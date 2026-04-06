@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import os
 import urllib.error
 import urllib.parse
@@ -45,58 +46,65 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--symbol", default="SPY", help="Underlying symbol. Default: SPY")
     parser.add_argument(
+        "--profile",
+        default="core",
+        choices=("micro", "weekly", "swing", "core"),
+        help="Scanner profile preset. Default: core",
+    )
+    parser.add_argument(
         "--min-dte",
         type=int,
-        default=7,
-        help="Minimum days to expiration to include. Default: 7",
+        help="Minimum days to expiration to include. Default: profile preset",
     )
     parser.add_argument(
         "--max-dte",
         type=int,
-        default=35,
-        help="Maximum days to expiration to include. Default: 35",
+        help="Maximum days to expiration to include. Default: profile preset",
     )
     parser.add_argument(
         "--short-delta-min",
         type=float,
-        default=0.12,
-        help="Minimum short-call delta. Default: 0.12",
+        help="Minimum short-call delta. Default: profile preset",
     )
     parser.add_argument(
         "--short-delta-max",
         type=float,
-        default=0.30,
-        help="Maximum short-call delta. Default: 0.30",
+        help="Maximum short-call delta. Default: profile preset",
+    )
+    parser.add_argument(
+        "--short-delta-target",
+        type=float,
+        help="Preferred short-call delta used in ranking. Default: profile preset",
+    )
+    parser.add_argument(
+        "--min-width",
+        type=float,
+        help="Minimum strike width for the spread. Default: profile preset",
     )
     parser.add_argument(
         "--max-width",
         type=float,
-        default=5.0,
-        help="Maximum strike width for the spread. Default: 5.0",
+        help="Maximum strike width for the spread. Default: profile preset",
     )
     parser.add_argument(
         "--min-credit",
         type=float,
-        default=0.25,
-        help="Minimum midpoint credit per spread. Default: 0.25",
+        help="Minimum midpoint credit per spread. Default: profile preset",
     )
     parser.add_argument(
         "--min-open-interest",
         type=int,
-        default=200,
-        help="Minimum open interest required on each leg. Default: 200",
+        help="Minimum open interest required on each leg. Default: profile preset",
     )
     parser.add_argument(
         "--max-relative-spread",
         type=float,
-        default=0.25,
-        help="Maximum bid/ask width as a fraction of midpoint for each leg. Default: 0.25",
+        help="Maximum bid/ask width as a fraction of midpoint for each leg. Default: profile preset",
     )
     parser.add_argument(
         "--min-return-on-risk",
         type=float,
-        default=0.10,
-        help="Minimum spread return on risk, e.g. 0.10 = 10%%. Default: 0.10",
+        help="Minimum spread return on risk, e.g. 0.10 = 10%%. Default: profile preset",
     )
     parser.add_argument(
         "--feed",
@@ -208,6 +216,41 @@ def pick(mapping: dict[str, Any], *keys: str) -> Any:
     return None
 
 
+def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
+    return max(low, min(high, value))
+
+
+def infer_underlying_key(underlying_type: str) -> str:
+    return "etf_index_proxy" if underlying_type == "etf_index_proxy" else "single_name_equity"
+
+
+def resolve_profile_value(override: Any, preset: Any) -> Any:
+    return preset if override is None else override
+
+
+def apply_profile_defaults(args: argparse.Namespace, underlying_type: str) -> None:
+    profile = PROFILE_CONFIGS[args.profile]
+    underlying_key = infer_underlying_key(underlying_type)
+
+    args.min_dte = resolve_profile_value(args.min_dte, profile.min_dte)
+    args.max_dte = resolve_profile_value(args.max_dte, profile.max_dte)
+    args.short_delta_min = resolve_profile_value(args.short_delta_min, profile.short_delta_min)
+    args.short_delta_max = resolve_profile_value(args.short_delta_max, profile.short_delta_max)
+    args.short_delta_target = resolve_profile_value(args.short_delta_target, profile.short_delta_target)
+    args.min_width = resolve_profile_value(args.min_width, profile.min_width)
+    args.max_width = resolve_profile_value(args.max_width, profile.max_width_by_underlying[underlying_key])
+    args.min_credit = resolve_profile_value(args.min_credit, profile.min_credit)
+    args.min_open_interest = resolve_profile_value(
+        args.min_open_interest,
+        profile.min_open_interest_by_underlying[underlying_key],
+    )
+    args.max_relative_spread = resolve_profile_value(
+        args.max_relative_spread,
+        profile.max_relative_spread_by_underlying[underlying_key],
+    )
+    args.min_return_on_risk = resolve_profile_value(args.min_return_on_risk, profile.min_return_on_risk)
+
+
 @dataclass(frozen=True)
 class OptionContract:
     symbol: str
@@ -234,8 +277,35 @@ class OptionSnapshot:
 
 
 @dataclass(frozen=True)
-class SpreadCandidate:
+class ProfileConfig:
+    name: str
+    min_dte: int
+    max_dte: int
+    short_delta_min: float
+    short_delta_max: float
+    short_delta_target: float
+    min_width: float
+    max_width_by_underlying: dict[str, float]
+    min_credit: float
+    min_open_interest_by_underlying: dict[str, int]
+    max_relative_spread_by_underlying: dict[str, float]
+    min_return_on_risk: float
+
+
+@dataclass(frozen=True)
+class ExpectedMoveEstimate:
     expiration_date: str
+    amount: float
+    percent_of_spot: float
+    reference_strike: float
+    method: str = "atm_straddle_midpoint"
+
+
+@dataclass(frozen=True)
+class SpreadCandidate:
+    profile: str
+    expiration_date: str
+    days_to_expiration: int
     underlying_price: float
     short_symbol: str
     long_symbol: str
@@ -256,10 +326,21 @@ class SpreadCandidate:
     max_loss: float
     return_on_risk: float
     breakeven: float
+    breakeven_cushion_pct: float
     short_otm_pct: float
     short_open_interest: int
     long_open_interest: int
+    short_relative_spread: float
+    long_relative_spread: float
+    fill_ratio: float
+    min_quote_size: int
     order_payload: dict[str, Any]
+    expected_move: float | None = None
+    expected_move_pct: float | None = None
+    expected_move_source_strike: float | None = None
+    short_vs_expected_move: float | None = None
+    breakeven_vs_expected_move: float | None = None
+    quality_score: float = 0.0
     calendar_status: str = "clean"
     calendar_reasons: tuple[str, ...] = ()
     calendar_confidence: str = "unknown"
@@ -267,6 +348,66 @@ class SpreadCandidate:
     calendar_last_updated: str | None = None
     calendar_days_to_nearest_event: int | None = None
     macro_regime: str | None = None
+
+
+PROFILE_CONFIGS: dict[str, ProfileConfig] = {
+    "micro": ProfileConfig(
+        name="micro",
+        min_dte=1,
+        max_dte=3,
+        short_delta_min=0.05,
+        short_delta_max=0.12,
+        short_delta_target=0.08,
+        min_width=1.0,
+        max_width_by_underlying={"etf_index_proxy": 2.0, "single_name_equity": 2.0},
+        min_credit=0.10,
+        min_open_interest_by_underlying={"etf_index_proxy": 1500, "single_name_equity": 1500},
+        max_relative_spread_by_underlying={"etf_index_proxy": 0.10, "single_name_equity": 0.10},
+        min_return_on_risk=0.08,
+    ),
+    "weekly": ProfileConfig(
+        name="weekly",
+        min_dte=4,
+        max_dte=10,
+        short_delta_min=0.08,
+        short_delta_max=0.16,
+        short_delta_target=0.12,
+        min_width=1.0,
+        max_width_by_underlying={"etf_index_proxy": 3.0, "single_name_equity": 5.0},
+        min_credit=0.18,
+        min_open_interest_by_underlying={"etf_index_proxy": 750, "single_name_equity": 400},
+        max_relative_spread_by_underlying={"etf_index_proxy": 0.12, "single_name_equity": 0.15},
+        min_return_on_risk=0.10,
+    ),
+    "swing": ProfileConfig(
+        name="swing",
+        min_dte=11,
+        max_dte=21,
+        short_delta_min=0.12,
+        short_delta_max=0.20,
+        short_delta_target=0.16,
+        min_width=1.0,
+        max_width_by_underlying={"etf_index_proxy": 5.0, "single_name_equity": 10.0},
+        min_credit=0.25,
+        min_open_interest_by_underlying={"etf_index_proxy": 500, "single_name_equity": 250},
+        max_relative_spread_by_underlying={"etf_index_proxy": 0.18, "single_name_equity": 0.18},
+        min_return_on_risk=0.10,
+    ),
+    "core": ProfileConfig(
+        name="core",
+        min_dte=22,
+        max_dte=35,
+        short_delta_min=0.15,
+        short_delta_max=0.22,
+        short_delta_target=0.18,
+        min_width=2.0,
+        max_width_by_underlying={"etf_index_proxy": 10.0, "single_name_equity": 10.0},
+        min_credit=0.35,
+        min_open_interest_by_underlying={"etf_index_proxy": 300, "single_name_equity": 200},
+        max_relative_spread_by_underlying={"etf_index_proxy": 0.20, "single_name_equity": 0.20},
+        min_return_on_risk=0.12,
+    ),
+}
 
 
 class AlpacaClient:
@@ -326,7 +467,14 @@ class AlpacaClient:
             return price
         raise RuntimeError(f"Could not determine current price for {symbol}")
 
-    def list_option_contracts(self, symbol: str, min_expiration: str, max_expiration: str) -> list[OptionContract]:
+    def list_option_contracts(
+        self,
+        symbol: str,
+        min_expiration: str,
+        max_expiration: str,
+        *,
+        option_type: str = "call",
+    ) -> list[OptionContract]:
         contracts: list[OptionContract] = []
         page_token: str | None = None
         while True:
@@ -335,7 +483,7 @@ class AlpacaClient:
                 "/v2/options/contracts",
                 {
                     "underlying_symbols": symbol,
-                    "type": "call",
+                    "type": option_type,
                     "status": "active",
                     "expiration_date_gte": min_expiration,
                     "expiration_date_lte": max_expiration,
@@ -362,7 +510,13 @@ class AlpacaClient:
                 break
         return contracts
 
-    def get_call_chain_snapshots(self, symbol: str, expiration_date: str, feed: str) -> dict[str, OptionSnapshot]:
+    def get_option_chain_snapshots(
+        self,
+        symbol: str,
+        expiration_date: str,
+        option_type: str,
+        feed: str,
+    ) -> dict[str, OptionSnapshot]:
         snapshots: dict[str, OptionSnapshot] = {}
         page_token: str | None = None
         while True:
@@ -371,7 +525,7 @@ class AlpacaClient:
                 f"/v1beta1/options/snapshots/{symbol}",
                 {
                     "feed": feed,
-                    "type": "call",
+                    "type": option_type,
                     "expiration_date": expiration_date,
                     "limit": 1000,
                     "page_token": page_token,
@@ -447,6 +601,84 @@ def relative_spread(snapshot: OptionSnapshot) -> float:
     return (snapshot.ask - snapshot.bid) / snapshot.midpoint
 
 
+def log_scaled_score(value: int, floor: int, ceiling: int) -> float:
+    if value <= floor:
+        return 0.0
+    if value >= ceiling:
+        return 1.0
+    numerator = math.log10(value) - math.log10(max(floor, 1))
+    denominator = math.log10(max(ceiling, 1)) - math.log10(max(floor, 1))
+    if denominator <= 0:
+        return 0.0
+    return clamp(numerator / denominator)
+
+
+def pick_atm_expected_move(
+    *,
+    spot_price: float,
+    expiration_date: str,
+    call_contracts: list[OptionContract],
+    put_contracts: list[OptionContract],
+    call_snapshots: dict[str, OptionSnapshot],
+    put_snapshots: dict[str, OptionSnapshot],
+) -> ExpectedMoveEstimate | None:
+    puts_by_strike = {contract.strike_price: contract for contract in put_contracts}
+    best_estimate: ExpectedMoveEstimate | None = None
+    best_distance: float | None = None
+
+    for call_contract in call_contracts:
+        put_contract = puts_by_strike.get(call_contract.strike_price)
+        if not put_contract:
+            continue
+
+        call_snapshot = call_snapshots.get(call_contract.symbol)
+        put_snapshot = put_snapshots.get(put_contract.symbol)
+        if not call_snapshot or not put_snapshot:
+            continue
+
+        expected_move = call_snapshot.midpoint + put_snapshot.midpoint
+        if expected_move <= 0:
+            continue
+
+        distance = abs(call_contract.strike_price - spot_price)
+        if best_distance is not None and distance > best_distance:
+            continue
+
+        estimate = ExpectedMoveEstimate(
+            expiration_date=expiration_date,
+            amount=expected_move,
+            percent_of_spot=expected_move / spot_price,
+            reference_strike=call_contract.strike_price,
+        )
+        best_distance = distance
+        best_estimate = estimate
+
+    return best_estimate
+
+
+def build_expected_move_estimates(
+    *,
+    spot_price: float,
+    call_contracts_by_expiration: dict[str, list[OptionContract]],
+    put_contracts_by_expiration: dict[str, list[OptionContract]],
+    call_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
+    put_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
+) -> dict[str, ExpectedMoveEstimate]:
+    estimates: dict[str, ExpectedMoveEstimate] = {}
+    for expiration_date, call_contracts in call_contracts_by_expiration.items():
+        estimate = pick_atm_expected_move(
+            spot_price=spot_price,
+            expiration_date=expiration_date,
+            call_contracts=call_contracts,
+            put_contracts=put_contracts_by_expiration.get(expiration_date, []),
+            call_snapshots=call_snapshots_by_expiration.get(expiration_date, {}),
+            put_snapshots=put_snapshots_by_expiration.get(expiration_date, {}),
+        )
+        if estimate:
+            estimates[expiration_date] = estimate
+    return estimates
+
+
 def make_order_payload(short_symbol: str, long_symbol: str, limit_price: float) -> dict[str, Any]:
     return {
         "order_class": "mleg",
@@ -494,6 +726,7 @@ def build_call_credit_spreads(
     spot_price: float,
     contracts_by_expiration: dict[str, list[OptionContract]],
     snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
+    expected_moves_by_expiration: dict[str, ExpectedMoveEstimate],
     args: argparse.Namespace,
 ) -> list[SpreadCandidate]:
     candidates: list[SpreadCandidate] = []
@@ -501,6 +734,8 @@ def build_call_credit_spreads(
     for expiration_date, contracts in sorted(contracts_by_expiration.items()):
         snapshot_map = snapshots_by_expiration.get(expiration_date, {})
         sorted_contracts = sorted(contracts, key=lambda contract: contract.strike_price)
+        expected_move = expected_moves_by_expiration.get(expiration_date)
+        days_to_expiration = days_from_today(expiration_date)
 
         for short_contract in sorted_contracts:
             short_snapshot = snapshot_map.get(short_contract.symbol)
@@ -510,7 +745,8 @@ def build_call_credit_spreads(
                 continue
             if short_contract.open_interest < args.min_open_interest:
                 continue
-            if relative_spread(short_snapshot) > args.max_relative_spread:
+            short_leg_relative_spread = relative_spread(short_snapshot)
+            if short_leg_relative_spread > args.max_relative_spread:
                 continue
             if short_snapshot.bid_size <= 0:
                 continue
@@ -524,6 +760,8 @@ def build_call_credit_spreads(
                     continue
 
                 width = long_contract.strike_price - short_contract.strike_price
+                if width < args.min_width:
+                    continue
                 if width > args.max_width:
                     break
 
@@ -532,7 +770,8 @@ def build_call_credit_spreads(
                     continue
                 if long_contract.open_interest < args.min_open_interest:
                     continue
-                if relative_spread(long_snapshot) > args.max_relative_spread:
+                long_leg_relative_spread = relative_spread(long_snapshot)
+                if long_leg_relative_spread > args.max_relative_spread:
                     continue
                 if long_snapshot.ask_size <= 0:
                     continue
@@ -556,9 +795,25 @@ def build_call_credit_spreads(
                     continue
 
                 breakeven = short_contract.strike_price + midpoint_credit
+                fill_ratio = clamp(natural_credit / midpoint_credit, 0.0, 1.25)
+                short_vs_expected_move = None
+                breakeven_vs_expected_move = None
+                expected_move_amount = None
+                expected_move_pct = None
+                expected_move_source_strike = None
+                if expected_move:
+                    expected_move_amount = expected_move.amount
+                    expected_move_pct = expected_move.percent_of_spot
+                    expected_move_source_strike = expected_move.reference_strike
+                    expected_move_ceiling = spot_price + expected_move.amount
+                    short_vs_expected_move = short_contract.strike_price - expected_move_ceiling
+                    breakeven_vs_expected_move = breakeven - expected_move_ceiling
+
                 candidates.append(
                     SpreadCandidate(
+                        profile=args.profile,
                         expiration_date=expiration_date,
+                        days_to_expiration=days_to_expiration,
                         underlying_price=spot_price,
                         short_symbol=short_contract.symbol,
                         long_symbol=long_contract.symbol,
@@ -579,9 +834,24 @@ def build_call_credit_spreads(
                         max_loss=max_loss,
                         return_on_risk=return_on_risk,
                         breakeven=breakeven,
+                        breakeven_cushion_pct=(breakeven - spot_price) / spot_price,
                         short_otm_pct=(short_contract.strike_price - spot_price) / spot_price,
                         short_open_interest=short_contract.open_interest,
                         long_open_interest=long_contract.open_interest,
+                        short_relative_spread=short_leg_relative_spread,
+                        long_relative_spread=long_leg_relative_spread,
+                        fill_ratio=fill_ratio,
+                        min_quote_size=min(
+                            short_snapshot.bid_size,
+                            short_snapshot.ask_size,
+                            long_snapshot.bid_size,
+                            long_snapshot.ask_size,
+                        ),
+                        expected_move=expected_move_amount,
+                        expected_move_pct=expected_move_pct,
+                        expected_move_source_strike=expected_move_source_strike,
+                        short_vs_expected_move=short_vs_expected_move,
+                        breakeven_vs_expected_move=breakeven_vs_expected_move,
                         order_payload=make_order_payload(
                             short_contract.symbol,
                             long_contract.symbol,
@@ -590,15 +860,79 @@ def build_call_credit_spreads(
                     )
                 )
 
-    candidates.sort(
+    return candidates
+
+
+def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> float:
+    delta_target = args.short_delta_target
+    delta_half_band = max((args.short_delta_max - args.short_delta_min) / 2.0, 0.01)
+    delta_score = 1.0
+    if candidate.short_delta is not None:
+        delta_score = 1.0 - min(abs(candidate.short_delta - delta_target) / delta_half_band, 1.0)
+
+    dte_target = (args.min_dte + args.max_dte) / 2.0
+    dte_half_band = max((args.max_dte - args.min_dte) / 2.0, 1.0)
+    dte_score = 1.0 - min(abs(candidate.days_to_expiration - dte_target) / dte_half_band, 1.0)
+
+    fill_score = clamp(candidate.fill_ratio)
+    liquidity_score = (
+        0.75
+        * log_scaled_score(
+            min(candidate.short_open_interest, candidate.long_open_interest),
+            floor=max(args.min_open_interest, 1),
+            ceiling=max(args.min_open_interest * 8, 10),
+        )
+        + 0.25 * clamp(candidate.min_quote_size / 100.0)
+    )
+
+    width_target = max(args.min_width, 2.0 if args.profile == "core" else args.min_width)
+    width_window = max(args.max_width - args.min_width, 1.0)
+    width_score = 1.0 - min(abs(candidate.width - width_target) / width_window, 1.0)
+
+    return_on_risk_score = clamp(candidate.return_on_risk / 0.60)
+    breakeven_cushion_score = clamp(candidate.breakeven_cushion_pct / 0.035)
+
+    if candidate.expected_move and candidate.expected_move > 0:
+        short_expected_move_score = clamp(0.50 + (candidate.short_vs_expected_move or 0.0) / candidate.expected_move)
+        breakeven_expected_move_score = clamp(
+            0.45 + (candidate.breakeven_vs_expected_move or 0.0) / candidate.expected_move
+        )
+    else:
+        short_expected_move_score = clamp(candidate.short_otm_pct / 0.03)
+        breakeven_expected_move_score = breakeven_cushion_score
+
+    base_score = (
+        0.24 * delta_score
+        + 0.18 * short_expected_move_score
+        + 0.16 * breakeven_expected_move_score
+        + 0.14 * fill_score
+        + 0.12 * liquidity_score
+        + 0.08 * width_score
+        + 0.05 * dte_score
+        + 0.03 * return_on_risk_score
+    )
+
+    calendar_multiplier = {
+        "clean": 1.0,
+        "penalized": 0.92,
+        "unknown": 0.82,
+        "blocked": 0.0,
+    }.get(candidate.calendar_status, 1.0)
+    return round(base_score * calendar_multiplier * 100.0, 1)
+
+
+def rank_candidates(candidates: list[SpreadCandidate], args: argparse.Namespace) -> list[SpreadCandidate]:
+    ranked = [replace(candidate, quality_score=score_candidate(candidate, args)) for candidate in candidates]
+    ranked.sort(
         key=lambda candidate: (
+            candidate.quality_score,
             candidate.return_on_risk,
             candidate.midpoint_credit,
             min(candidate.short_open_interest, candidate.long_open_interest),
         ),
         reverse=True,
     )
-    return candidates
+    return ranked
 
 
 def build_table_rows(candidates: list[SpreadCandidate]) -> list[list[str]]:
@@ -607,15 +941,17 @@ def build_table_rows(candidates: list[SpreadCandidate]) -> list[list[str]]:
         rows.append(
             [
                 candidate.expiration_date,
+                str(candidate.days_to_expiration),
                 f"{candidate.short_strike:.2f}",
                 f"{candidate.long_strike:.2f}",
                 f"{candidate.width:.2f}",
                 f"{candidate.midpoint_credit:.2f}",
-                f"{candidate.natural_credit:.2f}",
-                f"{candidate.max_loss:.0f}",
                 f"{candidate.return_on_risk * 100:.1f}",
+                f"{candidate.quality_score:.1f}",
                 "n/a" if candidate.short_delta is None else f"{candidate.short_delta:.2f}",
                 f"{candidate.short_otm_pct * 100:.1f}",
+                f"{candidate.breakeven_cushion_pct * 100:.1f}",
+                "n/a" if candidate.short_vs_expected_move is None else f"{candidate.short_vs_expected_move:.2f}",
                 f"{min(candidate.short_open_interest, candidate.long_open_interest)}",
                 candidate.calendar_status,
                 "n/a"
@@ -643,6 +979,8 @@ def format_table(headers: list[str], rows: list[list[str]]) -> str:
 
 def print_human_readable(symbol: str, spot_price: float, candidates: list[SpreadCandidate], show_order_json: bool) -> None:
     print(f"{symbol.upper()} spot: {spot_price:.2f}")
+    if candidates:
+        print(f"Profile: {candidates[0].profile}")
     print(f"Candidates found: {len(candidates)}")
     print()
 
@@ -650,7 +988,7 @@ def print_human_readable(symbol: str, spot_price: float, candidates: list[Spread
         print("No call credit spreads matched the current filters and calendar policy.")
         return
 
-    headers = ["Expiry", "Short", "Long", "Width", "MidCr", "NatCr", "MaxLoss", "ROR%", "Δ", "OTM%", "MinOI", "Cal", "EvtD"]
+    headers = ["Expiry", "DTE", "Short", "Long", "Width", "MidCr", "ROR%", "Score", "Δ", "OTM%", "BE%", "S-EM", "MinOI", "Cal", "EvtD"]
     rows = build_table_rows(candidates)
     print(format_table(headers, rows))
     print()
@@ -658,9 +996,16 @@ def print_human_readable(symbol: str, spot_price: float, candidates: list[Spread
     for index, candidate in enumerate(candidates, start=1):
         print(
             f"{index}. {candidate.short_symbol} -> {candidate.long_symbol} | "
+            f"score {candidate.quality_score:.1f} | "
             f"breakeven {candidate.breakeven:.2f} | "
             f"calendar {candidate.calendar_status}"
         )
+        if candidate.expected_move is not None:
+            print(
+                "   expected move: "
+                f"{candidate.expected_move:.2f} ({candidate.expected_move_pct * 100:.2f}% of spot) "
+                f"from {candidate.expected_move_source_strike:.2f} strike"
+            )
         if candidate.calendar_reasons:
             print(f"   reasons: {'; '.join(candidate.calendar_reasons)}")
         if candidate.calendar_sources:
@@ -677,7 +1022,9 @@ def print_human_readable(symbol: str, spot_price: float, candidates: list[Spread
 def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
+        "profile",
         "expiration_date",
+        "days_to_expiration",
         "underlying_price",
         "short_symbol",
         "long_symbol",
@@ -698,9 +1045,20 @@ def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
         "max_loss",
         "return_on_risk",
         "breakeven",
+        "breakeven_cushion_pct",
         "short_otm_pct",
         "short_open_interest",
         "long_open_interest",
+        "short_relative_spread",
+        "long_relative_spread",
+        "fill_ratio",
+        "min_quote_size",
+        "expected_move",
+        "expected_move_pct",
+        "expected_move_source_strike",
+        "short_vs_expected_move",
+        "breakeven_vs_expected_move",
+        "quality_score",
         "calendar_status",
         "calendar_reasons",
         "calendar_confidence",
@@ -728,10 +1086,13 @@ def write_json(path: str, symbol: str, spot_price: float, args: argparse.Namespa
         "spot_price": spot_price,
         "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "filters": {
+            "profile": args.profile,
             "min_dte": args.min_dte,
             "max_dte": args.max_dte,
             "short_delta_min": args.short_delta_min,
             "short_delta_max": args.short_delta_max,
+            "short_delta_target": args.short_delta_target,
+            "min_width": args.min_width,
             "max_width": args.max_width,
             "min_credit": args.min_credit,
             "min_open_interest": args.min_open_interest,
@@ -811,21 +1172,29 @@ def main() -> int:
     load_local_env()
     args = parse_args()
 
+    key_id = env_or_die("APCA_API_KEY_ID", "ALPACA_API_KEY")
+    secret_key = env_or_die("APCA_API_SECRET_KEY", "ALPACA_SECRET_KEY")
+
+    symbol = args.symbol.upper()
+    underlying_type = classify_underlying_type(symbol)
+    apply_profile_defaults(args, underlying_type)
+
     if args.min_dte < 0 or args.max_dte < args.min_dte:
         raise SystemExit("Expected 0 <= min-dte <= max-dte")
     if args.short_delta_min < 0 or args.short_delta_max > 1 or args.short_delta_min > args.short_delta_max:
         raise SystemExit("Expected 0 <= short-delta-min <= short-delta-max <= 1")
-    if args.max_width <= 0:
-        raise SystemExit("Expected max-width > 0")
+    if args.short_delta_target < args.short_delta_min or args.short_delta_target > args.short_delta_max:
+        raise SystemExit("Expected short-delta-target to fall inside the selected delta band")
+    if args.min_width <= 0:
+        raise SystemExit("Expected min-width > 0")
+    if args.max_width < args.min_width:
+        raise SystemExit("Expected max-width >= min-width")
     if args.min_credit <= 0:
         raise SystemExit("Expected min-credit > 0")
     if args.min_open_interest < 0:
         raise SystemExit("Expected min-open-interest >= 0")
     if args.max_relative_spread <= 0:
         raise SystemExit("Expected max-relative-spread > 0")
-
-    key_id = env_or_die("APCA_API_KEY_ID", "ALPACA_API_KEY")
-    secret_key = env_or_die("APCA_API_SECRET_KEY", "ALPACA_SECRET_KEY")
 
     client = AlpacaClient(
         key_id=key_id,
@@ -839,27 +1208,44 @@ def main() -> int:
         data_base_url=args.data_base_url,
     )
 
-    symbol = args.symbol.upper()
-    underlying_type = classify_underlying_type(symbol)
     min_expiration = (date.today() + timedelta(days=args.min_dte)).isoformat()
     max_expiration = (date.today() + timedelta(days=args.max_dte)).isoformat()
 
     spot_price = client.get_underlying_price(symbol, args.stock_feed)
-    contracts = client.list_option_contracts(symbol, min_expiration, max_expiration)
-    contracts_by_expiration = group_contracts_by_expiration(contracts)
+    call_contracts = client.list_option_contracts(symbol, min_expiration, max_expiration, option_type="call")
+    put_contracts = client.list_option_contracts(symbol, min_expiration, max_expiration, option_type="put")
+    contracts_by_expiration = group_contracts_by_expiration(call_contracts)
+    put_contracts_by_expiration = group_contracts_by_expiration(put_contracts)
 
-    snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]] = {}
+    call_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]] = {}
+    put_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]] = {}
     for expiration_date in sorted(contracts_by_expiration):
-        snapshots_by_expiration[expiration_date] = client.get_call_chain_snapshots(
+        call_snapshots_by_expiration[expiration_date] = client.get_option_chain_snapshots(
             symbol,
             expiration_date,
+            "call",
             args.feed,
         )
+        put_snapshots_by_expiration[expiration_date] = client.get_option_chain_snapshots(
+            symbol,
+            expiration_date,
+            "put",
+            args.feed,
+        )
+
+    expected_moves_by_expiration = build_expected_move_estimates(
+        spot_price=spot_price,
+        call_contracts_by_expiration=contracts_by_expiration,
+        put_contracts_by_expiration=put_contracts_by_expiration,
+        call_snapshots_by_expiration=call_snapshots_by_expiration,
+        put_snapshots_by_expiration=put_snapshots_by_expiration,
+    )
 
     all_candidates = build_call_credit_spreads(
         spot_price=spot_price,
         contracts_by_expiration=contracts_by_expiration,
-        snapshots_by_expiration=snapshots_by_expiration,
+        snapshots_by_expiration=call_snapshots_by_expiration,
+        expected_moves_by_expiration=expected_moves_by_expiration,
         args=args,
     )
     all_candidates = attach_calendar_decisions(
@@ -870,6 +1256,7 @@ def main() -> int:
         calendar_policy=args.calendar_policy,
         refresh_calendar_events=args.refresh_calendar_events,
     )
+    all_candidates = rank_candidates(all_candidates, args)
     output_path = args.output or default_output_path(symbol, args.output_format)
 
     if args.output_format == "csv":
@@ -887,10 +1274,13 @@ def main() -> int:
                     "spot_price": spot_price,
                     "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
                     "filters": {
+                        "profile": args.profile,
                         "min_dte": args.min_dte,
                         "max_dte": args.max_dte,
                         "short_delta_min": args.short_delta_min,
                         "short_delta_max": args.short_delta_max,
+                        "short_delta_target": args.short_delta_target,
+                        "min_width": args.min_width,
                         "max_width": args.max_width,
                         "min_credit": args.min_credit,
                         "min_open_interest": args.min_open_interest,

@@ -33,23 +33,23 @@ Short log of proposed features, why they matter, and the current direction.
 
 ## 2. Profile-Aware Ranking Engine
 
-- Status: proposed
+- Status: done
 - Priority: high
 - Scope: scanner core
 - Why: the current ranking still over-rewards premium and near-top-of-band delta instead of surfacing the best trades
 - Direction: rank within profile using a weighted quality score instead of primarily sorting by raw return on risk
 - V1: delta-target distance, breakeven cushion, fill quality, liquidity, width appropriateness
-- Next: define the scoring formula for `core` first, then extend to other profiles
+- Next: tune weights against live scan review and post-run outcomes
 
 ## 3. Expected Move And Breakeven Cushion
 
-- Status: proposed
+- Status: done
 - Priority: high
 - Scope: scanner core
 - Why: delta and OTM % alone are not enough to judge whether the short strike has enough room
 - Direction: measure short strike and breakeven distance against expected move and use it in filters and ranking
 - V1: add breakeven cushion scoring and a basic expected-move filter where data is available
-- Next: define the expected-move calculation and minimum cushion rules for `core`
+- Next: calibrate minimum cushion rules by profile and symbol type
 
 ## 4. Candidate De-Duplication
 

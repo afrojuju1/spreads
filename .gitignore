@@ -1,4 +1,3 @@
 .env
 outputs/
 __pycache__/
-call_credit_spreads_*.csv
