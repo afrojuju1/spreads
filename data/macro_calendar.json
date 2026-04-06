@@ -1,0 +1,260 @@
+{
+  "events": [
+    {
+      "event_id": "fomc-2026-01-28",
+      "event_type": "macro_fomc",
+      "name": "FOMC policy statement",
+      "date": "2026-01-28",
+      "time": "14:00",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "fomc-2026-03-18",
+      "event_type": "macro_fomc",
+      "name": "FOMC policy statement",
+      "date": "2026-03-18",
+      "time": "14:00",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "fomc-2026-04-29",
+      "event_type": "macro_fomc",
+      "name": "FOMC policy statement",
+      "date": "2026-04-29",
+      "time": "14:00",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "fomc-2026-06-17",
+      "event_type": "macro_fomc",
+      "name": "FOMC policy statement",
+      "date": "2026-06-17",
+      "time": "14:00",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "fomc-2026-07-29",
+      "event_type": "macro_fomc",
+      "name": "FOMC policy statement",
+      "date": "2026-07-29",
+      "time": "14:00",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "fomc-2026-09-16",
+      "event_type": "macro_fomc",
+      "name": "FOMC policy statement",
+      "date": "2026-09-16",
+      "time": "14:00",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "fomc-2026-10-28",
+      "event_type": "macro_fomc",
+      "name": "FOMC policy statement",
+      "date": "2026-10-28",
+      "time": "14:00",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "fomc-2026-12-09",
+      "event_type": "macro_fomc",
+      "name": "FOMC policy statement",
+      "date": "2026-12-09",
+      "time": "14:00",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "cpi-2026-01-13",
+      "event_type": "macro_cpi",
+      "name": "Consumer Price Index",
+      "date": "2026-01-13",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "cpi-2026-02-13",
+      "event_type": "macro_cpi",
+      "name": "Consumer Price Index",
+      "date": "2026-02-13",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "cpi-2026-03-11",
+      "event_type": "macro_cpi",
+      "name": "Consumer Price Index",
+      "date": "2026-03-11",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "cpi-2026-04-10",
+      "event_type": "macro_cpi",
+      "name": "Consumer Price Index",
+      "date": "2026-04-10",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "cpi-2026-05-12",
+      "event_type": "macro_cpi",
+      "name": "Consumer Price Index",
+      "date": "2026-05-12",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "cpi-2026-06-10",
+      "event_type": "macro_cpi",
+      "name": "Consumer Price Index",
+      "date": "2026-06-10",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "cpi-2026-07-14",
+      "event_type": "macro_cpi",
+      "name": "Consumer Price Index",
+      "date": "2026-07-14",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "cpi-2026-08-12",
+      "event_type": "macro_cpi",
+      "name": "Consumer Price Index",
+      "date": "2026-08-12",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "cpi-2026-09-11",
+      "event_type": "macro_cpi",
+      "name": "Consumer Price Index",
+      "date": "2026-09-11",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "cpi-2026-10-14",
+      "event_type": "macro_cpi",
+      "name": "Consumer Price Index",
+      "date": "2026-10-14",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "cpi-2026-11-10",
+      "event_type": "macro_cpi",
+      "name": "Consumer Price Index",
+      "date": "2026-11-10",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "cpi-2026-12-10",
+      "event_type": "macro_cpi",
+      "name": "Consumer Price Index",
+      "date": "2026-12-10",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "employment-2026-01-09",
+      "event_type": "macro_employment_situation",
+      "name": "Employment Situation",
+      "date": "2026-01-09",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "employment-2026-02-11",
+      "event_type": "macro_employment_situation",
+      "name": "Employment Situation",
+      "date": "2026-02-11",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "employment-2026-03-06",
+      "event_type": "macro_employment_situation",
+      "name": "Employment Situation",
+      "date": "2026-03-06",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "employment-2026-04-03",
+      "event_type": "macro_employment_situation",
+      "name": "Employment Situation",
+      "date": "2026-04-03",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "employment-2026-05-08",
+      "event_type": "macro_employment_situation",
+      "name": "Employment Situation",
+      "date": "2026-05-08",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "employment-2026-06-05",
+      "event_type": "macro_employment_situation",
+      "name": "Employment Situation",
+      "date": "2026-06-05",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "employment-2026-07-02",
+      "event_type": "macro_employment_situation",
+      "name": "Employment Situation",
+      "date": "2026-07-02",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "employment-2026-08-07",
+      "event_type": "macro_employment_situation",
+      "name": "Employment Situation",
+      "date": "2026-08-07",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "employment-2026-09-04",
+      "event_type": "macro_employment_situation",
+      "name": "Employment Situation",
+      "date": "2026-09-04",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "employment-2026-10-02",
+      "event_type": "macro_employment_situation",
+      "name": "Employment Situation",
+      "date": "2026-10-02",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "employment-2026-11-06",
+      "event_type": "macro_employment_situation",
+      "name": "Employment Situation",
+      "date": "2026-11-06",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    },
+    {
+      "event_id": "employment-2026-12-04",
+      "event_type": "macro_employment_situation",
+      "name": "Employment Situation",
+      "date": "2026-12-04",
+      "time": "08:30",
+      "timezone": "America/New_York"
+    }
+  ]
+}
