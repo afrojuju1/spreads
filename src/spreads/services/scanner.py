@@ -39,8 +39,9 @@ from spreads.integrations.calendar_events import build_calendar_event_resolver, 
 from spreads.integrations.calendar_events.models import CalendarPolicyDecision
 from spreads.integrations.calendar_events.policy import apply_credit_spread_policy
 from spreads.integrations.greeks import build_local_greeks_provider
+from spreads.storage import default_history_target
+from spreads.storage.base import HistoryStore
 from spreads.storage.factory import build_history_store
-from spreads.storage.history import DEFAULT_HISTORY_DB_PATH, RunHistoryStore
 
 
 DEFAULT_DATA_BASE_URL = "https://data.alpaca.markets"
@@ -266,7 +267,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--history-db",
-        default=str(DEFAULT_HISTORY_DB_PATH),
+        default=default_history_target(),
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
@@ -3326,7 +3327,7 @@ def run_replay(
     *,
     args: argparse.Namespace,
     client: AlpacaClient,
-    history_store: RunHistoryStore,
+    history_store: HistoryStore,
 ) -> int:
     if args.replay_latest and args.strategy == "combined":
         raise SystemExit("Replay latest requires --strategy call_credit or --strategy put_credit")
@@ -3386,7 +3387,7 @@ def scan_symbol_live(
     client: AlpacaClient,
     calendar_resolver: Any,
     greeks_provider: Any,
-    history_store: RunHistoryStore,
+    history_store: HistoryStore,
 ) -> SymbolScanResult:
     symbol = symbol.upper()
     underlying_type = classify_underlying_type(symbol)
@@ -3562,7 +3563,7 @@ def scan_symbol_across_strategies(
     client: AlpacaClient,
     calendar_resolver: Any,
     greeks_provider: Any,
-    history_store: RunHistoryStore,
+    history_store: HistoryStore,
 ) -> tuple[list[SymbolScanResult], list[UniverseScanFailure]]:
     results: list[SymbolScanResult] = []
     failures: list[UniverseScanFailure] = []

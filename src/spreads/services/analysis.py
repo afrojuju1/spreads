@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sqlite3
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -14,8 +13,7 @@ from spreads.common import env_or_die, load_local_env
 from spreads.integrations.alpaca.client import AlpacaClient, infer_trading_base_url
 from spreads.services.replay import summarize_replay
 from spreads.services.scanner import NEW_YORK
-from spreads.storage.history import DEFAULT_HISTORY_DB_PATH
-from spreads.storage.history import RunHistoryStore
+from spreads.storage import build_history_store, default_history_target
 
 
 def parse_args() -> argparse.Namespace:
@@ -24,8 +22,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--db",
-        default=str(DEFAULT_HISTORY_DB_PATH),
-        help="SQLite history database. Default: outputs/run_history/scanner_history.sqlite",
+        default=default_history_target(),
+        help="History database target. Supports SQLite paths and PostgreSQL URLs.",
     )
     parser.add_argument(
         "--date",
@@ -91,76 +89,19 @@ def load_events(path: Path, session_date: str) -> list[dict[str, Any]]:
     return events
 
 
-def load_top_runs(
-    conn: sqlite3.Connection,
-    session_date: str,
-    label: str,
-) -> list[sqlite3.Row]:
-    run_columns = {
-        row["name"]
-        for row in conn.execute("PRAGMA table_info(scan_runs)").fetchall()
-    }
-    setup_json_select = "r.setup_json" if "setup_json" in run_columns else "NULL AS setup_json"
-    session_filter = ""
-    parameters: list[str] = [f"{session_date}%"]
-    if "session_label" in run_columns:
-        session_filter = "AND r.session_label = ?"
-        parameters.append(label)
-    query = """
-        SELECT
-            r.run_id,
-            r.generated_at,
-            r.symbol,
-            r.strategy,
-            r.profile,
-            r.spot_price,
-            r.candidate_count,
-            r.setup_status,
-            r.setup_score,
-            {setup_json_select},
-            c.short_symbol,
-            c.long_symbol,
-            c.short_strike,
-            c.long_strike,
-            c.midpoint_credit,
-            c.quality_score,
-            c.calendar_status,
-            c.expected_move,
-            c.short_vs_expected_move
-        FROM scan_runs r
-        LEFT JOIN scan_candidates c
-            ON c.run_id = r.run_id AND c.rank = 1
-        WHERE r.generated_at LIKE ?
-        {session_filter}
-        ORDER BY r.generated_at ASC
-    """
-    return conn.execute(
-        query.format(setup_json_select=setup_json_select, session_filter=session_filter),
-        parameters,
-    ).fetchall()
-
-
-def load_quote_rows(conn: sqlite3.Connection, session_date: str, label: str) -> list[sqlite3.Row]:
-    query = """
-        SELECT *
-        FROM option_quote_events
-        WHERE captured_at LIKE ? AND label = ?
-        ORDER BY quote_id ASC
-    """
-    return conn.execute(query, (f"{session_date}%", label)).fetchall()
-
-
-def parse_setup_json(value: str | None) -> dict[str, Any] | None:
+def parse_setup_json(value: str | dict[str, Any] | None) -> dict[str, Any] | None:
     if not value:
         return None
+    if isinstance(value, dict):
+        return value
     try:
         return json.loads(value)
     except json.JSONDecodeError:
         return None
 
 
-def summarize_runs(rows: list[sqlite3.Row]) -> tuple[dict[tuple[str, str], dict[str, Any]], dict[str, Any]]:
-    grouped: dict[tuple[str, str], list[sqlite3.Row]] = defaultdict(list)
+def summarize_runs(rows: list[dict[str, Any]]) -> tuple[dict[tuple[str, str], dict[str, Any]], dict[str, Any]]:
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         grouped[(row["symbol"], row["strategy"])].append(row)
 
@@ -194,9 +135,9 @@ def summarize_runs(rows: list[sqlite3.Row]) -> tuple[dict[tuple[str, str], dict[
     return summaries, overview
 
 
-def summarize_quotes(rows: list[sqlite3.Row]) -> tuple[dict[tuple[str, str], dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
-    by_symbol_strategy: dict[tuple[str, str], list[sqlite3.Row]] = defaultdict(list)
-    by_option_symbol: dict[str, list[sqlite3.Row]] = defaultdict(list)
+def summarize_quotes(rows: list[dict[str, Any]]) -> tuple[dict[tuple[str, str], dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    by_symbol_strategy: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    by_option_symbol: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         by_symbol_strategy[(row["underlying_symbol"], row["strategy"])].append(row)
         by_option_symbol[row["option_symbol"]].append(row)
@@ -329,7 +270,7 @@ def build_replay_client() -> AlpacaClient:
 
 def load_latest_idea_outcomes(
     *,
-    db_path: Path,
+    db_target: str,
     run_summaries: dict[tuple[str, str], dict[str, Any]],
     profit_target: float,
     stop_multiple: float,
@@ -342,7 +283,7 @@ def load_latest_idea_outcomes(
             outcomes[key] = {"status": "unavailable", "reason": str(exc)}
         return outcomes
 
-    history_store = RunHistoryStore(db_path)
+    history_store = build_history_store(db_target)
     try:
         for key, summary in run_summaries.items():
             latest_idea_row = summary.get("latest_idea_row")
@@ -543,23 +484,27 @@ def build_report(
 def main() -> int:
     args = parse_args()
     session_date = resolve_date(args.date)
-    db_path = Path(args.db)
     events_path = Path(args.events_log) if args.events_log else default_event_log_path(args.label)
     output_path = Path(args.output) if args.output else default_output_path(session_date, args.label)
 
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    history_store = build_history_store(args.db)
     try:
-        run_rows = load_top_runs(conn, session_date, args.label)
-        quote_rows = load_quote_rows(conn, session_date, args.label)
+        run_rows = history_store.list_session_top_runs(
+            session_date=session_date,
+            session_label=args.label,
+        )
+        quote_rows = history_store.list_session_quote_events(
+            session_date=session_date,
+            label=args.label,
+        )
     finally:
-        conn.close()
+        history_store.close()
 
     run_summaries, run_overview = summarize_runs(run_rows)
     quote_summaries, leg_summaries, quote_overview = summarize_quotes(quote_rows)
     events = load_events(events_path, session_date)
     outcomes = load_latest_idea_outcomes(
-        db_path=db_path,
+        db_target=args.db,
         run_summaries=run_summaries,
         profit_target=args.replay_profit_target,
         stop_multiple=args.replay_stop_multiple,

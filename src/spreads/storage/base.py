@@ -31,6 +31,28 @@ class HistoryStore(Protocol):
 
     def list_candidates(self, run_id: str) -> list[dict[str, Any]]: ...
 
+    def list_runs(
+        self,
+        *,
+        limit: int,
+        symbol: str | None = None,
+        strategy: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def list_session_top_runs(
+        self,
+        *,
+        session_date: str,
+        session_label: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def list_session_quote_events(
+        self,
+        *,
+        session_date: str,
+        label: str,
+    ) -> list[dict[str, Any]]: ...
+
     def save_option_quote_events(
         self,
         *,

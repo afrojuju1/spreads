@@ -92,9 +92,11 @@ Do not:
 - phase 1 complete
 - phase 2 complete with `src/spreads/services`, `src/spreads/jobs`, `src/spreads/cli`, and `src/spreads/integrations/alpaca`
 - Postgres-ready history store and minimal FastAPI app added
+- local Postgres development uses `docker-compose`
+- Alembic owns schema migrations
 
 ## Next Step
 
 - split `src/spreads/services/scanner.py` into smaller service modules behind the same CLI
-- move collection/analysis query paths onto Postgres once migrations are added
+- add a SQLite-to-Postgres import path for existing session history
 - start the frontend against the FastAPI surface under `apps/api`

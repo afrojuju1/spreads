@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date, datetime, timedelta
 from typing import Any
 
 
@@ -16,88 +17,21 @@ class PostgresRunHistoryStore:
 
         self.path = database_url
         self.connection = psycopg.connect(database_url, row_factory=dict_row)
-        self._initialize_schema()
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
 
-    def _initialize_schema(self) -> None:
-        cursor = self.connection.cursor()
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS scan_runs (
-                run_id TEXT PRIMARY KEY,
-                generated_at TIMESTAMPTZ NOT NULL,
-                symbol TEXT NOT NULL,
-                strategy TEXT NOT NULL DEFAULT 'call_credit',
-                session_label TEXT,
-                profile TEXT NOT NULL,
-                spot_price DOUBLE PRECISION NOT NULL,
-                candidate_count INTEGER NOT NULL,
-                output_path TEXT,
-                filters_json JSONB NOT NULL,
-                setup_status TEXT,
-                setup_score DOUBLE PRECISION,
-                setup_json JSONB
-            )
-            """
-        )
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS scan_candidates (
-                run_id TEXT NOT NULL REFERENCES scan_runs(run_id) ON DELETE CASCADE,
-                rank INTEGER NOT NULL,
-                strategy TEXT NOT NULL DEFAULT 'call_credit',
-                expiration_date DATE NOT NULL,
-                short_symbol TEXT NOT NULL,
-                long_symbol TEXT NOT NULL,
-                short_strike DOUBLE PRECISION NOT NULL,
-                long_strike DOUBLE PRECISION NOT NULL,
-                width DOUBLE PRECISION NOT NULL DEFAULT 0,
-                midpoint_credit DOUBLE PRECISION NOT NULL DEFAULT 0,
-                natural_credit DOUBLE PRECISION NOT NULL DEFAULT 0,
-                breakeven DOUBLE PRECISION NOT NULL,
-                max_profit DOUBLE PRECISION NOT NULL DEFAULT 0,
-                max_loss DOUBLE PRECISION NOT NULL DEFAULT 0,
-                quality_score DOUBLE PRECISION NOT NULL,
-                return_on_risk DOUBLE PRECISION NOT NULL,
-                short_otm_pct DOUBLE PRECISION NOT NULL,
-                calendar_status TEXT,
-                setup_status TEXT,
-                expected_move DOUBLE PRECISION,
-                short_vs_expected_move DOUBLE PRECISION,
-                PRIMARY KEY (run_id, rank)
-            )
-            """
-        )
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS option_quote_events (
-                quote_id BIGSERIAL PRIMARY KEY,
-                cycle_id TEXT NOT NULL,
-                captured_at TIMESTAMPTZ NOT NULL,
-                label TEXT NOT NULL,
-                underlying_symbol TEXT,
-                strategy TEXT,
-                profile TEXT,
-                option_symbol TEXT NOT NULL,
-                leg_role TEXT NOT NULL,
-                bid DOUBLE PRECISION NOT NULL,
-                ask DOUBLE PRECISION NOT NULL,
-                midpoint DOUBLE PRECISION NOT NULL,
-                bid_size INTEGER NOT NULL,
-                ask_size INTEGER NOT NULL,
-                quote_timestamp TIMESTAMPTZ,
-                source TEXT NOT NULL DEFAULT 'alpaca_websocket'
-            )
-            """
-        )
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_scan_runs_symbol_generated_at ON scan_runs(symbol, generated_at DESC)"
-        )
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_scan_candidates_run_id ON scan_candidates(run_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_option_quote_events_cycle_id ON option_quote_events(cycle_id)")
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_option_quote_events_symbol_captured_at ON option_quote_events(option_symbol, captured_at DESC)"
-        )
-        self.connection.commit()
+    @staticmethod
+    def _normalize_value(value: Any) -> Any:
+        if isinstance(value, datetime):
+            rendered = value.isoformat()
+            return rendered.replace("+00:00", "Z") if rendered.endswith("+00:00") else rendered
+        if isinstance(value, date):
+            return value.isoformat()
+        return value
+
+    @classmethod
+    def _normalize_record(cls, row: dict[str, Any]) -> dict[str, Any]:
+        return {key: cls._normalize_value(value) for key, value in row.items()}
 
     def save_run(
         self,
@@ -228,7 +162,7 @@ class PostgresRunHistoryStore:
             row = cursor.fetchone()
         if row is None:
             return None
-        payload = dict(row)
+        payload = self._normalize_record(dict(row))
         payload["filters"] = payload.pop("filters_json")
         payload["setup"] = payload.get("setup_json")
         return payload
@@ -253,7 +187,7 @@ class PostgresRunHistoryStore:
             row = cursor.fetchone()
         if row is None:
             return None
-        payload = dict(row)
+        payload = self._normalize_record(dict(row))
         payload["filters"] = payload.pop("filters_json")
         payload["setup"] = payload.get("setup_json")
         return payload
@@ -262,7 +196,100 @@ class PostgresRunHistoryStore:
         with self.connection.cursor() as cursor:
             cursor.execute("SELECT * FROM scan_candidates WHERE run_id = %s ORDER BY rank ASC", (run_id,))
             rows = cursor.fetchall()
-        return [dict(row) for row in rows]
+        return [self._normalize_record(dict(row)) for row in rows]
+
+    def list_runs(
+        self,
+        *,
+        limit: int,
+        symbol: str | None = None,
+        strategy: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM scan_runs"
+        params: list[Any] = []
+        clauses: list[str] = []
+        if symbol:
+            clauses.append("symbol = %s")
+            params.append(symbol.upper())
+        if strategy:
+            clauses.append("strategy = %s")
+            params.append(strategy)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY generated_at DESC LIMIT %s"
+        params.append(limit)
+        with self.connection.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+        return [self._normalize_record(dict(row)) for row in rows]
+
+    def list_session_top_runs(
+        self,
+        *,
+        session_date: str,
+        session_label: str | None = None,
+    ) -> list[dict[str, Any]]:
+        session_start = date.fromisoformat(session_date)
+        session_end = session_start + timedelta(days=1)
+        query = """
+            SELECT
+                r.run_id,
+                r.generated_at,
+                r.symbol,
+                r.strategy,
+                r.profile,
+                r.spot_price,
+                r.candidate_count,
+                r.setup_status,
+                r.setup_score,
+                r.setup_json,
+                c.short_symbol,
+                c.long_symbol,
+                c.short_strike,
+                c.long_strike,
+                c.midpoint_credit,
+                c.quality_score,
+                c.calendar_status,
+                c.expected_move,
+                c.short_vs_expected_move
+            FROM scan_runs r
+            LEFT JOIN scan_candidates c
+                ON c.run_id = r.run_id AND c.rank = 1
+            WHERE r.generated_at >= %s
+              AND r.generated_at < %s
+        """
+        params: list[Any] = [session_start.isoformat(), session_end.isoformat()]
+        if session_label:
+            query += " AND r.session_label = %s"
+            params.append(session_label)
+        query += " ORDER BY r.generated_at ASC"
+        with self.connection.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+        return [self._normalize_record(dict(row)) for row in rows]
+
+    def list_session_quote_events(
+        self,
+        *,
+        session_date: str,
+        label: str,
+    ) -> list[dict[str, Any]]:
+        session_start = date.fromisoformat(session_date)
+        session_end = session_start + timedelta(days=1)
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM option_quote_events
+                WHERE captured_at >= %s
+                  AND captured_at < %s
+                  AND label = %s
+                ORDER BY quote_id ASC
+                """,
+                (session_start.isoformat(), session_end.isoformat(), label),
+            )
+            rows = cursor.fetchall()
+        return [self._normalize_record(dict(row)) for row in rows]
 
     def save_option_quote_events(
         self,

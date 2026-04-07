@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    ports:
+      - "55432:5432"
+    environment:
+      POSTGRES_DB: spreads
+      POSTGRES_USER: spreads
+      POSTGRES_PASSWORD: spreads
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spreads -d spreads"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    volumes:
+      - spreads_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  spreads_postgres_data:

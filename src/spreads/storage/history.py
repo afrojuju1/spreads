@@ -301,6 +301,96 @@ class RunHistoryStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def list_runs(
+        self,
+        *,
+        limit: int,
+        symbol: str | None = None,
+        strategy: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM scan_runs"
+        params: list[Any] = []
+        clauses: list[str] = []
+        if symbol:
+            clauses.append("symbol = ?")
+            params.append(symbol.upper())
+        if strategy:
+            clauses.append("strategy = ?")
+            params.append(strategy)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY generated_at DESC LIMIT ?"
+        params.append(limit)
+        rows = self.connection.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_session_top_runs(
+        self,
+        *,
+        session_date: str,
+        session_label: str | None = None,
+    ) -> list[dict[str, Any]]:
+        run_columns = {
+            row["name"]
+            for row in self.connection.execute("PRAGMA table_info(scan_runs)").fetchall()
+        }
+        setup_json_select = "r.setup_json" if "setup_json" in run_columns else "NULL AS setup_json"
+        session_filter = ""
+        parameters: list[str] = [f"{session_date}%"]
+        if session_label and "session_label" in run_columns:
+            session_filter = "AND r.session_label = ?"
+            parameters.append(session_label)
+        query = """
+            SELECT
+                r.run_id,
+                r.generated_at,
+                r.symbol,
+                r.strategy,
+                r.profile,
+                r.spot_price,
+                r.candidate_count,
+                r.setup_status,
+                r.setup_score,
+                {setup_json_select},
+                c.short_symbol,
+                c.long_symbol,
+                c.short_strike,
+                c.long_strike,
+                c.midpoint_credit,
+                c.quality_score,
+                c.calendar_status,
+                c.expected_move,
+                c.short_vs_expected_move
+            FROM scan_runs r
+            LEFT JOIN scan_candidates c
+                ON c.run_id = r.run_id AND c.rank = 1
+            WHERE r.generated_at LIKE ?
+            {session_filter}
+            ORDER BY r.generated_at ASC
+        """
+        rows = self.connection.execute(
+            query.format(setup_json_select=setup_json_select, session_filter=session_filter),
+            parameters,
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_session_quote_events(
+        self,
+        *,
+        session_date: str,
+        label: str,
+    ) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM option_quote_events
+            WHERE captured_at LIKE ? AND label = ?
+            ORDER BY quote_id ASC
+            """,
+            (f"{session_date}%", label),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def save_option_quote_events(
         self,
         *,

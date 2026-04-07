@@ -13,8 +13,7 @@ if str(SRC) not in sys.path:
 from fastapi import FastAPI, HTTPException, Query
 
 from spreads.domain.profiles import UNIVERSE_PRESETS
-from spreads.storage.factory import build_history_store
-from spreads.storage.history import DEFAULT_HISTORY_DB_PATH
+from spreads.storage import build_history_store, default_history_target
 
 app = FastAPI(title="Spreads API", version="0.1.0")
 
@@ -58,45 +57,16 @@ def list_history_runs(
     symbol: str | None = None,
     strategy: str | None = None,
     limit: int = Query(default=25, ge=1, le=500),
-    db: str = str(DEFAULT_HISTORY_DB_PATH),
+    db: str | None = None,
 ) -> dict[str, Any]:
-    store = build_history_store(db)
+    store = build_history_store(db or default_history_target())
     try:
-        connection = getattr(store, "connection", None)
-        if connection is None:
-            raise HTTPException(status_code=500, detail="History backend does not expose query access")
-        if str(db).startswith("postgres://") or str(db).startswith("postgresql://"):
-            query = "SELECT * FROM scan_runs"
-            params: list[Any] = []
-            clauses: list[str] = []
-            if symbol:
-                clauses.append("symbol = %s")
-                params.append(symbol.upper())
-            if strategy:
-                clauses.append("strategy = %s")
-                params.append(strategy)
-            if clauses:
-                query += " WHERE " + " AND ".join(clauses)
-            query += " ORDER BY generated_at DESC LIMIT %s"
-            params.append(limit)
-            with connection.cursor() as cursor:
-                cursor.execute(query, params)
-                rows = cursor.fetchall()
-            return {"runs": [dict(row) for row in rows]}
-        query = "SELECT * FROM scan_runs"
-        params = []
-        clauses = []
-        if symbol:
-            clauses.append("symbol = ?")
-            params.append(symbol.upper())
-        if strategy:
-            clauses.append("strategy = ?")
-            params.append(strategy)
-        if clauses:
-            query += " WHERE " + " AND ".join(clauses)
-        query += " ORDER BY generated_at DESC LIMIT ?"
-        params.append(limit)
-        rows = connection.execute(query, params).fetchall()
-        return {"runs": [dict(row) for row in rows]}
+        return {
+            "runs": store.list_runs(
+                limit=limit,
+                symbol=symbol,
+                strategy=strategy,
+            )
+        }
     finally:
         store.close()
