@@ -9,8 +9,9 @@ description = "Alpaca-based options spread scanner"
 requires-python = ">=3.11"
 dependencies = [
   "msgpack>=1.1.0",
+  "py-vollib>=1.0.1",
   "websocket-client>=1.8.0",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["calendar_events"]
+packages = ["calendar_events", "greeks"]

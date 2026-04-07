@@ -38,6 +38,7 @@ import websocket
 from calendar_events import build_calendar_event_resolver, classify_underlying_type
 from calendar_events.models import CalendarPolicyDecision
 from calendar_events.policy import apply_credit_spread_policy
+from greeks import build_local_greeks_provider
 from scanner_history import DEFAULT_HISTORY_DB_PATH, RunHistoryStore
 
 
@@ -376,6 +377,15 @@ def format_session_bucket(bucket: str) -> str:
     return bucket.replace("_", "-")
 
 
+def zero_dte_delta_target(session_bucket: str) -> float:
+    return {
+        "open": 0.08,
+        "midday": 0.10,
+        "late": 0.12,
+        "off_hours": 0.10,
+    }[session_bucket]
+
+
 def env_or_die(*names: str) -> str:
     for name in names:
         value = os.environ.get(name)
@@ -496,6 +506,7 @@ class OptionSnapshot:
     vega: float | None
     implied_volatility: float | None
     last_trade_price: float | None
+    greeks_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -581,6 +592,7 @@ class SpreadCandidate:
     width: float
     short_delta: float | None
     long_delta: float | None
+    greeks_source: str
     short_midpoint: float
     long_midpoint: float
     short_bid: float
@@ -633,7 +645,9 @@ class SymbolScanResult:
     candidates: list[SpreadCandidate]
     run_id: str
     quoted_contract_count: int = 0
+    alpaca_delta_contract_count: int = 0
     delta_contract_count: int = 0
+    local_delta_contract_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -664,18 +678,27 @@ def count_snapshot_delta_coverage(snapshots_by_expiration: dict[str, dict[str, O
     return quoted_contracts, contracts_with_delta
 
 
+def count_local_greeks_coverage(snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]]) -> int:
+    local_contracts = 0
+    for snapshot_map in snapshots_by_expiration.values():
+        for snapshot in snapshot_map.values():
+            if snapshot.greeks_source == "local_bsm":
+                local_contracts += 1
+    return local_contracts
+
+
 PROFILE_CONFIGS: dict[str, ProfileConfig] = {
     "0dte": ProfileConfig(
         name="0dte",
         min_dte=0,
         max_dte=0,
         short_delta_min=0.03,
-        short_delta_max=0.10,
-        short_delta_target=0.06,
+        short_delta_max=0.18,
+        short_delta_target=0.10,
         min_width=1.0,
         max_width_by_underlying={"etf_index_proxy": 2.0, "single_name_equity": 2.0},
-        min_credit=0.08,
-        min_open_interest_by_underlying={"etf_index_proxy": 1000, "single_name_equity": 1000},
+        min_credit=0.05,
+        min_open_interest_by_underlying={"etf_index_proxy": 750, "single_name_equity": 750},
         max_relative_spread_by_underlying={"etf_index_proxy": 0.12, "single_name_equity": 0.12},
         min_return_on_risk=0.05,
         min_fill_ratio=0.72,
@@ -1014,6 +1037,8 @@ class AlpacaClient:
         if midpoint <= 0:
             return None
 
+        delta_value = parse_float(pick(greeks, "delta", "d"))
+
         return OptionSnapshot(
             symbol=symbol,
             bid=bid,
@@ -1021,7 +1046,7 @@ class AlpacaClient:
             bid_size=bid_size,
             ask_size=ask_size,
             midpoint=midpoint,
-            delta=parse_float(pick(greeks, "delta", "d")),
+            delta=delta_value,
             gamma=parse_float(pick(greeks, "gamma", "g")),
             theta=parse_float(pick(greeks, "theta", "t")),
             vega=parse_float(pick(greeks, "vega", "v")),
@@ -1029,6 +1054,7 @@ class AlpacaClient:
                 pick(snapshot, "impliedVolatility", "implied_volatility", "iv")
             ),
             last_trade_price=parse_float(pick(latest_trade, "p", "price")),
+            greeks_source="alpaca" if delta_value is not None else None,
         )
 
 
@@ -1482,12 +1508,7 @@ def build_board_notes(candidate: SpreadCandidate, args: argparse.Namespace) -> t
     if args.profile == "0dte":
         session_bucket = zero_dte_session_bucket()
         notes.append(f"session-{format_session_bucket(session_bucket)}")
-        delta_target = {
-            "open": 0.05,
-            "midday": 0.06,
-            "late": 0.08,
-            "off_hours": 0.06,
-        }[session_bucket]
+        delta_target = zero_dte_delta_target(session_bucket)
     if candidate.short_delta is not None and abs(abs(candidate.short_delta) - delta_target) <= 0.02:
         notes.append("delta-fit")
     if candidate.expected_move and candidate.short_vs_expected_move is not None:
@@ -1511,6 +1532,10 @@ def build_board_notes(candidate: SpreadCandidate, args: argparse.Namespace) -> t
         notes.append("setup-neutral")
     if candidate.data_status == "penalized":
         notes.append("data-caution")
+    if candidate.greeks_source != "alpaca":
+        notes.append("local-greeks")
+    if len(notes) > 4 and candidate.greeks_source != "alpaca" and "local-greeks" not in notes[:4]:
+        notes = [*notes[:3], "local-greeks"]
     return tuple(notes[:4])
 
 
@@ -1654,6 +1679,66 @@ def option_expiry_close(expiration_date: str) -> datetime:
     return local_close.astimezone(UTC)
 
 
+def enrich_missing_greeks(
+    *,
+    symbol: str,
+    option_type: str,
+    spot_price: float,
+    contracts_by_expiration: dict[str, list[OptionContract]],
+    snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
+    greeks_provider: Any,
+    as_of: datetime,
+) -> dict[str, dict[str, OptionSnapshot]]:
+    if greeks_provider is None:
+        return snapshots_by_expiration
+
+    enriched_by_expiration: dict[str, dict[str, OptionSnapshot]] = {}
+    for expiration_date, contracts in contracts_by_expiration.items():
+        snapshot_map = snapshots_by_expiration.get(expiration_date, {})
+        contract_by_symbol = {contract.symbol: contract for contract in contracts}
+        expiry_close = option_expiry_close(expiration_date)
+        updated_map: dict[str, OptionSnapshot] = {}
+
+        for contract_symbol, snapshot in snapshot_map.items():
+            if snapshot.delta is not None:
+                updated_map[contract_symbol] = snapshot
+                continue
+
+            contract = contract_by_symbol.get(contract_symbol)
+            if contract is None:
+                updated_map[contract_symbol] = snapshot
+                continue
+
+            request = greeks_provider.build_request(
+                symbol=symbol,
+                option_symbol=contract_symbol,
+                option_type=option_type,
+                spot_price=spot_price,
+                strike_price=contract.strike_price,
+                bid=snapshot.bid,
+                ask=snapshot.ask,
+                expiration=expiry_close,
+                as_of=as_of,
+            )
+            result = greeks_provider.compute(request)
+            if result.status != "ok":
+                updated_map[contract_symbol] = snapshot
+                continue
+
+            updated_map[contract_symbol] = replace(
+                snapshot,
+                delta=result.delta,
+                gamma=result.gamma,
+                theta=result.theta,
+                vega=result.vega,
+                implied_volatility=result.implied_volatility,
+                greeks_source=result.source,
+            )
+
+        enriched_by_expiration[expiration_date] = updated_map
+    return enriched_by_expiration
+
+
 def build_credit_spreads(
     *,
     symbol: str,
@@ -1790,6 +1875,9 @@ def build_credit_spreads(
                         width=width,
                         short_delta=short_delta,
                         long_delta=long_delta,
+                        greeks_source=short_snapshot.greeks_source
+                        if short_snapshot.greeks_source == long_snapshot.greeks_source
+                        else "mixed",
                         short_midpoint=short_snapshot.midpoint,
                         long_midpoint=long_snapshot.midpoint,
                         short_bid=short_snapshot.bid,
@@ -1838,12 +1926,7 @@ def build_credit_spreads(
 def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> float:
     session_bucket = zero_dte_session_bucket() if args.profile == "0dte" else None
     if args.profile == "0dte":
-        delta_target = {
-            "open": 0.05,
-            "midday": 0.06,
-            "late": 0.08,
-            "off_hours": 0.06,
-        }[session_bucket or "off_hours"]
+        delta_target = zero_dte_delta_target(session_bucket or "off_hours")
     else:
         delta_target = args.short_delta_target
     delta_half_band = max((args.short_delta_max - args.short_delta_min) / 2.0, 0.01)
@@ -2030,6 +2113,8 @@ def print_human_readable(
             f"breakeven {candidate.breakeven:.2f} | "
             f"calendar {candidate.calendar_status}"
         )
+        if candidate.greeks_source != "alpaca":
+            print(f"   greeks: {candidate.greeks_source}")
         if candidate.expected_move is not None:
             print(
                 "   expected move: "
@@ -2069,6 +2154,7 @@ def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
         "width",
         "short_delta",
         "long_delta",
+        "greeks_source",
         "short_midpoint",
         "long_midpoint",
         "short_bid",
@@ -2138,7 +2224,7 @@ def write_json(
     payload = {
         "symbol": symbol,
         "spot_price": spot_price,
-        "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "generated_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "run_id": run_id,
         "filters": build_filter_payload(args),
         "setup": None
@@ -2258,7 +2344,7 @@ def write_universe_json(
         "label": label,
         "strategy": strategy,
         "symbols": symbols,
-        "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "generated_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "candidate_count": len(candidates),
         "failures": [asdict(failure) for failure in failures],
         "candidates": [asdict(candidate) for candidate in candidates],
@@ -2968,6 +3054,7 @@ def scan_symbol_live(
     base_args: argparse.Namespace,
     client: AlpacaClient,
     calendar_resolver: Any,
+    greeks_provider: Any,
     history_store: RunHistoryStore,
 ) -> SymbolScanResult:
     symbol = symbol.upper()
@@ -3013,6 +3100,31 @@ def scan_symbol_live(
             symbol_args.feed,
         )
 
+    raw_option_snapshots_by_expiration = (
+        call_snapshots_by_expiration if symbol_args.strategy == "call_credit" else put_snapshots_by_expiration
+    )
+    quoted_contract_count, alpaca_delta_contract_count = count_snapshot_delta_coverage(raw_option_snapshots_by_expiration)
+
+    snapshot_timestamp = datetime.now(UTC)
+    call_snapshots_by_expiration = enrich_missing_greeks(
+        symbol=symbol,
+        option_type="call",
+        spot_price=spot_price,
+        contracts_by_expiration=contracts_by_expiration,
+        snapshots_by_expiration=call_snapshots_by_expiration,
+        greeks_provider=greeks_provider,
+        as_of=snapshot_timestamp,
+    )
+    put_snapshots_by_expiration = enrich_missing_greeks(
+        symbol=symbol,
+        option_type="put",
+        spot_price=spot_price,
+        contracts_by_expiration=put_contracts_by_expiration,
+        snapshots_by_expiration=put_snapshots_by_expiration,
+        greeks_provider=greeks_provider,
+        as_of=snapshot_timestamp,
+    )
+
     expected_moves_by_expiration = build_expected_move_estimates(
         spot_price=spot_price,
         call_contracts_by_expiration=contracts_by_expiration,
@@ -3027,7 +3139,8 @@ def scan_symbol_live(
     option_snapshots_by_expiration = (
         call_snapshots_by_expiration if symbol_args.strategy == "call_credit" else put_snapshots_by_expiration
     )
-    quoted_contract_count, delta_contract_count = count_snapshot_delta_coverage(option_snapshots_by_expiration)
+    _, delta_contract_count = count_snapshot_delta_coverage(option_snapshots_by_expiration)
+    local_delta_contract_count = count_local_greeks_coverage(option_snapshots_by_expiration)
 
     all_candidates = build_credit_spreads(
         symbol=symbol,
@@ -3082,7 +3195,9 @@ def scan_symbol_live(
         candidates=all_candidates,
         run_id=run_id,
         quoted_contract_count=quoted_contract_count,
+        alpaca_delta_contract_count=alpaca_delta_contract_count,
         delta_contract_count=delta_contract_count,
+        local_delta_contract_count=local_delta_contract_count,
     )
 
 
@@ -3092,6 +3207,7 @@ def scan_symbol_across_strategies(
     base_args: argparse.Namespace,
     client: AlpacaClient,
     calendar_resolver: Any,
+    greeks_provider: Any,
     history_store: RunHistoryStore,
 ) -> tuple[list[SymbolScanResult], list[UniverseScanFailure]]:
     results: list[SymbolScanResult] = []
@@ -3106,6 +3222,7 @@ def scan_symbol_across_strategies(
                     base_args=strategy_args,
                     client=client,
                     calendar_resolver=calendar_resolver,
+                    greeks_provider=greeks_provider,
                     history_store=history_store,
                 )
             )
@@ -3147,6 +3264,7 @@ def main() -> int:
         secret_key=secret_key,
         data_base_url=args.data_base_url,
     )
+    greeks_provider = build_local_greeks_provider()
 
     if args.replay_latest or args.replay_run_id:
         try:
@@ -3161,6 +3279,7 @@ def main() -> int:
             base_args=args,
             client=client,
             calendar_resolver=calendar_resolver,
+            greeks_provider=greeks_provider,
             history_store=history_store,
         )
         if failures and not strategy_results:
@@ -3193,7 +3312,7 @@ def main() -> int:
                             "symbol": primary_result.symbol,
                             "strategy": args.strategy,
                             "spot_price": primary_result.spot_price,
-                            "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                            "generated_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
                             "filters": build_filter_payload(args),
                             "strategy_runs": [
                                 {
@@ -3228,11 +3347,13 @@ def main() -> int:
                     setup_summaries=setup_summaries,
                 )
                 for strategy_result in strategy_results:
-                    if strategy_result.args.profile == "0dte" and not strategy_result.candidates:
+                    if strategy_result.args.profile == "0dte":
                         print(
-                            f"0DTE strict note [{strategy_result.args.strategy}]: Alpaca returned quotes for "
-                            f"{strategy_result.quoted_contract_count} contracts and delta for "
-                            f"{strategy_result.delta_contract_count}."
+                            f"0DTE coverage [{strategy_result.args.strategy}]: Alpaca returned quotes for "
+                            f"{strategy_result.quoted_contract_count} contracts, Alpaca delta for "
+                            f"{strategy_result.alpaca_delta_contract_count}, final usable delta for "
+                            f"{strategy_result.delta_contract_count}, local Greeks for "
+                            f"{strategy_result.local_delta_contract_count}."
                         )
                 maybe_stream_live_quotes(args=args, client=client, candidates=candidates)
                 if failures:
@@ -3273,7 +3394,7 @@ def main() -> int:
                             "symbol": result.symbol,
                             "strategy": result.args.strategy,
                             "spot_price": result.spot_price,
-                            "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                            "generated_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
                             "run_id": result.run_id,
                             "filters": build_filter_payload(result.args),
                             "setup": None
@@ -3299,10 +3420,12 @@ def main() -> int:
                     strategy=result.args.strategy,
                     profile=result.args.profile,
                 )
-                if result.args.profile == "0dte" and not result.candidates:
+                if result.args.profile == "0dte":
                     print(
-                        f"0DTE strict note: Alpaca returned quotes for {result.quoted_contract_count} "
-                        f"contracts and delta for {result.delta_contract_count}."
+                        f"0DTE coverage: Alpaca returned quotes for {result.quoted_contract_count} "
+                        f"contracts, Alpaca delta for {result.alpaca_delta_contract_count}, final usable delta for "
+                        f"{result.delta_contract_count}, local Greeks for "
+                        f"{result.local_delta_contract_count}."
                     )
                 maybe_stream_live_quotes(args=result.args, client=client, candidates=candidates)
                 print(f"Saved {len(result.candidates)} candidates to {output_path}")
@@ -3319,6 +3442,7 @@ def main() -> int:
                 base_args=args,
                 client=client,
                 calendar_resolver=calendar_resolver,
+                greeks_provider=greeks_provider,
                 history_store=history_store,
             )
             failures.extend(symbol_failures)
