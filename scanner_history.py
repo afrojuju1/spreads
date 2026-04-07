@@ -66,6 +66,31 @@ class RunHistoryStore:
 
             CREATE INDEX IF NOT EXISTS idx_scan_candidates_run_id
             ON scan_candidates(run_id);
+
+            CREATE TABLE IF NOT EXISTS option_quote_events (
+                quote_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cycle_id TEXT NOT NULL,
+                captured_at TEXT NOT NULL,
+                label TEXT NOT NULL,
+                underlying_symbol TEXT,
+                strategy TEXT,
+                profile TEXT,
+                option_symbol TEXT NOT NULL,
+                leg_role TEXT NOT NULL,
+                bid REAL NOT NULL,
+                ask REAL NOT NULL,
+                midpoint REAL NOT NULL,
+                bid_size INTEGER NOT NULL,
+                ask_size INTEGER NOT NULL,
+                quote_timestamp TEXT,
+                source TEXT NOT NULL DEFAULT 'alpaca_websocket'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_option_quote_events_cycle_id
+            ON option_quote_events(cycle_id);
+
+            CREATE INDEX IF NOT EXISTS idx_option_quote_events_symbol_captured_at
+            ON option_quote_events(option_symbol, captured_at DESC);
             """
         )
         self._ensure_run_columns(
@@ -261,6 +286,62 @@ class RunHistoryStore:
             (run_id,),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def save_option_quote_events(
+        self,
+        *,
+        cycle_id: str,
+        label: str,
+        profile: str,
+        quotes: list[dict[str, Any]],
+    ) -> int:
+        if not quotes:
+            return 0
+
+        self.connection.executemany(
+            """
+            INSERT INTO option_quote_events (
+                cycle_id,
+                captured_at,
+                label,
+                underlying_symbol,
+                strategy,
+                profile,
+                option_symbol,
+                leg_role,
+                bid,
+                ask,
+                midpoint,
+                bid_size,
+                ask_size,
+                quote_timestamp,
+                source
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    cycle_id,
+                    quote["captured_at"],
+                    label,
+                    quote.get("underlying_symbol"),
+                    quote.get("strategy"),
+                    profile,
+                    quote["option_symbol"],
+                    quote["leg_role"],
+                    quote["bid"],
+                    quote["ask"],
+                    quote["midpoint"],
+                    quote["bid_size"],
+                    quote["ask_size"],
+                    quote.get("quote_timestamp"),
+                    quote.get("source", "alpaca_websocket"),
+                )
+                for quote in quotes
+            ],
+        )
+        self.connection.commit()
+        return len(quotes)
 
     def close(self) -> None:
         self.connection.close()

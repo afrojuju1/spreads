@@ -68,7 +68,7 @@ UNIVERSE_PRESETS: dict[str, tuple[str, ...]] = {
 }
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Find credit spread candidates for one symbol or a ranked universe board using Alpaca."
     )
@@ -208,6 +208,12 @@ def parse_args() -> argparse.Namespace:
         help="Print a sample Alpaca multi-leg order payload for each result.",
     )
     parser.add_argument(
+        "--greeks-source",
+        default="auto",
+        choices=("alpaca", "local", "auto"),
+        help="Greeks source mode. Default: auto",
+    )
+    parser.add_argument(
         "--stream-live-quotes",
         action="store_true",
         help="After printing results, stream fresh Alpaca option quotes for the displayed legs.",
@@ -287,7 +293,7 @@ def parse_args() -> argparse.Namespace:
         default=8.0,
         help=argparse.SUPPRESS,
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def load_local_env(path: str = ".env") -> None:
@@ -1076,10 +1082,21 @@ class AlpacaOptionQuoteStreamer:
         *,
         duration_seconds: float,
     ) -> dict[str, LiveOptionQuote]:
-        if not symbols:
-            return {}
-
         latest_quotes: dict[str, LiveOptionQuote] = {}
+        for quote in self.collect_quote_events(symbols, duration_seconds=duration_seconds):
+            latest_quotes[quote.symbol] = quote
+        return latest_quotes
+
+    def collect_quote_events(
+        self,
+        symbols: list[str],
+        *,
+        duration_seconds: float,
+    ) -> list[LiveOptionQuote]:
+        if not symbols:
+            return []
+
+        quote_events: list[LiveOptionQuote] = []
         ws = websocket.create_connection(
             self.url,
             timeout=5,
@@ -1110,7 +1127,8 @@ class AlpacaOptionQuoteStreamer:
                     ask = parse_float(message.get("ap"))
                     if bid is None or ask is None or bid <= 0 or ask <= 0 or ask < bid:
                         continue
-                    latest_quotes[str(message.get("S"))] = LiveOptionQuote(
+                    quote_events.append(
+                        LiveOptionQuote(
                         symbol=str(message.get("S")),
                         bid=bid,
                         ask=ask,
@@ -1118,9 +1136,10 @@ class AlpacaOptionQuoteStreamer:
                         ask_size=parse_int(message.get("as")) or 0,
                         timestamp=format_stream_timestamp(message.get("t")),
                     )
+                    )
         finally:
             ws.close()
-        return latest_quotes
+        return quote_events
 
     def _await_connection(self, ws: websocket.WebSocket) -> None:
         messages = self._recv_messages(ws)
@@ -1565,6 +1584,7 @@ def build_filter_payload(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "strategy": args.strategy,
         "profile": args.profile,
+        "greeks_source": args.greeks_source,
         "session_bucket": zero_dte_session_bucket() if args.profile == "0dte" else None,
         "min_dte": args.min_dte,
         "max_dte": args.max_dte,
@@ -1688,8 +1708,9 @@ def enrich_missing_greeks(
     snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
     greeks_provider: Any,
     as_of: datetime,
+    source_mode: str,
 ) -> dict[str, dict[str, OptionSnapshot]]:
-    if greeks_provider is None:
+    if greeks_provider is None or source_mode == "alpaca":
         return snapshots_by_expiration
 
     enriched_by_expiration: dict[str, dict[str, OptionSnapshot]] = {}
@@ -1700,7 +1721,7 @@ def enrich_missing_greeks(
         updated_map: dict[str, OptionSnapshot] = {}
 
         for contract_symbol, snapshot in snapshot_map.items():
-            if snapshot.delta is not None:
+            if source_mode == "auto" and snapshot.delta is not None:
                 updated_map[contract_symbol] = snapshot
                 continue
 
@@ -1722,7 +1743,18 @@ def enrich_missing_greeks(
             )
             result = greeks_provider.compute(request)
             if result.status != "ok":
-                updated_map[contract_symbol] = snapshot
+                if source_mode == "local":
+                    updated_map[contract_symbol] = replace(
+                        snapshot,
+                        delta=None,
+                        gamma=None,
+                        theta=None,
+                        vega=None,
+                        implied_volatility=None,
+                        greeks_source=None,
+                    )
+                else:
+                    updated_map[contract_symbol] = snapshot
                 continue
 
             updated_map[contract_symbol] = replace(
@@ -2078,11 +2110,13 @@ def print_human_readable(
     *,
     strategy: str,
     profile: str,
+    greeks_source: str,
     setup_summaries: tuple[str, ...] = (),
 ) -> None:
     print(f"{symbol.upper()} spot: {spot_price:.2f}")
     print(f"Strategy: {strategy}")
     print(f"Profile: {profile}")
+    print(f"Greeks: {greeks_source}")
     if profile == "0dte":
         print(f"0DTE session: {format_session_bucket(zero_dte_session_bucket())}")
     if setup is not None:
@@ -2278,12 +2312,14 @@ def print_universe_board(
     label: str,
     strategy: str,
     profile: str,
+    greeks_source: str,
     symbols: list[str],
     board_candidates: list[SpreadCandidate],
     failures: list[UniverseScanFailure],
 ) -> None:
     print(f"Universe: {label}")
     print(f"Strategy: {strategy}")
+    print(f"Greeks: {greeks_source}")
     if profile == "0dte" or (board_candidates and any(candidate.profile == "0dte" for candidate in board_candidates)):
         print(f"0DTE session: {format_session_bucket(zero_dte_session_bucket())}")
     print(f"Symbols requested: {len(symbols)}")
@@ -3114,6 +3150,7 @@ def scan_symbol_live(
         snapshots_by_expiration=call_snapshots_by_expiration,
         greeks_provider=greeks_provider,
         as_of=snapshot_timestamp,
+        source_mode=symbol_args.greeks_source,
     )
     put_snapshots_by_expiration = enrich_missing_greeks(
         symbol=symbol,
@@ -3123,6 +3160,7 @@ def scan_symbol_live(
         snapshots_by_expiration=put_snapshots_by_expiration,
         greeks_provider=greeks_provider,
         as_of=snapshot_timestamp,
+        source_mode=symbol_args.greeks_source,
     )
 
     expected_moves_by_expiration = build_expected_move_estimates(
@@ -3344,6 +3382,7 @@ def main() -> int:
                     None,
                     strategy=args.strategy,
                     profile=args.profile,
+                    greeks_source=args.greeks_source,
                     setup_summaries=setup_summaries,
                 )
                 for strategy_result in strategy_results:
@@ -3419,6 +3458,7 @@ def main() -> int:
                     result.setup,
                     strategy=result.args.strategy,
                     profile=result.args.profile,
+                    greeks_source=result.args.greeks_source,
                 )
                 if result.args.profile == "0dte":
                     print(
@@ -3496,6 +3536,7 @@ def main() -> int:
                 label=universe_label,
                 strategy=args.strategy,
                 profile=args.profile,
+                greeks_source=args.greeks_source,
                 symbols=symbols,
                 board_candidates=board_candidates,
                 failures=failures,
