@@ -47,15 +47,32 @@ Rollback one revision:
 uv run alembic downgrade -1
 ```
 
+## Import Existing SQLite History
+
+Backfill the existing local SQLite history into Postgres:
+
+```bash
+uv run spreads-import-history --truncate
+```
+
+By default the importer reads:
+
+- source: `outputs/run_history/scanner_history.sqlite`
+- target: `SPREADS_DATABASE_URL`
+
+It refuses to import into a non-empty Postgres target unless `--truncate` is provided.
+
 ## DB Selection
 
-The backend resolves the history store in this order:
+The runtime history backend is Postgres only.
+
+Resolution order:
 
 1. `SPREADS_DATABASE_URL`
 2. `DATABASE_URL`
-3. local SQLite fallback at `outputs/run_history/scanner_history.sqlite`
+3. local Docker default: `postgresql://spreads:spreads@localhost:55432/spreads`
 
-Once `SPREADS_DATABASE_URL` is set, the existing commands use Postgres automatically:
+The existing commands use Postgres automatically:
 
 ```bash
 uv run credit_spread_scanner.py --symbol SPY
@@ -67,5 +84,5 @@ uv run post_close_analysis.py --label explore_10_combined_weekly_auto
 
 - Docker only starts Postgres now; it does not create app tables.
 - Alembic owns app-schema changes.
-- The Python Postgres store no longer auto-creates tables.
-- SQLite remains available as a fallback for local-only workflows.
+- The runtime store is SQLAlchemy ORM on Postgres.
+- SQLite is only used as a one-time import source for old history data.

@@ -22,6 +22,7 @@ dependencies = [
 spreads-scan = "spreads.cli.scan:main"
 spreads-collect = "spreads.cli.collect:main"
 spreads-analyze = "spreads.cli.analyze:main"
+spreads-import-history = "spreads.cli.import_history:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/spreads"]

@@ -1,10 +1,8 @@
-from .factory import build_history_store, default_history_target
-from .history import DEFAULT_HISTORY_DB_PATH, RunHistoryStore
+from .factory import DEFAULT_POSTGRES_URL, build_history_store, default_history_target
 from .postgres import PostgresRunHistoryStore
 
 __all__ = [
-    "DEFAULT_HISTORY_DB_PATH",
-    "RunHistoryStore",
+    "DEFAULT_POSTGRES_URL",
     "PostgresRunHistoryStore",
     "build_history_store",
     "default_history_target",
