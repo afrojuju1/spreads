@@ -22,6 +22,7 @@ import json
 import math
 import os
 import shutil
+import time as time_module
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -30,6 +31,9 @@ from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
+
+import msgpack
+import websocket
 
 from calendar_events import build_calendar_event_resolver, classify_underlying_type
 from calendar_events.models import CalendarPolicyDecision
@@ -41,7 +45,9 @@ DEFAULT_DATA_BASE_URL = "https://data.alpaca.markets"
 DEFAULT_TRADING_BASE_URL = "https://api.alpaca.markets"
 NEW_YORK = ZoneInfo("America/New_York")
 DEFAULT_BOARD_UNIVERSE = "etf_core"
+ZERO_DTE_ALLOWED_SYMBOLS = ("SPY", "QQQ", "IWM")
 UNIVERSE_PRESETS: dict[str, tuple[str, ...]] = {
+    "0dte_core": ZERO_DTE_ALLOWED_SYMBOLS,
     "etf_core": ("SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "XLE", "SMH"),
     "liquid_stocks": ("AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "AMD", "TSLA"),
     "liquid_mixed": (
@@ -88,7 +94,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--profile",
         default="core",
-        choices=("micro", "weekly", "swing", "core"),
+        choices=("0dte", "micro", "weekly", "swing", "core"),
         help="Scanner profile preset. Default: core",
     )
     parser.add_argument(
@@ -201,6 +207,11 @@ def parse_args() -> argparse.Namespace:
         help="Print a sample Alpaca multi-leg order payload for each result.",
     )
     parser.add_argument(
+        "--stream-live-quotes",
+        action="store_true",
+        help="After printing results, stream fresh Alpaca option quotes for the displayed legs.",
+    )
+    parser.add_argument(
         "--calendar-policy",
         default="strict",
         choices=("strict", "warn", "off"),
@@ -269,6 +280,12 @@ def parse_args() -> argparse.Namespace:
         default=2.0,
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--stream-seconds",
+        type=float,
+        default=8.0,
+        help=argparse.SUPPRESS,
+    )
     return parser.parse_args()
 
 
@@ -298,7 +315,8 @@ def load_symbols_file(path: str) -> list[str]:
 
 def resolve_symbols(args: argparse.Namespace) -> tuple[list[str], str]:
     symbols: list[str] = []
-    label = args.symbol.upper() if args.symbol else DEFAULT_BOARD_UNIVERSE
+    default_label = "0dte_core" if args.profile == "0dte" else DEFAULT_BOARD_UNIVERSE
+    label = args.symbol.upper() if args.symbol else default_label
 
     if args.universe:
         symbols.extend(UNIVERSE_PRESETS[args.universe])
@@ -316,7 +334,7 @@ def resolve_symbols(args: argparse.Namespace) -> tuple[list[str], str]:
         label = args.symbol.upper()
 
     if not symbols:
-        return list(UNIVERSE_PRESETS[DEFAULT_BOARD_UNIVERSE]), DEFAULT_BOARD_UNIVERSE
+        return list(UNIVERSE_PRESETS[default_label]), default_label
 
     deduped: list[str] = []
     seen: set[str] = set()
@@ -340,6 +358,22 @@ def strategy_display_label(strategy: str) -> str:
         "put_credit": "Put",
         "combined": "Combined",
     }.get(strategy, strategy)
+
+
+def zero_dte_session_bucket(now: datetime | None = None) -> str:
+    current = datetime.now(NEW_YORK) if now is None else now.astimezone(NEW_YORK)
+    current_time = current.time()
+    if current_time < time(9, 30) or current_time >= time(16, 0):
+        return "off_hours"
+    if current_time < time(10, 30):
+        return "open"
+    if current_time < time(13, 30):
+        return "midday"
+    return "late"
+
+
+def format_session_bucket(bucket: str) -> str:
+    return bucket.replace("_", "-")
 
 
 def env_or_die(*names: str) -> str:
@@ -378,6 +412,15 @@ def pick(mapping: dict[str, Any], *keys: str) -> Any:
 
 def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
+
+
+def format_stream_timestamp(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, msgpack.Timestamp):
+        dt = datetime.fromtimestamp(value.to_unix(), tz=UTC)
+        return dt.isoformat(timespec="seconds").replace("+00:00", "Z")
+    return str(value)
 
 
 def infer_underlying_key(underlying_type: str) -> str:
@@ -420,6 +463,16 @@ def apply_profile_defaults(args: argparse.Namespace, underlying_type: str) -> No
     )
 
 
+def validate_profile_scope(symbol: str, args: argparse.Namespace, underlying_type: str) -> None:
+    if args.profile != "0dte":
+        return
+    if underlying_type != "etf_index_proxy":
+        raise SystemExit("0dte profile is currently limited to ETF/index proxies")
+    if symbol.upper() not in ZERO_DTE_ALLOWED_SYMBOLS:
+        allowed = ", ".join(ZERO_DTE_ALLOWED_SYMBOLS)
+        raise SystemExit(f"0dte profile is currently limited to: {allowed}")
+
+
 @dataclass(frozen=True)
 class OptionContract:
     symbol: str
@@ -453,6 +506,20 @@ class DailyBar:
     low: float
     close: float
     volume: int
+
+
+@dataclass(frozen=True)
+class LiveOptionQuote:
+    symbol: str
+    bid: float
+    ask: float
+    bid_size: int
+    ask_size: int
+    timestamp: str | None
+
+    @property
+    def midpoint(self) -> float:
+        return (self.bid + self.ask) / 2.0
 
 
 @dataclass(frozen=True)
@@ -565,6 +632,8 @@ class SymbolScanResult:
     setup: UnderlyingSetupContext | None
     candidates: list[SpreadCandidate]
     run_id: str
+    quoted_contract_count: int = 0
+    delta_contract_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -584,7 +653,35 @@ def build_setup_summaries(results: list[SymbolScanResult]) -> tuple[str, ...]:
     return tuple(summaries)
 
 
+def count_snapshot_delta_coverage(snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]]) -> tuple[int, int]:
+    quoted_contracts = 0
+    contracts_with_delta = 0
+    for snapshot_map in snapshots_by_expiration.values():
+        for snapshot in snapshot_map.values():
+            quoted_contracts += 1
+            if snapshot.delta is not None:
+                contracts_with_delta += 1
+    return quoted_contracts, contracts_with_delta
+
+
 PROFILE_CONFIGS: dict[str, ProfileConfig] = {
+    "0dte": ProfileConfig(
+        name="0dte",
+        min_dte=0,
+        max_dte=0,
+        short_delta_min=0.03,
+        short_delta_max=0.10,
+        short_delta_target=0.06,
+        min_width=1.0,
+        max_width_by_underlying={"etf_index_proxy": 2.0, "single_name_equity": 2.0},
+        min_credit=0.08,
+        min_open_interest_by_underlying={"etf_index_proxy": 1000, "single_name_equity": 1000},
+        max_relative_spread_by_underlying={"etf_index_proxy": 0.12, "single_name_equity": 0.12},
+        min_return_on_risk=0.05,
+        min_fill_ratio=0.72,
+        min_short_vs_expected_move_ratio=0.08,
+        min_breakeven_vs_expected_move_ratio=0.03,
+    ),
     "micro": ProfileConfig(
         name="micro",
         min_dte=1,
@@ -935,6 +1032,113 @@ class AlpacaClient:
         )
 
 
+class AlpacaOptionQuoteStreamer:
+    def __init__(self, *, key_id: str, secret_key: str, data_base_url: str, feed: str) -> None:
+        self.key_id = key_id
+        self.secret_key = secret_key
+        self.feed = feed
+        parsed = urllib.parse.urlparse(data_base_url)
+        hostname = parsed.netloc.lower()
+        if "sandbox" in hostname:
+            self.url = f"wss://stream.data.sandbox.alpaca.markets/v1beta1/{feed}"
+        else:
+            self.url = f"wss://stream.data.alpaca.markets/v1beta1/{feed}"
+
+    def stream_quotes(
+        self,
+        symbols: list[str],
+        *,
+        duration_seconds: float,
+    ) -> dict[str, LiveOptionQuote]:
+        if not symbols:
+            return {}
+
+        latest_quotes: dict[str, LiveOptionQuote] = {}
+        ws = websocket.create_connection(
+            self.url,
+            timeout=5,
+            header=["Content-Type: application/msgpack"],
+        )
+        try:
+            self._await_connection(ws)
+            self._send(ws, {"action": "auth", "key": self.key_id, "secret": self.secret_key})
+            self._await_authentication(ws)
+            self._send(ws, {"action": "subscribe", "quotes": symbols})
+            deadline = time_module.monotonic() + max(duration_seconds, 0.5)
+            while time_module.monotonic() < deadline:
+                remaining = deadline - time_module.monotonic()
+                ws.settimeout(max(min(remaining, 1.0), 0.1))
+                try:
+                    messages = self._recv_messages(ws)
+                except websocket.WebSocketTimeoutException:
+                    continue
+                for message in messages:
+                    message_type = message.get("T")
+                    if message_type == "error":
+                        code = message.get("code", "unknown")
+                        detail = message.get("msg", "unknown websocket error")
+                        raise RuntimeError(f"Option stream error {code}: {detail}")
+                    if message_type != "q":
+                        continue
+                    bid = parse_float(message.get("bp"))
+                    ask = parse_float(message.get("ap"))
+                    if bid is None or ask is None or bid <= 0 or ask <= 0 or ask < bid:
+                        continue
+                    latest_quotes[str(message.get("S"))] = LiveOptionQuote(
+                        symbol=str(message.get("S")),
+                        bid=bid,
+                        ask=ask,
+                        bid_size=parse_int(message.get("bs")) or 0,
+                        ask_size=parse_int(message.get("as")) or 0,
+                        timestamp=format_stream_timestamp(message.get("t")),
+                    )
+        finally:
+            ws.close()
+        return latest_quotes
+
+    def _await_connection(self, ws: websocket.WebSocket) -> None:
+        messages = self._recv_messages(ws)
+        for message in messages:
+            if message.get("T") == "success" and message.get("msg") == "connected":
+                return
+            if message.get("T") == "error":
+                code = message.get("code", "unknown")
+                detail = message.get("msg", "unknown websocket error")
+                raise RuntimeError(f"Option stream error {code}: {detail}")
+        raise RuntimeError("Option stream did not acknowledge the connection")
+
+    def _await_authentication(self, ws: websocket.WebSocket) -> None:
+        deadline = time_module.monotonic() + 5
+        while time_module.monotonic() < deadline:
+            messages = self._recv_messages(ws)
+            for message in messages:
+                message_type = message.get("T")
+                if message_type == "success" and message.get("msg") == "authenticated":
+                    return
+                if message_type == "error":
+                    code = message.get("code", "unknown")
+                    detail = message.get("msg", "unknown websocket error")
+                    raise RuntimeError(f"Option stream auth error {code}: {detail}")
+        raise RuntimeError("Option stream authentication timed out")
+
+    @staticmethod
+    def _send(ws: websocket.WebSocket, payload: dict[str, Any]) -> None:
+        ws.send(msgpack.packb(payload, use_bin_type=True), opcode=websocket.ABNF.OPCODE_BINARY)
+
+    @staticmethod
+    def _recv_messages(ws: websocket.WebSocket) -> list[dict[str, Any]]:
+        payload = ws.recv()
+        if isinstance(payload, bytes):
+            decoded = msgpack.unpackb(payload, raw=False)
+        else:
+            decoded = json.loads(payload)
+        if isinstance(decoded, dict):
+            return [decoded]
+        if isinstance(decoded, list):
+            return [item for item in decoded if isinstance(item, dict)]
+        return []
+
+
 def days_from_today(expiration_date: str) -> int:
     return (date.fromisoformat(expiration_date) - date.today()).days
 
@@ -1274,7 +1478,17 @@ def attach_data_quality(
 
 def build_board_notes(candidate: SpreadCandidate, args: argparse.Namespace) -> tuple[str, ...]:
     notes: list[str] = []
-    if candidate.short_delta is not None and abs(abs(candidate.short_delta) - args.short_delta_target) <= 0.02:
+    delta_target = args.short_delta_target
+    if args.profile == "0dte":
+        session_bucket = zero_dte_session_bucket()
+        notes.append(f"session-{format_session_bucket(session_bucket)}")
+        delta_target = {
+            "open": 0.05,
+            "midday": 0.06,
+            "late": 0.08,
+            "off_hours": 0.06,
+        }[session_bucket]
+    if candidate.short_delta is not None and abs(abs(candidate.short_delta) - delta_target) <= 0.02:
         notes.append("delta-fit")
     if candidate.expected_move and candidate.short_vs_expected_move is not None:
         if candidate.short_vs_expected_move >= 0:
@@ -1326,6 +1540,7 @@ def build_filter_payload(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "strategy": args.strategy,
         "profile": args.profile,
+        "session_bucket": zero_dte_session_bucket() if args.profile == "0dte" else None,
         "min_dte": args.min_dte,
         "max_dte": args.max_dte,
         "short_delta_min": args.short_delta_min,
@@ -1476,9 +1691,10 @@ def build_credit_spreads(
                 continue
             if short_snapshot.bid_size <= 0:
                 continue
-            if short_snapshot.delta is None:
+            short_delta = short_snapshot.delta
+            if short_delta is None:
                 continue
-            short_delta_magnitude = abs(short_snapshot.delta)
+            short_delta_magnitude = abs(short_delta)
             if not (args.short_delta_min <= short_delta_magnitude <= args.short_delta_max):
                 continue
 
@@ -1514,6 +1730,7 @@ def build_credit_spreads(
                     continue
                 if long_snapshot.ask_size <= 0:
                     continue
+                long_delta = long_snapshot.delta
 
                 midpoint_credit = short_snapshot.midpoint - long_snapshot.midpoint
                 natural_credit = short_snapshot.bid - long_snapshot.ask
@@ -1571,8 +1788,8 @@ def build_credit_spreads(
                         short_strike=short_contract.strike_price,
                         long_strike=long_contract.strike_price,
                         width=width,
-                        short_delta=short_snapshot.delta,
-                        long_delta=long_snapshot.delta,
+                        short_delta=short_delta,
+                        long_delta=long_delta,
                         short_midpoint=short_snapshot.midpoint,
                         long_midpoint=long_snapshot.midpoint,
                         short_bid=short_snapshot.bid,
@@ -1619,7 +1836,16 @@ def build_credit_spreads(
 
 
 def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> float:
-    delta_target = args.short_delta_target
+    session_bucket = zero_dte_session_bucket() if args.profile == "0dte" else None
+    if args.profile == "0dte":
+        delta_target = {
+            "open": 0.05,
+            "midday": 0.06,
+            "late": 0.08,
+            "off_hours": 0.06,
+        }[session_bucket or "off_hours"]
+    else:
+        delta_target = args.short_delta_target
     delta_half_band = max((args.short_delta_max - args.short_delta_min) / 2.0, 0.01)
     delta_score = 1.0
     if candidate.short_delta is not None:
@@ -1640,7 +1866,10 @@ def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> flo
         + 0.25 * clamp(candidate.min_quote_size / 100.0)
     )
 
-    width_target = max(args.min_width, 2.0 if args.profile == "core" else args.min_width)
+    if args.profile == "0dte":
+        width_target = 2.0 if session_bucket == "late" else 1.0
+    else:
+        width_target = max(args.min_width, 2.0 if args.profile == "core" else args.min_width)
     width_window = max(args.max_width - args.min_width, 1.0)
     width_score = 1.0 - min(abs(candidate.width - width_target) / width_window, 1.0)
 
@@ -1706,6 +1935,10 @@ def sort_candidates_for_display(candidates: list[SpreadCandidate]) -> list[Sprea
     return ranked
 
 
+def format_dte_label(days_to_expiration: int) -> str:
+    return "0D" if days_to_expiration == 0 else str(days_to_expiration)
+
+
 def build_table_rows(candidates: list[SpreadCandidate], *, include_strategy: bool = False) -> list[list[str]]:
     rows: list[list[str]] = []
     for candidate in candidates:
@@ -1715,7 +1948,7 @@ def build_table_rows(candidates: list[SpreadCandidate], *, include_strategy: boo
         row.extend(
             [
                 candidate.expiration_date,
-                str(candidate.days_to_expiration),
+                format_dte_label(candidate.days_to_expiration),
                 f"{candidate.short_strike:.2f}",
                 f"{candidate.long_strike:.2f}",
                 f"{candidate.width:.2f}",
@@ -1767,6 +2000,8 @@ def print_human_readable(
     print(f"{symbol.upper()} spot: {spot_price:.2f}")
     print(f"Strategy: {strategy}")
     print(f"Profile: {profile}")
+    if profile == "0dte":
+        print(f"0DTE session: {format_session_bucket(zero_dte_session_bucket())}")
     if setup is not None:
         print(f"Setup: {setup.status} ({setup.score:.1f})")
         if setup.reasons:
@@ -1933,7 +2168,7 @@ def build_universe_board_rows(candidates: list[SpreadCandidate], *, include_stra
         row.extend(
             [
                 candidate.expiration_date,
-                str(candidate.days_to_expiration),
+                format_dte_label(candidate.days_to_expiration),
                 f"{candidate.underlying_price:.2f}",
                 f"{candidate.short_strike:.2f}",
                 f"{candidate.long_strike:.2f}",
@@ -1956,12 +2191,15 @@ def print_universe_board(
     *,
     label: str,
     strategy: str,
+    profile: str,
     symbols: list[str],
     board_candidates: list[SpreadCandidate],
     failures: list[UniverseScanFailure],
 ) -> None:
     print(f"Universe: {label}")
     print(f"Strategy: {strategy}")
+    if profile == "0dte" or (board_candidates and any(candidate.profile == "0dte" for candidate in board_candidates)):
+        print(f"0DTE session: {format_session_bucket(zero_dte_session_bucket())}")
     print(f"Symbols requested: {len(symbols)}")
     print(f"Board entries: {len(board_candidates)}")
     if failures:
@@ -2027,6 +2265,89 @@ def write_universe_json(
     }
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
+
+
+def build_stream_symbols(candidates: list[SpreadCandidate], *, max_symbols: int = 16) -> list[str]:
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        for symbol in (candidate.short_symbol, candidate.long_symbol):
+            if symbol in seen:
+                continue
+            seen.add(symbol)
+            symbols.append(symbol)
+            if len(symbols) >= max_symbols:
+                return symbols
+    return symbols
+
+
+def build_live_spread_rows(
+    candidates: list[SpreadCandidate],
+    live_quotes: dict[str, LiveOptionQuote],
+) -> list[list[str]]:
+    rows: list[list[str]] = []
+    for candidate in candidates:
+        short_quote = live_quotes.get(candidate.short_symbol)
+        long_quote = live_quotes.get(candidate.long_symbol)
+        if short_quote is None or long_quote is None:
+            continue
+        live_mid_credit = short_quote.midpoint - long_quote.midpoint
+        live_natural_credit = short_quote.bid - long_quote.ask
+        rows.append(
+            [
+                strategy_display_label(candidate.strategy),
+                candidate.expiration_date,
+                f"{candidate.short_strike:.2f}",
+                f"{candidate.long_strike:.2f}",
+                f"{live_mid_credit:.2f}",
+                f"{live_natural_credit:.2f}",
+                f"{short_quote.bid:.2f}/{short_quote.ask:.2f}",
+                f"{long_quote.bid:.2f}/{long_quote.ask:.2f}",
+                "n/a" if short_quote.timestamp is None else str(short_quote.timestamp),
+            ]
+        )
+    return rows
+
+
+def maybe_stream_live_quotes(
+    *,
+    args: argparse.Namespace,
+    client: AlpacaClient,
+    candidates: list[SpreadCandidate],
+) -> None:
+    if not args.stream_live_quotes or args.json or not candidates:
+        return
+
+    stream_symbols = build_stream_symbols(candidates[: args.top])
+    if not stream_symbols:
+        return
+
+    print()
+    print(f"Streaming live option quotes for {len(stream_symbols)} legs via Alpaca websocket...")
+    try:
+        streamer = AlpacaOptionQuoteStreamer(
+            key_id=client.headers["APCA-API-KEY-ID"],
+            secret_key=client.headers["APCA-API-SECRET-KEY"],
+            data_base_url=client.data_base_url,
+            feed=args.feed,
+        )
+        live_quotes = streamer.stream_quotes(stream_symbols, duration_seconds=args.stream_seconds)
+    except Exception as exc:
+        print(f"Live quote stream unavailable: {exc}")
+        return
+
+    if not live_quotes:
+        print("Live quote stream returned no quote updates.")
+        return
+
+    rows = build_live_spread_rows(candidates[: args.top], live_quotes)
+    if not rows:
+        print("Live quote stream did not return both legs for the displayed spreads.")
+        return
+
+    headers = ["Side", "Expiry", "Short", "Long", "LiveMid", "LiveNat", "ShortQ", "LongQ", "Time"]
+    print(format_table(headers, rows))
+    print()
 
 
 def build_calendar_reason_messages(decision: CalendarPolicyDecision) -> tuple[str, ...]:
@@ -2655,6 +2976,7 @@ def scan_symbol_live(
     symbol_args.symbol = symbol
     apply_profile_defaults(symbol_args, underlying_type)
     validate_resolved_args(symbol_args)
+    validate_profile_scope(symbol, symbol_args, underlying_type)
 
     min_expiration = (date.today() + timedelta(days=symbol_args.min_dte)).isoformat()
     max_expiration = (date.today() + timedelta(days=symbol_args.max_dte)).isoformat()
@@ -2705,6 +3027,7 @@ def scan_symbol_live(
     option_snapshots_by_expiration = (
         call_snapshots_by_expiration if symbol_args.strategy == "call_credit" else put_snapshots_by_expiration
     )
+    quoted_contract_count, delta_contract_count = count_snapshot_delta_coverage(option_snapshots_by_expiration)
 
     all_candidates = build_credit_spreads(
         symbol=symbol,
@@ -2758,6 +3081,8 @@ def scan_symbol_live(
         setup=setup_context,
         candidates=all_candidates,
         run_id=run_id,
+        quoted_contract_count=quoted_contract_count,
+        delta_contract_count=delta_contract_count,
     )
 
 
@@ -2902,6 +3227,14 @@ def main() -> int:
                     profile=args.profile,
                     setup_summaries=setup_summaries,
                 )
+                for strategy_result in strategy_results:
+                    if strategy_result.args.profile == "0dte" and not strategy_result.candidates:
+                        print(
+                            f"0DTE strict note [{strategy_result.args.strategy}]: Alpaca returned quotes for "
+                            f"{strategy_result.quoted_contract_count} contracts and delta for "
+                            f"{strategy_result.delta_contract_count}."
+                        )
+                maybe_stream_live_quotes(args=args, client=client, candidates=candidates)
                 if failures:
                     print("Failures:")
                     for failure in failures:
@@ -2966,6 +3299,12 @@ def main() -> int:
                     strategy=result.args.strategy,
                     profile=result.args.profile,
                 )
+                if result.args.profile == "0dte" and not result.candidates:
+                    print(
+                        f"0DTE strict note: Alpaca returned quotes for {result.quoted_contract_count} "
+                        f"contracts and delta for {result.delta_contract_count}."
+                    )
+                maybe_stream_live_quotes(args=result.args, client=client, candidates=candidates)
                 print(f"Saved {len(result.candidates)} candidates to {output_path}")
                 print(f"Latest copy: {latest_copy}")
                 print(f"Run id: {result.run_id}")
@@ -3032,10 +3371,12 @@ def main() -> int:
             print_universe_board(
                 label=universe_label,
                 strategy=args.strategy,
+                profile=args.profile,
                 symbols=symbols,
                 board_candidates=board_candidates,
                 failures=failures,
             )
+            maybe_stream_live_quotes(args=args, client=client, candidates=board_candidates)
             if scan_results:
                 print(f"Stored per-symbol runs: {len(scan_results)}")
             print(f"Saved {len(board_candidates)} board entries to {output_path}")
