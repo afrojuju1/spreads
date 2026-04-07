@@ -21,7 +21,6 @@ import csv
 import json
 import math
 import os
-import sqlite3
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -40,6 +39,24 @@ from scanner_history import DEFAULT_HISTORY_DB_PATH, RunHistoryStore
 DEFAULT_DATA_BASE_URL = "https://data.alpaca.markets"
 DEFAULT_TRADING_BASE_URL = "https://api.alpaca.markets"
 NEW_YORK = ZoneInfo("America/New_York")
+UNIVERSE_PRESETS: dict[str, tuple[str, ...]] = {
+    "etf_core": ("SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "XLE", "SMH"),
+    "liquid_stocks": ("AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "AMD", "TSLA"),
+    "liquid_mixed": (
+        "SPY",
+        "QQQ",
+        "IWM",
+        "SMH",
+        "XLK",
+        "XLF",
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "AMZN",
+        "META",
+        "AMD",
+    ),
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,6 +64,19 @@ def parse_args() -> argparse.Namespace:
         description="Find call credit spread candidates for a single underlying using Alpaca."
     )
     parser.add_argument("--symbol", default="SPY", help="Underlying symbol. Default: SPY")
+    parser.add_argument(
+        "--symbols",
+        help="Comma-separated list of underlyings to scan as a universe board.",
+    )
+    parser.add_argument(
+        "--symbols-file",
+        help="Optional file containing one symbol per line for universe scanning.",
+    )
+    parser.add_argument(
+        "--universe",
+        choices=tuple(sorted(UNIVERSE_PRESETS)),
+        help="Use a curated symbol preset for multi-symbol scanning.",
+    )
     parser.add_argument(
         "--profile",
         default="core",
@@ -56,69 +86,69 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--min-dte",
         type=int,
-        help="Minimum days to expiration to include. Default: profile preset",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--max-dte",
         type=int,
-        help="Maximum days to expiration to include. Default: profile preset",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--short-delta-min",
         type=float,
-        help="Minimum short-call delta. Default: profile preset",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--short-delta-max",
         type=float,
-        help="Maximum short-call delta. Default: profile preset",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--short-delta-target",
         type=float,
-        help="Preferred short-call delta used in ranking. Default: profile preset",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--min-width",
         type=float,
-        help="Minimum strike width for the spread. Default: profile preset",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--max-width",
         type=float,
-        help="Maximum strike width for the spread. Default: profile preset",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--min-credit",
         type=float,
-        help="Minimum midpoint credit per spread. Default: profile preset",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--min-open-interest",
         type=int,
-        help="Minimum open interest required on each leg. Default: profile preset",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--max-relative-spread",
         type=float,
-        help="Maximum bid/ask width as a fraction of midpoint for each leg. Default: profile preset",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--min-return-on-risk",
         type=float,
-        help="Minimum spread return on risk, e.g. 0.10 = 10%%. Default: profile preset",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--feed",
         default="opra",
         choices=("opra", "indicative"),
-        help="Options market data feed. Premium users should use opra. Default: opra",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--stock-feed",
         default="sip",
         choices=("sip", "iex", "delayed_sip", "boats", "overnight"),
-        help="Stock feed used to price the underlying. Default: sip",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--top",
@@ -127,14 +157,20 @@ def parse_args() -> argparse.Namespace:
         help="Number of candidates to print. Default: 10",
     )
     parser.add_argument(
+        "--per-symbol-top",
+        type=int,
+        default=1,
+        help="Maximum number of ranked spreads to keep per symbol in universe mode. Default: 1",
+    )
+    parser.add_argument(
         "--trading-base-url",
         default=os.environ.get("ALPACA_TRADING_BASE_URL"),
-        help="Trading API base URL. If omitted, the script infers paper vs live from the API key.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--data-base-url",
         default=os.environ.get("ALPACA_DATA_BASE_URL", DEFAULT_DATA_BASE_URL),
-        help="Market Data API base URL. Default: https://data.alpaca.markets",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--output",
@@ -160,28 +196,49 @@ def parse_args() -> argparse.Namespace:
         "--calendar-policy",
         default="strict",
         choices=("strict", "warn", "off"),
-        help="Calendar event handling mode. Default: strict",
+        help="Calendar event mode. Default: strict",
     )
     parser.add_argument(
         "--refresh-calendar-events",
         action="store_true",
-        help="Force-refresh calendar sources before scanning.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--expand-duplicates",
         action="store_true",
-        help="Keep multiple spreads for the same short leg instead of collapsing to the top-ranked expression.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--setup-filter",
         default="on",
         choices=("on", "off"),
-        help="Apply underlying setup analysis to the scan. Default: on",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--data-policy",
+        default="strict",
+        choices=("strict", "warn", "off"),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--min-fill-ratio",
+        type=float,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--min-short-vs-expected-move-ratio",
+        type=float,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--min-breakeven-vs-expected-move-ratio",
+        type=float,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--history-db",
         default=str(DEFAULT_HISTORY_DB_PATH),
-        help="SQLite path for run history and replay. Default: outputs/run_history/scanner_history.sqlite",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--replay-latest",
@@ -191,6 +248,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--replay-run-id",
         help="Replay a specific stored run id instead of scanning live.",
+    )
+    parser.add_argument(
+        "--replay-profit-target",
+        type=float,
+        default=0.50,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--replay-stop-multiple",
+        type=float,
+        default=2.0,
+        help=argparse.SUPPRESS,
     )
     return parser.parse_args()
 
@@ -207,6 +276,44 @@ def load_local_env(path: str = ".env") -> None:
         key = key.strip()
         value = value.strip().strip('"').strip("'")
         os.environ.setdefault(key, value)
+
+
+def load_symbols_file(path: str) -> list[str]:
+    symbols: list[str] = []
+    for raw_line in Path(path).read_text().splitlines():
+        line = raw_line.strip().upper()
+        if not line or line.startswith("#"):
+            continue
+        symbols.append(line)
+    return symbols
+
+
+def resolve_symbols(args: argparse.Namespace) -> tuple[list[str], str]:
+    symbols: list[str] = []
+    label = args.symbol.upper()
+
+    if args.universe:
+        symbols.extend(UNIVERSE_PRESETS[args.universe])
+        label = args.universe
+    if args.symbols:
+        symbols.extend([token.strip().upper() for token in args.symbols.split(",") if token.strip()])
+        if args.symbols.strip():
+            label = "custom_symbols"
+    if args.symbols_file:
+        symbols.extend(load_symbols_file(args.symbols_file))
+        label = Path(args.symbols_file).stem.lower()
+
+    if not symbols:
+        return [args.symbol.upper()], label
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for symbol in symbols:
+        if symbol in seen:
+            continue
+        seen.add(symbol)
+        deduped.append(symbol)
+    return deduped, label
 
 
 def env_or_die(*names: str) -> str:
@@ -276,6 +383,15 @@ def apply_profile_defaults(args: argparse.Namespace, underlying_type: str) -> No
         profile.max_relative_spread_by_underlying[underlying_key],
     )
     args.min_return_on_risk = resolve_profile_value(args.min_return_on_risk, profile.min_return_on_risk)
+    args.min_fill_ratio = resolve_profile_value(args.min_fill_ratio, profile.min_fill_ratio)
+    args.min_short_vs_expected_move_ratio = resolve_profile_value(
+        args.min_short_vs_expected_move_ratio,
+        profile.min_short_vs_expected_move_ratio,
+    )
+    args.min_breakeven_vs_expected_move_ratio = resolve_profile_value(
+        args.min_breakeven_vs_expected_move_ratio,
+        profile.min_breakeven_vs_expected_move_ratio,
+    )
 
 
 @dataclass(frozen=True)
@@ -327,6 +443,9 @@ class ProfileConfig:
     min_open_interest_by_underlying: dict[str, int]
     max_relative_spread_by_underlying: dict[str, float]
     min_return_on_risk: float
+    min_fill_ratio: float
+    min_short_vs_expected_move_ratio: float
+    min_breakeven_vs_expected_move_ratio: float
 
 
 @dataclass(frozen=True)
@@ -355,6 +474,7 @@ class UnderlyingSetupContext:
 
 @dataclass(frozen=True)
 class SpreadCandidate:
+    underlying_symbol: str
     profile: str
     expiration_date: str
     days_to_expiration: int
@@ -403,6 +523,25 @@ class SpreadCandidate:
     setup_status: str = "unknown"
     setup_score: float | None = None
     setup_reasons: tuple[str, ...] = ()
+    data_status: str = "clean"
+    data_reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class SymbolScanResult:
+    symbol: str
+    underlying_type: str
+    spot_price: float
+    args: argparse.Namespace
+    setup: UnderlyingSetupContext | None
+    candidates: list[SpreadCandidate]
+    run_id: str
+
+
+@dataclass(frozen=True)
+class UniverseScanFailure:
+    symbol: str
+    error: str
 
 
 PROFILE_CONFIGS: dict[str, ProfileConfig] = {
@@ -419,6 +558,9 @@ PROFILE_CONFIGS: dict[str, ProfileConfig] = {
         min_open_interest_by_underlying={"etf_index_proxy": 1500, "single_name_equity": 1500},
         max_relative_spread_by_underlying={"etf_index_proxy": 0.10, "single_name_equity": 0.10},
         min_return_on_risk=0.08,
+        min_fill_ratio=0.75,
+        min_short_vs_expected_move_ratio=0.05,
+        min_breakeven_vs_expected_move_ratio=0.00,
     ),
     "weekly": ProfileConfig(
         name="weekly",
@@ -433,6 +575,9 @@ PROFILE_CONFIGS: dict[str, ProfileConfig] = {
         min_open_interest_by_underlying={"etf_index_proxy": 750, "single_name_equity": 400},
         max_relative_spread_by_underlying={"etf_index_proxy": 0.12, "single_name_equity": 0.15},
         min_return_on_risk=0.10,
+        min_fill_ratio=0.72,
+        min_short_vs_expected_move_ratio=-0.05,
+        min_breakeven_vs_expected_move_ratio=-0.02,
     ),
     "swing": ProfileConfig(
         name="swing",
@@ -447,6 +592,9 @@ PROFILE_CONFIGS: dict[str, ProfileConfig] = {
         min_open_interest_by_underlying={"etf_index_proxy": 500, "single_name_equity": 250},
         max_relative_spread_by_underlying={"etf_index_proxy": 0.18, "single_name_equity": 0.18},
         min_return_on_risk=0.10,
+        min_fill_ratio=0.70,
+        min_short_vs_expected_move_ratio=-0.08,
+        min_breakeven_vs_expected_move_ratio=-0.04,
     ),
     "core": ProfileConfig(
         name="core",
@@ -461,6 +609,9 @@ PROFILE_CONFIGS: dict[str, ProfileConfig] = {
         min_open_interest_by_underlying={"etf_index_proxy": 300, "single_name_equity": 200},
         max_relative_spread_by_underlying={"etf_index_proxy": 0.20, "single_name_equity": 0.20},
         min_return_on_risk=0.12,
+        min_fill_ratio=0.68,
+        min_short_vs_expected_move_ratio=-0.10,
+        min_breakeven_vs_expected_move_ratio=-0.05,
     ),
 }
 
@@ -640,6 +791,58 @@ class AlpacaClient:
             if not page_token:
                 break
         return snapshots
+
+    def get_option_bars(
+        self,
+        symbols: list[str],
+        *,
+        start: str,
+        end: str,
+    ) -> dict[str, list[DailyBar]]:
+        if not symbols:
+            return {}
+
+        bars_by_symbol: dict[str, list[DailyBar]] = {symbol: [] for symbol in symbols}
+        page_token: str | None = None
+        while True:
+            payload = self.get_json(
+                self.data_base_url,
+                "/v1beta1/options/bars",
+                {
+                    "symbols": ",".join(symbols),
+                    "timeframe": "1Day",
+                    "start": start,
+                    "end": end,
+                    "limit": 1000,
+                    "page_token": page_token,
+                },
+            )
+            raw_bars = payload.get("bars", {})
+            if isinstance(raw_bars, dict):
+                for symbol, bars in raw_bars.items():
+                    for item in bars:
+                        open_price = parse_float(pick(item, "o", "open"))
+                        high_price = parse_float(pick(item, "h", "high"))
+                        low_price = parse_float(pick(item, "l", "low"))
+                        close_price = parse_float(pick(item, "c", "close"))
+                        volume = parse_int(pick(item, "v", "volume")) or 0
+                        timestamp = pick(item, "t", "timestamp")
+                        if None in (open_price, high_price, low_price, close_price) or not timestamp:
+                            continue
+                        bars_by_symbol.setdefault(symbol, []).append(
+                            DailyBar(
+                                timestamp=str(timestamp),
+                                open=open_price,
+                                high=high_price,
+                                low=low_price,
+                                close=close_price,
+                                volume=volume,
+                            )
+                        )
+            page_token = payload.get("next_page_token") or payload.get("page_token")
+            if not page_token:
+                break
+        return bars_by_symbol
 
     @staticmethod
     def _extract_symbol_payload(
@@ -895,6 +1098,84 @@ def attach_underlying_setup(
     ]
 
 
+def assess_data_quality(
+    candidate: SpreadCandidate,
+    *,
+    underlying_type: str,
+    args: argparse.Namespace,
+) -> tuple[str, tuple[str, ...]]:
+    if args.data_policy == "off":
+        return "clean", ()
+
+    reasons: list[str] = []
+    blocked = False
+    penalized = False
+
+    if candidate.expected_move is None or candidate.expected_move <= 0:
+        reason = "Missing expected-move estimate"
+        if args.data_policy == "strict":
+            blocked = True
+        else:
+            penalized = True
+        reasons.append(reason)
+    else:
+        short_ratio = (candidate.short_vs_expected_move or 0.0) / candidate.expected_move
+        breakeven_ratio = (candidate.breakeven_vs_expected_move or 0.0) / candidate.expected_move
+        if short_ratio < args.min_short_vs_expected_move_ratio:
+            reason = (
+                f"Short strike sits too far inside expected move "
+                f"({short_ratio:.2f} < {args.min_short_vs_expected_move_ratio:.2f})"
+            )
+            if args.data_policy == "strict":
+                blocked = True
+            else:
+                penalized = True
+            reasons.append(reason)
+        if breakeven_ratio < args.min_breakeven_vs_expected_move_ratio:
+            reason = (
+                f"Breakeven sits too far inside expected move "
+                f"({breakeven_ratio:.2f} < {args.min_breakeven_vs_expected_move_ratio:.2f})"
+            )
+            if args.data_policy == "strict":
+                blocked = True
+            else:
+                penalized = True
+            reasons.append(reason)
+
+    if candidate.fill_ratio < args.min_fill_ratio:
+        reason = f"Natural-to-mid fill ratio is too weak ({candidate.fill_ratio:.2f} < {args.min_fill_ratio:.2f})"
+        if args.data_policy == "strict":
+            blocked = True
+        else:
+            penalized = True
+        reasons.append(reason)
+
+    if underlying_type == "single_name_equity" and candidate.calendar_confidence == "low":
+        penalized = True
+        reasons.append("Calendar data confidence is low for this single-name candidate")
+
+    if blocked:
+        return "blocked", tuple(reasons)
+    if penalized:
+        return "penalized", tuple(reasons)
+    return "clean", ()
+
+
+def attach_data_quality(
+    *,
+    candidates: list[SpreadCandidate],
+    underlying_type: str,
+    args: argparse.Namespace,
+) -> list[SpreadCandidate]:
+    enriched: list[SpreadCandidate] = []
+    for candidate in candidates:
+        status, reasons = assess_data_quality(candidate, underlying_type=underlying_type, args=args)
+        if args.data_policy == "strict" and status == "blocked":
+            continue
+        enriched.append(replace(candidate, data_status=status, data_reasons=reasons))
+    return enriched
+
+
 def deduplicate_candidates(candidates: list[SpreadCandidate], expand_duplicates: bool) -> list[SpreadCandidate]:
     if expand_duplicates:
         return candidates
@@ -932,7 +1213,42 @@ def build_filter_payload(args: argparse.Namespace) -> dict[str, Any]:
         "calendar_policy": args.calendar_policy,
         "setup_filter": args.setup_filter,
         "expand_duplicates": args.expand_duplicates,
+        "data_policy": args.data_policy,
+        "min_fill_ratio": args.min_fill_ratio,
+        "min_short_vs_expected_move_ratio": args.min_short_vs_expected_move_ratio,
+        "min_breakeven_vs_expected_move_ratio": args.min_breakeven_vs_expected_move_ratio,
     }
+
+
+def clone_args(args: argparse.Namespace) -> argparse.Namespace:
+    return argparse.Namespace(**vars(args))
+
+
+def validate_resolved_args(args: argparse.Namespace) -> None:
+    if args.min_dte < 0 or args.max_dte < args.min_dte:
+        raise SystemExit("Expected 0 <= min-dte <= max-dte")
+    if args.short_delta_min < 0 or args.short_delta_max > 1 or args.short_delta_min > args.short_delta_max:
+        raise SystemExit("Expected 0 <= short-delta-min <= short-delta-max <= 1")
+    if args.short_delta_target < args.short_delta_min or args.short_delta_target > args.short_delta_max:
+        raise SystemExit("Expected short-delta-target to fall inside the selected delta band")
+    if args.min_width <= 0:
+        raise SystemExit("Expected min-width > 0")
+    if args.max_width < args.min_width:
+        raise SystemExit("Expected max-width >= min-width")
+    if args.min_credit <= 0:
+        raise SystemExit("Expected min-credit > 0")
+    if args.min_open_interest < 0:
+        raise SystemExit("Expected min-open-interest >= 0")
+    if args.max_relative_spread <= 0:
+        raise SystemExit("Expected max-relative-spread > 0")
+    if args.per_symbol_top <= 0:
+        raise SystemExit("Expected per-symbol-top > 0")
+    if args.min_fill_ratio <= 0 or args.min_fill_ratio > 1.25:
+        raise SystemExit("Expected min-fill-ratio to be in (0, 1.25]")
+    if args.min_short_vs_expected_move_ratio < -1 or args.min_short_vs_expected_move_ratio > 1:
+        raise SystemExit("Expected min-short-vs-expected-move-ratio to be between -1 and 1")
+    if args.min_breakeven_vs_expected_move_ratio < -1 or args.min_breakeven_vs_expected_move_ratio > 1:
+        raise SystemExit("Expected min-breakeven-vs-expected-move-ratio to be between -1 and 1")
 
 
 def make_order_payload(short_symbol: str, long_symbol: str, limit_price: float) -> dict[str, Any]:
@@ -972,6 +1288,12 @@ def default_output_path(symbol: str, output_format: str) -> str:
     return str(Path("outputs") / "call_credit_spreads" / f"{symbol.lower()}_{timestamp}.{output_format}")
 
 
+def default_universe_output_path(label: str, output_format: str) -> str:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_label = label.lower().replace(" ", "_")
+    return str(Path("outputs") / "universe_boards" / f"{safe_label}_{timestamp}.{output_format}")
+
+
 def option_expiry_close(expiration_date: str) -> datetime:
     local_close = datetime.combine(date.fromisoformat(expiration_date), time(16, 0), tzinfo=NEW_YORK)
     return local_close.astimezone(UTC)
@@ -979,6 +1301,7 @@ def option_expiry_close(expiration_date: str) -> datetime:
 
 def build_call_credit_spreads(
     *,
+    symbol: str,
     spot_price: float,
     contracts_by_expiration: dict[str, list[OptionContract]],
     snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
@@ -1067,6 +1390,7 @@ def build_call_credit_spreads(
 
                 candidates.append(
                     SpreadCandidate(
+                        underlying_symbol=symbol,
                         profile=args.profile,
                         expiration_date=expiration_date,
                         days_to_expiration=days_to_expiration,
@@ -1180,7 +1504,12 @@ def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> flo
         "unfavorable": 0.78,
         "unknown": 0.88,
     }.get(candidate.setup_status, 0.88)
-    return round(base_score * calendar_multiplier * setup_multiplier * 100.0, 1)
+    data_multiplier = {
+        "clean": 1.0,
+        "penalized": 0.90,
+        "blocked": 0.0,
+    }.get(candidate.data_status, 1.0)
+    return round(base_score * calendar_multiplier * setup_multiplier * data_multiplier * 100.0, 1)
 
 
 def rank_candidates(candidates: list[SpreadCandidate], args: argparse.Namespace) -> list[SpreadCandidate]:
@@ -1216,6 +1545,7 @@ def build_table_rows(candidates: list[SpreadCandidate]) -> list[list[str]]:
                 "n/a" if candidate.short_vs_expected_move is None else f"{candidate.short_vs_expected_move:.2f}",
                 f"{min(candidate.short_open_interest, candidate.long_open_interest)}",
                 candidate.calendar_status,
+                candidate.data_status,
                 "n/a"
                 if candidate.calendar_days_to_nearest_event is None
                 else str(candidate.calendar_days_to_nearest_event),
@@ -1260,7 +1590,7 @@ def print_human_readable(
         print("No call credit spreads matched the current filters and calendar policy.")
         return
 
-    headers = ["Expiry", "DTE", "Short", "Long", "Width", "MidCr", "ROR%", "Score", "Δ", "OTM%", "BE%", "S-EM", "MinOI", "Cal", "EvtD"]
+    headers = ["Expiry", "DTE", "Short", "Long", "Width", "MidCr", "ROR%", "Score", "Δ", "OTM%", "BE%", "S-EM", "MinOI", "Cal", "DQ", "EvtD"]
     rows = build_table_rows(candidates)
     print(format_table(headers, rows))
     print()
@@ -1280,6 +1610,8 @@ def print_human_readable(
             )
         if candidate.calendar_reasons:
             print(f"   reasons: {'; '.join(candidate.calendar_reasons)}")
+        if candidate.data_reasons:
+            print(f"   data: {'; '.join(candidate.data_reasons)}")
         if candidate.calendar_sources:
             source_line = ", ".join(candidate.calendar_sources)
             print(f"   sources: {source_line} | confidence {candidate.calendar_confidence}")
@@ -1296,6 +1628,7 @@ def print_human_readable(
 def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
+        "underlying_symbol",
         "profile",
         "expiration_date",
         "days_to_expiration",
@@ -1343,6 +1676,8 @@ def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
         "setup_status",
         "setup_score",
         "setup_reasons",
+        "data_status",
+        "data_reasons",
         "order_payload",
     ]
     with open(path, "w", newline="", encoding="utf-8") as handle:
@@ -1353,6 +1688,7 @@ def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
             row["calendar_reasons"] = "; ".join(candidate.calendar_reasons)
             row["calendar_sources"] = ", ".join(candidate.calendar_sources)
             row["setup_reasons"] = "; ".join(candidate.setup_reasons)
+            row["data_reasons"] = "; ".join(candidate.data_reasons)
             row["order_payload"] = json.dumps(candidate.order_payload, separators=(",", ":"))
             writer.writerow(row)
 
@@ -1385,6 +1721,97 @@ def write_json(
             "return_5d_pct": setup.return_5d_pct,
             "distance_to_20d_high_pct": setup.distance_to_20d_high_pct,
         },
+        "candidates": [asdict(candidate) for candidate in candidates],
+    }
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+
+
+def build_universe_board_rows(candidates: list[SpreadCandidate]) -> list[list[str]]:
+    rows: list[list[str]] = []
+    for candidate in candidates:
+        rows.append(
+            [
+                candidate.underlying_symbol,
+                candidate.expiration_date,
+                str(candidate.days_to_expiration),
+                f"{candidate.underlying_price:.2f}",
+                f"{candidate.short_strike:.2f}",
+                f"{candidate.long_strike:.2f}",
+                f"{candidate.midpoint_credit:.2f}",
+                f"{candidate.quality_score:.1f}",
+                "n/a" if candidate.short_delta is None else f"{candidate.short_delta:.2f}",
+                f"{candidate.breakeven_cushion_pct * 100:.1f}",
+                "n/a" if candidate.short_vs_expected_move is None else f"{candidate.short_vs_expected_move:.2f}",
+                candidate.calendar_status,
+                candidate.data_status,
+                candidate.setup_status,
+            ]
+        )
+    return rows
+
+
+def print_universe_board(
+    *,
+    label: str,
+    symbols: list[str],
+    board_candidates: list[SpreadCandidate],
+    failures: list[UniverseScanFailure],
+) -> None:
+    print(f"Universe: {label}")
+    print(f"Symbols requested: {len(symbols)}")
+    print(f"Board entries: {len(board_candidates)}")
+    if failures:
+        print(f"Failures: {len(failures)}")
+    print()
+
+    if board_candidates:
+        headers = ["Symbol", "Expiry", "DTE", "Spot", "Short", "Long", "MidCr", "Score", "Δ", "BE%", "S-EM", "Cal", "DQ", "Setup"]
+        print(format_table(headers, build_universe_board_rows(board_candidates)))
+        print()
+    else:
+        print("No universe candidates matched the current filters.")
+        print()
+
+    for index, candidate in enumerate(board_candidates, start=1):
+        print(
+            f"{index}. {candidate.underlying_symbol} {candidate.short_symbol} -> {candidate.long_symbol} | "
+            f"score {candidate.quality_score:.1f} | breakeven {candidate.breakeven:.2f}"
+        )
+        if candidate.calendar_reasons:
+            print(f"   calendar: {'; '.join(candidate.calendar_reasons)}")
+        if candidate.data_reasons:
+            print(f"   data: {'; '.join(candidate.data_reasons)}")
+        if candidate.setup_reasons:
+            print(f"   setup: {'; '.join(candidate.setup_reasons)}")
+        print()
+
+    if failures:
+        print("Failures:")
+        for failure in failures:
+            print(f"- {failure.symbol}: {failure.error}")
+
+
+def write_universe_csv(path: str, candidates: list[SpreadCandidate]) -> None:
+    write_csv(path, candidates)
+
+
+def write_universe_json(
+    path: str,
+    *,
+    label: str,
+    symbols: list[str],
+    candidates: list[SpreadCandidate],
+    failures: list[UniverseScanFailure],
+) -> None:
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "mode": "universe",
+        "label": label,
+        "symbols": symbols,
+        "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "candidate_count": len(candidates),
+        "failures": [asdict(failure) for failure in failures],
         "candidates": [asdict(candidate) for candidate in candidates],
     }
     with open(path, "w", encoding="utf-8") as handle:
@@ -1462,18 +1889,54 @@ def bars_through_date(bars: list[DailyBar], target_date: date) -> list[DailyBar]
     return [bar for bar in bars if datetime.fromisoformat(bar.timestamp.replace("Z", "+00:00")).date() <= target_date]
 
 
+def latest_option_bar_on_or_before(
+    bars_by_symbol: dict[str, list[DailyBar]],
+    symbol: str,
+    target_date: date,
+) -> DailyBar | None:
+    return latest_bar_on_or_before(bars_by_symbol.get(symbol, []), target_date)
+
+
+def estimate_spread_bar(short_bar: DailyBar, long_bar: DailyBar) -> dict[str, float]:
+    return {
+        "open": max(short_bar.open - long_bar.open, 0.0),
+        "high": max(short_bar.high - long_bar.low, 0.0),
+        "low": max(short_bar.low - long_bar.high, 0.0),
+        "close": max(short_bar.close - long_bar.close, 0.0),
+    }
+
+
+def option_bar_available_for_target(
+    bars_by_symbol: dict[str, list[DailyBar]],
+    short_symbol: str,
+    long_symbol: str,
+    target_date: date,
+) -> bool:
+    short_bar = latest_option_bar_on_or_before(bars_by_symbol, short_symbol, target_date)
+    long_bar = latest_option_bar_on_or_before(bars_by_symbol, long_symbol, target_date)
+    if short_bar is None or long_bar is None:
+        return False
+    short_date = datetime.fromisoformat(short_bar.timestamp.replace("Z", "+00:00")).date()
+    long_date = datetime.fromisoformat(long_bar.timestamp.replace("Z", "+00:00")).date()
+    return short_date == target_date and long_date == target_date
+
+
 def summarize_replay(
     *,
     run_payload: dict[str, Any],
     candidates: list[dict[str, Any]],
     bars: list[DailyBar],
+    option_bars: dict[str, list[DailyBar]],
+    profit_target: float,
+    stop_multiple: float,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     generated_at = datetime.fromisoformat(run_payload["generated_at"].replace("Z", "+00:00"))
-    run_date = generated_at.date()
+    run_date = generated_at.astimezone(NEW_YORK).date()
     latest_available_date = None if not bars else max(
         datetime.fromisoformat(bar.timestamp.replace("Z", "+00:00")).date() for bar in bars
     )
     horizons = [
+        ("entry", run_date),
         ("1d", run_date + timedelta(days=1)),
         ("3d", run_date + timedelta(days=3)),
     ]
@@ -1487,6 +1950,8 @@ def summarize_replay(
         touched = 0
         closed_over_short = 0
         closed_over_breakeven = 0
+        profit_target_hits = 0
+        stop_hits = 0
 
         for candidate in candidates:
             if latest_available_date is None or latest_available_date < target_date:
@@ -1504,15 +1969,45 @@ def summarize_replay(
             horizon_bar = latest_bar_on_or_before(bars, target_date)
             if horizon_bar is None:
                 continue
+            if not option_bar_available_for_target(
+                option_bars,
+                candidate["short_symbol"],
+                candidate["long_symbol"],
+                target_date,
+            ):
+                rows.append(
+                    {
+                        "horizon": label,
+                        "short_symbol": candidate["short_symbol"],
+                        "long_symbol": candidate["long_symbol"],
+                        "expiration_date": candidate["expiration_date"],
+                        "status": "pending_option_bars",
+                    }
+                )
+                continue
+
             available_candidates += 1
             path_bars = horizon_bars
             max_high = max(bar.high for bar in path_bars) if path_bars else horizon_bar.high
             touched_short = max_high >= candidate["short_strike"]
             closed_above_short = horizon_bar.close >= candidate["short_strike"]
             closed_above_breakeven = horizon_bar.close >= candidate["breakeven"]
+            short_option_bar = latest_option_bar_on_or_before(option_bars, candidate["short_symbol"], target_date)
+            long_option_bar = latest_option_bar_on_or_before(option_bars, candidate["long_symbol"], target_date)
+            if short_option_bar is None or long_option_bar is None:
+                continue
+            spread_bar = estimate_spread_bar(short_option_bar, long_option_bar)
+            entry_credit = candidate["midpoint_credit"]
+            target_mark = max(entry_credit * (1.0 - profit_target), 0.0)
+            stop_mark = entry_credit * stop_multiple
+            estimated_profit_target_hit = spread_bar["low"] <= target_mark
+            estimated_stop_hit = spread_bar["high"] >= stop_mark
+            estimated_pnl = (entry_credit - spread_bar["close"]) * 100.0
             touched += int(touched_short)
             closed_over_short += int(closed_above_short)
             closed_over_breakeven += int(closed_above_breakeven)
+            profit_target_hits += int(estimated_profit_target_hit)
+            stop_hits += int(estimated_stop_hit)
             rows.append(
                 {
                     "horizon": label,
@@ -1525,6 +2020,12 @@ def summarize_replay(
                     "touched_short_strike": touched_short,
                     "closed_above_short_strike": closed_above_short,
                     "closed_above_breakeven": closed_above_breakeven,
+                    "spread_mark_close": spread_bar["close"],
+                    "spread_mark_low": spread_bar["low"],
+                    "spread_mark_high": spread_bar["high"],
+                    "estimated_pnl": estimated_pnl,
+                    "estimated_profit_target_hit": estimated_profit_target_hit,
+                    "estimated_stop_hit": estimated_stop_hit,
                 }
             )
 
@@ -1541,6 +2042,10 @@ def summarize_replay(
                 "close_over_breakeven_pct": None
                 if available_candidates == 0
                 else 100.0 * closed_over_breakeven / available_candidates,
+                "profit_target_hit_pct": None
+                if available_candidates == 0
+                else 100.0 * profit_target_hits / available_candidates,
+                "stop_hit_pct": None if available_candidates == 0 else 100.0 * stop_hits / available_candidates,
             }
         )
 
@@ -1548,6 +2053,8 @@ def summarize_replay(
     expiry_touched = 0
     expiry_closed_over_short = 0
     expiry_closed_over_breakeven = 0
+    expiry_profit_targets = 0
+    expiry_stop_hits = 0
     for candidate in candidates:
         expiry_date = date.fromisoformat(candidate["expiration_date"])
         if latest_available_date is None or latest_available_date < expiry_date:
@@ -1571,9 +2078,19 @@ def summarize_replay(
         touched_short = max_high >= candidate["short_strike"]
         closed_above_short = horizon_bar.close >= candidate["short_strike"]
         closed_above_breakeven = horizon_bar.close >= candidate["breakeven"]
+        settlement = max(horizon_bar.close - candidate["short_strike"], 0.0) - max(
+            horizon_bar.close - candidate["long_strike"], 0.0
+        )
+        estimated_pnl = candidate["max_profit"] - (settlement * 100.0)
+        target_mark = max(candidate["midpoint_credit"] * (1.0 - profit_target), 0.0)
+        stop_mark = candidate["midpoint_credit"] * stop_multiple
+        profit_target_hit = settlement <= target_mark
+        stop_hit = settlement >= stop_mark
         expiry_touched += int(touched_short)
         expiry_closed_over_short += int(closed_above_short)
         expiry_closed_over_breakeven += int(closed_above_breakeven)
+        expiry_profit_targets += int(profit_target_hit)
+        expiry_stop_hits += int(stop_hit)
         rows.append(
             {
                 "horizon": "expiry",
@@ -1586,6 +2103,12 @@ def summarize_replay(
                 "touched_short_strike": touched_short,
                 "closed_above_short_strike": closed_above_short,
                 "closed_above_breakeven": closed_above_breakeven,
+                "spread_mark_close": settlement,
+                "spread_mark_low": settlement,
+                "spread_mark_high": settlement,
+                "estimated_pnl": estimated_pnl,
+                "estimated_profit_target_hit": profit_target_hit,
+                "estimated_stop_hit": stop_hit,
             }
         )
 
@@ -1602,6 +2125,10 @@ def summarize_replay(
             "close_over_breakeven_pct": None
             if expiry_available == 0
             else 100.0 * expiry_closed_over_breakeven / expiry_available,
+            "profit_target_hit_pct": None
+            if expiry_available == 0
+            else 100.0 * expiry_profit_targets / expiry_available,
+            "stop_hit_pct": None if expiry_available == 0 else 100.0 * expiry_stop_hits / expiry_available,
         }
     )
 
@@ -1620,7 +2147,7 @@ def print_replay_summary(
     print(f"Stored candidates: {run_payload['candidate_count']}")
     print()
 
-    table_headers = ["Horizon", "Avail", "Pending", "Touch%", "Close>Short%", "Close>BE%"]
+    table_headers = ["Horizon", "Avail", "Pending", "Touch%", "Close>Short%", "Close>BE%", "PT%", "Stop%"]
     table_rows = []
     for summary in summaries:
         table_rows.append(
@@ -1633,6 +2160,8 @@ def print_replay_summary(
                 "n/a"
                 if summary["close_over_breakeven_pct"] is None
                 else f"{summary['close_over_breakeven_pct']:.1f}",
+                "n/a" if summary["profit_target_hit_pct"] is None else f"{summary['profit_target_hit_pct']:.1f}",
+                "n/a" if summary["stop_hit_pct"] is None else f"{summary['stop_hit_pct']:.1f}",
             ]
         )
     print(format_table(table_headers, table_rows))
@@ -1640,7 +2169,20 @@ def print_replay_summary(
 
     available_rows = [row for row in rows if row["status"] == "available"][:10]
     if available_rows:
-        detail_headers = ["Horizon", "Short", "Long", "Expiry", "Spot", "MaxHigh", "Touch", "Close>Short", "Close>BE"]
+        detail_headers = [
+            "Horizon",
+            "Short",
+            "Long",
+            "Expiry",
+            "Spot",
+            "Sprd",
+            "PnL$",
+            "Touch",
+            "Close>Short",
+            "Close>BE",
+            "PT",
+            "Stop",
+        ]
         detail_rows = [
             [
                 row["horizon"],
@@ -1648,10 +2190,13 @@ def print_replay_summary(
                 row["long_symbol"],
                 row["expiration_date"],
                 f"{row['spot_at_horizon']:.2f}",
-                f"{row['max_high_to_horizon']:.2f}",
+                f"{row['spread_mark_close']:.2f}",
+                f"{row['estimated_pnl']:.0f}",
                 "yes" if row["touched_short_strike"] else "no",
                 "yes" if row["closed_above_short_strike"] else "no",
                 "yes" if row["closed_above_breakeven"] else "no",
+                "yes" if row["estimated_profit_target_hit"] else "no",
+                "yes" if row["estimated_stop_hit"] else "no",
             ]
             for row in available_rows
         ]
@@ -1677,21 +2222,149 @@ def run_replay(
 
     candidates = history_store.list_candidates(run_payload["run_id"])
     generated_at = datetime.fromisoformat(run_payload["generated_at"].replace("Z", "+00:00"))
+    run_date = generated_at.astimezone(NEW_YORK).date()
     replay_end = max(
         [
-            generated_at.date() + timedelta(days=3),
+            run_date + timedelta(days=3),
             *[date.fromisoformat(candidate["expiration_date"]) for candidate in candidates],
         ]
     )
     bars = client.get_daily_bars(
         run_payload["symbol"],
-        start=(generated_at.date() - timedelta(days=2)).isoformat(),
+        start=(run_date - timedelta(days=2)).isoformat(),
         end=replay_end.isoformat(),
         stock_feed=args.stock_feed,
     )
-    summaries, rows = summarize_replay(run_payload=run_payload, candidates=candidates, bars=bars)
+    option_symbols = sorted(
+        {
+            *[candidate["short_symbol"] for candidate in candidates],
+            *[candidate["long_symbol"] for candidate in candidates],
+        }
+    )
+    option_bars = client.get_option_bars(
+        option_symbols,
+        start=run_date.isoformat(),
+        end=replay_end.isoformat(),
+    )
+    summaries, rows = summarize_replay(
+        run_payload=run_payload,
+        candidates=candidates,
+        bars=bars,
+        option_bars=option_bars,
+        profit_target=args.replay_profit_target,
+        stop_multiple=args.replay_stop_multiple,
+    )
     print_replay_summary(run_payload, summaries, rows)
     return 0
+
+
+def scan_symbol_live(
+    *,
+    symbol: str,
+    base_args: argparse.Namespace,
+    client: AlpacaClient,
+    calendar_resolver: Any,
+    history_store: RunHistoryStore,
+) -> SymbolScanResult:
+    symbol = symbol.upper()
+    underlying_type = classify_underlying_type(symbol)
+    symbol_args = clone_args(base_args)
+    symbol_args.symbol = symbol
+    apply_profile_defaults(symbol_args, underlying_type)
+    validate_resolved_args(symbol_args)
+
+    min_expiration = (date.today() + timedelta(days=symbol_args.min_dte)).isoformat()
+    max_expiration = (date.today() + timedelta(days=symbol_args.max_dte)).isoformat()
+
+    spot_price = client.get_underlying_price(symbol, symbol_args.stock_feed)
+    setup_context: UnderlyingSetupContext | None = None
+    if symbol_args.setup_filter == "on":
+        daily_bars = client.get_daily_bars(
+            symbol,
+            start=(date.today() - timedelta(days=120)).isoformat(),
+            end=date.today().isoformat(),
+            stock_feed=symbol_args.stock_feed,
+        )
+        setup_context = analyze_underlying_setup(symbol, spot_price, daily_bars)
+
+    call_contracts = client.list_option_contracts(symbol, min_expiration, max_expiration, option_type="call")
+    put_contracts = client.list_option_contracts(symbol, min_expiration, max_expiration, option_type="put")
+    contracts_by_expiration = group_contracts_by_expiration(call_contracts)
+    put_contracts_by_expiration = group_contracts_by_expiration(put_contracts)
+
+    call_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]] = {}
+    put_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]] = {}
+    for expiration_date in sorted(contracts_by_expiration):
+        call_snapshots_by_expiration[expiration_date] = client.get_option_chain_snapshots(
+            symbol,
+            expiration_date,
+            "call",
+            symbol_args.feed,
+        )
+        put_snapshots_by_expiration[expiration_date] = client.get_option_chain_snapshots(
+            symbol,
+            expiration_date,
+            "put",
+            symbol_args.feed,
+        )
+
+    expected_moves_by_expiration = build_expected_move_estimates(
+        spot_price=spot_price,
+        call_contracts_by_expiration=contracts_by_expiration,
+        put_contracts_by_expiration=put_contracts_by_expiration,
+        call_snapshots_by_expiration=call_snapshots_by_expiration,
+        put_snapshots_by_expiration=put_snapshots_by_expiration,
+    )
+
+    all_candidates = build_call_credit_spreads(
+        symbol=symbol,
+        spot_price=spot_price,
+        contracts_by_expiration=contracts_by_expiration,
+        snapshots_by_expiration=call_snapshots_by_expiration,
+        expected_moves_by_expiration=expected_moves_by_expiration,
+        args=symbol_args,
+    )
+    all_candidates = attach_underlying_setup(all_candidates, setup_context)
+    all_candidates = attach_calendar_decisions(
+        symbol=symbol,
+        underlying_type=underlying_type,
+        candidates=all_candidates,
+        resolver=calendar_resolver,
+        calendar_policy=symbol_args.calendar_policy,
+        refresh_calendar_events=symbol_args.refresh_calendar_events,
+    )
+    all_candidates = attach_data_quality(
+        candidates=all_candidates,
+        underlying_type=underlying_type,
+        args=symbol_args,
+    )
+    all_candidates = rank_candidates(all_candidates, symbol_args)
+    all_candidates = deduplicate_candidates(all_candidates, symbol_args.expand_duplicates)
+
+    run_id = build_run_id(symbol, symbol_args.profile)
+    generated_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    history_store.save_run(
+        run_id=run_id,
+        generated_at=generated_at,
+        symbol=symbol,
+        profile=symbol_args.profile,
+        spot_price=spot_price,
+        output_path="",
+        filters=build_filter_payload(symbol_args),
+        setup_status=None if setup_context is None else setup_context.status,
+        setup_score=None if setup_context is None else setup_context.score,
+        candidates=all_candidates,
+    )
+
+    return SymbolScanResult(
+        symbol=symbol,
+        underlying_type=underlying_type,
+        spot_price=spot_price,
+        args=symbol_args,
+        setup=setup_context,
+        candidates=all_candidates,
+        run_id=run_id,
+    )
 
 
 def main() -> int:
@@ -1700,27 +2373,7 @@ def main() -> int:
 
     key_id = env_or_die("APCA_API_KEY_ID", "ALPACA_API_KEY")
     secret_key = env_or_die("APCA_API_SECRET_KEY", "ALPACA_SECRET_KEY")
-
-    symbol = args.symbol.upper()
-    underlying_type = classify_underlying_type(symbol)
-    apply_profile_defaults(args, underlying_type)
-
-    if args.min_dte < 0 or args.max_dte < args.min_dte:
-        raise SystemExit("Expected 0 <= min-dte <= max-dte")
-    if args.short_delta_min < 0 or args.short_delta_max > 1 or args.short_delta_min > args.short_delta_max:
-        raise SystemExit("Expected 0 <= short-delta-min <= short-delta-max <= 1")
-    if args.short_delta_target < args.short_delta_min or args.short_delta_target > args.short_delta_max:
-        raise SystemExit("Expected short-delta-target to fall inside the selected delta band")
-    if args.min_width <= 0:
-        raise SystemExit("Expected min-width > 0")
-    if args.max_width < args.min_width:
-        raise SystemExit("Expected max-width >= min-width")
-    if args.min_credit <= 0:
-        raise SystemExit("Expected min-credit > 0")
-    if args.min_open_interest < 0:
-        raise SystemExit("Expected min-open-interest >= 0")
-    if args.max_relative_spread <= 0:
-        raise SystemExit("Expected max-relative-spread > 0")
+    symbols, universe_label = resolve_symbols(args)
 
     client = AlpacaClient(
         key_id=key_id,
@@ -1742,117 +2395,128 @@ def main() -> int:
             history_store.close()
             calendar_resolver.store.close()
 
-    min_expiration = (date.today() + timedelta(days=args.min_dte)).isoformat()
-    max_expiration = (date.today() + timedelta(days=args.max_dte)).isoformat()
-
-    spot_price = client.get_underlying_price(symbol, args.stock_feed)
-    setup_context: UnderlyingSetupContext | None = None
-    if args.setup_filter == "on":
-        daily_bars = client.get_daily_bars(
-            symbol,
-            start=(date.today() - timedelta(days=120)).isoformat(),
-            end=date.today().isoformat(),
-            stock_feed=args.stock_feed,
+    if len(symbols) == 1:
+        result = scan_symbol_live(
+            symbol=symbols[0],
+            base_args=args,
+            client=client,
+            calendar_resolver=calendar_resolver,
+            history_store=history_store,
         )
-        setup_context = analyze_underlying_setup(symbol, spot_price, daily_bars)
+        output_path = args.output or default_output_path(result.symbol, args.output_format)
 
-    call_contracts = client.list_option_contracts(symbol, min_expiration, max_expiration, option_type="call")
-    put_contracts = client.list_option_contracts(symbol, min_expiration, max_expiration, option_type="put")
-    contracts_by_expiration = group_contracts_by_expiration(call_contracts)
-    put_contracts_by_expiration = group_contracts_by_expiration(put_contracts)
-
-    call_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]] = {}
-    put_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]] = {}
-    for expiration_date in sorted(contracts_by_expiration):
-        call_snapshots_by_expiration[expiration_date] = client.get_option_chain_snapshots(
-            symbol,
-            expiration_date,
-            "call",
-            args.feed,
-        )
-        put_snapshots_by_expiration[expiration_date] = client.get_option_chain_snapshots(
-            symbol,
-            expiration_date,
-            "put",
-            args.feed,
-        )
-
-    expected_moves_by_expiration = build_expected_move_estimates(
-        spot_price=spot_price,
-        call_contracts_by_expiration=contracts_by_expiration,
-        put_contracts_by_expiration=put_contracts_by_expiration,
-        call_snapshots_by_expiration=call_snapshots_by_expiration,
-        put_snapshots_by_expiration=put_snapshots_by_expiration,
-    )
-
-    all_candidates = build_call_credit_spreads(
-        spot_price=spot_price,
-        contracts_by_expiration=contracts_by_expiration,
-        snapshots_by_expiration=call_snapshots_by_expiration,
-        expected_moves_by_expiration=expected_moves_by_expiration,
-        args=args,
-    )
-    all_candidates = attach_underlying_setup(all_candidates, setup_context)
-    all_candidates = attach_calendar_decisions(
-        symbol=symbol,
-        underlying_type=underlying_type,
-        candidates=all_candidates,
-        resolver=calendar_resolver,
-        calendar_policy=args.calendar_policy,
-        refresh_calendar_events=args.refresh_calendar_events,
-    )
-    all_candidates = rank_candidates(all_candidates, args)
-    all_candidates = deduplicate_candidates(all_candidates, args.expand_duplicates)
-    output_path = args.output or default_output_path(symbol, args.output_format)
-    run_id = build_run_id(symbol, args.profile)
-    generated_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-    if args.output_format == "csv":
-        write_csv(output_path, all_candidates)
-    else:
-        write_json(output_path, symbol, spot_price, args, all_candidates, run_id=run_id, setup=setup_context)
-
-    history_store.save_run(
-        run_id=run_id,
-        generated_at=generated_at,
-        symbol=symbol,
-        profile=args.profile,
-        spot_price=spot_price,
-        output_path=output_path,
-        filters=build_filter_payload(args),
-        setup_status=None if setup_context is None else setup_context.status,
-        setup_score=None if setup_context is None else setup_context.score,
-        candidates=all_candidates,
-    )
-
-    candidates = all_candidates[: args.top]
-
-    if args.json:
-        print(
-            json.dumps(
-                {
-                    "symbol": symbol,
-                    "spot_price": spot_price,
-                    "generated_at": generated_at,
-                    "run_id": run_id,
-                    "filters": build_filter_payload(args),
-                    "setup": None
-                    if setup_context is None
-                    else {
-                        "status": setup_context.status,
-                        "score": setup_context.score,
-                        "reasons": list(setup_context.reasons),
-                    },
-                    "candidates": [asdict(candidate) for candidate in candidates],
-                    "output_file": output_path,
-                },
-                indent=2,
+        if args.output_format == "csv":
+            write_csv(output_path, result.candidates)
+        else:
+            write_json(
+                output_path,
+                result.symbol,
+                result.spot_price,
+                result.args,
+                result.candidates,
+                run_id=result.run_id,
+                setup=result.setup,
             )
-        )
+
+        candidates = result.candidates[: result.args.top]
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "symbol": result.symbol,
+                        "spot_price": result.spot_price,
+                        "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                        "run_id": result.run_id,
+                        "filters": build_filter_payload(result.args),
+                        "setup": None
+                        if result.setup is None
+                        else {
+                            "status": result.setup.status,
+                            "score": result.setup.score,
+                            "reasons": list(result.setup.reasons),
+                        },
+                        "candidates": [asdict(candidate) for candidate in candidates],
+                        "output_file": output_path,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            print_human_readable(
+                result.symbol,
+                result.spot_price,
+                candidates,
+                result.args.show_order_json,
+                result.setup,
+            )
+            print(f"Saved {len(result.candidates)} candidates to {output_path}")
+            print(f"Run id: {result.run_id}")
     else:
-        print_human_readable(symbol, spot_price, candidates, args.show_order_json, setup_context)
-        print(f"Saved {len(all_candidates)} candidates to {output_path}")
-        print(f"Run id: {run_id}")
+        scan_results: list[SymbolScanResult] = []
+        failures: list[UniverseScanFailure] = []
+        board_candidates: list[SpreadCandidate] = []
+
+        for symbol in symbols:
+            try:
+                result = scan_symbol_live(
+                    symbol=symbol,
+                    base_args=args,
+                    client=client,
+                    calendar_resolver=calendar_resolver,
+                    history_store=history_store,
+                )
+                scan_results.append(result)
+                board_candidates.extend(result.candidates[: result.args.per_symbol_top])
+            except Exception as exc:
+                failures.append(UniverseScanFailure(symbol=symbol, error=str(exc).splitlines()[0]))
+
+        board_candidates.sort(
+            key=lambda candidate: (
+                candidate.quality_score,
+                candidate.return_on_risk,
+                candidate.midpoint_credit,
+            ),
+            reverse=True,
+        )
+        board_candidates = board_candidates[: args.top]
+        output_path = args.output or default_universe_output_path(universe_label, args.output_format)
+
+        if args.output_format == "csv":
+            write_universe_csv(output_path, board_candidates)
+        else:
+            write_universe_json(
+                output_path,
+                label=universe_label,
+                symbols=symbols,
+                candidates=board_candidates,
+                failures=failures,
+            )
+
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "mode": "universe",
+                        "label": universe_label,
+                        "symbols": symbols,
+                        "candidate_count": len(board_candidates),
+                        "failures": [asdict(failure) for failure in failures],
+                        "candidates": [asdict(candidate) for candidate in board_candidates],
+                        "output_file": output_path,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            print_universe_board(
+                label=universe_label,
+                symbols=symbols,
+                board_candidates=board_candidates,
+                failures=failures,
+            )
+            if scan_results:
+                print(f"Stored per-symbol runs: {len(scan_results)}")
+            print(f"Saved {len(board_candidates)} board entries to {output_path}")
 
     history_store.close()
     calendar_resolver.store.close()

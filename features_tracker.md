@@ -80,3 +80,33 @@ Short log of proposed features, why they matter, and the current direction.
 - Direction: save scan results in a structured history and compare post-scan outcomes over fixed review windows
 - V1: persist run metadata and evaluate what happened after 1d, 3d, and expiry
 - Next: extend replay beyond underlying-level outcomes into spread-level mark and expiry analysis
+
+## 7. Universe Scanner Board
+
+- Status: done
+- Priority: high
+- Scope: scanner product
+- Why: scanning one symbol at a time limits the system to manual exploration instead of ranked opportunity discovery
+- Direction: scan a curated symbol set, keep the top candidate per name by default, and rank the board across names
+- V1: `--symbols`, `--symbols-file`, and curated `--universe` presets with board CSV/JSON output
+- Next: add async execution and richer universe presets
+
+## 8. Spread-Level Replay And Exit Engine
+
+- Status: done
+- Priority: high
+- Scope: research / evaluation
+- Why: underlying-only replay misses the spread mark, profit targets, and stop behavior that actually matter
+- Direction: replay stored spreads with option-leg bars and simple exit thresholds
+- V1: entry-day spread marks plus 1d, 3d, and expiry summaries with estimated profit-target and stop-hit tracking
+- Next: add richer exit rules and spread P&L curves over time
+
+## 9. Data Reliability Hardening
+
+- Status: done
+- Priority: high
+- Scope: scanner core
+- Why: candidates should reflect not just market data presence, but whether the data quality is strong enough to trust
+- Direction: add explicit data-policy gates around expected move, fill quality, and source confidence
+- V1: strict and warning modes for expected-move coverage, fill-ratio quality, expected-move cushion, and low-confidence single-name event coverage
+- Next: improve source quality and make the hardening logic more source-aware

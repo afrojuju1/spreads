@@ -42,7 +42,12 @@ class RunHistoryStore:
                 long_symbol TEXT NOT NULL,
                 short_strike REAL NOT NULL,
                 long_strike REAL NOT NULL,
+                width REAL NOT NULL DEFAULT 0,
+                midpoint_credit REAL NOT NULL DEFAULT 0,
+                natural_credit REAL NOT NULL DEFAULT 0,
                 breakeven REAL NOT NULL,
+                max_profit REAL NOT NULL DEFAULT 0,
+                max_loss REAL NOT NULL DEFAULT 0,
                 quality_score REAL NOT NULL,
                 return_on_risk REAL NOT NULL,
                 short_otm_pct REAL NOT NULL,
@@ -61,7 +66,28 @@ class RunHistoryStore:
             ON scan_candidates(run_id);
             """
         )
+        self._ensure_candidate_columns(
+            {
+                "width": "REAL NOT NULL DEFAULT 0",
+                "midpoint_credit": "REAL NOT NULL DEFAULT 0",
+                "natural_credit": "REAL NOT NULL DEFAULT 0",
+                "max_profit": "REAL NOT NULL DEFAULT 0",
+                "max_loss": "REAL NOT NULL DEFAULT 0",
+            }
+        )
         self.connection.commit()
+
+    def _ensure_candidate_columns(self, columns: dict[str, str]) -> None:
+        existing = {
+            row["name"]
+            for row in self.connection.execute("PRAGMA table_info(scan_candidates)").fetchall()
+        }
+        for column, definition in columns.items():
+            if column in existing:
+                continue
+            self.connection.execute(
+                f"ALTER TABLE scan_candidates ADD COLUMN {column} {definition}"
+            )
 
     def save_run(
         self,
@@ -118,7 +144,12 @@ class RunHistoryStore:
                 long_symbol,
                 short_strike,
                 long_strike,
+                width,
+                midpoint_credit,
+                natural_credit,
                 breakeven,
+                max_profit,
+                max_loss,
                 quality_score,
                 return_on_risk,
                 short_otm_pct,
@@ -127,7 +158,7 @@ class RunHistoryStore:
                 expected_move,
                 short_vs_expected_move
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -138,7 +169,12 @@ class RunHistoryStore:
                     candidate.long_symbol,
                     candidate.short_strike,
                     candidate.long_strike,
+                    candidate.width,
+                    candidate.midpoint_credit,
+                    candidate.natural_credit,
                     candidate.breakeven,
+                    candidate.max_profit,
+                    candidate.max_loss,
                     candidate.quality_score,
                     candidate.return_on_risk,
                     candidate.short_otm_pct,
