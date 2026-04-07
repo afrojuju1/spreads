@@ -267,6 +267,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
+        "--session-label",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
         "--replay-latest",
         action="store_true",
         help="Replay the most recent stored run for the selected symbol instead of scanning live.",
@@ -526,6 +530,16 @@ class DailyBar:
 
 
 @dataclass(frozen=True)
+class IntradayBar:
+    timestamp: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+
+
+@dataclass(frozen=True)
 class LiveOptionQuote:
     symbol: str
     bid: float
@@ -573,6 +587,8 @@ class UnderlyingSetupContext:
     status: str
     score: float
     reasons: tuple[str, ...]
+    daily_score: float | None
+    intraday_score: float | None
     spot_vs_sma20_pct: float | None
     sma20_vs_sma50_pct: float | None
     return_5d_pct: float | None
@@ -581,6 +597,14 @@ class UnderlyingSetupContext:
     sma20: float | None
     sma50: float | None
     source_window_days: int
+    spot_vs_vwap_pct: float | None = None
+    intraday_return_pct: float | None = None
+    distance_to_session_extreme_pct: float | None = None
+    opening_range_break_pct: float | None = None
+    vwap: float | None = None
+    opening_range_high: float | None = None
+    opening_range_low: float | None = None
+    source_window_minutes: int | None = None
 
 
 @dataclass(frozen=True)
@@ -873,6 +897,51 @@ class AlpacaClient:
                 continue
             bars.append(
                 DailyBar(
+                    timestamp=str(timestamp),
+                    open=open_price,
+                    high=high_price,
+                    low=low_price,
+                    close=close_price,
+                    volume=volume,
+                )
+            )
+        return bars
+
+    def get_intraday_bars(
+        self,
+        symbol: str,
+        *,
+        start: str,
+        end: str,
+        stock_feed: str,
+        timeframe: str = "1Min",
+    ) -> list[IntradayBar]:
+        payload = self.get_json(
+            self.data_base_url,
+            "/v2/stocks/bars",
+            {
+                "symbols": symbol,
+                "timeframe": timeframe,
+                "start": start,
+                "end": end,
+                "adjustment": "raw",
+                "feed": stock_feed,
+                "limit": 1000,
+            },
+        )
+        bars_payload = payload.get("bars", {})
+        bars: list[IntradayBar] = []
+        for item in bars_payload.get(symbol, []):
+            open_price = parse_float(pick(item, "o", "open"))
+            high_price = parse_float(pick(item, "h", "high"))
+            low_price = parse_float(pick(item, "l", "low"))
+            close_price = parse_float(pick(item, "c", "close"))
+            volume = parse_int(pick(item, "v", "volume"))
+            timestamp = pick(item, "t", "timestamp")
+            if None in (open_price, high_price, low_price, close_price, volume) or not timestamp:
+                continue
+            bars.append(
+                IntradayBar(
                     timestamp=str(timestamp),
                     open=open_price,
                     high=high_price,
@@ -1284,7 +1353,26 @@ def caution_note(message: str) -> str:
     return f"Caution: {message}"
 
 
-def analyze_underlying_setup(
+def setup_status_from_score(score: float) -> str:
+    if score >= 60:
+        return "favorable"
+    if score >= 40:
+        return "neutral"
+    return "unfavorable"
+
+
+def dedupe_reasons(reasons: list[str]) -> tuple[str, ...]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for reason in reasons:
+        if reason in seen:
+            continue
+        seen.add(reason)
+        deduped.append(reason)
+    return tuple(deduped)
+
+
+def analyze_daily_setup(
     symbol: str,
     spot_price: float,
     bars: list[DailyBar],
@@ -1297,6 +1385,8 @@ def analyze_underlying_setup(
             status="unknown",
             score=0.0,
             reasons=("Not enough daily-bar history for setup analysis",),
+            daily_score=0.0,
+            intraday_score=None,
             spot_vs_sma20_pct=None,
             sma20_vs_sma50_pct=None,
             return_5d_pct=None,
@@ -1393,24 +1483,20 @@ def analyze_underlying_setup(
             elif distance_to_20d_extreme_pct > 0.03:
                 reasons.append(supportive_note("spot has room below the recent 20-day high"))
 
-    if score >= 60:
-        status = "favorable"
-    elif score >= 40:
-        status = "neutral"
-    else:
-        status = "unfavorable"
-
+    status = setup_status_from_score(score)
     if not reasons:
         if strategy == "put_credit":
-            reasons.append(f"{symbol} setup is {status} for bullish or neutral premium selling")
+            reasons.append(f"{symbol} daily setup is {status} for bullish or neutral premium selling")
         else:
-            reasons.append(f"{symbol} setup is {status} for bearish or neutral premium selling")
+            reasons.append(f"{symbol} daily setup is {status} for bearish or neutral premium selling")
 
     return UnderlyingSetupContext(
         strategy=strategy,
         status=status,
         score=score,
         reasons=tuple(reasons),
+        daily_score=score,
+        intraday_score=None,
         spot_vs_sma20_pct=spot_vs_sma20_pct,
         sma20_vs_sma50_pct=sma20_vs_sma50_pct,
         return_5d_pct=return_5d_pct,
@@ -1420,6 +1506,207 @@ def analyze_underlying_setup(
         sma50=sma50,
         source_window_days=len(bars),
     )
+
+
+def analyze_intraday_setup(
+    symbol: str,
+    spot_price: float,
+    bars: list[IntradayBar],
+    *,
+    strategy: str,
+) -> UnderlyingSetupContext | None:
+    if len(bars) < 5:
+        return None
+
+    open_price = bars[0].open
+    if open_price <= 0:
+        return None
+
+    session_high = max(bar.high for bar in bars)
+    session_low = min(bar.low for bar in bars)
+    weighted_prices = [
+        ((bar.high + bar.low + bar.close) / 3.0) * max(bar.volume, 1)
+        for bar in bars
+    ]
+    total_volume = sum(max(bar.volume, 1) for bar in bars)
+    vwap = None if total_volume <= 0 else sum(weighted_prices) / total_volume
+    spot_vs_vwap_pct = None if vwap in (None, 0) else (spot_price - vwap) / vwap
+    intraday_return_pct = (spot_price / open_price - 1.0) if open_price > 0 else None
+    opening_range_window = bars[: min(30, len(bars))]
+    opening_range_high = max(bar.high for bar in opening_range_window)
+    opening_range_low = min(bar.low for bar in opening_range_window)
+    if strategy == "put_credit":
+        distance_to_session_extreme_pct = (spot_price - session_low) / spot_price if spot_price > 0 else None
+        opening_range_break_pct = (spot_price - opening_range_high) / spot_price if spot_price > 0 else None
+        vwap_score = 0.5 if spot_vs_vwap_pct is None else clamp(0.5 + (spot_vs_vwap_pct / 0.01))
+        opening_range_score = 0.5 if opening_range_break_pct is None else clamp(0.55 + (opening_range_break_pct / 0.01))
+        momentum_score = 0.5 if intraday_return_pct is None else clamp(0.5 + (intraday_return_pct / 0.015))
+        extreme_score = (
+            0.5 if distance_to_session_extreme_pct is None else clamp(distance_to_session_extreme_pct / 0.012)
+        )
+    else:
+        distance_to_session_extreme_pct = (session_high - spot_price) / spot_price if spot_price > 0 else None
+        opening_range_break_pct = (opening_range_low - spot_price) / spot_price if spot_price > 0 else None
+        vwap_score = 0.5 if spot_vs_vwap_pct is None else clamp(0.5 - (spot_vs_vwap_pct / 0.01))
+        opening_range_score = 0.5 if opening_range_break_pct is None else clamp(0.55 + (opening_range_break_pct / 0.01))
+        momentum_score = 0.5 if intraday_return_pct is None else clamp(0.5 - (intraday_return_pct / 0.015))
+        extreme_score = (
+            0.5 if distance_to_session_extreme_pct is None else clamp(distance_to_session_extreme_pct / 0.012)
+        )
+
+    score = round(
+        100.0
+        * (
+            0.35 * vwap_score
+            + 0.25 * opening_range_score
+            + 0.20 * momentum_score
+            + 0.20 * extreme_score
+        ),
+        1,
+    )
+    status = setup_status_from_score(score)
+
+    reasons: list[str] = []
+    if strategy == "put_credit":
+        if spot_vs_vwap_pct is not None:
+            if spot_vs_vwap_pct > 0.0015:
+                reasons.append(supportive_note("spot is holding above VWAP"))
+            elif spot_vs_vwap_pct < -0.0015:
+                reasons.append(caution_note("spot is trading below VWAP"))
+        if opening_range_break_pct is not None:
+            if opening_range_break_pct > 0.001:
+                reasons.append(supportive_note("spot is above the opening range high"))
+            elif spot_price < opening_range_low:
+                reasons.append(caution_note("spot has broken below the opening range low"))
+        if intraday_return_pct is not None:
+            if intraday_return_pct > 0.004:
+                reasons.append(supportive_note("intraday trend is positive"))
+            elif intraday_return_pct < -0.004:
+                reasons.append(caution_note("intraday trend is negative"))
+        if distance_to_session_extreme_pct is not None:
+            if distance_to_session_extreme_pct < 0.003:
+                reasons.append(caution_note("spot is trading near the session low"))
+            elif distance_to_session_extreme_pct > 0.008:
+                reasons.append(supportive_note("spot has room above the session low"))
+    else:
+        if spot_vs_vwap_pct is not None:
+            if spot_vs_vwap_pct < -0.0015:
+                reasons.append(supportive_note("spot is holding below VWAP"))
+            elif spot_vs_vwap_pct > 0.0015:
+                reasons.append(caution_note("spot is trading above VWAP"))
+        if opening_range_break_pct is not None:
+            if opening_range_break_pct > 0.001:
+                reasons.append(supportive_note("spot is below the opening range low"))
+            elif spot_price > opening_range_high:
+                reasons.append(caution_note("spot has broken above the opening range high"))
+        if intraday_return_pct is not None:
+            if intraday_return_pct < -0.004:
+                reasons.append(supportive_note("intraday trend is negative"))
+            elif intraday_return_pct > 0.004:
+                reasons.append(caution_note("intraday trend is positive"))
+        if distance_to_session_extreme_pct is not None:
+            if distance_to_session_extreme_pct < 0.003:
+                reasons.append(caution_note("spot is trading near the session high"))
+            elif distance_to_session_extreme_pct > 0.008:
+                reasons.append(supportive_note("spot has room below the session high"))
+
+    if not reasons:
+        if strategy == "put_credit":
+            reasons.append(f"{symbol} intraday setup is {status} for bullish or neutral premium selling")
+        else:
+            reasons.append(f"{symbol} intraday setup is {status} for bearish or neutral premium selling")
+
+    return UnderlyingSetupContext(
+        strategy=strategy,
+        status=status,
+        score=score,
+        reasons=tuple(reasons),
+        daily_score=None,
+        intraday_score=score,
+        spot_vs_sma20_pct=None,
+        sma20_vs_sma50_pct=None,
+        return_5d_pct=None,
+        distance_to_20d_extreme_pct=None,
+        latest_close=bars[-1].close,
+        sma20=None,
+        sma50=None,
+        source_window_days=0,
+        spot_vs_vwap_pct=spot_vs_vwap_pct,
+        intraday_return_pct=intraday_return_pct,
+        distance_to_session_extreme_pct=distance_to_session_extreme_pct,
+        opening_range_break_pct=opening_range_break_pct,
+        vwap=vwap,
+        opening_range_high=opening_range_high,
+        opening_range_low=opening_range_low,
+        source_window_minutes=len(bars),
+    )
+
+
+def combine_setup_contexts(
+    daily_setup: UnderlyingSetupContext,
+    intraday_setup: UnderlyingSetupContext | None,
+    *,
+    profile: str,
+    strategy: str,
+) -> UnderlyingSetupContext:
+    if intraday_setup is None:
+        return daily_setup
+
+    intraday_weight = {
+        "0dte": 0.65,
+        "micro": 0.50,
+        "weekly": 0.35,
+        "swing": 0.20,
+        "core": 0.10,
+    }.get(profile, 0.10)
+    if daily_setup.status == "unknown":
+        intraday_weight = 1.0
+    daily_weight = 1.0 - intraday_weight
+    blended_score = round((daily_setup.score * daily_weight) + (intraday_setup.score * intraday_weight), 1)
+    blended_status = setup_status_from_score(blended_score)
+
+    ordered_reasons = list(intraday_setup.reasons[:4]) + list(daily_setup.reasons[:3])
+    if not ordered_reasons:
+        ordered_reasons.append(f"Combined setup is {blended_status} for {strategy}")
+
+    return UnderlyingSetupContext(
+        strategy=strategy,
+        status=blended_status,
+        score=blended_score,
+        reasons=dedupe_reasons(ordered_reasons),
+        daily_score=daily_setup.score,
+        intraday_score=intraday_setup.score,
+        spot_vs_sma20_pct=daily_setup.spot_vs_sma20_pct,
+        sma20_vs_sma50_pct=daily_setup.sma20_vs_sma50_pct,
+        return_5d_pct=daily_setup.return_5d_pct,
+        distance_to_20d_extreme_pct=daily_setup.distance_to_20d_extreme_pct,
+        latest_close=intraday_setup.latest_close or daily_setup.latest_close,
+        sma20=daily_setup.sma20,
+        sma50=daily_setup.sma50,
+        source_window_days=daily_setup.source_window_days,
+        spot_vs_vwap_pct=intraday_setup.spot_vs_vwap_pct,
+        intraday_return_pct=intraday_setup.intraday_return_pct,
+        distance_to_session_extreme_pct=intraday_setup.distance_to_session_extreme_pct,
+        opening_range_break_pct=intraday_setup.opening_range_break_pct,
+        vwap=intraday_setup.vwap,
+        opening_range_high=intraday_setup.opening_range_high,
+        opening_range_low=intraday_setup.opening_range_low,
+        source_window_minutes=intraday_setup.source_window_minutes,
+    )
+
+
+def analyze_underlying_setup(
+    symbol: str,
+    spot_price: float,
+    daily_bars: list[DailyBar],
+    *,
+    strategy: str,
+    profile: str,
+    intraday_bars: list[IntradayBar] | None = None,
+) -> UnderlyingSetupContext:
+    daily_setup = analyze_daily_setup(symbol, spot_price, daily_bars, strategy=strategy)
+    intraday_setup = analyze_intraday_setup(symbol, spot_price, intraday_bars or [], strategy=strategy)
+    return combine_setup_contexts(daily_setup, intraday_setup, profile=profile, strategy=strategy)
 
 
 def attach_underlying_setup(
@@ -1584,6 +1871,7 @@ def build_filter_payload(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "strategy": args.strategy,
         "profile": args.profile,
+        "session_label": getattr(args, "session_label", None),
         "greeks_source": args.greeks_source,
         "session_bucket": zero_dte_session_bucket() if args.profile == "0dte" else None,
         "min_dte": args.min_dte,
@@ -2244,6 +2532,14 @@ def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
             writer.writerow(row)
 
 
+def serialize_setup_context(setup: UnderlyingSetupContext | None) -> dict[str, Any] | None:
+    if setup is None:
+        return None
+    payload = asdict(setup)
+    payload["reasons"] = list(setup.reasons)
+    return payload
+
+
 def write_json(
     path: str,
     symbol: str,
@@ -2261,18 +2557,7 @@ def write_json(
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "run_id": run_id,
         "filters": build_filter_payload(args),
-        "setup": None
-        if setup is None
-        else {
-            "strategy": setup.strategy,
-            "status": setup.status,
-            "score": setup.score,
-            "reasons": list(setup.reasons),
-            "spot_vs_sma20_pct": setup.spot_vs_sma20_pct,
-            "sma20_vs_sma50_pct": setup.sma20_vs_sma50_pct,
-            "return_5d_pct": setup.return_5d_pct,
-            "distance_to_20d_extreme_pct": setup.distance_to_20d_extreme_pct,
-        },
+        "setup": serialize_setup_context(setup),
         "candidates": [asdict(candidate) for candidate in candidates],
     }
     with open(path, "w", encoding="utf-8") as handle:
@@ -3113,7 +3398,26 @@ def scan_symbol_live(
             end=date.today().isoformat(),
             stock_feed=symbol_args.stock_feed,
         )
-        setup_context = analyze_underlying_setup(symbol, spot_price, daily_bars, strategy=symbol_args.strategy)
+        intraday_bars: list[IntradayBar] = []
+        try:
+            session_start = datetime.combine(date.today(), time(9, 30), tzinfo=NEW_YORK).astimezone(UTC)
+            session_end = datetime.now(UTC)
+            intraday_bars = client.get_intraday_bars(
+                symbol,
+                start=session_start.isoformat(),
+                end=session_end.isoformat(),
+                stock_feed=symbol_args.stock_feed,
+            )
+        except Exception:
+            intraday_bars = []
+        setup_context = analyze_underlying_setup(
+            symbol,
+            spot_price,
+            daily_bars,
+            strategy=symbol_args.strategy,
+            profile=symbol_args.profile,
+            intraday_bars=intraday_bars,
+        )
 
     call_contracts = client.list_option_contracts(symbol, min_expiration, max_expiration, option_type="call")
     put_contracts = client.list_option_contracts(symbol, min_expiration, max_expiration, option_type="put")
@@ -3215,12 +3519,14 @@ def scan_symbol_live(
         generated_at=generated_at,
         symbol=symbol,
         strategy=symbol_args.strategy,
+        session_label=getattr(symbol_args, "session_label", None),
         profile=symbol_args.profile,
         spot_price=spot_price,
         output_path="",
         filters=build_filter_payload(symbol_args),
         setup_status=None if setup_context is None else setup_context.status,
         setup_score=None if setup_context is None else setup_context.score,
+        setup_payload=serialize_setup_context(setup_context),
         candidates=all_candidates,
     )
 

@@ -26,13 +26,15 @@ class RunHistoryStore:
                 generated_at TEXT NOT NULL,
                 symbol TEXT NOT NULL,
                 strategy TEXT NOT NULL DEFAULT 'call_credit',
+                session_label TEXT,
                 profile TEXT NOT NULL,
                 spot_price REAL NOT NULL,
                 candidate_count INTEGER NOT NULL,
                 output_path TEXT,
                 filters_json TEXT NOT NULL,
                 setup_status TEXT,
-                setup_score REAL
+                setup_score REAL,
+                setup_json TEXT
             );
 
             CREATE TABLE IF NOT EXISTS scan_candidates (
@@ -96,6 +98,8 @@ class RunHistoryStore:
         self._ensure_run_columns(
             {
                 "strategy": "TEXT NOT NULL DEFAULT 'call_credit'",
+                "session_label": "TEXT",
+                "setup_json": "TEXT",
             }
         )
         self._ensure_candidate_columns(
@@ -149,12 +153,14 @@ class RunHistoryStore:
         generated_at: str,
         symbol: str,
         strategy: str,
+        session_label: str | None,
         profile: str,
         spot_price: float,
         output_path: str,
         filters: dict[str, Any],
         setup_status: str | None,
         setup_score: float | None,
+        setup_payload: dict[str, Any] | None,
         candidates: list[Any],
     ) -> None:
         cursor = self.connection.cursor()
@@ -165,21 +171,24 @@ class RunHistoryStore:
                 generated_at,
                 symbol,
                 strategy,
+                session_label,
                 profile,
                 spot_price,
                 candidate_count,
                 output_path,
                 filters_json,
                 setup_status,
-                setup_score
+                setup_score,
+                setup_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
                 generated_at,
                 symbol,
                 strategy,
+                session_label,
                 profile,
                 spot_price,
                 len(candidates),
@@ -187,6 +196,7 @@ class RunHistoryStore:
                 json.dumps(filters, separators=(",", ":")),
                 setup_status,
                 setup_score,
+                None if setup_payload is None else json.dumps(setup_payload, separators=(",", ":")),
             ),
         )
         cursor.execute("DELETE FROM scan_candidates WHERE run_id = ?", (run_id,))
@@ -255,6 +265,8 @@ class RunHistoryStore:
             return None
         payload = dict(row)
         payload["filters"] = json.loads(payload.pop("filters_json"))
+        setup_json = payload.get("setup_json")
+        payload["setup"] = None if not setup_json else json.loads(setup_json)
         return payload
 
     def get_latest_run(self, symbol: str, strategy: str | None = None) -> dict[str, Any] | None:
@@ -278,6 +290,8 @@ class RunHistoryStore:
             return None
         payload = dict(row)
         payload["filters"] = json.loads(payload.pop("filters_json"))
+        setup_json = payload.get("setup_json")
+        payload["setup"] = None if not setup_json else json.loads(setup_json)
         return payload
 
     def list_candidates(self, run_id: str) -> list[dict[str, Any]]:

@@ -143,6 +143,7 @@ def run_universe_cycle(
     history_store: RunHistoryStore,
 ) -> tuple[list[str], str, list[SymbolScanResult], list[UniverseScanFailure], list[SpreadCandidate]]:
     symbols, universe_label = resolve_symbols(scanner_args)
+    scanner_args.session_label = snapshot_label(universe_label, scanner_args)
     scan_results: list[SymbolScanResult] = []
     failures: list[UniverseScanFailure] = []
     board_candidates: list[SpreadCandidate] = []
