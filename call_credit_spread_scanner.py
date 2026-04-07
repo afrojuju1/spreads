@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scan Alpaca option chains for call credit spread candidates.
+"""Scan Alpaca option chains for credit spread candidates.
 
 Usage:
     uv run call_credit_spread_scanner.py --symbol SPY
@@ -11,7 +11,7 @@ Required environment variables:
 Notes:
     - Uses Alpaca's Trading API for option contract metadata.
     - Uses Alpaca's Market Data API for underlying price and option chain snapshots.
-    - Ranks same-expiration bear call spreads using simple liquidity/risk filters.
+    - Supports call credit and put credit spreads with shared ranking/replay logic.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from zoneinfo import ZoneInfo
 
 from calendar_events import build_calendar_event_resolver, classify_underlying_type
 from calendar_events.models import CalendarPolicyDecision
-from calendar_events.policy import apply_call_credit_spread_policy
+from calendar_events.policy import apply_credit_spread_policy
 from scanner_history import DEFAULT_HISTORY_DB_PATH, RunHistoryStore
 
 
@@ -63,7 +63,7 @@ UNIVERSE_PRESETS: dict[str, tuple[str, ...]] = {
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Find call credit spread candidates for a single underlying using Alpaca."
+        description="Find credit spread candidates for one symbol or a ranked universe board using Alpaca."
     )
     parser.add_argument("--symbol", help="Scan a single underlying.")
     parser.add_argument(
@@ -78,6 +78,12 @@ def parse_args() -> argparse.Namespace:
         "--universe",
         choices=tuple(sorted(UNIVERSE_PRESETS)),
         help="Use a curated symbol preset for multi-symbol scanning.",
+    )
+    parser.add_argument(
+        "--strategy",
+        default="call_credit",
+        choices=("call_credit", "put_credit", "combined"),
+        help="Credit spread strategy. Use combined to evaluate both call and put credit spreads. Default: call_credit",
     )
     parser.add_argument(
         "--profile",
@@ -176,7 +182,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output",
-        help="Output file path. Default: outputs/call_credit_spreads/<symbol>_<timestamp>.csv",
+        help="Output file path. Default: strategy-specific outputs directory",
     )
     parser.add_argument(
         "--output-format",
@@ -322,6 +328,20 @@ def resolve_symbols(args: argparse.Namespace) -> tuple[list[str], str]:
     return deduped, label
 
 
+def concrete_strategies(strategy: str) -> tuple[str, ...]:
+    if strategy == "combined":
+        return ("call_credit", "put_credit")
+    return (strategy,)
+
+
+def strategy_display_label(strategy: str) -> str:
+    return {
+        "call_credit": "Call",
+        "put_credit": "Put",
+        "combined": "Combined",
+    }.get(strategy, strategy)
+
+
 def env_or_die(*names: str) -> str:
     for name in names:
         value = os.environ.get(name)
@@ -465,13 +485,14 @@ class ExpectedMoveEstimate:
 
 @dataclass(frozen=True)
 class UnderlyingSetupContext:
+    strategy: str
     status: str
     score: float
     reasons: tuple[str, ...]
     spot_vs_sma20_pct: float | None
     sma20_vs_sma50_pct: float | None
     return_5d_pct: float | None
-    distance_to_20d_high_pct: float | None
+    distance_to_20d_extreme_pct: float | None
     latest_close: float | None
     sma20: float | None
     sma50: float | None
@@ -481,6 +502,7 @@ class UnderlyingSetupContext:
 @dataclass(frozen=True)
 class SpreadCandidate:
     underlying_symbol: str
+    strategy: str
     profile: str
     expiration_date: str
     days_to_expiration: int
@@ -549,6 +571,17 @@ class SymbolScanResult:
 class UniverseScanFailure:
     symbol: str
     error: str
+
+
+def build_setup_summaries(results: list[SymbolScanResult]) -> tuple[str, ...]:
+    summaries: list[str] = []
+    for result in results:
+        if result.setup is None:
+            continue
+        summaries.append(
+            f"{result.args.strategy} {result.setup.status} ({result.setup.score:.1f})"
+        )
+    return tuple(summaries)
 
 
 PROFILE_CONFIGS: dict[str, ProfileConfig] = {
@@ -994,16 +1027,31 @@ def average(values: list[float]) -> float | None:
     return sum(values) / len(values)
 
 
-def analyze_underlying_setup(symbol: str, spot_price: float, bars: list[DailyBar]) -> UnderlyingSetupContext:
+def supportive_note(message: str) -> str:
+    return f"Supportive: {message}"
+
+
+def caution_note(message: str) -> str:
+    return f"Caution: {message}"
+
+
+def analyze_underlying_setup(
+    symbol: str,
+    spot_price: float,
+    bars: list[DailyBar],
+    *,
+    strategy: str,
+) -> UnderlyingSetupContext:
     if len(bars) < 20:
         return UnderlyingSetupContext(
+            strategy=strategy,
             status="unknown",
             score=0.0,
             reasons=("Not enough daily-bar history for setup analysis",),
             spot_vs_sma20_pct=None,
             sma20_vs_sma50_pct=None,
             return_5d_pct=None,
-            distance_to_20d_high_pct=None,
+            distance_to_20d_extreme_pct=None,
             latest_close=bars[-1].close if bars else None,
             sma20=None,
             sma50=None,
@@ -1012,6 +1060,7 @@ def analyze_underlying_setup(symbol: str, spot_price: float, bars: list[DailyBar
 
     closes = [bar.close for bar in bars]
     highs = [bar.high for bar in bars]
+    lows = [bar.low for bar in bars]
     sma20 = average(closes[-20:])
     sma50 = average(closes[-50:]) if len(closes) >= 50 else None
     latest_close = closes[-1]
@@ -1019,16 +1068,26 @@ def analyze_underlying_setup(symbol: str, spot_price: float, bars: list[DailyBar
     if len(closes) >= 6 and closes[-6] > 0:
         return_5d_pct = latest_close / closes[-6] - 1.0
     high_20 = max(highs[-20:])
-    distance_to_20d_high_pct = (high_20 - spot_price) / spot_price if spot_price > 0 else None
+    low_20 = min(lows[-20:])
     spot_vs_sma20_pct = ((spot_price - sma20) / sma20) if sma20 else None
     sma20_vs_sma50_pct = ((sma20 - sma50) / sma50) if sma20 and sma50 else None
 
-    price_vs_sma20_score = 0.5 if spot_vs_sma20_pct is None else clamp(0.5 - (spot_vs_sma20_pct / 0.08))
-    trend_score = 0.5 if sma20_vs_sma50_pct is None else clamp(0.5 - (sma20_vs_sma50_pct / 0.06))
-    momentum_score = 0.5 if return_5d_pct is None else clamp(0.55 - (return_5d_pct / 0.08))
-    high_distance_score = (
-        0.5 if distance_to_20d_high_pct is None else clamp(distance_to_20d_high_pct / 0.04)
-    )
+    if strategy == "put_credit":
+        distance_to_20d_extreme_pct = (spot_price - low_20) / spot_price if spot_price > 0 else None
+        price_vs_sma20_score = 0.5 if spot_vs_sma20_pct is None else clamp(0.5 + (spot_vs_sma20_pct / 0.08))
+        trend_score = 0.5 if sma20_vs_sma50_pct is None else clamp(0.5 + (sma20_vs_sma50_pct / 0.06))
+        momentum_score = 0.5 if return_5d_pct is None else clamp(0.45 + (return_5d_pct / 0.08))
+        extreme_distance_score = (
+            0.5 if distance_to_20d_extreme_pct is None else clamp(distance_to_20d_extreme_pct / 0.04)
+        )
+    else:
+        distance_to_20d_extreme_pct = (high_20 - spot_price) / spot_price if spot_price > 0 else None
+        price_vs_sma20_score = 0.5 if spot_vs_sma20_pct is None else clamp(0.5 - (spot_vs_sma20_pct / 0.08))
+        trend_score = 0.5 if sma20_vs_sma50_pct is None else clamp(0.5 - (sma20_vs_sma50_pct / 0.06))
+        momentum_score = 0.5 if return_5d_pct is None else clamp(0.55 - (return_5d_pct / 0.08))
+        extreme_distance_score = (
+            0.5 if distance_to_20d_extreme_pct is None else clamp(distance_to_20d_extreme_pct / 0.04)
+        )
 
     score = round(
         100.0
@@ -1036,32 +1095,54 @@ def analyze_underlying_setup(symbol: str, spot_price: float, bars: list[DailyBar
             0.35 * price_vs_sma20_score
             + 0.25 * trend_score
             + 0.20 * momentum_score
-            + 0.20 * high_distance_score
+            + 0.20 * extreme_distance_score
         ),
         1,
     )
 
     reasons: list[str] = []
-    if spot_vs_sma20_pct is not None:
-        if spot_vs_sma20_pct > 0.02:
-            reasons.append("Spot is extended above the 20-day average")
-        elif spot_vs_sma20_pct < -0.01:
-            reasons.append("Spot is trading below the 20-day average")
-    if sma20_vs_sma50_pct is not None:
-        if sma20_vs_sma50_pct > 0.015:
-            reasons.append("20-day average is leading the 50-day average higher")
-        elif sma20_vs_sma50_pct < -0.01:
-            reasons.append("20-day average is below the 50-day average")
-    if return_5d_pct is not None:
-        if return_5d_pct > 0.03:
-            reasons.append("Recent 5-day momentum is strongly positive")
-        elif return_5d_pct < -0.02:
-            reasons.append("Recent 5-day momentum is weak to negative")
-    if distance_to_20d_high_pct is not None:
-        if distance_to_20d_high_pct < 0.01:
-            reasons.append("Spot is trading near the 20-day high")
-        elif distance_to_20d_high_pct > 0.03:
-            reasons.append("Spot has room below the recent 20-day high")
+    if strategy == "put_credit":
+        if spot_vs_sma20_pct is not None:
+            if spot_vs_sma20_pct > 0.02:
+                reasons.append(supportive_note("spot is extended above the 20-day average"))
+            elif spot_vs_sma20_pct < -0.01:
+                reasons.append(caution_note("spot is trading below the 20-day average"))
+        if sma20_vs_sma50_pct is not None:
+            if sma20_vs_sma50_pct > 0.015:
+                reasons.append(supportive_note("20-day average is above the 50-day average"))
+            elif sma20_vs_sma50_pct < -0.01:
+                reasons.append(caution_note("20-day average is below the 50-day average"))
+        if return_5d_pct is not None:
+            if return_5d_pct > 0.03:
+                reasons.append(supportive_note("recent 5-day momentum is strongly positive"))
+            elif return_5d_pct < -0.02:
+                reasons.append(caution_note("recent 5-day momentum is weak to negative"))
+        if distance_to_20d_extreme_pct is not None:
+            if distance_to_20d_extreme_pct < 0.01:
+                reasons.append(caution_note("spot is trading near the 20-day low"))
+            elif distance_to_20d_extreme_pct > 0.03:
+                reasons.append(supportive_note("spot has room above the recent 20-day low"))
+    else:
+        if spot_vs_sma20_pct is not None:
+            if spot_vs_sma20_pct > 0.02:
+                reasons.append(supportive_note("spot is extended above the 20-day average"))
+            elif spot_vs_sma20_pct < -0.01:
+                reasons.append(caution_note("spot is trading below the 20-day average"))
+        if sma20_vs_sma50_pct is not None:
+            if sma20_vs_sma50_pct > 0.015:
+                reasons.append(caution_note("20-day average is leading the 50-day average higher"))
+            elif sma20_vs_sma50_pct < -0.01:
+                reasons.append(supportive_note("20-day average is below the 50-day average"))
+        if return_5d_pct is not None:
+            if return_5d_pct > 0.03:
+                reasons.append(caution_note("recent 5-day momentum is strongly positive"))
+            elif return_5d_pct < -0.02:
+                reasons.append(supportive_note("recent 5-day momentum is weak to negative"))
+        if distance_to_20d_extreme_pct is not None:
+            if distance_to_20d_extreme_pct < 0.01:
+                reasons.append(caution_note("spot is trading near the 20-day high"))
+            elif distance_to_20d_extreme_pct > 0.03:
+                reasons.append(supportive_note("spot has room below the recent 20-day high"))
 
     if score >= 60:
         status = "favorable"
@@ -1071,16 +1152,20 @@ def analyze_underlying_setup(symbol: str, spot_price: float, bars: list[DailyBar
         status = "unfavorable"
 
     if not reasons:
-        reasons.append(f"{symbol} setup is {status} for bearish or neutral premium selling")
+        if strategy == "put_credit":
+            reasons.append(f"{symbol} setup is {status} for bullish or neutral premium selling")
+        else:
+            reasons.append(f"{symbol} setup is {status} for bearish or neutral premium selling")
 
     return UnderlyingSetupContext(
+        strategy=strategy,
         status=status,
         score=score,
         reasons=tuple(reasons),
         spot_vs_sma20_pct=spot_vs_sma20_pct,
         sma20_vs_sma50_pct=sma20_vs_sma50_pct,
         return_5d_pct=return_5d_pct,
-        distance_to_20d_high_pct=distance_to_20d_high_pct,
+        distance_to_20d_extreme_pct=distance_to_20d_extreme_pct,
         latest_close=latest_close,
         sma20=sma20,
         sma50=sma50,
@@ -1189,7 +1274,7 @@ def attach_data_quality(
 
 def build_board_notes(candidate: SpreadCandidate, args: argparse.Namespace) -> tuple[str, ...]:
     notes: list[str] = []
-    if candidate.short_delta is not None and abs(candidate.short_delta - args.short_delta_target) <= 0.02:
+    if candidate.short_delta is not None and abs(abs(candidate.short_delta) - args.short_delta_target) <= 0.02:
         notes.append("delta-fit")
     if candidate.expected_move and candidate.short_vs_expected_move is not None:
         if candidate.short_vs_expected_move >= 0:
@@ -1233,12 +1318,13 @@ def deduplicate_candidates(candidates: list[SpreadCandidate], expand_duplicates:
     return deduplicated
 
 
-def build_run_id(symbol: str, profile: str) -> str:
-    return f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}_{symbol.lower()}_{profile}"
+def build_run_id(symbol: str, strategy: str, profile: str) -> str:
+    return f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}_{symbol.lower()}_{strategy}_{profile}"
 
 
 def build_filter_payload(args: argparse.Namespace) -> dict[str, Any]:
     return {
+        "strategy": args.strategy,
         "profile": args.profile,
         "min_dte": args.min_dte,
         "max_dte": args.max_dte,
@@ -1326,15 +1412,20 @@ def infer_trading_base_url(key_id: str, explicit_base_url: str | None) -> str:
     return DEFAULT_TRADING_BASE_URL
 
 
-def default_output_path(symbol: str, output_format: str) -> str:
+def default_output_path(symbol: str, strategy: str, output_format: str) -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return str(Path("outputs") / "call_credit_spreads" / f"{symbol.lower()}_{timestamp}.{output_format}")
+    directory = {
+        "call_credit": "call_credit_spreads",
+        "put_credit": "put_credit_spreads",
+        "combined": "combined_credit_spreads",
+    }.get(strategy, "call_credit_spreads")
+    return str(Path("outputs") / directory / f"{symbol.lower()}_{timestamp}.{output_format}")
 
 
-def default_universe_output_path(label: str, output_format: str) -> str:
+def default_universe_output_path(label: str, strategy: str, output_format: str) -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_label = label.lower().replace(" ", "_")
-    return str(Path("outputs") / "universe_boards" / f"{safe_label}_{timestamp}.{output_format}")
+    return str(Path("outputs") / "universe_boards" / f"{safe_label}_{strategy}_{timestamp}.{output_format}")
 
 
 def write_latest_copy(output_path: str, latest_name: str) -> str:
@@ -1348,9 +1439,10 @@ def option_expiry_close(expiration_date: str) -> datetime:
     return local_close.astimezone(UTC)
 
 
-def build_call_credit_spreads(
+def build_credit_spreads(
     *,
     symbol: str,
+    strategy: str,
     spot_price: float,
     contracts_by_expiration: dict[str, list[OptionContract]],
     snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
@@ -1365,12 +1457,18 @@ def build_call_credit_spreads(
         expected_move = expected_moves_by_expiration.get(expiration_date)
         days_to_expiration = days_from_today(expiration_date)
 
-        for short_contract in sorted_contracts:
+        short_contracts = sorted_contracts if strategy == "call_credit" else list(reversed(sorted_contracts))
+
+        for short_contract in short_contracts:
             short_snapshot = snapshot_map.get(short_contract.symbol)
             if not short_snapshot:
                 continue
-            if short_contract.strike_price <= spot_price:
-                continue
+            if strategy == "call_credit":
+                if short_contract.strike_price <= spot_price:
+                    continue
+            else:
+                if short_contract.strike_price >= spot_price:
+                    continue
             if short_contract.open_interest < args.min_open_interest:
                 continue
             short_leg_relative_spread = relative_spread(short_snapshot)
@@ -1380,17 +1478,30 @@ def build_call_credit_spreads(
                 continue
             if short_snapshot.delta is None:
                 continue
-            if not (args.short_delta_min <= short_snapshot.delta <= args.short_delta_max):
+            short_delta_magnitude = abs(short_snapshot.delta)
+            if not (args.short_delta_min <= short_delta_magnitude <= args.short_delta_max):
                 continue
 
-            for long_contract in sorted_contracts:
-                if long_contract.strike_price <= short_contract.strike_price:
-                    continue
+            if strategy == "call_credit":
+                long_contract_iterable = sorted_contracts
+            else:
+                short_index = sorted_contracts.index(short_contract)
+                long_contract_iterable = reversed(sorted_contracts[:short_index])
 
-                width = long_contract.strike_price - short_contract.strike_price
+            for long_contract in long_contract_iterable:
+                if strategy == "call_credit":
+                    if long_contract.strike_price <= short_contract.strike_price:
+                        continue
+                    width = long_contract.strike_price - short_contract.strike_price
+                else:
+                    if long_contract.strike_price >= short_contract.strike_price:
+                        continue
+                    width = short_contract.strike_price - long_contract.strike_price
                 if width < args.min_width:
                     continue
                 if width > args.max_width:
+                    if strategy == "call_credit":
+                        break
                     break
 
                 long_snapshot = snapshot_map.get(long_contract.symbol)
@@ -1422,7 +1533,12 @@ def build_call_credit_spreads(
                 if return_on_risk < args.min_return_on_risk:
                     continue
 
-                breakeven = short_contract.strike_price + midpoint_credit
+                if strategy == "call_credit":
+                    breakeven = short_contract.strike_price + midpoint_credit
+                    short_otm_pct = (short_contract.strike_price - spot_price) / spot_price
+                else:
+                    breakeven = short_contract.strike_price - midpoint_credit
+                    short_otm_pct = (spot_price - short_contract.strike_price) / spot_price
                 fill_ratio = clamp(natural_credit / midpoint_credit, 0.0, 1.25)
                 short_vs_expected_move = None
                 breakeven_vs_expected_move = None
@@ -1433,13 +1549,19 @@ def build_call_credit_spreads(
                     expected_move_amount = expected_move.amount
                     expected_move_pct = expected_move.percent_of_spot
                     expected_move_source_strike = expected_move.reference_strike
-                    expected_move_ceiling = spot_price + expected_move.amount
-                    short_vs_expected_move = short_contract.strike_price - expected_move_ceiling
-                    breakeven_vs_expected_move = breakeven - expected_move_ceiling
+                    if strategy == "call_credit":
+                        expected_move_boundary = spot_price + expected_move.amount
+                        short_vs_expected_move = short_contract.strike_price - expected_move_boundary
+                        breakeven_vs_expected_move = breakeven - expected_move_boundary
+                    else:
+                        expected_move_boundary = spot_price - expected_move.amount
+                        short_vs_expected_move = expected_move_boundary - short_contract.strike_price
+                        breakeven_vs_expected_move = expected_move_boundary - breakeven
 
                 candidates.append(
                     SpreadCandidate(
                         underlying_symbol=symbol,
+                        strategy=strategy,
                         profile=args.profile,
                         expiration_date=expiration_date,
                         days_to_expiration=days_to_expiration,
@@ -1463,8 +1585,12 @@ def build_call_credit_spreads(
                         max_loss=max_loss,
                         return_on_risk=return_on_risk,
                         breakeven=breakeven,
-                        breakeven_cushion_pct=(breakeven - spot_price) / spot_price,
-                        short_otm_pct=(short_contract.strike_price - spot_price) / spot_price,
+                        breakeven_cushion_pct=(
+                            (breakeven - spot_price) / spot_price
+                            if strategy == "call_credit"
+                            else (spot_price - breakeven) / spot_price
+                        ),
+                        short_otm_pct=short_otm_pct,
                         short_open_interest=short_contract.open_interest,
                         long_open_interest=long_contract.open_interest,
                         short_relative_spread=short_leg_relative_spread,
@@ -1497,7 +1623,7 @@ def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> flo
     delta_half_band = max((args.short_delta_max - args.short_delta_min) / 2.0, 0.01)
     delta_score = 1.0
     if candidate.short_delta is not None:
-        delta_score = 1.0 - min(abs(candidate.short_delta - delta_target) / delta_half_band, 1.0)
+        delta_score = 1.0 - min(abs(abs(candidate.short_delta) - delta_target) / delta_half_band, 1.0)
 
     dte_target = (args.min_dte + args.max_dte) / 2.0
     dte_half_band = max((args.max_dte - args.min_dte) / 2.0, 1.0)
@@ -1563,6 +1689,11 @@ def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> flo
 
 def rank_candidates(candidates: list[SpreadCandidate], args: argparse.Namespace) -> list[SpreadCandidate]:
     ranked = [replace(candidate, quality_score=score_candidate(candidate, args)) for candidate in candidates]
+    return sort_candidates_for_display(ranked)
+
+
+def sort_candidates_for_display(candidates: list[SpreadCandidate]) -> list[SpreadCandidate]:
+    ranked = list(candidates)
     ranked.sort(
         key=lambda candidate: (
             candidate.quality_score,
@@ -1575,10 +1706,13 @@ def rank_candidates(candidates: list[SpreadCandidate], args: argparse.Namespace)
     return ranked
 
 
-def build_table_rows(candidates: list[SpreadCandidate]) -> list[list[str]]:
+def build_table_rows(candidates: list[SpreadCandidate], *, include_strategy: bool = False) -> list[list[str]]:
     rows: list[list[str]] = []
     for candidate in candidates:
-        rows.append(
+        row = []
+        if include_strategy:
+            row.append(strategy_display_label(candidate.strategy))
+        row.extend(
             [
                 candidate.expiration_date,
                 str(candidate.days_to_expiration),
@@ -1600,6 +1734,7 @@ def build_table_rows(candidates: list[SpreadCandidate]) -> list[list[str]]:
                 else str(candidate.calendar_days_to_nearest_event),
             ]
         )
+        rows.append(row)
     return rows
 
 
@@ -1624,29 +1759,38 @@ def print_human_readable(
     candidates: list[SpreadCandidate],
     show_order_json: bool,
     setup: UnderlyingSetupContext | None,
+    *,
+    strategy: str,
+    profile: str,
+    setup_summaries: tuple[str, ...] = (),
 ) -> None:
     print(f"{symbol.upper()} spot: {spot_price:.2f}")
-    if candidates:
-        print(f"Profile: {candidates[0].profile}")
+    print(f"Strategy: {strategy}")
+    print(f"Profile: {profile}")
     if setup is not None:
         print(f"Setup: {setup.status} ({setup.score:.1f})")
         if setup.reasons:
             print(f"Setup notes: {'; '.join(setup.reasons)}")
+    elif setup_summaries:
+        print(f"Setups: {'; '.join(setup_summaries)}")
     print(f"Candidates found: {len(candidates)}")
     print()
 
     if not candidates:
-        print("No call credit spreads matched the current filters and calendar policy.")
+        print("No credit spreads matched the current filters and calendar policy.")
         return
 
+    include_strategy = strategy == "combined" or len({candidate.strategy for candidate in candidates}) > 1
     headers = ["Expiry", "DTE", "Short", "Long", "Width", "MidCr", "ROR%", "Score", "Δ", "OTM%", "BE%", "S-EM", "MinOI", "Cal", "DQ", "EvtD"]
-    rows = build_table_rows(candidates)
+    if include_strategy:
+        headers = ["Side", *headers]
+    rows = build_table_rows(candidates, include_strategy=include_strategy)
     print(format_table(headers, rows))
     print()
 
     for index, candidate in enumerate(candidates, start=1):
         print(
-            f"{index}. {candidate.short_symbol} -> {candidate.long_symbol} | "
+            f"{index}. [{strategy_display_label(candidate.strategy)}] {candidate.short_symbol} -> {candidate.long_symbol} | "
             f"score {candidate.quality_score:.1f} | "
             f"breakeven {candidate.breakeven:.2f} | "
             f"calendar {candidate.calendar_status}"
@@ -1678,6 +1822,7 @@ def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
         "underlying_symbol",
+        "strategy",
         "profile",
         "expiration_date",
         "days_to_expiration",
@@ -1764,13 +1909,14 @@ def write_json(
         "setup": None
         if setup is None
         else {
+            "strategy": setup.strategy,
             "status": setup.status,
             "score": setup.score,
             "reasons": list(setup.reasons),
             "spot_vs_sma20_pct": setup.spot_vs_sma20_pct,
             "sma20_vs_sma50_pct": setup.sma20_vs_sma50_pct,
             "return_5d_pct": setup.return_5d_pct,
-            "distance_to_20d_high_pct": setup.distance_to_20d_high_pct,
+            "distance_to_20d_extreme_pct": setup.distance_to_20d_extreme_pct,
         },
         "candidates": [asdict(candidate) for candidate in candidates],
     }
@@ -1778,12 +1924,14 @@ def write_json(
         json.dump(payload, handle, indent=2)
 
 
-def build_universe_board_rows(candidates: list[SpreadCandidate]) -> list[list[str]]:
+def build_universe_board_rows(candidates: list[SpreadCandidate], *, include_strategy: bool = False) -> list[list[str]]:
     rows: list[list[str]] = []
     for candidate in candidates:
-        rows.append(
+        row = [candidate.underlying_symbol]
+        if include_strategy:
+            row.append(strategy_display_label(candidate.strategy))
+        row.extend(
             [
-                candidate.underlying_symbol,
                 candidate.expiration_date,
                 str(candidate.days_to_expiration),
                 f"{candidate.underlying_price:.2f}",
@@ -1800,17 +1948,20 @@ def build_universe_board_rows(candidates: list[SpreadCandidate]) -> list[list[st
                 ",".join(candidate.board_notes),
             ]
         )
+        rows.append(row)
     return rows
 
 
 def print_universe_board(
     *,
     label: str,
+    strategy: str,
     symbols: list[str],
     board_candidates: list[SpreadCandidate],
     failures: list[UniverseScanFailure],
 ) -> None:
     print(f"Universe: {label}")
+    print(f"Strategy: {strategy}")
     print(f"Symbols requested: {len(symbols)}")
     print(f"Board entries: {len(board_candidates)}")
     if failures:
@@ -1818,8 +1969,11 @@ def print_universe_board(
     print()
 
     if board_candidates:
+        include_strategy = strategy == "combined" or len({candidate.strategy for candidate in board_candidates}) > 1
         headers = ["Symbol", "Expiry", "DTE", "Spot", "Short", "Long", "MidCr", "Score", "Δ", "BE%", "S-EM", "Cal", "DQ", "Setup", "Why"]
-        print(format_table(headers, build_universe_board_rows(board_candidates)))
+        if include_strategy:
+            headers = ["Symbol", "Side", *headers[1:]]
+        print(format_table(headers, build_universe_board_rows(board_candidates, include_strategy=include_strategy)))
         print()
     else:
         print("No universe candidates matched the current filters.")
@@ -1827,7 +1981,8 @@ def print_universe_board(
 
     for index, candidate in enumerate(board_candidates, start=1):
         print(
-            f"{index}. {candidate.underlying_symbol} {candidate.short_symbol} -> {candidate.long_symbol} | "
+            f"{index}. {candidate.underlying_symbol} [{strategy_display_label(candidate.strategy)}] "
+            f"{candidate.short_symbol} -> {candidate.long_symbol} | "
             f"score {candidate.quality_score:.1f} | breakeven {candidate.breakeven:.2f}"
         )
         if candidate.board_notes:
@@ -1854,6 +2009,7 @@ def write_universe_json(
     path: str,
     *,
     label: str,
+    strategy: str,
     symbols: list[str],
     candidates: list[SpreadCandidate],
     failures: list[UniverseScanFailure],
@@ -1862,6 +2018,7 @@ def write_universe_json(
     payload = {
         "mode": "universe",
         "label": label,
+        "strategy": strategy,
         "symbols": symbols,
         "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "candidate_count": len(candidates),
@@ -1879,6 +2036,7 @@ def build_calendar_reason_messages(decision: CalendarPolicyDecision) -> tuple[st
 def attach_calendar_decisions(
     *,
     symbol: str,
+    strategy: str,
     underlying_type: str,
     candidates: list[SpreadCandidate],
     resolver: Any,
@@ -1893,14 +2051,15 @@ def attach_calendar_decisions(
     for expiration_date in sorted({candidate.expiration_date for candidate in candidates}, reverse=True):
         context = resolver.resolve_calendar_context(
             symbol=symbol,
-            strategy="call_credit_spread",
+            strategy=strategy,
             window_start=window_start,
             window_end=option_expiry_close(expiration_date).isoformat(),
             underlying_type=underlying_type,
             refresh=refresh_calendar_events,
         )
-        decisions_by_expiration[expiration_date] = apply_call_credit_spread_policy(
+        decisions_by_expiration[expiration_date] = apply_credit_spread_policy(
             context,
+            strategy=strategy,
             underlying_type=underlying_type,
             mode=calendar_policy,
         )
@@ -2062,6 +2221,34 @@ def simulate_exit_until_date(
     }
 
 
+def mark_spread_on_date(
+    candidate: dict[str, Any],
+    *,
+    option_bars: dict[str, list[DailyBar]],
+    target_date: date,
+) -> dict[str, Any]:
+    short_bar = latest_option_bar_on_or_before(option_bars, candidate["short_symbol"], target_date)
+    long_bar = latest_option_bar_on_or_before(option_bars, candidate["long_symbol"], target_date)
+    if short_bar is None or long_bar is None:
+        return {"status": "pending_option_bars"}
+
+    spread_bar = estimate_spread_bar(short_bar, long_bar)
+    entry_credit = candidate["midpoint_credit"]
+    close_mark = spread_bar["close"]
+    return {
+        "status": "mark_only",
+        "exit_date": target_date.isoformat(),
+        "exit_reason": "entry_mark",
+        "exit_mark": close_mark,
+        "estimated_pnl": (entry_credit - close_mark) * 100.0,
+        "spread_mark_close": close_mark,
+        "spread_mark_low": None,
+        "spread_mark_high": None,
+        "profit_target_hit": False,
+        "stop_hit": False,
+    }
+
+
 def summarize_replay(
     *,
     run_payload: dict[str, Any],
@@ -2073,6 +2260,7 @@ def summarize_replay(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     generated_at = datetime.fromisoformat(run_payload["generated_at"].replace("Z", "+00:00"))
     run_date = generated_at.astimezone(NEW_YORK).date()
+    strategy = run_payload.get("strategy") or run_payload["filters"].get("strategy", "call_credit")
     latest_available_date = None if not bars else max(
         datetime.fromisoformat(bar.timestamp.replace("Z", "+00:00")).date() for bar in bars
     )
@@ -2089,8 +2277,8 @@ def summarize_replay(
         horizon_bars = bars_through_date(bars, target_date)
         available_candidates = 0
         touched = 0
-        closed_over_short = 0
-        closed_over_breakeven = 0
+        closed_past_short = 0
+        closed_past_breakeven = 0
         profit_target_hits = 0
         stop_hits = 0
         conflicts = 0
@@ -2112,14 +2300,21 @@ def summarize_replay(
             horizon_bar = latest_bar_on_or_before(bars, target_date)
             if horizon_bar is None:
                 continue
-            replay_path = simulate_exit_until_date(
-                candidate,
-                option_bars=option_bars,
-                start_date=run_date,
-                target_date=target_date,
-                profit_target=profit_target,
-                stop_multiple=stop_multiple,
-            )
+            if label == "entry":
+                replay_path = mark_spread_on_date(
+                    candidate,
+                    option_bars=option_bars,
+                    target_date=target_date,
+                )
+            else:
+                replay_path = simulate_exit_until_date(
+                    candidate,
+                    option_bars=option_bars,
+                    start_date=run_date,
+                    target_date=target_date,
+                    profit_target=profit_target,
+                    stop_multiple=stop_multiple,
+                )
             if replay_path["status"] == "pending_option_bars":
                 rows.append(
                     {
@@ -2134,13 +2329,24 @@ def summarize_replay(
 
             available_candidates += 1
             path_bars = horizon_bars
-            max_high = max(bar.high for bar in path_bars) if path_bars else horizon_bar.high
-            touched_short = max_high >= candidate["short_strike"]
-            closed_above_short = horizon_bar.close >= candidate["short_strike"]
-            closed_above_breakeven = horizon_bar.close >= candidate["breakeven"]
+            path_high = max(bar.high for bar in path_bars) if path_bars else horizon_bar.high
+            path_low = min(bar.low for bar in path_bars) if path_bars else horizon_bar.low
+            if label == "entry":
+                touched_short = False
+                closed_beyond_short = False
+                closed_beyond_breakeven = False
+            else:
+                if strategy == "put_credit":
+                    touched_short = path_low <= candidate["short_strike"]
+                    closed_beyond_short = horizon_bar.close <= candidate["short_strike"]
+                    closed_beyond_breakeven = horizon_bar.close <= candidate["breakeven"]
+                else:
+                    touched_short = path_high >= candidate["short_strike"]
+                    closed_beyond_short = horizon_bar.close >= candidate["short_strike"]
+                    closed_beyond_breakeven = horizon_bar.close >= candidate["breakeven"]
             touched += int(touched_short)
-            closed_over_short += int(closed_above_short)
-            closed_over_breakeven += int(closed_above_breakeven)
+            closed_past_short += int(closed_beyond_short)
+            closed_past_breakeven += int(closed_beyond_breakeven)
             profit_target_hits += int(replay_path["profit_target_hit"])
             stop_hits += int(replay_path["stop_hit"])
             conflicts += int(replay_path["status"] == "conflict")
@@ -2153,10 +2359,10 @@ def summarize_replay(
                     "expiration_date": candidate["expiration_date"],
                     "status": "available",
                     "spot_at_horizon": horizon_bar.close,
-                    "max_high_to_horizon": max_high,
+                    "path_extreme_to_horizon": path_low if strategy == "put_credit" else path_high,
                     "touched_short_strike": touched_short,
-                    "closed_above_short_strike": closed_above_short,
-                    "closed_above_breakeven": closed_above_breakeven,
+                    "closed_past_short_strike": closed_beyond_short,
+                    "closed_past_breakeven": closed_beyond_breakeven,
                     "spread_mark_close": replay_path["spread_mark_close"],
                     "spread_mark_low": replay_path["spread_mark_low"],
                     "spread_mark_high": replay_path["spread_mark_high"],
@@ -2176,12 +2382,12 @@ def summarize_replay(
                 "available": available_candidates,
                 "pending": total - available_candidates,
                 "touch_pct": None if available_candidates == 0 else 100.0 * touched / available_candidates,
-                "close_over_short_pct": None
+                "close_past_short_pct": None
                 if available_candidates == 0
-                else 100.0 * closed_over_short / available_candidates,
-                "close_over_breakeven_pct": None
+                else 100.0 * closed_past_short / available_candidates,
+                "close_past_breakeven_pct": None
                 if available_candidates == 0
-                else 100.0 * closed_over_breakeven / available_candidates,
+                else 100.0 * closed_past_breakeven / available_candidates,
                 "profit_target_hit_pct": None
                 if available_candidates == 0
                 else 100.0 * profit_target_hits / available_candidates,
@@ -2193,8 +2399,8 @@ def summarize_replay(
 
     expiry_available = 0
     expiry_touched = 0
-    expiry_closed_over_short = 0
-    expiry_closed_over_breakeven = 0
+    expiry_closed_past_short = 0
+    expiry_closed_past_breakeven = 0
     expiry_profit_targets = 0
     expiry_stop_hits = 0
     expiry_conflicts = 0
@@ -2237,13 +2443,19 @@ def summarize_replay(
             continue
         expiry_available += 1
         path_bars = bars_through_date(bars, expiry_date)
-        max_high = max(bar.high for bar in path_bars) if path_bars else horizon_bar.high
-        touched_short = max_high >= candidate["short_strike"]
-        closed_above_short = horizon_bar.close >= candidate["short_strike"]
-        closed_above_breakeven = horizon_bar.close >= candidate["breakeven"]
+        path_high = max(bar.high for bar in path_bars) if path_bars else horizon_bar.high
+        path_low = min(bar.low for bar in path_bars) if path_bars else horizon_bar.low
+        if strategy == "put_credit":
+            touched_short = path_low <= candidate["short_strike"]
+            closed_beyond_short = horizon_bar.close <= candidate["short_strike"]
+            closed_beyond_breakeven = horizon_bar.close <= candidate["breakeven"]
+        else:
+            touched_short = path_high >= candidate["short_strike"]
+            closed_beyond_short = horizon_bar.close >= candidate["short_strike"]
+            closed_beyond_breakeven = horizon_bar.close >= candidate["breakeven"]
         expiry_touched += int(touched_short)
-        expiry_closed_over_short += int(closed_above_short)
-        expiry_closed_over_breakeven += int(closed_above_breakeven)
+        expiry_closed_past_short += int(closed_beyond_short)
+        expiry_closed_past_breakeven += int(closed_beyond_breakeven)
         expiry_profit_targets += int(replay_path["profit_target_hit"])
         expiry_stop_hits += int(replay_path["stop_hit"])
         expiry_conflicts += int(replay_path["status"] == "conflict")
@@ -2256,10 +2468,10 @@ def summarize_replay(
                 "expiration_date": candidate["expiration_date"],
                 "status": "available",
                 "spot_at_horizon": horizon_bar.close,
-                "max_high_to_horizon": max_high,
+                "path_extreme_to_horizon": path_low if strategy == "put_credit" else path_high,
                 "touched_short_strike": touched_short,
-                "closed_above_short_strike": closed_above_short,
-                "closed_above_breakeven": closed_above_breakeven,
+                "closed_past_short_strike": closed_beyond_short,
+                "closed_past_breakeven": closed_beyond_breakeven,
                 "spread_mark_close": replay_path["spread_mark_close"],
                 "spread_mark_low": replay_path["spread_mark_low"],
                 "spread_mark_high": replay_path["spread_mark_high"],
@@ -2279,12 +2491,12 @@ def summarize_replay(
             "available": expiry_available,
             "pending": total - expiry_available,
             "touch_pct": None if expiry_available == 0 else 100.0 * expiry_touched / expiry_available,
-            "close_over_short_pct": None
+            "close_past_short_pct": None
             if expiry_available == 0
-            else 100.0 * expiry_closed_over_short / expiry_available,
-            "close_over_breakeven_pct": None
+            else 100.0 * expiry_closed_past_short / expiry_available,
+            "close_past_breakeven_pct": None
             if expiry_available == 0
-            else 100.0 * expiry_closed_over_breakeven / expiry_available,
+            else 100.0 * expiry_closed_past_breakeven / expiry_available,
             "profit_target_hit_pct": None
             if expiry_available == 0
             else 100.0 * expiry_profit_targets / expiry_available,
@@ -2302,14 +2514,15 @@ def print_replay_summary(
     summaries: list[dict[str, Any]],
     rows: list[dict[str, Any]],
 ) -> None:
+    strategy = run_payload.get("strategy") or run_payload["filters"].get("strategy", "call_credit")
     print(
         f"Replay run: {run_payload['run_id']} | {run_payload['symbol']} | "
-        f"profile {run_payload['profile']} | generated {run_payload['generated_at']}"
+        f"strategy {strategy} | profile {run_payload['profile']} | generated {run_payload['generated_at']}"
     )
     print(f"Stored candidates: {run_payload['candidate_count']}")
     print()
 
-    table_headers = ["Horizon", "Avail", "Pending", "Touch%", "Close>Short%", "Close>BE%", "PT%", "Stop%", "Conf%", "AvgPnL$"]
+    table_headers = ["Horizon", "Avail", "Pending", "Touch%", "PastShort%", "PastBE%", "PT%", "Stop%", "Conf%", "AvgPnL$"]
     table_rows = []
     for summary in summaries:
         table_rows.append(
@@ -2318,10 +2531,10 @@ def print_replay_summary(
                 str(summary["available"]),
                 str(summary["pending"]),
                 "n/a" if summary["touch_pct"] is None else f"{summary['touch_pct']:.1f}",
-                "n/a" if summary["close_over_short_pct"] is None else f"{summary['close_over_short_pct']:.1f}",
+                "n/a" if summary["close_past_short_pct"] is None else f"{summary['close_past_short_pct']:.1f}",
                 "n/a"
-                if summary["close_over_breakeven_pct"] is None
-                else f"{summary['close_over_breakeven_pct']:.1f}",
+                if summary["close_past_breakeven_pct"] is None
+                else f"{summary['close_past_breakeven_pct']:.1f}",
                 "n/a" if summary["profit_target_hit_pct"] is None else f"{summary['profit_target_hit_pct']:.1f}",
                 "n/a" if summary["stop_hit_pct"] is None else f"{summary['stop_hit_pct']:.1f}",
                 "n/a" if summary["conflict_pct"] is None else f"{summary['conflict_pct']:.1f}",
@@ -2342,8 +2555,8 @@ def print_replay_summary(
             "Sprd",
             "PnL$",
             "Touch",
-            "Close>Short",
-            "Close>BE",
+            "PastShort",
+            "PastBE",
             "Exit",
             "PT",
             "Stop",
@@ -2358,8 +2571,8 @@ def print_replay_summary(
                 f"{row['spread_mark_close']:.2f}",
                 f"{row['estimated_pnl']:.0f}",
                 "yes" if row["touched_short_strike"] else "no",
-                "yes" if row["closed_above_short_strike"] else "no",
-                "yes" if row["closed_above_breakeven"] else "no",
+                "yes" if row["closed_past_short_strike"] else "no",
+                "yes" if row["closed_past_breakeven"] else "no",
                 row["exit_reason"],
                 "yes" if row["estimated_profit_target_hit"] else "no",
                 "yes" if row["estimated_stop_hit"] else "no",
@@ -2377,12 +2590,14 @@ def run_replay(
     client: AlpacaClient,
     history_store: RunHistoryStore,
 ) -> int:
+    if args.replay_latest and args.strategy == "combined":
+        raise SystemExit("Replay latest requires --strategy call_credit or --strategy put_credit")
     if args.replay_run_id:
         run_payload = history_store.get_run(args.replay_run_id)
     else:
         if not args.symbol:
             raise SystemExit("Replay latest requires --symbol or use --replay-run-id")
-        run_payload = history_store.get_latest_run(args.symbol.upper())
+        run_payload = history_store.get_latest_run(args.symbol.upper(), strategy=args.strategy)
 
     if not run_payload:
         target = args.replay_run_id or args.symbol.upper()
@@ -2453,7 +2668,7 @@ def scan_symbol_live(
             end=date.today().isoformat(),
             stock_feed=symbol_args.stock_feed,
         )
-        setup_context = analyze_underlying_setup(symbol, spot_price, daily_bars)
+        setup_context = analyze_underlying_setup(symbol, spot_price, daily_bars, strategy=symbol_args.strategy)
 
     call_contracts = client.list_option_contracts(symbol, min_expiration, max_expiration, option_type="call")
     put_contracts = client.list_option_contracts(symbol, min_expiration, max_expiration, option_type="put")
@@ -2484,17 +2699,26 @@ def scan_symbol_live(
         put_snapshots_by_expiration=put_snapshots_by_expiration,
     )
 
-    all_candidates = build_call_credit_spreads(
+    option_contracts_by_expiration = (
+        contracts_by_expiration if symbol_args.strategy == "call_credit" else put_contracts_by_expiration
+    )
+    option_snapshots_by_expiration = (
+        call_snapshots_by_expiration if symbol_args.strategy == "call_credit" else put_snapshots_by_expiration
+    )
+
+    all_candidates = build_credit_spreads(
         symbol=symbol,
+        strategy=symbol_args.strategy,
         spot_price=spot_price,
-        contracts_by_expiration=contracts_by_expiration,
-        snapshots_by_expiration=call_snapshots_by_expiration,
+        contracts_by_expiration=option_contracts_by_expiration,
+        snapshots_by_expiration=option_snapshots_by_expiration,
         expected_moves_by_expiration=expected_moves_by_expiration,
         args=symbol_args,
     )
     all_candidates = attach_underlying_setup(all_candidates, setup_context)
     all_candidates = attach_calendar_decisions(
         symbol=symbol,
+        strategy=symbol_args.strategy,
         underlying_type=underlying_type,
         candidates=all_candidates,
         resolver=calendar_resolver,
@@ -2510,12 +2734,13 @@ def scan_symbol_live(
     all_candidates = rank_candidates(all_candidates, symbol_args)
     all_candidates = deduplicate_candidates(all_candidates, symbol_args.expand_duplicates)
 
-    run_id = build_run_id(symbol, symbol_args.profile)
+    run_id = build_run_id(symbol, symbol_args.strategy, symbol_args.profile)
     generated_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
     history_store.save_run(
         run_id=run_id,
         generated_at=generated_at,
         symbol=symbol,
+        strategy=symbol_args.strategy,
         profile=symbol_args.profile,
         spot_price=spot_price,
         output_path="",
@@ -2534,6 +2759,47 @@ def scan_symbol_live(
         candidates=all_candidates,
         run_id=run_id,
     )
+
+
+def scan_symbol_across_strategies(
+    *,
+    symbol: str,
+    base_args: argparse.Namespace,
+    client: AlpacaClient,
+    calendar_resolver: Any,
+    history_store: RunHistoryStore,
+) -> tuple[list[SymbolScanResult], list[UniverseScanFailure]]:
+    results: list[SymbolScanResult] = []
+    failures: list[UniverseScanFailure] = []
+    for strategy in concrete_strategies(base_args.strategy):
+        strategy_args = clone_args(base_args)
+        strategy_args.strategy = strategy
+        try:
+            results.append(
+                scan_symbol_live(
+                    symbol=symbol,
+                    base_args=strategy_args,
+                    client=client,
+                    calendar_resolver=calendar_resolver,
+                    history_store=history_store,
+                )
+            )
+        except Exception as exc:
+            label = f"{symbol}:{strategy}" if base_args.strategy == "combined" else symbol
+            failures.append(UniverseScanFailure(symbol=label, error=str(exc).splitlines()[0]))
+    return results, failures
+
+
+def merge_strategy_candidates(
+    results: list[SymbolScanResult],
+    *,
+    per_strategy_top: int | None = None,
+) -> list[SpreadCandidate]:
+    merged: list[SpreadCandidate] = []
+    for result in results:
+        candidates = result.candidates if per_strategy_top is None else result.candidates[:per_strategy_top]
+        merged.extend(candidates)
+    return sort_candidates_for_display(merged)
 
 
 def main() -> int:
@@ -2565,92 +2831,170 @@ def main() -> int:
             calendar_resolver.store.close()
 
     if len(symbols) == 1:
-        result = scan_symbol_live(
+        strategy_results, failures = scan_symbol_across_strategies(
             symbol=symbols[0],
             base_args=args,
             client=client,
             calendar_resolver=calendar_resolver,
             history_store=history_store,
         )
-        output_path = args.output or default_output_path(result.symbol, args.output_format)
+        if failures and not strategy_results:
+            raise SystemExit(failures[0].error)
 
-        if args.output_format == "csv":
-            write_csv(output_path, result.candidates)
-        else:
-            write_json(
-                output_path,
-                result.symbol,
-                result.spot_price,
-                result.args,
-                result.candidates,
-                run_id=result.run_id,
-                setup=result.setup,
-            )
-        latest_copy = write_latest_copy(output_path, f"latest_{result.symbol.lower()}.{args.output_format}")
-
-        candidates = result.candidates[: result.args.top]
-        if args.json:
-            print(
-                json.dumps(
-                    {
-                        "symbol": result.symbol,
-                        "spot_price": result.spot_price,
-                        "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-                        "run_id": result.run_id,
-                        "filters": build_filter_payload(result.args),
-                        "setup": None
-                        if result.setup is None
-                        else {
-                            "status": result.setup.status,
-                            "score": result.setup.score,
-                            "reasons": list(result.setup.reasons),
-                        },
-                        "candidates": [asdict(candidate) for candidate in candidates],
-                        "output_file": output_path,
-                    },
-                    indent=2,
+        if args.strategy == "combined":
+            combined_candidates = merge_strategy_candidates(strategy_results)
+            primary_result = strategy_results[0]
+            output_path = args.output or default_output_path(primary_result.symbol, args.strategy, args.output_format)
+            if args.output_format == "csv":
+                write_csv(output_path, combined_candidates)
+            else:
+                write_json(
+                    output_path,
+                    primary_result.symbol,
+                    primary_result.spot_price,
+                    args,
+                    combined_candidates,
                 )
+            latest_copy = write_latest_copy(
+                output_path,
+                f"latest_{primary_result.symbol.lower()}_{args.strategy}.{args.output_format}",
             )
+            candidates = combined_candidates[: args.top]
+            setup_summaries = build_setup_summaries(strategy_results)
+            if args.json:
+                print(
+                    json.dumps(
+                        {
+                            "symbol": primary_result.symbol,
+                            "strategy": args.strategy,
+                            "spot_price": primary_result.spot_price,
+                            "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                            "filters": build_filter_payload(args),
+                            "strategy_runs": [
+                                {
+                                    "strategy": result.args.strategy,
+                                    "run_id": result.run_id,
+                                    "setup": None
+                                    if result.setup is None
+                                    else {
+                                        "status": result.setup.status,
+                                        "score": result.setup.score,
+                                        "reasons": list(result.setup.reasons),
+                                    },
+                                }
+                                for result in strategy_results
+                            ],
+                            "failures": [asdict(failure) for failure in failures],
+                            "candidates": [asdict(candidate) for candidate in candidates],
+                            "output_file": output_path,
+                        },
+                        indent=2,
+                    )
+                )
+            else:
+                print_human_readable(
+                    primary_result.symbol,
+                    primary_result.spot_price,
+                    candidates,
+                    args.show_order_json,
+                    None,
+                    strategy=args.strategy,
+                    profile=args.profile,
+                    setup_summaries=setup_summaries,
+                )
+                if failures:
+                    print("Failures:")
+                    for failure in failures:
+                        print(f"- {failure.symbol}: {failure.error}")
+                print(f"Saved {len(combined_candidates)} candidates to {output_path}")
+                print(f"Latest copy: {latest_copy}")
+                print("Run ids:")
+                for result in strategy_results:
+                    print(f"- {result.args.strategy}: {result.run_id}")
         else:
-            print_human_readable(
-                result.symbol,
-                result.spot_price,
-                candidates,
-                result.args.show_order_json,
-                result.setup,
+            result = strategy_results[0]
+            output_path = args.output or default_output_path(result.symbol, result.args.strategy, args.output_format)
+
+            if args.output_format == "csv":
+                write_csv(output_path, result.candidates)
+            else:
+                write_json(
+                    output_path,
+                    result.symbol,
+                    result.spot_price,
+                    result.args,
+                    result.candidates,
+                    run_id=result.run_id,
+                    setup=result.setup,
+                )
+            latest_copy = write_latest_copy(
+                output_path,
+                f"latest_{result.symbol.lower()}_{result.args.strategy}.{args.output_format}",
             )
-            print(f"Saved {len(result.candidates)} candidates to {output_path}")
-            print(f"Latest copy: {latest_copy}")
-            print(f"Run id: {result.run_id}")
+
+            candidates = result.candidates[: result.args.top]
+            if args.json:
+                print(
+                    json.dumps(
+                        {
+                            "symbol": result.symbol,
+                            "strategy": result.args.strategy,
+                            "spot_price": result.spot_price,
+                            "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                            "run_id": result.run_id,
+                            "filters": build_filter_payload(result.args),
+                            "setup": None
+                            if result.setup is None
+                            else {
+                                "status": result.setup.status,
+                                "score": result.setup.score,
+                                "reasons": list(result.setup.reasons),
+                            },
+                            "candidates": [asdict(candidate) for candidate in candidates],
+                            "output_file": output_path,
+                        },
+                        indent=2,
+                    )
+                )
+            else:
+                print_human_readable(
+                    result.symbol,
+                    result.spot_price,
+                    candidates,
+                    result.args.show_order_json,
+                    result.setup,
+                    strategy=result.args.strategy,
+                    profile=result.args.profile,
+                )
+                print(f"Saved {len(result.candidates)} candidates to {output_path}")
+                print(f"Latest copy: {latest_copy}")
+                print(f"Run id: {result.run_id}")
     else:
         scan_results: list[SymbolScanResult] = []
         failures: list[UniverseScanFailure] = []
         board_candidates: list[SpreadCandidate] = []
 
         for symbol in symbols:
-            try:
-                result = scan_symbol_live(
-                    symbol=symbol,
-                    base_args=args,
-                    client=client,
-                    calendar_resolver=calendar_resolver,
-                    history_store=history_store,
-                )
-                scan_results.append(result)
-                board_candidates.extend(result.candidates[: result.args.per_symbol_top])
-            except Exception as exc:
-                failures.append(UniverseScanFailure(symbol=symbol, error=str(exc).splitlines()[0]))
+            strategy_results, symbol_failures = scan_symbol_across_strategies(
+                symbol=symbol,
+                base_args=args,
+                client=client,
+                calendar_resolver=calendar_resolver,
+                history_store=history_store,
+            )
+            failures.extend(symbol_failures)
+            if not strategy_results:
+                continue
+            scan_results.extend(strategy_results)
+            symbol_board_candidates = merge_strategy_candidates(
+                strategy_results,
+                per_strategy_top=args.per_symbol_top,
+            )[: args.per_symbol_top]
+            board_candidates.extend(symbol_board_candidates)
 
-        board_candidates.sort(
-            key=lambda candidate: (
-                candidate.quality_score,
-                candidate.return_on_risk,
-                candidate.midpoint_credit,
-            ),
-            reverse=True,
-        )
+        board_candidates = sort_candidates_for_display(board_candidates)
         board_candidates = board_candidates[: args.top]
-        output_path = args.output or default_universe_output_path(universe_label, args.output_format)
+        output_path = args.output or default_universe_output_path(universe_label, args.strategy, args.output_format)
 
         if args.output_format == "csv":
             write_universe_csv(output_path, board_candidates)
@@ -2658,13 +3002,14 @@ def main() -> int:
             write_universe_json(
                 output_path,
                 label=universe_label,
+                strategy=args.strategy,
                 symbols=symbols,
                 candidates=board_candidates,
                 failures=failures,
             )
         latest_copy = write_latest_copy(
             output_path,
-            f"latest_{universe_label.lower().replace(' ', '_')}.{args.output_format}",
+            f"latest_{universe_label.lower().replace(' ', '_')}_{args.strategy}.{args.output_format}",
         )
 
         if args.json:
@@ -2673,6 +3018,7 @@ def main() -> int:
                     {
                         "mode": "universe",
                         "label": universe_label,
+                        "strategy": args.strategy,
                         "symbols": symbols,
                         "candidate_count": len(board_candidates),
                         "failures": [asdict(failure) for failure in failures],
@@ -2685,6 +3031,7 @@ def main() -> int:
         else:
             print_universe_board(
                 label=universe_label,
+                strategy=args.strategy,
                 symbols=symbols,
                 board_candidates=board_candidates,
                 failures=failures,

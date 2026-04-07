@@ -25,6 +25,7 @@ class RunHistoryStore:
                 run_id TEXT PRIMARY KEY,
                 generated_at TEXT NOT NULL,
                 symbol TEXT NOT NULL,
+                strategy TEXT NOT NULL DEFAULT 'call_credit',
                 profile TEXT NOT NULL,
                 spot_price REAL NOT NULL,
                 candidate_count INTEGER NOT NULL,
@@ -37,6 +38,7 @@ class RunHistoryStore:
             CREATE TABLE IF NOT EXISTS scan_candidates (
                 run_id TEXT NOT NULL,
                 rank INTEGER NOT NULL,
+                strategy TEXT NOT NULL DEFAULT 'call_credit',
                 expiration_date TEXT NOT NULL,
                 short_symbol TEXT NOT NULL,
                 long_symbol TEXT NOT NULL,
@@ -66,8 +68,14 @@ class RunHistoryStore:
             ON scan_candidates(run_id);
             """
         )
+        self._ensure_run_columns(
+            {
+                "strategy": "TEXT NOT NULL DEFAULT 'call_credit'",
+            }
+        )
         self._ensure_candidate_columns(
             {
+                "strategy": "TEXT NOT NULL DEFAULT 'call_credit'",
                 "width": "REAL NOT NULL DEFAULT 0",
                 "midpoint_credit": "REAL NOT NULL DEFAULT 0",
                 "natural_credit": "REAL NOT NULL DEFAULT 0",
@@ -77,6 +85,22 @@ class RunHistoryStore:
         )
         self.connection.commit()
 
+    def _ensure_run_columns(self, columns: dict[str, str]) -> None:
+        existing = {
+            row["name"]
+            for row in self.connection.execute("PRAGMA table_info(scan_runs)").fetchall()
+        }
+        for column, definition in columns.items():
+            if column in existing:
+                continue
+            try:
+                self.connection.execute(
+                    f"ALTER TABLE scan_runs ADD COLUMN {column} {definition}"
+                )
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
+
     def _ensure_candidate_columns(self, columns: dict[str, str]) -> None:
         existing = {
             row["name"]
@@ -85,9 +109,13 @@ class RunHistoryStore:
         for column, definition in columns.items():
             if column in existing:
                 continue
-            self.connection.execute(
-                f"ALTER TABLE scan_candidates ADD COLUMN {column} {definition}"
-            )
+            try:
+                self.connection.execute(
+                    f"ALTER TABLE scan_candidates ADD COLUMN {column} {definition}"
+                )
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
 
     def save_run(
         self,
@@ -95,6 +123,7 @@ class RunHistoryStore:
         run_id: str,
         generated_at: str,
         symbol: str,
+        strategy: str,
         profile: str,
         spot_price: float,
         output_path: str,
@@ -110,6 +139,7 @@ class RunHistoryStore:
                 run_id,
                 generated_at,
                 symbol,
+                strategy,
                 profile,
                 spot_price,
                 candidate_count,
@@ -118,12 +148,13 @@ class RunHistoryStore:
                 setup_status,
                 setup_score
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
                 generated_at,
                 symbol,
+                strategy,
                 profile,
                 spot_price,
                 len(candidates),
@@ -139,6 +170,7 @@ class RunHistoryStore:
             INSERT INTO scan_candidates (
                 run_id,
                 rank,
+                strategy,
                 expiration_date,
                 short_symbol,
                 long_symbol,
@@ -158,12 +190,13 @@ class RunHistoryStore:
                 expected_move,
                 short_vs_expected_move
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
                     run_id,
                     rank,
+                    candidate.strategy,
                     candidate.expiration_date,
                     candidate.short_symbol,
                     candidate.long_symbol,
@@ -199,11 +232,23 @@ class RunHistoryStore:
         payload["filters"] = json.loads(payload.pop("filters_json"))
         return payload
 
-    def get_latest_run(self, symbol: str) -> dict[str, Any] | None:
-        row = self.connection.execute(
-            "SELECT * FROM scan_runs WHERE symbol = ? ORDER BY generated_at DESC LIMIT 1",
-            (symbol,),
-        ).fetchone()
+    def get_latest_run(self, symbol: str, strategy: str | None = None) -> dict[str, Any] | None:
+        if strategy is None:
+            row = self.connection.execute(
+                "SELECT * FROM scan_runs WHERE symbol = ? ORDER BY generated_at DESC LIMIT 1",
+                (symbol,),
+            ).fetchone()
+        else:
+            row = self.connection.execute(
+                """
+                SELECT *
+                FROM scan_runs
+                WHERE symbol = ? AND strategy = ?
+                ORDER BY generated_at DESC
+                LIMIT 1
+                """,
+                (symbol, strategy),
+            ).fetchone()
         if row is None:
             return None
         payload = dict(row)

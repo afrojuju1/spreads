@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from calendar_events.config import BLOCKING_EVENT_CODES, PENALTY_EVENT_CODES
+from calendar_events.config import PENALTY_EVENT_CODES
 from calendar_events.models import CalendarEventContext, CalendarPolicyDecision
 
 
-def apply_call_credit_spread_policy(
+def apply_credit_spread_policy(
     context: CalendarEventContext,
     *,
+    strategy: str,
     underlying_type: str,
     mode: str,
 ) -> CalendarPolicyDecision:
@@ -14,12 +15,19 @@ def apply_call_credit_spread_policy(
         return CalendarPolicyDecision(status="clean")
 
     codes = {reason.code for reason in context.reasons}
+    blocking_codes = {"earnings_before_expiry"}
+    if strategy == "call_credit":
+        blocking_codes.add("ex_dividend_before_expiry")
+    penalty_codes = set(PENALTY_EVENT_CODES)
+    if strategy == "put_credit" and "ex_dividend_before_expiry" in codes:
+        penalty_codes.add("ex_dividend_before_expiry")
+
     if mode == "strict":
-        if codes & BLOCKING_EVENT_CODES:
+        if codes & blocking_codes:
             status = "blocked"
         elif context.status == "unknown":
             status = "blocked"
-        elif codes & PENALTY_EVENT_CODES:
+        elif codes & penalty_codes:
             status = "penalized"
         else:
             status = "clean"
@@ -43,4 +51,18 @@ def apply_call_credit_spread_policy(
         source_confidence=context.source_confidence,
         sources=context.sources,
         last_updated=context.last_updated,
+    )
+
+
+def apply_call_credit_spread_policy(
+    context: CalendarEventContext,
+    *,
+    underlying_type: str,
+    mode: str,
+) -> CalendarPolicyDecision:
+    return apply_credit_spread_policy(
+        context,
+        strategy="call_credit",
+        underlying_type=underlying_type,
+        mode=mode,
     )
