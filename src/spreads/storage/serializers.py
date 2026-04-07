@@ -9,6 +9,7 @@ from spreads.storage.collector_models import (
     CollectorCycleEventModel,
     CollectorCycleModel,
 )
+from spreads.storage.job_models import JobDefinitionModel, JobLeaseModel, JobRunModel
 from spreads.storage.models import OptionQuoteEventModel, ScanCandidateModel, ScanRunModel
 from spreads.storage.records import (
     AlertEventRecord,
@@ -16,6 +17,9 @@ from spreads.storage.records import (
     CollectorCycleCandidateRecord,
     CollectorCycleEventRecord,
     CollectorCycleRecord,
+    JobDefinitionRecord,
+    JobLeaseRecord,
+    JobRunRecord,
     OptionQuoteEventRecord,
     ScanCandidateRecord,
     ScanRunRecord,
@@ -138,6 +142,50 @@ def to_alert_state_record(model: AlertStateModel) -> AlertStateRecord:
         last_cycle_id=model.last_cycle_id,
         last_alert_type=model.last_alert_type,
         state=dict(model.state_json or {}),
+    )
+
+
+def to_job_definition_record(model: JobDefinitionModel) -> JobDefinitionRecord:
+    return JobDefinitionRecord(
+        job_key=model.job_key,
+        job_type=model.job_type,
+        enabled=model.enabled,
+        schedule_type=model.schedule_type,
+        schedule=dict(model.schedule_json or {}),
+        payload=dict(model.payload_json or {}),
+        market_calendar=model.market_calendar,
+        singleton_scope=model.singleton_scope,
+        created_at=render_value(model.created_at),
+        updated_at=render_value(model.updated_at),
+    )
+
+
+def to_job_run_record(model: JobRunModel) -> JobRunRecord:
+    return JobRunRecord(
+        job_run_id=model.job_run_id,
+        job_key=model.job_key,
+        arq_job_id=model.arq_job_id,
+        job_type=model.job_type,
+        status=model.status,
+        scheduled_for=render_value(model.scheduled_for),
+        started_at=render_value(model.started_at),
+        finished_at=render_value(model.finished_at),
+        heartbeat_at=render_value(model.heartbeat_at),
+        worker_name=model.worker_name,
+        payload=dict(model.payload_json or {}),
+        result=None if model.result_json is None else dict(model.result_json),
+        error_text=model.error_text,
+    )
+
+
+def to_job_lease_record(model: JobLeaseModel) -> JobLeaseRecord:
+    return JobLeaseRecord(
+        lease_key=model.lease_key,
+        job_run_id=model.job_run_id,
+        owner=model.owner,
+        acquired_at=render_value(model.acquired_at),
+        expires_at=render_value(model.expires_at),
+        lease_state=dict(model.lease_state_json or {}),
     )
 
 

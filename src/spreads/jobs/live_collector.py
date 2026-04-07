@@ -5,7 +5,7 @@ import argparse
 import time as time_module
 from dataclasses import asdict
 from datetime import UTC, datetime, time
-from typing import Any
+from typing import Any, Callable
 
 from spreads.common import env_or_die, load_local_env
 from spreads.alerts import dispatch_cycle_alerts
@@ -43,7 +43,7 @@ WATCHLIST_TOP = 12
 WATCHLIST_QUOTE_CAPTURE_TOP = 6
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Poll the options scanner intraday and persist live idea cycles, board/watchlist state, and quote events to Postgres."
     )
@@ -112,7 +112,14 @@ def parse_args() -> argparse.Namespace:
         default=default_database_url(),
         help=argparse.SUPPRESS,
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
+
+
+def build_collection_args(overrides: dict[str, Any] | None = None) -> argparse.Namespace:
+    args = parse_args([])
+    for key, value in (overrides or {}).items():
+        setattr(args, key, value)
+    return args
 
 
 def market_is_open(now: datetime | None = None) -> bool:
@@ -647,14 +654,25 @@ def print_cycle_summary(
     print()
 
 
-def main() -> int:
-    load_local_env()
-    args = parse_args()
+def run_collection(
+    args: argparse.Namespace,
+    *,
+    heartbeat: Callable[[], None] | None = None,
+    emit_output: bool = True,
+) -> dict[str, Any]:
     scanner_args = build_scanner_args(args)
 
     if not args.allow_off_hours and not market_is_open():
-        print("Market is closed. Use --allow-off-hours to collect cycles anyway.")
-        return 0
+        if emit_output:
+            print("Market is closed. Use --allow-off-hours to collect cycles anyway.")
+        return {
+            "status": "skipped",
+            "reason": "market_closed",
+            "iterations_completed": 0,
+            "cycle_ids": [],
+            "alerts_sent": 0,
+            "quote_events_saved": 0,
+        }
 
     key_id = env_or_die("APCA_API_KEY_ID", "ALPACA_API_KEY")
     secret_key = env_or_die("APCA_API_SECRET_KEY", "ALPACA_SECRET_KEY")
@@ -674,10 +692,18 @@ def main() -> int:
         database_url=args.history_db,
     )
     greeks_provider = build_local_greeks_provider()
+    cycle_ids: list[str] = []
+    total_alerts = 0
+    total_quote_events = 0
+    last_label: str | None = None
+    iterations_completed = 0
     try:
         for iteration in range(args.iterations):
+            if heartbeat is not None:
+                heartbeat()
             if not args.allow_off_hours and not market_is_open():
-                print("Market closed during collection window. Stopping.")
+                if emit_output:
+                    print("Market closed during collection window. Stopping.")
                 break
 
             generated_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -689,7 +715,9 @@ def main() -> int:
                 history_store=history_store,
             )
             label = snapshot_label(universe_label, args)
+            last_label = label
             cycle_id = build_cycle_id(label)
+            cycle_ids.append(cycle_id)
             run_ids = {(result.symbol, result.args.strategy): result.run_id for result in scan_results}
             symbol_strategy_candidates = build_symbol_strategy_candidates(
                 scan_results,
@@ -764,24 +792,44 @@ def main() -> int:
                     )
                 except Exception as exc:
                     print(f"Live quote capture unavailable: {exc}")
-            print_cycle_summary(
-                generated_at=generated_at,
-                label=label,
-                board_candidates=board_payloads,
-                watchlist_candidates=watchlist_payloads,
-                events=events,
-                alerts=alerts,
-                failures=failures,
-                quote_event_count=quote_event_count,
-            )
+            total_alerts += len(alerts)
+            total_quote_events += quote_event_count
+            iterations_completed += 1
+            if emit_output:
+                print_cycle_summary(
+                    generated_at=generated_at,
+                    label=label,
+                    board_candidates=board_payloads,
+                    watchlist_candidates=watchlist_payloads,
+                    events=events,
+                    alerts=alerts,
+                    failures=failures,
+                    quote_event_count=quote_event_count,
+                )
             if iteration < args.iterations - 1:
                 time_module.sleep(max(args.interval_seconds, 1))
+                if heartbeat is not None:
+                    heartbeat()
     finally:
         alert_store.close()
         collector_store.close()
         history_store.close()
         calendar_resolver.store.close()
 
+    return {
+        "status": "completed",
+        "iterations_completed": iterations_completed,
+        "cycle_ids": cycle_ids,
+        "alerts_sent": total_alerts,
+        "quote_events_saved": total_quote_events,
+        "label": last_label,
+    }
+
+
+def main() -> int:
+    load_local_env()
+    args = parse_args()
+    run_collection(args, emit_output=True)
     return 0
 
 

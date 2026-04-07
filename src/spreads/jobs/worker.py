@@ -1,0 +1,251 @@
+from __future__ import annotations
+
+import asyncio
+import os
+import socket
+from datetime import UTC, datetime
+from typing import Any
+
+from spreads.jobs.live_collector import build_collection_args, run_collection
+from spreads.jobs.orchestration import (
+    build_redis_settings,
+    default_redis_url,
+    singleton_lease_key,
+    worker_runtime_lease_key,
+)
+from spreads.services.analysis import build_analysis_args, run_post_close_analysis
+from spreads.storage import build_job_repository, default_database_url
+
+WORKER_HEARTBEAT_SECONDS = 30
+WORKER_LEASE_TTL_SECONDS = 90
+JOB_LEASE_TTL_SECONDS = 600
+
+
+def worker_name() -> str:
+    return f"{socket.gethostname()}:{os.getpid()}"
+
+
+def compact_analysis_result(result: dict[str, Any]) -> dict[str, Any]:
+    summary = result["summary"]
+    outcomes = summary["outcomes"]
+    return {
+        "session_date": result["session_date"],
+        "label": result["label"],
+        "cycle_count": summary["cycle_count"],
+        "idea_count": outcomes["idea_count"],
+        "counts_by_bucket": outcomes["counts_by_bucket"],
+        "run_count": summary["run_overview"]["run_count"],
+        "quote_event_count": summary["quote_overview"]["quote_event_count"],
+        "event_count": summary["event_overview"]["event_count"],
+    }
+
+
+async def _heartbeat_runtime(job_store: Any, runtime_owner: str) -> None:
+    while True:
+        await asyncio.to_thread(
+            job_store.acquire_lease,
+            lease_key=worker_runtime_lease_key(runtime_owner),
+            owner=runtime_owner,
+            expires_in_seconds=WORKER_LEASE_TTL_SECONDS,
+            state={"kind": "worker"},
+        )
+        await asyncio.sleep(WORKER_HEARTBEAT_SECONDS)
+
+
+async def startup(ctx: dict[str, Any]) -> None:
+    ctx["database_url"] = default_database_url()
+    ctx["worker_name"] = worker_name()
+    ctx["job_store"] = build_job_repository(ctx["database_url"])
+    ctx["runtime_heartbeat_task"] = asyncio.create_task(
+        _heartbeat_runtime(ctx["job_store"], ctx["worker_name"])
+    )
+
+
+async def shutdown(ctx: dict[str, Any]) -> None:
+    task = ctx.get("runtime_heartbeat_task")
+    if task is not None:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    job_store = ctx.get("job_store")
+    if job_store is not None:
+        await asyncio.to_thread(
+            job_store.release_lease,
+            worker_runtime_lease_key(ctx["worker_name"]),
+            owner=ctx["worker_name"],
+        )
+        await asyncio.to_thread(job_store.close)
+
+
+async def _mark_running(job_store: Any, job_run_id: str, runtime_owner: str) -> None:
+    now = datetime.now(UTC)
+    await asyncio.to_thread(
+        job_store.update_job_run_status,
+        job_run_id=job_run_id,
+        status="running",
+        worker_name=runtime_owner,
+        started_at=now,
+        heartbeat_at=now,
+    )
+
+
+def _sync_job_heartbeat(
+    job_store: Any,
+    *,
+    job_run_id: str,
+    runtime_owner: str,
+    lease_key: str | None,
+) -> None:
+    now = datetime.now(UTC)
+    job_store.heartbeat_job_run(
+        job_run_id=job_run_id,
+        heartbeat_at=now,
+        worker_name=runtime_owner,
+    )
+    if lease_key is not None:
+        job_store.renew_lease(
+            lease_key=lease_key,
+            owner=job_run_id,
+            expires_in_seconds=JOB_LEASE_TTL_SECONDS,
+            state={"kind": "singleton_job"},
+        )
+
+
+async def _execute_managed_job(
+    ctx: dict[str, Any],
+    *,
+    job_key: str,
+    job_run_id: str,
+    payload: dict[str, Any],
+    runner: Any,
+    compact_result: Any,
+) -> dict[str, Any]:
+    job_store = ctx["job_store"]
+    runtime_owner = ctx["worker_name"]
+    lease_key = None
+    scope = payload.get("singleton_scope")
+    job_type = payload.get("job_type")
+    if scope and job_type:
+        lease_key = singleton_lease_key(str(job_type), str(scope))
+        acquired = await asyncio.to_thread(
+            job_store.acquire_lease,
+            lease_key=lease_key,
+            owner=job_run_id,
+            job_run_id=job_run_id,
+            expires_in_seconds=JOB_LEASE_TTL_SECONDS,
+            state={"kind": "singleton_job", "job_key": job_key},
+        )
+        if not acquired:
+            result = {"status": "skipped", "reason": "singleton_lease_unavailable"}
+            await asyncio.to_thread(
+                job_store.update_job_run_status,
+                job_run_id=job_run_id,
+                status="skipped",
+                worker_name=runtime_owner,
+                finished_at=datetime.now(UTC),
+                heartbeat_at=datetime.now(UTC),
+                result=result,
+            )
+            return result
+
+    await _mark_running(job_store, job_run_id, runtime_owner)
+    try:
+        result = await asyncio.to_thread(
+            runner,
+            lambda: _sync_job_heartbeat(
+                job_store,
+                job_run_id=job_run_id,
+                runtime_owner=runtime_owner,
+                lease_key=lease_key,
+            ),
+        )
+        compact = compact_result(result)
+        await asyncio.to_thread(
+            job_store.update_job_run_status,
+            job_run_id=job_run_id,
+            status="succeeded",
+            worker_name=runtime_owner,
+            finished_at=datetime.now(UTC),
+            heartbeat_at=datetime.now(UTC),
+            result=compact,
+        )
+        return compact
+    except Exception as exc:
+        await asyncio.to_thread(
+            job_store.update_job_run_status,
+            job_run_id=job_run_id,
+            status="failed",
+            worker_name=runtime_owner,
+            finished_at=datetime.now(UTC),
+            heartbeat_at=datetime.now(UTC),
+            error_text=str(exc),
+        )
+        raise
+    finally:
+        if lease_key is not None:
+            await asyncio.to_thread(job_store.release_lease, lease_key, owner=job_run_id)
+
+
+async def run_live_collector_job(
+    ctx: dict[str, Any],
+    job_key: str,
+    job_run_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    def runner(heartbeat: Any) -> dict[str, Any]:
+        args = build_collection_args(payload)
+        return run_collection(args, heartbeat=heartbeat, emit_output=False)
+
+    enriched_payload = dict(payload)
+    enriched_payload["job_type"] = "live_collector"
+    return await _execute_managed_job(
+        ctx,
+        job_key=job_key,
+        job_run_id=job_run_id,
+        payload=enriched_payload,
+        runner=runner,
+        compact_result=lambda result: result,
+    )
+
+
+async def run_post_close_analysis_job(
+    ctx: dict[str, Any],
+    job_key: str,
+    job_run_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    def runner(heartbeat: Any) -> dict[str, Any]:
+        heartbeat()
+        args = build_analysis_args(
+            {
+                "db": default_database_url(),
+                "date": payload.get("date", "today"),
+                "label": payload["label"],
+                "replay_profit_target": payload.get("replay_profit_target", 0.5),
+                "replay_stop_multiple": payload.get("replay_stop_multiple", 2.0),
+            }
+        )
+        return run_post_close_analysis(args, emit_output=False)
+
+    enriched_payload = dict(payload)
+    enriched_payload["job_type"] = "post_close_analysis"
+    return await _execute_managed_job(
+        ctx,
+        job_key=job_key,
+        job_run_id=job_run_id,
+        payload=enriched_payload,
+        runner=runner,
+        compact_result=compact_analysis_result,
+    )
+
+
+class WorkerSettings:
+    functions = [run_live_collector_job, run_post_close_analysis_job]
+    redis_settings = build_redis_settings(default_redis_url())
+    on_startup = startup
+    on_shutdown = shutdown
+    keep_result = 0
+    job_timeout = 60 * 60
+    max_jobs = 1

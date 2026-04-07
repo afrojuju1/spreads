@@ -1,18 +1,18 @@
 # Database Setup
 
-## Local Postgres
+## Local Services
 
-Start Postgres:
+Start Postgres and Redis:
 
 ```bash
-docker compose up -d postgres
+docker compose up -d postgres redis
 ```
 
 If you previously used the old Docker init-schema bootstrap, reset the local volume once:
 
 ```bash
 docker compose down -v
-docker compose up -d postgres
+docker compose up -d postgres redis
 ```
 
 Default connection URL:
@@ -35,6 +35,7 @@ Apply the schema with Alembic:
 
 ```bash
 uv run alembic upgrade head
+uv run spreads-seed-jobs
 ```
 
 Create a new migration:
@@ -67,6 +68,19 @@ uv run spreads-collect --profile weekly --universe explore_10
 uv run spreads-analyze --label explore_10_combined_weekly_auto
 ```
 
+ARQ orchestration defaults:
+
+```bash
+uv run spreads-scheduler
+uv run arq spreads.jobs.worker.WorkerSettings
+```
+
+Redis default connection URL:
+
+```text
+redis://localhost:56379/0
+```
+
 `spreads-collect` now persists live collector cycles, board/watchlist selections, events, and quote events directly to Postgres.
 
 Discord alert delivery is optional. If configured, collector alerts are sent through:
@@ -96,10 +110,15 @@ The FastAPI app is DB-backed. Useful endpoints include:
 - `/alerts`
 - `/alerts/latest`
 - `/alerts/{alert_id}`
+- `/jobs`
+- `/jobs/runs`
+- `/jobs/runs/{job_run_id}`
+- `/jobs/health`
 
 ## Notes
 
-- Docker only starts Postgres now; it does not create app tables.
+- Docker Compose can run `postgres`, `redis`, `api`, `worker`, and `scheduler`.
 - Alembic owns app-schema changes.
 - The runtime stores are SQLAlchemy ORM on Postgres.
 - Run history, collector live state, and calendar events all use the same Postgres database and session pattern.
+- Redis is transport/runtime only for ARQ; Postgres remains the source of truth for job state.

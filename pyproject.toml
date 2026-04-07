@@ -8,9 +8,11 @@ version = "0.1.0"
 description = "Alpaca-based options spread scanner"
 requires-python = ">=3.11"
 dependencies = [
+  "arq>=0.25.0",
   "alembic>=1.16.5",
   "fastapi>=0.118.0",
   "msgpack>=1.1.0",
+  "pandas-market-calendars>=4.4.1",
   "python-dotenv>=1.1.1",
   "psycopg[binary]>=3.2.10",
   "py-vollib>=1.0.1",
@@ -23,6 +25,8 @@ dependencies = [
 spreads-scan = "spreads.cli.scan:main"
 spreads-collect = "spreads.cli.collect:main"
 spreads-analyze = "spreads.cli.analyze:main"
+spreads-scheduler = "spreads.jobs.scheduler:main"
+spreads-seed-jobs = "spreads.jobs.seed:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/spreads"]

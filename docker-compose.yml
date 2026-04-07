@@ -16,6 +16,61 @@ services:
       start_period: 10s
     volumes:
       - spreads_postgres_data:/var/lib/postgresql/data
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "56379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  api:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
+      REDIS_URL: redis://redis:6379/0
+    command: ["uv", "run", "uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "58080:8000"
+  worker:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
+      REDIS_URL: redis://redis:6379/0
+    command: ["uv", "run", "arq", "spreads.jobs.worker.WorkerSettings"]
+  scheduler:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
+      REDIS_URL: redis://redis:6379/0
+    command: ["uv", "run", "spreads-scheduler"]
 
 volumes:
   spreads_postgres_data:

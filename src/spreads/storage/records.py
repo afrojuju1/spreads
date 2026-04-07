@@ -180,3 +180,44 @@ class AlertStateRecord(RecordMapping):
     last_cycle_id: str
     last_alert_type: str
     state: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class JobDefinitionRecord(RecordMapping):
+    job_key: str
+    job_type: str
+    enabled: bool
+    schedule_type: str
+    schedule: dict[str, Any]
+    payload: dict[str, Any]
+    market_calendar: str
+    singleton_scope: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class JobRunRecord(RecordMapping):
+    job_run_id: str
+    job_key: str
+    arq_job_id: str | None
+    job_type: str
+    status: str
+    scheduled_for: str
+    started_at: str | None
+    finished_at: str | None
+    heartbeat_at: str | None
+    worker_name: str | None
+    payload: dict[str, Any]
+    result: dict[str, Any] | None
+    error_text: str | None
+
+
+@dataclass(frozen=True)
+class JobLeaseRecord(RecordMapping):
+    lease_key: str
+    job_run_id: str | None
+    owner: str
+    acquired_at: str
+    expires_at: str
+    lease_state: dict[str, Any]

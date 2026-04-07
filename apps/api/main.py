@@ -18,10 +18,12 @@ from spreads.services.analysis import (
     build_session_summary,
     render_session_summary_markdown,
 )
+from spreads.jobs.orchestration import SCHEDULER_RUNTIME_LEASE_KEY, WORKER_RUNTIME_LEASE_PREFIX
 from spreads.storage import (
     build_alert_repository,
     build_collector_repository,
     build_history_store,
+    build_job_repository,
     default_database_url,
 )
 
@@ -267,6 +269,74 @@ def get_alert(alert_id: int, db: str | None = None) -> dict[str, Any]:
         if alert is None:
             raise HTTPException(status_code=404, detail="Alert not found")
         return alert.to_dict()
+    finally:
+        store.close()
+
+
+@app.get("/jobs")
+def list_jobs(
+    enabled_only: bool | None = Query(default=None),
+    job_type: str | None = None,
+    db: str | None = None,
+) -> dict[str, Any]:
+    store = build_job_repository(resolve_db(db))
+    try:
+        rows = store.list_job_definitions(enabled_only=enabled_only, job_type=job_type)
+        return {"jobs": [row.to_dict() for row in rows]}
+    finally:
+        store.close()
+
+
+@app.get("/jobs/runs")
+def list_job_runs(
+    job_key: str | None = None,
+    job_type: str | None = None,
+    status: str | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    db: str | None = None,
+) -> dict[str, Any]:
+    store = build_job_repository(resolve_db(db))
+    try:
+        rows = store.list_job_runs(job_key=job_key, job_type=job_type, status=status, limit=limit)
+        return {"job_runs": [row.to_dict() for row in rows]}
+    finally:
+        store.close()
+
+
+@app.get("/jobs/runs/{job_run_id}")
+def get_job_run(job_run_id: str, db: str | None = None) -> dict[str, Any]:
+    store = build_job_repository(resolve_db(db))
+    try:
+        row = store.get_job_run(job_run_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Job run not found")
+        return row.to_dict()
+    finally:
+        store.close()
+
+
+@app.get("/jobs/health")
+def get_jobs_health(db: str | None = None) -> dict[str, Any]:
+    store = build_job_repository(resolve_db(db))
+    try:
+        definitions = store.list_job_definitions(enabled_only=True)
+        running = store.list_job_runs(status="running", limit=100)
+        queued = store.list_job_runs(status="queued", limit=100)
+        scheduler = store.get_lease(SCHEDULER_RUNTIME_LEASE_KEY)
+        workers = store.list_active_leases(prefix=WORKER_RUNTIME_LEASE_PREFIX)
+        latest_collectors: dict[str, Any] = {}
+        for definition in definitions:
+            if definition["job_type"] != "live_collector":
+                continue
+            runs = store.list_job_runs(job_key=definition["job_key"], status="succeeded", limit=1)
+            latest_collectors[definition["job_key"]] = None if not runs else runs[0].to_dict()
+        return {
+            "scheduler": None if scheduler is None else scheduler.to_dict(),
+            "workers": [lease.to_dict() for lease in workers],
+            "running_jobs": [row.to_dict() for row in running],
+            "queued_jobs": [row.to_dict() for row in queued],
+            "latest_successful_collectors": latest_collectors,
+        }
     finally:
         store.close()
 

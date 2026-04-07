@@ -28,7 +28,7 @@ SCORE_BUCKETS = (
 )
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Summarize persisted intraday collector sessions and replay spread outcomes."
     )
@@ -59,7 +59,14 @@ def parse_args() -> argparse.Namespace:
         default=2.0,
         help="Stop multiple used for replay verdicts. Default: 2.0",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
+
+
+def build_analysis_args(overrides: dict[str, Any] | None = None) -> argparse.Namespace:
+    args = parse_args([])
+    for key, value in (overrides or {}).items():
+        setattr(args, key, value)
+    return args
 
 
 def resolve_date(value: str) -> str:
@@ -1076,10 +1083,8 @@ def render_session_summary_markdown(summary: Mapping[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def main() -> int:
-    args = parse_args()
+def run_post_close_analysis(args: argparse.Namespace, *, emit_output: bool = True) -> dict[str, Any]:
     session_date = resolve_date(args.date)
-
     summary = build_session_summary(
         db_target=args.db,
         session_date=session_date,
@@ -1088,7 +1093,19 @@ def main() -> int:
         stop_multiple=args.replay_stop_multiple,
     )
     report = render_session_summary_markdown(summary)
-    print(report, end="")
+    if emit_output:
+        print(report, end="")
+    return {
+        "session_date": session_date,
+        "label": args.label,
+        "summary": summary,
+        "report": report,
+    }
+
+
+def main() -> int:
+    args = parse_args()
+    run_post_close_analysis(args, emit_output=True)
     return 0
 
 
