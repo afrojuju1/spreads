@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -13,17 +12,18 @@ if str(SRC) not in sys.path:
 from fastapi import FastAPI, HTTPException, Query
 
 from spreads.domain.profiles import UNIVERSE_PRESETS
-from spreads.storage import build_history_store, default_database_url
+from spreads.services.analysis import (
+    build_session_outcomes,
+    build_session_summary,
+    render_session_summary_markdown,
+)
+from spreads.storage import build_collector_repository, build_history_store, default_database_url
 
-app = FastAPI(title="Spreads API", version="0.1.0")
+app = FastAPI(title="Spreads API", version="0.2.0")
 
 
-def live_snapshot_path(label: str) -> Path:
-    return ROOT / "outputs" / "live_ideas" / f"latest_{label}.json"
-
-
-def analysis_report_path(session_date: str, label: str) -> Path:
-    return ROOT / "outputs" / "analysis" / f"post_close_{session_date}_{label}.md"
+def resolve_db(db: str | None) -> str:
+    return db or default_database_url()
 
 
 @app.get("/health")
@@ -37,19 +37,67 @@ def list_universes() -> dict[str, list[str]]:
 
 
 @app.get("/live/{label}")
-def get_live_snapshot(label: str) -> dict[str, Any]:
-    path = live_snapshot_path(label)
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Live snapshot not found")
-    return json.loads(path.read_text())
+def get_live_snapshot(label: str, db: str | None = None) -> dict[str, Any]:
+    store = build_collector_repository(resolve_db(db))
+    try:
+        cycle = store.get_latest_cycle(label)
+        if cycle is None:
+            raise HTTPException(status_code=404, detail="Live cycle not found")
+        board = store.list_cycle_candidates(cycle["cycle_id"], bucket="board")
+        watchlist = store.list_cycle_candidates(cycle["cycle_id"], bucket="watchlist")
+        return {
+            **cycle.to_dict(),
+            "board_candidates": [candidate.to_dict() for candidate in board],
+            "watchlist_candidates": [candidate.to_dict() for candidate in watchlist],
+            "failures": cycle["failures"],
+        }
+    finally:
+        store.close()
 
 
-@app.get("/analysis/{session_date}/{label}")
-def get_analysis_report(session_date: str, label: str) -> dict[str, Any]:
-    path = analysis_report_path(session_date, label)
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Analysis report not found")
-    return {"path": str(path), "content": path.read_text()}
+@app.get("/live/{label}/cycles")
+def list_live_cycles(
+    label: str,
+    session_date: str | None = None,
+    limit: int = Query(default=50, ge=1, le=1000),
+    db: str | None = None,
+) -> dict[str, Any]:
+    store = build_collector_repository(resolve_db(db))
+    try:
+        cycles = store.list_cycles(label=label, session_date=session_date, limit=limit)
+        return {"cycles": [cycle.to_dict() for cycle in cycles]}
+    finally:
+        store.close()
+
+
+@app.get("/live/{label}/events")
+def list_live_events(
+    label: str,
+    session_date: str | None = None,
+    limit: int = Query(default=200, ge=1, le=5000),
+    db: str | None = None,
+) -> dict[str, Any]:
+    store = build_collector_repository(resolve_db(db))
+    try:
+        resolved_session_date = session_date
+        if resolved_session_date is None:
+            cycle = store.get_latest_cycle(label)
+            if cycle is None:
+                raise HTTPException(status_code=404, detail="Live cycle not found")
+            resolved_session_date = cycle["session_date"]
+        events = store.list_events(
+            label=label,
+            session_date=resolved_session_date,
+            limit=limit,
+            ascending=True,
+        )
+        return {
+            "label": label,
+            "session_date": resolved_session_date,
+            "events": [event.to_dict() for event in events],
+        }
+    finally:
+        store.close()
 
 
 @app.get("/history/runs")
@@ -59,7 +107,7 @@ def list_history_runs(
     limit: int = Query(default=25, ge=1, le=500),
     db: str | None = None,
 ) -> dict[str, Any]:
-    store = build_history_store(db or default_database_url())
+    store = build_history_store(resolve_db(db))
     try:
         return {
             "runs": [
@@ -73,3 +121,92 @@ def list_history_runs(
         }
     finally:
         store.close()
+
+
+@app.get("/history/runs/{run_id}")
+def get_history_run(run_id: str, db: str | None = None) -> dict[str, Any]:
+    store = build_history_store(resolve_db(db))
+    try:
+        run = store.get_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+        return run.to_dict()
+    finally:
+        store.close()
+
+
+@app.get("/history/runs/{run_id}/candidates")
+def get_history_run_candidates(run_id: str, db: str | None = None) -> dict[str, Any]:
+    store = build_history_store(resolve_db(db))
+    try:
+        run = store.get_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+        candidates = store.list_candidates(run_id)
+        return {
+            "run_id": run_id,
+            "candidates": [candidate.to_dict() for candidate in candidates],
+        }
+    finally:
+        store.close()
+
+
+@app.get("/sessions/{session_date}/{label}/outcomes")
+def get_session_outcomes(
+    session_date: str,
+    label: str,
+    replay_profit_target: float = Query(default=0.5, gt=0),
+    replay_stop_multiple: float = Query(default=2.0, gt=0),
+    db: str | None = None,
+) -> dict[str, Any]:
+    db_target = resolve_db(db)
+    history_store = build_history_store(db_target)
+    collector_store = build_collector_repository(db_target)
+    try:
+        return build_session_outcomes(
+            history_store=history_store,
+            collector_store=collector_store,
+            session_date=session_date,
+            label=label,
+            profit_target=replay_profit_target,
+            stop_multiple=replay_stop_multiple,
+        )
+    finally:
+        collector_store.close()
+        history_store.close()
+
+
+@app.get("/sessions/{session_date}/{label}/summary")
+def get_session_summary(
+    session_date: str,
+    label: str,
+    replay_profit_target: float = Query(default=0.5, gt=0),
+    replay_stop_multiple: float = Query(default=2.0, gt=0),
+    db: str | None = None,
+) -> dict[str, Any]:
+    return build_session_summary(
+        db_target=resolve_db(db),
+        session_date=session_date,
+        label=label,
+        profit_target=replay_profit_target,
+        stop_multiple=replay_stop_multiple,
+    )
+
+
+@app.get("/analysis/{session_date}/{label}")
+def get_analysis_report(
+    session_date: str,
+    label: str,
+    replay_profit_target: float = Query(default=0.5, gt=0),
+    replay_stop_multiple: float = Query(default=2.0, gt=0),
+    db: str | None = None,
+) -> dict[str, Any]:
+    summary = build_session_summary(
+        db_target=resolve_db(db),
+        session_date=session_date,
+        label=label,
+        profit_target=replay_profit_target,
+        stop_multiple=replay_stop_multiple,
+    )
+    content = render_session_summary_markdown(summary)
+    return {"session_date": session_date, "label": label, "content": content}

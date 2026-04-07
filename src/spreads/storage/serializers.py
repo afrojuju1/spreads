@@ -3,8 +3,16 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Any
 
+from spreads.storage.collector_models import (
+    CollectorCycleCandidateModel,
+    CollectorCycleEventModel,
+    CollectorCycleModel,
+)
 from spreads.storage.models import OptionQuoteEventModel, ScanCandidateModel, ScanRunModel
 from spreads.storage.records import (
+    CollectorCycleCandidateRecord,
+    CollectorCycleEventRecord,
+    CollectorCycleRecord,
     OptionQuoteEventRecord,
     ScanCandidateRecord,
     ScanRunRecord,
@@ -99,6 +107,64 @@ def to_option_quote_event_record(model: OptionQuoteEventModel) -> OptionQuoteEve
         ask_size=model.ask_size,
         quote_timestamp=render_value(model.quote_timestamp),
         source=model.source,
+    )
+
+
+def to_collector_cycle_record(model: CollectorCycleModel) -> CollectorCycleRecord:
+    return CollectorCycleRecord(
+        cycle_id=model.cycle_id,
+        label=model.label,
+        session_date=render_value(model.session_date),
+        generated_at=render_value(model.generated_at),
+        universe_label=model.universe_label,
+        strategy=model.strategy,
+        profile=model.profile,
+        greeks_source=model.greeks_source,
+        symbols=list(model.symbols_json or []),
+        failures=list(model.failures_json or []),
+        selection_state=dict(model.selection_state_json or {}),
+    )
+
+
+def to_collector_cycle_candidate_record(
+    model: CollectorCycleCandidateModel,
+    *,
+    label: str,
+    session_date: date,
+    generated_at: datetime,
+) -> CollectorCycleCandidateRecord:
+    return CollectorCycleCandidateRecord(
+        candidate_id=model.candidate_id,
+        cycle_id=model.cycle_id,
+        label=label,
+        session_date=render_value(session_date),
+        generated_at=render_value(generated_at),
+        bucket=model.bucket,
+        position=model.position,
+        run_id=model.run_id,
+        underlying_symbol=model.underlying_symbol,
+        strategy=model.strategy,
+        expiration_date=render_value(model.expiration_date),
+        short_symbol=model.short_symbol,
+        long_symbol=model.long_symbol,
+        quality_score=model.quality_score,
+        midpoint_credit=model.midpoint_credit,
+        candidate=dict(model.candidate_json or {}),
+    )
+
+
+def to_collector_cycle_event_record(model: CollectorCycleEventModel) -> CollectorCycleEventRecord:
+    return CollectorCycleEventRecord(
+        event_id=model.event_id,
+        cycle_id=model.cycle_id,
+        label=model.label,
+        session_date=render_value(model.session_date),
+        generated_at=render_value(model.generated_at),
+        symbol=model.symbol,
+        event_type=model.event_type,
+        message=model.message,
+        previous_candidate=None if model.previous_candidate_json is None else dict(model.previous_candidate_json),
+        current_candidate=None if model.current_candidate_json is None else dict(model.current_candidate_json),
     )
 
 

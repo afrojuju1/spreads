@@ -65,9 +65,13 @@ uv run spreads-collect --profile weekly --universe explore_10
 uv run spreads-analyze --label explore_10_combined_weekly_auto
 ```
 
+`spreads-collect` now persists live collector cycles, board/watchlist selections, events, and quote events directly to Postgres.
+
+`spreads-analyze` renders the post-close markdown report to stdout from Postgres-backed analytics; it does not write a report file.
+
 ## Notes
 
 - Docker only starts Postgres now; it does not create app tables.
 - Alembic owns app-schema changes.
 - The runtime stores are SQLAlchemy ORM on Postgres.
-- Run history and calendar events both use the same Postgres database and session pattern.
+- Run history, collector live state, and calendar events all use the same Postgres database and session pattern.

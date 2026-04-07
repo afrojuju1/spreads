@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Iterator
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, delete, func, inspect, select
 from sqlalchemy.orm import Session
@@ -180,9 +181,7 @@ class RunHistoryRepository:
         session_date: str,
         session_label: str | None = None,
     ) -> list[SessionTopRunRecord]:
-        session_start_date = date.fromisoformat(session_date)
-        session_start = datetime.combine(session_start_date, time.min, tzinfo=timezone.utc)
-        session_end = session_start + timedelta(days=1)
+        session_start, session_end = session_bounds(session_date)
 
         statement = (
             select(ScanRunModel, ScanCandidateModel)
@@ -210,9 +209,7 @@ class RunHistoryRepository:
         session_date: str,
         label: str,
     ) -> list[OptionQuoteEventRecord]:
-        session_start_date = date.fromisoformat(session_date)
-        session_start = datetime.combine(session_start_date, time.min, tzinfo=timezone.utc)
-        session_end = session_start + timedelta(days=1)
+        session_start, session_end = session_bounds(session_date)
 
         statement = (
             select(OptionQuoteEventModel)
@@ -263,3 +260,13 @@ class RunHistoryRepository:
 
     def close(self) -> None:
         self.engine.dispose()
+
+
+NEW_YORK = ZoneInfo("America/New_York")
+
+
+def session_bounds(session_date: str) -> tuple[datetime, datetime]:
+    ny_date = date.fromisoformat(session_date)
+    session_start_local = datetime.combine(ny_date, time.min, tzinfo=NEW_YORK)
+    session_end_local = session_start_local + timedelta(days=1)
+    return session_start_local.astimezone(timezone.utc), session_end_local.astimezone(timezone.utc)

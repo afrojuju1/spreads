@@ -105,3 +105,52 @@ class OptionQuoteEventRecord(RecordMapping):
     ask_size: int
     quote_timestamp: str | None
     source: str
+
+
+@dataclass(frozen=True)
+class CollectorCycleRecord(RecordMapping):
+    cycle_id: str
+    label: str
+    session_date: str
+    generated_at: str
+    universe_label: str
+    strategy: str
+    profile: str
+    greeks_source: str
+    symbols: list[str]
+    failures: list[dict[str, Any]]
+    selection_state: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class CollectorCycleCandidateRecord(RecordMapping):
+    candidate_id: int
+    cycle_id: str
+    label: str
+    session_date: str
+    generated_at: str
+    bucket: str
+    position: int
+    run_id: str
+    underlying_symbol: str
+    strategy: str
+    expiration_date: str
+    short_symbol: str
+    long_symbol: str
+    quality_score: float
+    midpoint_credit: float
+    candidate: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class CollectorCycleEventRecord(RecordMapping):
+    event_id: int
+    cycle_id: str
+    label: str
+    session_date: str
+    generated_at: str
+    symbol: str
+    event_type: str
+    message: str
+    previous_candidate: dict[str, Any] | None
+    current_candidate: dict[str, Any] | None

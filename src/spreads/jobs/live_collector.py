@@ -2,12 +2,9 @@
 from __future__ import annotations
 
 import argparse
-import json
-import shutil
 import time as time_module
 from dataclasses import asdict
 from datetime import UTC, datetime, time
-from pathlib import Path
 from typing import Any
 
 from spreads.common import env_or_die, load_local_env
@@ -25,8 +22,9 @@ from spreads.services.scanner import (
     scan_symbol_across_strategies,
     sort_candidates_for_display,
 )
-from spreads.storage import default_database_url
+from spreads.storage import build_collector_repository, default_database_url
 from spreads.storage.factory import build_history_store
+from spreads.storage.collector_repository import CollectorRepository
 from spreads.storage.run_history_repository import RunHistoryRepository
 
 BOARD_SCORE_FLOOR = 65.0
@@ -45,7 +43,7 @@ WATCHLIST_QUOTE_CAPTURE_TOP = 6
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Poll the options scanner intraday and persist live idea snapshots plus event logs."
+        description="Poll the options scanner intraday and persist live idea cycles, board/watchlist state, and quote events to Postgres."
     )
     parser.add_argument(
         "--universe",
@@ -106,11 +104,6 @@ def parse_args() -> argparse.Namespace:
         "--allow-off-hours",
         action="store_true",
         help="Run even outside regular market hours.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        default=str(Path("outputs") / "live_ideas"),
-        help="Directory for live idea snapshots and logs. Default: outputs/live_ideas",
     )
     parser.add_argument(
         "--history-db",
@@ -198,30 +191,23 @@ def serialize_candidate(candidate: SpreadCandidate, run_id: str | None) -> dict[
     payload["run_id"] = run_id
     return payload
 
-
-def latest_snapshot_path(output_dir: Path, label: str) -> Path:
-    return output_dir / f"latest_{label}.json"
-
-
-def event_log_path(output_dir: Path, label: str) -> Path:
-    return output_dir / f"events_{label}.jsonl"
-
-
-def read_previous_snapshot(path: Path) -> dict[str, dict[str, Any]]:
-    return read_previous_snapshot_state(path)[0]
-
-
-def read_previous_snapshot_state(path: Path) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    if not path.exists():
+def read_previous_cycle_state(
+    collector_store: CollectorRepository,
+    label: str,
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    latest_cycle = collector_store.get_latest_cycle(label)
+    if latest_cycle is None:
         return {}, {}
-    payload = json.loads(path.read_text())
-    board = payload.get("board_candidates", [])
+
+    board = collector_store.list_cycle_candidates(latest_cycle["cycle_id"], bucket="board")
     previous: dict[str, dict[str, Any]] = {}
     for candidate in board:
-        symbol = candidate.get("underlying_symbol")
+        payload = dict(candidate["candidate"])
+        symbol = payload.get("underlying_symbol")
         if symbol:
-            previous[str(symbol)] = candidate
-    raw_state = payload.get("selection_state", {})
+            previous[str(symbol)] = payload
+
+    raw_state = latest_cycle["selection_state"] or {}
     selection_state = {
         str(symbol): state
         for symbol, state in raw_state.items()
@@ -615,52 +601,6 @@ def collect_live_quote_records(
         )
     return records
 
-
-def write_events(path: Path, events: list[dict[str, Any]]) -> None:
-    if not events:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        for event in events:
-            handle.write(json.dumps(event, separators=(",", ":")))
-            handle.write("\n")
-
-
-def write_snapshot(
-    *,
-    output_dir: Path,
-    label: str,
-    cycle_id: str,
-    generated_at: str,
-    args: argparse.Namespace,
-    symbols: list[str],
-    board_candidates: list[dict[str, Any]],
-    watchlist_candidates: list[dict[str, Any]],
-    selection_state: dict[str, dict[str, Any]],
-    failures: list[UniverseScanFailure],
-) -> Path:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    snapshots_dir = output_dir / "snapshots"
-    snapshots_dir.mkdir(parents=True, exist_ok=True)
-    snapshot_path = snapshots_dir / f"{cycle_id}.json"
-    payload = {
-        "cycle_id": cycle_id,
-        "generated_at": generated_at,
-        "label": label,
-        "symbols": symbols,
-        "strategy": args.strategy,
-        "profile": args.profile,
-        "greeks_source": args.greeks_source,
-        "board_candidates": board_candidates,
-        "watchlist_candidates": watchlist_candidates,
-        "selection_state": selection_state,
-        "failures": [asdict(failure) for failure in failures],
-    }
-    snapshot_path.write_text(json.dumps(payload, indent=2))
-    shutil.copyfile(snapshot_path, latest_snapshot_path(output_dir, label))
-    return snapshot_path
-
-
 def print_cycle_summary(
     *,
     generated_at: str,
@@ -669,7 +609,6 @@ def print_cycle_summary(
     watchlist_candidates: list[dict[str, Any]],
     events: list[dict[str, Any]],
     failures: list[UniverseScanFailure],
-    snapshot_path: Path,
     quote_event_count: int,
 ) -> None:
     print(f"[{generated_at}] {label}")
@@ -693,7 +632,6 @@ def print_cycle_summary(
         print("Events:")
         for event in events:
             print(f"- {event['message']}")
-    print(f"Snapshot: {snapshot_path}")
     print()
 
 
@@ -703,7 +641,7 @@ def main() -> int:
     scanner_args = build_scanner_args(args)
 
     if not args.allow_off_hours and not market_is_open():
-        print("Market is closed. Use --allow-off-hours to collect snapshots anyway.")
+        print("Market is closed. Use --allow-off-hours to collect cycles anyway.")
         return 0
 
     key_id = env_or_die("APCA_API_KEY_ID", "ALPACA_API_KEY")
@@ -715,6 +653,7 @@ def main() -> int:
         data_base_url=scanner_args.data_base_url,
     )
     history_store = build_history_store(args.history_db)
+    collector_store = build_collector_repository(args.history_db)
     calendar_resolver = build_calendar_event_resolver(
         key_id=key_id,
         secret_key=secret_key,
@@ -722,8 +661,6 @@ def main() -> int:
         database_url=args.history_db,
     )
     greeks_provider = build_local_greeks_provider()
-    output_dir = Path(args.output_dir)
-
     try:
         for iteration in range(args.iterations):
             if not args.allow_off_hours and not market_is_open():
@@ -746,9 +683,7 @@ def main() -> int:
                 run_ids,
                 max_per_strategy=WATCHLIST_PER_STRATEGY,
             )
-            previous_map, previous_selection_state = read_previous_snapshot_state(
-                latest_snapshot_path(output_dir, label)
-            )
+            previous_map, previous_selection_state = read_previous_cycle_state(collector_store, label)
             board_payloads, selection_state = select_board_candidates(
                 symbol_candidates=symbol_strategy_candidates,
                 previous_board=previous_map,
@@ -768,19 +703,21 @@ def main() -> int:
                 previous=previous_map,
                 current=current_map,
             )
-            snapshot_path = write_snapshot(
-                output_dir=output_dir,
-                label=label,
+            collector_store.save_cycle(
                 cycle_id=cycle_id,
+                label=label,
                 generated_at=generated_at,
-                args=args,
+                universe_label=universe_label,
+                strategy=args.strategy,
+                profile=args.profile,
+                greeks_source=args.greeks_source,
                 symbols=symbols,
+                failures=[asdict(failure) for failure in failures],
+                selection_state=selection_state,
                 board_candidates=board_payloads,
                 watchlist_candidates=watchlist_payloads,
-                selection_state=selection_state,
-                failures=failures,
+                events=events,
             )
-            write_events(event_log_path(output_dir, label), events)
             quote_event_count = 0
             quote_candidates = board_payloads + watchlist_payloads[:WATCHLIST_QUOTE_CAPTURE_TOP]
             if quote_candidates:
@@ -806,12 +743,12 @@ def main() -> int:
                 watchlist_candidates=watchlist_payloads,
                 events=events,
                 failures=failures,
-                snapshot_path=snapshot_path,
                 quote_event_count=quote_event_count,
             )
             if iteration < args.iterations - 1:
                 time_module.sleep(max(args.interval_seconds, 1))
     finally:
+        collector_store.close()
         history_store.close()
         calendar_resolver.store.close()
 
