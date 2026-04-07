@@ -6,7 +6,9 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import create_engine, pool
 
-from spreads.storage.models import Base
+from spreads.storage import calendar_models as storage_calendar_models  # noqa: F401
+from spreads.storage.db import Base
+from spreads.storage import models as storage_models  # noqa: F401
 
 config = context.config
 

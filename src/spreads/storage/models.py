@@ -5,11 +5,9 @@ from typing import Any
 
 from sqlalchemy import BigInteger, Date, DateTime, Float, ForeignKey, Index, Integer, Text
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-
-class Base(DeclarativeBase):
-    pass
+from spreads.storage.db import Base
 
 
 class ScanRunModel(Base):

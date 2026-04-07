@@ -39,9 +39,9 @@ from spreads.integrations.calendar_events import build_calendar_event_resolver, 
 from spreads.integrations.calendar_events.models import CalendarPolicyDecision
 from spreads.integrations.calendar_events.policy import apply_credit_spread_policy
 from spreads.integrations.greeks import build_local_greeks_provider
-from spreads.storage import default_history_target
-from spreads.storage.base import HistoryStore
+from spreads.storage import default_database_url
 from spreads.storage.factory import build_history_store
+from spreads.storage.postgres import RunHistoryRepository
 
 
 DEFAULT_DATA_BASE_URL = "https://data.alpaca.markets"
@@ -267,7 +267,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--history-db",
-        default=default_history_target(),
+        default=default_database_url(),
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
@@ -3327,7 +3327,7 @@ def run_replay(
     *,
     args: argparse.Namespace,
     client: AlpacaClient,
-    history_store: HistoryStore,
+    history_store: RunHistoryRepository,
 ) -> int:
     if args.replay_latest and args.strategy == "combined":
         raise SystemExit("Replay latest requires --strategy call_credit or --strategy put_credit")
@@ -3387,7 +3387,7 @@ def scan_symbol_live(
     client: AlpacaClient,
     calendar_resolver: Any,
     greeks_provider: Any,
-    history_store: HistoryStore,
+    history_store: RunHistoryRepository,
 ) -> SymbolScanResult:
     symbol = symbol.upper()
     underlying_type = classify_underlying_type(symbol)
@@ -3563,7 +3563,7 @@ def scan_symbol_across_strategies(
     client: AlpacaClient,
     calendar_resolver: Any,
     greeks_provider: Any,
-    history_store: HistoryStore,
+    history_store: RunHistoryRepository,
 ) -> tuple[list[SymbolScanResult], list[UniverseScanFailure]]:
     results: list[SymbolScanResult] = []
     failures: list[UniverseScanFailure] = []
@@ -3618,6 +3618,7 @@ def main() -> int:
         key_id=key_id,
         secret_key=secret_key,
         data_base_url=args.data_base_url,
+        database_url=args.history_db,
     )
     greeks_provider = build_local_greeks_provider()
 

@@ -8,7 +8,6 @@ from .adapters.base import BaseCalendarEventAdapter
 from .adapters.earnings_calendar import EarningsCalendarAdapter
 from .adapters.macro_calendar import MacroCalendarAdapter
 from .config import (
-    DEFAULT_CALENDAR_DB_PATH,
     DEFAULT_MACRO_CALENDAR_PATH,
     DIVIDEND_EVENT_TYPES,
     MACRO_ASSET_SCOPE,
@@ -24,6 +23,7 @@ from .models import (
     CalendarEventRecord,
 )
 from .store import CalendarEventStore
+from spreads.storage import default_database_url
 
 
 def _utc_now_iso() -> str:
@@ -214,10 +214,10 @@ def build_calendar_event_resolver(
     key_id: str,
     secret_key: str,
     data_base_url: str,
-    db_path: Path | None = None,
+    database_url: str | None = None,
     macro_calendar_path: Path | None = None,
 ) -> CalendarEventResolver:
-    store = CalendarEventStore(db_path or DEFAULT_CALENDAR_DB_PATH)
+    store = CalendarEventStore(database_url or default_database_url())
     adapters: list[BaseCalendarEventAdapter] = [
         EarningsCalendarAdapter(),
         AlpacaCorporateActionsAdapter(key_id=key_id, secret_key=secret_key, base_url=data_base_url),

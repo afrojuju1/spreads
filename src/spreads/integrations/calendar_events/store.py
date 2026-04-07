@@ -1,105 +1,96 @@
 from __future__ import annotations
 
-import sqlite3
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from typing import Iterator
+
+from sqlalchemy import and_, select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import Session
+
+from spreads.storage.calendar_models import CalendarEventModel, CalendarEventRefreshStateModel
+from spreads.storage.db import build_session_factory
 
 from .models import CalendarEventRecord
 
 
+def _parse_datetime(value: str | datetime) -> datetime:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
+    normalized = value.replace("Z", "+00:00") if value.endswith("Z") else value
+    parsed = datetime.fromisoformat(normalized)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _render_datetime(value: datetime) -> str:
+    rendered = value.isoformat()
+    return rendered.replace("+00:00", "Z") if rendered.endswith("+00:00") else rendered
+
+
 class CalendarEventStore:
-    def __init__(self, db_path: Path) -> None:
-        self.db_path = db_path
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.connection = sqlite3.connect(self.db_path)
-        self.connection.row_factory = sqlite3.Row
-        self._init_schema()
+    def __init__(self, database_url: str) -> None:
+        self.path = database_url
+        self.engine, self.session_factory = build_session_factory(database_url)
+        with self.session_factory() as session:
+            session.execute(select(1))
 
-    def _init_schema(self) -> None:
-        self.connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS calendar_events (
-                event_id TEXT PRIMARY KEY,
-                event_type TEXT NOT NULL,
-                symbol TEXT,
-                asset_scope TEXT,
-                scheduled_at TEXT NOT NULL,
-                window_start TEXT NOT NULL,
-                window_end TEXT NOT NULL,
-                source TEXT NOT NULL,
-                source_confidence TEXT NOT NULL,
-                status TEXT NOT NULL,
-                payload_json TEXT NOT NULL,
-                ingested_at TEXT NOT NULL,
-                source_updated_at TEXT NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_calendar_events_symbol
-            ON calendar_events(symbol, scheduled_at);
-
-            CREATE INDEX IF NOT EXISTS idx_calendar_events_asset_scope
-            ON calendar_events(asset_scope, scheduled_at);
-
-            CREATE TABLE IF NOT EXISTS calendar_event_refresh_state (
-                source TEXT NOT NULL,
-                scope_key TEXT NOT NULL,
-                coverage_start TEXT NOT NULL,
-                coverage_end TEXT NOT NULL,
-                refreshed_at TEXT NOT NULL,
-                PRIMARY KEY (source, scope_key)
-            );
-            """
-        )
-        self.connection.commit()
+    @contextmanager
+    def session_scope(self) -> Iterator[Session]:
+        session = self.session_factory()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
 
     def close(self) -> None:
-        self.connection.close()
+        self.engine.dispose()
 
     def upsert_events(self, records: list[CalendarEventRecord]) -> None:
         if not records:
             return
-        self.connection.executemany(
-            """
-            INSERT INTO calendar_events (
-                event_id, event_type, symbol, asset_scope, scheduled_at,
-                window_start, window_end, source, source_confidence, status,
-                payload_json, ingested_at, source_updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(event_id) DO UPDATE SET
-                event_type=excluded.event_type,
-                symbol=excluded.symbol,
-                asset_scope=excluded.asset_scope,
-                scheduled_at=excluded.scheduled_at,
-                window_start=excluded.window_start,
-                window_end=excluded.window_end,
-                source=excluded.source,
-                source_confidence=excluded.source_confidence,
-                status=excluded.status,
-                payload_json=excluded.payload_json,
-                ingested_at=excluded.ingested_at,
-                source_updated_at=excluded.source_updated_at
-            """,
+        statement = insert(CalendarEventModel).values(
             [
-                (
-                    record.event_id,
-                    record.event_type,
-                    record.symbol,
-                    record.asset_scope,
-                    record.scheduled_at,
-                    record.window_start,
-                    record.window_end,
-                    record.source,
-                    record.source_confidence,
-                    record.status,
-                    record.payload_json,
-                    record.ingested_at,
-                    record.source_updated_at,
-                )
+                {
+                    "event_id": record.event_id,
+                    "event_type": record.event_type,
+                    "symbol": record.symbol,
+                    "asset_scope": record.asset_scope,
+                    "scheduled_at": _parse_datetime(record.scheduled_at),
+                    "window_start": _parse_datetime(record.window_start),
+                    "window_end": _parse_datetime(record.window_end),
+                    "source": record.source,
+                    "source_confidence": record.source_confidence,
+                    "status": record.status,
+                    "payload_json": record.payload_json,
+                    "ingested_at": _parse_datetime(record.ingested_at),
+                    "source_updated_at": _parse_datetime(record.source_updated_at),
+                }
                 for record in records
-            ],
+            ]
         )
-        self.connection.commit()
+        upsert = statement.on_conflict_do_update(
+            index_elements=[CalendarEventModel.event_id],
+            set_={
+                "event_type": statement.excluded.event_type,
+                "symbol": statement.excluded.symbol,
+                "asset_scope": statement.excluded.asset_scope,
+                "scheduled_at": statement.excluded.scheduled_at,
+                "window_start": statement.excluded.window_start,
+                "window_end": statement.excluded.window_end,
+                "source": statement.excluded.source,
+                "source_confidence": statement.excluded.source_confidence,
+                "status": statement.excluded.status,
+                "payload_json": statement.excluded.payload_json,
+                "ingested_at": statement.excluded.ingested_at,
+                "source_updated_at": statement.excluded.source_updated_at,
+            },
+        )
+        with self.session_scope() as session:
+            session.execute(upsert)
 
     def set_refresh_state(
         self,
@@ -110,31 +101,47 @@ class CalendarEventStore:
         coverage_end: str,
         refreshed_at: str,
     ) -> None:
-        self.connection.execute(
-            """
-            INSERT INTO calendar_event_refresh_state (
-                source, scope_key, coverage_start, coverage_end, refreshed_at
-            )
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(source, scope_key) DO UPDATE SET
-                coverage_start=excluded.coverage_start,
-                coverage_end=excluded.coverage_end,
-                refreshed_at=excluded.refreshed_at
-            """,
-            (source, scope_key, coverage_start, coverage_end, refreshed_at),
+        statement = insert(CalendarEventRefreshStateModel).values(
+            {
+                "source": source,
+                "scope_key": scope_key,
+                "coverage_start": _parse_datetime(coverage_start),
+                "coverage_end": _parse_datetime(coverage_end),
+                "refreshed_at": _parse_datetime(refreshed_at),
+            }
         )
-        self.connection.commit()
+        upsert = statement.on_conflict_do_update(
+            index_elements=[
+                CalendarEventRefreshStateModel.source,
+                CalendarEventRefreshStateModel.scope_key,
+            ],
+            set_={
+                "coverage_start": statement.excluded.coverage_start,
+                "coverage_end": statement.excluded.coverage_end,
+                "refreshed_at": statement.excluded.refreshed_at,
+            },
+        )
+        with self.session_scope() as session:
+            session.execute(upsert)
 
-    def get_refresh_state(self, *, source: str, scope_key: str) -> sqlite3.Row | None:
-        row = self.connection.execute(
-            """
-            SELECT source, scope_key, coverage_start, coverage_end, refreshed_at
-            FROM calendar_event_refresh_state
-            WHERE source = ? AND scope_key = ?
-            """,
-            (source, scope_key),
-        ).fetchone()
-        return row
+    def get_refresh_state(self, *, source: str, scope_key: str) -> dict[str, str] | None:
+        statement = select(CalendarEventRefreshStateModel).where(
+            and_(
+                CalendarEventRefreshStateModel.source == source,
+                CalendarEventRefreshStateModel.scope_key == scope_key,
+            )
+        )
+        with self.session_factory() as session:
+            row = session.scalar(statement)
+        if row is None:
+            return None
+        return {
+            "source": row.source,
+            "scope_key": row.scope_key,
+            "coverage_start": _render_datetime(row.coverage_start),
+            "coverage_end": _render_datetime(row.coverage_end),
+            "refreshed_at": _render_datetime(row.refreshed_at),
+        }
 
     def has_fresh_coverage(
         self,
@@ -152,7 +159,7 @@ class CalendarEventStore:
             return False
         if freshness_hours <= 0:
             return True
-        refreshed_at = datetime.fromisoformat(row["refreshed_at"])
+        refreshed_at = _parse_datetime(row["refreshed_at"])
         return refreshed_at >= datetime.now(UTC) - timedelta(hours=freshness_hours)
 
     def query_events(
@@ -163,41 +170,37 @@ class CalendarEventStore:
         window_start: str,
         window_end: str,
     ) -> list[CalendarEventRecord]:
-        params: list[str] = [window_start, window_end, symbol]
-        query = """
-            SELECT
-                event_id, event_type, symbol, asset_scope, scheduled_at,
-                window_start, window_end, source, source_confidence, status,
-                payload_json, ingested_at, source_updated_at
-            FROM calendar_events
-            WHERE scheduled_at >= ?
-              AND scheduled_at <= ?
-              AND (
-                    symbol = ?
-        """
-        if asset_scope:
-            query += " OR asset_scope = ?"
-            params.append(asset_scope)
-        query += """
-              )
-            ORDER BY scheduled_at ASC
-        """
-        rows = self.connection.execute(query, params).fetchall()
+        statement = (
+            select(CalendarEventModel)
+            .where(CalendarEventModel.scheduled_at >= _parse_datetime(window_start))
+            .where(CalendarEventModel.scheduled_at <= _parse_datetime(window_end))
+            .where(
+                (CalendarEventModel.symbol == symbol)
+                if not asset_scope
+                else (
+                    (CalendarEventModel.symbol == symbol)
+                    | (CalendarEventModel.asset_scope == asset_scope)
+                )
+            )
+            .order_by(CalendarEventModel.scheduled_at.asc())
+        )
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
         return [
             CalendarEventRecord(
-                event_id=row["event_id"],
-                event_type=row["event_type"],
-                symbol=row["symbol"],
-                asset_scope=row["asset_scope"],
-                scheduled_at=row["scheduled_at"],
-                window_start=row["window_start"],
-                window_end=row["window_end"],
-                source=row["source"],
-                source_confidence=row["source_confidence"],
-                status=row["status"],
-                payload_json=row["payload_json"],
-                ingested_at=row["ingested_at"],
-                source_updated_at=row["source_updated_at"],
+                event_id=row.event_id,
+                event_type=row.event_type,
+                symbol=row.symbol,
+                asset_scope=row.asset_scope,
+                scheduled_at=_render_datetime(row.scheduled_at),
+                window_start=_render_datetime(row.window_start),
+                window_end=_render_datetime(row.window_end),
+                source=row.source,
+                source_confidence=row.source_confidence,
+                status=row.status,
+                payload_json=row.payload_json,
+                ingested_at=_render_datetime(row.ingested_at),
+                source_updated_at=_render_datetime(row.source_updated_at),
             )
             for row in rows
         ]

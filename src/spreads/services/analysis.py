@@ -13,7 +13,7 @@ from spreads.common import env_or_die, load_local_env
 from spreads.integrations.alpaca.client import AlpacaClient, infer_trading_base_url
 from spreads.services.replay import summarize_replay
 from spreads.services.scanner import NEW_YORK
-from spreads.storage import build_history_store, default_history_target
+from spreads.storage import build_history_store, default_database_url
 
 
 def parse_args() -> argparse.Namespace:
@@ -22,8 +22,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--db",
-        default=default_history_target(),
-        help="History database target. Supports SQLite paths and PostgreSQL URLs.",
+        default=default_database_url(),
+        help="History database target. Default: SPREADS_DATABASE_URL / DATABASE_URL / local Docker Postgres.",
     )
     parser.add_argument(
         "--date",

@@ -4,67 +4,31 @@ from contextlib import contextmanager
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Iterator
 
-from sqlalchemy import and_, create_engine, delete, func, inspect, select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import and_, delete, func, inspect, select
+from sqlalchemy.orm import Session
 
+from spreads.storage.db import build_session_factory
 from spreads.storage.models import OptionQuoteEventModel, ScanCandidateModel, ScanRunModel
+from spreads.storage.records import (
+    OptionQuoteEventRecord,
+    ScanCandidateRecord,
+    ScanRunRecord,
+    SessionTopRunRecord,
+)
+from spreads.storage.serializers import (
+    parse_date,
+    parse_datetime,
+    to_option_quote_event_record,
+    to_scan_candidate_record,
+    to_scan_run_record,
+    to_session_top_run_record,
+)
 
 
-def normalize_database_url(url: str) -> str:
-    if url.startswith("postgresql+psycopg://"):
-        return url
-    if url.startswith("postgresql://"):
-        return url.replace("postgresql://", "postgresql+psycopg://", 1)
-    if url.startswith("postgres://"):
-        return url.replace("postgres://", "postgresql+psycopg://", 1)
-    return url
-
-
-def _parse_datetime(value: str | datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-    normalized = value.replace("Z", "+00:00") if value.endswith("Z") else value
-    parsed = datetime.fromisoformat(normalized)
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-
-
-def _parse_date(value: str | date) -> date:
-    if isinstance(value, date) and not isinstance(value, datetime):
-        return value
-    return date.fromisoformat(str(value))
-
-
-def _render_value(value: Any) -> Any:
-    if isinstance(value, datetime):
-        rendered = value.isoformat()
-        return rendered.replace("+00:00", "Z") if rendered.endswith("+00:00") else rendered
-    if isinstance(value, date):
-        return value.isoformat()
-    return value
-
-
-def _row_to_dict(model: Any) -> dict[str, Any]:
-    return {
-        column.name: _render_value(getattr(model, column.name))
-        for column in model.__table__.columns
-    }
-
-
-class PostgresRunHistoryStore:
+class RunHistoryRepository:
     def __init__(self, database_url: str) -> None:
         self.path = database_url
-        self.engine = create_engine(
-            normalize_database_url(database_url),
-            future=True,
-            pool_pre_ping=True,
-        )
-        self.session_factory = sessionmaker(
-            bind=self.engine,
-            expire_on_commit=False,
-            future=True,
-        )
+        self.engine, self.session_factory = build_session_factory(database_url)
         with self.session_factory() as session:
             session.execute(select(1))
 
@@ -126,7 +90,7 @@ class PostgresRunHistoryStore:
                 run = ScanRunModel(run_id=run_id)
                 session.add(run)
 
-            run.generated_at = _parse_datetime(generated_at)
+            run.generated_at = parse_datetime(generated_at)
             run.symbol = symbol
             run.strategy = strategy
             run.session_label = session_label
@@ -143,7 +107,7 @@ class PostgresRunHistoryStore:
                     run_id=run_id,
                     rank=rank,
                     strategy=candidate.strategy,
-                    expiration_date=_parse_date(candidate.expiration_date),
+                    expiration_date=parse_date(candidate.expiration_date),
                     short_symbol=candidate.short_symbol,
                     long_symbol=candidate.long_symbol,
                     short_strike=candidate.short_strike,
@@ -165,17 +129,14 @@ class PostgresRunHistoryStore:
                 for rank, candidate in enumerate(candidates, start=1)
             ]
 
-    def get_run(self, run_id: str) -> dict[str, Any] | None:
+    def get_run(self, run_id: str) -> ScanRunRecord | None:
         with self.session_factory() as session:
             run = session.get(ScanRunModel, run_id)
         if run is None:
             return None
-        payload = _row_to_dict(run)
-        payload["filters"] = payload.pop("filters_json")
-        payload["setup"] = payload.get("setup_json")
-        return payload
+        return to_scan_run_record(run)
 
-    def get_latest_run(self, symbol: str, strategy: str | None = None) -> dict[str, Any] | None:
+    def get_latest_run(self, symbol: str, strategy: str | None = None) -> ScanRunRecord | None:
         statement = select(ScanRunModel).where(ScanRunModel.symbol == symbol.upper())
         if strategy is not None:
             statement = statement.where(ScanRunModel.strategy == strategy)
@@ -184,12 +145,9 @@ class PostgresRunHistoryStore:
             run = session.scalar(statement)
         if run is None:
             return None
-        payload = _row_to_dict(run)
-        payload["filters"] = payload.pop("filters_json")
-        payload["setup"] = payload.get("setup_json")
-        return payload
+        return to_scan_run_record(run)
 
-    def list_candidates(self, run_id: str) -> list[dict[str, Any]]:
+    def list_candidates(self, run_id: str) -> list[ScanCandidateRecord]:
         statement = (
             select(ScanCandidateModel)
             .where(ScanCandidateModel.run_id == run_id)
@@ -197,7 +155,7 @@ class PostgresRunHistoryStore:
         )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [_row_to_dict(row) for row in rows]
+        return [to_scan_candidate_record(row) for row in rows]
 
     def list_runs(
         self,
@@ -205,7 +163,7 @@ class PostgresRunHistoryStore:
         limit: int,
         symbol: str | None = None,
         strategy: str | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[ScanRunRecord]:
         statement = select(ScanRunModel)
         if symbol:
             statement = statement.where(ScanRunModel.symbol == symbol.upper())
@@ -214,14 +172,14 @@ class PostgresRunHistoryStore:
         statement = statement.order_by(ScanRunModel.generated_at.desc()).limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [_row_to_dict(row) for row in rows]
+        return [to_scan_run_record(row) for row in rows]
 
     def list_session_top_runs(
         self,
         *,
         session_date: str,
         session_label: str | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[SessionTopRunRecord]:
         session_start_date = date.fromisoformat(session_date)
         session_start = datetime.combine(session_start_date, time.min, tzinfo=timezone.utc)
         session_end = session_start + timedelta(days=1)
@@ -244,55 +202,14 @@ class PostgresRunHistoryStore:
 
         with self.session_factory() as session:
             rows = session.execute(statement).all()
-
-        payloads: list[dict[str, Any]] = []
-        for run, candidate in rows:
-            payload = {
-                "run_id": _render_value(run.run_id),
-                "generated_at": _render_value(run.generated_at),
-                "symbol": _render_value(run.symbol),
-                "strategy": _render_value(run.strategy),
-                "profile": _render_value(run.profile),
-                "spot_price": _render_value(run.spot_price),
-                "candidate_count": _render_value(run.candidate_count),
-                "setup_status": _render_value(run.setup_status),
-                "setup_score": _render_value(run.setup_score),
-                "setup_json": run.setup_json,
-                "short_symbol": None,
-                "long_symbol": None,
-                "short_strike": None,
-                "long_strike": None,
-                "midpoint_credit": None,
-                "quality_score": None,
-                "calendar_status": None,
-                "expected_move": None,
-                "short_vs_expected_move": None,
-            }
-            if candidate is not None:
-                payload.update(
-                    {
-                        "short_symbol": _render_value(candidate.short_symbol),
-                        "long_symbol": _render_value(candidate.long_symbol),
-                        "short_strike": _render_value(candidate.short_strike),
-                        "long_strike": _render_value(candidate.long_strike),
-                        "midpoint_credit": _render_value(candidate.midpoint_credit),
-                        "quality_score": _render_value(candidate.quality_score),
-                        "calendar_status": _render_value(candidate.calendar_status),
-                        "expected_move": _render_value(candidate.expected_move),
-                        "short_vs_expected_move": _render_value(
-                            candidate.short_vs_expected_move
-                        ),
-                    }
-                )
-            payloads.append(payload)
-        return payloads
+        return [to_session_top_run_record(run, candidate) for run, candidate in rows]
 
     def list_session_quote_events(
         self,
         *,
         session_date: str,
         label: str,
-    ) -> list[dict[str, Any]]:
+    ) -> list[OptionQuoteEventRecord]:
         session_start_date = date.fromisoformat(session_date)
         session_start = datetime.combine(session_start_date, time.min, tzinfo=timezone.utc)
         session_end = session_start + timedelta(days=1)
@@ -306,7 +223,7 @@ class PostgresRunHistoryStore:
         )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [_row_to_dict(row) for row in rows]
+        return [to_option_quote_event_record(row) for row in rows]
 
     def save_option_quote_events(
         self,
@@ -324,7 +241,7 @@ class PostgresRunHistoryStore:
                 [
                     OptionQuoteEventModel(
                         cycle_id=cycle_id,
-                        captured_at=_parse_datetime(quote["captured_at"]),
+                        captured_at=parse_datetime(quote["captured_at"]),
                         label=label,
                         underlying_symbol=quote.get("underlying_symbol"),
                         strategy=quote.get("strategy"),
@@ -336,7 +253,7 @@ class PostgresRunHistoryStore:
                         midpoint=quote["midpoint"],
                         bid_size=quote["bid_size"],
                         ask_size=quote["ask_size"],
-                        quote_timestamp=_parse_datetime(quote.get("quote_timestamp")),
+                        quote_timestamp=parse_datetime(quote.get("quote_timestamp")),
                         source=quote.get("source", "alpaca_websocket"),
                     )
                     for quote in quotes

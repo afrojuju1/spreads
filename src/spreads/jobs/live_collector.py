@@ -25,9 +25,9 @@ from spreads.services.scanner import (
     scan_symbol_across_strategies,
     sort_candidates_for_display,
 )
-from spreads.storage import default_history_target
-from spreads.storage.base import HistoryStore
+from spreads.storage import default_database_url
 from spreads.storage.factory import build_history_store
+from spreads.storage.postgres import RunHistoryRepository
 
 BOARD_SCORE_FLOOR = 65.0
 BOARD_STRONG_SCORE = 82.0
@@ -114,7 +114,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--history-db",
-        default=default_history_target(),
+        default=default_database_url(),
         help=argparse.SUPPRESS,
     )
     return parser.parse_args()
@@ -152,7 +152,7 @@ def run_universe_cycle(
     client: AlpacaClient,
     calendar_resolver: Any,
     greeks_provider: Any,
-    history_store: HistoryStore,
+    history_store: RunHistoryRepository,
 ) -> tuple[list[str], str, list[SymbolScanResult], list[UniverseScanFailure], list[SpreadCandidate]]:
     symbols, universe_label = resolve_symbols(scanner_args)
     scanner_args.session_label = snapshot_label(universe_label, scanner_args)
@@ -719,6 +719,7 @@ def main() -> int:
         key_id=key_id,
         secret_key=secret_key,
         data_base_url=scanner_args.data_base_url,
+        database_url=args.history_db,
     )
     greeks_provider = build_local_greeks_provider()
     output_dir = Path(args.output_dir)

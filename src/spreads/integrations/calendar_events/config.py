@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-DEFAULT_CALENDAR_DB_PATH = Path("outputs") / "calendar_events" / "calendar_events.sqlite"
 DEFAULT_MACRO_CALENDAR_PATH = Path("data") / "macro_calendar.json"
 MACRO_ASSET_SCOPE = "etf_index_proxy"
 

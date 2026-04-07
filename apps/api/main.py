@@ -13,7 +13,7 @@ if str(SRC) not in sys.path:
 from fastapi import FastAPI, HTTPException, Query
 
 from spreads.domain.profiles import UNIVERSE_PRESETS
-from spreads.storage import build_history_store, default_history_target
+from spreads.storage import build_history_store, default_database_url
 
 app = FastAPI(title="Spreads API", version="0.1.0")
 
@@ -59,14 +59,17 @@ def list_history_runs(
     limit: int = Query(default=25, ge=1, le=500),
     db: str | None = None,
 ) -> dict[str, Any]:
-    store = build_history_store(db or default_history_target())
+    store = build_history_store(db or default_database_url())
     try:
         return {
-            "runs": store.list_runs(
-                limit=limit,
-                symbol=symbol,
-                strategy=strategy,
-            )
+            "runs": [
+                run.to_dict()
+                for run in store.list_runs(
+                    limit=limit,
+                    symbol=symbol,
+                    strategy=strategy,
+                )
+            ]
         }
     finally:
         store.close()

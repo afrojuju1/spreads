@@ -2,21 +2,16 @@ from __future__ import annotations
 
 import os
 
-from spreads.storage.postgres import PostgresRunHistoryStore
-
-DEFAULT_POSTGRES_URL = "postgresql://spreads:spreads@localhost:55432/spreads"
-
-
-def default_history_target() -> str:
-    return os.environ.get("SPREADS_DATABASE_URL") or os.environ.get("DATABASE_URL") or DEFAULT_POSTGRES_URL
+from spreads.storage.db import DEFAULT_POSTGRES_URL, default_database_url
+from spreads.storage.postgres import RunHistoryRepository
 
 
 def build_history_store(path_or_url: str | None = None):
     if path_or_url is None:
-        path_or_url = default_history_target()
+        path_or_url = default_database_url()
     value = str(path_or_url)
     if value.startswith("postgres://") or value.startswith("postgresql://") or value.startswith("postgresql+psycopg://"):
-        return PostgresRunHistoryStore(value)
+        return RunHistoryRepository(value)
     raise RuntimeError(
-        "SQLite history storage is deprecated. Configure SPREADS_DATABASE_URL for the Postgres backend."
+        f"History storage is Postgres-only. Use a PostgreSQL URL, for example {DEFAULT_POSTGRES_URL}."
     )

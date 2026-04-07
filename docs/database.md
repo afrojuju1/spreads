@@ -47,21 +47,6 @@ Rollback one revision:
 uv run alembic downgrade -1
 ```
 
-## Import Existing SQLite History
-
-Backfill the existing local SQLite history into Postgres:
-
-```bash
-uv run spreads-import-history --truncate
-```
-
-By default the importer reads:
-
-- source: `outputs/run_history/scanner_history.sqlite`
-- target: `SPREADS_DATABASE_URL`
-
-It refuses to import into a non-empty Postgres target unless `--truncate` is provided.
-
 ## DB Selection
 
 The runtime history backend is Postgres only.
@@ -84,5 +69,5 @@ uv run post_close_analysis.py --label explore_10_combined_weekly_auto
 
 - Docker only starts Postgres now; it does not create app tables.
 - Alembic owns app-schema changes.
-- The runtime store is SQLAlchemy ORM on Postgres.
-- SQLite is only used as a one-time import source for old history data.
+- The runtime stores are SQLAlchemy ORM on Postgres.
+- Run history and calendar events both use the same Postgres database and session pattern.
