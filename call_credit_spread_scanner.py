@@ -21,6 +21,7 @@ import csv
 import json
 import math
 import os
+import shutil
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -39,6 +40,7 @@ from scanner_history import DEFAULT_HISTORY_DB_PATH, RunHistoryStore
 DEFAULT_DATA_BASE_URL = "https://data.alpaca.markets"
 DEFAULT_TRADING_BASE_URL = "https://api.alpaca.markets"
 NEW_YORK = ZoneInfo("America/New_York")
+DEFAULT_BOARD_UNIVERSE = "etf_core"
 UNIVERSE_PRESETS: dict[str, tuple[str, ...]] = {
     "etf_core": ("SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "XLE", "SMH"),
     "liquid_stocks": ("AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "AMD", "TSLA"),
@@ -63,7 +65,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Find call credit spread candidates for a single underlying using Alpaca."
     )
-    parser.add_argument("--symbol", default="SPY", help="Underlying symbol. Default: SPY")
+    parser.add_argument("--symbol", help="Scan a single underlying.")
     parser.add_argument(
         "--symbols",
         help="Comma-separated list of underlyings to scan as a universe board.",
@@ -290,7 +292,7 @@ def load_symbols_file(path: str) -> list[str]:
 
 def resolve_symbols(args: argparse.Namespace) -> tuple[list[str], str]:
     symbols: list[str] = []
-    label = args.symbol.upper()
+    label = args.symbol.upper() if args.symbol else DEFAULT_BOARD_UNIVERSE
 
     if args.universe:
         symbols.extend(UNIVERSE_PRESETS[args.universe])
@@ -303,8 +305,12 @@ def resolve_symbols(args: argparse.Namespace) -> tuple[list[str], str]:
         symbols.extend(load_symbols_file(args.symbols_file))
         label = Path(args.symbols_file).stem.lower()
 
+    if args.symbol:
+        symbols.append(args.symbol.upper())
+        label = args.symbol.upper()
+
     if not symbols:
-        return [args.symbol.upper()], label
+        return list(UNIVERSE_PRESETS[DEFAULT_BOARD_UNIVERSE]), DEFAULT_BOARD_UNIVERSE
 
     deduped: list[str] = []
     seen: set[str] = set()
@@ -525,6 +531,7 @@ class SpreadCandidate:
     setup_reasons: tuple[str, ...] = ()
     data_status: str = "clean"
     data_reasons: tuple[str, ...] = ()
+    board_notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1151,8 +1158,12 @@ def assess_data_quality(
         reasons.append(reason)
 
     if underlying_type == "single_name_equity" and candidate.calendar_confidence == "low":
-        penalized = True
-        reasons.append("Calendar data confidence is low for this single-name candidate")
+        reason = "Calendar data confidence is low for this single-name candidate"
+        if args.data_policy == "strict":
+            blocked = True
+        else:
+            penalized = True
+        reasons.append(reason)
 
     if blocked:
         return "blocked", tuple(reasons)
@@ -1174,6 +1185,38 @@ def attach_data_quality(
             continue
         enriched.append(replace(candidate, data_status=status, data_reasons=reasons))
     return enriched
+
+
+def build_board_notes(candidate: SpreadCandidate, args: argparse.Namespace) -> tuple[str, ...]:
+    notes: list[str] = []
+    if candidate.short_delta is not None and abs(candidate.short_delta - args.short_delta_target) <= 0.02:
+        notes.append("delta-fit")
+    if candidate.expected_move and candidate.short_vs_expected_move is not None:
+        if candidate.short_vs_expected_move >= 0:
+            notes.append("outside-em")
+        else:
+            notes.append("inside-em")
+    if candidate.fill_ratio >= 0.80:
+        notes.append("good-fill")
+    elif candidate.fill_ratio >= args.min_fill_ratio:
+        notes.append("acceptable-fill")
+    if min(candidate.short_open_interest, candidate.long_open_interest) >= max(args.min_open_interest * 3, 500):
+        notes.append("liquid")
+    if candidate.calendar_status == "clean":
+        notes.append("calendar-clean")
+    elif candidate.calendar_status == "penalized":
+        notes.append("calendar-risk")
+    if candidate.setup_status == "favorable":
+        notes.append("setup-favorable")
+    elif candidate.setup_status == "neutral":
+        notes.append("setup-neutral")
+    if candidate.data_status == "penalized":
+        notes.append("data-caution")
+    return tuple(notes[:4])
+
+
+def attach_board_notes(candidates: list[SpreadCandidate], args: argparse.Namespace) -> list[SpreadCandidate]:
+    return [replace(candidate, board_notes=build_board_notes(candidate, args)) for candidate in candidates]
 
 
 def deduplicate_candidates(candidates: list[SpreadCandidate], expand_duplicates: bool) -> list[SpreadCandidate]:
@@ -1292,6 +1335,12 @@ def default_universe_output_path(label: str, output_format: str) -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_label = label.lower().replace(" ", "_")
     return str(Path("outputs") / "universe_boards" / f"{safe_label}_{timestamp}.{output_format}")
+
+
+def write_latest_copy(output_path: str, latest_name: str) -> str:
+    latest_path = str(Path(output_path).with_name(latest_name))
+    shutil.copyfile(output_path, latest_path)
+    return latest_path
 
 
 def option_expiry_close(expiration_date: str) -> datetime:
@@ -1678,6 +1727,7 @@ def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
         "setup_reasons",
         "data_status",
         "data_reasons",
+        "board_notes",
         "order_payload",
     ]
     with open(path, "w", newline="", encoding="utf-8") as handle:
@@ -1689,6 +1739,7 @@ def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
             row["calendar_sources"] = ", ".join(candidate.calendar_sources)
             row["setup_reasons"] = "; ".join(candidate.setup_reasons)
             row["data_reasons"] = "; ".join(candidate.data_reasons)
+            row["board_notes"] = ", ".join(candidate.board_notes)
             row["order_payload"] = json.dumps(candidate.order_payload, separators=(",", ":"))
             writer.writerow(row)
 
@@ -1746,6 +1797,7 @@ def build_universe_board_rows(candidates: list[SpreadCandidate]) -> list[list[st
                 candidate.calendar_status,
                 candidate.data_status,
                 candidate.setup_status,
+                ",".join(candidate.board_notes),
             ]
         )
     return rows
@@ -1766,7 +1818,7 @@ def print_universe_board(
     print()
 
     if board_candidates:
-        headers = ["Symbol", "Expiry", "DTE", "Spot", "Short", "Long", "MidCr", "Score", "Δ", "BE%", "S-EM", "Cal", "DQ", "Setup"]
+        headers = ["Symbol", "Expiry", "DTE", "Spot", "Short", "Long", "MidCr", "Score", "Δ", "BE%", "S-EM", "Cal", "DQ", "Setup", "Why"]
         print(format_table(headers, build_universe_board_rows(board_candidates)))
         print()
     else:
@@ -1778,6 +1830,8 @@ def print_universe_board(
             f"{index}. {candidate.underlying_symbol} {candidate.short_symbol} -> {candidate.long_symbol} | "
             f"score {candidate.quality_score:.1f} | breakeven {candidate.breakeven:.2f}"
         )
+        if candidate.board_notes:
+            print(f"   why: {', '.join(candidate.board_notes)}")
         if candidate.calendar_reasons:
             print(f"   calendar: {'; '.join(candidate.calendar_reasons)}")
         if candidate.data_reasons:
@@ -1921,6 +1975,93 @@ def option_bar_available_for_target(
     return short_date == target_date and long_date == target_date
 
 
+def option_bars_by_date(bars: list[DailyBar]) -> dict[date, DailyBar]:
+    return {
+        datetime.fromisoformat(bar.timestamp.replace("Z", "+00:00")).date(): bar
+        for bar in bars
+    }
+
+
+def simulate_exit_until_date(
+    candidate: dict[str, Any],
+    *,
+    option_bars: dict[str, list[DailyBar]],
+    start_date: date,
+    target_date: date,
+    profit_target: float,
+    stop_multiple: float,
+) -> dict[str, Any]:
+    short_bars = option_bars_by_date(option_bars.get(candidate["short_symbol"], []))
+    long_bars = option_bars_by_date(option_bars.get(candidate["long_symbol"], []))
+    entry_credit = candidate["midpoint_credit"]
+    target_mark = max(entry_credit * (1.0 - profit_target), 0.0)
+    stop_mark = entry_credit * stop_multiple
+
+    path_dates = sorted(d for d in short_bars if start_date <= d <= target_date and d in long_bars)
+    if not path_dates:
+        return {"status": "pending_option_bars"}
+
+    last_mark = None
+    for path_date in path_dates:
+        spread_bar = estimate_spread_bar(short_bars[path_date], long_bars[path_date])
+        last_mark = spread_bar["close"]
+        hit_target = spread_bar["low"] <= target_mark
+        hit_stop = spread_bar["high"] >= stop_mark
+
+        if hit_target and hit_stop:
+            return {
+                "status": "conflict",
+                "exit_date": path_date.isoformat(),
+                "exit_reason": "conflict_stop_first",
+                "exit_mark": stop_mark,
+                "estimated_pnl": (entry_credit - stop_mark) * 100.0,
+                "spread_mark_close": spread_bar["close"],
+                "spread_mark_low": spread_bar["low"],
+                "spread_mark_high": spread_bar["high"],
+                "profit_target_hit": True,
+                "stop_hit": True,
+            }
+        if hit_target:
+            return {
+                "status": "exited",
+                "exit_date": path_date.isoformat(),
+                "exit_reason": "profit_target",
+                "exit_mark": target_mark,
+                "estimated_pnl": (entry_credit - target_mark) * 100.0,
+                "spread_mark_close": spread_bar["close"],
+                "spread_mark_low": spread_bar["low"],
+                "spread_mark_high": spread_bar["high"],
+                "profit_target_hit": True,
+                "stop_hit": False,
+            }
+        if hit_stop:
+            return {
+                "status": "exited",
+                "exit_date": path_date.isoformat(),
+                "exit_reason": "stop",
+                "exit_mark": stop_mark,
+                "estimated_pnl": (entry_credit - stop_mark) * 100.0,
+                "spread_mark_close": spread_bar["close"],
+                "spread_mark_low": spread_bar["low"],
+                "spread_mark_high": spread_bar["high"],
+                "profit_target_hit": False,
+                "stop_hit": True,
+            }
+
+    return {
+        "status": "open",
+        "exit_date": path_dates[-1].isoformat(),
+        "exit_reason": "mark",
+        "exit_mark": last_mark,
+        "estimated_pnl": (entry_credit - last_mark) * 100.0 if last_mark is not None else None,
+        "spread_mark_close": last_mark,
+        "spread_mark_low": None,
+        "spread_mark_high": None,
+        "profit_target_hit": False,
+        "stop_hit": False,
+    }
+
+
 def summarize_replay(
     *,
     run_payload: dict[str, Any],
@@ -1952,6 +2093,8 @@ def summarize_replay(
         closed_over_breakeven = 0
         profit_target_hits = 0
         stop_hits = 0
+        conflicts = 0
+        total_pnl = 0.0
 
         for candidate in candidates:
             if latest_available_date is None or latest_available_date < target_date:
@@ -1969,12 +2112,15 @@ def summarize_replay(
             horizon_bar = latest_bar_on_or_before(bars, target_date)
             if horizon_bar is None:
                 continue
-            if not option_bar_available_for_target(
-                option_bars,
-                candidate["short_symbol"],
-                candidate["long_symbol"],
-                target_date,
-            ):
+            replay_path = simulate_exit_until_date(
+                candidate,
+                option_bars=option_bars,
+                start_date=run_date,
+                target_date=target_date,
+                profit_target=profit_target,
+                stop_multiple=stop_multiple,
+            )
+            if replay_path["status"] == "pending_option_bars":
                 rows.append(
                     {
                         "horizon": label,
@@ -1992,22 +2138,13 @@ def summarize_replay(
             touched_short = max_high >= candidate["short_strike"]
             closed_above_short = horizon_bar.close >= candidate["short_strike"]
             closed_above_breakeven = horizon_bar.close >= candidate["breakeven"]
-            short_option_bar = latest_option_bar_on_or_before(option_bars, candidate["short_symbol"], target_date)
-            long_option_bar = latest_option_bar_on_or_before(option_bars, candidate["long_symbol"], target_date)
-            if short_option_bar is None or long_option_bar is None:
-                continue
-            spread_bar = estimate_spread_bar(short_option_bar, long_option_bar)
-            entry_credit = candidate["midpoint_credit"]
-            target_mark = max(entry_credit * (1.0 - profit_target), 0.0)
-            stop_mark = entry_credit * stop_multiple
-            estimated_profit_target_hit = spread_bar["low"] <= target_mark
-            estimated_stop_hit = spread_bar["high"] >= stop_mark
-            estimated_pnl = (entry_credit - spread_bar["close"]) * 100.0
             touched += int(touched_short)
             closed_over_short += int(closed_above_short)
             closed_over_breakeven += int(closed_above_breakeven)
-            profit_target_hits += int(estimated_profit_target_hit)
-            stop_hits += int(estimated_stop_hit)
+            profit_target_hits += int(replay_path["profit_target_hit"])
+            stop_hits += int(replay_path["stop_hit"])
+            conflicts += int(replay_path["status"] == "conflict")
+            total_pnl += replay_path["estimated_pnl"] or 0.0
             rows.append(
                 {
                     "horizon": label,
@@ -2020,12 +2157,15 @@ def summarize_replay(
                     "touched_short_strike": touched_short,
                     "closed_above_short_strike": closed_above_short,
                     "closed_above_breakeven": closed_above_breakeven,
-                    "spread_mark_close": spread_bar["close"],
-                    "spread_mark_low": spread_bar["low"],
-                    "spread_mark_high": spread_bar["high"],
-                    "estimated_pnl": estimated_pnl,
-                    "estimated_profit_target_hit": estimated_profit_target_hit,
-                    "estimated_stop_hit": estimated_stop_hit,
+                    "spread_mark_close": replay_path["spread_mark_close"],
+                    "spread_mark_low": replay_path["spread_mark_low"],
+                    "spread_mark_high": replay_path["spread_mark_high"],
+                    "estimated_pnl": replay_path["estimated_pnl"],
+                    "estimated_profit_target_hit": replay_path["profit_target_hit"],
+                    "estimated_stop_hit": replay_path["stop_hit"],
+                    "exit_reason": replay_path["exit_reason"],
+                    "exit_date": replay_path["exit_date"],
+                    "replay_status": replay_path["status"],
                 }
             )
 
@@ -2046,6 +2186,8 @@ def summarize_replay(
                 if available_candidates == 0
                 else 100.0 * profit_target_hits / available_candidates,
                 "stop_hit_pct": None if available_candidates == 0 else 100.0 * stop_hits / available_candidates,
+                "conflict_pct": None if available_candidates == 0 else 100.0 * conflicts / available_candidates,
+                "avg_pnl": None if available_candidates == 0 else total_pnl / available_candidates,
             }
         )
 
@@ -2055,6 +2197,8 @@ def summarize_replay(
     expiry_closed_over_breakeven = 0
     expiry_profit_targets = 0
     expiry_stop_hits = 0
+    expiry_conflicts = 0
+    expiry_total_pnl = 0.0
     for candidate in candidates:
         expiry_date = date.fromisoformat(candidate["expiration_date"])
         if latest_available_date is None or latest_available_date < expiry_date:
@@ -2072,25 +2216,38 @@ def summarize_replay(
         horizon_bar = latest_bar_on_or_before(bars, expiry_date)
         if horizon_bar is None:
             continue
+        replay_path = simulate_exit_until_date(
+            candidate,
+            option_bars=option_bars,
+            start_date=run_date,
+            target_date=expiry_date,
+            profit_target=profit_target,
+            stop_multiple=stop_multiple,
+        )
+        if replay_path["status"] == "pending_option_bars":
+            rows.append(
+                {
+                    "horizon": "expiry",
+                    "short_symbol": candidate["short_symbol"],
+                    "long_symbol": candidate["long_symbol"],
+                    "expiration_date": candidate["expiration_date"],
+                    "status": "pending_option_bars",
+                }
+            )
+            continue
         expiry_available += 1
         path_bars = bars_through_date(bars, expiry_date)
         max_high = max(bar.high for bar in path_bars) if path_bars else horizon_bar.high
         touched_short = max_high >= candidate["short_strike"]
         closed_above_short = horizon_bar.close >= candidate["short_strike"]
         closed_above_breakeven = horizon_bar.close >= candidate["breakeven"]
-        settlement = max(horizon_bar.close - candidate["short_strike"], 0.0) - max(
-            horizon_bar.close - candidate["long_strike"], 0.0
-        )
-        estimated_pnl = candidate["max_profit"] - (settlement * 100.0)
-        target_mark = max(candidate["midpoint_credit"] * (1.0 - profit_target), 0.0)
-        stop_mark = candidate["midpoint_credit"] * stop_multiple
-        profit_target_hit = settlement <= target_mark
-        stop_hit = settlement >= stop_mark
         expiry_touched += int(touched_short)
         expiry_closed_over_short += int(closed_above_short)
         expiry_closed_over_breakeven += int(closed_above_breakeven)
-        expiry_profit_targets += int(profit_target_hit)
-        expiry_stop_hits += int(stop_hit)
+        expiry_profit_targets += int(replay_path["profit_target_hit"])
+        expiry_stop_hits += int(replay_path["stop_hit"])
+        expiry_conflicts += int(replay_path["status"] == "conflict")
+        expiry_total_pnl += replay_path["estimated_pnl"] or 0.0
         rows.append(
             {
                 "horizon": "expiry",
@@ -2103,12 +2260,15 @@ def summarize_replay(
                 "touched_short_strike": touched_short,
                 "closed_above_short_strike": closed_above_short,
                 "closed_above_breakeven": closed_above_breakeven,
-                "spread_mark_close": settlement,
-                "spread_mark_low": settlement,
-                "spread_mark_high": settlement,
-                "estimated_pnl": estimated_pnl,
-                "estimated_profit_target_hit": profit_target_hit,
-                "estimated_stop_hit": stop_hit,
+                "spread_mark_close": replay_path["spread_mark_close"],
+                "spread_mark_low": replay_path["spread_mark_low"],
+                "spread_mark_high": replay_path["spread_mark_high"],
+                "estimated_pnl": replay_path["estimated_pnl"],
+                "estimated_profit_target_hit": replay_path["profit_target_hit"],
+                "estimated_stop_hit": replay_path["stop_hit"],
+                "exit_reason": replay_path["exit_reason"],
+                "exit_date": replay_path["exit_date"],
+                "replay_status": replay_path["status"],
             }
         )
 
@@ -2129,6 +2289,8 @@ def summarize_replay(
             if expiry_available == 0
             else 100.0 * expiry_profit_targets / expiry_available,
             "stop_hit_pct": None if expiry_available == 0 else 100.0 * expiry_stop_hits / expiry_available,
+            "conflict_pct": None if expiry_available == 0 else 100.0 * expiry_conflicts / expiry_available,
+            "avg_pnl": None if expiry_available == 0 else expiry_total_pnl / expiry_available,
         }
     )
 
@@ -2147,7 +2309,7 @@ def print_replay_summary(
     print(f"Stored candidates: {run_payload['candidate_count']}")
     print()
 
-    table_headers = ["Horizon", "Avail", "Pending", "Touch%", "Close>Short%", "Close>BE%", "PT%", "Stop%"]
+    table_headers = ["Horizon", "Avail", "Pending", "Touch%", "Close>Short%", "Close>BE%", "PT%", "Stop%", "Conf%", "AvgPnL$"]
     table_rows = []
     for summary in summaries:
         table_rows.append(
@@ -2162,6 +2324,8 @@ def print_replay_summary(
                 else f"{summary['close_over_breakeven_pct']:.1f}",
                 "n/a" if summary["profit_target_hit_pct"] is None else f"{summary['profit_target_hit_pct']:.1f}",
                 "n/a" if summary["stop_hit_pct"] is None else f"{summary['stop_hit_pct']:.1f}",
+                "n/a" if summary["conflict_pct"] is None else f"{summary['conflict_pct']:.1f}",
+                "n/a" if summary["avg_pnl"] is None else f"{summary['avg_pnl']:.0f}",
             ]
         )
     print(format_table(table_headers, table_rows))
@@ -2180,6 +2344,7 @@ def print_replay_summary(
             "Touch",
             "Close>Short",
             "Close>BE",
+            "Exit",
             "PT",
             "Stop",
         ]
@@ -2195,6 +2360,7 @@ def print_replay_summary(
                 "yes" if row["touched_short_strike"] else "no",
                 "yes" if row["closed_above_short_strike"] else "no",
                 "yes" if row["closed_above_breakeven"] else "no",
+                row["exit_reason"],
                 "yes" if row["estimated_profit_target_hit"] else "no",
                 "yes" if row["estimated_stop_hit"] else "no",
             ]
@@ -2214,6 +2380,8 @@ def run_replay(
     if args.replay_run_id:
         run_payload = history_store.get_run(args.replay_run_id)
     else:
+        if not args.symbol:
+            raise SystemExit("Replay latest requires --symbol or use --replay-run-id")
         run_payload = history_store.get_latest_run(args.symbol.upper())
 
     if not run_payload:
@@ -2338,6 +2506,7 @@ def scan_symbol_live(
         underlying_type=underlying_type,
         args=symbol_args,
     )
+    all_candidates = attach_board_notes(all_candidates, symbol_args)
     all_candidates = rank_candidates(all_candidates, symbol_args)
     all_candidates = deduplicate_candidates(all_candidates, symbol_args.expand_duplicates)
 
@@ -2417,6 +2586,7 @@ def main() -> int:
                 run_id=result.run_id,
                 setup=result.setup,
             )
+        latest_copy = write_latest_copy(output_path, f"latest_{result.symbol.lower()}.{args.output_format}")
 
         candidates = result.candidates[: result.args.top]
         if args.json:
@@ -2450,6 +2620,7 @@ def main() -> int:
                 result.setup,
             )
             print(f"Saved {len(result.candidates)} candidates to {output_path}")
+            print(f"Latest copy: {latest_copy}")
             print(f"Run id: {result.run_id}")
     else:
         scan_results: list[SymbolScanResult] = []
@@ -2491,6 +2662,10 @@ def main() -> int:
                 candidates=board_candidates,
                 failures=failures,
             )
+        latest_copy = write_latest_copy(
+            output_path,
+            f"latest_{universe_label.lower().replace(' ', '_')}.{args.output_format}",
+        )
 
         if args.json:
             print(
@@ -2517,6 +2692,7 @@ def main() -> int:
             if scan_results:
                 print(f"Stored per-symbol runs: {len(scan_results)}")
             print(f"Saved {len(board_candidates)} board entries to {output_path}")
+            print(f"Latest copy: {latest_copy}")
 
     history_store.close()
     calendar_resolver.store.close()
