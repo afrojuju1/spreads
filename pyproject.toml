@@ -14,4 +14,4 @@ dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["calendar_events", "greeks"]
+packages = ["src/spreads"]
