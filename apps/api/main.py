@@ -17,7 +17,12 @@ from spreads.services.analysis import (
     build_session_summary,
     render_session_summary_markdown,
 )
-from spreads.storage import build_collector_repository, build_history_store, default_database_url
+from spreads.storage import (
+    build_alert_repository,
+    build_collector_repository,
+    build_history_store,
+    default_database_url,
+)
 
 app = FastAPI(title="Spreads API", version="0.2.0")
 
@@ -191,6 +196,52 @@ def get_session_summary(
         profit_target=replay_profit_target,
         stop_multiple=replay_stop_multiple,
     )
+
+
+@app.get("/alerts")
+def list_alerts(
+    session_date: str | None = None,
+    label: str | None = None,
+    symbol: str | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    db: str | None = None,
+) -> dict[str, Any]:
+    store = build_alert_repository(resolve_db(db))
+    try:
+        alerts = store.list_alert_events(
+            session_date=session_date,
+            label=label,
+            symbol=symbol,
+            limit=limit,
+        )
+        return {"alerts": [alert.to_dict() for alert in alerts]}
+    finally:
+        store.close()
+
+
+@app.get("/alerts/latest")
+def list_latest_alerts(
+    limit: int = Query(default=25, ge=1, le=250),
+    db: str | None = None,
+) -> dict[str, Any]:
+    store = build_alert_repository(resolve_db(db))
+    try:
+        alerts = store.list_alert_events(limit=limit)
+        return {"alerts": [alert.to_dict() for alert in alerts]}
+    finally:
+        store.close()
+
+
+@app.get("/alerts/{alert_id}")
+def get_alert(alert_id: int, db: str | None = None) -> dict[str, Any]:
+    store = build_alert_repository(resolve_db(db))
+    try:
+        alert = store.get_alert_event(alert_id)
+        if alert is None:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        return alert.to_dict()
+    finally:
+        store.close()
 
 
 @app.get("/analysis/{session_date}/{label}")

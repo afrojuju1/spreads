@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from spreads.storage.alert_repository import AlertRepository
 from spreads.storage.collector_repository import CollectorRepository
 from spreads.storage.db import DEFAULT_POSTGRES_URL, default_database_url
 from spreads.storage.run_history_repository import RunHistoryRepository
@@ -24,4 +25,15 @@ def build_collector_repository(path_or_url: str | None = None):
         return CollectorRepository(value)
     raise RuntimeError(
         f"Collector storage is Postgres-only. Use a PostgreSQL URL, for example {DEFAULT_POSTGRES_URL}."
+    )
+
+
+def build_alert_repository(path_or_url: str | None = None):
+    if path_or_url is None:
+        path_or_url = default_database_url()
+    value = str(path_or_url)
+    if value.startswith("postgres://") or value.startswith("postgresql://") or value.startswith("postgresql+psycopg://"):
+        return AlertRepository(value)
+    raise RuntimeError(
+        f"Alert storage is Postgres-only. Use a PostgreSQL URL, for example {DEFAULT_POSTGRES_URL}."
     )

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Any
 
+from spreads.storage.alert_models import AlertEventModel, AlertStateModel
 from spreads.storage.collector_models import (
     CollectorCycleCandidateModel,
     CollectorCycleEventModel,
@@ -10,6 +11,8 @@ from spreads.storage.collector_models import (
 )
 from spreads.storage.models import OptionQuoteEventModel, ScanCandidateModel, ScanRunModel
 from spreads.storage.records import (
+    AlertEventRecord,
+    AlertStateRecord,
     CollectorCycleCandidateRecord,
     CollectorCycleEventRecord,
     CollectorCycleRecord,
@@ -107,6 +110,34 @@ def to_option_quote_event_record(model: OptionQuoteEventModel) -> OptionQuoteEve
         ask_size=model.ask_size,
         quote_timestamp=render_value(model.quote_timestamp),
         source=model.source,
+    )
+
+
+def to_alert_event_record(model: AlertEventModel) -> AlertEventRecord:
+    return AlertEventRecord(
+        alert_id=model.alert_id,
+        created_at=render_value(model.created_at),
+        session_date=render_value(model.session_date),
+        label=model.label,
+        cycle_id=model.cycle_id,
+        symbol=model.symbol,
+        alert_type=model.alert_type,
+        dedupe_key=model.dedupe_key,
+        status=model.status,
+        delivery_target=model.delivery_target,
+        payload=dict(model.payload_json or {}),
+        response=None if model.response_json is None else dict(model.response_json),
+        error_text=model.error_text,
+    )
+
+
+def to_alert_state_record(model: AlertStateModel) -> AlertStateRecord:
+    return AlertStateRecord(
+        dedupe_key=model.dedupe_key,
+        last_alert_at=render_value(model.last_alert_at),
+        last_cycle_id=model.last_cycle_id,
+        last_alert_type=model.last_alert_type,
+        state=dict(model.state_json or {}),
     )
 
 

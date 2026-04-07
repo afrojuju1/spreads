@@ -256,6 +256,16 @@ class CollectorRepository:
             rows = session.scalars(statement).all()
         return [to_collector_cycle_event_record(row) for row in rows]
 
+    def list_cycle_events(self, cycle_id: str) -> list[CollectorCycleEventRecord]:
+        statement = (
+            select(CollectorCycleEventModel)
+            .where(CollectorCycleEventModel.cycle_id == cycle_id)
+            .order_by(CollectorCycleEventModel.generated_at.asc(), CollectorCycleEventModel.event_id.asc())
+        )
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return [to_collector_cycle_event_record(row) for row in rows]
+
     def truncate_all(self) -> None:
         with self.session_scope() as session:
             session.execute(delete(CollectorCycleEventModel))

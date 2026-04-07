@@ -8,6 +8,7 @@ from datetime import UTC, datetime, time
 from typing import Any
 
 from spreads.common import env_or_die, load_local_env
+from spreads.alerts import dispatch_cycle_alerts
 from spreads.integrations.alpaca.client import AlpacaClient, AlpacaOptionQuoteStreamer, infer_trading_base_url
 from spreads.integrations.calendar_events import build_calendar_event_resolver
 from spreads.integrations.greeks import build_local_greeks_provider
@@ -22,7 +23,8 @@ from spreads.services.scanner import (
     scan_symbol_across_strategies,
     sort_candidates_for_display,
 )
-from spreads.storage import build_collector_repository, default_database_url
+from spreads.storage import build_alert_repository, build_collector_repository, default_database_url
+from spreads.storage.alert_repository import AlertRepository
 from spreads.storage.factory import build_history_store
 from spreads.storage.collector_repository import CollectorRepository
 from spreads.storage.run_history_repository import RunHistoryRepository
@@ -608,6 +610,7 @@ def print_cycle_summary(
     board_candidates: list[dict[str, Any]],
     watchlist_candidates: list[dict[str, Any]],
     events: list[dict[str, Any]],
+    alerts: list[dict[str, Any]],
     failures: list[UniverseScanFailure],
     quote_event_count: int,
 ) -> None:
@@ -615,6 +618,7 @@ def print_cycle_summary(
     print(f"Board entries: {len(board_candidates)}")
     print(f"Watchlist entries: {len(watchlist_candidates)}")
     print(f"Events: {len(events)}")
+    print(f"Alerts: {len(alerts)}")
     print(f"Quote events saved: {quote_event_count}")
     if failures:
         print(f"Failures: {len(failures)}")
@@ -632,6 +636,14 @@ def print_cycle_summary(
         print("Events:")
         for event in events:
             print(f"- {event['message']}")
+    if alerts:
+        print("Alerts:")
+        for alert in alerts:
+            payload = alert.get("payload", {})
+            print(
+                f"- {payload.get('symbol')} {payload.get('alert_type')} "
+                f"status={alert.get('status')} cycle={payload.get('cycle_id')}"
+            )
     print()
 
 
@@ -653,6 +665,7 @@ def main() -> int:
         data_base_url=scanner_args.data_base_url,
     )
     history_store = build_history_store(args.history_db)
+    alert_store = build_alert_repository(args.history_db)
     collector_store = build_collector_repository(args.history_db)
     calendar_resolver = build_calendar_event_resolver(
         key_id=key_id,
@@ -718,6 +731,21 @@ def main() -> int:
                 watchlist_candidates=watchlist_payloads,
                 events=events,
             )
+            alerts: list[dict[str, Any]] = []
+            try:
+                alerts = dispatch_cycle_alerts(
+                    collector_store=collector_store,
+                    alert_store=alert_store,
+                    cycle_id=cycle_id,
+                    label=label,
+                    generated_at=generated_at,
+                    strategy_mode=args.strategy,
+                    profile=args.profile,
+                    board_candidates=board_payloads,
+                    events=events,
+                )
+            except Exception as exc:
+                print(f"Alert dispatch unavailable: {exc}")
             quote_event_count = 0
             quote_candidates = board_payloads + watchlist_payloads[:WATCHLIST_QUOTE_CAPTURE_TOP]
             if quote_candidates:
@@ -742,12 +770,14 @@ def main() -> int:
                 board_candidates=board_payloads,
                 watchlist_candidates=watchlist_payloads,
                 events=events,
+                alerts=alerts,
                 failures=failures,
                 quote_event_count=quote_event_count,
             )
             if iteration < args.iterations - 1:
                 time_module.sleep(max(args.interval_seconds, 1))
     finally:
+        alert_store.close()
         collector_store.close()
         history_store.close()
         calendar_resolver.store.close()

@@ -6,6 +6,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import create_engine, pool
 
+from spreads.storage import alert_models as storage_alert_models  # noqa: F401
 from spreads.storage import calendar_models as storage_calendar_models  # noqa: F401
 from spreads.storage import collector_models as storage_collector_models  # noqa: F401
 from spreads.storage.db import Base

@@ -154,3 +154,29 @@ class CollectorCycleEventRecord(RecordMapping):
     message: str
     previous_candidate: dict[str, Any] | None
     current_candidate: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
+class AlertEventRecord(RecordMapping):
+    alert_id: int
+    created_at: str
+    session_date: str
+    label: str
+    cycle_id: str
+    symbol: str
+    alert_type: str
+    dedupe_key: str
+    status: str
+    delivery_target: str
+    payload: dict[str, Any]
+    response: dict[str, Any] | None
+    error_text: str | None
+
+
+@dataclass(frozen=True)
+class AlertStateRecord(RecordMapping):
+    dedupe_key: str
+    last_alert_at: str
+    last_cycle_id: str
+    last_alert_type: str
+    state: dict[str, Any]
