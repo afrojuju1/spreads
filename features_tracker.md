@@ -53,30 +53,30 @@ Short log of proposed features, why they matter, and the current direction.
 
 ## 4. Candidate De-Duplication
 
-- Status: proposed
+- Status: done
 - Priority: medium
 - Scope: scanner output
 - Why: one short strike can create several nearly identical spreads that clutter the top results
 - Direction: collapse near-duplicate candidates and keep the best expression per short leg / expiry group
 - V1: keep only the top-ranked spread for each short leg and expiration unless explicitly expanded
-- Next: define duplicate rules and output behavior
+- Next: tune duplicate grouping rules for wider multi-expiry scans
 
 ## 5. Underlying Setup Filter
 
-- Status: proposed
+- Status: done
 - Priority: medium
 - Scope: scanner core
 - Why: a structurally valid spread is not enough if the underlying is in a bad regime for bearish or neutral premium selling
 - Direction: add a lightweight underlying context layer before final ranking
 - V1: trend, momentum, proximity to resistance, and simple regime checks
-- Next: define a minimal setup score for `core`
+- Next: refine the regime model and add clearer resistance / breakout signals
 
 ## 6. Run History And Replay
 
-- Status: proposed
+- Status: done
 - Priority: medium
 - Scope: research / evaluation
 - Why: we need to measure whether scanner changes actually improve outcomes over time
 - Direction: save scan results in a structured history and compare post-scan outcomes over fixed review windows
 - V1: persist run metadata and evaluate what happened after 1d, 3d, and expiry
-- Next: define storage format and replay metrics
+- Next: extend replay beyond underlying-level outcomes into spread-level mark and expiry analysis

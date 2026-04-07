@@ -21,6 +21,7 @@ import csv
 import json
 import math
 import os
+import sqlite3
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -33,6 +34,7 @@ from zoneinfo import ZoneInfo
 from calendar_events import build_calendar_event_resolver, classify_underlying_type
 from calendar_events.models import CalendarPolicyDecision
 from calendar_events.policy import apply_call_credit_spread_policy
+from scanner_history import DEFAULT_HISTORY_DB_PATH, RunHistoryStore
 
 
 DEFAULT_DATA_BASE_URL = "https://data.alpaca.markets"
@@ -165,6 +167,31 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Force-refresh calendar sources before scanning.",
     )
+    parser.add_argument(
+        "--expand-duplicates",
+        action="store_true",
+        help="Keep multiple spreads for the same short leg instead of collapsing to the top-ranked expression.",
+    )
+    parser.add_argument(
+        "--setup-filter",
+        default="on",
+        choices=("on", "off"),
+        help="Apply underlying setup analysis to the scan. Default: on",
+    )
+    parser.add_argument(
+        "--history-db",
+        default=str(DEFAULT_HISTORY_DB_PATH),
+        help="SQLite path for run history and replay. Default: outputs/run_history/scanner_history.sqlite",
+    )
+    parser.add_argument(
+        "--replay-latest",
+        action="store_true",
+        help="Replay the most recent stored run for the selected symbol instead of scanning live.",
+    )
+    parser.add_argument(
+        "--replay-run-id",
+        help="Replay a specific stored run id instead of scanning live.",
+    )
     return parser.parse_args()
 
 
@@ -277,6 +304,16 @@ class OptionSnapshot:
 
 
 @dataclass(frozen=True)
+class DailyBar:
+    timestamp: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+
+
+@dataclass(frozen=True)
 class ProfileConfig:
     name: str
     min_dte: int
@@ -299,6 +336,21 @@ class ExpectedMoveEstimate:
     percent_of_spot: float
     reference_strike: float
     method: str = "atm_straddle_midpoint"
+
+
+@dataclass(frozen=True)
+class UnderlyingSetupContext:
+    status: str
+    score: float
+    reasons: tuple[str, ...]
+    spot_vs_sma20_pct: float | None
+    sma20_vs_sma50_pct: float | None
+    return_5d_pct: float | None
+    distance_to_20d_high_pct: float | None
+    latest_close: float | None
+    sma20: float | None
+    sma50: float | None
+    source_window_days: int
 
 
 @dataclass(frozen=True)
@@ -348,6 +400,9 @@ class SpreadCandidate:
     calendar_last_updated: str | None = None
     calendar_days_to_nearest_event: int | None = None
     macro_regime: str | None = None
+    setup_status: str = "unknown"
+    setup_score: float | None = None
+    setup_reasons: tuple[str, ...] = ()
 
 
 PROFILE_CONFIGS: dict[str, ProfileConfig] = {
@@ -466,6 +521,50 @@ class AlpacaClient:
         if price and price > 0:
             return price
         raise RuntimeError(f"Could not determine current price for {symbol}")
+
+    def get_daily_bars(
+        self,
+        symbol: str,
+        *,
+        start: str,
+        end: str,
+        stock_feed: str,
+    ) -> list[DailyBar]:
+        payload = self.get_json(
+            self.data_base_url,
+            "/v2/stocks/bars",
+            {
+                "symbols": symbol,
+                "timeframe": "1Day",
+                "start": start,
+                "end": end,
+                "adjustment": "raw",
+                "feed": stock_feed,
+                "limit": 1000,
+            },
+        )
+        bars_payload = payload.get("bars", {})
+        bars: list[DailyBar] = []
+        for item in bars_payload.get(symbol, []):
+            open_price = parse_float(pick(item, "o", "open"))
+            high_price = parse_float(pick(item, "h", "high"))
+            low_price = parse_float(pick(item, "l", "low"))
+            close_price = parse_float(pick(item, "c", "close"))
+            volume = parse_int(pick(item, "v", "volume"))
+            timestamp = pick(item, "t", "timestamp")
+            if None in (open_price, high_price, low_price, close_price, volume) or not timestamp:
+                continue
+            bars.append(
+                DailyBar(
+                    timestamp=str(timestamp),
+                    open=open_price,
+                    high=high_price,
+                    low=low_price,
+                    close=close_price,
+                    volume=volume,
+                )
+            )
+        return bars
 
     def list_option_contracts(
         self,
@@ -677,6 +776,163 @@ def build_expected_move_estimates(
         if estimate:
             estimates[expiration_date] = estimate
     return estimates
+
+
+def average(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+
+def analyze_underlying_setup(symbol: str, spot_price: float, bars: list[DailyBar]) -> UnderlyingSetupContext:
+    if len(bars) < 20:
+        return UnderlyingSetupContext(
+            status="unknown",
+            score=0.0,
+            reasons=("Not enough daily-bar history for setup analysis",),
+            spot_vs_sma20_pct=None,
+            sma20_vs_sma50_pct=None,
+            return_5d_pct=None,
+            distance_to_20d_high_pct=None,
+            latest_close=bars[-1].close if bars else None,
+            sma20=None,
+            sma50=None,
+            source_window_days=len(bars),
+        )
+
+    closes = [bar.close for bar in bars]
+    highs = [bar.high for bar in bars]
+    sma20 = average(closes[-20:])
+    sma50 = average(closes[-50:]) if len(closes) >= 50 else None
+    latest_close = closes[-1]
+    return_5d_pct = None
+    if len(closes) >= 6 and closes[-6] > 0:
+        return_5d_pct = latest_close / closes[-6] - 1.0
+    high_20 = max(highs[-20:])
+    distance_to_20d_high_pct = (high_20 - spot_price) / spot_price if spot_price > 0 else None
+    spot_vs_sma20_pct = ((spot_price - sma20) / sma20) if sma20 else None
+    sma20_vs_sma50_pct = ((sma20 - sma50) / sma50) if sma20 and sma50 else None
+
+    price_vs_sma20_score = 0.5 if spot_vs_sma20_pct is None else clamp(0.5 - (spot_vs_sma20_pct / 0.08))
+    trend_score = 0.5 if sma20_vs_sma50_pct is None else clamp(0.5 - (sma20_vs_sma50_pct / 0.06))
+    momentum_score = 0.5 if return_5d_pct is None else clamp(0.55 - (return_5d_pct / 0.08))
+    high_distance_score = (
+        0.5 if distance_to_20d_high_pct is None else clamp(distance_to_20d_high_pct / 0.04)
+    )
+
+    score = round(
+        100.0
+        * (
+            0.35 * price_vs_sma20_score
+            + 0.25 * trend_score
+            + 0.20 * momentum_score
+            + 0.20 * high_distance_score
+        ),
+        1,
+    )
+
+    reasons: list[str] = []
+    if spot_vs_sma20_pct is not None:
+        if spot_vs_sma20_pct > 0.02:
+            reasons.append("Spot is extended above the 20-day average")
+        elif spot_vs_sma20_pct < -0.01:
+            reasons.append("Spot is trading below the 20-day average")
+    if sma20_vs_sma50_pct is not None:
+        if sma20_vs_sma50_pct > 0.015:
+            reasons.append("20-day average is leading the 50-day average higher")
+        elif sma20_vs_sma50_pct < -0.01:
+            reasons.append("20-day average is below the 50-day average")
+    if return_5d_pct is not None:
+        if return_5d_pct > 0.03:
+            reasons.append("Recent 5-day momentum is strongly positive")
+        elif return_5d_pct < -0.02:
+            reasons.append("Recent 5-day momentum is weak to negative")
+    if distance_to_20d_high_pct is not None:
+        if distance_to_20d_high_pct < 0.01:
+            reasons.append("Spot is trading near the 20-day high")
+        elif distance_to_20d_high_pct > 0.03:
+            reasons.append("Spot has room below the recent 20-day high")
+
+    if score >= 60:
+        status = "favorable"
+    elif score >= 40:
+        status = "neutral"
+    else:
+        status = "unfavorable"
+
+    if not reasons:
+        reasons.append(f"{symbol} setup is {status} for bearish or neutral premium selling")
+
+    return UnderlyingSetupContext(
+        status=status,
+        score=score,
+        reasons=tuple(reasons),
+        spot_vs_sma20_pct=spot_vs_sma20_pct,
+        sma20_vs_sma50_pct=sma20_vs_sma50_pct,
+        return_5d_pct=return_5d_pct,
+        distance_to_20d_high_pct=distance_to_20d_high_pct,
+        latest_close=latest_close,
+        sma20=sma20,
+        sma50=sma50,
+        source_window_days=len(bars),
+    )
+
+
+def attach_underlying_setup(
+    candidates: list[SpreadCandidate],
+    setup: UnderlyingSetupContext | None,
+) -> list[SpreadCandidate]:
+    if setup is None:
+        return candidates
+    return [
+        replace(
+            candidate,
+            setup_status=setup.status,
+            setup_score=setup.score,
+            setup_reasons=setup.reasons,
+        )
+        for candidate in candidates
+    ]
+
+
+def deduplicate_candidates(candidates: list[SpreadCandidate], expand_duplicates: bool) -> list[SpreadCandidate]:
+    if expand_duplicates:
+        return candidates
+
+    deduplicated: list[SpreadCandidate] = []
+    seen_short_legs: set[str] = set()
+    for candidate in candidates:
+        if candidate.short_symbol in seen_short_legs:
+            continue
+        seen_short_legs.add(candidate.short_symbol)
+        deduplicated.append(candidate)
+    return deduplicated
+
+
+def build_run_id(symbol: str, profile: str) -> str:
+    return f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}_{symbol.lower()}_{profile}"
+
+
+def build_filter_payload(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "profile": args.profile,
+        "min_dte": args.min_dte,
+        "max_dte": args.max_dte,
+        "short_delta_min": args.short_delta_min,
+        "short_delta_max": args.short_delta_max,
+        "short_delta_target": args.short_delta_target,
+        "min_width": args.min_width,
+        "max_width": args.max_width,
+        "min_credit": args.min_credit,
+        "min_open_interest": args.min_open_interest,
+        "max_relative_spread": args.max_relative_spread,
+        "min_return_on_risk": args.min_return_on_risk,
+        "feed": args.feed,
+        "stock_feed": args.stock_feed,
+        "calendar_policy": args.calendar_policy,
+        "setup_filter": args.setup_filter,
+        "expand_duplicates": args.expand_duplicates,
+    }
 
 
 def make_order_payload(short_symbol: str, long_symbol: str, limit_price: float) -> dict[str, Any]:
@@ -918,7 +1174,13 @@ def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> flo
         "unknown": 0.82,
         "blocked": 0.0,
     }.get(candidate.calendar_status, 1.0)
-    return round(base_score * calendar_multiplier * 100.0, 1)
+    setup_multiplier = {
+        "favorable": 1.0,
+        "neutral": 0.93,
+        "unfavorable": 0.78,
+        "unknown": 0.88,
+    }.get(candidate.setup_status, 0.88)
+    return round(base_score * calendar_multiplier * setup_multiplier * 100.0, 1)
 
 
 def rank_candidates(candidates: list[SpreadCandidate], args: argparse.Namespace) -> list[SpreadCandidate]:
@@ -977,10 +1239,20 @@ def format_table(headers: list[str], rows: list[list[str]]) -> str:
     return "\n".join(rendered)
 
 
-def print_human_readable(symbol: str, spot_price: float, candidates: list[SpreadCandidate], show_order_json: bool) -> None:
+def print_human_readable(
+    symbol: str,
+    spot_price: float,
+    candidates: list[SpreadCandidate],
+    show_order_json: bool,
+    setup: UnderlyingSetupContext | None,
+) -> None:
     print(f"{symbol.upper()} spot: {spot_price:.2f}")
     if candidates:
         print(f"Profile: {candidates[0].profile}")
+    if setup is not None:
+        print(f"Setup: {setup.status} ({setup.score:.1f})")
+        if setup.reasons:
+            print(f"Setup notes: {'; '.join(setup.reasons)}")
     print(f"Candidates found: {len(candidates)}")
     print()
 
@@ -1013,6 +1285,8 @@ def print_human_readable(symbol: str, spot_price: float, candidates: list[Spread
             print(f"   sources: {source_line} | confidence {candidate.calendar_confidence}")
         if candidate.macro_regime:
             print(f"   macro regime: {candidate.macro_regime}")
+        if candidate.setup_score is not None:
+            print(f"   setup: {candidate.setup_status} ({candidate.setup_score:.1f})")
         if show_order_json:
             print("   order payload:")
             print(json.dumps(candidate.order_payload, indent=2))
@@ -1066,6 +1340,9 @@ def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
         "calendar_last_updated",
         "calendar_days_to_nearest_event",
         "macro_regime",
+        "setup_status",
+        "setup_score",
+        "setup_reasons",
         "order_payload",
     ]
     with open(path, "w", newline="", encoding="utf-8") as handle:
@@ -1075,32 +1352,38 @@ def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
             row = asdict(candidate)
             row["calendar_reasons"] = "; ".join(candidate.calendar_reasons)
             row["calendar_sources"] = ", ".join(candidate.calendar_sources)
+            row["setup_reasons"] = "; ".join(candidate.setup_reasons)
             row["order_payload"] = json.dumps(candidate.order_payload, separators=(",", ":"))
             writer.writerow(row)
 
 
-def write_json(path: str, symbol: str, spot_price: float, args: argparse.Namespace, candidates: list[SpreadCandidate]) -> None:
+def write_json(
+    path: str,
+    symbol: str,
+    spot_price: float,
+    args: argparse.Namespace,
+    candidates: list[SpreadCandidate],
+    *,
+    run_id: str | None = None,
+    setup: UnderlyingSetupContext | None = None,
+) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "symbol": symbol,
         "spot_price": spot_price,
         "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-        "filters": {
-            "profile": args.profile,
-            "min_dte": args.min_dte,
-            "max_dte": args.max_dte,
-            "short_delta_min": args.short_delta_min,
-            "short_delta_max": args.short_delta_max,
-            "short_delta_target": args.short_delta_target,
-            "min_width": args.min_width,
-            "max_width": args.max_width,
-            "min_credit": args.min_credit,
-            "min_open_interest": args.min_open_interest,
-            "max_relative_spread": args.max_relative_spread,
-            "min_return_on_risk": args.min_return_on_risk,
-            "feed": args.feed,
-            "stock_feed": args.stock_feed,
-            "calendar_policy": args.calendar_policy,
+        "run_id": run_id,
+        "filters": build_filter_payload(args),
+        "setup": None
+        if setup is None
+        else {
+            "status": setup.status,
+            "score": setup.score,
+            "reasons": list(setup.reasons),
+            "spot_vs_sma20_pct": setup.spot_vs_sma20_pct,
+            "sma20_vs_sma50_pct": setup.sma20_vs_sma50_pct,
+            "return_5d_pct": setup.return_5d_pct,
+            "distance_to_20d_high_pct": setup.distance_to_20d_high_pct,
         },
         "candidates": [asdict(candidate) for candidate in candidates],
     }
@@ -1168,6 +1451,249 @@ def group_contracts_by_expiration(contracts: Iterable[OptionContract]) -> dict[s
     return grouped
 
 
+def latest_bar_on_or_before(bars: list[DailyBar], target_date: date) -> DailyBar | None:
+    eligible = [bar for bar in bars if datetime.fromisoformat(bar.timestamp.replace("Z", "+00:00")).date() <= target_date]
+    if not eligible:
+        return None
+    return eligible[-1]
+
+
+def bars_through_date(bars: list[DailyBar], target_date: date) -> list[DailyBar]:
+    return [bar for bar in bars if datetime.fromisoformat(bar.timestamp.replace("Z", "+00:00")).date() <= target_date]
+
+
+def summarize_replay(
+    *,
+    run_payload: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    bars: list[DailyBar],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    generated_at = datetime.fromisoformat(run_payload["generated_at"].replace("Z", "+00:00"))
+    run_date = generated_at.date()
+    latest_available_date = None if not bars else max(
+        datetime.fromisoformat(bar.timestamp.replace("Z", "+00:00")).date() for bar in bars
+    )
+    horizons = [
+        ("1d", run_date + timedelta(days=1)),
+        ("3d", run_date + timedelta(days=3)),
+    ]
+
+    summaries: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
+
+    for label, target_date in horizons:
+        horizon_bars = bars_through_date(bars, target_date)
+        available_candidates = 0
+        touched = 0
+        closed_over_short = 0
+        closed_over_breakeven = 0
+
+        for candidate in candidates:
+            if latest_available_date is None or latest_available_date < target_date:
+                rows.append(
+                    {
+                        "horizon": label,
+                        "short_symbol": candidate["short_symbol"],
+                        "long_symbol": candidate["long_symbol"],
+                        "expiration_date": candidate["expiration_date"],
+                        "status": "pending",
+                    }
+                )
+                continue
+
+            horizon_bar = latest_bar_on_or_before(bars, target_date)
+            if horizon_bar is None:
+                continue
+            available_candidates += 1
+            path_bars = horizon_bars
+            max_high = max(bar.high for bar in path_bars) if path_bars else horizon_bar.high
+            touched_short = max_high >= candidate["short_strike"]
+            closed_above_short = horizon_bar.close >= candidate["short_strike"]
+            closed_above_breakeven = horizon_bar.close >= candidate["breakeven"]
+            touched += int(touched_short)
+            closed_over_short += int(closed_above_short)
+            closed_over_breakeven += int(closed_above_breakeven)
+            rows.append(
+                {
+                    "horizon": label,
+                    "short_symbol": candidate["short_symbol"],
+                    "long_symbol": candidate["long_symbol"],
+                    "expiration_date": candidate["expiration_date"],
+                    "status": "available",
+                    "spot_at_horizon": horizon_bar.close,
+                    "max_high_to_horizon": max_high,
+                    "touched_short_strike": touched_short,
+                    "closed_above_short_strike": closed_above_short,
+                    "closed_above_breakeven": closed_above_breakeven,
+                }
+            )
+
+        total = len(candidates)
+        summaries.append(
+            {
+                "horizon": label,
+                "available": available_candidates,
+                "pending": total - available_candidates,
+                "touch_pct": None if available_candidates == 0 else 100.0 * touched / available_candidates,
+                "close_over_short_pct": None
+                if available_candidates == 0
+                else 100.0 * closed_over_short / available_candidates,
+                "close_over_breakeven_pct": None
+                if available_candidates == 0
+                else 100.0 * closed_over_breakeven / available_candidates,
+            }
+        )
+
+    expiry_available = 0
+    expiry_touched = 0
+    expiry_closed_over_short = 0
+    expiry_closed_over_breakeven = 0
+    for candidate in candidates:
+        expiry_date = date.fromisoformat(candidate["expiration_date"])
+        if latest_available_date is None or latest_available_date < expiry_date:
+            rows.append(
+                {
+                    "horizon": "expiry",
+                    "short_symbol": candidate["short_symbol"],
+                    "long_symbol": candidate["long_symbol"],
+                    "expiration_date": candidate["expiration_date"],
+                    "status": "pending",
+                }
+            )
+            continue
+
+        horizon_bar = latest_bar_on_or_before(bars, expiry_date)
+        if horizon_bar is None:
+            continue
+        expiry_available += 1
+        path_bars = bars_through_date(bars, expiry_date)
+        max_high = max(bar.high for bar in path_bars) if path_bars else horizon_bar.high
+        touched_short = max_high >= candidate["short_strike"]
+        closed_above_short = horizon_bar.close >= candidate["short_strike"]
+        closed_above_breakeven = horizon_bar.close >= candidate["breakeven"]
+        expiry_touched += int(touched_short)
+        expiry_closed_over_short += int(closed_above_short)
+        expiry_closed_over_breakeven += int(closed_above_breakeven)
+        rows.append(
+            {
+                "horizon": "expiry",
+                "short_symbol": candidate["short_symbol"],
+                "long_symbol": candidate["long_symbol"],
+                "expiration_date": candidate["expiration_date"],
+                "status": "available",
+                "spot_at_horizon": horizon_bar.close,
+                "max_high_to_horizon": max_high,
+                "touched_short_strike": touched_short,
+                "closed_above_short_strike": closed_above_short,
+                "closed_above_breakeven": closed_above_breakeven,
+            }
+        )
+
+    total = len(candidates)
+    summaries.append(
+        {
+            "horizon": "expiry",
+            "available": expiry_available,
+            "pending": total - expiry_available,
+            "touch_pct": None if expiry_available == 0 else 100.0 * expiry_touched / expiry_available,
+            "close_over_short_pct": None
+            if expiry_available == 0
+            else 100.0 * expiry_closed_over_short / expiry_available,
+            "close_over_breakeven_pct": None
+            if expiry_available == 0
+            else 100.0 * expiry_closed_over_breakeven / expiry_available,
+        }
+    )
+
+    return summaries, rows
+
+
+def print_replay_summary(
+    run_payload: dict[str, Any],
+    summaries: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+) -> None:
+    print(
+        f"Replay run: {run_payload['run_id']} | {run_payload['symbol']} | "
+        f"profile {run_payload['profile']} | generated {run_payload['generated_at']}"
+    )
+    print(f"Stored candidates: {run_payload['candidate_count']}")
+    print()
+
+    table_headers = ["Horizon", "Avail", "Pending", "Touch%", "Close>Short%", "Close>BE%"]
+    table_rows = []
+    for summary in summaries:
+        table_rows.append(
+            [
+                summary["horizon"],
+                str(summary["available"]),
+                str(summary["pending"]),
+                "n/a" if summary["touch_pct"] is None else f"{summary['touch_pct']:.1f}",
+                "n/a" if summary["close_over_short_pct"] is None else f"{summary['close_over_short_pct']:.1f}",
+                "n/a"
+                if summary["close_over_breakeven_pct"] is None
+                else f"{summary['close_over_breakeven_pct']:.1f}",
+            ]
+        )
+    print(format_table(table_headers, table_rows))
+    print()
+
+    available_rows = [row for row in rows if row["status"] == "available"][:10]
+    if available_rows:
+        detail_headers = ["Horizon", "Short", "Long", "Expiry", "Spot", "MaxHigh", "Touch", "Close>Short", "Close>BE"]
+        detail_rows = [
+            [
+                row["horizon"],
+                row["short_symbol"],
+                row["long_symbol"],
+                row["expiration_date"],
+                f"{row['spot_at_horizon']:.2f}",
+                f"{row['max_high_to_horizon']:.2f}",
+                "yes" if row["touched_short_strike"] else "no",
+                "yes" if row["closed_above_short_strike"] else "no",
+                "yes" if row["closed_above_breakeven"] else "no",
+            ]
+            for row in available_rows
+        ]
+        print(format_table(detail_headers, detail_rows))
+    else:
+        print("Replay data is not available yet for the stored horizons.")
+
+
+def run_replay(
+    *,
+    args: argparse.Namespace,
+    client: AlpacaClient,
+    history_store: RunHistoryStore,
+) -> int:
+    if args.replay_run_id:
+        run_payload = history_store.get_run(args.replay_run_id)
+    else:
+        run_payload = history_store.get_latest_run(args.symbol.upper())
+
+    if not run_payload:
+        target = args.replay_run_id or args.symbol.upper()
+        raise SystemExit(f"No stored run found for replay target: {target}")
+
+    candidates = history_store.list_candidates(run_payload["run_id"])
+    generated_at = datetime.fromisoformat(run_payload["generated_at"].replace("Z", "+00:00"))
+    replay_end = max(
+        [
+            generated_at.date() + timedelta(days=3),
+            *[date.fromisoformat(candidate["expiration_date"]) for candidate in candidates],
+        ]
+    )
+    bars = client.get_daily_bars(
+        run_payload["symbol"],
+        start=(generated_at.date() - timedelta(days=2)).isoformat(),
+        end=replay_end.isoformat(),
+        stock_feed=args.stock_feed,
+    )
+    summaries, rows = summarize_replay(run_payload=run_payload, candidates=candidates, bars=bars)
+    print_replay_summary(run_payload, summaries, rows)
+    return 0
+
+
 def main() -> int:
     load_local_env()
     args = parse_args()
@@ -1202,16 +1728,34 @@ def main() -> int:
         trading_base_url=infer_trading_base_url(key_id, args.trading_base_url),
         data_base_url=args.data_base_url,
     )
+    history_store = RunHistoryStore(args.history_db)
     calendar_resolver = build_calendar_event_resolver(
         key_id=key_id,
         secret_key=secret_key,
         data_base_url=args.data_base_url,
     )
 
+    if args.replay_latest or args.replay_run_id:
+        try:
+            return run_replay(args=args, client=client, history_store=history_store)
+        finally:
+            history_store.close()
+            calendar_resolver.store.close()
+
     min_expiration = (date.today() + timedelta(days=args.min_dte)).isoformat()
     max_expiration = (date.today() + timedelta(days=args.max_dte)).isoformat()
 
     spot_price = client.get_underlying_price(symbol, args.stock_feed)
+    setup_context: UnderlyingSetupContext | None = None
+    if args.setup_filter == "on":
+        daily_bars = client.get_daily_bars(
+            symbol,
+            start=(date.today() - timedelta(days=120)).isoformat(),
+            end=date.today().isoformat(),
+            stock_feed=args.stock_feed,
+        )
+        setup_context = analyze_underlying_setup(symbol, spot_price, daily_bars)
+
     call_contracts = client.list_option_contracts(symbol, min_expiration, max_expiration, option_type="call")
     put_contracts = client.list_option_contracts(symbol, min_expiration, max_expiration, option_type="put")
     contracts_by_expiration = group_contracts_by_expiration(call_contracts)
@@ -1248,6 +1792,7 @@ def main() -> int:
         expected_moves_by_expiration=expected_moves_by_expiration,
         args=args,
     )
+    all_candidates = attach_underlying_setup(all_candidates, setup_context)
     all_candidates = attach_calendar_decisions(
         symbol=symbol,
         underlying_type=underlying_type,
@@ -1257,12 +1802,28 @@ def main() -> int:
         refresh_calendar_events=args.refresh_calendar_events,
     )
     all_candidates = rank_candidates(all_candidates, args)
+    all_candidates = deduplicate_candidates(all_candidates, args.expand_duplicates)
     output_path = args.output or default_output_path(symbol, args.output_format)
+    run_id = build_run_id(symbol, args.profile)
+    generated_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
     if args.output_format == "csv":
         write_csv(output_path, all_candidates)
     else:
-        write_json(output_path, symbol, spot_price, args, all_candidates)
+        write_json(output_path, symbol, spot_price, args, all_candidates, run_id=run_id, setup=setup_context)
+
+    history_store.save_run(
+        run_id=run_id,
+        generated_at=generated_at,
+        symbol=symbol,
+        profile=args.profile,
+        spot_price=spot_price,
+        output_path=output_path,
+        filters=build_filter_payload(args),
+        setup_status=None if setup_context is None else setup_context.status,
+        setup_score=None if setup_context is None else setup_context.score,
+        candidates=all_candidates,
+    )
 
     candidates = all_candidates[: args.top]
 
@@ -1272,23 +1833,15 @@ def main() -> int:
                 {
                     "symbol": symbol,
                     "spot_price": spot_price,
-                    "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-                    "filters": {
-                        "profile": args.profile,
-                        "min_dte": args.min_dte,
-                        "max_dte": args.max_dte,
-                        "short_delta_min": args.short_delta_min,
-                        "short_delta_max": args.short_delta_max,
-                        "short_delta_target": args.short_delta_target,
-                        "min_width": args.min_width,
-                        "max_width": args.max_width,
-                        "min_credit": args.min_credit,
-                        "min_open_interest": args.min_open_interest,
-                        "max_relative_spread": args.max_relative_spread,
-                        "min_return_on_risk": args.min_return_on_risk,
-                        "feed": args.feed,
-                        "stock_feed": args.stock_feed,
-                        "calendar_policy": args.calendar_policy,
+                    "generated_at": generated_at,
+                    "run_id": run_id,
+                    "filters": build_filter_payload(args),
+                    "setup": None
+                    if setup_context is None
+                    else {
+                        "status": setup_context.status,
+                        "score": setup_context.score,
+                        "reasons": list(setup_context.reasons),
                     },
                     "candidates": [asdict(candidate) for candidate in candidates],
                     "output_file": output_path,
@@ -1297,9 +1850,11 @@ def main() -> int:
             )
         )
     else:
-        print_human_readable(symbol, spot_price, candidates, args.show_order_json)
+        print_human_readable(symbol, spot_price, candidates, args.show_order_json, setup_context)
         print(f"Saved {len(all_candidates)} candidates to {output_path}")
+        print(f"Run id: {run_id}")
 
+    history_store.close()
     calendar_resolver.store.close()
     return 0
 
