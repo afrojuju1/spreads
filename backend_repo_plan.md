@@ -87,11 +87,14 @@ Do not:
 5. Add the API.
 6. Add the frontend later.
 
+## Current Status
+
+- phase 1 complete
+- phase 2 complete with `src/spreads/services`, `src/spreads/jobs`, `src/spreads/cli`, and `src/spreads/integrations/alpaca`
+- Postgres-ready history store and minimal FastAPI app added
+
 ## Next Step
 
-Start phase 1:
-
-- create `src/spreads`
-- move `scanner_history.py` to `src/spreads/storage/history.py`
-- move `calendar_events/` and `greeks/` under `src/spreads/integrations/`
-- keep current root files as wrappers
+- split `src/spreads/services/scanner.py` into smaller service modules behind the same CLI
+- move collection/analysis query paths onto Postgres once migrations are added
+- start the frontend against the FastAPI surface under `apps/api`

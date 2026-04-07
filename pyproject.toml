@@ -8,10 +8,18 @@ version = "0.1.0"
 description = "Alpaca-based options spread scanner"
 requires-python = ">=3.11"
 dependencies = [
+  "fastapi>=0.118.0",
   "msgpack>=1.1.0",
+  "psycopg[binary]>=3.2.10",
   "py-vollib>=1.0.1",
+  "uvicorn>=0.37.0",
   "websocket-client>=1.8.0",
 ]
+
+[project.scripts]
+spreads-scan = "spreads.cli.scan:main"
+spreads-collect = "spreads.cli.collect:main"
+spreads-analyze = "spreads.cli.analyze:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/spreads"]
