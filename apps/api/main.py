@@ -13,6 +13,7 @@ from fastapi import FastAPI, HTTPException, Query
 
 from spreads.domain.profiles import UNIVERSE_PRESETS
 from spreads.services.analysis import (
+    build_signal_tuning,
     build_session_outcomes,
     build_session_summary,
     render_session_summary_markdown,
@@ -196,6 +197,32 @@ def get_session_summary(
         profit_target=replay_profit_target,
         stop_multiple=replay_stop_multiple,
     )
+
+
+@app.get("/sessions/{session_date}/{label}/tuning")
+def get_session_tuning(
+    session_date: str,
+    label: str,
+    replay_profit_target: float = Query(default=0.5, gt=0),
+    replay_stop_multiple: float = Query(default=2.0, gt=0),
+    db: str | None = None,
+) -> dict[str, Any]:
+    db_target = resolve_db(db)
+    history_store = build_history_store(db_target)
+    collector_store = build_collector_repository(db_target)
+    try:
+        outcomes = build_session_outcomes(
+            history_store=history_store,
+            collector_store=collector_store,
+            session_date=session_date,
+            label=label,
+            profit_target=replay_profit_target,
+            stop_multiple=replay_stop_multiple,
+        )
+        return build_signal_tuning(outcomes)
+    finally:
+        collector_store.close()
+        history_store.close()
 
 
 @app.get("/alerts")

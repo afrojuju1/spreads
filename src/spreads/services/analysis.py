@@ -237,6 +237,222 @@ def score_bucket_label(score: float | None) -> str:
     return "<55"
 
 
+def resolved_estimated_pnl(item: Mapping[str, Any]) -> float | None:
+    expiry_value = item.get("estimated_expiry_pnl")
+    if expiry_value is not None:
+        return float(expiry_value)
+    close_value = item.get("estimated_close_pnl")
+    if close_value is not None:
+        return float(close_value)
+    return None
+
+
+def board_session_phase(candidate: Mapping[str, Any]) -> str:
+    notes = candidate.get("board_notes") or []
+    for note in notes:
+        if isinstance(note, str) and note.startswith("session-"):
+            return note.removeprefix("session-")
+    return "unknown"
+
+
+def classify_vwap_regime(setup: Mapping[str, Any] | None, strategy: str) -> str:
+    if not setup:
+        return "unknown"
+    value = setup.get("spot_vs_vwap_pct")
+    if value is None:
+        return "unknown"
+    pct = float(value)
+    if strategy == "put_credit":
+        if pct > 0.0015:
+            return "supportive"
+        if pct < -0.0015:
+            return "adverse"
+    else:
+        if pct < -0.0015:
+            return "supportive"
+        if pct > 0.0015:
+            return "adverse"
+    return "neutral"
+
+
+def classify_trend_regime(setup: Mapping[str, Any] | None, strategy: str) -> str:
+    if not setup:
+        return "unknown"
+    value = setup.get("intraday_return_pct")
+    if value is None:
+        return "unknown"
+    pct = float(value)
+    if strategy == "put_credit":
+        if pct > 0.004:
+            return "supportive"
+        if pct < -0.004:
+            return "adverse"
+    else:
+        if pct < -0.004:
+            return "supportive"
+        if pct > 0.004:
+            return "adverse"
+    return "neutral"
+
+
+def classify_opening_range_regime(setup: Mapping[str, Any] | None, strategy: str) -> str:
+    if not setup:
+        return "unknown"
+    value = setup.get("opening_range_break_pct")
+    latest_close = setup.get("latest_close")
+    opening_range_high = setup.get("opening_range_high")
+    opening_range_low = setup.get("opening_range_low")
+    if value is None and latest_close is None:
+        return "unknown"
+    if value is not None and float(value) > 0.001:
+        return "supportive_breakout"
+    if strategy == "put_credit":
+        if latest_close is not None and opening_range_low is not None and float(latest_close) < float(opening_range_low):
+            return "adverse_break"
+    else:
+        if latest_close is not None and opening_range_high is not None and float(latest_close) > float(opening_range_high):
+            return "adverse_break"
+    return "inside_range"
+
+
+def classify_session_extreme_regime(setup: Mapping[str, Any] | None) -> str:
+    if not setup:
+        return "unknown"
+    value = setup.get("distance_to_session_extreme_pct")
+    if value is None:
+        return "unknown"
+    pct = float(value)
+    if pct < 0.003:
+        return "near_extreme"
+    if pct > 0.008:
+        return "room_to_extreme"
+    return "neutral"
+
+
+def aggregate_signal_dimension(
+    ideas: list[dict[str, Any]],
+    *,
+    field: str,
+) -> list[dict[str, Any]]:
+    grouped_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in ideas:
+        grouped_rows[str(item.get(field) or "unknown")].append(item)
+
+    rows: list[dict[str, Any]] = []
+    for key, group in grouped_rows.items():
+        resolved = [item for item in group if item["outcome_bucket"] in {"win", "loss"}]
+        pnl_values = [resolved_estimated_pnl(item) for item in group]
+        realized_pnls = [value for value in pnl_values if value is not None]
+        wins = sum(1 for item in group if item["outcome_bucket"] == "win")
+        losses = sum(1 for item in group if item["outcome_bucket"] == "loss")
+        rows.append(
+            {
+                "bucket": key,
+                "count": len(group),
+                "board_count": sum(1 for item in group if item["classification"] == "board"),
+                "watchlist_count": sum(1 for item in group if item["classification"] == "watchlist"),
+                "win_count": wins,
+                "loss_count": losses,
+                "still_open_count": sum(1 for item in group if item["outcome_bucket"] == "still_open"),
+                "unavailable_count": sum(1 for item in group if item["outcome_bucket"] == "unavailable"),
+                "resolved_count": len(resolved),
+                "win_rate": None if not resolved else wins / len(resolved),
+                "average_estimated_pnl": None if not realized_pnls else mean(realized_pnls),
+                "average_latest_score": mean(float(item["latest_score"]) for item in group),
+            }
+        )
+
+    rows.sort(
+        key=lambda row: (
+            -int(row["count"]),
+            -(row["win_rate"] if row["win_rate"] is not None else -1.0),
+            -float(row["average_latest_score"]),
+            row["bucket"],
+        )
+    )
+    return rows
+
+
+def build_signal_tuning(outcomes: Mapping[str, Any]) -> dict[str, Any]:
+    ideas = list(outcomes["ideas"])
+    dimensions = {
+        "classification": aggregate_signal_dimension(ideas, field="classification"),
+        "symbol": aggregate_signal_dimension(ideas, field="underlying_symbol"),
+        "strategy": aggregate_signal_dimension(ideas, field="strategy"),
+        "score_bucket": aggregate_signal_dimension(ideas, field="score_bucket"),
+        "setup_status": aggregate_signal_dimension(ideas, field="setup_status"),
+        "calendar_status": aggregate_signal_dimension(ideas, field="calendar_status"),
+        "session_phase": aggregate_signal_dimension(ideas, field="session_phase"),
+        "vwap_regime": aggregate_signal_dimension(ideas, field="vwap_regime"),
+        "trend_regime": aggregate_signal_dimension(ideas, field="trend_regime"),
+        "opening_range_regime": aggregate_signal_dimension(ideas, field="opening_range_regime"),
+        "session_extreme_regime": aggregate_signal_dimension(ideas, field="session_extreme_regime"),
+        "greeks_source": aggregate_signal_dimension(ideas, field="greeks_source"),
+    }
+
+    resolved_rank_candidates: list[dict[str, Any]] = []
+    provisional_rank_candidates: list[dict[str, Any]] = []
+    for dimension, rows in dimensions.items():
+        for row in rows:
+            if row["count"] < 2:
+                continue
+            candidate = {"dimension": dimension, **row}
+            if row["resolved_count"] > 0:
+                resolved_rank_candidates.append(candidate)
+            elif row["average_estimated_pnl"] is not None:
+                provisional_rank_candidates.append(candidate)
+
+    strongest = sorted(
+        resolved_rank_candidates,
+        key=lambda row: (
+            -(row["win_rate"] if row["win_rate"] is not None else -1.0),
+            -(row["average_estimated_pnl"] if row["average_estimated_pnl"] is not None else float("-inf")),
+            -int(row["resolved_count"]),
+            -int(row["count"]),
+            row["dimension"],
+            row["bucket"],
+        ),
+    )[:5]
+    weakest = sorted(
+        resolved_rank_candidates,
+        key=lambda row: (
+            row["win_rate"] if row["win_rate"] is not None else 2.0,
+            row["average_estimated_pnl"] if row["average_estimated_pnl"] is not None else float("inf"),
+            -int(row["resolved_count"]),
+            -int(row["count"]),
+            row["dimension"],
+            row["bucket"],
+        ),
+    )[:5]
+    provisional_strongest = sorted(
+        provisional_rank_candidates,
+        key=lambda row: (
+            -(row["average_estimated_pnl"] if row["average_estimated_pnl"] is not None else float("-inf")),
+            -int(row["count"]),
+            row["dimension"],
+            row["bucket"],
+        ),
+    )[:5]
+    provisional_weakest = sorted(
+        provisional_rank_candidates,
+        key=lambda row: (
+            row["average_estimated_pnl"] if row["average_estimated_pnl"] is not None else float("inf"),
+            -int(row["count"]),
+            row["dimension"],
+            row["bucket"],
+        ),
+    )[:5]
+
+    return {
+        "sample_size": len(ideas),
+        "dimensions": dimensions,
+        "strongest_signals": strongest,
+        "weakest_signals": weakest,
+        "provisional_strongest_signals": provisional_strongest,
+        "provisional_weakest_signals": provisional_weakest,
+    }
+
+
 def build_session_outcomes(
     *,
     history_store: RunHistoryRepository,
@@ -288,6 +504,15 @@ def build_session_outcomes(
     bars_cache: dict[tuple[str, str, str, str], Any] = {}
     option_bars_cache: dict[tuple[tuple[str, ...], str, str], Any] = {}
 
+    def load_run_bundle(run_id: str) -> tuple[Mapping[str, Any] | None, list[Mapping[str, Any]]]:
+        cached = run_cache.get(run_id)
+        if cached is None:
+            run_payload = history_store.get_run(run_id)
+            candidates = history_store.list_candidates(run_id)
+            cached = (run_payload, candidates)
+            run_cache[run_id] = cached
+        return cached
+
     def find_matching_candidate(
         candidates: list[Mapping[str, Any]],
         entry_candidate: Mapping[str, Any],
@@ -317,13 +542,7 @@ def build_session_outcomes(
             }
 
         run_id = str(entry_row["run_id"])
-        cached = run_cache.get(run_id)
-        if cached is None:
-            run_payload = history_store.get_run(run_id)
-            candidates = history_store.list_candidates(run_id)
-            cached = (run_payload, candidates)
-            run_cache[run_id] = cached
-        run_payload, stored_candidates = cached
+        run_payload, stored_candidates = load_run_bundle(run_id)
         if run_payload is None:
             return {
                 "status": "missing_run",
@@ -457,14 +676,28 @@ def build_session_outcomes(
         latest = state["latest"]
         classification = "board" if state["first_board"] is not None else "watchlist"
         outcome = replay_outcome(entry)
+        entry_run_payload, _ = load_run_bundle(str(entry["run_id"]))
+        entry_setup = None if entry_run_payload is None else (entry_run_payload.get("setup") or {})
+        entry_candidate = dict(entry["candidate"])
+        latest_candidate = dict(latest["candidate"])
+        setup_status = (
+            entry_candidate.get("setup_status")
+            or (entry_setup.get("status") if entry_setup else None)
+            or "unknown"
+        )
+        calendar_status = entry_candidate.get("calendar_status") or "unknown"
+        greeks_source = entry_candidate.get("greeks_source") or "unknown"
         ideas.append(
             {
                 **state["identity"],
                 "classification": classification,
-                "first_seen": entry["generated_at"],
+                "first_seen": state["first_seen"],
+                "entry_seen": entry["generated_at"],
                 "latest_seen": latest["generated_at"],
                 "entry_run_id": entry["run_id"],
                 "entry_cycle_id": entry["cycle_id"],
+                "first_board_seen": None if state["first_board"] is None else state["first_board"]["generated_at"],
+                "first_watchlist_seen": None if state["first_watchlist"] is None else state["first_watchlist"]["generated_at"],
                 "latest_score": latest["quality_score"],
                 "score_bucket": score_bucket_label(float(latest["quality_score"])),
                 "occurrence_count": state["occurrence_count"],
@@ -476,8 +709,17 @@ def build_session_outcomes(
                 "profit_target_hit": outcome["profit_target_hit"],
                 "stop_hit": outcome["stop_hit"],
                 "still_in_play": outcome["still_in_play"],
-                "entry_candidate": dict(entry["candidate"]),
-                "latest_candidate": dict(latest["candidate"]),
+                "entry_candidate": entry_candidate,
+                "latest_candidate": latest_candidate,
+                "entry_setup": entry_setup,
+                "setup_status": setup_status,
+                "calendar_status": calendar_status,
+                "greeks_source": greeks_source,
+                "session_phase": board_session_phase(entry_candidate),
+                "vwap_regime": classify_vwap_regime(entry_setup, str(entry["strategy"])),
+                "trend_regime": classify_trend_regime(entry_setup, str(entry["strategy"])),
+                "opening_range_regime": classify_opening_range_regime(entry_setup, str(entry["strategy"])),
+                "session_extreme_regime": classify_session_extreme_regime(entry_setup),
             }
         )
 
@@ -585,6 +827,7 @@ def build_session_summary(
         "symbol_breakdown": symbol_breakdown,
         "leg_summaries": leg_summaries[:10],
         "outcomes": outcomes,
+        "tuning": build_signal_tuning(outcomes),
     }
 
 
@@ -695,8 +938,12 @@ def render_outcome_summaries(outcomes: Mapping[str, Any]) -> list[str]:
         lines.append(
             f"### {idea['underlying_symbol']} {idea['strategy']} {idea['short_symbol']} / {idea['long_symbol']}"
         )
+        timing_line = f"- First seen: {idea['first_seen']} | entry seen: {idea['entry_seen']}"
+        if idea["classification"] == "board" and idea["first_watchlist_seen"] is not None:
+            timing_line += f" | first watchlist: {idea['first_watchlist_seen']}"
+        lines.append(timing_line)
         lines.append(
-            f"- Classification: {idea['classification']} | first seen: {idea['first_seen']} | latest score: {idea['latest_score']:.1f} ({idea['score_bucket']})"
+            f"- Classification: {idea['classification']} | latest score: {idea['latest_score']:.1f} ({idea['score_bucket']})"
         )
         lines.append(
             f"- Outcome: {idea['replay_verdict']} | bucket: {idea['outcome_bucket']} | still in play: {'yes' if idea['still_in_play'] else 'no'}"
@@ -706,6 +953,79 @@ def render_outcome_summaries(outcomes: Mapping[str, Any]) -> list[str]:
         lines.append(
             f"- Estimated PnL: close {close_pnl} | expiry {expiry_pnl} | PT {'yes' if idea['profit_target_hit'] else 'no'} | stop {'yes' if idea['stop_hit'] else 'no'}"
         )
+        lines.append("")
+    return lines
+
+
+def render_signal_tuning(tuning: Mapping[str, Any]) -> list[str]:
+    if tuning["sample_size"] == 0:
+        return ["No ideas were available for signal tuning."]
+
+    lines = [f"- Sample size: {tuning['sample_size']} ideas", ""]
+
+    strongest = tuning["strongest_signals"]
+    weakest = tuning["weakest_signals"]
+    provisional_strongest = tuning["provisional_strongest_signals"]
+    provisional_weakest = tuning["provisional_weakest_signals"]
+    if strongest:
+        lines.append("- Strongest resolved buckets:")
+        for row in strongest:
+            win_rate = "n/a" if row["win_rate"] is None else f"{row['win_rate'] * 100:.0f}%"
+            avg_pnl = "n/a" if row["average_estimated_pnl"] is None else f"{row['average_estimated_pnl']:.0f}"
+            lines.append(
+                f"  - {row['dimension']}={row['bucket']} | count {row['count']} | resolved {row['resolved_count']} | win rate {win_rate} | avg pnl {avg_pnl}"
+            )
+        lines.append("")
+    if weakest:
+        lines.append("- Weakest resolved buckets:")
+        for row in weakest:
+            win_rate = "n/a" if row["win_rate"] is None else f"{row['win_rate'] * 100:.0f}%"
+            avg_pnl = "n/a" if row["average_estimated_pnl"] is None else f"{row['average_estimated_pnl']:.0f}"
+            lines.append(
+                f"  - {row['dimension']}={row['bucket']} | count {row['count']} | resolved {row['resolved_count']} | win rate {win_rate} | avg pnl {avg_pnl}"
+            )
+        lines.append("")
+    if provisional_strongest:
+        lines.append("- Strongest provisional buckets (open-trade PnL only):")
+        for row in provisional_strongest:
+            avg_pnl = "n/a" if row["average_estimated_pnl"] is None else f"{row['average_estimated_pnl']:.0f}"
+            lines.append(
+                f"  - {row['dimension']}={row['bucket']} | count {row['count']} | resolved {row['resolved_count']} | avg pnl {avg_pnl}"
+            )
+        lines.append("")
+    if provisional_weakest:
+        lines.append("- Weakest provisional buckets (open-trade PnL only):")
+        for row in provisional_weakest:
+            avg_pnl = "n/a" if row["average_estimated_pnl"] is None else f"{row['average_estimated_pnl']:.0f}"
+            lines.append(
+                f"  - {row['dimension']}={row['bucket']} | count {row['count']} | resolved {row['resolved_count']} | avg pnl {avg_pnl}"
+            )
+        lines.append("")
+
+    dimensions_to_render = (
+        ("score_bucket", "By Score Bucket"),
+        ("setup_status", "By Setup Status"),
+        ("calendar_status", "By Calendar Status"),
+        ("session_phase", "By Session Phase"),
+        ("vwap_regime", "By VWAP Regime"),
+        ("trend_regime", "By Intraday Trend"),
+    )
+    for key, title in dimensions_to_render:
+        rows = tuning["dimensions"].get(key) or []
+        lines.append(f"### {title}")
+        if not rows:
+            lines.append("No data.")
+            lines.append("")
+            continue
+        lines.append("| Bucket | Count | Win | Loss | Open | Win Rate | Avg PnL | Avg Score |")
+        lines.append("|---|---:|---:|---:|---:|---:|---:|---:|")
+        for row in rows:
+            win_rate = "n/a" if row["win_rate"] is None else f"{row['win_rate'] * 100:.0f}%"
+            avg_pnl = "n/a" if row["average_estimated_pnl"] is None else f"{row['average_estimated_pnl']:.0f}"
+            lines.append(
+                f"| {row['bucket']} | {row['count']} | {row['win_count']} | {row['loss_count']} | {row['still_open_count']} | "
+                f"{win_rate} | {avg_pnl} | {row['average_latest_score']:.1f} |"
+            )
         lines.append("")
     return lines
 
@@ -744,6 +1064,9 @@ def render_session_summary_markdown(summary: Mapping[str, Any]) -> str:
             "## Accepted Vs Watchlist Outcomes",
             "",
             *render_outcome_summaries(summary["outcomes"]),
+            "## Signal Tuning",
+            "",
+            *render_signal_tuning(summary["tuning"]),
             "## Most Tracked Legs",
             "",
             *render_leg_summaries(summary["leg_summaries"]),
