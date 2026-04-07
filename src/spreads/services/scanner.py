@@ -2,7 +2,7 @@
 """Scan Alpaca option chains for credit spread candidates.
 
 Usage:
-    uv run credit_spread_scanner.py --symbol SPY
+    uv run spreads-scan --symbol SPY
 
 Required environment variables:
     APCA_API_KEY_ID
@@ -41,7 +41,7 @@ from spreads.integrations.calendar_events.policy import apply_credit_spread_poli
 from spreads.integrations.greeks import build_local_greeks_provider
 from spreads.storage import default_database_url
 from spreads.storage.factory import build_history_store
-from spreads.storage.postgres import RunHistoryRepository
+from spreads.storage.run_history_repository import RunHistoryRepository
 
 
 DEFAULT_DATA_BASE_URL = "https://data.alpaca.markets"

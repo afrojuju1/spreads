@@ -29,7 +29,12 @@ src/
       replay.py
       analysis.py
     storage/
-      history.py
+      db.py
+      models.py
+      calendar_models.py
+      run_history_repository.py
+      records.py
+      serializers.py
     jobs/
       live_collector.py
       post_close.py
@@ -45,16 +50,13 @@ docs/
 
 ## Current Mapping
 
-- `credit_spread_scanner.py`
-  - split into Alpaca integration, scanner service, ranking, setup, replay, and a thin CLI
-- `intraday_idea_collector.py`
-  - move to `jobs/live_collector.py`
-- `post_close_analysis.py`
-  - move to `services/analysis.py`
-- `scanner_history.py`
-  - move to `storage/history.py`
+- scanner CLI now lives at `src/spreads/cli/scan.py`
+- collector CLI now lives at `src/spreads/cli/collect.py`
+- analysis CLI now lives at `src/spreads/cli/analyze.py`
 - `calendar_events/` and `greeks/`
-  - move under `src/spreads/integrations/`
+  - live under `src/spreads/integrations/`
+- persistence models and repositories
+  - live under `src/spreads/storage/`
 
 ## Database
 
@@ -68,8 +70,7 @@ Why:
 
 Plan:
 
-- keep SQLite for local collection/dev for now
-- use Postgres as the future system of record
+- use Postgres as the system of record
 - partition quote-event tables by `captured_at`
 - archive older raw quote history later if needed
 
@@ -91,12 +92,12 @@ Do not:
 
 - phase 1 complete
 - phase 2 complete with `src/spreads/services`, `src/spreads/jobs`, `src/spreads/cli`, and `src/spreads/integrations/alpaca`
-- Postgres-ready history store and minimal FastAPI app added
+- Postgres-only runtime storage and minimal FastAPI app added
 - local Postgres development uses `docker-compose`
 - Alembic owns schema migrations
+- calendar events and run history share the same Postgres/session layer
 
 ## Next Step
 
 - split `src/spreads/services/scanner.py` into smaller service modules behind the same CLI
-- add a SQLite-to-Postgres import path for existing session history
 - start the frontend against the FastAPI surface under `apps/api`

@@ -60,9 +60,9 @@ Resolution order:
 The existing commands use Postgres automatically:
 
 ```bash
-uv run credit_spread_scanner.py --symbol SPY
-uv run intraday_idea_collector.py --profile weekly --universe explore_10
-uv run post_close_analysis.py --label explore_10_combined_weekly_auto
+uv run spreads-scan --symbol SPY
+uv run spreads-collect --profile weekly --universe explore_10
+uv run spreads-analyze --label explore_10_combined_weekly_auto
 ```
 
 ## Notes

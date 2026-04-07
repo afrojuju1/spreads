@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 
 from spreads.storage.db import DEFAULT_POSTGRES_URL, default_database_url
-from spreads.storage.postgres import RunHistoryRepository
+from spreads.storage.run_history_repository import RunHistoryRepository
 
 
 def build_history_store(path_or_url: str | None = None):

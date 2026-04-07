@@ -27,7 +27,7 @@ from spreads.services.scanner import (
 )
 from spreads.storage import default_database_url
 from spreads.storage.factory import build_history_store
-from spreads.storage.postgres import RunHistoryRepository
+from spreads.storage.run_history_repository import RunHistoryRepository
 
 BOARD_SCORE_FLOOR = 65.0
 BOARD_STRONG_SCORE = 82.0
