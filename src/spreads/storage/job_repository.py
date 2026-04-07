@@ -119,28 +119,24 @@ class JobRepository:
             raise ValueError("scheduled_for is required")
         with self.session_scope() as session:
             row = session.get(JobRunModel, job_run_id)
-            created = row is None
-            if row is None:
-                row = JobRunModel(
-                    job_run_id=job_run_id,
-                    job_key=job_key,
-                    scheduled_for=scheduled_for_dt,
-                    payload_json=payload,
-                    job_type=job_type,
-                    status=status,
-                )
-                session.add(row)
-            row.arq_job_id = arq_job_id
-            row.job_type = job_type
-            row.status = status
-            row.scheduled_for = scheduled_for_dt
-            row.worker_name = worker_name
-            row.payload_json = payload
-            row.result_json = result
-            row.error_text = error_text
+            if row is not None:
+                return to_job_run_record(row), False
+            row = JobRunModel(
+                job_run_id=job_run_id,
+                job_key=job_key,
+                arq_job_id=arq_job_id,
+                scheduled_for=scheduled_for_dt,
+                payload_json=payload,
+                job_type=job_type,
+                status=status,
+                worker_name=worker_name,
+                result_json=result,
+                error_text=error_text,
+            )
+            session.add(row)
             session.flush()
             session.refresh(row)
-            return to_job_run_record(row), created
+            return to_job_run_record(row), True
 
     def get_job_run(self, job_run_id: str) -> JobRunRecord | None:
         with self.session_factory() as session:
