@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from calendar_events import build_calendar_event_resolver
-from call_credit_spread_scanner import (
+from credit_spread_scanner import (
     NEW_YORK,
     AlpacaClient,
     AlpacaOptionQuoteStreamer,
@@ -37,6 +37,11 @@ BOARD_SIDE_SWITCH_MARGIN = 10.0
 BOARD_REPLACEMENT_MARGIN = 5.0
 BOARD_CONFIRMATION_CYCLES = 2
 BOARD_HOLD_TOLERANCE = 3.0
+WATCHLIST_SCORE_FLOOR = 55.0
+WATCHLIST_PER_STRATEGY = 3
+WATCHLIST_PER_SYMBOL = 2
+WATCHLIST_TOP = 12
+WATCHLIST_QUOTE_CAPTURE_TOP = 6
 
 
 def parse_args() -> argparse.Namespace:
@@ -235,16 +240,19 @@ def candidate_identity(candidate: dict[str, Any]) -> str:
 def build_symbol_strategy_candidates(
     scan_results: list[SymbolScanResult],
     run_ids: dict[tuple[str, str], str],
+    *,
+    max_per_strategy: int = 1,
 ) -> dict[str, list[dict[str, Any]]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for result in scan_results:
         if not result.candidates:
             continue
-        payload = serialize_candidate(
-            result.candidates[0],
-            run_ids.get((result.symbol, result.args.strategy)),
-        )
-        grouped.setdefault(result.symbol, []).append(payload)
+        for candidate in result.candidates[: max(max_per_strategy, 1)]:
+            payload = serialize_candidate(
+                candidate,
+                run_ids.get((result.symbol, result.args.strategy)),
+            )
+            grouped.setdefault(result.symbol, []).append(payload)
     for symbol in grouped:
         grouped[symbol].sort(key=lambda candidate: candidate["quality_score"], reverse=True)
     return grouped
@@ -420,6 +428,43 @@ def select_board_candidates(
     return selected[:top], next_state
 
 
+def select_watchlist_candidates(
+    *,
+    symbol_candidates: dict[str, list[dict[str, Any]]],
+    board_candidates: list[dict[str, Any]],
+    top: int,
+) -> list[dict[str, Any]]:
+    accepted_ids = {candidate_identity(candidate) for candidate in board_candidates}
+    watchlist: list[dict[str, Any]] = []
+
+    for symbol in sorted(symbol_candidates):
+        kept = 0
+        for candidate in sorted(
+            symbol_candidates.get(symbol, []),
+            key=lambda item: item["quality_score"],
+            reverse=True,
+        ):
+            if candidate_identity(candidate) in accepted_ids:
+                continue
+            if candidate["quality_score"] < WATCHLIST_SCORE_FLOOR:
+                continue
+            watchlist.append(candidate)
+            kept += 1
+            if kept >= WATCHLIST_PER_SYMBOL:
+                break
+
+    watchlist.sort(
+        key=lambda candidate: (
+            candidate["quality_score"],
+            candidate["return_on_risk"],
+            candidate["midpoint_credit"],
+            min(candidate["short_open_interest"], candidate["long_open_interest"]),
+        ),
+        reverse=True,
+    )
+    return watchlist[:top]
+
+
 def summarize_candidate(candidate: dict[str, Any]) -> str:
     return (
         f"{candidate['strategy']} {candidate['short_strike']:.2f}/{candidate['long_strike']:.2f} "
@@ -509,9 +554,9 @@ def build_events(
     return events
 
 
-def build_quote_symbol_metadata(board_candidates: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def build_quote_symbol_metadata(candidates: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     metadata: dict[str, dict[str, Any]] = {}
-    for candidate in board_candidates:
+    for candidate in candidates:
         for leg_role, option_symbol in (
             ("short", candidate["short_symbol"]),
             ("long", candidate["long_symbol"]),
@@ -528,13 +573,13 @@ def collect_live_quote_records(
     *,
     args: argparse.Namespace,
     client: AlpacaClient,
-    board_candidates: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
     feed: str,
 ) -> list[dict[str, Any]]:
-    if args.quote_capture_seconds <= 0 or not board_candidates:
+    if args.quote_capture_seconds <= 0 or not candidates:
         return []
 
-    stream_symbols = list(build_quote_symbol_metadata(board_candidates).keys())
+    stream_symbols = list(build_quote_symbol_metadata(candidates).keys())
     streamer = AlpacaOptionQuoteStreamer(
         key_id=client.headers["APCA-API-KEY-ID"],
         secret_key=client.headers["APCA-API-SECRET-KEY"],
@@ -549,7 +594,7 @@ def collect_live_quote_records(
         return []
 
     captured_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-    symbol_metadata = build_quote_symbol_metadata(board_candidates)
+    symbol_metadata = build_quote_symbol_metadata(candidates)
     records: list[dict[str, Any]] = []
     for quote in quote_events:
         metadata = symbol_metadata.get(quote.symbol, {})
@@ -591,6 +636,7 @@ def write_snapshot(
     args: argparse.Namespace,
     symbols: list[str],
     board_candidates: list[dict[str, Any]],
+    watchlist_candidates: list[dict[str, Any]],
     selection_state: dict[str, dict[str, Any]],
     failures: list[UniverseScanFailure],
 ) -> Path:
@@ -607,6 +653,7 @@ def write_snapshot(
         "profile": args.profile,
         "greeks_source": args.greeks_source,
         "board_candidates": board_candidates,
+        "watchlist_candidates": watchlist_candidates,
         "selection_state": selection_state,
         "failures": [asdict(failure) for failure in failures],
     }
@@ -620,6 +667,7 @@ def print_cycle_summary(
     generated_at: str,
     label: str,
     board_candidates: list[dict[str, Any]],
+    watchlist_candidates: list[dict[str, Any]],
     events: list[dict[str, Any]],
     failures: list[UniverseScanFailure],
     snapshot_path: Path,
@@ -627,6 +675,7 @@ def print_cycle_summary(
 ) -> None:
     print(f"[{generated_at}] {label}")
     print(f"Board entries: {len(board_candidates)}")
+    print(f"Watchlist entries: {len(watchlist_candidates)}")
     print(f"Events: {len(events)}")
     print(f"Quote events saved: {quote_event_count}")
     if failures:
@@ -692,7 +741,11 @@ def main() -> int:
             label = snapshot_label(universe_label, args)
             cycle_id = build_cycle_id(label)
             run_ids = {(result.symbol, result.args.strategy): result.run_id for result in scan_results}
-            symbol_strategy_candidates = build_symbol_strategy_candidates(scan_results, run_ids)
+            symbol_strategy_candidates = build_symbol_strategy_candidates(
+                scan_results,
+                run_ids,
+                max_per_strategy=WATCHLIST_PER_STRATEGY,
+            )
             previous_map, previous_selection_state = read_previous_snapshot_state(
                 latest_snapshot_path(output_dir, label)
             )
@@ -701,6 +754,11 @@ def main() -> int:
                 previous_board=previous_map,
                 previous_state=previous_selection_state,
                 top=args.top,
+            )
+            watchlist_payloads = select_watchlist_candidates(
+                symbol_candidates=symbol_strategy_candidates,
+                board_candidates=board_payloads,
+                top=WATCHLIST_TOP,
             )
             current_map = {payload["underlying_symbol"]: payload for payload in board_payloads}
             events = build_events(
@@ -718,17 +776,19 @@ def main() -> int:
                 args=args,
                 symbols=symbols,
                 board_candidates=board_payloads,
+                watchlist_candidates=watchlist_payloads,
                 selection_state=selection_state,
                 failures=failures,
             )
             write_events(event_log_path(output_dir, label), events)
             quote_event_count = 0
-            if board_payloads:
+            quote_candidates = board_payloads + watchlist_payloads[:WATCHLIST_QUOTE_CAPTURE_TOP]
+            if quote_candidates:
                 try:
                     quote_records = collect_live_quote_records(
                         args=args,
                         client=client,
-                        board_candidates=board_payloads,
+                        candidates=quote_candidates,
                         feed=scanner_args.feed,
                     )
                     quote_event_count = history_store.save_option_quote_events(
@@ -743,6 +803,7 @@ def main() -> int:
                 generated_at=generated_at,
                 label=label,
                 board_candidates=board_payloads,
+                watchlist_candidates=watchlist_payloads,
                 events=events,
                 failures=failures,
                 snapshot_path=snapshot_path,

@@ -2,7 +2,7 @@
 """Scan Alpaca option chains for credit spread candidates.
 
 Usage:
-    uv run call_credit_spread_scanner.py --symbol SPY
+    uv run credit_spread_scanner.py --symbol SPY
 
 Required environment variables:
     APCA_API_KEY_ID
@@ -46,9 +46,11 @@ DEFAULT_DATA_BASE_URL = "https://data.alpaca.markets"
 DEFAULT_TRADING_BASE_URL = "https://api.alpaca.markets"
 NEW_YORK = ZoneInfo("America/New_York")
 DEFAULT_BOARD_UNIVERSE = "etf_core"
-ZERO_DTE_ALLOWED_SYMBOLS = ("SPY", "QQQ", "IWM")
+ZERO_DTE_CORE_SYMBOLS = ("SPY", "QQQ", "IWM")
+ZERO_DTE_ALLOWED_SYMBOLS = ("SPY", "QQQ", "IWM", "DIA", "XLF", "XLE", "XLI", "XLV", "GLD", "TLT")
 UNIVERSE_PRESETS: dict[str, tuple[str, ...]] = {
-    "0dte_core": ZERO_DTE_ALLOWED_SYMBOLS,
+    "0dte_core": ZERO_DTE_CORE_SYMBOLS,
+    "explore_10": ZERO_DTE_ALLOWED_SYMBOLS,
     "etf_core": ("SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "XLE", "SMH"),
     "liquid_stocks": ("AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "AMD", "TSLA"),
     "liquid_mixed": (
@@ -762,7 +764,7 @@ PROFILE_CONFIGS: dict[str, ProfileConfig] = {
         min_width=1.0,
         max_width_by_underlying={"etf_index_proxy": 3.0, "single_name_equity": 5.0},
         min_credit=0.18,
-        min_open_interest_by_underlying={"etf_index_proxy": 750, "single_name_equity": 400},
+        min_open_interest_by_underlying={"etf_index_proxy": 500, "single_name_equity": 400},
         max_relative_spread_by_underlying={"etf_index_proxy": 0.12, "single_name_equity": 0.15},
         min_return_on_risk=0.10,
         min_fill_ratio=0.72,
@@ -804,6 +806,18 @@ PROFILE_CONFIGS: dict[str, ProfileConfig] = {
         min_breakeven_vs_expected_move_ratio=-0.05,
     ),
 }
+
+
+def effective_min_credit(width: float, args: argparse.Namespace) -> float:
+    threshold = args.min_credit
+    if args.profile != "0dte":
+        return threshold
+    session_bucket = zero_dte_session_bucket()
+    if session_bucket != "late":
+        return threshold
+    if width <= 1.0:
+        return max(threshold, 0.08)
+    return max(threshold, 0.15)
 
 
 class AlpacaClient:
@@ -2139,7 +2153,7 @@ def build_credit_spreads(
 
                 midpoint_credit = short_snapshot.midpoint - long_snapshot.midpoint
                 natural_credit = short_snapshot.bid - long_snapshot.ask
-                if midpoint_credit < args.min_credit:
+                if midpoint_credit < effective_min_credit(width, args):
                     continue
                 if natural_credit <= 0:
                     continue
