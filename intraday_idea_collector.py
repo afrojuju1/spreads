@@ -30,6 +30,14 @@ from call_credit_spread_scanner import (
 from greeks import build_local_greeks_provider
 from scanner_history import DEFAULT_HISTORY_DB_PATH, RunHistoryStore
 
+BOARD_SCORE_FLOOR = 65.0
+BOARD_STRONG_SCORE = 82.0
+BOARD_WINNER_GAP = 6.0
+BOARD_SIDE_SWITCH_MARGIN = 10.0
+BOARD_REPLACEMENT_MARGIN = 5.0
+BOARD_CONFIRMATION_CYCLES = 2
+BOARD_HOLD_TOLERANCE = 3.0
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -196,8 +204,12 @@ def event_log_path(output_dir: Path, label: str) -> Path:
 
 
 def read_previous_snapshot(path: Path) -> dict[str, dict[str, Any]]:
+    return read_previous_snapshot_state(path)[0]
+
+
+def read_previous_snapshot_state(path: Path) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     if not path.exists():
-        return {}
+        return {}, {}
     payload = json.loads(path.read_text())
     board = payload.get("board_candidates", [])
     previous: dict[str, dict[str, Any]] = {}
@@ -205,7 +217,207 @@ def read_previous_snapshot(path: Path) -> dict[str, dict[str, Any]]:
         symbol = candidate.get("underlying_symbol")
         if symbol:
             previous[str(symbol)] = candidate
-    return previous
+    raw_state = payload.get("selection_state", {})
+    selection_state = {
+        str(symbol): state
+        for symbol, state in raw_state.items()
+        if isinstance(symbol, str) and isinstance(state, dict)
+    }
+    return previous, selection_state
+
+
+def candidate_identity(candidate: dict[str, Any]) -> str:
+    return (
+        f"{candidate['strategy']}|{candidate['short_symbol']}|{candidate['long_symbol']}"
+    )
+
+
+def build_symbol_strategy_candidates(
+    scan_results: list[SymbolScanResult],
+    run_ids: dict[tuple[str, str], str],
+) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for result in scan_results:
+        if not result.candidates:
+            continue
+        payload = serialize_candidate(
+            result.candidates[0],
+            run_ids.get((result.symbol, result.args.strategy)),
+        )
+        grouped.setdefault(result.symbol, []).append(payload)
+    for symbol in grouped:
+        grouped[symbol].sort(key=lambda candidate: candidate["quality_score"], reverse=True)
+    return grouped
+
+
+def evaluate_pending_candidate(
+    *,
+    symbol: str,
+    winner: dict[str, Any],
+    previous_state: dict[str, Any],
+) -> tuple[bool, dict[str, Any]]:
+    winner_id = candidate_identity(winner)
+    pending_id = previous_state.get("pending_identity")
+    pending_count = int(previous_state.get("pending_count", 0))
+    if pending_id == winner_id:
+        pending_count += 1
+    else:
+        pending_count = 1
+    state = {
+        "pending_identity": winner_id,
+        "pending_strategy": winner["strategy"],
+        "pending_count": pending_count,
+    }
+    return pending_count >= BOARD_CONFIRMATION_CYCLES, state
+
+
+def select_board_candidates(
+    *,
+    symbol_candidates: dict[str, list[dict[str, Any]]],
+    previous_board: dict[str, dict[str, Any]],
+    previous_state: dict[str, dict[str, Any]],
+    top: int,
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    selected: list[dict[str, Any]] = []
+    next_state: dict[str, dict[str, Any]] = {}
+
+    for symbol in sorted(symbol_candidates):
+        options = sorted(
+            symbol_candidates.get(symbol, []),
+            key=lambda candidate: candidate["quality_score"],
+            reverse=True,
+        )
+        viable = [candidate for candidate in options if candidate["quality_score"] >= BOARD_SCORE_FLOOR]
+        winner = viable[0] if viable else None
+        runner_up = viable[1] if len(viable) > 1 else None
+        winner_gap = None
+        if winner is not None and runner_up is not None:
+            winner_gap = winner["quality_score"] - runner_up["quality_score"]
+
+        previous = previous_board.get(symbol)
+        state = previous_state.get(symbol, {})
+
+        accepted: dict[str, Any] | None = None
+        state_update: dict[str, Any] = {}
+
+        if previous is None:
+            if winner is not None:
+                if (
+                    winner["quality_score"] >= BOARD_STRONG_SCORE
+                    or runner_up is None
+                    or (winner_gap is not None and winner_gap >= BOARD_WINNER_GAP)
+                ):
+                    accepted = winner
+                else:
+                    confirmed, state_update = evaluate_pending_candidate(
+                        symbol=symbol,
+                        winner=winner,
+                        previous_state=state,
+                    )
+                    if confirmed:
+                        accepted = winner
+                        state_update = {}
+            if accepted is not None:
+                state_update.update(
+                    {
+                        "accepted_identity": candidate_identity(accepted),
+                        "accepted_strategy": accepted["strategy"],
+                        "accepted_score": accepted["quality_score"],
+                    }
+                )
+                selected.append(accepted)
+            next_state[symbol] = state_update
+            continue
+
+        previous_id = candidate_identity(previous)
+        previous_match = next((candidate for candidate in options if candidate_identity(candidate) == previous_id), None)
+        previous_same_side = next(
+            (candidate for candidate in options if candidate["strategy"] == previous["strategy"]),
+            None,
+        )
+        current_anchor = previous_match or previous_same_side
+
+        if current_anchor is not None and current_anchor["quality_score"] >= BOARD_SCORE_FLOOR - BOARD_HOLD_TOLERANCE:
+            accepted = current_anchor
+        elif winner is not None:
+            if winner["strategy"] == previous["strategy"]:
+                accepted = winner
+            else:
+                confirmed, state_update = evaluate_pending_candidate(
+                    symbol=symbol,
+                    winner=winner,
+                    previous_state=state,
+                )
+                if confirmed:
+                    accepted = winner
+                    state_update = {}
+        else:
+            accepted = None
+
+        if winner is not None and accepted is not None:
+            accepted_id = candidate_identity(accepted)
+            winner_id = candidate_identity(winner)
+            if winner_id != accepted_id:
+                same_side = winner["strategy"] == accepted["strategy"]
+                score_gap = winner["quality_score"] - accepted["quality_score"]
+                if same_side:
+                    if score_gap >= BOARD_REPLACEMENT_MARGIN:
+                        confirmed, state_update = evaluate_pending_candidate(
+                            symbol=symbol,
+                            winner=winner,
+                            previous_state=state,
+                        )
+                        if confirmed:
+                            accepted = winner
+                            state_update = {}
+                    else:
+                        accepted = accepted
+                else:
+                    if (
+                        score_gap >= BOARD_SIDE_SWITCH_MARGIN
+                        and (winner_gap is None or winner_gap >= BOARD_WINNER_GAP)
+                    ):
+                        confirmed, state_update = evaluate_pending_candidate(
+                            symbol=symbol,
+                            winner=winner,
+                            previous_state=state,
+                        )
+                        if confirmed:
+                            accepted = winner
+                            state_update = {}
+                    else:
+                        accepted = accepted
+
+        if accepted is not None:
+            accepted_score = accepted["quality_score"]
+            if accepted_score < BOARD_SCORE_FLOOR:
+                accepted = None
+            else:
+                state_update.update(
+                    {
+                        "accepted_identity": candidate_identity(accepted),
+                        "accepted_strategy": accepted["strategy"],
+                        "accepted_score": accepted_score,
+                    }
+                )
+                if state_update.get("pending_identity") == state_update["accepted_identity"]:
+                    state_update.pop("pending_identity", None)
+                    state_update.pop("pending_strategy", None)
+                    state_update.pop("pending_count", None)
+                selected.append(accepted)
+
+        next_state[symbol] = state_update
+
+    selected.sort(
+        key=lambda candidate: (
+            candidate["quality_score"],
+            candidate["return_on_risk"],
+            candidate["midpoint_credit"],
+            min(candidate["short_open_interest"], candidate["long_open_interest"]),
+        ),
+        reverse=True,
+    )
+    return selected[:top], next_state
 
 
 def summarize_candidate(candidate: dict[str, Any]) -> str:
@@ -379,6 +591,7 @@ def write_snapshot(
     args: argparse.Namespace,
     symbols: list[str],
     board_candidates: list[dict[str, Any]],
+    selection_state: dict[str, dict[str, Any]],
     failures: list[UniverseScanFailure],
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -394,6 +607,7 @@ def write_snapshot(
         "profile": args.profile,
         "greeks_source": args.greeks_source,
         "board_candidates": board_candidates,
+        "selection_state": selection_state,
         "failures": [asdict(failure) for failure in failures],
     }
     snapshot_path.write_text(json.dumps(payload, indent=2))
@@ -478,15 +692,17 @@ def main() -> int:
             label = snapshot_label(universe_label, args)
             cycle_id = build_cycle_id(label)
             run_ids = {(result.symbol, result.args.strategy): result.run_id for result in scan_results}
-            board_payloads = [
-                serialize_candidate(
-                    candidate,
-                    run_ids.get((candidate.underlying_symbol, candidate.strategy)),
-                )
-                for candidate in board_candidates
-            ]
+            symbol_strategy_candidates = build_symbol_strategy_candidates(scan_results, run_ids)
+            previous_map, previous_selection_state = read_previous_snapshot_state(
+                latest_snapshot_path(output_dir, label)
+            )
+            board_payloads, selection_state = select_board_candidates(
+                symbol_candidates=symbol_strategy_candidates,
+                previous_board=previous_map,
+                previous_state=previous_selection_state,
+                top=args.top,
+            )
             current_map = {payload["underlying_symbol"]: payload for payload in board_payloads}
-            previous_map = read_previous_snapshot(latest_snapshot_path(output_dir, label))
             events = build_events(
                 label=label,
                 cycle_id=cycle_id,
@@ -502,6 +718,7 @@ def main() -> int:
                 args=args,
                 symbols=symbols,
                 board_candidates=board_payloads,
+                selection_state=selection_state,
                 failures=failures,
             )
             write_events(event_log_path(output_dir, label), events)
