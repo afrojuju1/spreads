@@ -3073,19 +3073,14 @@ def summarize_replay(
             path_bars = horizon_bars
             path_high = max(bar.high for bar in path_bars) if path_bars else horizon_bar.high
             path_low = min(bar.low for bar in path_bars) if path_bars else horizon_bar.low
-            if label == "entry":
-                touched_short = False
-                closed_beyond_short = False
-                closed_beyond_breakeven = False
+            if strategy == "put_credit":
+                touched_short = path_low <= candidate["short_strike"]
+                closed_beyond_short = horizon_bar.close <= candidate["short_strike"]
+                closed_beyond_breakeven = horizon_bar.close <= candidate["breakeven"]
             else:
-                if strategy == "put_credit":
-                    touched_short = path_low <= candidate["short_strike"]
-                    closed_beyond_short = horizon_bar.close <= candidate["short_strike"]
-                    closed_beyond_breakeven = horizon_bar.close <= candidate["breakeven"]
-                else:
-                    touched_short = path_high >= candidate["short_strike"]
-                    closed_beyond_short = horizon_bar.close >= candidate["short_strike"]
-                    closed_beyond_breakeven = horizon_bar.close >= candidate["breakeven"]
+                touched_short = path_high >= candidate["short_strike"]
+                closed_beyond_short = horizon_bar.close >= candidate["short_strike"]
+                closed_beyond_breakeven = horizon_bar.close >= candidate["breakeven"]
             touched += int(touched_short)
             closed_past_short += int(closed_beyond_short)
             closed_past_breakeven += int(closed_beyond_breakeven)

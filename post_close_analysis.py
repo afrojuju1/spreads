@@ -5,11 +5,21 @@ import argparse
 import json
 import sqlite3
 from collections import Counter, defaultdict
+from datetime import datetime, timedelta
 from pathlib import Path
 from statistics import mean
 from typing import Any
 
+from credit_spread_scanner import (
+    NEW_YORK,
+    AlpacaClient,
+    env_or_die,
+    infer_trading_base_url,
+    load_local_env,
+    summarize_replay,
+)
 from scanner_history import DEFAULT_HISTORY_DB_PATH
+from scanner_history import RunHistoryStore
 
 
 def parse_args() -> argparse.Namespace:
@@ -38,6 +48,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         help="Optional markdown output path. Default: outputs/analysis/post_close_<date>_<label>.md",
+    )
+    parser.add_argument(
+        "--replay-profit-target",
+        type=float,
+        default=0.5,
+        help="Profit target used for replay verdicts. Default: 0.5",
+    )
+    parser.add_argument(
+        "--replay-stop-multiple",
+        type=float,
+        default=2.0,
+        help="Stop multiple used for replay verdicts. Default: 2.0",
     )
     return parser.parse_args()
 
@@ -169,6 +191,7 @@ def summarize_runs(rows: list[sqlite3.Row]) -> tuple[dict[tuple[str, str], dict[
             "last_seen": group[-1]["generated_at"],
             "avg_best_score": None if not candidate_rows else mean(row["quality_score"] for row in candidate_rows),
             "best_row": best_row,
+            "latest_idea_row": None if not candidate_rows else candidate_rows[-1],
             "latest_row": latest_row,
             "latest_setup": latest_setup,
         }
@@ -296,6 +319,192 @@ def render_leg_summaries(leg_summaries: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
+def build_replay_client() -> AlpacaClient:
+    load_local_env()
+    key_id = env_or_die("APCA_API_KEY_ID", "ALPACA_API_KEY")
+    secret_key = env_or_die("APCA_API_SECRET_KEY", "ALPACA_SECRET_KEY")
+    return AlpacaClient(
+        key_id=key_id,
+        secret_key=secret_key,
+        trading_base_url=infer_trading_base_url(key_id, None),
+        data_base_url="https://data.alpaca.markets",
+    )
+
+
+def load_latest_idea_outcomes(
+    *,
+    db_path: Path,
+    run_summaries: dict[tuple[str, str], dict[str, Any]],
+    profit_target: float,
+    stop_multiple: float,
+) -> dict[tuple[str, str], dict[str, Any]]:
+    outcomes: dict[tuple[str, str], dict[str, Any]] = {}
+    try:
+        client = build_replay_client()
+    except Exception as exc:
+        for key in run_summaries:
+            outcomes[key] = {"status": "unavailable", "reason": str(exc)}
+        return outcomes
+
+    history_store = RunHistoryStore(db_path)
+    try:
+        for key, summary in run_summaries.items():
+            latest_idea_row = summary.get("latest_idea_row")
+            if latest_idea_row is None:
+                outcomes[key] = {"status": "no_idea"}
+                continue
+
+            run_id = latest_idea_row["run_id"]
+            run_payload = history_store.get_run(run_id)
+            candidates = history_store.list_candidates(run_id)
+            if not run_payload or not candidates:
+                outcomes[key] = {"status": "missing_run"}
+                continue
+
+            top_candidate = candidates[:1]
+            generated_at = datetime.fromisoformat(run_payload["generated_at"].replace("Z", "+00:00"))
+            run_date = generated_at.astimezone(NEW_YORK).date()
+            replay_end = max(
+                [
+                    run_date + timedelta(days=3),
+                    *[datetime.fromisoformat(f"{candidate['expiration_date']}T00:00:00+00:00").date() for candidate in top_candidate],
+                ]
+            )
+            bars = client.get_daily_bars(
+                run_payload["symbol"],
+                start=(run_date - timedelta(days=2)).isoformat(),
+                end=replay_end.isoformat(),
+                stock_feed=run_payload["filters"].get("stock_feed", "sip"),
+            )
+            option_symbols = sorted(
+                {
+                    *[candidate["short_symbol"] for candidate in top_candidate],
+                    *[candidate["long_symbol"] for candidate in top_candidate],
+                }
+            )
+            option_bars = client.get_option_bars(
+                option_symbols,
+                start=run_date.isoformat(),
+                end=replay_end.isoformat(),
+            )
+            replay_summaries, replay_rows = summarize_replay(
+                run_payload=run_payload,
+                candidates=top_candidate,
+                bars=bars,
+                option_bars=option_bars,
+                profit_target=profit_target,
+                stop_multiple=stop_multiple,
+            )
+            rows_by_horizon = {
+                row["horizon"]: row
+                for row in replay_rows
+                if row.get("status") == "available"
+            }
+            entry_row = rows_by_horizon.get("entry")
+            expiry_row = rows_by_horizon.get("expiry")
+
+            if expiry_row is not None:
+                if expiry_row["estimated_pnl"] is not None and expiry_row["estimated_pnl"] > 0:
+                    verdict = "profitable by expiry"
+                elif expiry_row.get("estimated_stop_hit"):
+                    verdict = "stop-loss outcome by expiry"
+                elif expiry_row.get("closed_past_breakeven"):
+                    verdict = "loss by expiry"
+                else:
+                    verdict = "expired but unresolved"
+                outcomes[key] = {
+                    "status": "available",
+                    "verdict": verdict,
+                    "run_id": run_id,
+                    "candidate": top_candidate[0],
+                    "entry_row": entry_row,
+                    "expiry_row": expiry_row,
+                    "replay_summaries": replay_summaries,
+                }
+                continue
+
+            if entry_row is not None:
+                if entry_row.get("closed_past_breakeven"):
+                    verdict = "in danger at close"
+                elif entry_row.get("closed_past_short_strike"):
+                    verdict = "tested at close but still live"
+                elif entry_row["estimated_pnl"] is not None and entry_row["estimated_pnl"] > 0:
+                    verdict = "up and still in play at close"
+                else:
+                    verdict = "down but still in play at close"
+                outcomes[key] = {
+                    "status": "available",
+                    "verdict": verdict,
+                    "run_id": run_id,
+                    "candidate": top_candidate[0],
+                    "entry_row": entry_row,
+                    "expiry_row": None,
+                    "replay_summaries": replay_summaries,
+                }
+                continue
+
+            outcomes[key] = {
+                "status": "pending",
+                "run_id": run_id,
+                "candidate": top_candidate[0],
+                "replay_summaries": replay_summaries,
+            }
+    finally:
+        history_store.close()
+
+    return outcomes
+
+
+def render_outcome_summaries(outcomes: dict[tuple[str, str], dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
+    for key in sorted(outcomes):
+        outcome = outcomes[key]
+        symbol, strategy = key
+        lines.append(f"### {symbol} {strategy}")
+        status = outcome.get("status")
+        if status == "no_idea":
+            lines.append("- No surfaced idea to evaluate.")
+            lines.append("")
+            continue
+        if status == "unavailable":
+            lines.append(f"- Outcome replay unavailable: {outcome.get('reason', 'unknown error')}")
+            lines.append("")
+            continue
+        if status == "missing_run":
+            lines.append("- Stored run payload was not available.")
+            lines.append("")
+            continue
+        candidate = outcome.get("candidate", {})
+        lines.append(
+            f"- Latest idea: {candidate.get('short_strike', 0):.2f}/{candidate.get('long_strike', 0):.2f} "
+            f"exp {candidate.get('expiration_date')} score {candidate.get('quality_score', 0):.1f} "
+            f"credit {candidate.get('midpoint_credit', 0):.2f}"
+        )
+        if status == "pending":
+            lines.append("- Outcome: replay data is still pending for this idea.")
+            lines.append("")
+            continue
+
+        lines.append(f"- Outcome: {outcome.get('verdict', 'unknown')}")
+        entry_row = outcome.get("entry_row")
+        if entry_row is not None:
+            lines.append(
+                f"- Close state: PnL {entry_row.get('estimated_pnl', 0):.0f}, "
+                f"past short = {'yes' if entry_row.get('closed_past_short_strike') else 'no'}, "
+                f"past breakeven = {'yes' if entry_row.get('closed_past_breakeven') else 'no'}"
+            )
+        expiry_row = outcome.get("expiry_row")
+        if expiry_row is not None:
+            lines.append(
+                f"- Expiry state: PnL {expiry_row.get('estimated_pnl', 0):.0f}, "
+                f"exit = {expiry_row.get('exit_reason')}, "
+                f"PT = {'yes' if expiry_row.get('estimated_profit_target_hit') else 'no'}, "
+                f"stop = {'yes' if expiry_row.get('estimated_stop_hit') else 'no'}"
+            )
+        lines.append("")
+    return lines
+
+
 def build_report(
     *,
     session_date: str,
@@ -306,6 +515,7 @@ def build_report(
     quote_summaries: dict[tuple[str, str], dict[str, Any]],
     leg_summaries: list[dict[str, Any]],
     events: list[dict[str, Any]],
+    outcomes: dict[tuple[str, str], dict[str, Any]],
 ) -> str:
     lines = [
         f"# Post-Close Analysis: {session_date}",
@@ -323,6 +533,9 @@ def build_report(
         "## Symbol Breakdown",
         "",
         *render_symbol_summaries(run_summaries, quote_summaries),
+        "## Idea Outcomes",
+        "",
+        *render_outcome_summaries(outcomes),
         "## Most Tracked Legs",
         "",
         *render_leg_summaries(leg_summaries),
@@ -349,6 +562,12 @@ def main() -> int:
     run_summaries, run_overview = summarize_runs(run_rows)
     quote_summaries, leg_summaries, quote_overview = summarize_quotes(quote_rows)
     events = load_events(events_path, session_date)
+    outcomes = load_latest_idea_outcomes(
+        db_path=db_path,
+        run_summaries=run_summaries,
+        profit_target=args.replay_profit_target,
+        stop_multiple=args.replay_stop_multiple,
+    )
     report = build_report(
         session_date=session_date,
         label=args.label,
@@ -358,6 +577,7 @@ def main() -> int:
         quote_summaries=quote_summaries,
         leg_summaries=leg_summaries,
         events=events,
+        outcomes=outcomes,
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
