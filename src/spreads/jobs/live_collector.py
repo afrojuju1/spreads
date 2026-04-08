@@ -9,12 +9,14 @@ from typing import Any, Callable
 
 from spreads.common import env_or_die, load_local_env
 from spreads.alerts.dispatcher import dispatch_cycle_alerts
-from spreads.integrations.alpaca.client import AlpacaClient, AlpacaOptionQuoteStreamer, infer_trading_base_url
+from spreads.integrations.alpaca.client import AlpacaClient, infer_trading_base_url
 from spreads.integrations.calendar_events import build_calendar_event_resolver
 from spreads.integrations.greeks import build_local_greeks_provider
 from spreads.runtime.config import default_database_url
 from spreads.services.live_collector_health import build_quote_capture_summary
 from spreads.services.live_pipelines import build_live_snapshot_label
+from spreads.services.option_quote_capture import request_option_quote_capture
+from spreads.services.option_quote_records import build_quote_records, build_quote_symbol_metadata
 from spreads.services.scanner import (
     NEW_YORK,
     SpreadCandidate,
@@ -584,50 +586,6 @@ def build_events(
     return events
 
 
-def build_quote_symbol_metadata(candidates: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    metadata: dict[str, dict[str, Any]] = {}
-    for candidate in candidates:
-        for leg_role, option_symbol in (
-            ("short", candidate["short_symbol"]),
-            ("long", candidate["long_symbol"]),
-        ):
-            metadata[option_symbol] = {
-                "underlying_symbol": candidate["underlying_symbol"],
-                "strategy": candidate["strategy"],
-                "leg_role": leg_role,
-            }
-    return metadata
-
-
-def build_quote_records(
-    *,
-    captured_at: str,
-    symbol_metadata: dict[str, dict[str, Any]],
-    quotes: list[Any],
-    source: str,
-) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
-    for quote in quotes:
-        metadata = symbol_metadata.get(quote.symbol, {})
-        records.append(
-            {
-                "captured_at": captured_at,
-                "underlying_symbol": metadata.get("underlying_symbol"),
-                "strategy": metadata.get("strategy"),
-                "option_symbol": quote.symbol,
-                "leg_role": metadata.get("leg_role", "unknown"),
-                "bid": quote.bid,
-                "ask": quote.ask,
-                "midpoint": quote.midpoint,
-                "bid_size": quote.bid_size,
-                "ask_size": quote.ask_size,
-                "quote_timestamp": quote.timestamp,
-                "source": source,
-            }
-        )
-    return records
-
-
 def collect_latest_quote_records(
     *,
     client: AlpacaClient,
@@ -661,34 +619,17 @@ def collect_latest_quote_records(
 def collect_websocket_quote_records(
     *,
     args: argparse.Namespace,
-    client: AlpacaClient,
     candidates: list[dict[str, Any]],
     feed: str,
 ) -> list[dict[str, Any]]:
     if args.quote_capture_seconds <= 0 or not candidates:
         return []
-
-    symbol_metadata = build_quote_symbol_metadata(candidates)
-    stream_symbols = list(symbol_metadata.keys())
-    streamer = AlpacaOptionQuoteStreamer(
-        key_id=client.headers["APCA-API-KEY-ID"],
-        secret_key=client.headers["APCA-API-SECRET-KEY"],
-        data_base_url=client.data_base_url,
+    return request_option_quote_capture(
+        candidates=candidates,
         feed=feed,
-    )
-    quote_events = streamer.collect_quote_events(
-        stream_symbols,
         duration_seconds=float(args.quote_capture_seconds),
+        data_base_url=getattr(args, "data_base_url", None),
     )
-    if quote_events:
-        websocket_captured_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-        return build_quote_records(
-            captured_at=websocket_captured_at,
-            symbol_metadata=symbol_metadata,
-            quotes=quote_events,
-            source="alpaca_websocket",
-        )
-    return []
 
 def print_cycle_summary(
     *,
@@ -860,7 +801,6 @@ def _run_collection_cycle(
         try:
             websocket_quote_records = collect_websocket_quote_records(
                 args=args,
-                client=client,
                 candidates=quote_candidates,
                 feed=scanner_args.feed,
             )

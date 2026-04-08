@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -15,7 +16,7 @@ if str(SRC) not in sys.path:
 
 from arq import create_pool
 from pydantic import BaseModel, Field
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 import redis.asyncio as redis_async
 
 from spreads.domain.profiles import UNIVERSE_PRESETS
@@ -41,6 +42,7 @@ from spreads.services.generator import (
     list_generator_symbol_suggestions,
 )
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
+from spreads.services.option_quote_capture import AlpacaOptionQuoteCaptureBroker
 from spreads.services.live_pipelines import build_live_session_catalog
 from spreads.services.operator_actions import (
     apply_generator_live_action,
@@ -55,7 +57,16 @@ from spreads.storage.factory import (
     build_post_market_repository,
 )
 
-app = FastAPI(title="Spreads API", version="0.2.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.option_quote_capture_broker = AlpacaOptionQuoteCaptureBroker()
+    try:
+        yield
+    finally:
+        await app.state.option_quote_capture_broker.aclose()
+
+
+app = FastAPI(title="Spreads API", version="0.2.0", lifespan=lifespan)
 
 
 class GeneratorRequest(BaseModel):
@@ -81,6 +92,13 @@ class GeneratorCandidateActionRequest(BaseModel):
     long_symbol: str = Field(..., min_length=1)
     live_label: str | None = Field(default=None, min_length=1)
     bucket: Literal["board", "watchlist"] | None = None
+
+
+class OptionQuoteCaptureRequest(BaseModel):
+    candidates: list[dict[str, Any]] = Field(default_factory=list)
+    feed: Literal["opra", "indicative"] = "opra"
+    duration_seconds: float = Field(default=20.0, gt=0, le=60.0)
+    data_base_url: str | None = None
 
 
 def resolve_db(db: str | None) -> str:
@@ -118,6 +136,21 @@ def _job_run_payload(run: Any) -> dict[str, Any]:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/internal/market-data/option-quotes/capture")
+async def capture_option_quotes(payload: OptionQuoteCaptureRequest, request: Request) -> dict[str, Any]:
+    broker = request.app.state.option_quote_capture_broker
+    try:
+        quotes = await broker.capture_quote_records(
+            candidates=list(payload.candidates),
+            feed=payload.feed,
+            duration_seconds=payload.duration_seconds,
+            data_base_url=payload.data_base_url,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"quotes": quotes}
 
 
 @app.get("/universes")
