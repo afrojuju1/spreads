@@ -71,6 +71,17 @@ services:
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
       REDIS_URL: redis://redis:6379/0
     command: ["uv", "run", "spreads-scheduler"]
+  web:
+    build:
+      context: ./apps/web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      SPREADS_API_BASE_URL: http://api:8000
+    ports:
+      - "53000:3000"
 
 volumes:
   spreads_postgres_data:

@@ -1,6 +1,13 @@
 .git
+.gitignore
 .venv
-outputs
 __pycache__
 *.pyc
-.DS_Store
+node_modules
+apps/web/node_modules
+apps/web/.next
+apps/web/out
+output
+outputs
+data/raw
+*.sqlite

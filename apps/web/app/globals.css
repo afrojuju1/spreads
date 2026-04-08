@@ -1,0 +1,128 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  --background: oklch(0.978 0.01 83.46);
+  --foreground: oklch(0.244 0.014 51.25);
+  --card: oklch(0.992 0.006 91.45 / 95%);
+  --card-foreground: oklch(0.244 0.014 51.25);
+  --popover: oklch(0.995 0.004 92.52);
+  --popover-foreground: oklch(0.244 0.014 51.25);
+  --primary: oklch(0.358 0.042 46.13);
+  --primary-foreground: oklch(0.985 0.005 95.1);
+  --secondary: oklch(0.949 0.01 82.77);
+  --secondary-foreground: oklch(0.28 0.016 49.08);
+  --muted: oklch(0.956 0.008 84.02);
+  --muted-foreground: oklch(0.554 0.019 48.49);
+  --accent: oklch(0.947 0.014 77.67);
+  --accent-foreground: oklch(0.28 0.016 49.08);
+  --destructive: oklch(0.598 0.215 26.42);
+  --border: oklch(0.89 0.012 82.67);
+  --input: oklch(0.924 0.01 84.72);
+  --ring: oklch(0.657 0.109 63.87);
+  --chart-1: oklch(0.713 0.146 153.72);
+  --chart-2: oklch(0.671 0.174 39.72);
+  --chart-3: oklch(0.561 0.088 262.11);
+  --chart-4: oklch(0.786 0.119 86.61);
+  --chart-5: oklch(0.597 0.079 207.2);
+  --radius: 0.9rem;
+  --sidebar: oklch(0.963 0.009 84.32 / 94%);
+  --sidebar-foreground: oklch(0.244 0.014 51.25);
+  --sidebar-primary: oklch(0.358 0.042 46.13);
+  --sidebar-primary-foreground: oklch(0.985 0.005 95.1);
+  --sidebar-accent: oklch(0.943 0.013 78.94);
+  --sidebar-accent-foreground: oklch(0.28 0.016 49.08);
+  --sidebar-border: oklch(0.89 0.012 82.67);
+  --sidebar-ring: oklch(0.657 0.109 63.87);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+  }
+  body {
+    @apply bg-background text-foreground;
+    background-image:
+      radial-gradient(circle at top left, color-mix(in oklab, var(--accent) 32%, transparent) 0%, transparent 36%),
+      radial-gradient(circle at top right, color-mix(in oklab, var(--chart-1) 22%, transparent) 0%, transparent 28%),
+      linear-gradient(180deg, color-mix(in oklab, var(--background) 94%, white) 0%, var(--background) 42%, color-mix(in oklab, var(--background) 97%, black) 100%);
+    min-height: 100dvh;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply rounded-3xl border border-border/80 bg-card/90 shadow-[0_24px_80px_-48px_rgba(61,43,31,0.35)] backdrop-blur;
+  }
+
+  .panel-header {
+    @apply flex items-center justify-between gap-3 border-b border-border/70 px-4 py-3;
+  }
+
+  .panel-body {
+    @apply px-4 py-3;
+  }
+
+  .metric-card {
+    @apply rounded-2xl border border-border/70 bg-background/80 px-4 py-3;
+  }
+
+  .mono {
+    @apply font-mono text-[13px] tracking-tight;
+  }
+}
+
+::selection {
+  background: color-mix(in oklab, var(--chart-4) 65%, white);
+  color: var(--foreground);
+}
