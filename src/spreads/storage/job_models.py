@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -33,6 +33,8 @@ class JobRunModel(Base):
     __table_args__ = (
         Index("idx_job_runs_job_key_scheduled_for", "job_key", "scheduled_for"),
         Index("idx_job_runs_status_scheduled_for", "status", "scheduled_for"),
+        Index("idx_job_runs_session_slot", "session_id", "slot_at"),
+        Index("ux_job_runs_job_key_session_slot", "job_key", "session_id", "slot_at", unique=True),
     )
 
     job_run_id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -45,6 +47,9 @@ class JobRunModel(Base):
     job_type: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    slot_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

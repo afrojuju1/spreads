@@ -113,6 +113,8 @@ class CollectorCycleRecord(RecordMapping):
     label: str
     session_date: str
     generated_at: str
+    job_run_id: str | None
+    session_id: str | None
     universe_label: str
     strategy: str
     profile: str
@@ -204,6 +206,9 @@ class JobRunRecord(RecordMapping):
     job_type: str
     status: str
     scheduled_for: str
+    session_id: str | None
+    slot_at: str | None
+    retry_count: int
     started_at: str | None
     finished_at: str | None
     heartbeat_at: str | None

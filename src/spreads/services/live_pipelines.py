@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from datetime import date
 from types import SimpleNamespace
 from typing import Any
 
@@ -15,6 +16,11 @@ def build_live_snapshot_label(
     greeks_source: str,
 ) -> str:
     return f"{universe_label}_{strategy}_{profile}_{greeks_source}".lower()
+
+
+def build_live_session_id(label: str, session_date: str | date) -> str:
+    rendered = session_date.isoformat() if isinstance(session_date, date) else str(session_date)
+    return f"live:{label}:{rendered}"
 
 
 def _payload_namespace(payload: Mapping[str, Any]) -> SimpleNamespace:

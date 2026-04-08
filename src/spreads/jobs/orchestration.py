@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 import pandas_market_calendars as mcal
 
+from spreads.services.live_pipelines import build_live_session_id, resolve_live_collector_label
 from spreads.storage.records import JobDefinitionRecord
 
 NEW_YORK = ZoneInfo("America/New_York")
@@ -39,6 +40,10 @@ def _market_schedule(calendar_name: str, session_day: date) -> tuple[datetime, d
 def floor_to_interval(now: datetime, minutes: int) -> datetime:
     minute = (now.minute // minutes) * minutes
     return now.replace(minute=minute, second=0, microsecond=0)
+
+
+def isoformat_utc(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def resolve_scheduled_for(
@@ -87,6 +92,66 @@ def resolve_scheduled_for(
 def build_job_run_id(job_key: str, scheduled_for: datetime) -> str:
     slot = scheduled_for.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
     return f"{job_key}:{slot}"
+
+
+def build_job_attempt_id(job_run_id: str, retry_count: int) -> str:
+    if retry_count <= 0:
+        return job_run_id
+    return f"{job_run_id}:retry:{retry_count}"
+
+
+def _session_slots(
+    *,
+    session_start: datetime,
+    session_end: datetime,
+    now: datetime,
+    interval_seconds: int,
+) -> list[datetime]:
+    if now < session_start:
+        return []
+    cutoff = min(now, session_end)
+    elapsed_seconds = int(max((cutoff - session_start).total_seconds(), 0))
+    slot_count = (elapsed_seconds // max(interval_seconds, 1)) + 1
+    return [session_start + timedelta(seconds=index * interval_seconds) for index in range(slot_count)]
+
+
+def resolve_live_tick_plan(
+    definition: JobDefinitionRecord,
+    *,
+    now: datetime | None = None,
+) -> dict[str, object] | None:
+    current = (now or utc_now()).astimezone(NEW_YORK)
+    market_window = _market_schedule(definition.market_calendar, current.date())
+    if market_window is None:
+        return None
+    market_open, market_close = market_window
+    payload = dict(definition.payload)
+    interval_seconds = max(int(payload.get("interval_seconds", 300)), 1)
+    session_start = market_open + timedelta(
+        minutes=int(payload.get("session_start_offset_minutes", definition.schedule.get("minutes", 0)))
+    )
+    session_end = market_close + timedelta(minutes=int(payload.get("session_end_offset_minutes", 0)))
+    recovery_deadline = session_end + timedelta(seconds=interval_seconds)
+    if current < session_start or current > recovery_deadline:
+        return None
+    label = resolve_live_collector_label(payload)
+    session_id = build_live_session_id(label, session_start.date())
+    slots = _session_slots(
+        session_start=session_start,
+        session_end=session_end,
+        now=current,
+        interval_seconds=interval_seconds,
+    )
+    return {
+        "label": label,
+        "session_id": session_id,
+        "session_date": session_start.date().isoformat(),
+        "interval_seconds": interval_seconds,
+        "session_start": session_start.astimezone(UTC),
+        "session_end": session_end.astimezone(UTC),
+        "slots": [slot.astimezone(UTC) for slot in slots],
+        "payload": payload,
+    }
 
 
 def due_job_payload(definition: JobDefinitionRecord, *, now: datetime | None = None) -> tuple[str, datetime, dict[str, object]] | None:

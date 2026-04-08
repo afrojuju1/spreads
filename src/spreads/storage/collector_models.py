@@ -14,12 +14,19 @@ class CollectorCycleModel(Base):
     __tablename__ = "collector_cycles"
     __table_args__ = (
         Index("idx_collector_cycles_label_session_generated_at", "label", "session_date", "generated_at"),
+        Index("idx_collector_cycles_session_id_generated_at", "session_id", "generated_at"),
     )
 
     cycle_id: Mapped[str] = mapped_column(Text, primary_key=True)
     label: Mapped[str] = mapped_column(Text, nullable=False)
     session_date: Mapped[date] = mapped_column(Date, nullable=False)
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    job_run_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("job_runs.job_run_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     universe_label: Mapped[str] = mapped_column(Text, nullable=False)
     strategy: Mapped[str] = mapped_column(Text, nullable=False)
     profile: Mapped[str] = mapped_column(Text, nullable=False)

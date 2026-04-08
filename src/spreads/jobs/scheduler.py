@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from arq import create_pool
@@ -10,7 +10,11 @@ from arq import create_pool
 from spreads.events.bus import publish_global_event_async
 from spreads.jobs.orchestration import (
     SCHEDULER_RUNTIME_LEASE_KEY,
+    build_job_attempt_id,
+    build_job_run_id,
     due_job_payload,
+    isoformat_utc,
+    resolve_live_tick_plan,
     singleton_lease_key,
     utc_now,
 )
@@ -21,6 +25,7 @@ from spreads.storage.serializers import parse_datetime
 
 DEFAULT_POLL_SECONDS = 30
 SCHEDULER_LEASE_TTL_SECONDS = 90
+LIVE_SLOT_MAX_RETRIES = 3
 
 
 async def _publish_job_run_update(redis: Any, run_record: Any) -> None:
@@ -53,26 +58,196 @@ def _lease_is_active(lease: Any) -> bool:
     return expires_at is not None and expires_at > utc_now()
 
 
-async def enqueue_due_jobs(job_store: Any, redis: Any) -> dict[str, Any]:
-    now = datetime.now(UTC)
+def _task_name_for_job_type(job_type: str) -> str | None:
+    return {
+        "live_collector": "run_live_collector_job",
+        "post_close_analysis": "run_post_close_analysis_job",
+        "post_market_analysis": "run_post_market_analysis_job",
+    }.get(job_type)
+
+
+async def _enqueue_job_run(
+    *,
+    job_store: Any,
+    redis: Any,
+    definition: Any,
+    run_record: Any,
+) -> bool:
+    task_name = _task_name_for_job_type(str(definition["job_type"]))
+    if task_name is None:
+        failed_record = await asyncio.to_thread(
+            job_store.update_job_run_status,
+            job_run_id=run_record["job_run_id"],
+            status="failed",
+            finished_at=datetime.now(UTC),
+            error_text=f"Unsupported job_type: {definition['job_type']}",
+        )
+        if failed_record is not None:
+            await _publish_job_run_update(redis, failed_record)
+        return False
+    try:
+        result = await redis.enqueue_job(
+            task_name,
+            definition["job_key"],
+            run_record["job_run_id"],
+            run_record["payload"],
+            run_record["arq_job_id"],
+            _job_id=run_record["arq_job_id"],
+        )
+        if result is None:
+            skipped_record = await asyncio.to_thread(
+                job_store.update_job_run_status,
+                job_run_id=run_record["job_run_id"],
+                status="skipped",
+                finished_at=datetime.now(UTC),
+                error_text="ARQ rejected duplicate job id",
+            )
+            if skipped_record is not None:
+                await _publish_job_run_update(redis, skipped_record)
+            return False
+        await _publish_job_run_update(redis, run_record)
+        return True
+    except Exception as exc:
+        failed_record = await asyncio.to_thread(
+            job_store.update_job_run_status,
+            job_run_id=run_record["job_run_id"],
+            status="failed",
+            finished_at=datetime.now(UTC),
+            error_text=str(exc),
+        )
+        if failed_record is not None:
+            await _publish_job_run_update(redis, failed_record)
+        return False
+
+
+def _live_run_active(run_record: Any, *, now: datetime, interval_seconds: int) -> bool:
+    if run_record["status"] == "queued":
+        queued_at = parse_datetime(run_record["scheduled_for"])
+        if queued_at is None:
+            return False
+        return queued_at >= now - timedelta(seconds=max(interval_seconds, DEFAULT_POLL_SECONDS * 2))
+    if run_record["status"] == "running":
+        last_seen = (
+            parse_datetime(run_record.get("heartbeat_at"))
+            or parse_datetime(run_record.get("started_at"))
+            or parse_datetime(run_record.get("scheduled_for"))
+        )
+        if last_seen is None:
+            return False
+        return last_seen >= now - timedelta(seconds=max(interval_seconds * 2, DEFAULT_POLL_SECONDS * 4))
+    return False
+
+
+async def _reconcile_live_collector_jobs(job_store: Any, redis: Any, *, now: datetime) -> dict[str, Any]:
+    definitions = await asyncio.to_thread(job_store.list_job_definitions, enabled_only=True, job_type="live_collector")
+    enqueued: list[str] = []
+    skipped: list[dict[str, str]] = []
+
+    for definition in definitions:
+        plan = resolve_live_tick_plan(definition, now=now)
+        if plan is None:
+            continue
+        max_retries = max(int(definition["payload"].get("max_slot_retries", LIVE_SLOT_MAX_RETRIES)), 0)
+        for slot_at in plan["slots"]:
+            run_record = await asyncio.to_thread(
+                job_store.get_job_run_for_slot,
+                job_key=definition["job_key"],
+                session_id=str(plan["session_id"]),
+                slot_at=slot_at,
+            )
+            if run_record is None:
+                slot_iso = isoformat_utc(slot_at)
+                payload = dict(plan["payload"])
+                payload.update(
+                    {
+                        "job_key": definition["job_key"],
+                        "job_type": "live_collector",
+                        "label": plan["label"],
+                        "session_id": plan["session_id"],
+                        "scheduled_for": slot_iso,
+                        "slot_at": slot_iso,
+                        "singleton_scope": None,
+                    }
+                )
+                job_run_id = build_job_run_id(definition["job_key"], slot_at)
+                attempt_id = build_job_attempt_id(job_run_id, 0)
+                created_record, created = await asyncio.to_thread(
+                    job_store.create_job_run,
+                    job_run_id=job_run_id,
+                    job_key=definition["job_key"],
+                    arq_job_id=attempt_id,
+                    job_type="live_collector",
+                    status="queued",
+                    scheduled_for=slot_at,
+                    session_id=str(plan["session_id"]),
+                    slot_at=slot_at,
+                    payload=payload,
+                )
+                if created:
+                    if await _enqueue_job_run(
+                        job_store=job_store,
+                        redis=redis,
+                        definition=definition,
+                        run_record=created_record,
+                    ):
+                        enqueued.append(created_record["job_run_id"])
+                    break
+                continue
+
+            if run_record["status"] == "succeeded":
+                continue
+            if run_record["status"] == "failed" and int(run_record.get("retry_count", 0)) >= max_retries:
+                continue
+            if run_record["status"] in {"queued", "running"} and _live_run_active(
+                run_record,
+                now=now,
+                interval_seconds=int(plan["interval_seconds"]),
+            ):
+                break
+
+            next_retry_count = int(run_record.get("retry_count", 0)) + 1
+            if run_record["status"] in {"failed", "skipped"} and next_retry_count > max_retries:
+                continue
+            attempt_id = build_job_attempt_id(run_record["job_run_id"], next_retry_count)
+            requeued_record = await asyncio.to_thread(
+                job_store.requeue_job_run,
+                job_run_id=run_record["job_run_id"],
+                arq_job_id=attempt_id,
+                payload=dict(run_record["payload"]),
+            )
+            if await _enqueue_job_run(
+                job_store=job_store,
+                redis=redis,
+                definition=definition,
+                run_record=requeued_record,
+            ):
+                enqueued.append(requeued_record["job_run_id"])
+            break
+
+    return {"enqueued": enqueued, "skipped": skipped}
+
+
+async def _enqueue_definition_jobs(job_store: Any, redis: Any, *, now: datetime) -> dict[str, Any]:
     definitions = await asyncio.to_thread(job_store.list_job_definitions, enabled_only=True)
     enqueued: list[str] = []
     skipped: list[dict[str, str]] = []
 
     for definition in definitions:
+        if definition["job_type"] == "live_collector":
+            continue
         due = due_job_payload(definition, now=now)
         if due is None:
             continue
         job_run_id, scheduled_for, payload = due
-        if definition.singleton_scope:
+        if definition["singleton_scope"]:
             lease = await asyncio.to_thread(
                 job_store.get_lease,
-                singleton_lease_key(definition.job_type, definition.singleton_scope),
+                singleton_lease_key(definition["job_type"], definition["singleton_scope"]),
             )
             if _lease_is_active(lease):
                 skipped.append(
                     {
-                        "job_key": definition.job_key,
+                        "job_key": definition["job_key"],
                         "reason": "singleton_lease_active",
                     }
                 )
@@ -81,9 +256,9 @@ async def enqueue_due_jobs(job_store: Any, redis: Any) -> dict[str, Any]:
         run_record, created = await asyncio.to_thread(
             job_store.create_job_run,
             job_run_id=job_run_id,
-            job_key=definition.job_key,
-            arq_job_id=job_run_id,
-            job_type=definition.job_type,
+            job_key=definition["job_key"],
+            arq_job_id=build_job_attempt_id(job_run_id, 0),
+            job_type=definition["job_type"],
             status="queued",
             scheduled_for=scheduled_for,
             payload=payload,
@@ -91,51 +266,26 @@ async def enqueue_due_jobs(job_store: Any, redis: Any) -> dict[str, Any]:
         if not created:
             continue
 
-        task_name = {
-            "live_collector": "run_live_collector_job",
-            "post_close_analysis": "run_post_close_analysis_job",
-            "post_market_analysis": "run_post_market_analysis_job",
-        }.get(definition.job_type)
-        if task_name is None:
-            failed_record = await asyncio.to_thread(
-                job_store.update_job_run_status,
-                job_run_id=run_record["job_run_id"],
-                status="failed",
-                finished_at=datetime.now(UTC),
-                error_text=f"Unsupported job_type: {definition.job_type}",
-            )
-            await _publish_job_run_update(redis, failed_record)
-            continue
-        try:
-            result = await redis.enqueue_job(
-                task_name,
-                definition.job_key,
-                run_record["job_run_id"],
-                payload,
-                _job_id=run_record["job_run_id"],
-            )
-            if result is None:
-                skipped_record = await asyncio.to_thread(
-                    job_store.update_job_run_status,
-                    job_run_id=run_record["job_run_id"],
-                    status="skipped",
-                    finished_at=datetime.now(UTC),
-                    error_text="ARQ rejected duplicate job id",
-                )
-                await _publish_job_run_update(redis, skipped_record)
-                continue
-            await _publish_job_run_update(redis, run_record)
+        if await _enqueue_job_run(
+            job_store=job_store,
+            redis=redis,
+            definition=definition,
+            run_record=run_record,
+        ):
             enqueued.append(run_record["job_run_id"])
-        except Exception as exc:
-            failed_record = await asyncio.to_thread(
-                job_store.update_job_run_status,
-                job_run_id=run_record["job_run_id"],
-                status="failed",
-                finished_at=datetime.now(UTC),
-                error_text=str(exc),
-            )
-            await _publish_job_run_update(redis, failed_record)
     return {"enqueued": enqueued, "skipped": skipped}
+
+
+async def enqueue_due_jobs(job_store: Any, redis: Any) -> dict[str, Any]:
+    now = datetime.now(UTC)
+    live_result, definition_result = await asyncio.gather(
+        _reconcile_live_collector_jobs(job_store, redis, now=now),
+        _enqueue_definition_jobs(job_store, redis, now=now),
+    )
+    return {
+        "enqueued": [*live_result["enqueued"], *definition_result["enqueued"]],
+        "skipped": [*live_result["skipped"], *definition_result["skipped"]],
+    }
 
 
 async def scheduler_loop(args: argparse.Namespace) -> int:

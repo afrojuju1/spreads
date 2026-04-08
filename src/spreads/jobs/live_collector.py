@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 import time as time_module
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable
 
@@ -13,6 +13,7 @@ from spreads.integrations.alpaca.client import AlpacaClient, AlpacaOptionQuoteSt
 from spreads.integrations.calendar_events import build_calendar_event_resolver
 from spreads.integrations.greeks import build_local_greeks_provider
 from spreads.runtime.config import default_database_url
+from spreads.services.live_collector_health import build_quote_capture_summary
 from spreads.services.live_pipelines import build_live_snapshot_label
 from spreads.services.scanner import (
     NEW_YORK,
@@ -46,6 +47,13 @@ WATCHLIST_PER_STRATEGY = 3
 WATCHLIST_PER_SYMBOL = 2
 WATCHLIST_TOP = 12
 WATCHLIST_QUOTE_CAPTURE_TOP = 6
+
+
+@dataclass(frozen=True)
+class LiveTickContext:
+    job_run_id: str
+    session_id: str
+    slot_at: str
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -591,34 +599,15 @@ def build_quote_symbol_metadata(candidates: list[dict[str, Any]]) -> dict[str, d
     return metadata
 
 
-def collect_live_quote_records(
+def build_quote_records(
     *,
-    args: argparse.Namespace,
-    client: AlpacaClient,
-    candidates: list[dict[str, Any]],
-    feed: str,
+    captured_at: str,
+    symbol_metadata: dict[str, dict[str, Any]],
+    quotes: list[Any],
+    source: str,
 ) -> list[dict[str, Any]]:
-    if args.quote_capture_seconds <= 0 or not candidates:
-        return []
-
-    stream_symbols = list(build_quote_symbol_metadata(candidates).keys())
-    streamer = AlpacaOptionQuoteStreamer(
-        key_id=client.headers["APCA-API-KEY-ID"],
-        secret_key=client.headers["APCA-API-SECRET-KEY"],
-        data_base_url=client.data_base_url,
-        feed=feed,
-    )
-    quote_events = streamer.collect_quote_events(
-        stream_symbols,
-        duration_seconds=float(args.quote_capture_seconds),
-    )
-    if not quote_events:
-        return []
-
-    captured_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-    symbol_metadata = build_quote_symbol_metadata(candidates)
     records: list[dict[str, Any]] = []
-    for quote in quote_events:
+    for quote in quotes:
         metadata = symbol_metadata.get(quote.symbol, {})
         records.append(
             {
@@ -633,10 +622,73 @@ def collect_live_quote_records(
                 "bid_size": quote.bid_size,
                 "ask_size": quote.ask_size,
                 "quote_timestamp": quote.timestamp,
-                "source": "alpaca_websocket",
+                "source": source,
             }
         )
     return records
+
+
+def collect_latest_quote_records(
+    *,
+    client: AlpacaClient,
+    candidates: list[dict[str, Any]],
+    feed: str,
+    attempts: int = 1,
+    retry_delay_seconds: float = 0.0,
+    source: str = "alpaca_latest_quote",
+) -> list[dict[str, Any]]:
+    if not candidates:
+        return []
+
+    symbol_metadata = build_quote_symbol_metadata(candidates)
+    stream_symbols = list(symbol_metadata.keys())
+    max_attempts = max(int(attempts), 1)
+    for attempt in range(max_attempts):
+        latest_quotes = client.get_latest_option_quotes(stream_symbols, feed=feed)
+        if latest_quotes:
+            latest_captured_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+            return build_quote_records(
+                captured_at=latest_captured_at,
+                symbol_metadata=symbol_metadata,
+                quotes=list(latest_quotes.values()),
+                source=source,
+            )
+        if attempt < max_attempts - 1 and retry_delay_seconds > 0:
+            time_module.sleep(retry_delay_seconds)
+    return []
+
+
+def collect_websocket_quote_records(
+    *,
+    args: argparse.Namespace,
+    client: AlpacaClient,
+    candidates: list[dict[str, Any]],
+    feed: str,
+) -> list[dict[str, Any]]:
+    if args.quote_capture_seconds <= 0 or not candidates:
+        return []
+
+    symbol_metadata = build_quote_symbol_metadata(candidates)
+    stream_symbols = list(symbol_metadata.keys())
+    streamer = AlpacaOptionQuoteStreamer(
+        key_id=client.headers["APCA-API-KEY-ID"],
+        secret_key=client.headers["APCA-API-SECRET-KEY"],
+        data_base_url=client.data_base_url,
+        feed=feed,
+    )
+    quote_events = streamer.collect_quote_events(
+        stream_symbols,
+        duration_seconds=float(args.quote_capture_seconds),
+    )
+    if quote_events:
+        websocket_captured_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+        return build_quote_records(
+            captured_at=websocket_captured_at,
+            symbol_metadata=symbol_metadata,
+            quotes=quote_events,
+            source="alpaca_websocket",
+        )
+    return []
 
 def print_cycle_summary(
     *,
@@ -682,6 +734,298 @@ def print_cycle_summary(
     print()
 
 
+def _resolve_collection_reference_time(slot_at: str | datetime | None) -> datetime:
+    if isinstance(slot_at, datetime):
+        return slot_at
+    if isinstance(slot_at, str) and slot_at:
+        normalized = slot_at.replace("Z", "+00:00") if slot_at.endswith("Z") else slot_at
+        parsed = datetime.fromisoformat(normalized)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return datetime.now(UTC)
+
+
+def _run_collection_cycle(
+    args: argparse.Namespace,
+    *,
+    tick_context: LiveTickContext | None,
+    scanner_args: argparse.Namespace,
+    client: AlpacaClient,
+    history_store: RunHistoryRepository,
+    alert_store: AlertRepository,
+    collector_store: CollectorRepository,
+    calendar_resolver: Any,
+    greeks_provider: Any,
+    emit_output: bool,
+    heartbeat: Callable[[], None] | None = None,
+) -> dict[str, Any]:
+    generated_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    if heartbeat is not None:
+        heartbeat()
+    symbols, universe_label, scan_results, failures, _ = run_universe_cycle(
+        scanner_args=scanner_args,
+        client=client,
+        calendar_resolver=calendar_resolver,
+        greeks_provider=greeks_provider,
+        history_store=history_store,
+    )
+    label = build_live_snapshot_label(
+        universe_label=universe_label,
+        strategy=args.strategy,
+        profile=args.profile,
+        greeks_source=args.greeks_source,
+    )
+    cycle_id = build_cycle_id(label)
+    run_ids = {(result.symbol, result.args.strategy): result.run_id for result in scan_results}
+    symbol_strategy_candidates = build_symbol_strategy_candidates(
+        scan_results,
+        run_ids,
+        max_per_strategy=WATCHLIST_PER_STRATEGY,
+    )
+    previous_map, previous_selection_state = read_previous_cycle_state(collector_store, label)
+    board_payloads, selection_state = select_board_candidates(
+        symbol_candidates=symbol_strategy_candidates,
+        previous_board=previous_map,
+        previous_state=previous_selection_state,
+        top=args.top,
+    )
+    watchlist_payloads = select_watchlist_candidates(
+        symbol_candidates=symbol_strategy_candidates,
+        board_candidates=board_payloads,
+        top=WATCHLIST_TOP,
+    )
+    current_map = {payload["underlying_symbol"]: payload for payload in board_payloads}
+    events = build_events(
+        label=label,
+        cycle_id=cycle_id,
+        generated_at=generated_at,
+        previous=previous_map,
+        current=current_map,
+    )
+    collector_store.save_cycle(
+        cycle_id=cycle_id,
+        label=label,
+        generated_at=generated_at,
+        job_run_id=None if tick_context is None else tick_context.job_run_id,
+        session_id=None if tick_context is None else tick_context.session_id,
+        universe_label=universe_label,
+        strategy=args.strategy,
+        profile=args.profile,
+        greeks_source=args.greeks_source,
+        symbols=symbols,
+        failures=[asdict(failure) for failure in failures],
+        selection_state=selection_state,
+        board_candidates=board_payloads,
+        watchlist_candidates=watchlist_payloads,
+        events=events,
+    )
+    if heartbeat is not None:
+        heartbeat()
+    alerts: list[dict[str, Any]] = []
+    try:
+        alerts = dispatch_cycle_alerts(
+            collector_store=collector_store,
+            alert_store=alert_store,
+            cycle_id=cycle_id,
+            label=label,
+            generated_at=generated_at,
+            strategy_mode=args.strategy,
+            profile=args.profile,
+            board_candidates=board_payloads,
+            events=events,
+        )
+    except Exception as exc:
+        print(f"Alert dispatch unavailable: {exc}")
+    quote_event_count = 0
+    baseline_quote_event_count = 0
+    websocket_quote_event_count = 0
+    recovery_quote_event_count = 0
+    quote_candidates = board_payloads + watchlist_payloads[:WATCHLIST_QUOTE_CAPTURE_TOP]
+    expected_quote_symbols = list(build_quote_symbol_metadata(quote_candidates).keys())
+    if quote_candidates:
+        try:
+            latest_quote_records = collect_latest_quote_records(
+                client=client,
+                candidates=quote_candidates,
+                feed=scanner_args.feed,
+            )
+            baseline_quote_event_count = history_store.save_option_quote_events(
+                cycle_id=cycle_id,
+                label=label,
+                profile=args.profile,
+                quotes=latest_quote_records,
+            )
+            quote_event_count += baseline_quote_event_count
+        except Exception as exc:
+            print(f"Live latest quote capture unavailable: {exc}")
+        try:
+            websocket_quote_records = collect_websocket_quote_records(
+                args=args,
+                client=client,
+                candidates=quote_candidates,
+                feed=scanner_args.feed,
+            )
+            websocket_quote_event_count = history_store.save_option_quote_events(
+                cycle_id=cycle_id,
+                label=label,
+                profile=args.profile,
+                quotes=websocket_quote_records,
+            )
+            quote_event_count += websocket_quote_event_count
+        except Exception as exc:
+            print(f"Live websocket quote capture unavailable: {exc}")
+        if quote_event_count == 0:
+            try:
+                recovery_quote_records = collect_latest_quote_records(
+                    client=client,
+                    candidates=quote_candidates,
+                    feed=scanner_args.feed,
+                    attempts=3,
+                    retry_delay_seconds=2.0,
+                    source="alpaca_latest_quote_recovery",
+                )
+                recovered_quote_event_count = history_store.save_option_quote_events(
+                    cycle_id=cycle_id,
+                    label=label,
+                    profile=args.profile,
+                    quotes=recovery_quote_records,
+                )
+                recovery_quote_event_count = recovered_quote_event_count
+                quote_event_count += recovered_quote_event_count
+            except Exception as exc:
+                print(f"Live quote recovery unavailable: {exc}")
+    quote_capture = build_quote_capture_summary(
+        expected_quote_symbols=expected_quote_symbols,
+        total_quote_events_saved=quote_event_count,
+        baseline_quote_events_saved=baseline_quote_event_count,
+        websocket_quote_events_saved=websocket_quote_event_count,
+        recovery_quote_events_saved=recovery_quote_event_count,
+    )
+    if heartbeat is not None:
+        heartbeat()
+    if emit_output:
+        print_cycle_summary(
+            generated_at=generated_at,
+            label=label,
+            board_candidates=board_payloads,
+            watchlist_candidates=watchlist_payloads,
+            events=events,
+            alerts=alerts,
+            failures=failures,
+            quote_event_count=quote_event_count,
+        )
+    return {
+        "cycle_id": cycle_id,
+        "generated_at": generated_at,
+        "label": label,
+        "alerts_sent": len(alerts),
+        "quote_events_saved": quote_event_count,
+        "baseline_quote_events_saved": baseline_quote_event_count,
+        "websocket_quote_events_saved": websocket_quote_event_count,
+        "recovery_quote_events_saved": recovery_quote_event_count,
+        "expected_quote_symbols": expected_quote_symbols,
+        "board_candidate_count": len(board_payloads),
+        "watchlist_candidate_count": len(watchlist_payloads),
+        "quote_capture": quote_capture,
+    }
+
+
+def run_collection_tick(
+    args: argparse.Namespace,
+    *,
+    tick_context: LiveTickContext,
+    heartbeat: Callable[[], None] | None = None,
+    emit_output: bool = True,
+) -> dict[str, Any]:
+    scanner_args = build_scanner_args(args)
+    reference_time = _resolve_collection_reference_time(tick_context.slot_at)
+    if not args.allow_off_hours and not collection_window_is_open(
+        now=reference_time,
+        session_start_offset_minutes=int(getattr(args, "session_start_offset_minutes", 0)),
+        session_end_offset_minutes=int(getattr(args, "session_end_offset_minutes", 0)),
+    ):
+        if emit_output:
+            print("Scheduled slot is outside the collection window. Skipping.")
+        return {
+            "status": "skipped",
+            "reason": "market_closed",
+            "iterations_completed": 0,
+            "cycle_ids": [],
+            "alerts_sent": 0,
+            "quote_events_saved": 0,
+            "baseline_quote_events_saved": 0,
+            "websocket_quote_events_saved": 0,
+            "recovery_quote_events_saved": 0,
+            "expected_quote_symbols": [],
+            "quote_capture": build_quote_capture_summary(
+                expected_quote_symbols=[],
+                total_quote_events_saved=0,
+                baseline_quote_events_saved=0,
+                websocket_quote_events_saved=0,
+                recovery_quote_events_saved=0,
+            ),
+            "session_id": tick_context.session_id,
+            "slot_at": tick_context.slot_at,
+        }
+
+    key_id = env_or_die("APCA_API_KEY_ID", "ALPACA_API_KEY")
+    secret_key = env_or_die("APCA_API_SECRET_KEY", "ALPACA_SECRET_KEY")
+    client = AlpacaClient(
+        key_id=key_id,
+        secret_key=secret_key,
+        trading_base_url=infer_trading_base_url(key_id, scanner_args.trading_base_url),
+        data_base_url=scanner_args.data_base_url,
+    )
+    history_store = build_history_store(args.history_db)
+    alert_store = build_alert_repository(args.history_db)
+    collector_store = build_collector_repository(args.history_db)
+    calendar_resolver = build_calendar_event_resolver(
+        key_id=key_id,
+        secret_key=secret_key,
+        data_base_url=scanner_args.data_base_url,
+        database_url=args.history_db,
+    )
+    greeks_provider = build_local_greeks_provider()
+    try:
+        if heartbeat is not None:
+            heartbeat()
+        cycle_result = _run_collection_cycle(
+            args,
+            tick_context=tick_context,
+            scanner_args=scanner_args,
+            client=client,
+            history_store=history_store,
+            alert_store=alert_store,
+            collector_store=collector_store,
+            calendar_resolver=calendar_resolver,
+            greeks_provider=greeks_provider,
+            emit_output=emit_output,
+            heartbeat=heartbeat,
+        )
+    finally:
+        alert_store.close()
+        collector_store.close()
+        history_store.close()
+        calendar_resolver.store.close()
+
+    return {
+        "status": "completed",
+        "iterations_completed": 1,
+        "cycle_ids": [cycle_result["cycle_id"]],
+        "alerts_sent": cycle_result["alerts_sent"],
+        "quote_events_saved": cycle_result["quote_events_saved"],
+        "baseline_quote_events_saved": cycle_result["baseline_quote_events_saved"],
+        "websocket_quote_events_saved": cycle_result["websocket_quote_events_saved"],
+        "recovery_quote_events_saved": cycle_result["recovery_quote_events_saved"],
+        "expected_quote_symbols": list(cycle_result["expected_quote_symbols"]),
+        "board_candidate_count": cycle_result["board_candidate_count"],
+        "watchlist_candidate_count": cycle_result["watchlist_candidate_count"],
+        "quote_capture": dict(cycle_result["quote_capture"]),
+        "label": cycle_result["label"],
+        "session_id": tick_context.session_id,
+        "slot_at": tick_context.slot_at,
+    }
+
+
 def run_collection(
     args: argparse.Namespace,
     *,
@@ -691,6 +1035,7 @@ def run_collection(
     scanner_args = build_scanner_args(args)
 
     if not args.allow_off_hours and not collection_window_is_open(
+        now=_resolve_collection_reference_time(None),
         session_start_offset_minutes=int(getattr(args, "session_start_offset_minutes", 0)),
         session_end_offset_minutes=int(getattr(args, "session_end_offset_minutes", 0)),
     ):
@@ -703,6 +1048,17 @@ def run_collection(
             "cycle_ids": [],
             "alerts_sent": 0,
             "quote_events_saved": 0,
+            "baseline_quote_events_saved": 0,
+            "websocket_quote_events_saved": 0,
+            "recovery_quote_events_saved": 0,
+            "expected_quote_symbols": [],
+            "quote_capture": build_quote_capture_summary(
+                expected_quote_symbols=[],
+                total_quote_events_saved=0,
+                baseline_quote_events_saved=0,
+                websocket_quote_events_saved=0,
+                recovery_quote_events_saved=0,
+            ),
         }
 
     key_id = env_or_die("APCA_API_KEY_ID", "ALPACA_API_KEY")
@@ -726,6 +1082,9 @@ def run_collection(
     cycle_ids: list[str] = []
     total_alerts = 0
     total_quote_events = 0
+    total_baseline_quote_events = 0
+    total_websocket_quote_events = 0
+    total_recovery_quote_events = 0
     last_label: str | None = None
     iterations_completed = 0
     try:
@@ -734,118 +1093,34 @@ def run_collection(
             if heartbeat is not None:
                 heartbeat()
             if not args.allow_off_hours and not collection_window_is_open(
+                now=datetime.now(UTC),
                 session_start_offset_minutes=int(getattr(args, "session_start_offset_minutes", 0)),
                 session_end_offset_minutes=int(getattr(args, "session_end_offset_minutes", 0)),
             ):
                 if emit_output:
                     print("Market closed during collection window. Stopping.")
                 break
-
-            generated_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-            symbols, universe_label, scan_results, failures, board_candidates = run_universe_cycle(
+            cycle_result = _run_collection_cycle(
+                args,
+                tick_context=None,
                 scanner_args=scanner_args,
                 client=client,
+                history_store=history_store,
+                alert_store=alert_store,
+                collector_store=collector_store,
                 calendar_resolver=calendar_resolver,
                 greeks_provider=greeks_provider,
-                history_store=history_store,
+                emit_output=emit_output,
+                heartbeat=heartbeat,
             )
-            label = build_live_snapshot_label(
-                universe_label=universe_label,
-                strategy=args.strategy,
-                profile=args.profile,
-                greeks_source=args.greeks_source,
-            )
-            last_label = label
-            cycle_id = build_cycle_id(label)
-            cycle_ids.append(cycle_id)
-            run_ids = {(result.symbol, result.args.strategy): result.run_id for result in scan_results}
-            symbol_strategy_candidates = build_symbol_strategy_candidates(
-                scan_results,
-                run_ids,
-                max_per_strategy=WATCHLIST_PER_STRATEGY,
-            )
-            previous_map, previous_selection_state = read_previous_cycle_state(collector_store, label)
-            board_payloads, selection_state = select_board_candidates(
-                symbol_candidates=symbol_strategy_candidates,
-                previous_board=previous_map,
-                previous_state=previous_selection_state,
-                top=args.top,
-            )
-            watchlist_payloads = select_watchlist_candidates(
-                symbol_candidates=symbol_strategy_candidates,
-                board_candidates=board_payloads,
-                top=WATCHLIST_TOP,
-            )
-            current_map = {payload["underlying_symbol"]: payload for payload in board_payloads}
-            events = build_events(
-                label=label,
-                cycle_id=cycle_id,
-                generated_at=generated_at,
-                previous=previous_map,
-                current=current_map,
-            )
-            collector_store.save_cycle(
-                cycle_id=cycle_id,
-                label=label,
-                generated_at=generated_at,
-                universe_label=universe_label,
-                strategy=args.strategy,
-                profile=args.profile,
-                greeks_source=args.greeks_source,
-                symbols=symbols,
-                failures=[asdict(failure) for failure in failures],
-                selection_state=selection_state,
-                board_candidates=board_payloads,
-                watchlist_candidates=watchlist_payloads,
-                events=events,
-            )
-            alerts: list[dict[str, Any]] = []
-            try:
-                alerts = dispatch_cycle_alerts(
-                    collector_store=collector_store,
-                    alert_store=alert_store,
-                    cycle_id=cycle_id,
-                    label=label,
-                    generated_at=generated_at,
-                    strategy_mode=args.strategy,
-                    profile=args.profile,
-                    board_candidates=board_payloads,
-                    events=events,
-                )
-            except Exception as exc:
-                print(f"Alert dispatch unavailable: {exc}")
-            quote_event_count = 0
-            quote_candidates = board_payloads + watchlist_payloads[:WATCHLIST_QUOTE_CAPTURE_TOP]
-            if quote_candidates:
-                try:
-                    quote_records = collect_live_quote_records(
-                        args=args,
-                        client=client,
-                        candidates=quote_candidates,
-                        feed=scanner_args.feed,
-                    )
-                    quote_event_count = history_store.save_option_quote_events(
-                        cycle_id=cycle_id,
-                        label=label,
-                        profile=args.profile,
-                        quotes=quote_records,
-                    )
-                except Exception as exc:
-                    print(f"Live quote capture unavailable: {exc}")
-            total_alerts += len(alerts)
-            total_quote_events += quote_event_count
+            cycle_ids.append(cycle_result["cycle_id"])
+            total_alerts += int(cycle_result["alerts_sent"])
+            total_quote_events += int(cycle_result["quote_events_saved"])
+            total_baseline_quote_events += int(cycle_result["baseline_quote_events_saved"])
+            total_websocket_quote_events += int(cycle_result["websocket_quote_events_saved"])
+            total_recovery_quote_events += int(cycle_result["recovery_quote_events_saved"])
             iterations_completed += 1
-            if emit_output:
-                print_cycle_summary(
-                    generated_at=generated_at,
-                    label=label,
-                    board_candidates=board_payloads,
-                    watchlist_candidates=watchlist_payloads,
-                    events=events,
-                    alerts=alerts,
-                    failures=failures,
-                    quote_event_count=quote_event_count,
-                )
+            last_label = str(cycle_result["label"])
             if iteration < args.iterations - 1:
                 elapsed_seconds = time_module.monotonic() - iteration_started_at
                 sleep_seconds = max(float(max(args.interval_seconds, 1)) - elapsed_seconds, 0.0)
@@ -865,6 +1140,16 @@ def run_collection(
         "cycle_ids": cycle_ids,
         "alerts_sent": total_alerts,
         "quote_events_saved": total_quote_events,
+        "baseline_quote_events_saved": total_baseline_quote_events,
+        "websocket_quote_events_saved": total_websocket_quote_events,
+        "recovery_quote_events_saved": total_recovery_quote_events,
+        "quote_capture": build_quote_capture_summary(
+            expected_quote_symbols=[],
+            total_quote_events_saved=total_quote_events,
+            baseline_quote_events_saved=total_baseline_quote_events,
+            websocket_quote_events_saved=total_websocket_quote_events,
+            recovery_quote_events_saved=total_recovery_quote_events,
+        ),
         "label": last_label,
     }
 

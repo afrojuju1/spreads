@@ -109,6 +109,9 @@ class JobRepository:
         job_type: str,
         status: str,
         scheduled_for: str | datetime,
+        session_id: str | None = None,
+        slot_at: str | datetime | None = None,
+        retry_count: int = 0,
         payload: dict[str, Any],
         worker_name: str | None = None,
         result: dict[str, Any] | None = None,
@@ -117,8 +120,19 @@ class JobRepository:
         scheduled_for_dt = parse_datetime(scheduled_for)
         if scheduled_for_dt is None:
             raise ValueError("scheduled_for is required")
+        slot_at_dt = parse_datetime(slot_at)
         with self.session_scope() as session:
-            row = session.get(JobRunModel, job_run_id)
+            row = None
+            if session_id and slot_at_dt is not None:
+                statement = (
+                    select(JobRunModel)
+                    .where(JobRunModel.job_key == job_key)
+                    .where(JobRunModel.session_id == session_id)
+                    .where(JobRunModel.slot_at == slot_at_dt)
+                )
+                row = session.scalar(statement)
+            if row is None:
+                row = session.get(JobRunModel, job_run_id)
             if row is not None:
                 return to_job_run_record(row), False
             row = JobRunModel(
@@ -126,6 +140,9 @@ class JobRepository:
                 job_key=job_key,
                 arq_job_id=arq_job_id,
                 scheduled_for=scheduled_for_dt,
+                session_id=session_id,
+                slot_at=slot_at_dt,
+                retry_count=retry_count,
                 payload_json=payload,
                 job_type=job_type,
                 status=status,
@@ -145,12 +162,37 @@ class JobRepository:
             return None
         return to_job_run_record(row)
 
+    def get_job_run_for_slot(
+        self,
+        *,
+        job_key: str,
+        session_id: str,
+        slot_at: str | datetime,
+    ) -> JobRunRecord | None:
+        slot_at_dt = parse_datetime(slot_at)
+        if slot_at_dt is None:
+            raise ValueError("slot_at is required")
+        statement = (
+            select(JobRunModel)
+            .where(JobRunModel.job_key == job_key)
+            .where(JobRunModel.session_id == session_id)
+            .where(JobRunModel.slot_at == slot_at_dt)
+        )
+        with self.session_factory() as session:
+            row = session.scalar(statement)
+        if row is None:
+            return None
+        return to_job_run_record(row)
+
     def list_job_runs(
         self,
         *,
         job_key: str | None = None,
         job_type: str | None = None,
         status: str | None = None,
+        session_id: str | None = None,
+        scheduled_from: str | datetime | None = None,
+        scheduled_to: str | datetime | None = None,
         limit: int = 100,
     ) -> list[JobRunRecord]:
         statement = select(JobRunModel)
@@ -160,6 +202,14 @@ class JobRepository:
             statement = statement.where(JobRunModel.job_type == job_type)
         if status:
             statement = statement.where(JobRunModel.status == status)
+        if session_id:
+            statement = statement.where(JobRunModel.session_id == session_id)
+        scheduled_from_dt = parse_datetime(scheduled_from)
+        if scheduled_from_dt is not None:
+            statement = statement.where(JobRunModel.scheduled_for >= scheduled_from_dt)
+        scheduled_to_dt = parse_datetime(scheduled_to)
+        if scheduled_to_dt is not None:
+            statement = statement.where(JobRunModel.scheduled_for <= scheduled_to_dt)
         statement = statement.order_by(JobRunModel.scheduled_for.desc(), JobRunModel.job_run_id.desc()).limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
@@ -170,17 +220,20 @@ class JobRepository:
         *,
         job_run_id: str,
         status: str,
+        expected_arq_job_id: str | None = None,
         worker_name: str | None = None,
         started_at: str | datetime | None = None,
         finished_at: str | datetime | None = None,
         heartbeat_at: str | datetime | None = None,
         result: dict[str, Any] | None = None,
         error_text: str | None = None,
-    ) -> JobRunRecord:
+    ) -> JobRunRecord | None:
         with self.session_scope() as session:
             row = session.get(JobRunModel, job_run_id)
             if row is None:
                 raise ValueError(f"Unknown job_run_id: {job_run_id}")
+            if expected_arq_job_id is not None and row.arq_job_id != expected_arq_job_id:
+                return None
             row.status = status
             if worker_name is not None:
                 row.worker_name = worker_name
@@ -192,8 +245,16 @@ class JobRepository:
                 row.heartbeat_at = parse_datetime(heartbeat_at)
             if result is not None:
                 row.result_json = result
+            if status == "queued":
+                row.started_at = None
+                row.finished_at = None
+                row.heartbeat_at = None
+                row.worker_name = None
+                row.result_json = None
             if error_text is not None or status == "failed":
                 row.error_text = error_text
+            elif status in {"queued", "running", "succeeded", "skipped"}:
+                row.error_text = None
             session.flush()
             session.refresh(row)
             return to_job_run_record(row)
@@ -202,15 +263,43 @@ class JobRepository:
         self,
         *,
         job_run_id: str,
+        expected_arq_job_id: str | None = None,
         heartbeat_at: str | datetime | None = None,
         worker_name: str | None = None,
-    ) -> JobRunRecord:
+    ) -> JobRunRecord | None:
         return self.update_job_run_status(
             job_run_id=job_run_id,
             status="running",
+            expected_arq_job_id=expected_arq_job_id,
             heartbeat_at=heartbeat_at or datetime.now(UTC),
             worker_name=worker_name,
         )
+
+    def requeue_job_run(
+        self,
+        *,
+        job_run_id: str,
+        arq_job_id: str,
+        payload: dict[str, Any] | None = None,
+    ) -> JobRunRecord:
+        with self.session_scope() as session:
+            row = session.get(JobRunModel, job_run_id)
+            if row is None:
+                raise ValueError(f"Unknown job_run_id: {job_run_id}")
+            row.arq_job_id = arq_job_id
+            row.status = "queued"
+            row.retry_count = int(row.retry_count) + 1
+            row.started_at = None
+            row.finished_at = None
+            row.heartbeat_at = None
+            row.worker_name = None
+            row.result_json = None
+            row.error_text = None
+            if payload is not None:
+                row.payload_json = payload
+            session.flush()
+            session.refresh(row)
+            return to_job_run_record(row)
 
     def acquire_lease(
         self,

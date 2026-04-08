@@ -319,6 +319,8 @@ def apply_generator_live_action(
             cycle_id=cycle_id,
             label=latest_cycle["label"],
             generated_at=generated_at,
+            job_run_id=latest_cycle.get("job_run_id"),
+            session_id=latest_cycle.get("session_id"),
             universe_label=latest_cycle["universe_label"],
             strategy=latest_cycle["strategy"],
             profile=latest_cycle["profile"],

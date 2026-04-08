@@ -905,6 +905,45 @@ class AlpacaClient:
             return price
         raise RuntimeError(f"Could not determine current price for {symbol}")
 
+    def get_latest_option_quotes(
+        self,
+        symbols: list[str],
+        *,
+        feed: str,
+    ) -> dict[str, LiveOptionQuote]:
+        if not symbols:
+            return {}
+
+        payload = self.get_json(
+            self.data_base_url,
+            "/v1beta1/options/quotes/latest",
+            {
+                "symbols": ",".join(symbols),
+                "feed": feed,
+            },
+        )
+        raw_quotes = payload.get("quotes", {})
+        if not isinstance(raw_quotes, dict):
+            return {}
+
+        latest_quotes: dict[str, LiveOptionQuote] = {}
+        for symbol, quote in raw_quotes.items():
+            if not isinstance(quote, dict):
+                continue
+            bid = parse_float(pick(quote, "bp", "bid_price"))
+            ask = parse_float(pick(quote, "ap", "ask_price"))
+            if bid is None or ask is None or bid <= 0 or ask <= 0 or ask < bid:
+                continue
+            latest_quotes[str(symbol)] = LiveOptionQuote(
+                symbol=str(symbol),
+                bid=bid,
+                ask=ask,
+                bid_size=parse_int(pick(quote, "bs", "bid_size")) or 0,
+                ask_size=parse_int(pick(quote, "as", "ask_size")) or 0,
+                timestamp=format_stream_timestamp(pick(quote, "t", "timestamp")),
+            )
+        return latest_quotes
+
     def get_daily_bars(
         self,
         symbol: str,

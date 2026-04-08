@@ -40,6 +40,7 @@ from spreads.services.generator import (
     generator_result_summary,
     list_generator_symbol_suggestions,
 )
+from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
 from spreads.services.live_pipelines import build_live_session_catalog
 from spreads.services.operator_actions import (
     apply_generator_live_action,
@@ -108,6 +109,10 @@ def _generator_job_payload(job: Any, *, include_result: bool = True) -> dict[str
     if not include_result:
         payload.pop("result", None)
     return payload
+
+
+def _job_run_payload(run: Any) -> dict[str, Any]:
+    return enrich_live_collector_job_run_payload(run.to_dict())
 
 
 @app.get("/health")
@@ -595,13 +600,20 @@ def list_job_runs(
     job_key: str | None = None,
     job_type: str | None = None,
     status: str | None = None,
+    session_id: str | None = None,
     limit: int = Query(default=100, ge=1, le=1000),
     db: str | None = None,
 ) -> dict[str, Any]:
     store = build_job_repository(resolve_db(db))
     try:
-        rows = store.list_job_runs(job_key=job_key, job_type=job_type, status=status, limit=limit)
-        return {"job_runs": [row.to_dict() for row in rows]}
+        rows = store.list_job_runs(
+            job_key=job_key,
+            job_type=job_type,
+            status=status,
+            session_id=session_id,
+            limit=limit,
+        )
+        return {"job_runs": [_job_run_payload(row) for row in rows]}
     finally:
         store.close()
 
@@ -613,7 +625,7 @@ def get_job_run(job_run_id: str, db: str | None = None) -> dict[str, Any]:
         row = store.get_job_run(job_run_id)
         if row is None:
             raise HTTPException(status_code=404, detail="Job run not found")
-        return row.to_dict()
+        return _job_run_payload(row)
     finally:
         store.close()
 
@@ -632,12 +644,12 @@ def get_jobs_health(db: str | None = None) -> dict[str, Any]:
             if definition["job_type"] != "live_collector":
                 continue
             runs = store.list_job_runs(job_key=definition["job_key"], status="succeeded", limit=1)
-            latest_collectors[definition["job_key"]] = None if not runs else runs[0].to_dict()
+            latest_collectors[definition["job_key"]] = None if not runs else _job_run_payload(runs[0])
         return {
             "scheduler": None if scheduler is None else scheduler.to_dict(),
             "workers": [lease.to_dict() for lease in workers],
-            "running_jobs": [row.to_dict() for row in running],
-            "queued_jobs": [row.to_dict() for row in queued],
+            "running_jobs": [_job_run_payload(row) for row in running],
+            "queued_jobs": [_job_run_payload(row) for row in queued],
             "latest_successful_collectors": latest_collectors,
         }
     finally:

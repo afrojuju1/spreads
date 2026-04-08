@@ -11,7 +11,7 @@ from uuid import uuid4
 import redis.asyncio as redis_async
 
 from spreads.events.bus import publish_global_event_async
-from spreads.jobs.live_collector import build_collection_args, run_collection
+from spreads.jobs.live_collector import LiveTickContext, build_collection_args, run_collection_tick
 from spreads.jobs.orchestration import (
     singleton_lease_key,
     worker_runtime_lease_key,
@@ -24,19 +24,17 @@ from spreads.services.analysis import (
     run_post_close_analysis,
 )
 from spreads.services.generator import build_generator_args, generate_symbol_ideas, generator_job_channel
-from spreads.services.live_pipelines import build_live_session_catalog
+from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
+from spreads.services.live_pipelines import build_live_session_catalog, build_live_session_id
 from spreads.services.post_market_analysis import parse_args as parse_post_market_args
 from spreads.services.post_market_analysis import run_post_market_analysis
-from spreads.storage.factory import (
-    build_collector_repository,
-    build_generator_job_repository,
-    build_job_repository,
-    build_post_market_repository,
-)
+from spreads.storage.factory import build_generator_job_repository, build_job_repository, build_post_market_repository
 
 WORKER_HEARTBEAT_SECONDS = 30
 WORKER_LEASE_TTL_SECONDS = 90
 JOB_LEASE_TTL_SECONDS = 600
+LIVE_COLLECTOR_WEBSOCKET_STALL_THRESHOLD = 2
+LIVE_COLLECTOR_SLOT_LAG_THRESHOLD = 2
 
 
 def worker_name() -> str:
@@ -47,6 +45,10 @@ class ManagedJobFailure(RuntimeError):
     def __init__(self, message: str, *, result: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.result = result
+
+
+class SupersededJobRun(RuntimeError):
+    pass
 
 
 def _compact_single_analysis_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -184,16 +186,19 @@ async def _publish_generator_job_event(
 
 
 async def _publish_job_run_event(ctx: dict[str, Any], run_record: Any) -> None:
+    if run_record is None:
+        return
     event_bus = ctx.get("event_bus")
     if event_bus is None:
         return
     try:
+        payload = enrich_live_collector_job_run_payload(run_record.to_dict())
         await publish_global_event_async(
             event_bus,
             topic="job.run.updated",
             entity_type="job_run",
             entity_id=run_record["job_run_id"],
-            payload=run_record.to_dict(),
+            payload=payload,
             timestamp=run_record.get("finished_at") or run_record.get("heartbeat_at") or run_record["scheduled_for"],
         )
     except Exception:
@@ -240,16 +245,185 @@ async def _publish_post_market_planner_events(ctx: dict[str, Any], result: dict[
         )
 
 
-async def _mark_running(job_store: Any, job_run_id: str, runtime_owner: str) -> None:
+def _parse_utc(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        normalized = value.replace("Z", "+00:00") if value.endswith("Z") else value
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def _run_duration_seconds(run_payload: dict[str, Any]) -> float | None:
+    started_at = _parse_utc(run_payload.get("started_at"))
+    finished_at = _parse_utc(run_payload.get("finished_at"))
+    if started_at is None or finished_at is None:
+        return None
+    duration = (finished_at - started_at).total_seconds()
+    return round(duration, 3) if duration >= 0 else None
+
+
+def _slot_lag_slots(run_payload: dict[str, Any]) -> int:
+    slot_at = _parse_utc(run_payload.get("slot_at"))
+    finished_at = _parse_utc(run_payload.get("finished_at"))
+    interval_seconds = int((run_payload.get("payload") or {}).get("interval_seconds") or 0)
+    if slot_at is None or finished_at is None or interval_seconds <= 0:
+        return 0
+    elapsed_seconds = max((finished_at - slot_at).total_seconds(), 0.0)
+    return max(int(elapsed_seconds // interval_seconds) - 1, 0)
+
+
+def _count_consecutive_websocket_zero_slots(
+    job_store: Any,
+    *,
+    job_key: str,
+    session_id: str,
+) -> int:
+    rows = job_store.list_job_runs(
+        job_key=job_key,
+        status="succeeded",
+        session_id=session_id,
+        limit=8,
+    )
+    consecutive = 0
+    for row in rows:
+        payload = enrich_live_collector_job_run_payload(row.to_dict())
+        quote_capture = payload.get("quote_capture") or {}
+        if int(quote_capture.get("websocket_quote_events_saved", 0)) > 0:
+            break
+        consecutive += 1
+    return consecutive
+
+
+def _build_live_collector_log_payload(
+    run_payload: dict[str, Any],
+    *,
+    consecutive_websocket_zero_slots: int,
+    slot_lag_slots: int,
+) -> dict[str, Any]:
+    result = run_payload.get("result") or {}
+    quote_capture = run_payload.get("quote_capture") or {}
+    cycle_ids = result.get("cycle_ids") or []
+    return {
+        "event": "live_collector_slot_completed",
+        "job_run_id": run_payload["job_run_id"],
+        "job_key": run_payload["job_key"],
+        "label": result.get("label") or (run_payload.get("payload") or {}).get("label"),
+        "session_id": run_payload.get("session_id"),
+        "slot_at": run_payload.get("slot_at"),
+        "cycle_id": None if not cycle_ids else cycle_ids[0],
+        "worker_name": run_payload.get("worker_name"),
+        "duration_seconds": _run_duration_seconds(run_payload),
+        "board_candidate_count": int(result.get("board_candidate_count") or 0),
+        "watchlist_candidate_count": int(result.get("watchlist_candidate_count") or 0),
+        "quote_capture": quote_capture,
+        "consecutive_websocket_zero_slots": consecutive_websocket_zero_slots,
+        "slot_lag_slots": slot_lag_slots,
+    }
+
+
+def _build_live_collector_degradation(
+    run_payload: dict[str, Any],
+    *,
+    consecutive_websocket_zero_slots: int,
+    slot_lag_slots: int,
+) -> dict[str, Any] | None:
+    quote_capture = run_payload.get("quote_capture") or {}
+    reasons: list[str] = []
+    if int(quote_capture.get("total_quote_events_saved", 0)) == 0:
+        reasons.append("quote_capture_empty")
+    if (
+        int(quote_capture.get("websocket_quote_events_saved", 0)) == 0
+        and consecutive_websocket_zero_slots >= LIVE_COLLECTOR_WEBSOCKET_STALL_THRESHOLD
+    ):
+        reasons.append("websocket_stalled")
+    if slot_lag_slots >= LIVE_COLLECTOR_SLOT_LAG_THRESHOLD:
+        reasons.append("slot_lagging")
+    if not reasons:
+        return None
+    result = run_payload.get("result") or {}
+    cycle_ids = result.get("cycle_ids") or []
+    return {
+        "reasons": reasons,
+        "job_run_id": run_payload["job_run_id"],
+        "job_key": run_payload["job_key"],
+        "label": result.get("label") or (run_payload.get("payload") or {}).get("label"),
+        "session_id": run_payload.get("session_id"),
+        "slot_at": run_payload.get("slot_at"),
+        "cycle_id": None if not cycle_ids else cycle_ids[0],
+        "capture_status": quote_capture.get("capture_status"),
+        "quote_capture": quote_capture,
+        "consecutive_websocket_zero_slots": consecutive_websocket_zero_slots,
+        "slot_lag_slots": slot_lag_slots,
+    }
+
+
+async def _emit_live_collector_observability(ctx: dict[str, Any], run_record: Any) -> None:
+    run_payload = enrich_live_collector_job_run_payload(run_record.to_dict())
+    session_id = run_payload.get("session_id")
+    if not isinstance(session_id, str) or not session_id:
+        return
+    job_store = ctx["job_store"]
+    consecutive_websocket_zero_slots = await asyncio.to_thread(
+        _count_consecutive_websocket_zero_slots,
+        job_store,
+        job_key=str(run_payload["job_key"]),
+        session_id=session_id,
+    )
+    slot_lag_slots = _slot_lag_slots(run_payload)
+    log_payload = _build_live_collector_log_payload(
+        run_payload,
+        consecutive_websocket_zero_slots=consecutive_websocket_zero_slots,
+        slot_lag_slots=slot_lag_slots,
+    )
+    print(json.dumps(log_payload, separators=(",", ":"), sort_keys=True), flush=True)
+    degradation = _build_live_collector_degradation(
+        run_payload,
+        consecutive_websocket_zero_slots=consecutive_websocket_zero_slots,
+        slot_lag_slots=slot_lag_slots,
+    )
+    if degradation is None:
+        return
+    print(
+        json.dumps(
+            {"event": "live_collector_slot_degraded", **degradation},
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    event_bus = ctx.get("event_bus")
+    if event_bus is None:
+        return
+    try:
+        await publish_global_event_async(
+            event_bus,
+            topic="live.collector.degraded",
+            entity_type="job_run",
+            entity_id=run_payload["job_run_id"],
+            payload=degradation,
+            event_type="alert",
+            timestamp=run_payload.get("finished_at") or run_payload.get("slot_at"),
+        )
+    except Exception:
+        pass
+
+
+async def _mark_running(job_store: Any, job_run_id: str, runtime_owner: str, arq_job_id: str) -> Any:
     now = datetime.now(UTC)
     run_record = await asyncio.to_thread(
         job_store.update_job_run_status,
         job_run_id=job_run_id,
         status="running",
+        expected_arq_job_id=arq_job_id,
         worker_name=runtime_owner,
         started_at=now,
         heartbeat_at=now,
     )
+    if run_record is None:
+        raise SupersededJobRun(f"Job run {job_run_id} was superseded before start.")
     return run_record
 
 
@@ -257,15 +431,19 @@ def _sync_job_heartbeat(
     job_store: Any,
     *,
     job_run_id: str,
+    arq_job_id: str,
     runtime_owner: str,
     lease_key: str | None,
 ) -> None:
     now = datetime.now(UTC)
-    job_store.heartbeat_job_run(
+    run_record = job_store.heartbeat_job_run(
         job_run_id=job_run_id,
+        expected_arq_job_id=arq_job_id,
         heartbeat_at=now,
         worker_name=runtime_owner,
     )
+    if run_record is None:
+        raise SupersededJobRun(f"Job run {job_run_id} was superseded during execution.")
     if lease_key is not None:
         job_store.renew_lease(
             lease_key=lease_key,
@@ -277,16 +455,22 @@ def _sync_job_heartbeat(
 
 def build_live_session_catalog_for_date(
     *,
-    db_target: str,
     job_store: Any,
     session_date: str,
 ) -> dict[str, Any]:
-    collector_store = build_collector_repository(db_target)
-    try:
-        definitions = job_store.list_job_definitions(enabled_only=True, job_type="live_collector")
-        realized_labels = collector_store.list_session_labels(session_date=session_date)
-    finally:
-        collector_store.close()
+    definitions = job_store.list_job_definitions(enabled_only=True, job_type="live_collector")
+    base_catalog = build_live_session_catalog(definitions, realized_labels=[])
+    realized_labels = [
+        str(pipeline["label"])
+        for pipeline in base_catalog["pipelines"]
+        if job_store.list_job_runs(
+            job_key=str(pipeline["job_key"]),
+            job_type="live_collector",
+            status="succeeded",
+            session_id=build_live_session_id(str(pipeline["label"]), session_date),
+            limit=1,
+        )
+    ]
     return build_live_session_catalog(definitions, realized_labels=realized_labels)
 
 
@@ -314,7 +498,6 @@ def run_post_close_analysis_targets(
 ) -> dict[str, Any]:
     session_date = resolve_date(str(payload.get("date", "today")))
     catalog = build_live_session_catalog_for_date(
-        db_target=db_target,
         job_store=job_store,
         session_date=session_date,
     )
@@ -364,7 +547,6 @@ def run_post_market_analysis_targets(
 ) -> dict[str, Any]:
     session_date = resolve_date(str(payload.get("date", "today")))
     catalog = build_live_session_catalog_for_date(
-        db_target=db_target,
         job_store=job_store,
         session_date=session_date,
     )
@@ -452,6 +634,7 @@ async def _execute_managed_job(
     *,
     job_key: str,
     job_run_id: str,
+    arq_job_id: str,
     payload: dict[str, Any],
     runner: Any,
     compact_result: Any,
@@ -477,6 +660,7 @@ async def _execute_managed_job(
                 job_store.update_job_run_status,
                 job_run_id=job_run_id,
                 status="skipped",
+                expected_arq_job_id=arq_job_id,
                 worker_name=runtime_owner,
                 finished_at=datetime.now(UTC),
                 heartbeat_at=datetime.now(UTC),
@@ -485,7 +669,7 @@ async def _execute_managed_job(
             await _publish_job_run_event(ctx, skipped_record)
             return result
 
-    running_record = await _mark_running(job_store, job_run_id, runtime_owner)
+    running_record = await _mark_running(job_store, job_run_id, runtime_owner, arq_job_id)
     await _publish_job_run_event(ctx, running_record)
     try:
         result = await asyncio.to_thread(
@@ -493,28 +677,38 @@ async def _execute_managed_job(
             lambda: _sync_job_heartbeat(
                 job_store,
                 job_run_id=job_run_id,
+                arq_job_id=arq_job_id,
                 runtime_owner=runtime_owner,
                 lease_key=lease_key,
             ),
         )
         compact = compact_result(result)
+        final_status = "skipped" if isinstance(result, dict) and result.get("status") == "skipped" else "succeeded"
         completed_record = await asyncio.to_thread(
             job_store.update_job_run_status,
             job_run_id=job_run_id,
-            status="succeeded",
+            status=final_status,
+            expected_arq_job_id=arq_job_id,
             worker_name=runtime_owner,
             finished_at=datetime.now(UTC),
             heartbeat_at=datetime.now(UTC),
             result=compact,
         )
+        if completed_record is None:
+            raise SupersededJobRun(f"Job run {job_run_id} was superseded before completion.")
         await _publish_job_run_event(ctx, completed_record)
+        if payload.get("job_type") == "live_collector" and final_status == "succeeded":
+            await _emit_live_collector_observability(ctx, completed_record)
         return compact
+    except SupersededJobRun:
+        return {"status": "superseded", "job_run_id": job_run_id}
     except Exception as exc:
         partial_result = exc.result if isinstance(exc, ManagedJobFailure) else None
         failed_record = await asyncio.to_thread(
             job_store.update_job_run_status,
             job_run_id=job_run_id,
             status="failed",
+            expected_arq_job_id=arq_job_id,
             worker_name=runtime_owner,
             finished_at=datetime.now(UTC),
             heartbeat_at=datetime.now(UTC),
@@ -533,10 +727,27 @@ async def run_live_collector_job(
     job_key: str,
     job_run_id: str,
     payload: dict[str, Any],
+    arq_job_id: str,
 ) -> dict[str, Any]:
     def runner(heartbeat: Any) -> dict[str, Any]:
         args = build_collection_args(payload)
-        return run_collection(args, heartbeat=heartbeat, emit_output=False)
+        session_id = payload.get("session_id")
+        slot_at = payload.get("slot_at")
+        if not isinstance(session_id, str) or not session_id:
+            raise ValueError("live_collector payload is missing session_id")
+        if not isinstance(slot_at, str) or not slot_at:
+            raise ValueError("live_collector payload is missing slot_at")
+        tick_context = LiveTickContext(
+            job_run_id=job_run_id,
+            session_id=session_id,
+            slot_at=slot_at,
+        )
+        return run_collection_tick(
+            args,
+            tick_context=tick_context,
+            heartbeat=heartbeat,
+            emit_output=False,
+        )
 
     enriched_payload = dict(payload)
     enriched_payload["job_type"] = "live_collector"
@@ -544,6 +755,7 @@ async def run_live_collector_job(
         ctx,
         job_key=job_key,
         job_run_id=job_run_id,
+        arq_job_id=arq_job_id,
         payload=enriched_payload,
         runner=runner,
         compact_result=lambda result: result,
@@ -555,6 +767,7 @@ async def run_post_close_analysis_job(
     job_key: str,
     job_run_id: str,
     payload: dict[str, Any],
+    arq_job_id: str,
 ) -> dict[str, Any]:
     database_url = ctx["database_url"]
     job_store = ctx["job_store"]
@@ -585,6 +798,7 @@ async def run_post_close_analysis_job(
         ctx,
         job_key=job_key,
         job_run_id=job_run_id,
+        arq_job_id=arq_job_id,
         payload=enriched_payload,
         runner=runner,
         compact_result=compact_analysis_result,
@@ -596,6 +810,7 @@ async def run_post_market_analysis_job(
     job_key: str,
     job_run_id: str,
     payload: dict[str, Any],
+    arq_job_id: str,
 ) -> dict[str, Any]:
     database_url = ctx["database_url"]
     job_store = ctx["job_store"]
@@ -638,6 +853,7 @@ async def run_post_market_analysis_job(
             ctx,
             job_key=job_key,
             job_run_id=job_run_id,
+            arq_job_id=arq_job_id,
             payload=enriched_payload,
             runner=runner,
             compact_result=compact_post_market_result,

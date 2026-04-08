@@ -146,6 +146,23 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
         tone: status === "failed" ? "error" : "warning",
       };
     }
+    case "live.collector.degraded": {
+      const label = readText(payload.label) ?? "live collector";
+      const captureStatus = humanizeToken(readText(payload.capture_status) ?? "degraded");
+      const reasons = Array.isArray(payload.reasons)
+        ? payload.reasons.filter(isString).map((reason) => humanizeToken(reason))
+        : [];
+      const reasonText = reasons.length ? reasons.join(", ") : "Collector health degraded";
+      return {
+        id: `${event.topic}:${event.entity_id}:${reasonText}`,
+        title: `Live collector degraded for ${label}`,
+        body: `${captureStatus}. ${reasonText}.`,
+        href: "/jobs",
+        summary: `Live ${label} degraded`,
+        timestamp: event.timestamp,
+        tone: "warning",
+      };
+    }
     case "post_market.analysis.updated": {
       const status = readText(payload.status);
       if (!status || !["succeeded", "failed"].includes(status)) {
@@ -237,6 +254,10 @@ function GlobalRealtimeBridge({
         break;
       case "job.run.updated":
         queryClient.invalidateQueries({ queryKey: ["jobs"] });
+        queryClient.invalidateQueries({ queryKey: ["job-runs"] });
+        queryClient.invalidateQueries({ queryKey: ["jobs-health"] });
+        break;
+      case "live.collector.degraded":
         queryClient.invalidateQueries({ queryKey: ["job-runs"] });
         queryClient.invalidateQueries({ queryKey: ["jobs-health"] });
         break;
