@@ -4,11 +4,11 @@ import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ColumnDef } from "@tanstack/react-table";
 import { LoaderCircle, Sparkles } from "lucide-react";
-import { useDeferredValue, useMemo, useState } from "react";
+import { startTransition, useDeferredValue, useMemo, useState } from "react";
 
 import { DataTable } from "@/components/dashboard/data-table";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -27,6 +27,11 @@ import {
   getGeneratorJob,
   getGeneratorSymbols,
 } from "@/lib/api";
+import {
+  DEFAULT_GENERATOR_REQUEST,
+  type GeneratorJobRequestPayload,
+  normalizeGeneratorJobRequestRecord,
+} from "@/lib/generator-request";
 
 type CandidateRow = {
   id: string;
@@ -78,18 +83,33 @@ export const CANDIDATE_COLUMNS: ColumnDef<CandidateRow>[] = [
   },
 ];
 
-export function GeneratorWorkbench() {
-  const [symbol, setSymbol] = useState("SPY");
-  const [profile, setProfile] = useState("weekly");
-  const [strategy, setStrategy] = useState("combined");
-  const [greeksSource, setGreeksSource] = useState("auto");
-  const [top, setTop] = useState("5");
-  const [minCredit, setMinCredit] = useState("");
-  const [shortDeltaMax, setShortDeltaMax] = useState("");
-  const [shortDeltaTarget, setShortDeltaTarget] = useState("");
+export function GeneratorWorkbench({
+  initialRequest = DEFAULT_GENERATOR_REQUEST,
+}: {
+  initialRequest?: GeneratorJobRequestPayload;
+}) {
+  const [symbol, setSymbol] = useState(initialRequest.symbol);
+  const [profile, setProfile] = useState(initialRequest.profile);
+  const [strategy, setStrategy] = useState(initialRequest.strategy);
+  const [greeksSource, setGreeksSource] = useState(initialRequest.greeks_source);
+  const [top, setTop] = useState(String(initialRequest.top));
+  const [minCredit, setMinCredit] = useState(
+    initialRequest.min_credit === undefined ? "" : String(initialRequest.min_credit),
+  );
+  const [shortDeltaMax, setShortDeltaMax] = useState(
+    initialRequest.short_delta_max === undefined ? "" : String(initialRequest.short_delta_max),
+  );
+  const [shortDeltaTarget, setShortDeltaTarget] = useState(
+    initialRequest.short_delta_target === undefined ? "" : String(initialRequest.short_delta_target),
+  );
+  const [allowOffHours, setAllowOffHours] = useState(initialRequest.allow_off_hours);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [historySymbol, setHistorySymbol] = useState("");
+  const [historyStatus, setHistoryStatus] = useState("all");
+  const [historyLimit, setHistoryLimit] = useState("8");
   const deferredSymbol = useDeferredValue(symbol.trim().toUpperCase());
+  const deferredHistorySymbol = useDeferredValue(historySymbol.trim().toUpperCase());
   const queryClient = useQueryClient();
 
   const symbolSuggestionsQuery = useQuery({
@@ -99,8 +119,13 @@ export function GeneratorWorkbench() {
   });
 
   const recentJobsQuery = useQuery({
-    queryKey: ["generator-jobs", "", "", 8],
-    queryFn: () => getGeneratorJobs({ limit: 8 }),
+    queryKey: ["generator-jobs", deferredHistorySymbol, historyStatus, historyLimit],
+    queryFn: () =>
+      getGeneratorJobs({
+        symbol: deferredHistorySymbol || undefined,
+        status: historyStatus === "all" ? undefined : historyStatus,
+        limit: Number(historyLimit) || 8,
+      }),
     staleTime: 15_000,
   });
 
@@ -147,10 +172,34 @@ export function GeneratorWorkbench() {
     candidateRows.find((row) => row.id === resolvedSelectedId)?.raw ??
     (candidateRows[0]?.raw ?? null);
 
-  const handleSubmit = () => {
+  const applyRequestToForm = (request: GeneratorJobRequestPayload) => {
+    startTransition(() => {
+      setSymbol(request.symbol);
+      setProfile(request.profile);
+      setStrategy(request.strategy);
+      setGreeksSource(request.greeks_source);
+      setTop(String(request.top));
+      setMinCredit(request.min_credit === undefined ? "" : String(request.min_credit));
+      setShortDeltaMax(
+        request.short_delta_max === undefined ? "" : String(request.short_delta_max),
+      );
+      setShortDeltaTarget(
+        request.short_delta_target === undefined ? "" : String(request.short_delta_target),
+      );
+      setAllowOffHours(request.allow_off_hours);
+      setSelectedId(null);
+      setActiveJobId(null);
+    });
+  };
+
+  const submitRequest = (request: GeneratorJobRequestPayload) => {
     setActiveJobId(null);
     setSelectedId(null);
-    mutation.mutate({
+    mutation.mutate(request);
+  };
+
+  const handleSubmit = () => {
+    submitRequest({
       symbol: symbol.trim().toUpperCase(),
       profile,
       strategy,
@@ -159,7 +208,7 @@ export function GeneratorWorkbench() {
       min_credit: minCredit === "" ? undefined : Number(minCredit),
       short_delta_max: shortDeltaMax === "" ? undefined : Number(shortDeltaMax),
       short_delta_target: shortDeltaTarget === "" ? undefined : Number(shortDeltaTarget),
-      allow_off_hours: false,
+      allow_off_hours: allowOffHours,
     });
   };
 
@@ -343,20 +392,58 @@ export function GeneratorWorkbench() {
                 </div>
               </div>
               <div className="panel-body space-y-2">
+                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px_120px]">
+                  <Field label="Symbol filter">
+                    <Input
+                      value={historySymbol}
+                      onChange={(event) => setHistorySymbol(event.target.value.toUpperCase())}
+                      placeholder="All symbols"
+                      className="rounded-2xl bg-background/70"
+                    />
+                  </Field>
+                  <Field label="Status">
+                    <Select value={historyStatus} onValueChange={(value) => setHistoryStatus(value ?? "all")}>
+                      <SelectTrigger className="rounded-2xl bg-background/70">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All statuses</SelectItem>
+                        <SelectItem value="queued">Queued</SelectItem>
+                        <SelectItem value="running">Running</SelectItem>
+                        <SelectItem value="succeeded">Succeeded</SelectItem>
+                        <SelectItem value="no_play">No play</SelectItem>
+                        <SelectItem value="failed">Failed</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field label="Limit">
+                    <Select value={historyLimit} onValueChange={(value) => setHistoryLimit(value ?? "8")}>
+                      <SelectTrigger className="rounded-2xl bg-background/70">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="8">8 jobs</SelectItem>
+                        <SelectItem value="16">16 jobs</SelectItem>
+                        <SelectItem value="32">32 jobs</SelectItem>
+                        <SelectItem value="64">64 jobs</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                </div>
+                <Separator />
                 {recentJobsQuery.isLoading ? (
                   <LoadingState body="Loading recent generator jobs..." />
                 ) : !(recentJobsQuery.data?.jobs.length) ? (
                   <EmptyState
-                    title="No generator history yet"
-                    body="Submitted generator jobs will appear here once they are persisted."
+                    title="No matching generator jobs"
+                    body="Adjust the filters or submit a generator request to populate this history."
                   />
                 ) : (
                   recentJobsQuery.data.jobs.map((job) => (
-                    <Link
+                    <div
                       key={job.generator_job_id}
-                      href={`/generator/jobs/${job.generator_job_id}`}
                       className={cn(
-                        "block rounded-2xl border border-border/70 bg-background/70 px-3 py-3 transition-colors hover:bg-accent/40",
+                        "rounded-2xl border border-border/70 bg-background/70 px-3 py-3 transition-colors hover:bg-accent/40",
                         activeJobId === job.generator_job_id && "border-stone-900/20 bg-accent/40",
                       )}
                     >
@@ -385,7 +472,37 @@ export function GeneratorWorkbench() {
                         )}
                         {job.summary.top_score != null ? <span>score {job.summary.top_score.toFixed(1)}</span> : null}
                       </div>
-                    </Link>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => applyRequestToForm(normalizeGeneratorJobRequestRecord(job.request))}
+                        >
+                          Load into form
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          disabled={mutation.isPending}
+                          onClick={() => {
+                            const request = normalizeGeneratorJobRequestRecord(job.request);
+                            applyRequestToForm(request);
+                            submitRequest(request);
+                          }}
+                        >
+                          {mutation.isPending ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
+                          Run again
+                        </Button>
+                        <Link
+                          href={`/generator/jobs/${job.generator_job_id}`}
+                          className={buttonVariants({ variant: "ghost", size: "sm" })}
+                        >
+                          Details
+                        </Link>
+                      </div>
+                    </div>
                   ))
                 )}
               </div>

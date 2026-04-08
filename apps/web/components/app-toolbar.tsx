@@ -3,13 +3,18 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Activity,
   BellRing,
   BriefcaseBusiness,
   CandlestickChart,
   Radar,
   Sparkles,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 
+import { useRealtimeActivity } from "@/components/providers";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 const PAGE_ITEMS = [
@@ -47,6 +52,7 @@ const PAGE_ITEMS = [
 
 export function AppToolbar() {
   const pathname = usePathname();
+  const { connectionState, latestSummary } = useRealtimeActivity();
 
   return (
     <div className="sticky top-0 z-40 border-b border-border/70 bg-background/88 backdrop-blur-xl">
@@ -60,8 +66,32 @@ export function AppToolbar() {
               Live board, generator, alerts, and post-market review.
             </div>
           </div>
-          <div className="hidden text-[11px] uppercase tracking-[0.22em] text-muted-foreground md:block">
-            Page toolbar
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge
+              variant="outline"
+              className={cn(
+                "rounded-full border px-2.5 py-1 text-[11px] uppercase tracking-[0.16em]",
+                connectionState === "connected"
+                  ? "border-emerald-200 bg-emerald-100 text-emerald-900"
+                  : "border-amber-200 bg-amber-100 text-amber-900",
+              )}
+            >
+              {connectionState === "connected" ? (
+                <Wifi className="size-3.5" />
+              ) : (
+                <WifiOff className="size-3.5" />
+              )}
+              {connectionState}
+            </Badge>
+            {latestSummary ? (
+              <Badge
+                variant="outline"
+                className="hidden rounded-full border-border/70 bg-card/80 px-2.5 py-1 text-[11px] uppercase tracking-[0.16em] text-muted-foreground md:inline-flex"
+              >
+                <Activity className="size-3.5" />
+                {latestSummary}
+              </Badge>
+            ) : null}
           </div>
         </div>
         <nav className="flex gap-2 overflow-x-auto pb-1">

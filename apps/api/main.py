@@ -187,7 +187,11 @@ def list_generator_jobs(
 ) -> dict[str, Any]:
     store = build_generator_job_repository(resolve_db(db))
     try:
-        jobs = store.list_jobs(symbol=symbol, status=status, limit=limit)
+        symbol_filter = symbol.strip().upper() if symbol and symbol.strip() else None
+        status_filter = status.strip().lower() if status and status.strip() else None
+        if status_filter == "all":
+            status_filter = None
+        jobs = store.list_jobs(symbol=symbol_filter, status=status_filter, limit=limit)
         return {"jobs": [_generator_job_payload(job, include_result=False) for job in jobs]}
     finally:
         store.close()

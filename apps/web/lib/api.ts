@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import type { GeneratorJobRequestPayload } from "@/lib/generator-request";
+
 const candidateDetailSchema = z
   .object({
     run_id: z.string().optional(),
@@ -545,31 +547,11 @@ export function getSessionTuning(sessionDate: string, label: string) {
   return fetchApi(`sessions/${sessionDate}/${label}/tuning`, sessionTuningSchema);
 }
 
-export function generateIdeas(payload: {
-  symbol: string;
-  profile: string;
-  strategy: string;
-  greeks_source: string;
-  top: number;
-  min_credit?: number;
-  short_delta_max?: number;
-  short_delta_target?: number;
-  allow_off_hours?: boolean;
-}) {
+export function generateIdeas(payload: GeneratorJobRequestPayload) {
   return postApi("generator/ideas", generatorResponseSchema, payload);
 }
 
-export function createGeneratorJob(payload: {
-  symbol: string;
-  profile: string;
-  strategy: string;
-  greeks_source: string;
-  top: number;
-  min_credit?: number;
-  short_delta_max?: number;
-  short_delta_target?: number;
-  allow_off_hours?: boolean;
-}) {
+export function createGeneratorJob(payload: GeneratorJobRequestPayload) {
   return postApi("generator/jobs", generatorJobSchema, payload);
 }
 

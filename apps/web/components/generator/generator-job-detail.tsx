@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
+import { LoaderCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { DataTable } from "@/components/dashboard/data-table";
@@ -16,19 +18,32 @@ import {
   StrategyBadge,
 } from "@/components/generator/generator-workbench";
 import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { getGeneratorJob } from "@/lib/api";
+import { createGeneratorJob, getGeneratorJob } from "@/lib/api";
+import {
+  buildGeneratorFormHref,
+  normalizeGeneratorJobRequestRecord,
+} from "@/lib/generator-request";
 
 export function GeneratorJobDetail({ generatorJobId }: { generatorJobId: string }) {
+  const router = useRouter();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const jobQuery = useQuery({
     queryKey: ["generator-job", generatorJobId],
     queryFn: () => getGeneratorJob(generatorJobId),
     staleTime: 0,
   });
+  const rerunMutation = useMutation({
+    mutationFn: createGeneratorJob,
+    onSuccess: (job) => {
+      router.push(`/generator/jobs/${job.generator_job_id}`);
+    },
+  });
 
   const job = jobQuery.data;
   const result = job?.result;
+  const normalizedRequest = job ? normalizeGeneratorJobRequestRecord(job.request) : null;
   const candidateRows = useMemo(() => buildCandidateRows(result), [result]);
   const resolvedSelectedId =
     selectedId && candidateRows.some((row) => row.id === selectedId)
@@ -55,6 +70,31 @@ export function GeneratorJobDetail({ generatorJobId }: { generatorJobId: string 
                 </Link>
                 {job ? <span className="mono">{job.generator_job_id}</span> : null}
               </div>
+              {normalizedRequest ? (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Link
+                    href={buildGeneratorFormHref(normalizedRequest)}
+                    className={buttonVariants({ variant: "outline", size: "sm" })}
+                  >
+                    Load into form
+                  </Link>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={rerunMutation.isPending}
+                    onClick={() => rerunMutation.mutate(normalizedRequest)}
+                  >
+                    {rerunMutation.isPending ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
+                    Run again
+                  </Button>
+                </div>
+              ) : null}
+              {rerunMutation.isError ? (
+                <div className="mt-3 text-sm text-rose-700">
+                  {rerunMutation.error instanceof Error ? rerunMutation.error.message : "Could not rerun this generator job."}
+                </div>
+              ) : null}
             </div>
             {job ? <StatusBadge value={job.status} tone="job" /> : null}
           </div>
