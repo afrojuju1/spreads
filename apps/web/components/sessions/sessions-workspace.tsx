@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ColumnDef } from "@tanstack/react-table";
 import {
   Activity,
@@ -12,15 +12,18 @@ import {
 } from "lucide-react";
 import { trim } from "lodash-es";
 import { useRouter, useSearchParams } from "next/navigation";
-import { startTransition, useEffect } from "react";
+import { startTransition, useEffect, useState } from "react";
 
 import { DataTable } from "@/components/data-table";
 import {
   type AlertRecord,
   buildSessionHref,
+  createSessionExecution,
+  type ExecutionAttempt,
   type JobRun,
   type LiveCandidate,
   type LiveEvent,
+  refreshSessionExecution,
   type SessionDetail,
   getSessionDetail,
   getSessions,
@@ -175,6 +178,33 @@ function CaptureStatusBadge({ value }: { value: string | null | undefined }) {
   const resolved = readString(value, "unknown");
   return (
     <Badge variant="outline" className={cn("rounded-full border px-2.5 py-1 text-[11px] uppercase tracking-[0.16em]", captureTone(resolved))}>
+      {resolved.replaceAll("_", " ")}
+    </Badge>
+  );
+}
+
+function executionTone(value: string): string {
+  switch (value) {
+    case "filled":
+      return "border-emerald-200 bg-emerald-100 text-emerald-900";
+    case "partially_filled":
+      return "border-sky-200 bg-sky-100 text-sky-900";
+    case "canceled":
+    case "done_for_day":
+    case "expired":
+      return "border-amber-200 bg-amber-100 text-amber-900";
+    case "failed":
+    case "rejected":
+      return "border-rose-200 bg-rose-100 text-rose-900";
+    default:
+      return "border-border/70 bg-card text-foreground";
+  }
+}
+
+function ExecutionStatusBadge({ value }: { value: string | null | undefined }) {
+  const resolved = readString(value, "unknown");
+  return (
+    <Badge variant="outline" className={cn("rounded-full border px-2.5 py-1 text-[11px] uppercase tracking-[0.16em]", executionTone(resolved))}>
       {resolved.replaceAll("_", " ")}
     </Badge>
   );
@@ -499,6 +529,9 @@ function SessionAnalysis({ session }: { session: SessionDetail }) {
 export function SessionsWorkspace() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
+  const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null);
+  const [refreshingAttemptId, setRefreshingAttemptId] = useState<string | null>(null);
 
   const sessionsQuery = useQuery({
     queryKey: ["sessions"],
@@ -533,6 +566,42 @@ export function SessionsWorkspace() {
   const slotRows = buildSlotRows(session?.slot_runs ?? []);
   const alertRows = buildAlertRows(session?.alerts ?? []);
   const eventRows = buildEventRows(session?.events ?? []);
+  const selectedBoardCandidate =
+    (selectedBoardId ? boardRows.find((row) => row.id === selectedBoardId)?.raw : null) ??
+    boardRows[0]?.raw ??
+    null;
+  const selectedBoardCandidatePayload =
+    selectedBoardCandidate && typeof selectedBoardCandidate.candidate === "object"
+      ? (selectedBoardCandidate.candidate as Record<string, unknown>)
+      : null;
+
+  const submitExecutionMutation = useMutation({
+    mutationFn: (candidate: LiveCandidate) =>
+      createSessionExecution(selectedSessionId ?? "", { candidate_id: candidate.candidate_id }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["sessions"] }),
+        queryClient.invalidateQueries({ queryKey: ["session", selectedSessionId] }),
+      ]);
+    },
+  });
+
+  const refreshExecutionMutation = useMutation({
+    mutationFn: (executionAttemptId: string) =>
+      refreshSessionExecution(selectedSessionId ?? "", executionAttemptId),
+    onMutate: (executionAttemptId) => {
+      setRefreshingAttemptId(executionAttemptId);
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["sessions"] }),
+        queryClient.invalidateQueries({ queryKey: ["session", selectedSessionId] }),
+      ]);
+    },
+    onSettled: () => {
+      setRefreshingAttemptId(null);
+    },
+  });
 
   const selectSession = (sessionId: string) => {
     if (!sessionId || sessionId === selectedSessionId) {
@@ -683,12 +752,104 @@ export function SessionsWorkspace() {
               </div>
 
               <SectionSurface title="Board" description="Current board candidates from the latest successful cycle.">
-                <DataTable
-                  columns={CANDIDATE_COLUMNS}
-                  data={boardRows}
-                  getRowId={(row) => row.id}
-                  emptyMessage="No board candidates were persisted for this session."
-                />
+                <div className="flex flex-col gap-4">
+                  <DataTable
+                    columns={CANDIDATE_COLUMNS}
+                    data={boardRows}
+                    getRowId={(row) => row.id}
+                    selectedId={selectedBoardCandidate ? String(selectedBoardCandidate.candidate_id) : undefined}
+                    onSelect={(row) => setSelectedBoardId(row.id)}
+                    emptyMessage="No board candidates were persisted for this session."
+                  />
+                  {selectedBoardCandidate ? (
+                    <div className="rounded-2xl border border-border/70 bg-background/70 px-4 py-4">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="min-w-0">
+                          <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                            Selected live candidate
+                          </div>
+                          <div className="mt-2 text-lg font-medium">
+                            {selectedBoardCandidate.underlying_symbol} · {selectedBoardCandidate.strategy.replaceAll("_", " ")}
+                          </div>
+                          <div className="mt-1 text-sm text-muted-foreground">
+                            {selectedBoardCandidate.short_symbol} / {selectedBoardCandidate.long_symbol} · expires {formatDate(selectedBoardCandidate.expiration_date)}
+                          </div>
+                          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                            <MetricTile label="score" value={formatScore(selectedBoardCandidate.quality_score)} />
+                            <MetricTile label="credit" value={formatCurrency(selectedBoardCandidate.midpoint_credit)} />
+                            <MetricTile
+                              label="limit"
+                              value={formatCurrency(
+                                readNumber(
+                                  selectedBoardCandidatePayload?.limit_price ??
+                                    selectedBoardCandidatePayload?.midpoint_credit,
+                                ),
+                              )}
+                              note="Persisted candidate payload"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-2 lg:items-end">
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            disabled={submitExecutionMutation.isPending || !selectedSessionId}
+                            onClick={() => submitExecutionMutation.mutate(selectedBoardCandidate)}
+                          >
+                            {submitExecutionMutation.isPending ? <LoaderCircle className="size-4 animate-spin" /> : null}
+                            Execute 1x
+                          </Button>
+                          <div className="max-w-sm text-sm text-muted-foreground lg:text-right">
+                            Uses the candidate&apos;s persisted Alpaca multi-leg order payload and saved limit price.
+                          </div>
+                        </div>
+                      </div>
+                      {submitExecutionMutation.isError ? (
+                        <div className="mt-3 text-sm text-rose-700">
+                          {submitExecutionMutation.error instanceof Error
+                            ? submitExecutionMutation.error.message
+                            : "Could not submit this live execution."}
+                        </div>
+                      ) : null}
+                      {submitExecutionMutation.data ? (
+                        <div className="mt-3 text-sm text-foreground/70">
+                          {submitExecutionMutation.data.message}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              </SectionSurface>
+
+              <SectionSurface title="Executions" description="Persisted trade attempts, broker orders, and any fills linked to this session.">
+                {!session.executions.length ? (
+                  <div className="rounded-2xl border border-dashed border-border/70 px-4 py-8 text-sm text-muted-foreground">
+                    No execution attempts were recorded for this session yet.
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    {session.executions.map((attempt) => (
+                      <ExecutionAttemptCard
+                        key={attempt.execution_attempt_id}
+                        attempt={attempt}
+                        refreshing={refreshingAttemptId === attempt.execution_attempt_id}
+                        onRefresh={() => refreshExecutionMutation.mutate(attempt.execution_attempt_id)}
+                      />
+                    ))}
+                  </div>
+                )}
+                {refreshExecutionMutation.isError ? (
+                  <div className="mt-3 text-sm text-rose-700">
+                    {refreshExecutionMutation.error instanceof Error
+                      ? refreshExecutionMutation.error.message
+                      : "Could not refresh broker execution status."}
+                  </div>
+                ) : null}
+                {refreshExecutionMutation.data ? (
+                  <div className="mt-3 text-sm text-foreground/70">
+                    {refreshExecutionMutation.data.message}
+                  </div>
+                ) : null}
               </SectionSurface>
 
               <SectionSurface title="Watchlist" description="Current watchlist candidates from the latest successful cycle.">
@@ -757,5 +918,80 @@ export function SessionsWorkspace() {
           )}
       </div>
     </main>
+  );
+}
+
+function ExecutionAttemptCard({
+  attempt,
+  refreshing,
+  onRefresh,
+}: {
+  attempt: ExecutionAttempt;
+  refreshing: boolean;
+  onRefresh: () => void;
+}) {
+  const primaryOrder = attempt.orders.find((order) => !order.parent_broker_order_id) ?? attempt.orders[0] ?? null;
+  const fillSummary = attempt.fills.length
+    ? `${attempt.fills.length} fill${attempt.fills.length === 1 ? "" : "s"} recorded`
+    : "No fills recorded yet";
+
+  return (
+    <div className="rounded-2xl border border-border/70 bg-background/70 px-4 py-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">
+              {attempt.underlying_symbol} · {attempt.strategy.replaceAll("_", " ")}
+            </span>
+            <ExecutionStatusBadge value={attempt.status} />
+          </div>
+          <div className="mt-1 text-sm text-muted-foreground">
+            {attempt.short_symbol} / {attempt.long_symbol} · qty {attempt.quantity} · limit {formatCurrency(attempt.limit_price)}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+            <span>requested {formatTimestamp(attempt.requested_at)}</span>
+            <span>submitted {attempt.submitted_at ? formatTimestamp(attempt.submitted_at) : "—"}</span>
+            <span>broker order {primaryOrder?.broker_order_id ?? attempt.broker_order_id ?? "pending"}</span>
+          </div>
+        </div>
+        <Button type="button" variant="outline" size="sm" disabled={refreshing} onClick={onRefresh}>
+          {refreshing ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
+          Refresh broker status
+        </Button>
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+        <MetricTile label="broker status" value={readString(primaryOrder?.order_status, attempt.status)} />
+        <MetricTile label="fills" value={fillSummary} />
+        <MetricTile
+          label="completed"
+          value={attempt.completed_at ? formatTime(attempt.completed_at) : "—"}
+          note={attempt.completed_at ? formatDate(attempt.completed_at) : "Awaiting terminal state"}
+        />
+      </div>
+      {attempt.orders.length > 1 ? (
+        <div className="mt-3 text-sm text-muted-foreground">
+          Legs:{" "}
+          {attempt.orders
+            .filter((order) => order.parent_broker_order_id)
+            .map((order) => `${readString(order.leg_symbol, "leg")} ${readString(order.order_status, "unknown")}`)
+            .join(" · ")}
+        </div>
+      ) : null}
+      {attempt.fills.length ? (
+        <div className="mt-3 flex flex-col gap-2">
+          {attempt.fills.slice(0, 4).map((fill) => (
+            <div key={fill.broker_fill_id} className="rounded-xl border border-border/70 px-3 py-2 text-sm text-foreground/80">
+              {fill.symbol} · {readString(fill.fill_type, "fill").replaceAll("_", " ")} · qty {fill.quantity} @{" "}
+              {fill.price == null ? "—" : formatCurrency(fill.price)} · {formatTimestamp(fill.filled_at)}
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {attempt.error_text ? (
+        <div className="mt-3 text-sm text-rose-700">
+          {attempt.error_text}
+        </div>
+      ) : null}
+    </div>
   );
 }

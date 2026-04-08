@@ -13,6 +13,7 @@ from spreads.integrations.alpaca.client import AlpacaClient, infer_trading_base_
 from spreads.integrations.calendar_events import build_calendar_event_resolver
 from spreads.integrations.greeks import build_local_greeks_provider
 from spreads.runtime.config import default_database_url
+from spreads.services.execution import submit_auto_session_execution
 from spreads.services.live_collector_health import build_quote_capture_summary
 from spreads.services.live_pipelines import build_live_snapshot_label
 from spreads.services.option_quote_capture import request_option_quote_capture
@@ -641,6 +642,7 @@ def print_cycle_summary(
     alerts: list[dict[str, Any]],
     failures: list[UniverseScanFailure],
     quote_event_count: int,
+    auto_execution: dict[str, Any] | None,
 ) -> None:
     print(f"[{generated_at}] {label}")
     print(f"Board entries: {len(board_candidates)}")
@@ -648,6 +650,8 @@ def print_cycle_summary(
     print(f"Events: {len(events)}")
     print(f"Alerts: {len(alerts)}")
     print(f"Quote events saved: {quote_event_count}")
+    if auto_execution is not None:
+        print(f"Auto execution: {auto_execution.get('message')}")
     if failures:
         print(f"Failures: {len(failures)}")
     if board_candidates:
@@ -761,6 +765,27 @@ def _run_collection_cycle(
     )
     if heartbeat is not None:
         heartbeat()
+    auto_execution: dict[str, Any] | None = None
+    if tick_context is not None:
+        try:
+            auto_execution = submit_auto_session_execution(
+                db_target=args.history_db,
+                session_id=tick_context.session_id,
+                cycle_id=cycle_id,
+                policy=getattr(args, "execution_policy", None),
+                job_run_id=tick_context.job_run_id,
+            )
+        except Exception as exc:
+            auto_execution = {
+                "action": "auto_submit",
+                "changed": False,
+                "reason": "execution_error",
+                "message": f"Automatic execution failed: {exc}",
+                "error": str(exc),
+            }
+            print(f"Automatic execution unavailable: {exc}")
+        if heartbeat is not None:
+            heartbeat()
     alerts: list[dict[str, Any]] = []
     try:
         alerts = dispatch_cycle_alerts(
@@ -852,6 +877,7 @@ def _run_collection_cycle(
             alerts=alerts,
             failures=failures,
             quote_event_count=quote_event_count,
+            auto_execution=auto_execution,
         )
     return {
         "cycle_id": cycle_id,
@@ -866,6 +892,7 @@ def _run_collection_cycle(
         "board_candidate_count": len(board_payloads),
         "watchlist_candidate_count": len(watchlist_payloads),
         "quote_capture": quote_capture,
+        "auto_execution": auto_execution,
     }
 
 
@@ -960,6 +987,7 @@ def run_collection_tick(
         "board_candidate_count": cycle_result["board_candidate_count"],
         "watchlist_candidate_count": cycle_result["watchlist_candidate_count"],
         "quote_capture": dict(cycle_result["quote_capture"]),
+        "auto_execution": cycle_result["auto_execution"],
         "label": cycle_result["label"],
         "session_id": tick_context.session_id,
         "slot_at": tick_context.slot_at,

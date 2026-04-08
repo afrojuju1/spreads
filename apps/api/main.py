@@ -45,6 +45,11 @@ from spreads.services.operator_actions import (
     apply_generator_live_action,
     create_manual_generator_alert,
 )
+from spreads.services.execution import (
+    EXECUTION_SCHEMA_MESSAGE,
+    refresh_live_session_execution,
+    submit_live_session_execution,
+)
 from spreads.services.sessions import get_session_detail, list_existing_sessions
 from spreads.storage.factory import (
     build_alert_repository,
@@ -97,6 +102,12 @@ class OptionQuoteCaptureRequest(BaseModel):
     feed: Literal["opra", "indicative"] = "opra"
     duration_seconds: float = Field(default=20.0, gt=0, le=60.0)
     data_base_url: str | None = None
+
+
+class SessionExecutionRequest(BaseModel):
+    candidate_id: int = Field(..., gt=0)
+    quantity: int | None = Field(default=None, ge=1, le=25)
+    limit_price: float | None = Field(default=None, gt=0)
 
 
 def resolve_db(db: str | None) -> str:
@@ -505,6 +516,48 @@ def get_session(
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/sessions/{session_id}/executions")
+def submit_session_execution(
+    session_id: str,
+    payload: SessionExecutionRequest,
+    db: str | None = None,
+) -> dict[str, Any]:
+    try:
+        return submit_live_session_execution(
+            db_target=resolve_db(db),
+            session_id=session_id,
+            candidate_id=payload.candidate_id,
+            quantity=payload.quantity,
+            limit_price=payload.limit_price,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        if str(exc) == EXECUTION_SCHEMA_MESSAGE:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/sessions/{session_id}/executions/{execution_attempt_id}/refresh")
+def refresh_session_execution(
+    session_id: str,
+    execution_attempt_id: str,
+    db: str | None = None,
+) -> dict[str, Any]:
+    try:
+        return refresh_live_session_execution(
+            db_target=resolve_db(db),
+            session_id=session_id,
+            execution_attempt_id=execution_attempt_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        if str(exc) == EXECUTION_SCHEMA_MESSAGE:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.get("/alerts")

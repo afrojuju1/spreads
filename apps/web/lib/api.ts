@@ -298,6 +298,96 @@ const sessionAnalysisSchema = sessionSummarySchema
   })
   .passthrough();
 
+const executionOrderSchema = z
+  .object({
+    execution_order_id: z.number(),
+    execution_attempt_id: z.string(),
+    broker: z.string(),
+    broker_order_id: z.string(),
+    parent_broker_order_id: z.string().nullable().optional(),
+    client_order_id: z.string().nullable().optional(),
+    order_status: z.string(),
+    order_type: z.string().nullable().optional(),
+    time_in_force: z.string().nullable().optional(),
+    order_class: z.string().nullable().optional(),
+    side: z.string().nullable().optional(),
+    symbol: z.string().nullable().optional(),
+    leg_symbol: z.string().nullable().optional(),
+    leg_side: z.string().nullable().optional(),
+    position_intent: z.string().nullable().optional(),
+    quantity: z.number().nullable().optional(),
+    limit_price: z.number().nullable().optional(),
+    filled_qty: z.number().nullable().optional(),
+    filled_avg_price: z.number().nullable().optional(),
+    submitted_at: z.string().nullable().optional(),
+    updated_at: z.string(),
+    order: z.record(z.string(), z.unknown()),
+  })
+  .passthrough();
+
+const executionFillSchema = z
+  .object({
+    execution_fill_id: z.number(),
+    execution_attempt_id: z.string(),
+    execution_order_id: z.number().nullable().optional(),
+    broker: z.string(),
+    broker_fill_id: z.string(),
+    broker_order_id: z.string(),
+    symbol: z.string(),
+    side: z.string().nullable().optional(),
+    fill_type: z.string().nullable().optional(),
+    quantity: z.number(),
+    cumulative_quantity: z.number().nullable().optional(),
+    remaining_quantity: z.number().nullable().optional(),
+    price: z.number().nullable().optional(),
+    filled_at: z.string(),
+    fill: z.record(z.string(), z.unknown()),
+  })
+  .passthrough();
+
+const executionAttemptSchema = z
+  .object({
+    execution_attempt_id: z.string(),
+    session_id: z.string(),
+    session_date: z.string(),
+    label: z.string(),
+    cycle_id: z.string().nullable().optional(),
+    candidate_id: z.number().nullable().optional(),
+    bucket: z.string().nullable().optional(),
+    candidate_generated_at: z.string().nullable().optional(),
+    run_id: z.string().nullable().optional(),
+    job_run_id: z.string().nullable().optional(),
+    underlying_symbol: z.string(),
+    strategy: z.string(),
+    expiration_date: z.string(),
+    short_symbol: z.string(),
+    long_symbol: z.string(),
+    quantity: z.number(),
+    limit_price: z.number(),
+    requested_at: z.string(),
+    submitted_at: z.string().nullable().optional(),
+    completed_at: z.string().nullable().optional(),
+    status: z.string(),
+    broker: z.string(),
+    broker_order_id: z.string().nullable().optional(),
+    client_order_id: z.string().nullable().optional(),
+    request: z.record(z.string(), z.unknown()),
+    candidate: candidateDetailSchema,
+    error_text: z.string().nullable().optional(),
+    orders: z.array(executionOrderSchema),
+    fills: z.array(executionFillSchema),
+  })
+  .passthrough();
+
+const sessionExecutionActionResponseSchema = z
+  .object({
+    action: z.enum(["submit", "refresh"]),
+    changed: z.boolean(),
+    message: z.string(),
+    attempt: executionAttemptSchema,
+  })
+  .passthrough();
+
 const sessionDetailSchema = z
   .object({
     session_id: z.string(),
@@ -312,6 +402,7 @@ const sessionDetailSchema = z
     slot_runs: z.array(jobRunSchema),
     alerts: z.array(alertSchema),
     events: z.array(liveEventSchema),
+    executions: z.array(executionAttemptSchema),
     analysis: sessionAnalysisSchema.nullable().optional(),
   })
   .passthrough();
@@ -501,11 +592,15 @@ export type SessionIdea = z.infer<typeof sessionIdeaSchema>;
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 export type SessionTuning = z.infer<typeof sessionTuningSchema>;
 export type SessionListItem = z.infer<typeof sessionListItemSchema>;
+export type ExecutionOrder = z.infer<typeof executionOrderSchema>;
+export type ExecutionFill = z.infer<typeof executionFillSchema>;
+export type ExecutionAttempt = z.infer<typeof executionAttemptSchema>;
 export type SessionDetail = z.infer<typeof sessionDetailSchema>;
 export type TuningBucket = z.infer<typeof tuningBucketSchema>;
 export type GeneratorResponse = z.infer<typeof generatorResponseSchema>;
 export type GeneratorJob = z.infer<typeof generatorJobSchema>;
 export type GeneratorJobActionResponse = z.infer<typeof generatorJobActionResponseSchema>;
+export type SessionExecutionActionResponse = z.infer<typeof sessionExecutionActionResponseSchema>;
 export type GeneratorJobEvent = z.infer<typeof generatorJobEventSchema>;
 export type GeneratorDiagnostics = z.infer<typeof generatorDiagnosticsSchema>;
 export type GeneratorStrategyComparison = z.infer<typeof generatorStrategyComparisonSchema>;
@@ -521,6 +616,11 @@ export type GeneratorCandidateActionRequest = {
   long_symbol: string;
   live_label?: string;
   bucket?: "board" | "watchlist";
+};
+export type SessionExecutionRequest = {
+  candidate_id: number;
+  quantity?: number;
+  limit_price?: number;
 };
 
 async function fetchApi<T>(
@@ -627,6 +727,28 @@ export function getSessions(filters?: {
 
 export function getSessionDetail(sessionId: string) {
   return fetchApi(`sessions/${encodeURIComponent(sessionId)}`, sessionDetailSchema);
+}
+
+export function createSessionExecution(
+  sessionId: string,
+  payload: SessionExecutionRequest,
+) {
+  return postApi(
+    `sessions/${encodeURIComponent(sessionId)}/executions`,
+    sessionExecutionActionResponseSchema,
+    payload,
+  );
+}
+
+export function refreshSessionExecution(
+  sessionId: string,
+  executionAttemptId: string,
+) {
+  return postApi(
+    `sessions/${encodeURIComponent(sessionId)}/executions/${encodeURIComponent(executionAttemptId)}/refresh`,
+    sessionExecutionActionResponseSchema,
+    {},
+  );
 }
 
 export function generateIdeas(payload: GeneratorJobRequestPayload) {

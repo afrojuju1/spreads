@@ -3,6 +3,7 @@ from __future__ import annotations
 from spreads.runtime.config import DEFAULT_POSTGRES_URL, default_database_url
 from spreads.storage.alert_repository import AlertRepository
 from spreads.storage.collector_repository import CollectorRepository
+from spreads.storage.execution_repository import ExecutionRepository
 from spreads.storage.generator_job_repository import GeneratorJobRepository
 from spreads.storage.job_repository import JobRepository
 from spreads.storage.post_market_repository import PostMarketAnalysisRepository
@@ -61,6 +62,17 @@ def build_generator_job_repository(path_or_url: str | None = None):
         return GeneratorJobRepository(value)
     raise RuntimeError(
         f"Generator job storage is Postgres-only. Use a PostgreSQL URL, for example {DEFAULT_POSTGRES_URL}."
+    )
+
+
+def build_execution_repository(path_or_url: str | None = None):
+    if path_or_url is None:
+        path_or_url = default_database_url()
+    value = str(path_or_url)
+    if value.startswith("postgres://") or value.startswith("postgresql://") or value.startswith("postgresql+psycopg://"):
+        return ExecutionRepository(value)
+    raise RuntimeError(
+        f"Execution storage is Postgres-only. Use a PostgreSQL URL, for example {DEFAULT_POSTGRES_URL}."
     )
 
 

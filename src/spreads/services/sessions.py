@@ -4,6 +4,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from spreads.services.analysis import build_session_summary
+from spreads.services.execution import list_session_execution_attempts
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
 from spreads.services.live_pipelines import parse_live_session_id
 from spreads.storage.factory import (
@@ -296,6 +297,11 @@ def get_session_detail(
             None if latest_run is None else str(latest_run.get("slot_at") or latest_run.get("scheduled_for") or ""),
             None if current_cycle is None else str(current_cycle.get("generated_at") or ""),
         )
+        executions = list_session_execution_attempts(
+            db_target=db_target,
+            session_id=session_id,
+            limit=25,
+        )
 
         return {
             "session_id": session_id,
@@ -310,6 +316,7 @@ def get_session_detail(
             "slot_runs": slot_runs,
             "alerts": alerts,
             "events": events,
+            "executions": executions,
             "analysis": analysis,
         }
     finally:

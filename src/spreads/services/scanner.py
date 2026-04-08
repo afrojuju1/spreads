@@ -840,13 +840,30 @@ class AlpacaClient:
             "User-Agent": "call-credit-spread-scanner/1.0",
         }
 
-    def get_json(self, base_url: str, path: str, params: dict[str, Any] | None = None) -> Any:
+    def request_json(
+        self,
+        method: str,
+        base_url: str,
+        path: str,
+        params: dict[str, Any] | None = None,
+        body: Any | None = None,
+    ) -> Any:
         query = ""
         if params:
             filtered = {k: v for k, v in params.items() if v not in (None, "")}
             query = "?" + urllib.parse.urlencode(filtered)
         url = f"{base_url}{path}{query}"
-        request = urllib.request.Request(url, headers=self.headers)
+        request_headers = dict(self.headers)
+        request_data = None
+        if body is not None:
+            request_headers["Content-Type"] = "application/json"
+            request_data = json.dumps(body).encode("utf-8")
+        request = urllib.request.Request(
+            url,
+            headers=request_headers,
+            data=request_data,
+            method=method.upper(),
+        )
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 return json.load(response)
@@ -855,6 +872,55 @@ class AlpacaClient:
             raise RuntimeError(f"Alpaca request failed: {exc.code} {exc.reason} for {url}\n{body}") from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(f"Failed to reach Alpaca for {url}: {exc.reason}") from exc
+
+    def get_json(self, base_url: str, path: str, params: dict[str, Any] | None = None) -> Any:
+        return self.request_json("GET", base_url, path, params=params)
+
+    def post_json(
+        self,
+        base_url: str,
+        path: str,
+        body: Any,
+        params: dict[str, Any] | None = None,
+    ) -> Any:
+        return self.request_json("POST", base_url, path, params=params, body=body)
+
+    def submit_order(self, payload: dict[str, Any]) -> dict[str, Any]:
+        response = self.post_json(self.trading_base_url, "/v2/orders", payload)
+        if not isinstance(response, dict):
+            raise RuntimeError("Unexpected Alpaca order submission response shape")
+        return response
+
+    def get_order(self, order_id: str, *, nested: bool = False) -> dict[str, Any]:
+        response = self.get_json(
+            self.trading_base_url,
+            f"/v2/orders/{order_id}",
+            {"nested": "true" if nested else None},
+        )
+        if not isinstance(response, dict):
+            raise RuntimeError("Unexpected Alpaca order response shape")
+        return response
+
+    def list_account_activities(
+        self,
+        *,
+        activity_type: str = "FILL",
+        date: str | None = None,
+        page_size: int | None = None,
+        direction: str | None = None,
+    ) -> list[dict[str, Any]]:
+        response = self.get_json(
+            self.trading_base_url,
+            f"/v2/account/activities/{activity_type}",
+            {
+                "date": date,
+                "page_size": page_size,
+                "direction": direction,
+            },
+        )
+        if not isinstance(response, list):
+            raise RuntimeError("Unexpected Alpaca account activity response shape")
+        return [dict(item) for item in response if isinstance(item, dict)]
 
     def list_optionable_underlyings(self) -> list[dict[str, Any]]:
         payload = self.get_json(

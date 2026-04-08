@@ -5,6 +5,12 @@ import argparse
 from spreads.runtime.config import default_database_url
 from spreads.storage.factory import build_job_repository
 
+DEFAULT_AUTO_EXECUTION_POLICY = {
+    "enabled": True,
+    "mode": "top_board",
+    "quantity": 1,
+}
+
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Seed default ARQ-managed job definitions.")
@@ -36,6 +42,7 @@ def seed_definitions(db: str) -> list[str]:
                     "allow_off_hours": False,
                     "session_start_offset_minutes": -5,
                     "session_end_offset_minutes": 5,
+                    "execution_policy": dict(DEFAULT_AUTO_EXECUTION_POLICY),
                 },
                 "singleton_scope": "explore_10_combined_0dte_auto",
             },
@@ -58,6 +65,7 @@ def seed_definitions(db: str) -> list[str]:
                     "allow_off_hours": False,
                     "session_start_offset_minutes": -5,
                     "session_end_offset_minutes": 5,
+                    "execution_policy": dict(DEFAULT_AUTO_EXECUTION_POLICY),
                 },
                 "singleton_scope": "explore_10_combined_weekly_auto",
             },
@@ -80,6 +88,7 @@ def seed_definitions(db: str) -> list[str]:
                     "allow_off_hours": False,
                     "session_start_offset_minutes": -5,
                     "session_end_offset_minutes": 5,
+                    "execution_policy": dict(DEFAULT_AUTO_EXECUTION_POLICY),
                 },
                 "singleton_scope": "explore_10_combined_core_auto",
             },

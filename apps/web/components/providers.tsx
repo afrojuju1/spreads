@@ -193,6 +193,29 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
         tone: status === "succeeded" ? "success" : "error",
       };
     }
+    case "execution.attempt.updated": {
+      const status = readText(payload.status) ?? "updated";
+      const symbol = readText(payload.underlying_symbol) ?? "execution";
+      const sessionId = readText(payload.session_id);
+      return {
+        id: `${event.topic}:${event.entity_id}:${status}`,
+        title: `Execution ${humanizeToken(status)}`,
+        body:
+          readText(payload.message) ??
+          `${symbol} execution is now ${humanizeToken(status).toLowerCase()}.`,
+        href: sessionId ? buildSessionHref(sessionId) : "/",
+        summary: `Execution ${symbol} ${humanizeToken(status)}`,
+        timestamp: event.timestamp,
+        tone:
+          status === "filled"
+            ? "success"
+            : ["rejected", "failed"].includes(status)
+              ? "error"
+              : ["canceled", "done_for_day", "expired"].includes(status)
+                ? "warning"
+                : "info",
+      };
+    }
     default:
       return null;
   }
@@ -277,6 +300,12 @@ function GlobalRealtimeBridge({
         }
         break;
       case "post_market.analysis.updated":
+        queryClient.invalidateQueries({ queryKey: ["sessions"] });
+        if (sessionId) {
+          queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
+        }
+        break;
+      case "execution.attempt.updated":
         queryClient.invalidateQueries({ queryKey: ["sessions"] });
         if (sessionId) {
           queryClient.invalidateQueries({ queryKey: ["session", sessionId] });

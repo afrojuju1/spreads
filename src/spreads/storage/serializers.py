@@ -9,6 +9,11 @@ from spreads.storage.collector_models import (
     CollectorCycleEventModel,
     CollectorCycleModel,
 )
+from spreads.storage.execution_models import (
+    ExecutionAttemptModel,
+    ExecutionFillModel,
+    ExecutionOrderModel,
+)
 from spreads.storage.generator_job_models import GeneratorJobModel
 from spreads.storage.job_models import JobDefinitionModel, JobLeaseModel, JobRunModel
 from spreads.storage.models import OptionQuoteEventModel, ScanCandidateModel, ScanRunModel
@@ -19,6 +24,9 @@ from spreads.storage.records import (
     CollectorCycleCandidateRecord,
     CollectorCycleEventRecord,
     CollectorCycleRecord,
+    ExecutionAttemptRecord,
+    ExecutionFillRecord,
+    ExecutionOrderRecord,
     GeneratorJobRecord,
     JobDefinitionRecord,
     JobLeaseRecord,
@@ -227,6 +235,85 @@ def to_generator_job_record(model: GeneratorJobModel) -> GeneratorJobRecord:
         request=dict(model.request_json or {}),
         result=None if model.result_json is None else dict(model.result_json),
         error_text=model.error_text,
+    )
+
+
+def to_execution_attempt_record(model: ExecutionAttemptModel) -> ExecutionAttemptRecord:
+    return ExecutionAttemptRecord(
+        execution_attempt_id=model.execution_attempt_id,
+        session_id=model.session_id,
+        session_date=render_value(model.session_date),
+        label=model.label,
+        cycle_id=model.cycle_id,
+        candidate_id=model.candidate_id,
+        bucket=model.bucket,
+        candidate_generated_at=render_value(model.candidate_generated_at),
+        run_id=model.run_id,
+        job_run_id=model.job_run_id,
+        underlying_symbol=model.underlying_symbol,
+        strategy=model.strategy,
+        expiration_date=render_value(model.expiration_date),
+        short_symbol=model.short_symbol,
+        long_symbol=model.long_symbol,
+        quantity=model.quantity,
+        limit_price=model.limit_price,
+        requested_at=render_value(model.requested_at),
+        submitted_at=render_value(model.submitted_at),
+        completed_at=render_value(model.completed_at),
+        status=model.status,
+        broker=model.broker,
+        broker_order_id=model.broker_order_id,
+        client_order_id=model.client_order_id,
+        request=dict(model.request_json or {}),
+        candidate=dict(model.candidate_json or {}),
+        error_text=model.error_text,
+    )
+
+
+def to_execution_order_record(model: ExecutionOrderModel) -> ExecutionOrderRecord:
+    return ExecutionOrderRecord(
+        execution_order_id=model.execution_order_id,
+        execution_attempt_id=model.execution_attempt_id,
+        broker=model.broker,
+        broker_order_id=model.broker_order_id,
+        parent_broker_order_id=model.parent_broker_order_id,
+        client_order_id=model.client_order_id,
+        order_status=model.order_status,
+        order_type=model.order_type,
+        time_in_force=model.time_in_force,
+        order_class=model.order_class,
+        side=model.side,
+        symbol=model.symbol,
+        leg_symbol=model.leg_symbol,
+        leg_side=model.leg_side,
+        position_intent=model.position_intent,
+        quantity=model.quantity,
+        limit_price=model.limit_price,
+        filled_qty=model.filled_qty,
+        filled_avg_price=model.filled_avg_price,
+        submitted_at=render_value(model.submitted_at),
+        updated_at=render_value(model.updated_at),
+        order=dict(model.order_json or {}),
+    )
+
+
+def to_execution_fill_record(model: ExecutionFillModel) -> ExecutionFillRecord:
+    return ExecutionFillRecord(
+        execution_fill_id=model.execution_fill_id,
+        execution_attempt_id=model.execution_attempt_id,
+        execution_order_id=model.execution_order_id,
+        broker=model.broker,
+        broker_fill_id=model.broker_fill_id,
+        broker_order_id=model.broker_order_id,
+        symbol=model.symbol,
+        side=model.side,
+        fill_type=model.fill_type,
+        quantity=model.quantity,
+        cumulative_quantity=model.cumulative_quantity,
+        remaining_quantity=model.remaining_quantity,
+        price=model.price,
+        filled_at=render_value(model.filled_at),
+        fill=dict(model.fill_json or {}),
     )
 
 

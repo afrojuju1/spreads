@@ -256,3 +256,79 @@ class GeneratorJobRecord(RecordMapping):
     request: dict[str, Any]
     result: dict[str, Any] | None
     error_text: str | None
+
+
+@dataclass(frozen=True)
+class ExecutionAttemptRecord(RecordMapping):
+    execution_attempt_id: str
+    session_id: str
+    session_date: str
+    label: str
+    cycle_id: str | None
+    candidate_id: int | None
+    bucket: str | None
+    candidate_generated_at: str | None
+    run_id: str | None
+    job_run_id: str | None
+    underlying_symbol: str
+    strategy: str
+    expiration_date: str
+    short_symbol: str
+    long_symbol: str
+    quantity: int
+    limit_price: float
+    requested_at: str
+    submitted_at: str | None
+    completed_at: str | None
+    status: str
+    broker: str
+    broker_order_id: str | None
+    client_order_id: str | None
+    request: dict[str, Any]
+    candidate: dict[str, Any]
+    error_text: str | None
+
+
+@dataclass(frozen=True)
+class ExecutionOrderRecord(RecordMapping):
+    execution_order_id: int
+    execution_attempt_id: str
+    broker: str
+    broker_order_id: str
+    parent_broker_order_id: str | None
+    client_order_id: str | None
+    order_status: str
+    order_type: str | None
+    time_in_force: str | None
+    order_class: str | None
+    side: str | None
+    symbol: str | None
+    leg_symbol: str | None
+    leg_side: str | None
+    position_intent: str | None
+    quantity: float | None
+    limit_price: float | None
+    filled_qty: float | None
+    filled_avg_price: float | None
+    submitted_at: str | None
+    updated_at: str
+    order: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ExecutionFillRecord(RecordMapping):
+    execution_fill_id: int
+    execution_attempt_id: str
+    execution_order_id: int | None
+    broker: str
+    broker_fill_id: str
+    broker_order_id: str
+    symbol: str
+    side: str | None
+    fill_type: str | None
+    quantity: float
+    cumulative_quantity: float | None
+    remaining_quantity: float | None
+    price: float | None
+    filled_at: str
+    fill: dict[str, Any]

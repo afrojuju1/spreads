@@ -255,6 +255,25 @@ class CollectorRepository:
             for candidate, cycle in rows
         ]
 
+    def get_candidate(self, candidate_id: int) -> CollectorCycleCandidateRecord | None:
+        statement = (
+            select(CollectorCycleCandidateModel, CollectorCycleModel)
+            .join(CollectorCycleModel, CollectorCycleCandidateModel.cycle_id == CollectorCycleModel.cycle_id)
+            .where(CollectorCycleCandidateModel.candidate_id == candidate_id)
+            .limit(1)
+        )
+        with self.session_factory() as session:
+            row = session.execute(statement).first()
+        if row is None:
+            return None
+        candidate, cycle = row
+        return to_collector_cycle_candidate_record(
+            candidate,
+            label=cycle.label,
+            session_date=cycle.session_date,
+            generated_at=cycle.generated_at,
+        )
+
     def list_session_candidates(
         self,
         *,
