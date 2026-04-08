@@ -7,6 +7,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { CheckCircle2, LoaderCircle, TriangleAlert, XCircle } from "lucide-react";
+import { isString, startCase, take, trim } from "lodash-es";
 import {
   createContext,
   useContext,
@@ -55,11 +56,11 @@ const RealtimeActivityContext = createContext<RealtimeActivityContextValue>({
 });
 
 function readText(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+  return isString(value) && trim(value) !== "" ? trim(value) : undefined;
 }
 
 function humanizeToken(value: string): string {
-  return value.replaceAll("_", " ");
+  return startCase(value);
 }
 
 function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null {
@@ -371,7 +372,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     }
     seenNoticeIdsRef.current.add(notice.id);
     setLatestSummary(notice.summary);
-    setNotices((current) => [notice, ...current].slice(0, MAX_NOTICES));
+    setNotices((current) => take([notice, ...current], MAX_NOTICES));
     const timer = window.setTimeout(() => dismissNotice(notice.id), NOTICE_TTL_MS);
     noticeTimersRef.current.set(notice.id, timer);
   };

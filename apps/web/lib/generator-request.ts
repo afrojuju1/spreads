@@ -1,3 +1,15 @@
+import {
+  head,
+  isArray,
+  isBoolean,
+  isFinite,
+  isNumber,
+  isString,
+  pickBy,
+  toNumber,
+  toUpper,
+  trim,
+} from "lodash-es";
 import { z } from "zod";
 
 export type GeneratorPageSearchParams = Record<string, string | string[] | undefined>;
@@ -36,28 +48,28 @@ const generatorJobRequestSchema = z.object({
 });
 
 function firstValue(value: string | string[] | undefined): string | undefined {
-  if (Array.isArray(value)) {
-    return value[0];
+  if (isArray(value)) {
+    return head(value);
   }
   return value;
 }
 
 function parseOptionalNumber(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) {
+  if (isNumber(value) && isFinite(value)) {
     return value;
   }
-  if (typeof value !== "string" || value.trim() === "") {
+  if (!isString(value) || trim(value) === "") {
     return undefined;
   }
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
+  const parsed = toNumber(value);
+  return isFinite(parsed) ? parsed : undefined;
 }
 
 function parseBoolean(value: unknown): boolean | undefined {
-  if (typeof value === "boolean") {
+  if (isBoolean(value)) {
     return value;
   }
-  if (typeof value !== "string") {
+  if (!isString(value)) {
     return undefined;
   }
   if (value === "true") {
@@ -74,19 +86,19 @@ export function normalizeGeneratorJobRequestRecord(
 ): GeneratorJobRequestPayload {
   return generatorJobRequestSchema.parse({
     symbol:
-      typeof request.symbol === "string" && request.symbol.trim() !== ""
-        ? request.symbol.trim().toUpperCase()
+      isString(request.symbol) && trim(request.symbol) !== ""
+        ? toUpper(trim(request.symbol))
         : DEFAULT_GENERATOR_REQUEST.symbol,
     profile:
-      typeof request.profile === "string" && request.profile.trim() !== ""
+      isString(request.profile) && trim(request.profile) !== ""
         ? request.profile
         : DEFAULT_GENERATOR_REQUEST.profile,
     strategy:
-      typeof request.strategy === "string" && request.strategy.trim() !== ""
+      isString(request.strategy) && trim(request.strategy) !== ""
         ? request.strategy
         : DEFAULT_GENERATOR_REQUEST.strategy,
     greeks_source:
-      typeof request.greeks_source === "string" && request.greeks_source.trim() !== ""
+      isString(request.greeks_source) && trim(request.greeks_source) !== ""
         ? request.greeks_source
         : DEFAULT_GENERATOR_REQUEST.greeks_source,
     top: parseOptionalNumber(request.top) ?? DEFAULT_GENERATOR_REQUEST.top,
@@ -101,7 +113,9 @@ export function parseGeneratorPageRequest(
   searchParams: GeneratorPageSearchParams,
 ): GeneratorJobRequestPayload {
   return generatorJobRequestSchema.parse({
-    symbol: firstValue(searchParams.symbol)?.trim().toUpperCase() || DEFAULT_GENERATOR_REQUEST.symbol,
+    symbol: firstValue(searchParams.symbol)
+      ? toUpper(trim(firstValue(searchParams.symbol) ?? ""))
+      : DEFAULT_GENERATOR_REQUEST.symbol,
     profile: firstValue(searchParams.profile) || DEFAULT_GENERATOR_REQUEST.profile,
     strategy: firstValue(searchParams.strategy) || DEFAULT_GENERATOR_REQUEST.strategy,
     greeks_source: firstValue(searchParams.greeks_source) || DEFAULT_GENERATOR_REQUEST.greeks_source,
@@ -116,22 +130,22 @@ export function parseGeneratorPageRequest(
 
 export function buildGeneratorFormHref(request: GeneratorJobRequestPayload): string {
   const params = new URLSearchParams();
-  params.set("symbol", request.symbol);
-  params.set("profile", request.profile);
-  params.set("strategy", request.strategy);
-  params.set("greeks_source", request.greeks_source);
-  params.set("top", String(request.top));
-  if (request.min_credit !== undefined) {
-    params.set("min_credit", String(request.min_credit));
-  }
-  if (request.short_delta_max !== undefined) {
-    params.set("short_delta_max", String(request.short_delta_max));
-  }
-  if (request.short_delta_target !== undefined) {
-    params.set("short_delta_target", String(request.short_delta_target));
-  }
-  if (request.allow_off_hours) {
-    params.set("allow_off_hours", "true");
+  const values = pickBy(
+    {
+      symbol: request.symbol,
+      profile: request.profile,
+      strategy: request.strategy,
+      greeks_source: request.greeks_source,
+      top: request.top,
+      min_credit: request.min_credit,
+      short_delta_max: request.short_delta_max,
+      short_delta_target: request.short_delta_target,
+      allow_off_hours: request.allow_off_hours ? "true" : undefined,
+    },
+    (value) => value !== undefined,
+  );
+  for (const [key, value] of Object.entries(values)) {
+    params.set(key, String(value));
   }
   return `/generator?${params.toString()}`;
 }
