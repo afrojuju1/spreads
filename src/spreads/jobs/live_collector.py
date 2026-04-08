@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import time as time_module
 from dataclasses import asdict
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from typing import Any, Callable
 
 from spreads.common import env_or_die, load_local_env
@@ -108,6 +108,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Run even outside regular market hours.",
     )
     parser.add_argument(
+        "--session-start-offset-minutes",
+        type=int,
+        default=0,
+        help="Minutes relative to the 9:30 ET open when collection can begin. Default: 0",
+    )
+    parser.add_argument(
+        "--session-end-offset-minutes",
+        type=int,
+        default=0,
+        help="Minutes relative to the 4:00 ET close when collection should stop. Default: 0",
+    )
+    parser.add_argument(
         "--history-db",
         default=default_database_url(),
         help=argparse.SUPPRESS,
@@ -128,6 +140,24 @@ def market_is_open(now: datetime | None = None) -> bool:
         return False
     current_time = current.time()
     return time(9, 30) <= current_time < time(16, 0)
+
+
+def collection_window_is_open(
+    *,
+    now: datetime | None = None,
+    session_start_offset_minutes: int = 0,
+    session_end_offset_minutes: int = 0,
+) -> bool:
+    current = datetime.now(NEW_YORK) if now is None else now.astimezone(NEW_YORK)
+    if current.weekday() >= 5:
+        return False
+    session_start = current.replace(hour=9, minute=30, second=0, microsecond=0) + timedelta(
+        minutes=session_start_offset_minutes
+    )
+    session_end = current.replace(hour=16, minute=0, second=0, microsecond=0) + timedelta(
+        minutes=session_end_offset_minutes
+    )
+    return session_start <= current <= session_end
 
 
 def build_scanner_args(args: argparse.Namespace) -> argparse.Namespace:
@@ -699,9 +729,13 @@ def run_collection(
     iterations_completed = 0
     try:
         for iteration in range(args.iterations):
+            iteration_started_at = time_module.monotonic()
             if heartbeat is not None:
                 heartbeat()
-            if not args.allow_off_hours and not market_is_open():
+            if not args.allow_off_hours and not collection_window_is_open(
+                session_start_offset_minutes=int(getattr(args, "session_start_offset_minutes", 0)),
+                session_end_offset_minutes=int(getattr(args, "session_end_offset_minutes", 0)),
+            ):
                 if emit_output:
                     print("Market closed during collection window. Stopping.")
                 break
@@ -807,7 +841,10 @@ def run_collection(
                     quote_event_count=quote_event_count,
                 )
             if iteration < args.iterations - 1:
-                time_module.sleep(max(args.interval_seconds, 1))
+                elapsed_seconds = time_module.monotonic() - iteration_started_at
+                sleep_seconds = max(float(max(args.interval_seconds, 1)) - elapsed_seconds, 0.0)
+                if sleep_seconds > 0:
+                    time_module.sleep(sleep_seconds)
                 if heartbeat is not None:
                     heartbeat()
     finally:

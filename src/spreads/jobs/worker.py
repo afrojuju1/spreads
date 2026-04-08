@@ -6,22 +6,34 @@ import os
 import socket
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 import redis.asyncio as redis_async
 
 from spreads.events import publish_global_event_async
 from spreads.jobs.live_collector import build_collection_args, run_collection
+from spreads.jobs.pipelines import build_live_session_catalog
 from spreads.jobs.orchestration import (
     build_redis_settings,
     default_redis_url,
     singleton_lease_key,
     worker_runtime_lease_key,
 )
-from spreads.services.analysis import build_analysis_args, run_post_close_analysis
+from spreads.services.analysis import (
+    build_analysis_args,
+    resolve_date,
+    run_post_close_analysis,
+)
 from spreads.services.generator import build_generator_args, generate_symbol_ideas, generator_job_channel
 from spreads.services.post_market_analysis import parse_args as parse_post_market_args
 from spreads.services.post_market_analysis import run_post_market_analysis
-from spreads.storage import build_generator_job_repository, build_job_repository, default_database_url
+from spreads.storage import (
+    build_collector_repository,
+    build_generator_job_repository,
+    build_job_repository,
+    build_post_market_repository,
+    default_database_url,
+)
 
 WORKER_HEARTBEAT_SECONDS = 30
 WORKER_LEASE_TTL_SECONDS = 90
@@ -32,7 +44,13 @@ def worker_name() -> str:
     return f"{socket.gethostname()}:{os.getpid()}"
 
 
-def compact_analysis_result(result: dict[str, Any]) -> dict[str, Any]:
+class ManagedJobFailure(RuntimeError):
+    def __init__(self, message: str, *, result: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.result = result
+
+
+def _compact_single_analysis_result(result: dict[str, Any]) -> dict[str, Any]:
     summary = result["summary"]
     outcomes = summary["outcomes"]
     return {
@@ -47,7 +65,21 @@ def compact_analysis_result(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def compact_post_market_result(result: dict[str, Any]) -> dict[str, Any]:
+def compact_analysis_result(result: dict[str, Any]) -> dict[str, Any]:
+    if result.get("mode") == "planner":
+        return {
+            "mode": "planner",
+            "session_date": result["session_date"],
+            "expected_labels": list(result.get("expected_labels") or []),
+            "realized_labels": list(result.get("realized_labels") or []),
+            "runs": [_compact_single_analysis_result(item) for item in result.get("runs", [])],
+            "skipped_labels": [dict(item) for item in result.get("skipped_labels", [])],
+            "failed_labels": [dict(item) for item in result.get("failed_labels", [])],
+        }
+    return _compact_single_analysis_result(result)
+
+
+def _compact_single_post_market_result(result: dict[str, Any]) -> dict[str, Any]:
     diagnostics = result["diagnostics"]
     bucket_performance = diagnostics["bucket_performance"]
     return {
@@ -62,6 +94,20 @@ def compact_post_market_result(result: dict[str, Any]) -> dict[str, Any]:
         "board_count": bucket_performance["board"]["count"],
         "watchlist_count": bucket_performance["watchlist"]["count"],
     }
+
+
+def compact_post_market_result(result: dict[str, Any]) -> dict[str, Any]:
+    if result.get("mode") == "planner":
+        return {
+            "mode": "planner",
+            "session_date": result["session_date"],
+            "expected_labels": list(result.get("expected_labels") or []),
+            "realized_labels": list(result.get("realized_labels") or []),
+            "runs": [_compact_single_post_market_result(item) for item in result.get("runs", [])],
+            "skipped_labels": [dict(item) for item in result.get("skipped_labels", [])],
+            "failed_labels": [dict(item) for item in result.get("failed_labels", [])],
+        }
+    return _compact_single_post_market_result(result)
 
 
 async def _heartbeat_runtime(job_store: Any, runtime_owner: str) -> None:
@@ -178,6 +224,23 @@ async def _publish_post_market_event(
         pass
 
 
+async def _publish_post_market_planner_events(ctx: dict[str, Any], result: dict[str, Any]) -> None:
+    for run in result.get("runs", []):
+        await _publish_post_market_event(
+            ctx,
+            analysis_run_id=str(run["analysis_run_id"]),
+            payload=run,
+            timestamp=datetime.now(UTC),
+        )
+    for skipped in result.get("skipped_labels", []):
+        await _publish_post_market_event(
+            ctx,
+            analysis_run_id=str(skipped["analysis_run_id"]),
+            payload=skipped,
+            timestamp=datetime.now(UTC),
+        )
+
+
 async def _mark_running(job_store: Any, job_run_id: str, runtime_owner: str) -> None:
     now = datetime.now(UTC)
     run_record = await asyncio.to_thread(
@@ -211,6 +274,178 @@ def _sync_job_heartbeat(
             expires_in_seconds=JOB_LEASE_TTL_SECONDS,
             state={"kind": "singleton_job"},
         )
+
+
+def build_live_session_catalog_for_date(
+    *,
+    db_target: str,
+    job_store: Any,
+    session_date: str,
+) -> dict[str, Any]:
+    collector_store = build_collector_repository(db_target)
+    try:
+        definitions = job_store.list_job_definitions(enabled_only=True, job_type="live_collector")
+        realized_labels = collector_store.list_session_labels(session_date=session_date)
+    finally:
+        collector_store.close()
+    return build_live_session_catalog(definitions, realized_labels=realized_labels)
+
+
+def _planner_analysis_payload(
+    base_payload: dict[str, Any],
+    *,
+    db_target: str,
+    label: str,
+) -> dict[str, Any]:
+    return {
+        "db": db_target,
+        "date": str(base_payload.get("date", "today")),
+        "label": label,
+        "replay_profit_target": base_payload.get("replay_profit_target", 0.5),
+        "replay_stop_multiple": base_payload.get("replay_stop_multiple", 2.0),
+    }
+
+
+def run_post_close_analysis_targets(
+    *,
+    db_target: str,
+    job_store: Any,
+    payload: dict[str, Any],
+    heartbeat: Any,
+) -> dict[str, Any]:
+    session_date = resolve_date(str(payload.get("date", "today")))
+    catalog = build_live_session_catalog_for_date(
+        db_target=db_target,
+        job_store=job_store,
+        session_date=session_date,
+    )
+    runs: list[dict[str, Any]] = []
+    skipped_labels: list[dict[str, Any]] = []
+    failed_labels: list[dict[str, Any]] = []
+
+    for pipeline in catalog["pipelines"]:
+        heartbeat()
+        label = str(pipeline["label"])
+        if not pipeline["has_session"]:
+            skipped_labels.append({"label": label, "reason": "missing_session"})
+            continue
+        try:
+            args = build_analysis_args(
+                _planner_analysis_payload(payload, db_target=db_target, label=label)
+            )
+            runs.append(run_post_close_analysis(args, emit_output=False))
+        except Exception as exc:
+            failed_labels.append({"label": label, "error": str(exc)})
+
+    result = {
+        "mode": "planner",
+        "session_date": session_date,
+        "expected_labels": list(catalog["expected_labels"]),
+        "realized_labels": list(catalog["realized_labels"]),
+        "runs": runs,
+        "skipped_labels": skipped_labels,
+        "failed_labels": failed_labels,
+    }
+    if failed_labels:
+        labels = ", ".join(item["label"] for item in failed_labels)
+        raise ManagedJobFailure(
+            f"Post-close analysis failed for labels: {labels}",
+            result=result,
+        )
+    return result
+
+
+def run_post_market_analysis_targets(
+    *,
+    db_target: str,
+    job_store: Any,
+    parent_job_run_id: str,
+    payload: dict[str, Any],
+    heartbeat: Any,
+) -> dict[str, Any]:
+    session_date = resolve_date(str(payload.get("date", "today")))
+    catalog = build_live_session_catalog_for_date(
+        db_target=db_target,
+        job_store=job_store,
+        session_date=session_date,
+    )
+    repository = build_post_market_repository(db_target)
+    runs: list[dict[str, Any]] = []
+    skipped_labels: list[dict[str, Any]] = []
+    failed_labels: list[dict[str, Any]] = []
+    try:
+        for pipeline in catalog["pipelines"]:
+            heartbeat()
+            label = str(pipeline["label"])
+            analysis_run_id = f"{parent_job_run_id}:{label}:{uuid4().hex[:8]}"
+            if not pipeline["has_session"]:
+                created_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+                repository.begin_run(
+                    analysis_run_id=analysis_run_id,
+                    job_run_id=None,
+                    session_date=session_date,
+                    label=label,
+                    created_at=created_at,
+                )
+                repository.skip_run(
+                    analysis_run_id=analysis_run_id,
+                    completed_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                    error_text="No persisted collector cycles were available for this session label.",
+                )
+                skipped_labels.append(
+                    {
+                        "analysis_run_id": analysis_run_id,
+                        "label": label,
+                        "session_date": session_date,
+                        "status": "skipped",
+                        "reason": "missing_session",
+                    }
+                )
+                continue
+            try:
+                args = parse_post_market_args(
+                    [
+                        "--db",
+                        db_target,
+                        "--date",
+                        session_date,
+                        "--label",
+                        label,
+                        "--replay-profit-target",
+                        str(payload.get("replay_profit_target", 0.5)),
+                        "--replay-stop-multiple",
+                        str(payload.get("replay_stop_multiple", 2.0)),
+                    ]
+                )
+                runs.append(
+                    run_post_market_analysis(
+                        args,
+                        emit_output=False,
+                        analysis_run_id=analysis_run_id,
+                        job_run_id=None,
+                    )
+                )
+            except Exception as exc:
+                failed_labels.append({"label": label, "error": str(exc)})
+    finally:
+        repository.close()
+
+    result = {
+        "mode": "planner",
+        "session_date": session_date,
+        "expected_labels": list(catalog["expected_labels"]),
+        "realized_labels": list(catalog["realized_labels"]),
+        "runs": runs,
+        "skipped_labels": skipped_labels,
+        "failed_labels": failed_labels,
+    }
+    if failed_labels:
+        labels = ", ".join(item["label"] for item in failed_labels)
+        raise ManagedJobFailure(
+            f"Post-market analysis failed for labels: {labels}",
+            result=result,
+        )
+    return result
 
 
 async def _execute_managed_job(
@@ -276,6 +511,7 @@ async def _execute_managed_job(
         await _publish_job_run_event(ctx, completed_record)
         return compact
     except Exception as exc:
+        partial_result = exc.result if isinstance(exc, ManagedJobFailure) else None
         failed_record = await asyncio.to_thread(
             job_store.update_job_run_status,
             job_run_id=job_run_id,
@@ -283,6 +519,7 @@ async def _execute_managed_job(
             worker_name=runtime_owner,
             finished_at=datetime.now(UTC),
             heartbeat_at=datetime.now(UTC),
+            result=None if partial_result is None else compact_result(partial_result),
             error_text=str(exc),
         )
         await _publish_job_run_event(ctx, failed_record)
@@ -320,18 +557,28 @@ async def run_post_close_analysis_job(
     job_run_id: str,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
+    database_url = ctx["database_url"]
+    job_store = ctx["job_store"]
+
     def runner(heartbeat: Any) -> dict[str, Any]:
-        heartbeat()
-        args = build_analysis_args(
-            {
-                "db": default_database_url(),
-                "date": payload.get("date", "today"),
-                "label": payload["label"],
-                "replay_profit_target": payload.get("replay_profit_target", 0.5),
-                "replay_stop_multiple": payload.get("replay_stop_multiple", 2.0),
-            }
+        if payload.get("label"):
+            heartbeat()
+            args = build_analysis_args(
+                {
+                    "db": database_url,
+                    "date": payload.get("date", "today"),
+                    "label": payload["label"],
+                    "replay_profit_target": payload.get("replay_profit_target", 0.5),
+                    "replay_stop_multiple": payload.get("replay_stop_multiple", 2.0),
+                }
+            )
+            return run_post_close_analysis(args, emit_output=False)
+        return run_post_close_analysis_targets(
+            db_target=database_url,
+            job_store=job_store,
+            payload=payload,
+            heartbeat=heartbeat,
         )
-        return run_post_close_analysis(args, emit_output=False)
 
     enriched_payload = dict(payload)
     enriched_payload["job_type"] = "post_close_analysis"
@@ -351,27 +598,38 @@ async def run_post_market_analysis_job(
     job_run_id: str,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
+    database_url = ctx["database_url"]
+    job_store = ctx["job_store"]
+
     def runner(heartbeat: Any) -> dict[str, Any]:
-        heartbeat()
-        args = parse_post_market_args(
-            [
-                "--db",
-                default_database_url(),
-                "--date",
-                str(payload.get("date", "today")),
-                "--label",
-                str(payload["label"]),
-                "--replay-profit-target",
-                str(payload.get("replay_profit_target", 0.5)),
-                "--replay-stop-multiple",
-                str(payload.get("replay_stop_multiple", 2.0)),
-            ]
-        )
-        return run_post_market_analysis(
-            args,
-            emit_output=False,
-            analysis_run_id=job_run_id,
-            job_run_id=job_run_id,
+        if payload.get("label"):
+            heartbeat()
+            args = parse_post_market_args(
+                [
+                    "--db",
+                    database_url,
+                    "--date",
+                    str(payload.get("date", "today")),
+                    "--label",
+                    str(payload["label"]),
+                    "--replay-profit-target",
+                    str(payload.get("replay_profit_target", 0.5)),
+                    "--replay-stop-multiple",
+                    str(payload.get("replay_stop_multiple", 2.0)),
+                ]
+            )
+            return run_post_market_analysis(
+                args,
+                emit_output=False,
+                analysis_run_id=job_run_id,
+                job_run_id=job_run_id,
+            )
+        return run_post_market_analysis_targets(
+            db_target=database_url,
+            job_store=job_store,
+            parent_job_run_id=job_run_id,
+            payload=payload,
+            heartbeat=heartbeat,
         )
 
     enriched_payload = dict(payload)
@@ -385,6 +643,9 @@ async def run_post_market_analysis_job(
             runner=runner,
             compact_result=compact_post_market_result,
         )
+        if result.get("mode") == "planner":
+            await _publish_post_market_planner_events(ctx, result)
+            return result
         await _publish_post_market_event(
             ctx,
             analysis_run_id=str(result["analysis_run_id"]),
@@ -392,6 +653,22 @@ async def run_post_market_analysis_job(
             timestamp=datetime.now(UTC),
         )
         return result
+    except ManagedJobFailure as exc:
+        partial_result = compact_post_market_result(exc.result) if exc.result is not None else None
+        if partial_result is not None and partial_result.get("mode") == "planner":
+            await _publish_post_market_planner_events(ctx, partial_result)
+        await _publish_post_market_event(
+            ctx,
+            analysis_run_id=job_run_id,
+            payload={
+                "analysis_run_id": job_run_id,
+                "session_date": payload.get("date", "today"),
+                "status": "failed",
+                "failed_labels": [] if partial_result is None else partial_result.get("failed_labels", []),
+            },
+            timestamp=datetime.now(UTC),
+        )
+        raise
     except Exception:
         await _publish_post_market_event(
             ctx,

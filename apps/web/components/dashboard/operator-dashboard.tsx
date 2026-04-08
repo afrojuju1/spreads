@@ -31,6 +31,7 @@ import {
   getJobsHealth,
   getLive,
   getLiveEvents,
+  getSessionLabels,
   getSessionSummary,
   getSessionTuning,
 } from "@/lib/api";
@@ -365,13 +366,7 @@ export function OperatorDashboard({ section }: { section: DashboardSection }) {
     .map((job) => job.singleton_scope ?? job.job_key)
     .filter(Boolean) as string[] | undefined;
 
-  const sessionLabels = jobsQuery.data?.jobs
-    .filter((job) => job.job_type === "post_close_analysis")
-    .map((job) => String(job.payload.label ?? ""))
-    .filter(Boolean);
-
   const resolvedLiveLabel = liveLabel || liveLabels?.[0] || "";
-  const resolvedSessionLabel = sessionLabel || sessionLabels?.[0] || "";
 
   const liveQuery = useQuery({
     queryKey: ["live", resolvedLiveLabel],
@@ -388,6 +383,14 @@ export function OperatorDashboard({ section }: { section: DashboardSection }) {
 
   const resolvedSessionDate =
     sessionDate || liveQuery.data?.session_date || new Date().toISOString().slice(0, 10);
+  const sessionLabelsQuery = useQuery({
+    queryKey: ["session-labels", resolvedSessionDate],
+    queryFn: () => getSessionLabels(resolvedSessionDate),
+    enabled: Boolean(resolvedSessionDate),
+    refetchInterval: 60_000,
+  });
+  const sessionLabels = sessionLabelsQuery.data?.labels ?? [];
+  const resolvedSessionLabel = sessionLabel || sessionLabels[0] || "";
 
   const summaryQuery = useQuery({
     queryKey: ["session-summary", resolvedSessionDate, resolvedSessionLabel],

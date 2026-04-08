@@ -130,6 +130,31 @@ class PostMarketAnalysisRepository:
             session.refresh(row)
             return to_post_market_analysis_run_record(row)
 
+    def skip_run(
+        self,
+        *,
+        analysis_run_id: str,
+        completed_at: str | datetime,
+        error_text: str,
+    ) -> PostMarketAnalysisRunRecord:
+        completed_at_dt = parse_datetime(completed_at)
+        if completed_at_dt is None:
+            raise ValueError("completed_at is required")
+        with self.session_scope() as session:
+            row = session.get(PostMarketAnalysisRunModel, analysis_run_id)
+            if row is None:
+                raise ValueError(f"Unknown analysis_run_id: {analysis_run_id}")
+            row.status = "skipped"
+            row.completed_at = completed_at_dt
+            row.summary_json = None
+            row.diagnostics_json = None
+            row.recommendations_json = None
+            row.report_markdown = None
+            row.error_text = error_text
+            session.flush()
+            session.refresh(row)
+            return to_post_market_analysis_run_record(row)
+
     def get_run(self, analysis_run_id: str) -> PostMarketAnalysisRunRecord | None:
         with self.session_factory() as session:
             row = session.get(PostMarketAnalysisRunModel, analysis_run_id)

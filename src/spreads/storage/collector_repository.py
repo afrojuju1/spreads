@@ -172,6 +172,24 @@ class CollectorRepository:
             rows = session.scalars(statement).all()
         return [to_collector_cycle_record(row) for row in rows]
 
+    def list_session_labels(
+        self,
+        *,
+        session_date: str | None = None,
+        limit: int | None = None,
+    ) -> list[str]:
+        statement = select(CollectorCycleModel.label).distinct()
+        if session_date:
+            statement = statement.where(
+                CollectorCycleModel.session_date == date.fromisoformat(session_date)
+            )
+        statement = statement.order_by(CollectorCycleModel.label.asc())
+        if limit is not None:
+            statement = statement.limit(limit)
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return [str(row) for row in rows]
+
     def list_cycle_candidates(
         self,
         cycle_id: str,

@@ -170,6 +170,14 @@ const jobsHealthSchema = z
   })
   .passthrough();
 
+const sessionLabelsResponseSchema = z.object({
+  session_date: z.string(),
+  expected_labels: z.array(z.string()),
+  realized_labels: z.array(z.string()),
+  unexpected_realized_labels: z.array(z.string()).optional(),
+  labels: z.array(z.string()),
+});
+
 const sessionIdeaSchema = z
   .object({
     underlying_symbol: z.string(),
@@ -449,6 +457,7 @@ export type AlertRecord = z.infer<typeof alertSchema>;
 export type JobDefinition = z.infer<typeof jobDefinitionSchema>;
 export type JobRun = z.infer<typeof jobRunSchema>;
 export type LiveResponse = z.infer<typeof liveResponseSchema>;
+export type SessionLabelsResponse = z.infer<typeof sessionLabelsResponseSchema>;
 export type SessionIdea = z.infer<typeof sessionIdeaSchema>;
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 export type SessionTuning = z.infer<typeof sessionTuningSchema>;
@@ -563,6 +572,10 @@ export function getJobRuns(limit = 8) {
 
 export function getJobsHealth() {
   return fetchApi("jobs/health", jobsHealthSchema);
+}
+
+export function getSessionLabels(sessionDate: string) {
+  return fetchApi(`sessions/${sessionDate}/labels`, sessionLabelsResponseSchema);
 }
 
 export function getSessionSummary(sessionDate: string, label: string) {

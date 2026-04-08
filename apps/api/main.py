@@ -20,10 +20,12 @@ import redis.asyncio as redis_async
 
 from spreads.domain.profiles import UNIVERSE_PRESETS
 from spreads.events import GLOBAL_EVENTS_CHANNEL, publish_global_event_async
+from spreads.jobs.pipelines import build_live_session_catalog
 from spreads.services.analysis import (
     build_signal_tuning,
     build_session_outcomes,
     build_session_summary,
+    resolve_date,
     render_session_summary_markdown,
 )
 from spreads.services.generator import (
@@ -436,6 +438,29 @@ def get_history_run_candidates(run_id: str, db: str | None = None) -> dict[str, 
         }
     finally:
         store.close()
+
+
+@app.get("/sessions/{session_date}/labels")
+def get_session_labels(session_date: str, db: str | None = None) -> dict[str, Any]:
+    resolved_session_date = resolve_date(session_date)
+    db_target = resolve_db(db)
+    collector_store = build_collector_repository(db_target)
+    job_store = build_job_repository(db_target)
+    try:
+        catalog = build_live_session_catalog(
+            job_store.list_job_definitions(enabled_only=True, job_type="live_collector"),
+            realized_labels=collector_store.list_session_labels(session_date=resolved_session_date),
+        )
+        return {
+            "session_date": resolved_session_date,
+            "expected_labels": catalog["expected_labels"],
+            "realized_labels": catalog["realized_labels"],
+            "unexpected_realized_labels": catalog["unexpected_realized_labels"],
+            "labels": catalog["labels"],
+        }
+    finally:
+        job_store.close()
+        collector_store.close()
 
 
 @app.get("/sessions/{session_date}/{label}/outcomes")
