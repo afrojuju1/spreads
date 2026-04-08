@@ -9,6 +9,7 @@ import { useMemo, useState } from "react";
 import { DataTable } from "@/components/dashboard/data-table";
 import {
   buildCandidateRows,
+  CandidateOperatorActions,
   CANDIDATE_COLUMNS,
   EmptyState,
   LoadingState,
@@ -335,6 +336,8 @@ export function GeneratorJobDetail({ generatorJobId }: { generatorJobId: string 
                       <MetricTile label="return / risk" value={selectedCandidate.return_on_risk ? `${(selectedCandidate.return_on_risk * 100).toFixed(1)}%` : "—"} />
                     </div>
                   </div>
+                  <Separator />
+                  <CandidateOperatorActions job={job} selectedCandidate={selectedCandidate} />
                   <Separator />
                   <ReasonBlock title="Board notes" items={selectedCandidate.board_notes ?? []} />
                   <ReasonBlock title="Setup reasons" items={selectedCandidate.setup_reasons ?? []} />

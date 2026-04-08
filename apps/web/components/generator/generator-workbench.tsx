@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ColumnDef } from "@tanstack/react-table";
 import { LoaderCircle, Sparkles } from "lucide-react";
+import { uniq } from "lodash-es";
 import { startTransition, useDeferredValue, useMemo, useState } from "react";
 
 import { DataTable } from "@/components/dashboard/data-table";
@@ -21,8 +22,11 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import {
   CandidateDetail,
+  createGeneratorCandidateAction,
   GeneratorResponse,
+  GeneratorJob,
   createGeneratorJob,
+  getJobs,
   getGeneratorJobs,
   getGeneratorJob,
   getGeneratorSymbols,
@@ -680,6 +684,8 @@ export function GeneratorWorkbench({
                     </div>
                   </div>
                   <Separator />
+                  <CandidateOperatorActions job={activeJob} selectedCandidate={selectedCandidate} />
+                  <Separator />
                   <ReasonBlock title="Board notes" items={selectedCandidate.board_notes ?? []} />
                   <ReasonBlock title="Setup reasons" items={selectedCandidate.setup_reasons ?? []} />
                   <ReasonBlock title="Calendar reasons" items={selectedCandidate.calendar_reasons ?? []} />
@@ -696,6 +702,173 @@ export function GeneratorWorkbench({
         </div>
       </div>
     </main>
+  );
+}
+
+export function CandidateOperatorActions({
+  job,
+  selectedCandidate,
+}: {
+  job: GeneratorJob | null | undefined;
+  selectedCandidate: CandidateDetail | null;
+}) {
+  const queryClient = useQueryClient();
+  const [selectedLiveLabel, setSelectedLiveLabel] = useState("");
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+
+  const jobsQuery = useQuery({
+    queryKey: ["jobs"],
+    queryFn: getJobs,
+    staleTime: 60_000,
+  });
+
+  const liveLabels = useMemo(
+    () =>
+      uniq(
+        (jobsQuery.data?.jobs ?? [])
+          .filter((item) => item.job_type === "live_collector")
+          .map((item) => item.singleton_scope ?? item.job_key)
+          .filter((label): label is string => Boolean(label)),
+      ),
+    [jobsQuery.data?.jobs],
+  );
+
+  const resolvedLiveLabel =
+    selectedLiveLabel && liveLabels.includes(selectedLiveLabel)
+      ? selectedLiveLabel
+      : (liveLabels[0] ?? "");
+
+  const actionMutation = useMutation({
+    mutationFn: (payload: {
+      action: "create_alert" | "promote_live";
+      live_label?: string;
+      bucket?: "board" | "watchlist";
+      strategy: string;
+      short_symbol: string;
+      long_symbol: string;
+    }) => createGeneratorCandidateAction(job?.generator_job_id ?? "", payload),
+    onSuccess: (result) => {
+      if (result.action === "create_alert") {
+        queryClient.invalidateQueries({ queryKey: ["alerts-latest"] });
+        return;
+      }
+      queryClient.invalidateQueries({ queryKey: ["live"] });
+      queryClient.invalidateQueries({ queryKey: ["live-events"] });
+    },
+    onSettled: () => {
+      setPendingAction(null);
+    },
+  });
+
+  if (!job || !selectedCandidate) {
+    return null;
+  }
+
+  const runAction = (action: "create_alert" | "promote_live", bucket?: "board" | "watchlist") => {
+    const actionKey = bucket ? `${action}:${bucket}` : action;
+    setPendingAction(actionKey);
+    actionMutation.mutate({
+      action,
+      bucket,
+      live_label: resolvedLiveLabel || undefined,
+      strategy: selectedCandidate.strategy,
+      short_symbol: selectedCandidate.short_symbol,
+      long_symbol: selectedCandidate.long_symbol,
+    });
+  };
+
+  const noLiveWorkflow = !resolvedLiveLabel;
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+          Operator actions
+        </div>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          Push this candidate into the current live workflow or emit a manual alert from the persisted job result.
+        </p>
+      </div>
+      <Field label="Live workflow">
+        <Select
+          value={resolvedLiveLabel || undefined}
+          onValueChange={(value) => setSelectedLiveLabel(value ?? "")}
+          disabled={!liveLabels.length}
+        >
+          <SelectTrigger className="rounded-2xl bg-background/70">
+            <SelectValue placeholder={jobsQuery.isLoading ? "Loading live workflows..." : "No live workflow available"} />
+          </SelectTrigger>
+          <SelectContent>
+            {liveLabels.map((label) => (
+              <SelectItem key={label} value={label}>
+                {label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={actionMutation.isPending || noLiveWorkflow}
+          onClick={() => runAction("create_alert")}
+        >
+          {pendingAction === "create_alert" ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
+          Create alert
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={actionMutation.isPending || noLiveWorkflow}
+          onClick={() => runAction("promote_live", "watchlist")}
+        >
+          {pendingAction === "promote_live:watchlist" ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
+          Add to watchlist
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          disabled={actionMutation.isPending || noLiveWorkflow}
+          onClick={() => runAction("promote_live", "board")}
+        >
+          {pendingAction === "promote_live:board" ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
+          Promote to board
+        </Button>
+      </div>
+      {noLiveWorkflow ? (
+        <div className="text-sm text-muted-foreground">
+          No live collector workflow is available yet. Run a live collector cycle first, then these actions will attach to its label.
+        </div>
+      ) : null}
+      {jobsQuery.isError ? (
+        <div className="text-sm text-rose-700">
+          {jobsQuery.error instanceof Error ? jobsQuery.error.message : "Could not load live workflows."}
+        </div>
+      ) : null}
+      {actionMutation.isError ? (
+        <div className="text-sm text-rose-700">
+          {actionMutation.error instanceof Error
+            ? actionMutation.error.message
+            : "Could not apply the selected operator action."}
+        </div>
+      ) : null}
+      {actionMutation.data ? (
+        <div
+          className={cn(
+            "rounded-2xl border px-3 py-3 text-sm",
+            actionMutation.data.changed
+              ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+              : "border-amber-200 bg-amber-50 text-amber-950",
+          )}
+        >
+          {actionMutation.data.message}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

@@ -410,6 +410,23 @@ const generatorJobsResponseSchema = z.object({
   jobs: z.array(generatorJobSchema),
 });
 
+const generatorJobActionResponseSchema = z
+  .object({
+    action: z.enum(["create_alert", "promote_live"]),
+    changed: z.boolean(),
+    message: z.string(),
+    live_label: z.string().nullable().optional(),
+    bucket: z.enum(["board", "watchlist"]).nullable().optional(),
+    cycle_id: z.string().nullable().optional(),
+    event_type: z.string().nullable().optional(),
+    symbol: z.string().nullable().optional(),
+    generated_at: z.string().nullable().optional(),
+    board_count: z.number().optional(),
+    watchlist_count: z.number().optional(),
+    alert: alertSchema.nullable().optional(),
+  })
+  .passthrough();
+
 const generatorJobEventSchema = z.object({
   type: z.enum(["snapshot", "running", "completed", "failed", "error"]),
   detail: z.string().optional(),
@@ -438,6 +455,7 @@ export type SessionTuning = z.infer<typeof sessionTuningSchema>;
 export type TuningBucket = z.infer<typeof tuningBucketSchema>;
 export type GeneratorResponse = z.infer<typeof generatorResponseSchema>;
 export type GeneratorJob = z.infer<typeof generatorJobSchema>;
+export type GeneratorJobActionResponse = z.infer<typeof generatorJobActionResponseSchema>;
 export type GeneratorJobEvent = z.infer<typeof generatorJobEventSchema>;
 export type GeneratorDiagnostics = z.infer<typeof generatorDiagnosticsSchema>;
 export type GeneratorStrategyComparison = z.infer<typeof generatorStrategyComparisonSchema>;
@@ -446,6 +464,14 @@ export type GlobalRealtimeEvent = z.infer<typeof globalRealtimeEventSchema>;
 export type UniversesResponse = z.infer<typeof universesResponseSchema>;
 export type GeneratorSymbolSuggestion = z.infer<typeof generatorSymbolSuggestionSchema>;
 export type GeneratorSymbolsResponse = z.infer<typeof generatorSymbolsResponseSchema>;
+export type GeneratorCandidateActionRequest = {
+  action: "create_alert" | "promote_live";
+  strategy: string;
+  short_symbol: string;
+  long_symbol: string;
+  live_label?: string;
+  bucket?: "board" | "watchlist";
+};
 
 async function fetchApi<T>(
   path: string,
@@ -565,6 +591,17 @@ export function getGeneratorJobs(filters?: {
 
 export function getGeneratorJob(generatorJobId: string) {
   return fetchApi(`generator/jobs/${generatorJobId}`, generatorJobSchema);
+}
+
+export function createGeneratorCandidateAction(
+  generatorJobId: string,
+  payload: GeneratorCandidateActionRequest,
+) {
+  return postApi(
+    `generator/jobs/${generatorJobId}/actions`,
+    generatorJobActionResponseSchema,
+    payload,
+  );
 }
 
 export function parseGeneratorJobEvent(payload: string) {

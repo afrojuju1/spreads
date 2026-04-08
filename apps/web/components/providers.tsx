@@ -107,6 +107,26 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
         tone: status === "failed" ? "error" : status === "skipped" ? "warning" : "info",
       };
     }
+    case "live.cycle.updated": {
+      const label = readText(payload.live_label) ?? readText(payload.label) ?? "live";
+      const symbol = readText(payload.symbol) ?? "candidate";
+      const bucket = readText(payload.bucket);
+      const title =
+        bucket === "board"
+          ? `Live board updated for ${label}`
+          : bucket === "watchlist"
+            ? `Watchlist updated for ${label}`
+            : `Live workflow updated for ${label}`;
+      return {
+        id: `${event.topic}:${event.entity_id}`,
+        title,
+        body: readText(payload.message) ?? `${symbol} was applied to the ${label} live workflow.`,
+        href: "/live",
+        summary: `Live ${label} updated`,
+        timestamp: event.timestamp,
+        tone: "info",
+      };
+    }
     case "job.run.updated": {
       const status = readText(payload.status);
       if (!status || !["failed", "skipped"].includes(status)) {
@@ -210,6 +230,10 @@ function GlobalRealtimeBridge({
         break;
       case "alert.event.created":
         queryClient.invalidateQueries({ queryKey: ["alerts-latest"] });
+        break;
+      case "live.cycle.updated":
+        queryClient.invalidateQueries({ queryKey: ["live"] });
+        queryClient.invalidateQueries({ queryKey: ["live-events"] });
         break;
       case "job.run.updated":
         queryClient.invalidateQueries({ queryKey: ["jobs"] });

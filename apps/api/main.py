@@ -5,7 +5,7 @@ import json
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -32,6 +32,10 @@ from spreads.services.generator import (
     generator_job_channel,
     generator_result_summary,
     list_generator_symbol_suggestions,
+)
+from spreads.services.operator_actions import (
+    apply_generator_live_action,
+    create_manual_generator_alert,
 )
 from spreads.jobs.orchestration import (
     SCHEDULER_RUNTIME_LEASE_KEY,
@@ -66,6 +70,15 @@ class GeneratorRequest(BaseModel):
 
 class GeneratorJobRequest(GeneratorRequest):
     pass
+
+
+class GeneratorCandidateActionRequest(BaseModel):
+    action: Literal["create_alert", "promote_live"]
+    strategy: str = Field(..., min_length=1)
+    short_symbol: str = Field(..., min_length=1)
+    long_symbol: str = Field(..., min_length=1)
+    live_label: str | None = Field(default=None, min_length=1)
+    bucket: Literal["board", "watchlist"] | None = None
 
 
 def resolve_db(db: str | None) -> str:
@@ -205,6 +218,49 @@ def get_generator_job(generator_job_id: str, db: str | None = None) -> dict[str,
         if job is None:
             raise HTTPException(status_code=404, detail="Generator job not found")
         return _generator_job_payload(job)
+    finally:
+        store.close()
+
+
+@app.post("/generator/jobs/{generator_job_id}/actions")
+def apply_generator_job_action(
+    generator_job_id: str,
+    payload: GeneratorCandidateActionRequest,
+    db: str | None = None,
+) -> dict[str, Any]:
+    db_target = resolve_db(db)
+    store = build_generator_job_repository(db_target)
+    try:
+        job = store.get_job(generator_job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Generator job not found")
+        try:
+            if payload.action == "create_alert":
+                if not payload.live_label:
+                    raise HTTPException(status_code=400, detail="live_label is required to create an alert")
+                return create_manual_generator_alert(
+                    job=job,
+                    live_label=payload.live_label,
+                    strategy=payload.strategy,
+                    short_symbol=payload.short_symbol,
+                    long_symbol=payload.long_symbol,
+                    db_target=db_target,
+                )
+            if not payload.live_label:
+                raise HTTPException(status_code=400, detail="live_label is required to update live workflow")
+            if payload.bucket is None:
+                raise HTTPException(status_code=400, detail="bucket is required to update live workflow")
+            return apply_generator_live_action(
+                job=job,
+                live_label=payload.live_label,
+                bucket=payload.bucket,
+                strategy=payload.strategy,
+                short_symbol=payload.short_symbol,
+                long_symbol=payload.long_symbol,
+                db_target=db_target,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         store.close()
 
