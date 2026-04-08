@@ -221,3 +221,19 @@ class JobLeaseRecord(RecordMapping):
     acquired_at: str
     expires_at: str
     lease_state: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class PostMarketAnalysisRunRecord(RecordMapping):
+    analysis_run_id: str
+    job_run_id: str | None
+    session_date: str
+    label: str
+    created_at: str
+    completed_at: str | None
+    status: str
+    summary: dict[str, Any] | None
+    diagnostics: dict[str, Any] | None
+    recommendations: list[dict[str, Any]] | None
+    report_markdown: str | None
+    error_text: str | None

@@ -11,6 +11,7 @@ from spreads.storage.collector_models import (
 )
 from spreads.storage.job_models import JobDefinitionModel, JobLeaseModel, JobRunModel
 from spreads.storage.models import OptionQuoteEventModel, ScanCandidateModel, ScanRunModel
+from spreads.storage.post_market_models import PostMarketAnalysisRunModel
 from spreads.storage.records import (
     AlertEventRecord,
     AlertStateRecord,
@@ -21,6 +22,7 @@ from spreads.storage.records import (
     JobLeaseRecord,
     JobRunRecord,
     OptionQuoteEventRecord,
+    PostMarketAnalysisRunRecord,
     ScanCandidateRecord,
     ScanRunRecord,
     SessionTopRunRecord,
@@ -186,6 +188,25 @@ def to_job_lease_record(model: JobLeaseModel) -> JobLeaseRecord:
         acquired_at=render_value(model.acquired_at),
         expires_at=render_value(model.expires_at),
         lease_state=dict(model.lease_state_json or {}),
+    )
+
+
+def to_post_market_analysis_run_record(model: PostMarketAnalysisRunModel) -> PostMarketAnalysisRunRecord:
+    recommendations = model.recommendations_json
+    rendered_recommendations = None if recommendations is None else list(recommendations)
+    return PostMarketAnalysisRunRecord(
+        analysis_run_id=model.analysis_run_id,
+        job_run_id=model.job_run_id,
+        session_date=render_value(model.session_date),
+        label=model.label,
+        created_at=render_value(model.created_at),
+        completed_at=render_value(model.completed_at),
+        status=model.status,
+        summary=None if model.summary_json is None else dict(model.summary_json),
+        diagnostics=None if model.diagnostics_json is None else dict(model.diagnostics_json),
+        recommendations=rendered_recommendations,
+        report_markdown=model.report_markdown,
+        error_text=model.error_text,
     )
 
 

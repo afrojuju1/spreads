@@ -10,6 +10,7 @@ from spreads.storage import alert_models as storage_alert_models  # noqa: F401
 from spreads.storage import calendar_models as storage_calendar_models  # noqa: F401
 from spreads.storage import collector_models as storage_collector_models  # noqa: F401
 from spreads.storage import job_models as storage_job_models  # noqa: F401
+from spreads.storage import post_market_models as storage_post_market_models  # noqa: F401
 from spreads.storage.db import Base
 from spreads.storage import models as storage_models  # noqa: F401
 

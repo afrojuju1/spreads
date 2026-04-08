@@ -14,6 +14,8 @@ from spreads.jobs.orchestration import (
     worker_runtime_lease_key,
 )
 from spreads.services.analysis import build_analysis_args, run_post_close_analysis
+from spreads.services.post_market_analysis import parse_args as parse_post_market_args
+from spreads.services.post_market_analysis import run_post_market_analysis
 from spreads.storage import build_job_repository, default_database_url
 
 WORKER_HEARTBEAT_SECONDS = 30
@@ -37,6 +39,23 @@ def compact_analysis_result(result: dict[str, Any]) -> dict[str, Any]:
         "run_count": summary["run_overview"]["run_count"],
         "quote_event_count": summary["quote_overview"]["quote_event_count"],
         "event_count": summary["event_overview"]["event_count"],
+    }
+
+
+def compact_post_market_result(result: dict[str, Any]) -> dict[str, Any]:
+    diagnostics = result["diagnostics"]
+    bucket_performance = diagnostics["bucket_performance"]
+    return {
+        "analysis_run_id": result["analysis_run_id"],
+        "session_date": result["session_date"],
+        "label": result["label"],
+        "status": result["status"],
+        "overall_verdict": diagnostics["overall_verdict"],
+        "strength_count": len(diagnostics["strengths"]),
+        "problem_count": len(diagnostics["problems"]),
+        "recommendation_count": len(result["recommendations"]),
+        "board_count": bucket_performance["board"]["count"],
+        "watchlist_count": bucket_performance["watchlist"]["count"],
     }
 
 
@@ -241,8 +260,49 @@ async def run_post_close_analysis_job(
     )
 
 
+async def run_post_market_analysis_job(
+    ctx: dict[str, Any],
+    job_key: str,
+    job_run_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    def runner(heartbeat: Any) -> dict[str, Any]:
+        heartbeat()
+        args = parse_post_market_args(
+            [
+                "--db",
+                default_database_url(),
+                "--date",
+                str(payload.get("date", "today")),
+                "--label",
+                str(payload["label"]),
+                "--replay-profit-target",
+                str(payload.get("replay_profit_target", 0.5)),
+                "--replay-stop-multiple",
+                str(payload.get("replay_stop_multiple", 2.0)),
+            ]
+        )
+        return run_post_market_analysis(
+            args,
+            emit_output=False,
+            analysis_run_id=job_run_id,
+            job_run_id=job_run_id,
+        )
+
+    enriched_payload = dict(payload)
+    enriched_payload["job_type"] = "post_market_analysis"
+    return await _execute_managed_job(
+        ctx,
+        job_key=job_key,
+        job_run_id=job_run_id,
+        payload=enriched_payload,
+        runner=runner,
+        compact_result=compact_post_market_result,
+    )
+
+
 class WorkerSettings:
-    functions = [run_live_collector_job, run_post_close_analysis_job]
+    functions = [run_live_collector_job, run_post_close_analysis_job, run_post_market_analysis_job]
     redis_settings = build_redis_settings(default_redis_url())
     on_startup = startup
     on_shutdown = shutdown

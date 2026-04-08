@@ -84,6 +84,34 @@ def seed_definitions(db: str) -> list[str]:
                 },
                 "singleton_scope": None,
             },
+            {
+                "job_key": "post_market_analysis:explore_10_combined_0dte_auto",
+                "job_type": "post_market_analysis",
+                "enabled": True,
+                "schedule_type": "market_close_plus_minutes",
+                "schedule": {"minutes": 45},
+                "payload": {
+                    "date": "today",
+                    "label": "explore_10_combined_0dte_auto",
+                    "replay_profit_target": 0.5,
+                    "replay_stop_multiple": 2.0,
+                },
+                "singleton_scope": None,
+            },
+            {
+                "job_key": "post_market_analysis:explore_10_combined_weekly_auto",
+                "job_type": "post_market_analysis",
+                "enabled": True,
+                "schedule_type": "market_close_plus_minutes",
+                "schedule": {"minutes": 45},
+                "payload": {
+                    "date": "today",
+                    "label": "explore_10_combined_weekly_auto",
+                    "replay_profit_target": 0.5,
+                    "replay_stop_multiple": 2.0,
+                },
+                "singleton_scope": None,
+            },
         ]
         for definition in definitions:
             repo.upsert_job_definition(

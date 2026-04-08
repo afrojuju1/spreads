@@ -79,6 +79,7 @@ async def enqueue_due_jobs(job_store: Any, redis: Any) -> dict[str, Any]:
         task_name = {
             "live_collector": "run_live_collector_job",
             "post_close_analysis": "run_post_close_analysis_job",
+            "post_market_analysis": "run_post_market_analysis_job",
         }.get(definition.job_type)
         if task_name is None:
             await asyncio.to_thread(

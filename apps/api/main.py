@@ -24,6 +24,7 @@ from spreads.storage import (
     build_collector_repository,
     build_history_store,
     build_job_repository,
+    build_post_market_repository,
     default_database_url,
 )
 
@@ -358,3 +359,43 @@ def get_analysis_report(
     )
     content = render_session_summary_markdown(summary)
     return {"session_date": session_date, "label": label, "content": content}
+
+
+@app.get("/post-market/runs")
+def list_post_market_runs(
+    session_date: str | None = None,
+    label: str | None = None,
+    status: str | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    db: str | None = None,
+) -> dict[str, Any]:
+    store = build_post_market_repository(resolve_db(db))
+    try:
+        rows = store.list_runs(session_date=session_date, label=label, status=status, limit=limit)
+        return {"analysis_runs": [row.to_dict() for row in rows]}
+    finally:
+        store.close()
+
+
+@app.get("/post-market/runs/{analysis_run_id}")
+def get_post_market_run(analysis_run_id: str, db: str | None = None) -> dict[str, Any]:
+    store = build_post_market_repository(resolve_db(db))
+    try:
+        row = store.get_run(analysis_run_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Post-market analysis run not found")
+        return row.to_dict()
+    finally:
+        store.close()
+
+
+@app.get("/post-market/{session_date}/{label}")
+def get_post_market_analysis(session_date: str, label: str, db: str | None = None) -> dict[str, Any]:
+    store = build_post_market_repository(resolve_db(db))
+    try:
+        row = store.get_latest_run(label=label, session_date=session_date)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Post-market analysis not found")
+        return row.to_dict()
+    finally:
+        store.close()

@@ -25,6 +25,7 @@ dependencies = [
 spreads-scan = "spreads.cli.scan:main"
 spreads-collect = "spreads.cli.collect:main"
 spreads-analyze = "spreads.cli.analyze:main"
+spreads-post-market-analyze = "spreads.services.post_market_analysis:main"
 spreads-scheduler = "spreads.jobs.scheduler:main"
 spreads-seed-jobs = "spreads.jobs.seed:main"
 
