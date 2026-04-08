@@ -276,6 +276,71 @@ const generatorReasonSchema = z
   })
   .passthrough();
 
+const generatorDiagnosticGroupSchema = z
+  .object({
+    bucket: z.string(),
+    reason_count: z.number(),
+    reasons: z.array(generatorReasonSchema),
+  })
+  .passthrough();
+
+const generatorRecommendationSchema = z
+  .object({
+    code: z.string(),
+    title: z.string(),
+    action: z.string(),
+    reason: z.string(),
+    priority: z.string().optional(),
+  })
+  .passthrough();
+
+const generatorPreferredPlayExplanationSchema = z
+  .object({
+    summary: z.string(),
+    strategy: z.string().optional(),
+    short_symbol: z.string().optional(),
+    long_symbol: z.string().optional(),
+    short_strike: z.number().optional(),
+    long_strike: z.number().optional(),
+    quality_score: z.number().optional(),
+    score_margin_vs_runner_up: z.number().nullable().optional(),
+    setup_status: z.string().nullable().optional(),
+    calendar_status: z.string().nullable().optional(),
+    midpoint_credit: z.number().optional(),
+    return_on_risk: z.number().nullable().optional(),
+  })
+  .passthrough();
+
+const generatorDiagnosticsSchema = z
+  .object({
+    overview: z
+      .object({
+        status: z.string(),
+        symbol: z.string(),
+        profile: z.string(),
+        strategy: z.string(),
+        playability_verdict: z.string(),
+      })
+      .passthrough(),
+    groups: z.array(generatorDiagnosticGroupSchema),
+  })
+  .passthrough();
+
+const generatorStrategyComparisonSchema = z
+  .object({
+    strategy: z.string(),
+    run_id: z.string(),
+    setup_status: z.string().nullable().optional(),
+    candidate_count: z.number(),
+    quoted_contract_count: z.number(),
+    alpaca_delta_contract_count: z.number(),
+    delta_contract_count: z.number(),
+    local_delta_contract_count: z.number(),
+    blocker_codes: z.array(z.string()),
+    blocker_summary: z.array(generatorReasonSchema),
+  })
+  .passthrough();
+
 const generatorStrategyRunSchema = z
   .object({
     strategy: z.string(),
@@ -304,8 +369,22 @@ const generatorResponseSchema = z
     top_candidates: z.array(candidateDetailSchema),
     strategy_runs: z.array(generatorStrategyRunSchema),
     rejection_summary: z.array(generatorReasonSchema),
+    diagnostics: generatorDiagnosticsSchema,
+    strategy_comparison: z.array(generatorStrategyComparisonSchema),
+    preferred_play_explanation: generatorPreferredPlayExplanationSchema.nullable().optional(),
+    recommendations: z.array(generatorRecommendationSchema),
     failures: z.array(z.record(z.string(), z.string())).optional(),
     request: z.record(z.string(), z.unknown()).optional(),
+  })
+  .passthrough();
+
+const generatorJobSummarySchema = z
+  .object({
+    preferred_strategy: z.string().nullable().optional(),
+    preferred_strikes: z.string().nullable().optional(),
+    top_score: z.number().nullable().optional(),
+    candidate_count: z.number(),
+    rejection_count: z.number(),
   })
   .passthrough();
 
@@ -320,14 +399,28 @@ const generatorJobSchema = z
     finished_at: z.string().nullable().optional(),
     request: z.record(z.string(), z.unknown()),
     result: generatorResponseSchema.nullable().optional(),
+    summary: generatorJobSummarySchema,
     error_text: z.string().nullable().optional(),
   })
   .passthrough();
+
+const generatorJobsResponseSchema = z.object({
+  jobs: z.array(generatorJobSchema),
+});
 
 const generatorJobEventSchema = z.object({
   type: z.enum(["snapshot", "running", "completed", "failed", "error"]),
   detail: z.string().optional(),
   job: generatorJobSchema.optional(),
+});
+
+const globalRealtimeEventSchema = z.object({
+  type: z.string(),
+  topic: z.string(),
+  entity_type: z.string(),
+  entity_id: z.string(),
+  timestamp: z.string(),
+  payload: z.record(z.string(), z.unknown()).default({}),
 });
 
 export type CandidateDetail = z.infer<typeof candidateDetailSchema>;
@@ -344,6 +437,10 @@ export type TuningBucket = z.infer<typeof tuningBucketSchema>;
 export type GeneratorResponse = z.infer<typeof generatorResponseSchema>;
 export type GeneratorJob = z.infer<typeof generatorJobSchema>;
 export type GeneratorJobEvent = z.infer<typeof generatorJobEventSchema>;
+export type GeneratorDiagnostics = z.infer<typeof generatorDiagnosticsSchema>;
+export type GeneratorStrategyComparison = z.infer<typeof generatorStrategyComparisonSchema>;
+export type GeneratorRecommendation = z.infer<typeof generatorRecommendationSchema>;
+export type GlobalRealtimeEvent = z.infer<typeof globalRealtimeEventSchema>;
 export type UniversesResponse = z.infer<typeof universesResponseSchema>;
 export type GeneratorSymbolSuggestion = z.infer<typeof generatorSymbolSuggestionSchema>;
 export type GeneratorSymbolsResponse = z.infer<typeof generatorSymbolsResponseSchema>;
@@ -476,6 +573,14 @@ export function createGeneratorJob(payload: {
   return postApi("generator/jobs", generatorJobSchema, payload);
 }
 
+export function getGeneratorJobs(filters?: {
+  symbol?: string;
+  status?: string;
+  limit?: number;
+}) {
+  return fetchApi("generator/jobs", generatorJobsResponseSchema, filters);
+}
+
 export function getGeneratorJob(generatorJobId: string) {
   return fetchApi(`generator/jobs/${generatorJobId}`, generatorJobSchema);
 }
@@ -492,4 +597,18 @@ export function buildGeneratorJobWebSocketUrl(generatorJobId: string) {
     process.env.NEXT_PUBLIC_SPREADS_API_PORT?.trim() ||
     "58080";
   return `${protocol}://${host}:${backendPort}/ws/generator/${generatorJobId}`;
+}
+
+export function parseGlobalRealtimeEvent(payload: string) {
+  return globalRealtimeEventSchema.parse(JSON.parse(payload));
+}
+
+export function buildGlobalEventsWebSocketUrl() {
+  const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+  const host = window.location.hostname;
+  const backendPort =
+    process.env.NEXT_PUBLIC_SPREADS_API_WS_PORT?.trim() ||
+    process.env.NEXT_PUBLIC_SPREADS_API_PORT?.trim() ||
+    "58080";
+  return `${protocol}://${host}:${backendPort}/ws/events`;
 }

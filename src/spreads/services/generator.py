@@ -4,7 +4,7 @@ import argparse
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from threading import Lock
-from typing import Any
+from typing import Any, Mapping
 
 from spreads.common import env_or_die, load_local_env
 from spreads.domain.profiles import UNIVERSE_PRESETS
@@ -26,6 +26,22 @@ OPTIONABLE_SYMBOL_CACHE_TTL = timedelta(minutes=15)
 _optionable_symbol_cache: dict[str, Any] = {"loaded_at": None, "assets": None}
 _optionable_symbol_cache_lock = Lock()
 GENERATOR_JOB_CHANNEL_PREFIX = "generator-job:"
+DIAGNOSTIC_BUCKET_ORDER = [
+    "market_data",
+    "greeks",
+    "setup",
+    "filtering",
+    "candidate_quality",
+]
+REASON_BUCKET_BY_CODE = {
+    "scan_error": "market_data",
+    "no_quoted_contracts": "market_data",
+    "no_usable_greeks": "greeks",
+    "no_delta_qualified_contracts": "greeks",
+    "setup_not_supportive": "setup",
+    "all_candidates_filtered": "filtering",
+    "no_viable_spread": "candidate_quality",
+}
 
 
 def generator_job_channel(generator_job_id: str) -> str:
@@ -270,6 +286,240 @@ def build_no_play_reasons(
     return reasons
 
 
+def diagnostic_bucket_for_reason(reason: Mapping[str, Any]) -> str:
+    return REASON_BUCKET_BY_CODE.get(str(reason.get("code") or ""), "candidate_quality")
+
+
+def build_strategy_comparison(strategy_runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    comparisons: list[dict[str, Any]] = []
+    for run in strategy_runs:
+        setup = run.get("setup") or {}
+        reasons = list(run.get("no_play_reasons") or [])
+        comparisons.append(
+            {
+                "strategy": run["strategy"],
+                "run_id": run["run_id"],
+                "setup_status": setup.get("status"),
+                "candidate_count": int(run.get("candidate_count") or 0),
+                "quoted_contract_count": int(run.get("quoted_contract_count") or 0),
+                "alpaca_delta_contract_count": int(run.get("alpaca_delta_contract_count") or 0),
+                "delta_contract_count": int(run.get("delta_contract_count") or 0),
+                "local_delta_contract_count": int(run.get("local_delta_contract_count") or 0),
+                "blocker_codes": [str(reason.get("code") or "") for reason in reasons],
+                "blocker_summary": [
+                    {
+                        "code": str(reason.get("code") or ""),
+                        "message": str(reason.get("message") or ""),
+                        "severity": str(reason.get("severity") or "info"),
+                    }
+                    for reason in reasons
+                ],
+            }
+        )
+    return comparisons
+
+
+def build_preferred_play_explanation(
+    candidates: list[SpreadCandidate],
+) -> dict[str, Any] | None:
+    if not candidates:
+        return None
+    winner = candidates[0]
+    runner_up = candidates[1] if len(candidates) > 1 else None
+    score_margin = None
+    if runner_up is not None:
+        score_margin = winner.quality_score - runner_up.quality_score
+    parts = [
+        f"{winner.strategy} {winner.short_strike:.2f}/{winner.long_strike:.2f} ranked first",
+        f"with the top quality score of {winner.quality_score:.1f}",
+    ]
+    if score_margin is not None:
+        parts.append(f"and a {score_margin:.1f}-point edge over the next candidate")
+    if winner.setup_status:
+        parts.append(f"while setup was {winner.setup_status}")
+    if winner.calendar_status:
+        parts.append(f"and calendar status was {winner.calendar_status}")
+    return {
+        "summary": ", ".join(parts) + ".",
+        "strategy": winner.strategy,
+        "short_symbol": winner.short_symbol,
+        "long_symbol": winner.long_symbol,
+        "short_strike": winner.short_strike,
+        "long_strike": winner.long_strike,
+        "quality_score": winner.quality_score,
+        "score_margin_vs_runner_up": score_margin,
+        "setup_status": winner.setup_status,
+        "calendar_status": winner.calendar_status,
+        "midpoint_credit": winner.midpoint_credit,
+        "return_on_risk": winner.return_on_risk,
+    }
+
+
+def build_diagnostic_recommendations(
+    *,
+    args: argparse.Namespace,
+    reasons: list[dict[str, Any]],
+    strategy_runs: list[dict[str, Any]],
+    merged_candidates: list[SpreadCandidate],
+) -> list[dict[str, Any]]:
+    if merged_candidates:
+        return [
+            {
+                "code": "play_available",
+                "title": "A playable spread is available now",
+                "action": "Use the preferred play and review the top-ranked alternatives only if execution quality changes.",
+                "reason": "The generator already found at least one candidate that survived the requested filters.",
+                "priority": "info",
+            }
+        ]
+
+    recommendations: list[dict[str, Any]] = []
+    reason_codes = {str(reason.get("code") or "") for reason in reasons}
+
+    if "no_quoted_contracts" in reason_codes:
+        recommendations.append(
+            {
+                "code": "switch_symbol_or_wait",
+                "title": "No tradable contracts were available",
+                "action": "Wait for better market data or try a different symbol with healthier intraday option quotes.",
+                "reason": "No quoted contracts survived in the requested expiry window.",
+                "priority": "high",
+            }
+        )
+
+    if "no_usable_greeks" in reason_codes and args.greeks_source != "local":
+        recommendations.append(
+            {
+                "code": "switch_to_local_greeks",
+                "title": "Use local Greeks enrichment",
+                "action": "Retry with `greeks_source=local` or `auto` if Alpaca Greeks are sparse.",
+                "reason": "Quoted contracts existed, but no usable Greeks survived enrichment.",
+                "priority": "high",
+            }
+        )
+
+    if "no_delta_qualified_contracts" in reason_codes and args.profile == "0dte":
+        recommendations.append(
+            {
+                "code": "widen_profile_to_weekly",
+                "title": "Widen the profile window",
+                "action": "Retry the same symbol with the `weekly` profile to broaden the candidate set.",
+                "reason": "The same-day delta window was too narrow for the available contracts.",
+                "priority": "medium",
+            }
+        )
+
+    if "all_candidates_filtered" in reason_codes:
+        action = (
+            "Retry with a lower minimum credit."
+            if getattr(args, "min_credit", None)
+            else "Relax the most restrictive filter, starting with credit or delta targeting."
+        )
+        recommendations.append(
+            {
+                "code": "relax_candidate_filters",
+                "title": "Relax candidate thresholds",
+                "action": action,
+                "reason": "Contracts and Greeks existed, but every spread failed downstream filters.",
+                "priority": "medium",
+            }
+        )
+
+    if "setup_not_supportive" in reason_codes:
+        recommendations.append(
+            {
+                "code": "wait_for_better_setup",
+                "title": "Wait for a more supportive setup",
+                "action": "Hold the symbol until the setup becomes favorable instead of forcing a trade now.",
+                "reason": "The underlying setup was neutral or unfavorable for the requested side.",
+                "priority": "medium",
+            }
+        )
+
+    if not recommendations:
+        recommendations.append(
+            {
+                "code": "no_actionable_change",
+                "title": "No bounded parameter change stood out",
+                "action": "Review another symbol or rerun later with the same settings.",
+                "reason": "No deterministic adjustment clearly improves this request.",
+                "priority": "low",
+            }
+        )
+    return recommendations[:4]
+
+
+def build_generator_diagnostics(
+    *,
+    args: argparse.Namespace,
+    reasons: list[dict[str, Any]],
+    strategy_runs: list[dict[str, Any]],
+    merged_candidates: list[SpreadCandidate],
+) -> dict[str, Any]:
+    grouped: list[dict[str, Any]] = []
+    for bucket in DIAGNOSTIC_BUCKET_ORDER:
+        bucket_reasons = [reason for reason in reasons if diagnostic_bucket_for_reason(reason) == bucket]
+        if not bucket_reasons:
+            continue
+        grouped.append(
+            {
+                "bucket": bucket,
+                "reason_count": len(bucket_reasons),
+                "reasons": bucket_reasons,
+            }
+        )
+
+    status = "ok" if merged_candidates else "no_play"
+    if merged_candidates:
+        playability_verdict = "play_available"
+    elif any(reason.get("code") == "no_quoted_contracts" for reason in reasons):
+        playability_verdict = "blocked_by_market_data"
+    elif any(reason.get("code") == "no_usable_greeks" for reason in reasons):
+        playability_verdict = "blocked_by_greeks"
+    elif any(reason.get("code") == "setup_not_supportive" for reason in reasons):
+        playability_verdict = "blocked_by_setup"
+    elif any(reason.get("code") == "all_candidates_filtered" for reason in reasons):
+        playability_verdict = "filtered_out"
+    else:
+        playability_verdict = "no_viable_spread"
+
+    return {
+        "overview": {
+            "status": status,
+            "symbol": str(args.symbol).upper(),
+            "profile": args.profile,
+            "strategy": args.strategy,
+            "playability_verdict": playability_verdict,
+        },
+        "groups": grouped,
+        "recommendations": build_diagnostic_recommendations(
+            args=args,
+            reasons=reasons,
+            strategy_runs=strategy_runs,
+            merged_candidates=merged_candidates,
+        ),
+        "strategy_comparison": build_strategy_comparison(strategy_runs),
+        "preferred_play_explanation": build_preferred_play_explanation(merged_candidates),
+    }
+
+
+def generator_result_summary(result: Mapping[str, Any] | None) -> dict[str, Any]:
+    payload = dict(result or {})
+    preferred = payload.get("preferred_play") or {}
+    top_candidates = list(payload.get("top_candidates") or [])
+    rejection_summary = list(payload.get("rejection_summary") or [])
+    preferred_strikes = None
+    if preferred.get("short_strike") is not None and preferred.get("long_strike") is not None:
+        preferred_strikes = f"{float(preferred['short_strike']):.2f} / {float(preferred['long_strike']):.2f}"
+    return {
+        "preferred_strategy": preferred.get("strategy"),
+        "preferred_strikes": preferred_strikes,
+        "top_score": preferred.get("quality_score"),
+        "candidate_count": len(top_candidates),
+        "rejection_count": len(rejection_summary),
+    }
+
+
 def generate_symbol_ideas(args: argparse.Namespace) -> dict[str, Any]:
     load_local_env()
     if not args.symbol:
@@ -365,6 +615,12 @@ def generate_symbol_ideas(args: argparse.Namespace) -> dict[str, Any]:
 
     status = "ok" if merged_candidates else "no_play"
     preferred = None if not merged_candidates else summarize_candidate(merged_candidates[0])
+    diagnostics = build_generator_diagnostics(
+        args=args,
+        reasons=deduped_reasons,
+        strategy_runs=strategy_runs,
+        merged_candidates=merged_candidates,
+    )
     return {
         "status": status,
         "generated_at": generated_at,
@@ -377,6 +633,13 @@ def generate_symbol_ideas(args: argparse.Namespace) -> dict[str, Any]:
         "top_candidates": [summarize_candidate(candidate) for candidate in merged_candidates],
         "strategy_runs": strategy_runs,
         "rejection_summary": deduped_reasons,
+        "diagnostics": {
+            "overview": diagnostics["overview"],
+            "groups": diagnostics["groups"],
+        },
+        "strategy_comparison": diagnostics["strategy_comparison"],
+        "preferred_play_explanation": diagnostics["preferred_play_explanation"],
+        "recommendations": diagnostics["recommendations"],
         "failures": failures_payload,
         "request": {
             "symbol": str(args.symbol).upper(),

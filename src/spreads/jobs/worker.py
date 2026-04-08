@@ -9,6 +9,7 @@ from typing import Any
 
 import redis.asyncio as redis_async
 
+from spreads.events import publish_global_event_async
 from spreads.jobs.live_collector import build_collection_args, run_collection
 from spreads.jobs.orchestration import (
     build_redis_settings,
@@ -124,11 +125,62 @@ async def _publish_generator_job_event(
         "job": job_record.to_dict(),
     }
     await event_bus.publish(generator_job_channel(job_record["generator_job_id"]), json.dumps(payload))
+    try:
+        await publish_global_event_async(
+            event_bus,
+            topic="generator.job.updated",
+            entity_type="generator_job",
+            entity_id=job_record["generator_job_id"],
+            payload=job_record.to_dict(),
+            timestamp=job_record.get("finished_at") or job_record.get("started_at") or job_record["created_at"],
+        )
+    except Exception:
+        pass
+
+
+async def _publish_job_run_event(ctx: dict[str, Any], run_record: Any) -> None:
+    event_bus = ctx.get("event_bus")
+    if event_bus is None:
+        return
+    try:
+        await publish_global_event_async(
+            event_bus,
+            topic="job.run.updated",
+            entity_type="job_run",
+            entity_id=run_record["job_run_id"],
+            payload=run_record.to_dict(),
+            timestamp=run_record.get("finished_at") or run_record.get("heartbeat_at") or run_record["scheduled_for"],
+        )
+    except Exception:
+        pass
+
+
+async def _publish_post_market_event(
+    ctx: dict[str, Any],
+    *,
+    analysis_run_id: str,
+    payload: dict[str, Any],
+    timestamp: str | datetime | None = None,
+) -> None:
+    event_bus = ctx.get("event_bus")
+    if event_bus is None:
+        return
+    try:
+        await publish_global_event_async(
+            event_bus,
+            topic="post_market.analysis.updated",
+            entity_type="post_market_analysis",
+            entity_id=analysis_run_id,
+            payload=payload,
+            timestamp=timestamp,
+        )
+    except Exception:
+        pass
 
 
 async def _mark_running(job_store: Any, job_run_id: str, runtime_owner: str) -> None:
     now = datetime.now(UTC)
-    await asyncio.to_thread(
+    run_record = await asyncio.to_thread(
         job_store.update_job_run_status,
         job_run_id=job_run_id,
         status="running",
@@ -136,6 +188,7 @@ async def _mark_running(job_store: Any, job_run_id: str, runtime_owner: str) -> 
         started_at=now,
         heartbeat_at=now,
     )
+    return run_record
 
 
 def _sync_job_heartbeat(
@@ -186,7 +239,7 @@ async def _execute_managed_job(
         )
         if not acquired:
             result = {"status": "skipped", "reason": "singleton_lease_unavailable"}
-            await asyncio.to_thread(
+            skipped_record = await asyncio.to_thread(
                 job_store.update_job_run_status,
                 job_run_id=job_run_id,
                 status="skipped",
@@ -195,9 +248,11 @@ async def _execute_managed_job(
                 heartbeat_at=datetime.now(UTC),
                 result=result,
             )
+            await _publish_job_run_event(ctx, skipped_record)
             return result
 
-    await _mark_running(job_store, job_run_id, runtime_owner)
+    running_record = await _mark_running(job_store, job_run_id, runtime_owner)
+    await _publish_job_run_event(ctx, running_record)
     try:
         result = await asyncio.to_thread(
             runner,
@@ -209,7 +264,7 @@ async def _execute_managed_job(
             ),
         )
         compact = compact_result(result)
-        await asyncio.to_thread(
+        completed_record = await asyncio.to_thread(
             job_store.update_job_run_status,
             job_run_id=job_run_id,
             status="succeeded",
@@ -218,9 +273,10 @@ async def _execute_managed_job(
             heartbeat_at=datetime.now(UTC),
             result=compact,
         )
+        await _publish_job_run_event(ctx, completed_record)
         return compact
     except Exception as exc:
-        await asyncio.to_thread(
+        failed_record = await asyncio.to_thread(
             job_store.update_job_run_status,
             job_run_id=job_run_id,
             status="failed",
@@ -229,6 +285,7 @@ async def _execute_managed_job(
             heartbeat_at=datetime.now(UTC),
             error_text=str(exc),
         )
+        await _publish_job_run_event(ctx, failed_record)
         raise
     finally:
         if lease_key is not None:
@@ -319,14 +376,35 @@ async def run_post_market_analysis_job(
 
     enriched_payload = dict(payload)
     enriched_payload["job_type"] = "post_market_analysis"
-    return await _execute_managed_job(
-        ctx,
-        job_key=job_key,
-        job_run_id=job_run_id,
-        payload=enriched_payload,
-        runner=runner,
-        compact_result=compact_post_market_result,
-    )
+    try:
+        result = await _execute_managed_job(
+            ctx,
+            job_key=job_key,
+            job_run_id=job_run_id,
+            payload=enriched_payload,
+            runner=runner,
+            compact_result=compact_post_market_result,
+        )
+        await _publish_post_market_event(
+            ctx,
+            analysis_run_id=str(result["analysis_run_id"]),
+            payload=result,
+            timestamp=datetime.now(UTC),
+        )
+        return result
+    except Exception:
+        await _publish_post_market_event(
+            ctx,
+            analysis_run_id=job_run_id,
+            payload={
+                "analysis_run_id": job_run_id,
+                "label": payload.get("label"),
+                "session_date": payload.get("date", "today"),
+                "status": "failed",
+            },
+            timestamp=datetime.now(UTC),
+        )
+        raise
 
 
 async def run_generator_job(

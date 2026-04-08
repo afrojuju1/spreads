@@ -1,9 +1,10 @@
 "use client";
 
-import { useQuery, useMutation } from "@tanstack/react-query";
+import Link from "next/link";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ColumnDef } from "@tanstack/react-table";
 import { LoaderCircle, Sparkles } from "lucide-react";
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 
 import { DataTable } from "@/components/dashboard/data-table";
 import { Badge } from "@/components/ui/badge";
@@ -19,14 +20,12 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import {
-  buildGeneratorJobWebSocketUrl,
   CandidateDetail,
-  GeneratorJob,
   GeneratorResponse,
   createGeneratorJob,
+  getGeneratorJobs,
   getGeneratorJob,
   getGeneratorSymbols,
-  parseGeneratorJobEvent,
 } from "@/lib/api";
 
 type CandidateRow = {
@@ -41,7 +40,7 @@ type CandidateRow = {
   raw: CandidateDetail;
 };
 
-const CANDIDATE_COLUMNS: ColumnDef<CandidateRow>[] = [
+export const CANDIDATE_COLUMNS: ColumnDef<CandidateRow>[] = [
   {
     accessorKey: "strategy",
     header: "Side",
@@ -89,9 +88,9 @@ export function GeneratorWorkbench() {
   const [shortDeltaMax, setShortDeltaMax] = useState("");
   const [shortDeltaTarget, setShortDeltaTarget] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [activeJob, setActiveJob] = useState<GeneratorJob | null>(null);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const deferredSymbol = useDeferredValue(symbol.trim().toUpperCase());
-  const socketRef = useRef<WebSocket | null>(null);
+  const queryClient = useQueryClient();
 
   const symbolSuggestionsQuery = useQuery({
     queryKey: ["generator-symbols", deferredSymbol],
@@ -99,13 +98,29 @@ export function GeneratorWorkbench() {
     staleTime: 15 * 60_000,
   });
 
+  const recentJobsQuery = useQuery({
+    queryKey: ["generator-jobs", "", "", 8],
+    queryFn: () => getGeneratorJobs({ limit: 8 }),
+    staleTime: 15_000,
+  });
+
+  const activeJobQuery = useQuery({
+    queryKey: ["generator-job", activeJobId],
+    queryFn: () => getGeneratorJob(activeJobId as string),
+    enabled: Boolean(activeJobId),
+    staleTime: 0,
+  });
+
   const mutation = useMutation({
     mutationFn: createGeneratorJob,
     onSuccess: (job) => {
-      setActiveJob(job);
+      queryClient.setQueryData(["generator-job", job.generator_job_id], job);
+      setActiveJobId(job.generator_job_id);
+      queryClient.invalidateQueries({ queryKey: ["generator-jobs"] });
     },
   });
 
+  const activeJob = activeJobQuery.data ?? null;
   const result = activeJob?.result;
   const isRunning =
     mutation.isPending || activeJob?.status === "queued" || activeJob?.status === "running";
@@ -116,88 +131,6 @@ export function GeneratorWorkbench() {
         ? (activeJob.error_text ?? "Generator job failed.")
         : null;
 
-  useEffect(() => {
-    const first = result?.top_candidates[0];
-    setSelectedId(first ? candidateRowId(first) : null);
-  }, [result]);
-
-  useEffect(() => {
-    const jobId = activeJob?.generator_job_id;
-    const status = activeJob?.status;
-    if (!jobId || status === "succeeded" || status === "no_play" || status === "failed") {
-      return undefined;
-    }
-
-    socketRef.current?.close();
-    const websocket = new WebSocket(buildGeneratorJobWebSocketUrl(jobId));
-    socketRef.current = websocket;
-    let hydrated = false;
-
-    const hydrateJob = async () => {
-      if (hydrated) {
-        return;
-      }
-      hydrated = true;
-      try {
-        const nextJob = await getGeneratorJob(jobId);
-        setActiveJob(nextJob);
-      } catch (error) {
-        console.error("Failed to hydrate generator job", error);
-      } finally {
-        websocket.close();
-      }
-    };
-
-    websocket.onmessage = (event) => {
-      if (typeof event.data !== "string") {
-        return;
-      }
-      const payload = parseGeneratorJobEvent(event.data);
-      if (payload.type === "error") {
-        setActiveJob((current) =>
-          current
-            ? {
-                ...current,
-                status: "failed",
-                error_text: payload.detail ?? "Generator websocket failed.",
-              }
-            : null,
-        );
-        websocket.close();
-        return;
-      }
-      if (!payload.job) {
-        return;
-      }
-      setActiveJob(payload.job);
-      if (
-        payload.job.status === "succeeded" ||
-        payload.job.status === "no_play" ||
-        payload.job.status === "failed"
-      ) {
-        void hydrateJob();
-      }
-    };
-
-    websocket.onerror = () => {
-      void hydrateJob();
-    };
-
-    websocket.onclose = () => {
-      if (!hydrated) {
-        void hydrateJob();
-      }
-    };
-
-    return () => {
-      socketRef.current = null;
-      hydrated = true;
-      websocket.close();
-    };
-  }, [activeJob?.generator_job_id, activeJob?.status]);
-
-  useEffect(() => () => socketRef.current?.close(), []);
-
   const candidateRows = useMemo(() => buildCandidateRows(result), [result]);
   const symbolMatches = useMemo(() => {
     const remoteMatches = symbolSuggestionsQuery.data?.symbols;
@@ -206,13 +139,16 @@ export function GeneratorWorkbench() {
     }
     return [];
   }, [symbolSuggestionsQuery.data?.symbols]);
+  const resolvedSelectedId =
+    selectedId && candidateRows.some((row) => row.id === selectedId)
+      ? selectedId
+      : (candidateRows[0]?.id ?? null);
   const selectedCandidate =
-    candidateRows.find((row) => row.id === selectedId)?.raw ??
+    candidateRows.find((row) => row.id === resolvedSelectedId)?.raw ??
     (candidateRows[0]?.raw ?? null);
 
   const handleSubmit = () => {
-    socketRef.current?.close();
-    setActiveJob(null);
+    setActiveJobId(null);
     setSelectedId(null);
     mutation.mutate({
       symbol: symbol.trim().toUpperCase(),
@@ -246,16 +182,17 @@ export function GeneratorWorkbench() {
         </header>
 
         <div className="grid gap-4 xl:grid-cols-[minmax(340px,0.8fr)_minmax(0,1.2fr)_360px]">
-          <aside className="panel">
-            <div className="panel-header">
-              <div className="min-w-0">
-                <div className="min-w-0 text-sm font-medium">Request</div>
-                <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                  Symbol, profile, and scan overrides
+          <div className="flex min-w-0 flex-col gap-4">
+            <aside className="panel">
+              <div className="panel-header">
+                <div className="min-w-0">
+                  <div className="min-w-0 text-sm font-medium">Request</div>
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                    Symbol, profile, and scan overrides
+                  </div>
                 </div>
               </div>
-            </div>
-            <div className="panel-body space-y-4">
+              <div className="panel-body space-y-4">
               <Field label="Symbol">
                 <div className="space-y-3">
                   <Input
@@ -393,8 +330,67 @@ export function GeneratorWorkbench() {
                 )}
                 Generate
               </Button>
-            </div>
-          </aside>
+              </div>
+            </aside>
+
+            <section className="panel">
+              <div className="panel-header">
+                <div className="min-w-0">
+                  <div className="min-w-0 text-sm font-medium">Recent jobs</div>
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                    Persisted generator runs and recent outcomes
+                  </div>
+                </div>
+              </div>
+              <div className="panel-body space-y-2">
+                {recentJobsQuery.isLoading ? (
+                  <LoadingState body="Loading recent generator jobs..." />
+                ) : !(recentJobsQuery.data?.jobs.length) ? (
+                  <EmptyState
+                    title="No generator history yet"
+                    body="Submitted generator jobs will appear here once they are persisted."
+                  />
+                ) : (
+                  recentJobsQuery.data.jobs.map((job) => (
+                    <Link
+                      key={job.generator_job_id}
+                      href={`/generator/jobs/${job.generator_job_id}`}
+                      className={cn(
+                        "block rounded-2xl border border-border/70 bg-background/70 px-3 py-3 transition-colors hover:bg-accent/40",
+                        activeJobId === job.generator_job_id && "border-stone-900/20 bg-accent/40",
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium tracking-[0.08em]">{job.symbol}</span>
+                            <StatusBadge value={job.status} tone="job" />
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {String(job.request.profile ?? "—")} · {String(job.request.strategy ?? "—")} · {String(job.request.greeks_source ?? "—")}
+                          </div>
+                        </div>
+                        <div className="text-right text-xs text-muted-foreground">
+                          <div>{formatDateTime(job.created_at)}</div>
+                          <div>{job.summary.candidate_count} candidates</div>
+                        </div>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2 text-xs text-foreground/75">
+                        {job.summary.preferred_strategy ? (
+                          <span>
+                            {job.summary.preferred_strategy} {job.summary.preferred_strikes}
+                          </span>
+                        ) : (
+                          <span>{job.summary.rejection_count} blockers</span>
+                        )}
+                        {job.summary.top_score != null ? <span>score {job.summary.top_score.toFixed(1)}</span> : null}
+                      </div>
+                    </Link>
+                  ))
+                )}
+              </div>
+            </section>
+          </div>
 
           <section className="flex min-w-0 flex-col gap-4">
             <div className="panel">
@@ -425,17 +421,20 @@ export function GeneratorWorkbench() {
                 ) : null}
               </div>
               <div className="panel-body">
-                {mutation.isIdle ? (
+                {!activeJobId && mutation.isIdle ? (
                   <EmptyState
                     title="Ready to generate"
                     body="Choose a symbol and profile, then run the generator to see ideal spreads or a structured no-play diagnosis."
                   />
-                ) : isRunning ? (
+                ) : isRunning || activeJobQuery.isLoading ? (
                   <LoadingState />
-                ) : errorMessage ? (
+                ) : errorMessage || activeJobQuery.isError ? (
                   <EmptyState
                     title="Generator failed"
-                    body={errorMessage}
+                    body={
+                      errorMessage ??
+                      (activeJobQuery.error instanceof Error ? activeJobQuery.error.message : "Unknown generator error.")
+                    }
                     tone="error"
                   />
                 ) : (
@@ -444,7 +443,7 @@ export function GeneratorWorkbench() {
                     data={candidateRows}
                     emptyMessage="No spreads qualified for this request."
                     getRowId={(row) => row.id}
-                    selectedId={selectedId}
+                    selectedId={resolvedSelectedId}
                     onSelect={(row) => setSelectedId(row.id)}
                   />
                 )}
@@ -583,7 +582,7 @@ export function GeneratorWorkbench() {
   );
 }
 
-function buildCandidateRows(result: GeneratorResponse | undefined): CandidateRow[] {
+export function buildCandidateRows(result: GeneratorResponse | null | undefined): CandidateRow[] {
   return (result?.top_candidates ?? []).map((candidate) => ({
     id: candidateRowId(candidate),
     strategy: candidate.strategy,
@@ -597,7 +596,7 @@ function buildCandidateRows(result: GeneratorResponse | undefined): CandidateRow
   }));
 }
 
-function candidateRowId(candidate: CandidateDetail) {
+export function candidateRowId(candidate: CandidateDetail) {
   return `${candidate.strategy}:${candidate.short_symbol}:${candidate.long_symbol}`;
 }
 
@@ -624,7 +623,7 @@ function Field({
   );
 }
 
-function MetricTile({ label, value }: { label: string; value: string }) {
+export function MetricTile({ label, value }: { label: string; value: string }) {
   return (
     <div className="metric-card min-w-0">
       <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">{label}</div>
@@ -633,7 +632,7 @@ function MetricTile({ label, value }: { label: string; value: string }) {
   );
 }
 
-function EmptyState({
+export function EmptyState({
   title,
   body,
   tone = "default",
@@ -657,16 +656,20 @@ function EmptyState({
   );
 }
 
-function LoadingState() {
+export function LoadingState({
+  body = "Scanning live option chains and ranking candidates...",
+}: {
+  body?: string;
+}) {
   return (
     <div className="flex items-center gap-3 rounded-2xl border border-border/70 bg-background/70 px-4 py-5 text-sm text-muted-foreground">
       <LoaderCircle className="size-4 animate-spin" />
-      Scanning live option chains and ranking candidates...
+      {body}
     </div>
   );
 }
 
-function ReasonBlock({ title, items }: { title: string; items: string[] }) {
+export function ReasonBlock({ title, items }: { title: string; items: string[] }) {
   if (!items.length) {
     return null;
   }
@@ -682,7 +685,7 @@ function ReasonBlock({ title, items }: { title: string; items: string[] }) {
   );
 }
 
-function StrategyBadge({ strategy }: { strategy: string }) {
+export function StrategyBadge({ strategy }: { strategy: string }) {
   const isPut = strategy === "put_credit";
   return (
     <Badge
@@ -697,12 +700,12 @@ function StrategyBadge({ strategy }: { strategy: string }) {
   );
 }
 
-function StatusBadge({
+export function StatusBadge({
   value,
   tone,
 }: {
   value: string;
-  tone: "setup" | "calendar" | "outcome";
+  tone: "setup" | "calendar" | "outcome" | "job";
 }) {
   const normalized = value.toLowerCase();
   let className = "border-stone-300 bg-stone-100/80 text-stone-700";
@@ -733,10 +736,34 @@ function StatusBadge({
       className = "border-stone-300 bg-stone-100/80 text-stone-700";
     }
   }
+  if (tone === "job") {
+    if (normalized.includes("succeeded")) {
+      className = "border-emerald-200 bg-emerald-100 text-emerald-900";
+    } else if (normalized.includes("running") || normalized.includes("queued")) {
+      className = "border-amber-200 bg-amber-100 text-amber-900";
+    } else if (normalized.includes("failed")) {
+      className = "border-rose-200 bg-rose-100 text-rose-900";
+    } else {
+      className = "border-stone-300 bg-stone-100/80 text-stone-700";
+    }
+  }
 
   return (
     <Badge variant="outline" className={cn("rounded-full", className)}>
       {value}
     </Badge>
   );
+}
+
+function formatDateTime(value: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }

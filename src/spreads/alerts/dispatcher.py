@@ -12,6 +12,7 @@ from spreads.alerts.rules import (
     build_score_breakout_decisions,
     score_anchor_key,
 )
+from spreads.events import publish_global_event_sync
 from spreads.storage.alert_repository import AlertRepository
 from spreads.storage.collector_repository import CollectorRepository
 
@@ -214,5 +215,15 @@ def dispatch_cycle_alerts(
             candidate=decision.candidate,
             alert_type=decision.alert_type,
         )
+        try:
+            publish_global_event_sync(
+                topic="alert.event.created",
+                entity_type="alert_event",
+                entity_id=str(record["alert_id"]),
+                payload=record,
+                timestamp=record["created_at"],
+            )
+        except Exception:
+            pass
         delivered.append(record)
     return delivered

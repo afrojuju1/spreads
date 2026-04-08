@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnec
 import redis.asyncio as redis_async
 
 from spreads.domain.profiles import UNIVERSE_PRESETS
+from spreads.events import GLOBAL_EVENTS_CHANNEL, publish_global_event_async
 from spreads.services.analysis import (
     build_signal_tuning,
     build_session_outcomes,
@@ -29,6 +30,7 @@ from spreads.services.generator import (
     build_generator_args,
     generate_symbol_ideas,
     generator_job_channel,
+    generator_result_summary,
     list_generator_symbol_suggestions,
 )
 from spreads.jobs.orchestration import (
@@ -85,6 +87,15 @@ def _generator_request_payload(payload: GeneratorRequest, *, db_target: str) -> 
     }
 
 
+def _generator_job_payload(job: Any, *, include_result: bool = True) -> dict[str, Any]:
+    payload = job.to_dict()
+    result = payload.get("result") if include_result else None
+    payload["summary"] = generator_result_summary(result)
+    if not include_result:
+        payload.pop("result", None)
+    return payload
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -127,15 +138,58 @@ async def create_generator_job(payload: GeneratorJobRequest, db: str | None = No
             request=request_payload,
             status="queued",
         )
-        await redis.enqueue_job(
-            "run_generator_job",
-            generator_job_id,
-            request_payload,
-            _job_id=generator_job_id,
-        )
-        return job.to_dict()
+        try:
+            await redis.enqueue_job(
+                "run_generator_job",
+                generator_job_id,
+                request_payload,
+                _job_id=generator_job_id,
+            )
+        except Exception as exc:
+            job = store.fail_job(
+                generator_job_id=generator_job_id,
+                finished_at=datetime.now(UTC),
+                error_text=str(exc),
+            )
+            try:
+                await publish_global_event_async(
+                    redis,
+                    topic="generator.job.updated",
+                    entity_type="generator_job",
+                    entity_id=generator_job_id,
+                    payload=_generator_job_payload(job),
+                )
+            except Exception:
+                pass
+            raise
+        try:
+            await publish_global_event_async(
+                redis,
+                topic="generator.job.updated",
+                entity_type="generator_job",
+                entity_id=generator_job_id,
+                payload=_generator_job_payload(job),
+            )
+        except Exception:
+            pass
+        return _generator_job_payload(job)
     finally:
         await redis.close()
+        store.close()
+
+
+@app.get("/generator/jobs")
+def list_generator_jobs(
+    symbol: str | None = None,
+    status: str | None = None,
+    limit: int = Query(default=12, ge=1, le=200),
+    db: str | None = None,
+) -> dict[str, Any]:
+    store = build_generator_job_repository(resolve_db(db))
+    try:
+        jobs = store.list_jobs(symbol=symbol, status=status, limit=limit)
+        return {"jobs": [_generator_job_payload(job, include_result=False) for job in jobs]}
+    finally:
         store.close()
 
 
@@ -146,9 +200,33 @@ def get_generator_job(generator_job_id: str, db: str | None = None) -> dict[str,
         job = store.get_job(generator_job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Generator job not found")
-        return job.to_dict()
+        return _generator_job_payload(job)
     finally:
         store.close()
+
+
+@app.websocket("/ws/events")
+async def global_events_ws(websocket: WebSocket) -> None:
+    redis = redis_async.from_url(default_redis_url(), decode_responses=True)
+    pubsub = redis.pubsub()
+    try:
+        await websocket.accept()
+        await pubsub.subscribe(GLOBAL_EVENTS_CHANNEL)
+        while True:
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+            if message and message.get("type") == "message":
+                payload = message["data"]
+                if isinstance(payload, str):
+                    await websocket.send_json(json.loads(payload))
+                else:
+                    await websocket.send_json(payload)
+            await asyncio.sleep(0.1)
+    except WebSocketDisconnect:
+        return
+    finally:
+        await pubsub.unsubscribe(GLOBAL_EVENTS_CHANNEL)
+        await pubsub.aclose()
+        await redis.aclose()
 
 
 @app.websocket("/ws/generator/{generator_job_id}")
@@ -165,7 +243,7 @@ async def generator_job_ws(websocket: WebSocket, generator_job_id: str, db: str 
             await websocket.send_json({"type": "error", "detail": "Generator job not found"})
             await websocket.close(code=4404)
             return
-        await websocket.send_json({"type": "snapshot", "job": job.to_dict()})
+        await websocket.send_json({"type": "snapshot", "job": _generator_job_payload(job)})
         await pubsub.subscribe(channel)
         while True:
             message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)

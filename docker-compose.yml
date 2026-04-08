@@ -81,6 +81,7 @@ services:
     environment:
       NODE_ENV: development
       SPREADS_API_BASE_URL: http://api:8000
+      NEXT_PUBLIC_SPREADS_API_WS_PORT: "58080"
       WATCHPACK_POLLING: "true"
       NEXT_TELEMETRY_DISABLED: "1"
     volumes:
