@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, Space_Grotesk } from "next/font/google";
 
+import { AppToolbar } from "@/components/app-toolbar";
 import { Providers } from "@/components/providers";
 import "./globals.css";
 
@@ -17,7 +18,7 @@ const mono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: "Spreads Operator",
-  description: "Live board, alerts, jobs, and session review for spreads.",
+  description: "Live board, generator, alerts, jobs, and session review for spreads.",
 };
 
 export default function RootLayout({
@@ -31,7 +32,12 @@ export default function RootLayout({
       className={`${sans.variable} ${mono.variable} h-full antialiased`}
     >
       <body className="min-h-full font-sans">
-        <Providers>{children}</Providers>
+        <Providers>
+          <div className="min-h-dvh">
+            <AppToolbar />
+            {children}
+          </div>
+        </Providers>
       </body>
     </html>
   );

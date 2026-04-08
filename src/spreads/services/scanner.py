@@ -840,7 +840,7 @@ class AlpacaClient:
             "User-Agent": "call-credit-spread-scanner/1.0",
         }
 
-    def get_json(self, base_url: str, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    def get_json(self, base_url: str, path: str, params: dict[str, Any] | None = None) -> Any:
         query = ""
         if params:
             filtered = {k: v for k, v in params.items() if v not in (None, "")}
@@ -855,6 +855,32 @@ class AlpacaClient:
             raise RuntimeError(f"Alpaca request failed: {exc.code} {exc.reason} for {url}\n{body}") from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(f"Failed to reach Alpaca for {url}: {exc.reason}") from exc
+
+    def list_optionable_underlyings(self) -> list[dict[str, Any]]:
+        payload = self.get_json(
+            self.trading_base_url,
+            "/v2/assets",
+            {
+                "status": "active",
+                "asset_class": "us_equity",
+                "attributes": "has_options",
+            },
+        )
+        if not isinstance(payload, list):
+            raise RuntimeError("Unexpected Alpaca assets response shape")
+
+        assets: list[dict[str, Any]] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            symbol = str(item.get("symbol") or "").upper()
+            status = str(item.get("status") or "").lower()
+            if not symbol or status != "active":
+                continue
+            if item.get("tradable") is False:
+                continue
+            assets.append(item)
+        return assets
 
     def get_underlying_price(self, symbol: str, stock_feed: str) -> float:
         quote_payload = self.get_json(

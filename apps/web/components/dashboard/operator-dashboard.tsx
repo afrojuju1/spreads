@@ -419,7 +419,7 @@ export function OperatorDashboard({ section }: { section: DashboardSection }) {
     "label",
     "description",
   ]);
-  const jobRunRows = filterRows(buildJobRunRows(jobRunsQuery.data?.runs ?? []), deferredSearch, [
+  const jobRunRows = filterRows(buildJobRunRows(jobRunsQuery.data?.job_runs ?? []), deferredSearch, [
     "jobKey",
     "jobType",
     "status",
@@ -454,7 +454,7 @@ export function OperatorDashboard({ section }: { section: DashboardSection }) {
   const tuningDimensions = (tuningQuery.data?.dimensions ?? {}) as Record<string, TuningBucket[]>;
   const runningJobCount = jobsHealthQuery.data?.running_jobs?.length ?? 0;
   const queuedJobCount = jobsHealthQuery.data?.queued_jobs?.length ?? 0;
-  const recentSuccessCount = (jobRunsQuery.data?.runs ?? []).filter(
+  const recentSuccessCount = (jobRunsQuery.data?.job_runs ?? []).filter(
     (run) => run.status === "succeeded",
   ).length;
 

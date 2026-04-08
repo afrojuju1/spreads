@@ -237,3 +237,17 @@ class PostMarketAnalysisRunRecord(RecordMapping):
     recommendations: list[dict[str, Any]] | None
     report_markdown: str | None
     error_text: str | None
+
+
+@dataclass(frozen=True)
+class GeneratorJobRecord(RecordMapping):
+    generator_job_id: str
+    arq_job_id: str | None
+    symbol: str
+    status: str
+    created_at: str
+    started_at: str | None
+    finished_at: str | None
+    request: dict[str, Any]
+    result: dict[str, Any] | None
+    error_text: str | None

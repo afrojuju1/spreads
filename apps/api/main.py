@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from fastapi import FastAPI, HTTPException, Query
+from arq import create_pool
+from pydantic import BaseModel, Field
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+import redis.asyncio as redis_async
 
 from spreads.domain.profiles import UNIVERSE_PRESETS
 from spreads.services.analysis import (
@@ -18,10 +25,22 @@ from spreads.services.analysis import (
     build_session_summary,
     render_session_summary_markdown,
 )
-from spreads.jobs.orchestration import SCHEDULER_RUNTIME_LEASE_KEY, WORKER_RUNTIME_LEASE_PREFIX
+from spreads.services.generator import (
+    build_generator_args,
+    generate_symbol_ideas,
+    generator_job_channel,
+    list_generator_symbol_suggestions,
+)
+from spreads.jobs.orchestration import (
+    SCHEDULER_RUNTIME_LEASE_KEY,
+    WORKER_RUNTIME_LEASE_PREFIX,
+    build_redis_settings,
+    default_redis_url,
+)
 from spreads.storage import (
     build_alert_repository,
     build_collector_repository,
+    build_generator_job_repository,
     build_history_store,
     build_job_repository,
     build_post_market_repository,
@@ -31,8 +50,39 @@ from spreads.storage import (
 app = FastAPI(title="Spreads API", version="0.2.0")
 
 
+class GeneratorRequest(BaseModel):
+    symbol: str = Field(..., min_length=1)
+    profile: str = Field(default="weekly")
+    strategy: str = Field(default="combined")
+    greeks_source: str = Field(default="auto")
+    top: int = Field(default=5, ge=1, le=25)
+    min_credit: float | None = Field(default=None, gt=0)
+    short_delta_max: float | None = Field(default=None, gt=0)
+    short_delta_target: float | None = Field(default=None, gt=0)
+    allow_off_hours: bool = False
+
+
+class GeneratorJobRequest(GeneratorRequest):
+    pass
+
+
 def resolve_db(db: str | None) -> str:
     return db or default_database_url()
+
+
+def _generator_request_payload(payload: GeneratorRequest, *, db_target: str) -> dict[str, Any]:
+    return {
+        "history_db": db_target,
+        "symbol": payload.symbol.upper(),
+        "profile": payload.profile,
+        "strategy": payload.strategy,
+        "greeks_source": payload.greeks_source,
+        "top": payload.top,
+        "min_credit": payload.min_credit,
+        "short_delta_max": payload.short_delta_max,
+        "short_delta_target": payload.short_delta_target,
+        "allow_off_hours": payload.allow_off_hours,
+    }
 
 
 @app.get("/health")
@@ -43,6 +93,96 @@ def health() -> dict[str, str]:
 @app.get("/universes")
 def list_universes() -> dict[str, list[str]]:
     return {name: list(symbols) for name, symbols in UNIVERSE_PRESETS.items()}
+
+
+@app.post("/generator/ideas")
+def generate_ideas(payload: GeneratorRequest, db: str | None = None) -> dict[str, Any]:
+    args = build_generator_args(_generator_request_payload(payload, db_target=resolve_db(db)))
+    result = generate_symbol_ideas(args)
+    result["allow_off_hours"] = payload.allow_off_hours
+    return result
+
+
+@app.get("/generator/symbols")
+def list_generator_symbols(
+    query: str = Query(default="", max_length=64),
+    limit: int = Query(default=40, ge=1, le=200),
+) -> dict[str, Any]:
+    return list_generator_symbol_suggestions(query=query, limit=limit)
+
+
+@app.post("/generator/jobs")
+async def create_generator_job(payload: GeneratorJobRequest, db: str | None = None) -> dict[str, Any]:
+    db_target = resolve_db(db)
+    store = build_generator_job_repository(db_target)
+    redis = await create_pool(build_redis_settings(default_redis_url()))
+    try:
+        generator_job_id = f"generator:{uuid4().hex}"
+        request_payload = _generator_request_payload(payload, db_target=db_target)
+        job = store.create_job(
+            generator_job_id=generator_job_id,
+            arq_job_id=generator_job_id,
+            symbol=payload.symbol.upper(),
+            created_at=datetime.now(UTC),
+            request=request_payload,
+            status="queued",
+        )
+        await redis.enqueue_job(
+            "run_generator_job",
+            generator_job_id,
+            request_payload,
+            _job_id=generator_job_id,
+        )
+        return job.to_dict()
+    finally:
+        await redis.close()
+        store.close()
+
+
+@app.get("/generator/jobs/{generator_job_id}")
+def get_generator_job(generator_job_id: str, db: str | None = None) -> dict[str, Any]:
+    store = build_generator_job_repository(resolve_db(db))
+    try:
+        job = store.get_job(generator_job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Generator job not found")
+        return job.to_dict()
+    finally:
+        store.close()
+
+
+@app.websocket("/ws/generator/{generator_job_id}")
+async def generator_job_ws(websocket: WebSocket, generator_job_id: str, db: str | None = None) -> None:
+    db_target = resolve_db(db)
+    store = build_generator_job_repository(db_target)
+    redis = redis_async.from_url(default_redis_url(), decode_responses=True)
+    pubsub = redis.pubsub()
+    channel = generator_job_channel(generator_job_id)
+    try:
+        job = store.get_job(generator_job_id)
+        await websocket.accept()
+        if job is None:
+            await websocket.send_json({"type": "error", "detail": "Generator job not found"})
+            await websocket.close(code=4404)
+            return
+        await websocket.send_json({"type": "snapshot", "job": job.to_dict()})
+        await pubsub.subscribe(channel)
+        while True:
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+            if message and message.get("type") == "message":
+                payload = message["data"]
+                if isinstance(payload, str):
+                    await websocket.send_json(json.loads(payload))
+                else:
+                    await websocket.send_json(payload)
+            await asyncio.sleep(0.1)
+    except WebSocketDisconnect:
+        return
+    finally:
+        await pubsub.unsubscribe(channel)
+        await pubsub.aclose()
+        await redis.aclose()
+        store.close()
 
 
 @app.get("/live/{label}")

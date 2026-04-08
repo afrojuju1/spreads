@@ -13,11 +13,19 @@ async function forward(request: NextRequest, paramsPromise: Promise<{ path: stri
     upstreamUrl.searchParams.append(key, value);
   }
 
+  const contentType = request.headers.get("content-type");
+  const body =
+    request.method === "GET" || request.method === "HEAD"
+      ? undefined
+      : await request.text();
+
   const response = await fetch(upstreamUrl, {
     method: request.method,
     headers: {
       accept: request.headers.get("accept") ?? "application/json",
+      ...(contentType ? { "content-type": contentType } : {}),
     },
+    ...(body !== undefined ? { body } : {}),
     cache: "no-store",
   });
 
@@ -30,6 +38,13 @@ async function forward(request: NextRequest, paramsPromise: Promise<{ path: stri
 }
 
 export async function GET(
+  request: NextRequest,
+  context: { params: Promise<{ path: string[] }> },
+) {
+  return forward(request, context.params);
+}
+
+export async function POST(
   request: NextRequest,
   context: { params: Promise<{ path: string[] }> },
 ) {

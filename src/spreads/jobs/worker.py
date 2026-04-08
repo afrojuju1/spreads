@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import socket
 from datetime import UTC, datetime
 from typing import Any
+
+import redis.asyncio as redis_async
 
 from spreads.jobs.live_collector import build_collection_args, run_collection
 from spreads.jobs.orchestration import (
@@ -14,9 +17,10 @@ from spreads.jobs.orchestration import (
     worker_runtime_lease_key,
 )
 from spreads.services.analysis import build_analysis_args, run_post_close_analysis
+from spreads.services.generator import build_generator_args, generate_symbol_ideas, generator_job_channel
 from spreads.services.post_market_analysis import parse_args as parse_post_market_args
 from spreads.services.post_market_analysis import run_post_market_analysis
-from spreads.storage import build_job_repository, default_database_url
+from spreads.storage import build_generator_job_repository, build_job_repository, default_database_url
 
 WORKER_HEARTBEAT_SECONDS = 30
 WORKER_LEASE_TTL_SECONDS = 90
@@ -73,8 +77,11 @@ async def _heartbeat_runtime(job_store: Any, runtime_owner: str) -> None:
 
 async def startup(ctx: dict[str, Any]) -> None:
     ctx["database_url"] = default_database_url()
+    ctx["redis_url"] = default_redis_url()
     ctx["worker_name"] = worker_name()
     ctx["job_store"] = build_job_repository(ctx["database_url"])
+    ctx["generator_job_store"] = build_generator_job_repository(ctx["database_url"])
+    ctx["event_bus"] = redis_async.from_url(ctx["redis_url"], decode_responses=True)
     ctx["runtime_heartbeat_task"] = asyncio.create_task(
         _heartbeat_runtime(ctx["job_store"], ctx["worker_name"])
     )
@@ -96,6 +103,27 @@ async def shutdown(ctx: dict[str, Any]) -> None:
             owner=ctx["worker_name"],
         )
         await asyncio.to_thread(job_store.close)
+    generator_job_store = ctx.get("generator_job_store")
+    if generator_job_store is not None:
+        await asyncio.to_thread(generator_job_store.close)
+    event_bus = ctx.get("event_bus")
+    if event_bus is not None:
+        await event_bus.aclose()
+
+
+async def _publish_generator_job_event(
+    ctx: dict[str, Any],
+    event_type: str,
+    job_record: Any,
+) -> None:
+    event_bus = ctx.get("event_bus")
+    if event_bus is None:
+        return
+    payload = {
+        "type": event_type,
+        "job": job_record.to_dict(),
+    }
+    await event_bus.publish(generator_job_channel(job_record["generator_job_id"]), json.dumps(payload))
 
 
 async def _mark_running(job_store: Any, job_run_id: str, runtime_owner: str) -> None:
@@ -301,8 +329,48 @@ async def run_post_market_analysis_job(
     )
 
 
+async def run_generator_job(
+    ctx: dict[str, Any],
+    generator_job_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    generator_job_store = ctx["generator_job_store"]
+    running_record = await asyncio.to_thread(
+        generator_job_store.start_job,
+        generator_job_id=generator_job_id,
+        started_at=datetime.now(UTC),
+    )
+    await _publish_generator_job_event(ctx, "running", running_record)
+    try:
+        args = build_generator_args(payload)
+        result = await asyncio.to_thread(generate_symbol_ideas, args)
+        final_status = "succeeded" if result.get("status") == "ok" else "no_play"
+        completed_record = await asyncio.to_thread(
+            generator_job_store.complete_job,
+            generator_job_id=generator_job_id,
+            finished_at=datetime.now(UTC),
+            status=final_status,
+            result=result,
+        )
+        await _publish_generator_job_event(ctx, "completed", completed_record)
+        return {
+            "generator_job_id": generator_job_id,
+            "status": final_status,
+            "symbol": completed_record["symbol"],
+        }
+    except Exception as exc:
+        failed_record = await asyncio.to_thread(
+            generator_job_store.fail_job,
+            generator_job_id=generator_job_id,
+            finished_at=datetime.now(UTC),
+            error_text=str(exc),
+        )
+        await _publish_generator_job_event(ctx, "failed", failed_record)
+        raise
+
+
 class WorkerSettings:
-    functions = [run_live_collector_job, run_post_close_analysis_job, run_post_market_analysis_job]
+    functions = [run_live_collector_job, run_post_close_analysis_job, run_post_market_analysis_job, run_generator_job]
     redis_settings = build_redis_settings(default_redis_url())
     on_startup = startup
     on_shutdown = shutdown

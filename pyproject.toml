@@ -19,6 +19,7 @@ dependencies = [
   "sqlalchemy>=2.0.43",
   "uvicorn>=0.37.0",
   "websocket-client>=1.8.0",
+  "websockets>=16.0",
 ]
 
 [project.scripts]

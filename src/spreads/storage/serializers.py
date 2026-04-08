@@ -9,6 +9,7 @@ from spreads.storage.collector_models import (
     CollectorCycleEventModel,
     CollectorCycleModel,
 )
+from spreads.storage.generator_job_models import GeneratorJobModel
 from spreads.storage.job_models import JobDefinitionModel, JobLeaseModel, JobRunModel
 from spreads.storage.models import OptionQuoteEventModel, ScanCandidateModel, ScanRunModel
 from spreads.storage.post_market_models import PostMarketAnalysisRunModel
@@ -18,6 +19,7 @@ from spreads.storage.records import (
     CollectorCycleCandidateRecord,
     CollectorCycleEventRecord,
     CollectorCycleRecord,
+    GeneratorJobRecord,
     JobDefinitionRecord,
     JobLeaseRecord,
     JobRunRecord,
@@ -206,6 +208,21 @@ def to_post_market_analysis_run_record(model: PostMarketAnalysisRunModel) -> Pos
         diagnostics=None if model.diagnostics_json is None else dict(model.diagnostics_json),
         recommendations=rendered_recommendations,
         report_markdown=model.report_markdown,
+        error_text=model.error_text,
+    )
+
+
+def to_generator_job_record(model: GeneratorJobModel) -> GeneratorJobRecord:
+    return GeneratorJobRecord(
+        generator_job_id=model.generator_job_id,
+        arq_job_id=model.arq_job_id,
+        symbol=model.symbol,
+        status=model.status,
+        created_at=render_value(model.created_at),
+        started_at=render_value(model.started_at),
+        finished_at=render_value(model.finished_at),
+        request=dict(model.request_json or {}),
+        result=None if model.result_json is None else dict(model.result_json),
         error_text=model.error_text,
     )
 
