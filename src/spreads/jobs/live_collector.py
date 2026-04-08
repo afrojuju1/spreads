@@ -4,14 +4,16 @@ from __future__ import annotations
 import argparse
 import time as time_module
 from dataclasses import asdict
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Callable
 
 from spreads.common import env_or_die, load_local_env
-from spreads.alerts import dispatch_cycle_alerts
+from spreads.alerts.dispatcher import dispatch_cycle_alerts
 from spreads.integrations.alpaca.client import AlpacaClient, AlpacaOptionQuoteStreamer, infer_trading_base_url
 from spreads.integrations.calendar_events import build_calendar_event_resolver
 from spreads.integrations.greeks import build_local_greeks_provider
+from spreads.runtime.config import default_database_url
+from spreads.services.live_pipelines import build_live_snapshot_label
 from spreads.services.scanner import (
     NEW_YORK,
     SpreadCandidate,
@@ -23,9 +25,12 @@ from spreads.services.scanner import (
     scan_symbol_across_strategies,
     sort_candidates_for_display,
 )
-from spreads.storage import build_alert_repository, build_collector_repository, default_database_url
 from spreads.storage.alert_repository import AlertRepository
-from spreads.storage.factory import build_history_store
+from spreads.storage.factory import (
+    build_alert_repository,
+    build_collector_repository,
+    build_history_store,
+)
 from spreads.storage.collector_repository import CollectorRepository
 from spreads.storage.run_history_repository import RunHistoryRepository
 
@@ -134,14 +139,6 @@ def build_collection_args(overrides: dict[str, Any] | None = None) -> argparse.N
     return args
 
 
-def market_is_open(now: datetime | None = None) -> bool:
-    current = datetime.now(NEW_YORK) if now is None else now.astimezone(NEW_YORK)
-    if current.weekday() >= 5:
-        return False
-    current_time = current.time()
-    return time(9, 30) <= current_time < time(16, 0)
-
-
 def collection_window_is_open(
     *,
     now: datetime | None = None,
@@ -187,7 +184,12 @@ def run_universe_cycle(
     history_store: RunHistoryRepository,
 ) -> tuple[list[str], str, list[SymbolScanResult], list[UniverseScanFailure], list[SpreadCandidate]]:
     symbols, universe_label = resolve_symbols(scanner_args)
-    scanner_args.session_label = snapshot_label(universe_label, scanner_args)
+    scanner_args.session_label = build_live_snapshot_label(
+        universe_label=universe_label,
+        strategy=scanner_args.strategy,
+        profile=scanner_args.profile,
+        greeks_source=scanner_args.greeks_source,
+    )
     scan_results: list[SymbolScanResult] = []
     failures: list[UniverseScanFailure] = []
     board_candidates: list[SpreadCandidate] = []
@@ -219,10 +221,6 @@ def run_universe_cycle(
 def build_cycle_id(label: str) -> str:
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     return f"{timestamp}_{label}"
-
-
-def snapshot_label(universe_label: str, args: argparse.Namespace) -> str:
-    return f"{universe_label}_{args.strategy}_{args.profile}_{args.greeks_source}".lower()
 
 
 def serialize_candidate(candidate: SpreadCandidate, run_id: str | None) -> dict[str, Any]:
@@ -692,7 +690,10 @@ def run_collection(
 ) -> dict[str, Any]:
     scanner_args = build_scanner_args(args)
 
-    if not args.allow_off_hours and not market_is_open():
+    if not args.allow_off_hours and not collection_window_is_open(
+        session_start_offset_minutes=int(getattr(args, "session_start_offset_minutes", 0)),
+        session_end_offset_minutes=int(getattr(args, "session_end_offset_minutes", 0)),
+    ):
         if emit_output:
             print("Market is closed. Use --allow-off-hours to collect cycles anyway.")
         return {
@@ -748,7 +749,12 @@ def run_collection(
                 greeks_provider=greeks_provider,
                 history_store=history_store,
             )
-            label = snapshot_label(universe_label, args)
+            label = build_live_snapshot_label(
+                universe_label=universe_label,
+                strategy=args.strategy,
+                profile=args.profile,
+                greeks_source=args.greeks_source,
+            )
             last_label = label
             cycle_id = build_cycle_id(label)
             cycle_ids.append(cycle_id)

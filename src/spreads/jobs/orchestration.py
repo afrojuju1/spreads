@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-import os
 from datetime import UTC, date, datetime, timedelta
-from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 import pandas_market_calendars as mcal
-from arq.connections import RedisSettings
 
 from spreads.storage.records import JobDefinitionRecord
 
 NEW_YORK = ZoneInfo("America/New_York")
-DEFAULT_REDIS_URL = "redis://localhost:56379/0"
 SCHEDULER_RUNTIME_LEASE_KEY = "runtime:scheduler"
 WORKER_RUNTIME_LEASE_PREFIX = "runtime:worker:"
 SINGLETON_LEASE_PREFIX = "singleton:"
@@ -19,24 +15,6 @@ SINGLETON_LEASE_PREFIX = "singleton:"
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
-
-
-def default_redis_url() -> str:
-    return os.environ.get("REDIS_URL") or DEFAULT_REDIS_URL
-
-
-def build_redis_settings(redis_url: str | None = None) -> RedisSettings:
-    parsed = urlparse(redis_url or default_redis_url())
-    database = 0
-    if parsed.path and parsed.path != "/":
-        database = int(parsed.path.lstrip("/"))
-    return RedisSettings(
-        host=parsed.hostname or "localhost",
-        port=parsed.port or 6379,
-        database=database,
-        password=parsed.password,
-        ssl=parsed.scheme == "rediss",
-    )
 
 
 def singleton_lease_key(job_type: str, scope: str) -> str:

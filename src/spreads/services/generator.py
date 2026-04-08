@@ -19,7 +19,7 @@ from spreads.services.scanner import (
     parse_args as parse_scanner_args,
     scan_symbol_across_strategies,
 )
-from spreads.storage import build_history_store
+from spreads.storage.factory import build_history_store
 
 
 OPTIONABLE_SYMBOL_CACHE_TTL = timedelta(minutes=15)

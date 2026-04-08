@@ -1,21 +1,43 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from types import SimpleNamespace
 from typing import Any
 
-from spreads.jobs.live_collector import (
-    build_collection_args,
-    build_scanner_args,
-    snapshot_label,
-)
 from spreads.services.scanner import resolve_symbols
 
 
+def build_live_snapshot_label(
+    *,
+    universe_label: str,
+    strategy: str,
+    profile: str,
+    greeks_source: str,
+) -> str:
+    return f"{universe_label}_{strategy}_{profile}_{greeks_source}".lower()
+
+
+def _payload_namespace(payload: Mapping[str, Any]) -> SimpleNamespace:
+    return SimpleNamespace(
+        symbol=None,
+        symbols=payload.get("symbols"),
+        symbols_file=payload.get("symbols_file"),
+        universe=str(payload.get("universe") or "0dte_core"),
+        strategy=str(payload.get("strategy") or "combined"),
+        profile=str(payload.get("profile") or "0dte"),
+        greeks_source=str(payload.get("greeks_source") or "auto"),
+    )
+
+
 def resolve_live_collector_label(payload: Mapping[str, Any]) -> str:
-    args = build_collection_args(dict(payload))
-    scanner_args = build_scanner_args(args)
-    _, universe_label = resolve_symbols(scanner_args)
-    return snapshot_label(universe_label, args)
+    args = _payload_namespace(payload)
+    _, universe_label = resolve_symbols(args)
+    return build_live_snapshot_label(
+        universe_label=universe_label,
+        strategy=args.strategy,
+        profile=args.profile,
+        greeks_source=args.greeks_source,
+    )
 
 
 def list_enabled_live_collector_pipelines(

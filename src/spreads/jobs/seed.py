@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import argparse
 
-from spreads.storage import build_job_repository, default_database_url
+from spreads.runtime.config import default_database_url
+from spreads.storage.factory import build_job_repository
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

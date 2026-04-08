@@ -12,7 +12,7 @@ from spreads.alerts.rules import (
     build_score_breakout_decisions,
     score_anchor_key,
 )
-from spreads.events import publish_global_event_sync
+from spreads.events.bus import publish_global_event_sync
 from spreads.storage.alert_repository import AlertRepository
 from spreads.storage.collector_repository import CollectorRepository
 

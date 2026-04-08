@@ -23,7 +23,7 @@ from .models import (
     CalendarEventRecord,
 )
 from .store import CalendarEventStore
-from spreads.storage import default_database_url
+from spreads.runtime.config import default_database_url
 
 
 def _utc_now_iso() -> str:

@@ -6,7 +6,7 @@ from typing import Any
 
 import redis
 
-from spreads.jobs.orchestration import default_redis_url
+from spreads.runtime.config import default_redis_url
 
 GLOBAL_EVENTS_CHANNEL = "spreads:events"
 

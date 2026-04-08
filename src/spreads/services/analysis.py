@@ -9,13 +9,10 @@ from typing import Any, Mapping
 
 from spreads.common import env_or_die, load_local_env
 from spreads.integrations.alpaca.client import AlpacaClient, infer_trading_base_url
+from spreads.runtime.config import default_database_url
 from spreads.services.replay import summarize_replay
 from spreads.services.scanner import NEW_YORK
-from spreads.storage import (
-    build_collector_repository,
-    build_history_store,
-    default_database_url,
-)
+from spreads.storage.factory import build_collector_repository, build_history_store
 from spreads.storage.collector_repository import CollectorRepository
 from spreads.storage.run_history_repository import RunHistoryRepository
 

@@ -1,3 +1,10 @@
-from spreads.services.scanner import main as scan_main
+from __future__ import annotations
+
+
+def scan_main() -> int:
+    from spreads.services.scanner import main
+
+    return main()
+
 
 __all__ = ["scan_main"]

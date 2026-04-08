@@ -39,7 +39,7 @@ from spreads.integrations.calendar_events import build_calendar_event_resolver, 
 from spreads.integrations.calendar_events.models import CalendarPolicyDecision
 from spreads.integrations.calendar_events.policy import apply_credit_spread_policy
 from spreads.integrations.greeks import build_local_greeks_provider
-from spreads.storage import default_database_url
+from spreads.runtime.config import default_database_url
 from spreads.storage.factory import build_history_store
 from spreads.storage.run_history_repository import RunHistoryRepository
 

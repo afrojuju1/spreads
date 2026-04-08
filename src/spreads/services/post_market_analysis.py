@@ -9,7 +9,8 @@ from spreads.services.analysis import (
     render_session_summary_markdown,
     resolve_date,
 )
-from spreads.storage import build_post_market_repository, default_database_url
+from spreads.runtime.config import default_database_url
+from spreads.storage.factory import build_post_market_repository
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from spreads.runtime.config import DEFAULT_POSTGRES_URL, default_database_url
 from spreads.storage.alert_repository import AlertRepository
 from spreads.storage.collector_repository import CollectorRepository
-from spreads.storage.db import DEFAULT_POSTGRES_URL, default_database_url
 from spreads.storage.generator_job_repository import GeneratorJobRepository
 from spreads.storage.job_repository import JobRepository
 from spreads.storage.post_market_repository import PostMarketAnalysisRepository

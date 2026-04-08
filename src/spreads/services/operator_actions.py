@@ -6,8 +6,8 @@ from typing import Any
 from uuid import uuid4
 
 from spreads.alerts.dispatcher import resolve_session_date, send_or_skip_alert
-from spreads.events import publish_global_event_sync
-from spreads.storage import build_alert_repository, build_collector_repository
+from spreads.events.bus import publish_global_event_sync
+from spreads.storage.factory import build_alert_repository, build_collector_repository
 from spreads.storage.records import GeneratorJobRecord
 
 MANUAL_ALERT_TYPE = "manual_generator_idea"

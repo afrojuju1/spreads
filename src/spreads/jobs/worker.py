@@ -10,29 +10,28 @@ from uuid import uuid4
 
 import redis.asyncio as redis_async
 
-from spreads.events import publish_global_event_async
+from spreads.events.bus import publish_global_event_async
 from spreads.jobs.live_collector import build_collection_args, run_collection
-from spreads.jobs.pipelines import build_live_session_catalog
 from spreads.jobs.orchestration import (
-    build_redis_settings,
-    default_redis_url,
     singleton_lease_key,
     worker_runtime_lease_key,
 )
+from spreads.runtime.config import default_database_url, default_redis_url
+from spreads.runtime.redis import build_redis_settings
 from spreads.services.analysis import (
     build_analysis_args,
     resolve_date,
     run_post_close_analysis,
 )
 from spreads.services.generator import build_generator_args, generate_symbol_ideas, generator_job_channel
+from spreads.services.live_pipelines import build_live_session_catalog
 from spreads.services.post_market_analysis import parse_args as parse_post_market_args
 from spreads.services.post_market_analysis import run_post_market_analysis
-from spreads.storage import (
+from spreads.storage.factory import (
     build_collector_repository,
     build_generator_job_repository,
     build_job_repository,
     build_post_market_repository,
-    default_database_url,
 )
 
 WORKER_HEARTBEAT_SECONDS = 30
@@ -730,5 +729,5 @@ class WorkerSettings:
     on_startup = startup
     on_shutdown = shutdown
     keep_result = 0
-    job_timeout = 60 * 60
+    job_timeout = 8 * 60 * 60
     max_jobs = 1
