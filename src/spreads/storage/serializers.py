@@ -13,6 +13,8 @@ from spreads.storage.execution_models import (
     ExecutionAttemptModel,
     ExecutionFillModel,
     ExecutionOrderModel,
+    SessionPositionCloseModel,
+    SessionPositionModel,
 )
 from spreads.storage.generator_job_models import GeneratorJobModel
 from spreads.storage.job_models import JobDefinitionModel, JobLeaseModel, JobRunModel
@@ -27,6 +29,8 @@ from spreads.storage.records import (
     ExecutionAttemptRecord,
     ExecutionFillRecord,
     ExecutionOrderRecord,
+    SessionPositionCloseRecord,
+    SessionPositionRecord,
     GeneratorJobRecord,
     JobDefinitionRecord,
     JobLeaseRecord,
@@ -255,6 +259,8 @@ def to_execution_attempt_record(model: ExecutionAttemptModel) -> ExecutionAttemp
         expiration_date=render_value(model.expiration_date),
         short_symbol=model.short_symbol,
         long_symbol=model.long_symbol,
+        trade_intent=model.trade_intent,
+        session_position_id=model.session_position_id,
         quantity=model.quantity,
         limit_price=model.limit_price,
         requested_at=render_value(model.requested_at),
@@ -314,6 +320,56 @@ def to_execution_fill_record(model: ExecutionFillModel) -> ExecutionFillRecord:
         price=model.price,
         filled_at=render_value(model.filled_at),
         fill=dict(model.fill_json or {}),
+    )
+
+
+def to_session_position_record(model: SessionPositionModel) -> SessionPositionRecord:
+    return SessionPositionRecord(
+        session_position_id=model.session_position_id,
+        session_id=model.session_id,
+        session_date=render_value(model.session_date),
+        label=model.label,
+        candidate_id=model.candidate_id,
+        open_execution_attempt_id=model.open_execution_attempt_id,
+        underlying_symbol=model.underlying_symbol,
+        strategy=model.strategy,
+        expiration_date=render_value(model.expiration_date),
+        short_symbol=model.short_symbol,
+        long_symbol=model.long_symbol,
+        requested_quantity=model.requested_quantity,
+        opened_quantity=model.opened_quantity,
+        remaining_quantity=model.remaining_quantity,
+        entry_credit=model.entry_credit,
+        entry_notional=model.entry_notional,
+        width=model.width,
+        max_profit=model.max_profit,
+        max_loss=model.max_loss,
+        opened_at=render_value(model.opened_at),
+        closed_at=render_value(model.closed_at),
+        status=model.status,
+        realized_pnl=model.realized_pnl,
+        unrealized_pnl=model.unrealized_pnl,
+        close_mark=model.close_mark,
+        close_mark_source=model.close_mark_source,
+        close_marked_at=render_value(model.close_marked_at),
+        last_broker_status=model.last_broker_status,
+        created_at=render_value(model.created_at),
+        updated_at=render_value(model.updated_at),
+    )
+
+
+def to_session_position_close_record(model: SessionPositionCloseModel) -> SessionPositionCloseRecord:
+    return SessionPositionCloseRecord(
+        session_position_close_id=model.session_position_close_id,
+        session_position_id=model.session_position_id,
+        execution_attempt_id=model.execution_attempt_id,
+        closed_quantity=model.closed_quantity,
+        exit_debit=model.exit_debit,
+        realized_pnl=model.realized_pnl,
+        broker_order_id=model.broker_order_id,
+        closed_at=render_value(model.closed_at),
+        created_at=render_value(model.created_at),
+        updated_at=render_value(model.updated_at),
     )
 
 

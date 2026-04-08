@@ -170,6 +170,95 @@ const jobsHealthSchema = z
   })
   .passthrough();
 
+const accountSnapshotSchema = z
+  .object({
+    account_number: z.string().nullable().optional(),
+    status: z.string().nullable().optional(),
+    currency: z.string().nullable().optional(),
+    equity: z.number().nullable().optional(),
+    last_equity: z.number().nullable().optional(),
+    cash: z.number().nullable().optional(),
+    buying_power: z.number().nullable().optional(),
+    regt_buying_power: z.number().nullable().optional(),
+    daytrading_buying_power: z.number().nullable().optional(),
+    non_marginable_buying_power: z.number().nullable().optional(),
+    options_buying_power: z.number().nullable().optional(),
+    portfolio_value: z.number().nullable().optional(),
+    long_market_value: z.number().nullable().optional(),
+    short_market_value: z.number().nullable().optional(),
+    initial_margin: z.number().nullable().optional(),
+    maintenance_margin: z.number().nullable().optional(),
+    daytrade_count: z.number().nullable().optional(),
+    pattern_day_trader: z.boolean().nullable().optional(),
+    trading_blocked: z.boolean().nullable().optional(),
+    transfers_blocked: z.boolean().nullable().optional(),
+    account_blocked: z.boolean().nullable().optional(),
+    shorting_enabled: z.boolean().nullable().optional(),
+  })
+  .passthrough();
+
+const accountPnlSchema = z
+  .object({
+    day_change: z.number().nullable().optional(),
+    day_change_percent: z.number().nullable().optional(),
+  })
+  .passthrough();
+
+const accountHistoryRangeSchema = z.enum(["1D", "1W", "1M"]);
+
+const accountHistoryPointSchema = z
+  .object({
+    timestamp: z.string(),
+    equity: z.number().nullable().optional(),
+    profit_loss: z.number().nullable().optional(),
+    profit_loss_pct: z.number().nullable().optional(),
+  })
+  .passthrough();
+
+const accountHistorySchema = z
+  .object({
+    range: accountHistoryRangeSchema,
+    period: z.string().nullable().optional(),
+    timeframe: z.string().nullable().optional(),
+    intraday_reporting: z.string().nullable().optional(),
+    base_value: z.number().nullable().optional(),
+    points: z.array(accountHistoryPointSchema),
+  })
+  .passthrough();
+
+const accountPositionSchema = z
+  .object({
+    asset_id: z.string().nullable().optional(),
+    symbol: z.string(),
+    asset_class: z.string().nullable().optional(),
+    exchange: z.string().nullable().optional(),
+    side: z.string().nullable().optional(),
+    qty: z.number().nullable().optional(),
+    qty_available: z.number().nullable().optional(),
+    market_value: z.number().nullable().optional(),
+    cost_basis: z.number().nullable().optional(),
+    avg_entry_price: z.number().nullable().optional(),
+    current_price: z.number().nullable().optional(),
+    change_today: z.number().nullable().optional(),
+    unrealized_pl: z.number().nullable().optional(),
+    unrealized_plpc: z.number().nullable().optional(),
+    unrealized_intraday_pl: z.number().nullable().optional(),
+    unrealized_intraday_plpc: z.number().nullable().optional(),
+  })
+  .passthrough();
+
+const accountOverviewSchema = z
+  .object({
+    broker: z.literal("alpaca"),
+    environment: z.enum(["paper", "live", "custom"]),
+    retrieved_at: z.string(),
+    account: accountSnapshotSchema,
+    pnl: accountPnlSchema,
+    history: accountHistorySchema,
+    positions: z.array(accountPositionSchema),
+  })
+  .passthrough();
+
 const sessionIdeaSchema = z
   .object({
     underlying_symbol: z.string(),
@@ -362,6 +451,8 @@ const executionAttemptSchema = z
     expiration_date: z.string(),
     short_symbol: z.string(),
     long_symbol: z.string(),
+    trade_intent: z.string(),
+    session_position_id: z.string().nullable().optional(),
     quantity: z.number(),
     limit_price: z.number(),
     requested_at: z.string(),
@@ -388,6 +479,90 @@ const sessionExecutionActionResponseSchema = z
   })
   .passthrough();
 
+const sessionPortfolioQuoteSchema = z
+  .object({
+    symbol: z.string(),
+    bid: z.number(),
+    ask: z.number(),
+    midpoint: z.number(),
+    timestamp: z.string().nullable().optional(),
+    source: z.string(),
+  })
+  .passthrough();
+
+const sessionPortfolioPositionSchema = z
+  .object({
+    position_id: z.string(),
+    execution_attempt_id: z.string(),
+    session_position_id: z.string().optional(),
+    open_execution_attempt_id: z.string().optional(),
+    candidate_id: z.number().nullable().optional(),
+    underlying_symbol: z.string(),
+    strategy: z.string(),
+    short_symbol: z.string(),
+    long_symbol: z.string(),
+    expiration_date: z.string().nullable().optional(),
+    position_status: z.string(),
+    broker_status: z.string(),
+    requested_quantity: z.number().nullable().optional(),
+    opened_quantity: z.number().nullable().optional(),
+    remaining_quantity: z.number().nullable().optional(),
+    closed_quantity: z.number().nullable().optional(),
+    filled_quantity: z.number().optional(),
+    entry_credit: z.number().nullable().optional(),
+    entry_notional: z.number().nullable().optional(),
+    width: z.number().nullable().optional(),
+    max_profit: z.number().nullable().optional(),
+    max_loss: z.number().nullable().optional(),
+    opened_at: z.string().nullable().optional(),
+    completed_at: z.string().nullable().optional(),
+    closed_at: z.string().nullable().optional(),
+    realized_pnl: z.number().nullable().optional(),
+    unrealized_pnl: z.number().nullable().optional(),
+    net_pnl: z.number().nullable().optional(),
+    spread_mark_midpoint: z.number().nullable().optional(),
+    spread_mark_close: z.number().nullable().optional(),
+    estimated_midpoint_pnl: z.number().nullable().optional(),
+    estimated_close_pnl: z.number().nullable().optional(),
+    mark_source: z.string().nullable().optional(),
+    mark_timestamp: z.string().nullable().optional(),
+    short_quote: sessionPortfolioQuoteSchema.nullable().optional(),
+    long_quote: sessionPortfolioQuoteSchema.nullable().optional(),
+  })
+  .passthrough();
+
+const sessionPortfolioSummarySchema = z
+  .object({
+    position_count: z.number(),
+    open_position_count: z.number(),
+    partial_close_position_count: z.number().optional(),
+    closed_position_count: z.number().optional(),
+    filled_contract_count: z.number().optional(),
+    opened_contract_count: z.number().optional(),
+    remaining_contract_count: z.number().optional(),
+    entry_notional_total: z.number().nullable().optional(),
+    max_profit_total: z.number().nullable().optional(),
+    max_loss_total: z.number().nullable().optional(),
+    realized_pnl_total: z.number().nullable().optional(),
+    unrealized_pnl_total: z.number().nullable().optional(),
+    net_pnl_total: z.number().nullable().optional(),
+    estimated_midpoint_pnl_total: z.number().nullable().optional(),
+    estimated_close_pnl_total: z.number().nullable().optional(),
+    quoted_position_count: z.number(),
+    unquoted_position_count: z.number(),
+    mark_source: z.string().nullable().optional(),
+    mark_error: z.string().nullable().optional(),
+    retrieved_at: z.string(),
+  })
+  .passthrough();
+
+const sessionPortfolioSchema = z
+  .object({
+    summary: sessionPortfolioSummarySchema,
+    positions: z.array(sessionPortfolioPositionSchema),
+  })
+  .passthrough();
+
 const sessionDetailSchema = z
   .object({
     session_id: z.string(),
@@ -403,6 +578,7 @@ const sessionDetailSchema = z
     alerts: z.array(alertSchema),
     events: z.array(liveEventSchema),
     executions: z.array(executionAttemptSchema),
+    portfolio: sessionPortfolioSchema,
     analysis: sessionAnalysisSchema.nullable().optional(),
   })
   .passthrough();
@@ -588,6 +764,13 @@ export type AlertRecord = z.infer<typeof alertSchema>;
 export type JobDefinition = z.infer<typeof jobDefinitionSchema>;
 export type JobRun = z.infer<typeof jobRunSchema>;
 export type LiveResponse = z.infer<typeof liveResponseSchema>;
+export type AccountSnapshot = z.infer<typeof accountSnapshotSchema>;
+export type AccountPnl = z.infer<typeof accountPnlSchema>;
+export type AccountHistoryPoint = z.infer<typeof accountHistoryPointSchema>;
+export type AccountHistory = z.infer<typeof accountHistorySchema>;
+export type AccountPosition = z.infer<typeof accountPositionSchema>;
+export type AccountOverview = z.infer<typeof accountOverviewSchema>;
+export type AccountHistoryRange = z.infer<typeof accountHistoryRangeSchema>;
 export type SessionIdea = z.infer<typeof sessionIdeaSchema>;
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 export type SessionTuning = z.infer<typeof sessionTuningSchema>;
@@ -595,6 +778,10 @@ export type SessionListItem = z.infer<typeof sessionListItemSchema>;
 export type ExecutionOrder = z.infer<typeof executionOrderSchema>;
 export type ExecutionFill = z.infer<typeof executionFillSchema>;
 export type ExecutionAttempt = z.infer<typeof executionAttemptSchema>;
+export type SessionPortfolioQuote = z.infer<typeof sessionPortfolioQuoteSchema>;
+export type SessionPortfolioPosition = z.infer<typeof sessionPortfolioPositionSchema>;
+export type SessionPortfolioSummary = z.infer<typeof sessionPortfolioSummarySchema>;
+export type SessionPortfolio = z.infer<typeof sessionPortfolioSchema>;
 export type SessionDetail = z.infer<typeof sessionDetailSchema>;
 export type TuningBucket = z.infer<typeof tuningBucketSchema>;
 export type GeneratorResponse = z.infer<typeof generatorResponseSchema>;
@@ -622,6 +809,10 @@ export type SessionExecutionRequest = {
   quantity?: number;
   limit_price?: number;
 };
+export type SessionPositionCloseRequest = {
+  quantity?: number;
+  limit_price?: number;
+};
 
 async function fetchApi<T>(
   path: string,
@@ -644,7 +835,14 @@ async function fetchApi<T>(
   });
 
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+    let detail = "";
+    try {
+      const payload = await response.json();
+      detail = typeof payload?.detail === "string" ? payload.detail : "";
+    } catch {}
+    throw new Error(
+      detail || `API request failed: ${response.status} ${response.statusText}`,
+    );
   }
 
   const payload = await response.json();
@@ -676,7 +874,14 @@ async function postApi<TRequest, TResponse>(
   });
 
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+    let detail = "";
+    try {
+      const payload = await response.json();
+      detail = typeof payload?.detail === "string" ? payload.detail : "";
+    } catch {}
+    throw new Error(
+      detail || `API request failed: ${response.status} ${response.statusText}`,
+    );
   }
 
   const payload = await response.json();
@@ -715,6 +920,12 @@ export function getJobsHealth() {
   return fetchApi("jobs/health", jobsHealthSchema);
 }
 
+export function getAccountOverview(historyRange: AccountHistoryRange = "1D") {
+  return fetchApi("account/overview", accountOverviewSchema, {
+    history_range: historyRange,
+  });
+}
+
 export function getSessions(filters?: {
   sessionDate?: string;
   limit?: number;
@@ -735,6 +946,18 @@ export function createSessionExecution(
 ) {
   return postApi(
     `sessions/${encodeURIComponent(sessionId)}/executions`,
+    sessionExecutionActionResponseSchema,
+    payload,
+  );
+}
+
+export function closeSessionPosition(
+  sessionId: string,
+  sessionPositionId: string,
+  payload: SessionPositionCloseRequest = {},
+) {
+  return postApi(
+    `sessions/${encodeURIComponent(sessionId)}/positions/${encodeURIComponent(sessionPositionId)}/close`,
     sessionExecutionActionResponseSchema,
     payload,
   );

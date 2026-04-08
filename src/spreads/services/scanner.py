@@ -901,6 +901,38 @@ class AlpacaClient:
             raise RuntimeError("Unexpected Alpaca order response shape")
         return response
 
+    def get_account(self) -> dict[str, Any]:
+        response = self.get_json(self.trading_base_url, "/v2/account")
+        if not isinstance(response, dict):
+            raise RuntimeError("Unexpected Alpaca account response shape")
+        return response
+
+    def list_positions(self) -> list[dict[str, Any]]:
+        response = self.get_json(self.trading_base_url, "/v2/positions")
+        if not isinstance(response, list):
+            raise RuntimeError("Unexpected Alpaca positions response shape")
+        return [dict(item) for item in response if isinstance(item, dict)]
+
+    def get_account_portfolio_history(
+        self,
+        *,
+        period: str | None = None,
+        timeframe: str | None = None,
+        intraday_reporting: str | None = None,
+    ) -> dict[str, Any]:
+        response = self.get_json(
+            self.trading_base_url,
+            "/v2/account/portfolio/history",
+            {
+                "period": period,
+                "timeframe": timeframe,
+                "intraday_reporting": intraday_reporting,
+            },
+        )
+        if not isinstance(response, dict):
+            raise RuntimeError("Unexpected Alpaca portfolio history response shape")
+        return response
+
     def list_account_activities(
         self,
         *,
@@ -2075,7 +2107,7 @@ def validate_resolved_args(args: argparse.Namespace) -> None:
         raise SystemExit("Expected min-breakeven-vs-expected-move-ratio to be between -1 and 1")
 
 
-def make_order_payload(short_symbol: str, long_symbol: str, limit_price: float) -> dict[str, Any]:
+def make_open_order_payload(short_symbol: str, long_symbol: str, limit_price: float) -> dict[str, Any]:
     return {
         "order_class": "mleg",
         "qty": "1",
@@ -2097,6 +2129,34 @@ def make_order_payload(short_symbol: str, long_symbol: str, limit_price: float) 
             },
         ],
     }
+
+
+def make_close_order_payload(short_symbol: str, long_symbol: str, limit_price: float) -> dict[str, Any]:
+    return {
+        "order_class": "mleg",
+        "qty": "1",
+        "type": "limit",
+        "limit_price": f"{limit_price:.2f}",
+        "time_in_force": "day",
+        "legs": [
+            {
+                "symbol": short_symbol,
+                "ratio_qty": "1",
+                "side": "buy",
+                "position_intent": "buy_to_close",
+            },
+            {
+                "symbol": long_symbol,
+                "ratio_qty": "1",
+                "side": "sell",
+                "position_intent": "sell_to_close",
+            },
+        ],
+    }
+
+
+def make_order_payload(short_symbol: str, long_symbol: str, limit_price: float) -> dict[str, Any]:
+    return make_open_order_payload(short_symbol=short_symbol, long_symbol=long_symbol, limit_price=limit_price)
 
 
 def infer_trading_base_url(key_id: str, explicit_base_url: str | None) -> str:

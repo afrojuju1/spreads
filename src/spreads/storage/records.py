@@ -275,6 +275,8 @@ class ExecutionAttemptRecord(RecordMapping):
     expiration_date: str
     short_symbol: str
     long_symbol: str
+    trade_intent: str
+    session_position_id: str | None
     quantity: int
     limit_price: float
     requested_at: str
@@ -332,3 +334,51 @@ class ExecutionFillRecord(RecordMapping):
     price: float | None
     filled_at: str
     fill: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class SessionPositionRecord(RecordMapping):
+    session_position_id: str
+    session_id: str
+    session_date: str
+    label: str
+    candidate_id: int | None
+    open_execution_attempt_id: str
+    underlying_symbol: str
+    strategy: str
+    expiration_date: str
+    short_symbol: str
+    long_symbol: str
+    requested_quantity: int
+    opened_quantity: float
+    remaining_quantity: float
+    entry_credit: float | None
+    entry_notional: float | None
+    width: float | None
+    max_profit: float | None
+    max_loss: float | None
+    opened_at: str | None
+    closed_at: str | None
+    status: str
+    realized_pnl: float
+    unrealized_pnl: float | None
+    close_mark: float | None
+    close_mark_source: str | None
+    close_marked_at: str | None
+    last_broker_status: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class SessionPositionCloseRecord(RecordMapping):
+    session_position_close_id: int
+    session_position_id: str
+    execution_attempt_id: str
+    closed_quantity: float
+    exit_debit: float | None
+    realized_pnl: float
+    broker_order_id: str | None
+    closed_at: str | None
+    created_at: str
+    updated_at: str

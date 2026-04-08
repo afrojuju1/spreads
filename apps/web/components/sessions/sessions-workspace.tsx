@@ -9,6 +9,7 @@ import {
   LoaderCircle,
   RefreshCw,
   Rows3,
+  Wallet,
 } from "lucide-react";
 import { trim } from "lodash-es";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -16,15 +17,23 @@ import { startTransition, useEffect, useState } from "react";
 
 import { DataTable } from "@/components/data-table";
 import {
+  type AccountHistory,
+  type AccountHistoryPoint,
+  type AccountHistoryRange,
+  type AccountOverview,
+  type AccountPosition,
   type AlertRecord,
   buildSessionHref,
+  closeSessionPosition,
   createSessionExecution,
   type ExecutionAttempt,
   type JobRun,
   type LiveCandidate,
   type LiveEvent,
+  getAccountOverview,
   refreshSessionExecution,
   type SessionDetail,
+  type SessionPortfolioPosition,
   getSessionDetail,
   getSessions,
 } from "@/lib/api";
@@ -88,6 +97,42 @@ type EventRow = {
   raw: LiveEvent;
 };
 
+type AccountPositionRow = {
+  id: string;
+  symbol: string;
+  side: string;
+  quantity: number | null | undefined;
+  averageEntryPrice: number | null | undefined;
+  currentPrice: number | null | undefined;
+  marketValue: number | null | undefined;
+  intradayPnl: number | null | undefined;
+  intradayPnlPercent: number | null | undefined;
+  openPnl: number | null | undefined;
+  openPnlPercent: number | null | undefined;
+  raw: AccountPosition;
+};
+
+type SessionPortfolioPositionRow = {
+  id: string;
+  symbol: string;
+  strategy: string;
+  status: string;
+  brokerStatus: string;
+  openedQuantity: number | null | undefined;
+  remainingQuantity: number | null | undefined;
+  entryCredit: number | null | undefined;
+  closeMark: number | null | undefined;
+  realizedPnl: number | null | undefined;
+  unrealizedPnl: number | null | undefined;
+  netPnl: number | null | undefined;
+  maxLoss: number | null | undefined;
+  openedAt: string | null | undefined;
+  closedAt: string | null | undefined;
+  raw: SessionPortfolioPosition;
+};
+
+const ACCOUNT_HISTORY_RANGES: AccountHistoryRange[] = ["1D", "1W", "1M"];
+
 function readNumber(value: unknown, fallback = 0): number {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
@@ -124,8 +169,42 @@ function formatCurrency(value: number): string {
   }).format(value);
 }
 
+function formatNullableCurrency(value: number | null | undefined): string {
+  return value == null ? "—" : formatCurrency(value);
+}
+
+function formatSignedCurrency(value: number | null | undefined): string {
+  if (value == null) {
+    return "—";
+  }
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+    signDisplay: "exceptZero",
+  }).format(value);
+}
+
 function formatScore(value: number): string {
   return value.toFixed(1);
+}
+
+function formatQuantity(value: number | null | undefined): string {
+  if (value == null) {
+    return "—";
+  }
+  return new Intl.NumberFormat(undefined, {
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function formatSignedPercent(value: number | null | undefined): string {
+  if (value == null) {
+    return "—";
+  }
+  const percent = value * 100;
+  return `${percent > 0 ? "+" : ""}${percent.toFixed(2)}%`;
 }
 
 function formatDuration(raw: JobRun): string {
@@ -163,6 +242,19 @@ function captureTone(value: string): string {
     default:
       return "border-border/70 bg-card text-foreground";
   }
+}
+
+function valueTone(value: number | null | undefined): string {
+  if (value == null) {
+    return "text-muted-foreground";
+  }
+  if (value > 0) {
+    return "text-emerald-700";
+  }
+  if (value < 0) {
+    return "text-rose-700";
+  }
+  return "text-foreground/80";
 }
 
 function SessionStatusBadge({ value }: { value: string | null | undefined }) {
@@ -206,6 +298,44 @@ function ExecutionStatusBadge({ value }: { value: string | null | undefined }) {
   return (
     <Badge variant="outline" className={cn("rounded-full border px-2.5 py-1 text-[11px] uppercase tracking-[0.16em]", executionTone(resolved))}>
       {resolved.replaceAll("_", " ")}
+    </Badge>
+  );
+}
+
+function portfolioTone(value: string): string {
+  switch (value) {
+    case "open":
+      return "border-emerald-200 bg-emerald-100 text-emerald-900";
+    case "partial_close":
+    case "partial_open":
+      return "border-sky-200 bg-sky-100 text-sky-900";
+    case "closed":
+      return "border-stone-200 bg-stone-100 text-stone-900";
+    default:
+      return "border-border/70 bg-card text-foreground";
+  }
+}
+
+function PortfolioStatusBadge({ value }: { value: string | null | undefined }) {
+  const resolved = readString(value, "unknown");
+  return (
+    <Badge variant="outline" className={cn("rounded-full border px-2.5 py-1 text-[11px] uppercase tracking-[0.16em]", portfolioTone(resolved))}>
+      {resolved.replaceAll("_", " ")}
+    </Badge>
+  );
+}
+
+function AccountEnvironmentBadge({ value }: { value: string | null | undefined }) {
+  const resolved = readString(value, "custom");
+  const tone =
+    resolved === "paper"
+      ? "border-sky-200 bg-sky-100 text-sky-900"
+      : resolved === "live"
+        ? "border-amber-200 bg-amber-100 text-amber-900"
+        : "border-border/70 bg-card text-foreground";
+  return (
+    <Badge variant="outline" className={cn("rounded-full border px-2.5 py-1 text-[11px] uppercase tracking-[0.16em]", tone)}>
+      {resolved}
     </Badge>
   );
 }
@@ -311,6 +441,46 @@ function buildEventRows(events: LiveEvent[]): EventRow[] {
       message: event.message,
       raw: event,
     }));
+}
+
+function buildAccountPositionRows(positions: AccountPosition[]): AccountPositionRow[] {
+  return positions.map((position) => ({
+    id: position.asset_id ?? position.symbol,
+    symbol: position.symbol,
+    side: readString(position.side, "flat"),
+    quantity: position.qty,
+    averageEntryPrice: position.avg_entry_price,
+    currentPrice: position.current_price,
+    marketValue: position.market_value,
+    intradayPnl: position.unrealized_intraday_pl,
+    intradayPnlPercent: position.unrealized_intraday_plpc,
+    openPnl: position.unrealized_pl,
+    openPnlPercent: position.unrealized_plpc,
+    raw: position,
+  }));
+}
+
+function buildSessionPortfolioPositionRows(
+  positions: SessionPortfolioPosition[],
+): SessionPortfolioPositionRow[] {
+  return positions.map((position) => ({
+    id: position.position_id,
+    symbol: position.underlying_symbol,
+    strategy: position.strategy,
+    status: position.position_status,
+    brokerStatus: position.broker_status,
+    openedQuantity: position.opened_quantity ?? position.filled_quantity,
+    remainingQuantity: position.remaining_quantity ?? position.filled_quantity,
+    entryCredit: position.entry_credit,
+    closeMark: position.spread_mark_close,
+    realizedPnl: position.realized_pnl,
+    unrealizedPnl: position.unrealized_pnl ?? position.estimated_close_pnl,
+    netPnl: position.net_pnl,
+    maxLoss: position.max_loss,
+    openedAt: position.opened_at,
+    closedAt: position.closed_at,
+    raw: position,
+  }));
 }
 
 const CANDIDATE_COLUMNS: ColumnDef<CandidateRow>[] = [
@@ -440,6 +610,191 @@ const EVENT_COLUMNS: ColumnDef<EventRow>[] = [
   },
 ];
 
+const ACCOUNT_POSITION_COLUMNS: ColumnDef<AccountPositionRow>[] = [
+  {
+    accessorKey: "symbol",
+    header: "Symbol",
+    cell: ({ row }) => <span className="font-mono text-[12px] font-semibold">{row.original.symbol}</span>,
+  },
+  {
+    accessorKey: "side",
+    header: "Side",
+    cell: ({ getValue }) => <span className="capitalize text-foreground/80">{String(getValue())}</span>,
+  },
+  {
+    accessorKey: "quantity",
+    header: "Qty",
+    cell: ({ getValue }) => <span className="font-mono">{formatQuantity(getValue<number | null | undefined>())}</span>,
+  },
+  {
+    accessorKey: "averageEntryPrice",
+    header: "Entry",
+    cell: ({ getValue }) => <span className="font-mono">{formatNullableCurrency(getValue<number | null | undefined>())}</span>,
+  },
+  {
+    accessorKey: "currentPrice",
+    header: "Mark",
+    cell: ({ getValue }) => <span className="font-mono">{formatNullableCurrency(getValue<number | null | undefined>())}</span>,
+  },
+  {
+    accessorKey: "marketValue",
+    header: "Market Value",
+    cell: ({ getValue }) => <span className="font-mono">{formatNullableCurrency(getValue<number | null | undefined>())}</span>,
+  },
+  {
+    accessorKey: "intradayPnl",
+    header: "Day PnL",
+    cell: ({ row }) => (
+      <div className={cn("font-mono", valueTone(row.original.intradayPnl))}>
+        <div>{formatSignedCurrency(row.original.intradayPnl)}</div>
+        <div className="text-[11px]">{formatSignedPercent(row.original.intradayPnlPercent)}</div>
+      </div>
+    ),
+  },
+  {
+    accessorKey: "openPnl",
+    header: "Open PnL",
+    cell: ({ row }) => (
+      <div className={cn("font-mono", valueTone(row.original.openPnl))}>
+        <div>{formatSignedCurrency(row.original.openPnl)}</div>
+        <div className="text-[11px]">{formatSignedPercent(row.original.openPnlPercent)}</div>
+      </div>
+    ),
+  },
+];
+
+function buildSessionPortfolioPositionColumns({
+  closingPositionId,
+  onClose,
+}: {
+  closingPositionId: string | null;
+  onClose: (position: SessionPortfolioPosition) => void;
+}): ColumnDef<SessionPortfolioPositionRow>[] {
+  return [
+  {
+    accessorKey: "symbol",
+    header: "Underlying",
+    cell: ({ row }) => (
+      <div>
+        <div className="font-semibold tracking-[0.04em]">{row.original.symbol}</div>
+        <div className="text-[11px] text-muted-foreground">
+          {row.original.raw.short_symbol} / {row.original.raw.long_symbol}
+        </div>
+      </div>
+    ),
+  },
+  {
+    accessorKey: "strategy",
+    header: "Setup",
+    cell: ({ row }) => (
+      <div>
+        <div className="capitalize text-foreground/80">{row.original.strategy.replaceAll("_", " ")}</div>
+        <div className="text-[11px] text-muted-foreground">
+          expires {formatDate(row.original.raw.expiration_date)}
+        </div>
+      </div>
+    ),
+  },
+  {
+    accessorKey: "status",
+    header: "Status",
+    cell: ({ row }) => (
+      <div className="flex flex-col gap-1">
+        <PortfolioStatusBadge value={row.original.status} />
+        <ExecutionStatusBadge value={row.original.brokerStatus} />
+      </div>
+    ),
+  },
+  {
+    accessorKey: "remainingQuantity",
+    header: "Qty",
+    cell: ({ row }) => (
+      <div className="font-mono">
+        <div>{formatQuantity(row.original.remainingQuantity)}</div>
+        <div className="text-[11px] text-muted-foreground">
+          open {formatQuantity(row.original.openedQuantity)}
+        </div>
+      </div>
+    ),
+  },
+  {
+    accessorKey: "entryCredit",
+    header: "Entry Credit",
+    cell: ({ getValue }) => (
+      <span className="font-mono">{formatNullableCurrency(getValue<number | null | undefined>())}</span>
+    ),
+  },
+  {
+    accessorKey: "closeMark",
+    header: "Close Mark",
+    cell: ({ row }) => (
+      <div className="font-mono">
+        <div>{formatNullableCurrency(row.original.closeMark)}</div>
+        <div className="text-[11px] text-muted-foreground">
+          {readString(row.original.raw.mark_source, "unquoted")}
+        </div>
+      </div>
+    ),
+  },
+  {
+    accessorKey: "realizedPnl",
+    header: "P&L",
+    cell: ({ row }) => (
+      <div className="font-mono">
+        <div className={valueTone(row.original.realizedPnl)}>
+          realized {formatSignedCurrency(row.original.realizedPnl)}
+        </div>
+        <div className={cn("text-[11px]", valueTone(row.original.unrealizedPnl))}>
+          open {formatSignedCurrency(row.original.unrealizedPnl)}
+        </div>
+      </div>
+    ),
+  },
+  {
+    accessorKey: "maxLoss",
+    header: "Max Loss",
+    cell: ({ getValue }) => (
+      <span className="font-mono">{formatNullableCurrency(getValue<number | null | undefined>())}</span>
+    ),
+  },
+  {
+    accessorKey: "openedAt",
+    header: "Opened",
+    cell: ({ row }) => (
+      <div className="font-mono text-[12px]">
+        <div>{formatTimestamp(row.original.openedAt)}</div>
+        <div className="text-muted-foreground">{formatTimestamp(row.original.closedAt)}</div>
+      </div>
+    ),
+  },
+  {
+    id: "actions",
+    header: "",
+    cell: ({ row }) => {
+      const canClose =
+        row.original.status !== "closed" &&
+        (row.original.remainingQuantity ?? 0) > 0;
+      return canClose ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={closingPositionId === row.original.id}
+          onClick={() => onClose(row.original.raw)}
+        >
+          {closingPositionId === row.original.id ? (
+            <LoaderCircle className="size-3.5 animate-spin" />
+          ) : null}
+          Close
+        </Button>
+      ) : (
+        <span className="text-xs text-muted-foreground">Settled</span>
+      );
+    },
+  },
+];
+}
+
 function LoadingShell() {
   return (
     <div className="flex flex-col gap-4">
@@ -447,6 +802,304 @@ function LoadingShell() {
       <Skeleton className="h-72 w-full rounded-[28px]" />
       <Skeleton className="h-72 w-full rounded-[28px]" />
     </div>
+  );
+}
+
+function maskAccountNumber(value: string | null | undefined): string {
+  const normalized = trim(value ?? "");
+  if (!normalized) {
+    return "—";
+  }
+  if (normalized.length <= 4) {
+    return normalized;
+  }
+  return `••••${normalized.slice(-4)}`;
+}
+
+function buildChartCoordinates(points: AccountHistoryPoint[], width: number, height: number, padding: number) {
+  const validPoints = points.filter(
+    (point): point is AccountHistoryPoint & { equity: number } => typeof point.equity === "number" && Number.isFinite(point.equity),
+  );
+  if (!validPoints.length) {
+    return null;
+  }
+  const min = Math.min(...validPoints.map((point) => point.equity));
+  const max = Math.max(...validPoints.map((point) => point.equity));
+  const range = max - min || 1;
+  const step = validPoints.length === 1 ? 0 : (width - padding * 2) / (validPoints.length - 1);
+  const coordinates = validPoints.map((point, index) => {
+    const x = padding + step * index;
+    const y = height - padding - ((point.equity - min) / range) * (height - padding * 2);
+    return { x, y, point };
+  });
+  const line = coordinates.map(({ x, y }) => `${x},${y}`).join(" ");
+  const area = [
+    `${padding},${height - padding}`,
+    ...coordinates.map(({ x, y }) => `${x},${y}`),
+    `${coordinates[coordinates.length - 1]?.x ?? width - padding},${height - padding}`,
+  ].join(" ");
+  return {
+    min,
+    max,
+    start: validPoints[0].equity,
+    end: validPoints[validPoints.length - 1].equity,
+    line,
+    area,
+  };
+}
+
+function AccountHistoryChart({ history }: { history: AccountHistory }) {
+  const width = 720;
+  const height = 220;
+  const padding = 16;
+  const chart = buildChartCoordinates(history.points, width, height, padding);
+
+  if (!chart) {
+    return (
+      <div className="rounded-2xl border border-dashed border-border/70 px-4 py-8 text-sm text-muted-foreground">
+        Alpaca did not return equity history points for this range.
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border border-border/70 bg-background/70 px-4 py-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Equity curve</div>
+          <div className={cn("mt-2 text-2xl font-semibold", valueTone(chart.end - chart.start))}>
+            {formatSignedCurrency(chart.end - chart.start)}
+          </div>
+          <div className="mt-1 text-sm text-muted-foreground">
+            {history.range} range · {readString(history.timeframe, "—")} candles
+          </div>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-3">
+          <MetricTile label="start" value={formatNullableCurrency(chart.start)} />
+          <MetricTile label="high" value={formatNullableCurrency(chart.max)} />
+          <MetricTile label="low" value={formatNullableCurrency(chart.min)} />
+        </div>
+      </div>
+      <div className="mt-4 overflow-hidden rounded-2xl border border-border/70 bg-gradient-to-b from-stone-100/80 to-background">
+        <svg viewBox={`0 0 ${width} ${height}`} className="h-56 w-full">
+          <defs>
+            <linearGradient id="account-history-fill" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="rgb(41 37 36 / 0.22)" />
+              <stop offset="100%" stopColor="rgb(41 37 36 / 0.02)" />
+            </linearGradient>
+          </defs>
+          <polyline points={chart.area} fill="url(#account-history-fill)" stroke="none" />
+          <polyline
+            points={chart.line}
+            fill="none"
+            stroke="rgb(68 64 60)"
+            strokeWidth="3"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+function AccountOverviewSection({
+  overview,
+  historyRange,
+  onHistoryRangeChange,
+  refreshing,
+  onRefresh,
+  error,
+}: {
+  overview: AccountOverview | null;
+  historyRange: AccountHistoryRange;
+  onHistoryRangeChange: (nextRange: AccountHistoryRange) => void;
+  refreshing: boolean;
+  onRefresh: () => void;
+  error: string | null;
+}) {
+  const positionRows = buildAccountPositionRows(overview?.positions ?? []);
+
+  return (
+    <SectionSurface title="Broker Account" description="Read-only Alpaca balances, open positions, and portfolio equity history.">
+      {overview ? (
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline" className="rounded-full border-border/70 bg-background/80 px-2.5 py-1 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                  <Wallet data-icon="inline-start" />
+                  Broker snapshot
+                </Badge>
+                <AccountEnvironmentBadge value={overview.environment} />
+                {overview.account.status ? <SessionStatusBadge value={overview.account.status.toLowerCase()} /> : null}
+              </div>
+              <div className="mt-3 text-sm text-foreground/70">
+                Account {maskAccountNumber(overview.account.account_number)} · refreshed {formatTimestamp(overview.retrieved_at)}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {ACCOUNT_HISTORY_RANGES.map((range) => (
+                <Button
+                  key={range}
+                  type="button"
+                  size="sm"
+                  variant={historyRange === range ? "secondary" : "outline"}
+                  onClick={() => onHistoryRangeChange(range)}
+                >
+                  {range}
+                </Button>
+              ))}
+              <Button type="button" variant="outline" size="sm" disabled={refreshing} onClick={onRefresh}>
+                {refreshing ? <LoaderCircle className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+                Refresh
+              </Button>
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+            <MetricTile
+              label="equity"
+              value={formatNullableCurrency(overview.account.equity)}
+              note={`Prev close ${formatNullableCurrency(overview.account.last_equity)}`}
+            />
+            <MetricTile
+              label="day pnl"
+              value={formatSignedCurrency(overview.pnl.day_change)}
+              note={formatSignedPercent(overview.pnl.day_change_percent)}
+            />
+            <MetricTile
+              label="buying power"
+              value={formatNullableCurrency(overview.account.buying_power)}
+              note={`Options ${formatNullableCurrency(overview.account.options_buying_power)}`}
+            />
+            <MetricTile
+              label="cash"
+              value={formatNullableCurrency(overview.account.cash)}
+              note={`Day trades ${overview.account.daytrade_count ?? "—"}`}
+            />
+            <MetricTile
+              label="positions"
+              value={String(overview.positions.length)}
+              note="Currently open broker positions"
+            />
+            <MetricTile
+              label="account status"
+              value={readString(overview.account.status, "—").toUpperCase()}
+              note={overview.account.trading_blocked ? "Trading blocked" : "Trading enabled"}
+            />
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+            <AccountHistoryChart history={overview.history} />
+            <div className="rounded-2xl border border-border/70 bg-background/70 px-4 py-4">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Open positions</div>
+              <div className="mt-3">
+                <DataTable
+                  columns={ACCOUNT_POSITION_COLUMNS}
+                  data={positionRows}
+                  getRowId={(row) => row.id}
+                  emptyMessage="No open broker positions were reported by Alpaca."
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : error ? (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+          {error}
+        </div>
+      ) : (
+        <div className="grid gap-3 md:grid-cols-3">
+          <Skeleton className="h-28 rounded-2xl" />
+          <Skeleton className="h-28 rounded-2xl" />
+          <Skeleton className="h-28 rounded-2xl" />
+          <Skeleton className="h-72 rounded-2xl md:col-span-2" />
+          <Skeleton className="h-72 rounded-2xl" />
+        </div>
+      )}
+    </SectionSurface>
+  );
+}
+
+function SessionPortfolioSection({
+  session,
+  closingPositionId,
+  onClosePosition,
+  closeError,
+  closeMessage,
+}: {
+  session: SessionDetail;
+  closingPositionId: string | null;
+  onClosePosition: (position: SessionPortfolioPosition) => void;
+  closeError: string | null;
+  closeMessage: string | null;
+}) {
+  const portfolio = session.portfolio;
+  const summary = portfolio.summary;
+  const positionRows = buildSessionPortfolioPositionRows(portfolio.positions);
+  const columns = buildSessionPortfolioPositionColumns({
+    closingPositionId,
+    onClose: onClosePosition,
+  });
+
+  return (
+    <SectionSurface
+      title="Trade PnL"
+      description="Day-scoped session positions backed by persisted executions, with realized PnL from closes and live quote marks layered on top."
+    >
+      {!positionRows.length ? (
+        <div className="rounded-2xl border border-dashed border-border/70 px-4 py-8 text-sm text-muted-foreground">
+          No session positions were opened for this session yet.
+        </div>
+      ) : (
+        <div className="flex flex-col gap-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <MetricTile
+              label="Open positions"
+              value={String(summary.open_position_count)}
+              note={`${summary.partial_close_position_count ?? 0} partial / ${summary.quoted_position_count} quoted`}
+            />
+            <MetricTile
+              label="Closed today"
+              value={String(summary.closed_position_count ?? 0)}
+              note={`${formatQuantity(summary.remaining_contract_count)} contracts still open`}
+            />
+            <MetricTile
+              label="Realized PnL"
+              value={formatSignedCurrency(summary.realized_pnl_total)}
+              note={`Net ${formatSignedCurrency(summary.net_pnl_total)}`}
+            />
+            <MetricTile
+              label="Open PnL"
+              value={formatSignedCurrency(summary.unrealized_pnl_total)}
+              note={`Marks as of ${formatTimestamp(summary.retrieved_at)}`}
+            />
+          </div>
+          {summary.mark_error ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+              Quote enrichment was partial: {summary.mark_error}
+            </div>
+          ) : null}
+          {closeError ? (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+              {closeError}
+            </div>
+          ) : null}
+          {closeMessage ? (
+            <div className="rounded-2xl border border-border/70 bg-background/70 px-4 py-3 text-sm text-foreground/70">
+              {closeMessage}
+            </div>
+          ) : null}
+          <DataTable
+            columns={columns}
+            data={positionRows}
+            getRowId={(row) => row.id}
+            emptyMessage="No session positions were recorded in the execution ledger."
+          />
+        </div>
+      )}
+    </SectionSurface>
   );
 }
 
@@ -530,14 +1183,23 @@ export function SessionsWorkspace() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
+  const [accountHistoryRange, setAccountHistoryRange] = useState<AccountHistoryRange>("1D");
   const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null);
   const [refreshingAttemptId, setRefreshingAttemptId] = useState<string | null>(null);
+  const [closingPositionId, setClosingPositionId] = useState<string | null>(null);
+
+  const accountOverviewQuery = useQuery({
+    queryKey: ["account-overview", accountHistoryRange],
+    queryFn: () => getAccountOverview(accountHistoryRange),
+    refetchInterval: 30_000,
+  });
 
   const sessionsQuery = useQuery({
     queryKey: ["sessions"],
     queryFn: () => getSessions({ limit: 120 }),
   });
 
+  const accountOverview = accountOverviewQuery.data ?? null;
   const sessions = sessionsQuery.data?.sessions ?? [];
   const requestedSessionId = searchParams.get("session_id");
   const selectedSession =
@@ -557,6 +1219,7 @@ export function SessionsWorkspace() {
     queryKey: ["session", selectedSessionId],
     queryFn: () => getSessionDetail(selectedSessionId ?? ""),
     enabled: Boolean(selectedSessionId),
+    refetchInterval: 30_000,
   });
 
   const session = sessionDetailQuery.data ?? null;
@@ -580,6 +1243,7 @@ export function SessionsWorkspace() {
       createSessionExecution(selectedSessionId ?? "", { candidate_id: candidate.candidate_id }),
     onSuccess: async () => {
       await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["account-overview"] }),
         queryClient.invalidateQueries({ queryKey: ["sessions"] }),
         queryClient.invalidateQueries({ queryKey: ["session", selectedSessionId] }),
       ]);
@@ -594,12 +1258,31 @@ export function SessionsWorkspace() {
     },
     onSuccess: async () => {
       await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["account-overview"] }),
         queryClient.invalidateQueries({ queryKey: ["sessions"] }),
         queryClient.invalidateQueries({ queryKey: ["session", selectedSessionId] }),
       ]);
     },
     onSettled: () => {
       setRefreshingAttemptId(null);
+    },
+  });
+
+  const closePositionMutation = useMutation({
+    mutationFn: (position: SessionPortfolioPosition) =>
+      closeSessionPosition(selectedSessionId ?? "", position.position_id),
+    onMutate: (position) => {
+      setClosingPositionId(position.position_id);
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["account-overview"] }),
+        queryClient.invalidateQueries({ queryKey: ["sessions"] }),
+        queryClient.invalidateQueries({ queryKey: ["session", selectedSessionId] }),
+      ]);
+    },
+    onSettled: () => {
+      setClosingPositionId(null);
     },
   });
 
@@ -726,6 +1409,25 @@ export function SessionsWorkspace() {
             ) : null}
           </div>
 
+          <AccountOverviewSection
+            overview={accountOverview}
+            historyRange={accountHistoryRange}
+            onHistoryRangeChange={(nextRange) => {
+              startTransition(() => {
+                setAccountHistoryRange(nextRange);
+              });
+            }}
+            refreshing={accountOverviewQuery.isFetching}
+            onRefresh={() => {
+              void accountOverviewQuery.refetch();
+            }}
+            error={
+              accountOverviewQuery.isError
+                ? "Broker account data could not be loaded from Alpaca."
+                : null
+            }
+          />
+
           {session ? (
             <>
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -750,6 +1452,20 @@ export function SessionsWorkspace() {
                   note="Collector events for this session"
                 />
               </div>
+
+              <SessionPortfolioSection
+                session={session}
+                closingPositionId={closingPositionId}
+                onClosePosition={(position) => closePositionMutation.mutate(position)}
+                closeError={
+                  closePositionMutation.isError
+                    ? closePositionMutation.error instanceof Error
+                      ? closePositionMutation.error.message
+                      : "Could not submit the session close execution."
+                    : null
+                }
+                closeMessage={closePositionMutation.data?.message ?? null}
+              />
 
               <SectionSurface title="Board" description="Current board candidates from the latest successful cycle.">
                 <div className="flex flex-col gap-4">
@@ -944,6 +1660,9 @@ function ExecutionAttemptCard({
               {attempt.underlying_symbol} · {attempt.strategy.replaceAll("_", " ")}
             </span>
             <ExecutionStatusBadge value={attempt.status} />
+            <Badge variant="outline" className="rounded-full border-border/70 bg-background/80 px-2.5 py-1 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+              {attempt.trade_intent}
+            </Badge>
           </div>
           <div className="mt-1 text-sm text-muted-foreground">
             {attempt.short_symbol} / {attempt.long_symbol} · qty {attempt.quantity} · limit {formatCurrency(attempt.limit_price)}
@@ -952,6 +1671,7 @@ function ExecutionAttemptCard({
             <span>requested {formatTimestamp(attempt.requested_at)}</span>
             <span>submitted {attempt.submitted_at ? formatTimestamp(attempt.submitted_at) : "—"}</span>
             <span>broker order {primaryOrder?.broker_order_id ?? attempt.broker_order_id ?? "pending"}</span>
+            {attempt.session_position_id ? <span>position {attempt.session_position_id}</span> : null}
           </div>
         </div>
         <Button type="button" variant="outline" size="sm" disabled={refreshing} onClick={onRefresh}>

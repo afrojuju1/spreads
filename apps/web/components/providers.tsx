@@ -306,6 +306,7 @@ function GlobalRealtimeBridge({
         }
         break;
       case "execution.attempt.updated":
+        queryClient.invalidateQueries({ queryKey: ["account-overview"] });
         queryClient.invalidateQueries({ queryKey: ["sessions"] });
         if (sessionId) {
           queryClient.invalidateQueries({ queryKey: ["session", sessionId] });

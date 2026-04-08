@@ -16,6 +16,7 @@ class ExecutionAttemptModel(Base):
         Index("idx_execution_attempts_session_requested", "session_id", "requested_at"),
         Index("idx_execution_attempts_status_requested", "status", "requested_at"),
         Index("idx_execution_attempts_candidate_requested", "candidate_id", "requested_at"),
+        Index("idx_execution_attempts_position_requested", "session_position_id", "requested_at"),
     )
 
     execution_attempt_id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -45,6 +46,12 @@ class ExecutionAttemptModel(Base):
     expiration_date: Mapped[date] = mapped_column(Date, nullable=False)
     short_symbol: Mapped[str] = mapped_column(Text, nullable=False)
     long_symbol: Mapped[str] = mapped_column(Text, nullable=False)
+    trade_intent: Mapped[str] = mapped_column(Text, nullable=False, default="open")
+    session_position_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("session_positions.session_position_id", ondelete="SET NULL"),
+        nullable=True,
+    )
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     limit_price: Mapped[float] = mapped_column(Float, nullable=False)
     requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -126,3 +133,78 @@ class ExecutionFillModel(Base):
     price: Mapped[float | None] = mapped_column(Float, nullable=True)
     filled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     fill_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+
+class SessionPositionModel(Base):
+    __tablename__ = "session_positions"
+    __table_args__ = (
+        Index("idx_session_positions_session_updated", "session_id", "updated_at"),
+        Index("idx_session_positions_session_status", "session_id", "status"),
+        Index("ux_session_positions_open_attempt", "open_execution_attempt_id", unique=True),
+    )
+
+    session_position_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    session_id: Mapped[str] = mapped_column(Text, nullable=False)
+    session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    candidate_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("collector_cycle_candidates.candidate_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    open_execution_attempt_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("execution_attempts.execution_attempt_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    underlying_symbol: Mapped[str] = mapped_column(Text, nullable=False)
+    strategy: Mapped[str] = mapped_column(Text, nullable=False)
+    expiration_date: Mapped[date] = mapped_column(Date, nullable=False)
+    short_symbol: Mapped[str] = mapped_column(Text, nullable=False)
+    long_symbol: Mapped[str] = mapped_column(Text, nullable=False)
+    requested_quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    opened_quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    remaining_quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    entry_credit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_notional: Mapped[float | None] = mapped_column(Float, nullable=True)
+    width: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_profit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_loss: Mapped[float | None] = mapped_column(Float, nullable=True)
+    opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    realized_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    unrealized_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
+    close_mark: Mapped[float | None] = mapped_column(Float, nullable=True)
+    close_mark_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    close_marked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_broker_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SessionPositionCloseModel(Base):
+    __tablename__ = "session_position_closes"
+    __table_args__ = (
+        Index("idx_session_position_closes_position_closed", "session_position_id", "closed_at"),
+        Index("ux_session_position_closes_execution_attempt", "execution_attempt_id", unique=True),
+    )
+
+    session_position_close_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    session_position_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("session_positions.session_position_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    execution_attempt_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("execution_attempts.execution_attempt_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    closed_quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    exit_debit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    realized_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    broker_order_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

@@ -1,18 +1,20 @@
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from spreads.common import env_or_die, load_local_env
 from spreads.events.bus import publish_global_event_sync
-from spreads.integrations.alpaca.client import (
-    AlpacaClient,
-    DEFAULT_DATA_BASE_URL,
-    infer_trading_base_url,
-)
+from spreads.integrations.alpaca.client import AlpacaClient
+from spreads.services.alpaca import create_alpaca_client_from_env
 from spreads.services.live_pipelines import build_live_session_id
+from spreads.services.scanner import make_close_order_payload
+from spreads.services.session_positions import (
+    CLOSE_TRADE_INTENT,
+    OPEN_TRADE_INTENT,
+    resolve_trade_intent,
+    sync_session_position_from_attempt,
+)
 from spreads.storage.factory import build_collector_repository, build_execution_repository
 
 BROKER_NAME = "alpaca"
@@ -94,22 +96,13 @@ def _resolve_completed_at(order: dict[str, Any]) -> str | None:
     return None
 
 
-def _create_alpaca_client() -> AlpacaClient:
-    load_local_env()
-    key_id = env_or_die("APCA_API_KEY_ID", "ALPACA_API_KEY")
-    secret_key = env_or_die("APCA_API_SECRET_KEY", "ALPACA_SECRET_KEY")
-    trading_base_url = infer_trading_base_url(key_id, os.environ.get("ALPACA_TRADING_BASE_URL"))
-    data_base_url = os.environ.get("ALPACA_DATA_BASE_URL", DEFAULT_DATA_BASE_URL)
-    return AlpacaClient(
-        key_id=key_id,
-        secret_key=secret_key,
-        trading_base_url=trading_base_url,
-        data_base_url=data_base_url,
-    )
-
-
 def _require_execution_schema(execution_store: Any) -> None:
     if not execution_store.schema_ready():
+        raise RuntimeError(EXECUTION_SCHEMA_MESSAGE)
+
+
+def _require_position_schema(execution_store: Any) -> None:
+    if not execution_store.positions_schema_ready():
         raise RuntimeError(EXECUTION_SCHEMA_MESSAGE)
 
 
@@ -232,6 +225,55 @@ def _build_order_request(
         raise ValueError("Execution limit price must be positive")
 
     request = dict(order_payload)
+    request["qty"] = str(int(resolved_quantity))
+    request["limit_price"] = f"{float(resolved_limit_price):.2f}"
+    request["client_order_id"] = client_order_id
+    return request, int(resolved_quantity), round(float(resolved_limit_price), 2)
+
+
+def _resolve_session_position(
+    *,
+    execution_store: Any,
+    session_id: str,
+    session_position_id: str,
+) -> dict[str, Any]:
+    position = execution_store.get_session_position(session_position_id)
+    if position is None:
+        raise ValueError(f"Unknown session_position_id: {session_position_id}")
+    if str(position["session_id"]) != session_id:
+        raise ValueError(f"Session position {session_position_id} does not belong to session {session_id}")
+    return position.to_dict()
+
+
+def _build_close_order_request(
+    *,
+    position: dict[str, Any],
+    quantity: int | None,
+    limit_price: float | None,
+    client_order_id: str,
+) -> tuple[dict[str, Any], int, float]:
+    remaining_quantity = _coerce_float(position.get("remaining_quantity"))
+    if remaining_quantity is None or remaining_quantity <= 0:
+        raise ValueError("Session position does not have remaining quantity to close")
+    resolved_quantity = quantity if quantity is not None else int(round(remaining_quantity))
+    if resolved_quantity <= 0:
+        raise ValueError("Close quantity must be positive")
+    if resolved_quantity > remaining_quantity:
+        raise ValueError("Close quantity exceeds the remaining session position quantity")
+
+    resolved_limit_price = (
+        limit_price
+        if limit_price is not None
+        else _coerce_float(position.get("close_mark"))
+    )
+    if resolved_limit_price is None or resolved_limit_price <= 0:
+        raise ValueError("Close execution requires a positive limit price or a quoted close mark")
+
+    request = make_close_order_payload(
+        short_symbol=str(position["short_symbol"]),
+        long_symbol=str(position["long_symbol"]),
+        limit_price=float(resolved_limit_price),
+    )
     request["qty"] = str(int(resolved_quantity))
     request["limit_price"] = f"{float(resolved_limit_price):.2f}"
     request["client_order_id"] = client_order_id
@@ -372,6 +414,11 @@ def _sync_attempt_state(
         completed_at=completed_at,
         error_text=None,
     )
+    payload = _get_attempt_payload(execution_store, str(attempt["execution_attempt_id"]))
+    sync_session_position_from_attempt(
+        execution_store=execution_store,
+        attempt=payload,
+    )
     return _get_attempt_payload(execution_store, str(attempt["execution_attempt_id"]))
 
 
@@ -411,6 +458,7 @@ def submit_live_session_execution(
     submitted_order: dict[str, Any] | None = None
     try:
         _require_execution_schema(execution_store)
+        _require_position_schema(execution_store)
         candidate, cycle = _resolve_session_candidate(
             collector_store=collector_store,
             session_id=session_id,
@@ -463,6 +511,8 @@ def submit_live_session_execution(
             expiration_date=str(candidate["expiration_date"]),
             short_symbol=str(candidate["short_symbol"]),
             long_symbol=str(candidate["long_symbol"]),
+            trade_intent=OPEN_TRADE_INTENT,
+            session_position_id=None,
             quantity=resolved_quantity,
             limit_price=resolved_limit_price,
             requested_at=requested_at,
@@ -470,13 +520,14 @@ def submit_live_session_execution(
             broker=BROKER_NAME,
             client_order_id=client_order_id,
             request={
-                "order": order_request,
                 **({} if request_metadata is None else request_metadata),
+                "trade_intent": OPEN_TRADE_INTENT,
+                "order": order_request,
             },
             candidate=dict(candidate.get("candidate") or {}),
         ).to_dict()
 
-        client = _create_alpaca_client()
+        client = create_alpaca_client_from_env()
         submitted_order = client.submit_order(order_request)
         execution_store.update_attempt(
             execution_attempt_id=str(attempt["execution_attempt_id"]),
@@ -554,6 +605,169 @@ def submit_live_session_execution(
         collector_store.close()
 
 
+def submit_session_position_close(
+    *,
+    db_target: str,
+    session_id: str,
+    session_position_id: str,
+    quantity: int | None = None,
+    limit_price: float | None = None,
+    request_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    execution_store = build_execution_repository(db_target)
+    requested_at = _utc_now()
+    client_order_id = _execution_client_order_id()
+    attempt_id: str | None = None
+    submitted_order: dict[str, Any] | None = None
+    try:
+        _require_execution_schema(execution_store)
+        _require_position_schema(execution_store)
+        position = _resolve_session_position(
+            execution_store=execution_store,
+            session_id=session_id,
+            session_position_id=session_position_id,
+        )
+        if str(position.get("status") or "open") == "closed":
+            raise ValueError("Session position is already closed")
+
+        existing_attempts = execution_store.list_open_attempts_for_session_position(
+            session_position_id=session_position_id,
+            statuses=sorted(OPEN_STATUSES),
+        )
+        if existing_attempts:
+            payload = _get_attempt_payload(
+                execution_store,
+                str(existing_attempts[0]["execution_attempt_id"]),
+            )
+            return {
+                "action": "submit",
+                "changed": False,
+                "message": "An active close execution already exists for this session position.",
+                "attempt": payload,
+            }
+
+        order_request, resolved_quantity, resolved_limit_price = _build_close_order_request(
+            position=position,
+            quantity=quantity,
+            limit_price=limit_price,
+            client_order_id=client_order_id,
+        )
+        trade_intent = resolve_trade_intent(CLOSE_TRADE_INTENT)
+
+        attempt_id = _execution_attempt_id()
+        attempt = execution_store.create_attempt(
+            execution_attempt_id=attempt_id,
+            session_id=session_id,
+            session_date=str(position["session_date"]),
+            label=str(position["label"]),
+            cycle_id=None,
+            candidate_id=_coerce_int(position.get("candidate_id")),
+            bucket="position_close",
+            candidate_generated_at=None,
+            run_id=None,
+            job_run_id=None,
+            underlying_symbol=str(position["underlying_symbol"]),
+            strategy=str(position["strategy"]),
+            expiration_date=str(position["expiration_date"]),
+            short_symbol=str(position["short_symbol"]),
+            long_symbol=str(position["long_symbol"]),
+            trade_intent=trade_intent,
+            session_position_id=session_position_id,
+            quantity=resolved_quantity,
+            limit_price=resolved_limit_price,
+            requested_at=requested_at,
+            status=PENDING_SUBMISSION_STATUS,
+            broker=BROKER_NAME,
+            client_order_id=client_order_id,
+            request={
+                **({} if request_metadata is None else request_metadata),
+                "trade_intent": trade_intent,
+                "session_position_id": session_position_id,
+                "order": order_request,
+            },
+            candidate={},
+        ).to_dict()
+
+        client = create_alpaca_client_from_env()
+        submitted_order = client.submit_order(order_request)
+        execution_store.update_attempt(
+            execution_attempt_id=str(attempt["execution_attempt_id"]),
+            status=str(submitted_order.get("status") or "submitted").lower(),
+            broker_order_id=_as_text(submitted_order.get("id")),
+            client_order_id=_as_text(submitted_order.get("client_order_id")) or client_order_id,
+            submitted_at=_as_text(submitted_order.get("submitted_at")) or requested_at,
+            session_position_id=session_position_id,
+        )
+
+        try:
+            order_snapshot = client.get_order(str(submitted_order["id"]), nested=True)
+        except Exception:
+            order_snapshot = submitted_order
+
+        payload = _sync_attempt_state(
+            execution_store=execution_store,
+            attempt=attempt,
+            client=client,
+            order_snapshot=order_snapshot,
+        )
+        message = (
+            f"Submitted close for {payload['underlying_symbol']} "
+            f"{payload['short_symbol']} / {payload['long_symbol']}."
+        )
+        _publish_execution_attempt_event(payload, message=message)
+        return {
+            "action": "submit",
+            "changed": True,
+            "message": message,
+            "attempt": payload,
+        }
+    except Exception as exc:
+        if submitted_order is None:
+            if attempt_id is not None:
+                execution_store.update_attempt(
+                    execution_attempt_id=attempt_id,
+                    status="failed",
+                    client_order_id=client_order_id,
+                    completed_at=requested_at,
+                    error_text=str(exc),
+                    session_position_id=session_position_id,
+                )
+                payload = _get_attempt_payload(execution_store, attempt_id)
+                _publish_execution_attempt_event(
+                    payload,
+                    message=f"Close execution failed before submission: {exc}",
+                )
+            raise
+        broker_order_id = _as_text(submitted_order.get("id"))
+        status = str(submitted_order.get("status") or "submitted").lower()
+        if attempt_id is not None:
+            execution_store.update_attempt(
+                execution_attempt_id=attempt_id,
+                status=status,
+                broker_order_id=broker_order_id,
+                client_order_id=_as_text(submitted_order.get("client_order_id")) or client_order_id,
+                submitted_at=_as_text(submitted_order.get("submitted_at")) or requested_at,
+                completed_at=_resolve_completed_at(submitted_order) if _is_terminal_status(status) else None,
+                error_text=str(exc),
+                session_position_id=session_position_id,
+            )
+            payload = _get_attempt_payload(execution_store, attempt_id)
+            message = (
+                f"Close order {broker_order_id or payload['execution_attempt_id']} was submitted, "
+                f"but local execution sync failed: {exc}"
+            )
+            _publish_execution_attempt_event(payload, message=message)
+            return {
+                "action": "submit",
+                "changed": True,
+                "message": message,
+                "attempt": payload,
+            }
+        raise
+    finally:
+        execution_store.close()
+
+
 def refresh_live_session_execution(
     *,
     db_target: str,
@@ -572,7 +786,7 @@ def refresh_live_session_execution(
         if broker_order_id is None:
             raise ValueError("Execution does not have a broker order id to refresh")
 
-        client = _create_alpaca_client()
+        client = create_alpaca_client_from_env()
         order_snapshot = client.get_order(broker_order_id, nested=True)
         payload = _sync_attempt_state(
             execution_store=execution_store,
@@ -614,6 +828,7 @@ def submit_auto_session_execution(
     execution_store = build_execution_repository(db_target)
     try:
         _require_execution_schema(execution_store)
+        _require_position_schema(execution_store)
         existing_attempts = execution_store.list_attempts(session_id=session_id, limit=1)
         if existing_attempts:
             return {

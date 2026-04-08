@@ -27,6 +27,7 @@ from spreads.jobs.orchestration import (
 )
 from spreads.runtime.config import default_database_url, default_redis_url
 from spreads.runtime.redis import build_redis_settings
+from spreads.services.account_state import get_account_overview as get_alpaca_account_overview
 from spreads.services.analysis import (
     build_session_summary,
     resolve_date,
@@ -48,6 +49,7 @@ from spreads.services.operator_actions import (
 from spreads.services.execution import (
     EXECUTION_SCHEMA_MESSAGE,
     refresh_live_session_execution,
+    submit_session_position_close,
     submit_live_session_execution,
 )
 from spreads.services.sessions import get_session_detail, list_existing_sessions
@@ -110,6 +112,11 @@ class SessionExecutionRequest(BaseModel):
     limit_price: float | None = Field(default=None, gt=0)
 
 
+class SessionPositionCloseRequest(BaseModel):
+    quantity: int | None = Field(default=None, ge=1, le=25)
+    limit_price: float | None = Field(default=None, gt=0)
+
+
 def resolve_db(db: str | None) -> str:
     return db or default_database_url()
 
@@ -145,6 +152,18 @@ def _job_run_payload(run: Any) -> dict[str, Any]:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/account/overview")
+def get_account_overview(
+    history_range: Literal["1D", "1W", "1M"] = Query(default="1D"),
+) -> dict[str, Any]:
+    try:
+        return get_alpaca_account_overview(history_range=history_range)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.post("/internal/market-data/option-quotes/capture")
@@ -529,6 +548,29 @@ def submit_session_execution(
             db_target=resolve_db(db),
             session_id=session_id,
             candidate_id=payload.candidate_id,
+            quantity=payload.quantity,
+            limit_price=payload.limit_price,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        if str(exc) == EXECUTION_SCHEMA_MESSAGE:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/sessions/{session_id}/positions/{session_position_id}/close")
+def close_session_position(
+    session_id: str,
+    session_position_id: str,
+    payload: SessionPositionCloseRequest,
+    db: str | None = None,
+) -> dict[str, Any]:
+    try:
+        return submit_session_position_close(
+            db_target=resolve_db(db),
+            session_id=session_id,
+            session_position_id=session_position_id,
             quantity=payload.quantity,
             limit_price=payload.limit_price,
         )

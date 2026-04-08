@@ -4,6 +4,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from spreads.services.analysis import build_session_summary
+from spreads.services.execution_portfolio import build_session_execution_portfolio
 from spreads.services.execution import list_session_execution_attempts
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
 from spreads.services.live_pipelines import parse_live_session_id
@@ -300,7 +301,12 @@ def get_session_detail(
         executions = list_session_execution_attempts(
             db_target=db_target,
             session_id=session_id,
-            limit=25,
+            limit=50,
+        )
+        portfolio = build_session_execution_portfolio(
+            db_target=db_target,
+            session_id=session_id,
+            executions=executions,
         )
 
         return {
@@ -317,6 +323,7 @@ def get_session_detail(
             "alerts": alerts,
             "events": events,
             "executions": executions,
+            "portfolio": portfolio,
             "analysis": analysis,
         }
     finally:
