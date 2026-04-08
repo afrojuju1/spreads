@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { LoaderCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import { DataTable } from "@/components/dashboard/data-table";
+import { DataTable } from "@/components/data-table";
 import {
   buildCandidateRows,
   CandidateOperatorActions,
@@ -22,6 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { createGeneratorJob, getGeneratorJob } from "@/lib/api";
+import { formatLocalDateTime } from "@/lib/date";
 import {
   buildGeneratorFormHref,
   normalizeGeneratorJobRequestRecord,
@@ -359,14 +360,5 @@ export function GeneratorJobDetail({ generatorJobId }: { generatorJobId: string 
 }
 
 function formatDateTime(value: string) {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  return formatLocalDateTime(value);
 }

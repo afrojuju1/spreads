@@ -1,5 +1,5 @@
-import { OperatorDashboard } from "@/components/dashboard/operator-dashboard";
+import { AlertsFeed } from "@/components/alerts/alerts-feed";
 
 export default function AlertsPage() {
-  return <OperatorDashboard section="alerts" />;
+  return <AlertsFeed />;
 }

@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import { SessionsWorkspace } from "@/components/sessions/sessions-workspace";
 
 export default function Home() {
-  redirect("/live");
+  return <SessionsWorkspace />;
 }

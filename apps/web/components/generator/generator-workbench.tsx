@@ -7,7 +7,7 @@ import { LoaderCircle, Sparkles } from "lucide-react";
 import { uniq } from "lodash-es";
 import { startTransition, useDeferredValue, useMemo, useState } from "react";
 
-import { DataTable } from "@/components/dashboard/data-table";
+import { DataTable } from "@/components/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,6 +31,7 @@ import {
   getGeneratorJob,
   getGeneratorSymbols,
 } from "@/lib/api";
+import { formatLocalDateTime } from "@/lib/date";
 import {
   DEFAULT_GENERATOR_REQUEST,
   type GeneratorJobRequestPayload,
@@ -1046,14 +1047,5 @@ export function StatusBadge({
 }
 
 function formatDateTime(value: string) {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  return formatLocalDateTime(value);
 }

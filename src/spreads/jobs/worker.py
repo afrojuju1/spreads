@@ -215,13 +215,21 @@ async def _publish_post_market_event(
     event_bus = ctx.get("event_bus")
     if event_bus is None:
         return
+    session_id = None
+    label = payload.get("label")
+    session_date = payload.get("session_date")
+    if isinstance(label, str) and label and isinstance(session_date, str) and session_date:
+        session_id = build_live_session_id(label, session_date)
     try:
         await publish_global_event_async(
             event_bus,
             topic="post_market.analysis.updated",
             entity_type="post_market_analysis",
             entity_id=analysis_run_id,
-            payload=payload,
+            payload={
+                **payload,
+                **({} if session_id is None else {"session_id": session_id}),
+            },
             timestamp=timestamp,
         )
     except Exception:

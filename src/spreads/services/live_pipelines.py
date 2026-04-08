@@ -23,6 +23,26 @@ def build_live_session_id(label: str, session_date: str | date) -> str:
     return f"live:{label}:{rendered}"
 
 
+def parse_live_session_id(session_id: str) -> dict[str, str] | None:
+    if not session_id:
+        return None
+    prefix, separator, remainder = session_id.partition(":")
+    if prefix != "live" or not separator:
+        return None
+    label, separator, session_date = remainder.rpartition(":")
+    if not separator or not label or not session_date:
+        return None
+    try:
+        resolved_session_date = date.fromisoformat(session_date).isoformat()
+    except ValueError:
+        return None
+    return {
+        "session_id": session_id,
+        "label": label,
+        "session_date": resolved_session_date,
+    }
+
+
 def _payload_namespace(payload: Mapping[str, Any]) -> SimpleNamespace:
     return SimpleNamespace(
         symbol=None,

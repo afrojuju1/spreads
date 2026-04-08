@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from datetime import date, datetime
 from typing import Any, Iterator
 
-from sqlalchemy import delete, inspect, select
+from sqlalchemy import delete, func, inspect, select
 from sqlalchemy.orm import Session
 
 from spreads.storage.alert_models import AlertEventModel, AlertStateModel
@@ -148,6 +148,21 @@ class AlertRepository:
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
         return [to_alert_event_record(row) for row in rows]
+
+    def count_alert_events(
+        self,
+        *,
+        session_date: str | None = None,
+        label: str | None = None,
+    ) -> int:
+        statement = select(func.count()).select_from(AlertEventModel)
+        if session_date:
+            statement = statement.where(AlertEventModel.session_date == date.fromisoformat(session_date))
+        if label:
+            statement = statement.where(AlertEventModel.label == label)
+        with self.session_factory() as session:
+            count = session.scalar(statement)
+        return int(count or 0)
 
     def get_alert_event(self, alert_id: int) -> AlertEventRecord | None:
         with self.session_factory() as session:

@@ -38,7 +38,25 @@ services:
     environment:
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
       REDIS_URL: redis://redis:6379/0
-    command: ["uv", "run", "uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+      WATCHFILES_FORCE_POLLING: "true"
+    command:
+      [
+        "uv",
+        "run",
+        "uvicorn",
+        "apps.api.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+        "--reload-dir",
+        "src",
+        "--reload-dir",
+        "apps/api",
+      ]
+    volumes:
+      - .:/app
     ports:
       - "58080:8000"
   worker:
@@ -57,6 +75,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       SPREADS_INTERNAL_API_BASE_URL: http://api:8000
     command: ["uv", "run", "arq", "spreads.jobs.worker.WorkerSettings"]
+    volumes:
+      - .:/app
   scheduler:
     build:
       context: .
@@ -72,9 +92,12 @@ services:
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
       REDIS_URL: redis://redis:6379/0
     command: ["uv", "run", "spreads-scheduler"]
+    volumes:
+      - .:/app
   web:
     build:
       context: ./apps/web
+      target: dev
     restart: unless-stopped
     depends_on:
       api:
@@ -86,23 +109,13 @@ services:
       WATCHPACK_POLLING: "true"
       NEXT_TELEMETRY_DISABLED: "1"
     volumes:
-      - ./apps/web/app:/app/app
-      - ./apps/web/components:/app/components
-      - ./apps/web/lib:/app/lib
-      - ./apps/web/public:/app/public
-      - ./apps/web/package.json:/app/package.json:ro
-      - ./apps/web/package-lock.json:/app/package-lock.json:ro
-      - ./apps/web/next.config.ts:/app/next.config.ts:ro
-      - ./apps/web/tsconfig.json:/app/tsconfig.json:ro
-      - ./apps/web/postcss.config.mjs:/app/postcss.config.mjs:ro
-      - ./apps/web/eslint.config.mjs:/app/eslint.config.mjs:ro
-      - ./apps/web/components.json:/app/components.json:ro
-      - ./apps/web/next-env.d.ts:/app/next-env.d.ts:ro
+      - ./apps/web:/app
       - web_node_modules:/app/node_modules
-    command: ["npm", "run", "dev", "--", "--hostname", "0.0.0.0", "--port", "3000"]
+      - web_next_data:/app/.next
     ports:
       - "53000:3000"
 
 volumes:
   spreads_postgres_data:
   web_node_modules:
+  web_next_data:

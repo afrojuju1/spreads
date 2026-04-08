@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any, Iterator
 
-from sqlalchemy import delete, inspect, select
+from sqlalchemy import delete, func, inspect, select
 from sqlalchemy.orm import Session
 
 from spreads.storage.db import build_session_factory
@@ -214,6 +214,35 @@ class JobRepository:
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
         return [to_job_run_record(row) for row in rows]
+
+    def list_session_ids(
+        self,
+        *,
+        job_type: str | None = None,
+        limit: int = 100,
+    ) -> list[str]:
+        activity_at = func.max(
+            func.coalesce(
+                JobRunModel.finished_at,
+                JobRunModel.heartbeat_at,
+                JobRunModel.started_at,
+                JobRunModel.slot_at,
+                JobRunModel.scheduled_for,
+            )
+        )
+        statement = select(JobRunModel.session_id, activity_at.label("activity_at")).where(
+            JobRunModel.session_id.is_not(None)
+        )
+        if job_type:
+            statement = statement.where(JobRunModel.job_type == job_type)
+        statement = (
+            statement.group_by(JobRunModel.session_id)
+            .order_by(activity_at.desc(), JobRunModel.session_id.desc())
+            .limit(limit)
+        )
+        with self.session_factory() as session:
+            rows = session.execute(statement).all()
+        return [str(session_id) for session_id, _ in rows if session_id]
 
     def update_job_run_status(
         self,

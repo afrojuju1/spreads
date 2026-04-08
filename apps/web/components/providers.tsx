@@ -19,10 +19,12 @@ import {
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
+  buildSessionHref,
   buildGlobalEventsWebSocketUrl,
   parseGlobalRealtimeEvent,
   type GlobalRealtimeEvent,
 } from "@/lib/api";
+import { formatLocalTime } from "@/lib/date";
 import { cn } from "@/lib/utils";
 
 type RealtimeConnectionState = "connecting" | "connected" | "reconnecting";
@@ -97,11 +99,12 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
       const symbol = readText(payload.symbol) ?? "alert";
       const alertType = humanizeToken(readText(payload.alert_type) ?? "event");
       const status = readText(payload.status) ?? "created";
+      const sessionId = readText(payload.session_id);
       return {
         id: `${event.topic}:${event.entity_id}`,
         title: `Alert ${humanizeToken(status)}`,
         body: `${symbol} ${alertType} was recorded in the alert feed.`,
-        href: "/alerts",
+        href: sessionId ? buildSessionHref(sessionId) : "/alerts",
         summary: `Alert ${symbol} ${humanizeToken(status)}`,
         timestamp: event.timestamp,
         tone: status === "failed" ? "error" : status === "skipped" ? "warning" : "info",
@@ -111,6 +114,7 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
       const label = readText(payload.live_label) ?? readText(payload.label) ?? "live";
       const symbol = readText(payload.symbol) ?? "candidate";
       const bucket = readText(payload.bucket);
+      const sessionId = readText(payload.session_id);
       const title =
         bucket === "board"
           ? `Live board updated for ${label}`
@@ -121,7 +125,7 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
         id: `${event.topic}:${event.entity_id}`,
         title,
         body: readText(payload.message) ?? `${symbol} was applied to the ${label} live workflow.`,
-        href: "/live",
+        href: sessionId ? buildSessionHref(sessionId) : "/",
         summary: `Live ${label} updated`,
         timestamp: event.timestamp,
         tone: "info",
@@ -134,13 +138,14 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
       }
       const jobType = humanizeToken(readText(payload.job_type) ?? "job");
       const jobKey = readText(payload.job_key) ?? event.entity_id;
+      const sessionId = readText(payload.session_id);
       return {
         id: `${event.topic}:${event.entity_id}:${status}`,
         title: `Job run ${humanizeToken(status)}`,
         body:
           readText(payload.error_text) ??
           `${jobType} ${status === "skipped" ? "did not run" : "reported a failure"} for ${jobKey}.`,
-        href: "/jobs",
+        href: sessionId ? buildSessionHref(sessionId) : "/jobs",
         summary: `Job ${jobType} ${humanizeToken(status)}`,
         timestamp: event.timestamp,
         tone: status === "failed" ? "error" : "warning",
@@ -149,6 +154,7 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
     case "live.collector.degraded": {
       const label = readText(payload.label) ?? "live collector";
       const captureStatus = humanizeToken(readText(payload.capture_status) ?? "degraded");
+      const sessionId = readText(payload.session_id);
       const reasons = Array.isArray(payload.reasons)
         ? payload.reasons.filter(isString).map((reason) => humanizeToken(reason))
         : [];
@@ -157,7 +163,7 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
         id: `${event.topic}:${event.entity_id}:${reasonText}`,
         title: `Live collector degraded for ${label}`,
         body: `${captureStatus}. ${reasonText}.`,
-        href: "/jobs",
+        href: sessionId ? buildSessionHref(sessionId) : "/jobs",
         summary: `Live ${label} degraded`,
         timestamp: event.timestamp,
         tone: "warning",
@@ -170,6 +176,7 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
       }
       const label = readText(payload.label) ?? "post-market";
       const sessionDate = readText(payload.session_date);
+      const sessionId = readText(payload.session_id);
       return {
         id: `${event.topic}:${event.entity_id}:${status}`,
         title:
@@ -180,7 +187,7 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
           status === "succeeded"
             ? `The ${label} analysis${sessionDate ? ` for ${sessionDate}` : ""} finished successfully.`
             : `The ${label} analysis${sessionDate ? ` for ${sessionDate}` : ""} failed.`,
-        href: "/sessions",
+        href: sessionId ? buildSessionHref(sessionId) : "/",
         summary: `Post-market ${label} ${humanizeToken(status)}`,
         timestamp: event.timestamp,
         tone: status === "succeeded" ? "success" : "error",
@@ -218,14 +225,7 @@ function NoticeIcon({ tone }: { tone: RealtimeNoticeTone }) {
 }
 
 function formatNoticeTime(timestamp: string): string {
-  const parsed = new Date(timestamp);
-  if (Number.isNaN(parsed.getTime())) {
-    return timestamp;
-  }
-  return parsed.toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  return formatLocalTime(timestamp);
 }
 
 function GlobalRealtimeBridge({
@@ -240,6 +240,7 @@ function GlobalRealtimeBridge({
 
   const handleRealtimeEvent = useEffectEvent((payload: string) => {
     const realtimeEvent = parseGlobalRealtimeEvent(payload);
+    const sessionId = readText(realtimeEvent.payload.session_id);
     switch (realtimeEvent.topic) {
       case "generator.job.updated":
         queryClient.invalidateQueries({ queryKey: ["generator-jobs"] });
@@ -247,23 +248,39 @@ function GlobalRealtimeBridge({
         break;
       case "alert.event.created":
         queryClient.invalidateQueries({ queryKey: ["alerts-latest"] });
+        queryClient.invalidateQueries({ queryKey: ["sessions"] });
+        if (sessionId) {
+          queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
+        }
         break;
       case "live.cycle.updated":
-        queryClient.invalidateQueries({ queryKey: ["live"] });
-        queryClient.invalidateQueries({ queryKey: ["live-events"] });
+        queryClient.invalidateQueries({ queryKey: ["sessions"] });
+        if (sessionId) {
+          queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
+        }
         break;
       case "job.run.updated":
         queryClient.invalidateQueries({ queryKey: ["jobs"] });
         queryClient.invalidateQueries({ queryKey: ["job-runs"] });
         queryClient.invalidateQueries({ queryKey: ["jobs-health"] });
+        queryClient.invalidateQueries({ queryKey: ["sessions"] });
+        if (sessionId) {
+          queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
+        }
         break;
       case "live.collector.degraded":
         queryClient.invalidateQueries({ queryKey: ["job-runs"] });
         queryClient.invalidateQueries({ queryKey: ["jobs-health"] });
+        queryClient.invalidateQueries({ queryKey: ["sessions"] });
+        if (sessionId) {
+          queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
+        }
         break;
       case "post_market.analysis.updated":
-        queryClient.invalidateQueries({ queryKey: ["session-summary"] });
-        queryClient.invalidateQueries({ queryKey: ["session-tuning"] });
+        queryClient.invalidateQueries({ queryKey: ["sessions"] });
+        if (sessionId) {
+          queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
+        }
         break;
       default:
         break;

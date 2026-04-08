@@ -170,14 +170,6 @@ const jobsHealthSchema = z
   })
   .passthrough();
 
-const sessionLabelsResponseSchema = z.object({
-  session_date: z.string(),
-  expected_labels: z.array(z.string()),
-  realized_labels: z.array(z.string()),
-  unexpected_realized_labels: z.array(z.string()).optional(),
-  labels: z.array(z.string()),
-});
-
 const sessionIdeaSchema = z
   .object({
     underlying_symbol: z.string(),
@@ -246,12 +238,13 @@ const sessionSummarySchema = z
         ideas: z.array(sessionIdeaSchema),
       })
       .passthrough(),
-    tuning: z.record(z.string(), z.unknown()).nullable().optional(),
+    tuning: z.lazy(() => sessionTuningSchema).nullable().optional(),
   })
   .passthrough();
 
 const tuningBucketSchema = z
   .object({
+    dimension: z.string().optional(),
     bucket: z.string(),
     count: z.number().optional(),
     board_count: z.number().optional(),
@@ -275,6 +268,53 @@ const sessionTuningSchema = z.object({
   provisional_strongest_signals: z.array(tuningBucketSchema).optional(),
   provisional_weakest_signals: z.array(tuningBucketSchema).optional(),
 });
+
+const sessionListItemSchema = z
+  .object({
+    session_id: z.string(),
+    label: z.string(),
+    session_date: z.string(),
+    status: z.string(),
+    latest_slot_at: z.string().nullable().optional(),
+    latest_slot_status: z.string().nullable().optional(),
+    latest_capture_status: z.string().nullable().optional(),
+    websocket_quote_events_saved: z.number(),
+    baseline_quote_events_saved: z.number(),
+    recovery_quote_events_saved: z.number(),
+    board_count: z.number(),
+    watchlist_count: z.number(),
+    alert_count: z.number(),
+    updated_at: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+const sessionListResponseSchema = z.object({
+  sessions: z.array(sessionListItemSchema),
+});
+
+const sessionAnalysisSchema = sessionSummarySchema
+  .extend({
+    analysis_run: z.record(z.string(), z.unknown()),
+  })
+  .passthrough();
+
+const sessionDetailSchema = z
+  .object({
+    session_id: z.string(),
+    label: z.string(),
+    session_date: z.string(),
+    status: z.string(),
+    updated_at: z.string().nullable().optional(),
+    latest_slot: jobRunSchema.nullable().optional(),
+    current_cycle: liveResponseSchema.nullable().optional(),
+    board_candidates: z.array(liveCandidateSchema),
+    watchlist_candidates: z.array(liveCandidateSchema),
+    slot_runs: z.array(jobRunSchema),
+    alerts: z.array(alertSchema),
+    events: z.array(liveEventSchema),
+    analysis: sessionAnalysisSchema.nullable().optional(),
+  })
+  .passthrough();
 
 const generatorReasonSchema = z
   .object({
@@ -457,10 +497,11 @@ export type AlertRecord = z.infer<typeof alertSchema>;
 export type JobDefinition = z.infer<typeof jobDefinitionSchema>;
 export type JobRun = z.infer<typeof jobRunSchema>;
 export type LiveResponse = z.infer<typeof liveResponseSchema>;
-export type SessionLabelsResponse = z.infer<typeof sessionLabelsResponseSchema>;
 export type SessionIdea = z.infer<typeof sessionIdeaSchema>;
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 export type SessionTuning = z.infer<typeof sessionTuningSchema>;
+export type SessionListItem = z.infer<typeof sessionListItemSchema>;
+export type SessionDetail = z.infer<typeof sessionDetailSchema>;
 export type TuningBucket = z.infer<typeof tuningBucketSchema>;
 export type GeneratorResponse = z.infer<typeof generatorResponseSchema>;
 export type GeneratorJob = z.infer<typeof generatorJobSchema>;
@@ -574,16 +615,18 @@ export function getJobsHealth() {
   return fetchApi("jobs/health", jobsHealthSchema);
 }
 
-export function getSessionLabels(sessionDate: string) {
-  return fetchApi(`sessions/${sessionDate}/labels`, sessionLabelsResponseSchema);
+export function getSessions(filters?: {
+  sessionDate?: string;
+  limit?: number;
+}) {
+  return fetchApi("sessions", sessionListResponseSchema, {
+    session_date: filters?.sessionDate,
+    limit: filters?.limit,
+  });
 }
 
-export function getSessionSummary(sessionDate: string, label: string) {
-  return fetchApi(`sessions/${sessionDate}/${label}/summary`, sessionSummarySchema);
-}
-
-export function getSessionTuning(sessionDate: string, label: string) {
-  return fetchApi(`sessions/${sessionDate}/${label}/tuning`, sessionTuningSchema);
+export function getSessionDetail(sessionId: string) {
+  return fetchApi(`sessions/${encodeURIComponent(sessionId)}`, sessionDetailSchema);
 }
 
 export function generateIdeas(payload: GeneratorJobRequestPayload) {
@@ -633,6 +676,13 @@ export function buildGeneratorJobWebSocketUrl(generatorJobId: string) {
 
 export function parseGlobalRealtimeEvent(payload: string) {
   return globalRealtimeEventSchema.parse(JSON.parse(payload));
+}
+
+export function buildSessionHref(sessionId?: string | null) {
+  if (!sessionId) {
+    return "/";
+  }
+  return `/?session_id=${encodeURIComponent(sessionId)}`;
 }
 
 export function buildGlobalEventsWebSocketUrl() {

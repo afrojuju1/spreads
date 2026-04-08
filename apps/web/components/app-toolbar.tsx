@@ -7,7 +7,6 @@ import {
   BellRing,
   BriefcaseBusiness,
   CandlestickChart,
-  Radar,
   Sparkles,
   Wifi,
   WifiOff,
@@ -19,15 +18,9 @@ import { cn } from "@/lib/utils";
 
 const PAGE_ITEMS = [
   {
-    href: "/live",
-    label: "Live",
-    caption: "board + tape",
-    icon: Radar,
-  },
-  {
-    href: "/sessions",
+    href: "/",
     label: "Sessions",
-    caption: "outcomes + tuning",
+    caption: "slots + board",
     icon: CandlestickChart,
   },
   {
@@ -63,7 +56,7 @@ export function AppToolbar() {
               Spreads operator
             </div>
             <div className="truncate text-sm text-foreground/80">
-              Live board, generator, alerts, and post-market review.
+              Sessions, generator, alerts, and runtime diagnostics.
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -96,7 +89,10 @@ export function AppToolbar() {
         </div>
         <nav className="flex gap-2 overflow-x-auto pb-1">
           {PAGE_ITEMS.map((item) => {
-            const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+            const isActive =
+              item.href === "/"
+                ? pathname === "/"
+                : pathname === item.href || pathname.startsWith(`${item.href}/`);
             const Icon = item.icon;
 
             return (

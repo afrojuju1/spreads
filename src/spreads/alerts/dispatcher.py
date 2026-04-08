@@ -13,6 +13,7 @@ from spreads.alerts.rules import (
     score_anchor_key,
 )
 from spreads.events.bus import publish_global_event_sync
+from spreads.services.live_pipelines import build_live_session_id
 from spreads.storage.alert_repository import AlertRepository
 from spreads.storage.collector_repository import CollectorRepository
 
@@ -220,7 +221,10 @@ def dispatch_cycle_alerts(
                 topic="alert.event.created",
                 entity_type="alert_event",
                 entity_id=str(record["alert_id"]),
-                payload=record,
+                payload={
+                    **record.to_dict(),
+                    "session_id": build_live_session_id(label, session_date),
+                },
                 timestamp=record["created_at"],
             )
         except Exception:

@@ -28,8 +28,6 @@ from spreads.jobs.orchestration import (
 from spreads.runtime.config import default_database_url, default_redis_url
 from spreads.runtime.redis import build_redis_settings
 from spreads.services.analysis import (
-    build_signal_tuning,
-    build_session_outcomes,
     build_session_summary,
     resolve_date,
     render_session_summary_markdown,
@@ -43,11 +41,11 @@ from spreads.services.generator import (
 )
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
 from spreads.services.option_quote_capture import AlpacaOptionQuoteCaptureBroker
-from spreads.services.live_pipelines import build_live_session_catalog
 from spreads.services.operator_actions import (
     apply_generator_live_action,
     create_manual_generator_alert,
 )
+from spreads.services.sessions import get_session_detail, list_existing_sessions
 from spreads.storage.factory import (
     build_alert_repository,
     build_collector_repository,
@@ -477,95 +475,36 @@ def get_history_run_candidates(run_id: str, db: str | None = None) -> dict[str, 
         store.close()
 
 
-@app.get("/sessions/{session_date}/labels")
-def get_session_labels(session_date: str, db: str | None = None) -> dict[str, Any]:
-    resolved_session_date = resolve_date(session_date)
-    db_target = resolve_db(db)
-    collector_store = build_collector_repository(db_target)
-    job_store = build_job_repository(db_target)
-    try:
-        catalog = build_live_session_catalog(
-            job_store.list_job_definitions(enabled_only=True, job_type="live_collector"),
-            realized_labels=collector_store.list_session_labels(session_date=resolved_session_date),
-        )
-        return {
-            "session_date": resolved_session_date,
-            "expected_labels": catalog["expected_labels"],
-            "realized_labels": catalog["realized_labels"],
-            "unexpected_realized_labels": catalog["unexpected_realized_labels"],
-            "labels": catalog["labels"],
-        }
-    finally:
-        job_store.close()
-        collector_store.close()
-
-
-@app.get("/sessions/{session_date}/{label}/outcomes")
-def get_session_outcomes(
-    session_date: str,
-    label: str,
-    replay_profit_target: float = Query(default=0.5, gt=0),
-    replay_stop_multiple: float = Query(default=2.0, gt=0),
+@app.get("/sessions")
+def list_sessions(
+    session_date: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
     db: str | None = None,
 ) -> dict[str, Any]:
-    db_target = resolve_db(db)
-    history_store = build_history_store(db_target)
-    collector_store = build_collector_repository(db_target)
-    try:
-        return build_session_outcomes(
-            history_store=history_store,
-            collector_store=collector_store,
-            session_date=session_date,
-            label=label,
-            profit_target=replay_profit_target,
-            stop_multiple=replay_stop_multiple,
-        )
-    finally:
-        collector_store.close()
-        history_store.close()
-
-
-@app.get("/sessions/{session_date}/{label}/summary")
-def get_session_summary(
-    session_date: str,
-    label: str,
-    replay_profit_target: float = Query(default=0.5, gt=0),
-    replay_stop_multiple: float = Query(default=2.0, gt=0),
-    db: str | None = None,
-) -> dict[str, Any]:
-    return build_session_summary(
+    resolved_session_date = None if session_date is None else resolve_date(session_date)
+    return list_existing_sessions(
         db_target=resolve_db(db),
-        session_date=session_date,
-        label=label,
-        profit_target=replay_profit_target,
-        stop_multiple=replay_stop_multiple,
+        limit=limit,
+        session_date=resolved_session_date,
     )
 
 
-@app.get("/sessions/{session_date}/{label}/tuning")
-def get_session_tuning(
-    session_date: str,
-    label: str,
+@app.get("/sessions/{session_id}")
+def get_session(
+    session_id: str,
     replay_profit_target: float = Query(default=0.5, gt=0),
     replay_stop_multiple: float = Query(default=2.0, gt=0),
     db: str | None = None,
 ) -> dict[str, Any]:
-    db_target = resolve_db(db)
-    history_store = build_history_store(db_target)
-    collector_store = build_collector_repository(db_target)
     try:
-        outcomes = build_session_outcomes(
-            history_store=history_store,
-            collector_store=collector_store,
-            session_date=session_date,
-            label=label,
+        return get_session_detail(
+            db_target=resolve_db(db),
+            session_id=session_id,
             profit_target=replay_profit_target,
             stop_multiple=replay_stop_multiple,
         )
-        return build_signal_tuning(outcomes)
-    finally:
-        collector_store.close()
-        history_store.close()
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/alerts")

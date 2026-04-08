@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from spreads.alerts.dispatcher import resolve_session_date, send_or_skip_alert
 from spreads.events.bus import publish_global_event_sync
+from spreads.services.live_pipelines import build_live_session_id
 from spreads.storage.factory import build_alert_repository, build_collector_repository
 from spreads.storage.records import GeneratorJobRecord
 
@@ -157,7 +158,10 @@ def create_manual_generator_alert(
                 topic="alert.event.created",
                 entity_type="alert_event",
                 entity_id=str(record["alert_id"]),
-                payload=record,
+                payload={
+                    **record.to_dict(),
+                    "session_id": build_live_session_id(record["label"], record["session_date"]),
+                },
                 timestamp=record["created_at"],
             )
         except Exception:
@@ -167,6 +171,7 @@ def create_manual_generator_alert(
             "changed": True,
             "message": f"Manual alert {record['status']} for {candidate['underlying_symbol']} on {latest_cycle['label']}.",
             "live_label": latest_cycle["label"],
+            "session_id": latest_cycle.get("session_id"),
             "alert": record,
         }
     finally:
@@ -337,6 +342,7 @@ def apply_generator_live_action(
             "changed": True,
             "message": message,
             "live_label": latest_cycle["label"],
+            "session_id": latest_cycle.get("session_id"),
             "bucket": bucket,
             "cycle_id": cycle_id,
             "event_type": event_type,

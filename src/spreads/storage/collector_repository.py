@@ -194,6 +194,39 @@ class CollectorRepository:
             rows = session.scalars(statement).all()
         return [str(row) for row in rows]
 
+    def list_session_ids(
+        self,
+        *,
+        session_date: str | None = None,
+        limit: int | None = None,
+    ) -> list[str]:
+        statement = select(CollectorCycleModel.session_id).distinct().where(
+            CollectorCycleModel.session_id.is_not(None)
+        )
+        if session_date:
+            statement = statement.where(
+                CollectorCycleModel.session_date == date.fromisoformat(session_date)
+            )
+        statement = statement.order_by(CollectorCycleModel.session_id.desc())
+        if limit is not None:
+            statement = statement.limit(limit)
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return [str(row) for row in rows if row]
+
+    def get_latest_session_cycle(self, session_id: str) -> CollectorCycleRecord | None:
+        statement = (
+            select(CollectorCycleModel)
+            .where(CollectorCycleModel.session_id == session_id)
+            .order_by(CollectorCycleModel.generated_at.desc(), CollectorCycleModel.cycle_id.desc())
+            .limit(1)
+        )
+        with self.session_factory() as session:
+            cycle = session.scalar(statement)
+        if cycle is None:
+            return None
+        return to_collector_cycle_record(cycle)
+
     def list_cycle_candidates(
         self,
         cycle_id: str,
