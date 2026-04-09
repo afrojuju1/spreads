@@ -8,12 +8,14 @@ ANALYSIS_QUEUE_NAME = "arq:queue:analysis"
 GENERATOR_QUEUE_NAME = "arq:queue:generator"
 
 BROKER_SYNC_JOB_TYPE = "broker_sync"
+EXECUTION_SUBMIT_JOB_TYPE = "execution_submit"
 LIVE_COLLECTOR_JOB_TYPE = "live_collector"
 POST_CLOSE_ANALYSIS_JOB_TYPE = "post_close_analysis"
 POST_MARKET_ANALYSIS_JOB_TYPE = "post_market_analysis"
 SESSION_EXIT_MANAGER_JOB_TYPE = "session_exit_manager"
 GENERATOR_JOB_TYPE = "generator"
 
+EXECUTION_SUBMIT_ADHOC_JOB_KEY = "execution_submit:adhoc"
 GENERATOR_ADHOC_JOB_KEY = "generator:adhoc"
 
 
@@ -38,6 +40,11 @@ JOB_SPECS = {
         JobSpec(
             job_type=BROKER_SYNC_JOB_TYPE,
             task_name="run_broker_sync_job",
+            queue_name=FAST_QUEUE_NAME,
+        ),
+        JobSpec(
+            job_type=EXECUTION_SUBMIT_JOB_TYPE,
+            task_name="run_execution_submit_job",
             queue_name=FAST_QUEUE_NAME,
         ),
         JobSpec(
@@ -74,6 +81,7 @@ WORKER_LANES = (
         queue_name=FAST_QUEUE_NAME,
         task_names=(
             JOB_SPECS[BROKER_SYNC_JOB_TYPE].task_name,
+            JOB_SPECS[EXECUTION_SUBMIT_JOB_TYPE].task_name,
             JOB_SPECS[SESSION_EXIT_MANAGER_JOB_TYPE].task_name,
         ),
         max_jobs=2,

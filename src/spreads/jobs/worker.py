@@ -16,6 +16,7 @@ from spreads.jobs.registry import (
     ANALYSIS_QUEUE_NAME,
     BROKER_SYNC_JOB_TYPE,
     COLLECTOR_QUEUE_NAME,
+    EXECUTION_SUBMIT_JOB_TYPE,
     FAST_QUEUE_NAME,
     GENERATOR_QUEUE_NAME,
     LIVE_COLLECTOR_JOB_TYPE,
@@ -36,6 +37,7 @@ from spreads.services.analysis import (
 )
 from spreads.services.broker_sync import run_broker_sync
 from spreads.services.exit_manager import run_session_exit_manager
+from spreads.services.execution import run_execution_submit
 from spreads.services.generator import (
     build_generator_args,
     build_generator_job_payload,
@@ -779,6 +781,36 @@ async def run_broker_sync_job(
     )
 
 
+async def run_execution_submit_job(
+    ctx: dict[str, Any],
+    job_key: str,
+    job_run_id: str,
+    payload: dict[str, Any],
+    arq_job_id: str,
+) -> dict[str, Any]:
+    database_url = ctx["database_url"]
+
+    def runner(heartbeat: Any) -> dict[str, Any]:
+        heartbeat()
+        return run_execution_submit(
+            db_target=database_url,
+            execution_attempt_id=str(payload["execution_attempt_id"]),
+            heartbeat=heartbeat,
+        )
+
+    enriched_payload = dict(payload)
+    enriched_payload["job_type"] = EXECUTION_SUBMIT_JOB_TYPE
+    return await _execute_managed_job(
+        ctx,
+        job_key=job_key,
+        job_run_id=job_run_id,
+        arq_job_id=arq_job_id,
+        payload=enriched_payload,
+        runner=runner,
+        compact_result=lambda result: result,
+    )
+
+
 async def run_session_exit_manager_job(
     ctx: dict[str, Any],
     job_key: str,
@@ -1040,6 +1072,7 @@ async def run_generator_job(
 class FastWorkerSettings:
     functions = [
         run_broker_sync_job,
+        run_execution_submit_job,
         run_session_exit_manager_job,
     ]
     queue_name = FAST_QUEUE_NAME

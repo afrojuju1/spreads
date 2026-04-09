@@ -7,7 +7,7 @@ from spreads.db.decorators import with_storage
 from spreads.events.bus import publish_global_event_sync
 from spreads.services.account_state import fetch_account_overview_live
 from spreads.services.alpaca import create_alpaca_client_from_env
-from spreads.services.execution import OPEN_STATUSES, refresh_live_session_execution
+from spreads.services.execution import OPEN_STATUSES, PENDING_SUBMISSION_STATUS, refresh_live_session_execution
 from spreads.services.execution_portfolio import refresh_session_position_marks
 from spreads.services.session_positions import sync_session_position_from_attempt
 from spreads.storage.serializers import parse_datetime
@@ -301,12 +301,19 @@ def run_broker_sync(
         )
 
         refreshed_attempts = 0
+        queued_attempts = 0
         refresh_errors: list[dict[str, str]] = []
         active_attempts = execution_store.list_attempts_by_status(
             statuses=sorted(OPEN_STATUSES),
             limit=200,
         )
         for attempt in active_attempts:
+            if (
+                str(attempt.get("status") or "") == PENDING_SUBMISSION_STATUS
+                and _as_text(attempt.get("broker_order_id")) is None
+            ):
+                queued_attempts += 1
+                continue
             try:
                 refresh_live_session_execution(
                     db_target=db_target,
@@ -370,6 +377,7 @@ def run_broker_sync(
             "snapshot_id": snapshot["snapshot_id"],
             "snapshot_captured_at": snapshot["captured_at"],
             "refreshed_attempt_count": refreshed_attempts,
+            "queued_attempt_count": queued_attempts,
             "refresh_error_count": len(refresh_errors),
             "open_position_count": len(open_positions),
             "mismatch_position_count": len(mismatch_positions),

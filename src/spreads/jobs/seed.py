@@ -4,6 +4,8 @@ import argparse
 
 from spreads.jobs.registry import (
     BROKER_SYNC_JOB_TYPE,
+    EXECUTION_SUBMIT_ADHOC_JOB_KEY,
+    EXECUTION_SUBMIT_JOB_TYPE,
     GENERATOR_ADHOC_JOB_KEY,
     GENERATOR_JOB_TYPE,
     LIVE_COLLECTOR_JOB_TYPE,
@@ -238,6 +240,15 @@ def seed_definitions(db: str) -> list[str]:
             {
                 "job_key": GENERATOR_ADHOC_JOB_KEY,
                 "job_type": GENERATOR_JOB_TYPE,
+                "enabled": False,
+                "schedule_type": "manual",
+                "schedule": {},
+                "payload": {},
+                "singleton_scope": None,
+            },
+            {
+                "job_key": EXECUTION_SUBMIT_ADHOC_JOB_KEY,
+                "job_type": EXECUTION_SUBMIT_JOB_TYPE,
                 "enabled": False,
                 "schedule_type": "manual",
                 "schedule": {},

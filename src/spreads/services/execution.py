@@ -1,12 +1,22 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from arq import create_pool
+
 from spreads.db.decorators import with_storage
 from spreads.events.bus import publish_global_event_sync
 from spreads.integrations.alpaca.client import AlpacaClient
+from spreads.jobs.registry import (
+    EXECUTION_SUBMIT_ADHOC_JOB_KEY,
+    EXECUTION_SUBMIT_JOB_TYPE,
+    get_job_spec,
+)
+from spreads.runtime.config import default_redis_url
+from spreads.runtime.redis import build_redis_settings
 from spreads.services.alpaca import create_alpaca_client_from_env
 from spreads.services.exit_manager import normalize_exit_policy, resolve_exit_policy_snapshot
 from spreads.services.live_pipelines import build_live_session_id
@@ -91,6 +101,10 @@ def _execution_client_order_id() -> str:
     return f"spr-exec-{uuid4().hex[:20]}"
 
 
+def _execution_submit_job_run_id(execution_attempt_id: str) -> str:
+    return f"execution_submit:{execution_attempt_id}"
+
+
 def _is_terminal_status(status: str | None) -> bool:
     return str(status or "").lower() in TERMINAL_STATUSES
 
@@ -111,6 +125,48 @@ def _require_execution_schema(execution_store: Any) -> None:
 def _require_position_schema(execution_store: Any) -> None:
     if not execution_store.positions_schema_ready():
         raise RuntimeError(EXECUTION_SCHEMA_MESSAGE)
+
+
+def _ensure_execution_submit_job_definition(job_store: Any) -> None:
+    job_store.upsert_job_definition(
+        job_key=EXECUTION_SUBMIT_ADHOC_JOB_KEY,
+        job_type=EXECUTION_SUBMIT_JOB_TYPE,
+        enabled=False,
+        schedule_type="manual",
+        schedule={},
+        payload={},
+        singleton_scope=None,
+    )
+
+
+def _enqueue_ad_hoc_job(
+    *,
+    job_type: str,
+    job_key: str,
+    job_run_id: str,
+    arq_job_id: str,
+    payload: dict[str, Any],
+) -> Any:
+    spec = get_job_spec(job_type)
+    if spec is None:
+        raise RuntimeError(f"Job type is not registered: {job_type}")
+
+    async def _enqueue() -> Any:
+        redis = await create_pool(build_redis_settings(default_redis_url()))
+        try:
+            return await redis.enqueue_job(
+                spec.task_name,
+                job_key,
+                job_run_id,
+                payload,
+                arq_job_id,
+                _job_id=arq_job_id,
+                _queue_name=spec.queue_name,
+            )
+        finally:
+            await redis.aclose()
+
+    return asyncio.run(_enqueue())
 
 
 def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -477,6 +533,106 @@ def _publish_execution_attempt_event(attempt: dict[str, Any], *, message: str) -
         pass
 
 
+def _submission_message(attempt: dict[str, Any], *, queued: bool) -> str:
+    if str(attempt.get("trade_intent") or OPEN_TRADE_INTENT) == CLOSE_TRADE_INTENT:
+        prefix = "Queued close for" if queued else "Submitted close for"
+        return (
+            f"{prefix} {attempt['underlying_symbol']} "
+            f"{attempt['short_symbol']} / {attempt['long_symbol']}."
+        )
+    prefix = "Queued" if queued else "Submitted"
+    return (
+        f"{prefix} {attempt['underlying_symbol']} {attempt['strategy']} "
+        f"{attempt['short_symbol']} / {attempt['long_symbol']}."
+    )
+
+
+def _queue_execution_attempt(
+    *,
+    job_store: Any,
+    execution_store: Any,
+    attempt: dict[str, Any],
+) -> dict[str, Any]:
+    _ensure_execution_submit_job_definition(job_store)
+    execution_attempt_id = str(attempt["execution_attempt_id"])
+    job_run_id = _execution_submit_job_run_id(execution_attempt_id)
+    scheduled_for = datetime.now(UTC)
+    payload = {
+        "execution_attempt_id": execution_attempt_id,
+        "session_id": str(attempt["session_id"]),
+        "trade_intent": str(attempt["trade_intent"]),
+        "job_key": EXECUTION_SUBMIT_ADHOC_JOB_KEY,
+        "job_type": EXECUTION_SUBMIT_JOB_TYPE,
+        "scheduled_for": scheduled_for.isoformat().replace("+00:00", "Z"),
+    }
+    job_run, _ = job_store.create_job_run(
+        job_run_id=job_run_id,
+        job_key=EXECUTION_SUBMIT_ADHOC_JOB_KEY,
+        arq_job_id=job_run_id,
+        job_type=EXECUTION_SUBMIT_JOB_TYPE,
+        status="queued",
+        scheduled_for=scheduled_for,
+        session_id=str(attempt["session_id"]),
+        payload=payload,
+    )
+    try:
+        enqueued = _enqueue_ad_hoc_job(
+            job_type=EXECUTION_SUBMIT_JOB_TYPE,
+            job_key=EXECUTION_SUBMIT_ADHOC_JOB_KEY,
+            job_run_id=job_run_id,
+            arq_job_id=job_run_id,
+            payload=payload,
+        )
+    except Exception as exc:
+        job_store.update_job_run_status(
+            job_run_id=job_run_id,
+            status="failed",
+            expected_arq_job_id=job_run_id,
+            finished_at=datetime.now(UTC),
+            error_text=str(exc),
+        )
+        execution_store.update_attempt(
+            execution_attempt_id=execution_attempt_id,
+            status="failed",
+            completed_at=_utc_now(),
+            error_text=str(exc),
+            session_position_id=_as_text(attempt.get("session_position_id")),
+        )
+        failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
+        _publish_execution_attempt_event(
+            failed_attempt,
+            message=f"Execution queueing failed before submission: {exc}",
+        )
+        raise RuntimeError(f"Execution queueing failed: {exc}") from exc
+    if enqueued is None:
+        job_store.update_job_run_status(
+            job_run_id=job_run_id,
+            status="failed",
+            expected_arq_job_id=job_run_id,
+            finished_at=datetime.now(UTC),
+            error_text="Execution submit job was not enqueued.",
+        )
+        execution_store.update_attempt(
+            execution_attempt_id=execution_attempt_id,
+            status="failed",
+            completed_at=_utc_now(),
+            error_text="Execution submit job was not enqueued.",
+            session_position_id=_as_text(attempt.get("session_position_id")),
+        )
+        failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
+        _publish_execution_attempt_event(
+            failed_attempt,
+            message="Execution queueing failed before submission: job was not enqueued.",
+        )
+        raise RuntimeError("Execution queueing failed: job was not enqueued.")
+    queued_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
+    _publish_execution_attempt_event(
+        queued_attempt,
+        message=_submission_message(queued_attempt, queued=True),
+    )
+    return queued_attempt
+
+
 @with_storage()
 def submit_live_session_execution(
     *,
@@ -494,7 +650,6 @@ def submit_live_session_execution(
     requested_at = _utc_now()
     client_order_id = _execution_client_order_id()
     attempt_id: str | None = None
-    submitted_order: dict[str, Any] | None = None
     try:
         _require_execution_schema(execution_store)
         _require_position_schema(execution_store)
@@ -599,33 +754,12 @@ def submit_live_session_execution(
             },
             candidate=dict(candidate.get("candidate") or {}),
         ).to_dict()
-
-        client = create_alpaca_client_from_env()
-        submitted_order = client.submit_order(order_request)
-        execution_store.update_attempt(
-            execution_attempt_id=str(attempt["execution_attempt_id"]),
-            status=str(submitted_order.get("status") or "submitted").lower(),
-            broker_order_id=_as_text(submitted_order.get("id")),
-            client_order_id=_as_text(submitted_order.get("client_order_id")) or client_order_id,
-            submitted_at=_as_text(submitted_order.get("submitted_at")) or requested_at,
-        )
-
-        try:
-            order_snapshot = client.get_order(str(submitted_order["id"]), nested=True)
-        except Exception:
-            order_snapshot = submitted_order
-
-        payload = _sync_attempt_state(
+        payload = _queue_execution_attempt(
+            job_store=job_store,
             execution_store=execution_store,
             attempt=attempt,
-            client=client,
-            order_snapshot=order_snapshot,
         )
-        message = (
-            f"Submitted {payload['underlying_symbol']} {payload['strategy']} "
-            f"{payload['short_symbol']} / {payload['long_symbol']}."
-        )
-        _publish_execution_attempt_event(payload, message=message)
+        message = _submission_message(payload, queued=True)
         return {
             "action": "submit",
             "changed": True,
@@ -633,8 +767,9 @@ def submit_live_session_execution(
             "attempt": payload,
         }
     except Exception as exc:
-        if submitted_order is None:
-            if attempt_id is not None:
+        if attempt_id is not None:
+            current_attempt = execution_store.get_attempt(attempt_id)
+            if current_attempt is not None and str(current_attempt.get("status") or "") == PENDING_SUBMISSION_STATUS:
                 execution_store.update_attempt(
                     execution_attempt_id=attempt_id,
                     status="failed",
@@ -647,33 +782,8 @@ def submit_live_session_execution(
                     payload,
                     message=f"Execution failed before submission: {exc}",
                 )
-            raise
-        broker_order_id = _as_text(submitted_order.get("id"))
-        status = str(submitted_order.get("status") or "submitted").lower()
-        if attempt_id is not None:
-            execution_store.update_attempt(
-                execution_attempt_id=attempt_id,
-                status=status,
-                broker_order_id=broker_order_id,
-                client_order_id=_as_text(submitted_order.get("client_order_id")) or client_order_id,
-                submitted_at=_as_text(submitted_order.get("submitted_at")) or requested_at,
-                completed_at=_resolve_completed_at(submitted_order) if _is_terminal_status(status) else None,
-                error_text=str(exc),
-            )
-            payload = _get_attempt_payload(execution_store, attempt_id)
-            message = (
-                f"Order {broker_order_id or payload['execution_attempt_id']} was submitted, "
-                f"but local execution sync failed: {exc}"
-            )
-            _publish_execution_attempt_event(payload, message=message)
-            return {
-                "action": "submit",
-                "changed": True,
-                "message": message,
-                "attempt": payload,
-            }
         raise
- 
+
 @with_storage()
 def submit_session_position_close(
     *,
@@ -686,10 +796,10 @@ def submit_session_position_close(
     storage: Any | None = None,
 ) -> dict[str, Any]:
     execution_store = storage.execution
+    job_store = storage.jobs
     requested_at = _utc_now()
     client_order_id = _execution_client_order_id()
     attempt_id: str | None = None
-    submitted_order: dict[str, Any] | None = None
     try:
         _require_execution_schema(execution_store)
         _require_position_schema(execution_store)
@@ -763,34 +873,12 @@ def submit_session_position_close(
             },
             candidate={},
         ).to_dict()
-
-        client = create_alpaca_client_from_env()
-        submitted_order = client.submit_order(order_request)
-        execution_store.update_attempt(
-            execution_attempt_id=str(attempt["execution_attempt_id"]),
-            status=str(submitted_order.get("status") or "submitted").lower(),
-            broker_order_id=_as_text(submitted_order.get("id")),
-            client_order_id=_as_text(submitted_order.get("client_order_id")) or client_order_id,
-            submitted_at=_as_text(submitted_order.get("submitted_at")) or requested_at,
-            session_position_id=session_position_id,
-        )
-
-        try:
-            order_snapshot = client.get_order(str(submitted_order["id"]), nested=True)
-        except Exception:
-            order_snapshot = submitted_order
-
-        payload = _sync_attempt_state(
+        payload = _queue_execution_attempt(
+            job_store=job_store,
             execution_store=execution_store,
             attempt=attempt,
-            client=client,
-            order_snapshot=order_snapshot,
         )
-        message = (
-            f"Submitted close for {payload['underlying_symbol']} "
-            f"{payload['short_symbol']} / {payload['long_symbol']}."
-        )
-        _publish_execution_attempt_event(payload, message=message)
+        message = _submission_message(payload, queued=True)
         return {
             "action": "submit",
             "changed": True,
@@ -798,8 +886,9 @@ def submit_session_position_close(
             "attempt": payload,
         }
     except Exception as exc:
-        if submitted_order is None:
-            if attempt_id is not None:
+        if attempt_id is not None:
+            current_attempt = execution_store.get_attempt(attempt_id)
+            if current_attempt is not None and str(current_attempt.get("status") or "") == PENDING_SUBMISSION_STATUS:
                 execution_store.update_attempt(
                     execution_attempt_id=attempt_id,
                     status="failed",
@@ -813,34 +902,8 @@ def submit_session_position_close(
                     payload,
                     message=f"Close execution failed before submission: {exc}",
                 )
-            raise
-        broker_order_id = _as_text(submitted_order.get("id"))
-        status = str(submitted_order.get("status") or "submitted").lower()
-        if attempt_id is not None:
-            execution_store.update_attempt(
-                execution_attempt_id=attempt_id,
-                status=status,
-                broker_order_id=broker_order_id,
-                client_order_id=_as_text(submitted_order.get("client_order_id")) or client_order_id,
-                submitted_at=_as_text(submitted_order.get("submitted_at")) or requested_at,
-                completed_at=_resolve_completed_at(submitted_order) if _is_terminal_status(status) else None,
-                error_text=str(exc),
-                session_position_id=session_position_id,
-            )
-            payload = _get_attempt_payload(execution_store, attempt_id)
-            message = (
-                f"Close order {broker_order_id or payload['execution_attempt_id']} was submitted, "
-                f"but local execution sync failed: {exc}"
-            )
-            _publish_execution_attempt_event(payload, message=message)
-            return {
-                "action": "submit",
-                "changed": True,
-                "message": message,
-                "attempt": payload,
-            }
         raise
- 
+
 @with_storage()
 def refresh_live_session_execution(
     *,
@@ -856,6 +919,17 @@ def refresh_live_session_execution(
         raise ValueError(f"Unknown execution_attempt_id: {execution_attempt_id}")
     if str(attempt["session_id"]) != session_id:
         raise ValueError(f"Execution {execution_attempt_id} does not belong to session {session_id}")
+    if (
+        _as_text(attempt.get("broker_order_id")) is None
+        and str(attempt.get("status") or "") == PENDING_SUBMISSION_STATUS
+    ):
+        payload = _get_attempt_payload(execution_store, execution_attempt_id)
+        return {
+            "action": "refresh",
+            "changed": False,
+            "message": "Execution is still queued for broker submission.",
+            "attempt": payload,
+        }
     broker_order_id = _as_text(attempt.get("broker_order_id"))
     if broker_order_id is None:
         raise ValueError("Execution does not have a broker order id to refresh")
@@ -876,6 +950,125 @@ def refresh_live_session_execution(
         "message": message,
         "attempt": payload,
     }
+
+
+@with_storage()
+def run_execution_submit(
+    *,
+    db_target: str,
+    execution_attempt_id: str,
+    heartbeat: Any | None = None,
+    storage: Any | None = None,
+) -> dict[str, Any]:
+    execution_store = storage.execution
+    _require_execution_schema(execution_store)
+    attempt = execution_store.get_attempt(execution_attempt_id)
+    if attempt is None:
+        raise ValueError(f"Unknown execution_attempt_id: {execution_attempt_id}")
+
+    payload = _get_attempt_payload(execution_store, execution_attempt_id)
+    broker_order_id = _as_text(payload.get("broker_order_id"))
+    status = str(payload.get("status") or "")
+    if broker_order_id is not None or status != PENDING_SUBMISSION_STATUS:
+        return {
+            "status": "skipped",
+            "reason": "attempt_already_submitted",
+            "execution_attempt_id": execution_attempt_id,
+            "attempt_status": status,
+            "broker_order_id": broker_order_id,
+        }
+
+    request = dict(payload.get("request") or {})
+    order_request = request.get("order")
+    if not isinstance(order_request, dict) or not order_request:
+        execution_store.update_attempt(
+            execution_attempt_id=execution_attempt_id,
+            status="failed",
+            completed_at=_utc_now(),
+            error_text="Execution attempt is missing its broker order payload.",
+            session_position_id=_as_text(payload.get("session_position_id")),
+        )
+        failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
+        _publish_execution_attempt_event(
+            failed_attempt,
+            message="Execution failed before submission: missing broker order payload.",
+        )
+        raise ValueError("Execution attempt is missing its broker order payload.")
+
+    if callable(heartbeat):
+        heartbeat()
+    client = create_alpaca_client_from_env()
+    requested_at = _as_text(payload.get("requested_at")) or _utc_now()
+    client_order_id = _as_text(payload.get("client_order_id"))
+
+    submitted_order: dict[str, Any] | None = None
+    try:
+        submitted_order = client.submit_order(order_request)
+        execution_store.update_attempt(
+            execution_attempt_id=execution_attempt_id,
+            status=str(submitted_order.get("status") or "submitted").lower(),
+            broker_order_id=_as_text(submitted_order.get("id")),
+            client_order_id=_as_text(submitted_order.get("client_order_id")) or client_order_id,
+            submitted_at=_as_text(submitted_order.get("submitted_at")) or requested_at,
+            session_position_id=_as_text(payload.get("session_position_id")),
+        )
+        if callable(heartbeat):
+            heartbeat()
+        try:
+            order_snapshot = client.get_order(str(submitted_order["id"]), nested=True)
+        except Exception:
+            order_snapshot = submitted_order
+        synced_attempt = _sync_attempt_state(
+            execution_store=execution_store,
+            attempt=payload,
+            client=client,
+            order_snapshot=order_snapshot,
+        )
+        message = _submission_message(synced_attempt, queued=False)
+        _publish_execution_attempt_event(synced_attempt, message=message)
+        return {
+            "status": "submitted",
+            "execution_attempt_id": execution_attempt_id,
+            "message": message,
+            "attempt": synced_attempt,
+        }
+    except Exception as exc:
+        if submitted_order is None:
+            execution_store.update_attempt(
+                execution_attempt_id=execution_attempt_id,
+                status="failed",
+                client_order_id=client_order_id,
+                completed_at=requested_at,
+                error_text=str(exc),
+                session_position_id=_as_text(payload.get("session_position_id")),
+            )
+            failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
+            _publish_execution_attempt_event(
+                failed_attempt,
+                message=f"Execution failed before submission: {exc}",
+            )
+            raise
+        broker_order_id = _as_text(submitted_order.get("id"))
+        submitted_status = str(submitted_order.get("status") or "submitted").lower()
+        execution_store.update_attempt(
+            execution_attempt_id=execution_attempt_id,
+            status=submitted_status,
+            broker_order_id=broker_order_id,
+            client_order_id=_as_text(submitted_order.get("client_order_id")) or client_order_id,
+            submitted_at=_as_text(submitted_order.get("submitted_at")) or requested_at,
+            completed_at=_resolve_completed_at(submitted_order) if _is_terminal_status(submitted_status) else None,
+            error_text=str(exc),
+            session_position_id=_as_text(payload.get("session_position_id")),
+        )
+        failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
+        _publish_execution_attempt_event(
+            failed_attempt,
+            message=(
+                f"Order {broker_order_id or execution_attempt_id} was submitted, "
+                f"but local execution sync failed: {exc}"
+            ),
+        )
+        raise
 
 
 @with_storage()
