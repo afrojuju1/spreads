@@ -8,12 +8,7 @@ from sqlalchemy import delete, func, select
 from spreads.storage.base import RepositoryBase
 from spreads.storage.job_models import JobDefinitionModel, JobLeaseModel, JobRunModel
 from spreads.storage.records import JobDefinitionRecord, JobLeaseRecord, JobRunRecord
-from spreads.storage.serializers import (
-    parse_datetime,
-    to_job_definition_record,
-    to_job_lease_record,
-    to_job_run_record,
-)
+from spreads.storage.serializers import parse_datetime
 
 
 class JobRepository(RepositoryBase):
@@ -51,14 +46,14 @@ class JobRepository(RepositoryBase):
             row.updated_at = now
             session.flush()
             session.refresh(row)
-            return to_job_definition_record(row)
+            return self.row(row)
 
     def get_job_definition(self, job_key: str) -> JobDefinitionRecord | None:
         with self.session_factory() as session:
             row = session.get(JobDefinitionModel, job_key)
         if row is None:
             return None
-        return to_job_definition_record(row)
+        return self.row(row)
 
     def list_job_definitions(
         self,
@@ -76,7 +71,7 @@ class JobRepository(RepositoryBase):
         statement = statement.order_by(JobDefinitionModel.job_key.asc())
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [to_job_definition_record(row) for row in rows]
+        return self.rows(rows)
 
     def create_job_run(
         self,
@@ -112,7 +107,7 @@ class JobRepository(RepositoryBase):
             if row is None:
                 row = session.get(JobRunModel, job_run_id)
             if row is not None:
-                return to_job_run_record(row), False
+                return self.row(row), False
             row = JobRunModel(
                 job_run_id=job_run_id,
                 job_key=job_key,
@@ -131,14 +126,14 @@ class JobRepository(RepositoryBase):
             session.add(row)
             session.flush()
             session.refresh(row)
-            return to_job_run_record(row), True
+            return self.row(row), True
 
     def get_job_run(self, job_run_id: str) -> JobRunRecord | None:
         with self.session_factory() as session:
             row = session.get(JobRunModel, job_run_id)
         if row is None:
             return None
-        return to_job_run_record(row)
+        return self.row(row)
 
     def get_job_run_for_slot(
         self,
@@ -160,7 +155,7 @@ class JobRepository(RepositoryBase):
             row = session.scalar(statement)
         if row is None:
             return None
-        return to_job_run_record(row)
+        return self.row(row)
 
     def list_job_runs(
         self,
@@ -191,7 +186,7 @@ class JobRepository(RepositoryBase):
         statement = statement.order_by(JobRunModel.scheduled_for.desc(), JobRunModel.job_run_id.desc()).limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [to_job_run_record(row) for row in rows]
+        return self.rows(rows)
 
     def list_session_ids(
         self,
@@ -264,7 +259,7 @@ class JobRepository(RepositoryBase):
                 row.error_text = None
             session.flush()
             session.refresh(row)
-            return to_job_run_record(row)
+            return self.row(row)
 
     def heartbeat_job_run(
         self,
@@ -306,7 +301,7 @@ class JobRepository(RepositoryBase):
                 row.payload_json = payload
             session.flush()
             session.refresh(row)
-            return to_job_run_record(row)
+            return self.row(row)
 
     def acquire_lease(
         self,
@@ -354,7 +349,7 @@ class JobRepository(RepositoryBase):
                 row.lease_state_json = state
             session.flush()
             session.refresh(row)
-            return to_job_lease_record(row)
+            return self.row(row)
 
     def release_lease(self, lease_key: str, *, owner: str | None = None) -> None:
         with self.session_scope() as session:
@@ -370,7 +365,7 @@ class JobRepository(RepositoryBase):
             row = session.get(JobLeaseModel, lease_key)
         if row is None:
             return None
-        return to_job_lease_record(row)
+        return self.row(row)
 
     def list_active_leases(self, *, prefix: str | None = None) -> list[JobLeaseRecord]:
         now = datetime.now(UTC)
@@ -380,7 +375,7 @@ class JobRepository(RepositoryBase):
         statement = statement.order_by(JobLeaseModel.expires_at.desc())
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [to_job_lease_record(row) for row in rows]
+        return self.rows(rows)
 
     def truncate_all(self) -> None:
         with self.session_scope() as session:

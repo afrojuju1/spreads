@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from spreads.db.decorators import with_storage
 from spreads.services.risk_manager import assess_position_risk
 from spreads.services.alpaca import create_alpaca_client_from_env
 from spreads.services.scanner import LiveOptionQuote
 from spreads.services.session_positions import sync_session_position_from_attempt
-from spreads.storage.factory import build_execution_repository
 
 QUOTE_FEEDS = ("opra", "indicative")
 OPEN_POSITION_STATUSES = {"open", "partial_close"}
@@ -150,12 +150,14 @@ def _empty_portfolio() -> dict[str, Any]:
     }
 
 
+@with_storage()
 def build_session_execution_portfolio(
     *,
     db_target: str,
     session_id: str,
     executions: list[dict[str, Any]] | None = None,
     execution_store: Any | None = None,
+    storage: Any | None = None,
 ) -> dict[str, Any]:
     def _build_portfolio(resolved_execution_store: Any) -> dict[str, Any]:
         if not resolved_execution_store.positions_schema_ready():
@@ -337,11 +339,5 @@ def build_session_execution_portfolio(
             "positions": positions,
         }
 
-    if execution_store is not None:
-        return _build_portfolio(execution_store)
-
-    resolved_execution_store = build_execution_repository(db_target)
-    try:
-        return _build_portfolio(resolved_execution_store)
-    finally:
-        resolved_execution_store.close()
+    resolved_execution_store = execution_store if execution_store is not None else storage.execution
+    return _build_portfolio(resolved_execution_store)

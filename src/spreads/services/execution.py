@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from spreads.db.decorators import with_storage
 from spreads.events.bus import publish_global_event_sync
 from spreads.integrations.alpaca.client import AlpacaClient
 from spreads.services.alpaca import create_alpaca_client_from_env
@@ -21,12 +22,7 @@ from spreads.services.session_positions import (
     resolve_trade_intent,
     sync_session_position_from_attempt,
 )
-from spreads.storage.factory import (
-    build_collector_repository,
-    build_execution_repository,
-    build_job_repository,
-    build_storage_context,
-)
+from spreads.storage.factory import build_job_repository
 
 BROKER_NAME = "alpaca"
 EXECUTION_SCHEMA_MESSAGE = "Execution tables are not available yet. Run the latest Alembic migrations."
@@ -171,28 +167,23 @@ def _attach_attempt_details(
     ]
 
 
+@with_storage()
 def list_session_execution_attempts(
     *,
     db_target: str,
     session_id: str,
     limit: int = 20,
     execution_store: Any | None = None,
+    storage: Any | None = None,
 ) -> list[dict[str, Any]]:
-    if execution_store is not None:
-        if not execution_store.schema_ready():
-            return []
-        attempts = [attempt.to_dict() for attempt in execution_store.list_attempts(session_id=session_id, limit=limit)]
-        return _attach_attempt_details(execution_store=execution_store, attempts=attempts)
-
-    with build_storage_context(db_target) as storage:
-        resolved_execution_store = storage.execution
-        if not resolved_execution_store.schema_ready():
-            return []
-        attempts = [
-            attempt.to_dict()
-            for attempt in resolved_execution_store.list_attempts(session_id=session_id, limit=limit)
-        ]
-        return _attach_attempt_details(execution_store=resolved_execution_store, attempts=attempts)
+    resolved_execution_store = execution_store if execution_store is not None else storage.execution
+    if not resolved_execution_store.schema_ready():
+        return []
+    attempts = [
+        attempt.to_dict()
+        for attempt in resolved_execution_store.list_attempts(session_id=session_id, limit=limit)
+    ]
+    return _attach_attempt_details(execution_store=resolved_execution_store, attempts=attempts)
 
 
 def _get_attempt_payload(execution_store: Any, execution_attempt_id: str) -> dict[str, Any]:
@@ -486,6 +477,7 @@ def _publish_execution_attempt_event(attempt: dict[str, Any], *, message: str) -
         pass
 
 
+@with_storage()
 def submit_live_session_execution(
     *,
     db_target: str,
@@ -494,11 +486,11 @@ def submit_live_session_execution(
     quantity: int | None = None,
     limit_price: float | None = None,
     request_metadata: dict[str, Any] | None = None,
+    storage: Any | None = None,
 ) -> dict[str, Any]:
-    storage = build_storage_context(db_target)
-    collector_store = build_collector_repository(context=storage)
-    execution_store = build_execution_repository(context=storage)
-    job_store = build_job_repository(context=storage)
+    collector_store = storage.collector
+    execution_store = storage.execution
+    job_store = storage.jobs
     requested_at = _utc_now()
     client_order_id = _execution_client_order_id()
     attempt_id: str | None = None
@@ -681,10 +673,8 @@ def submit_live_session_execution(
                 "attempt": payload,
             }
         raise
-    finally:
-        storage.close()
-
-
+ 
+@with_storage()
 def submit_session_position_close(
     *,
     db_target: str,
@@ -693,9 +683,9 @@ def submit_session_position_close(
     quantity: int | None = None,
     limit_price: float | None = None,
     request_metadata: dict[str, Any] | None = None,
+    storage: Any | None = None,
 ) -> dict[str, Any]:
-    storage = build_storage_context(db_target)
-    execution_store = build_execution_repository(context=storage)
+    execution_store = storage.execution
     requested_at = _utc_now()
     client_order_id = _execution_client_order_id()
     attempt_id: str | None = None
@@ -850,49 +840,45 @@ def submit_session_position_close(
                 "attempt": payload,
             }
         raise
-    finally:
-        storage.close()
-
-
+ 
+@with_storage()
 def refresh_live_session_execution(
     *,
     db_target: str,
     session_id: str,
     execution_attempt_id: str,
+    storage: Any | None = None,
 ) -> dict[str, Any]:
-    storage = build_storage_context(db_target)
-    execution_store = build_execution_repository(context=storage)
-    try:
-        _require_execution_schema(execution_store)
-        attempt = execution_store.get_attempt(execution_attempt_id)
-        if attempt is None:
-            raise ValueError(f"Unknown execution_attempt_id: {execution_attempt_id}")
-        if str(attempt["session_id"]) != session_id:
-            raise ValueError(f"Execution {execution_attempt_id} does not belong to session {session_id}")
-        broker_order_id = _as_text(attempt.get("broker_order_id"))
-        if broker_order_id is None:
-            raise ValueError("Execution does not have a broker order id to refresh")
+    execution_store = storage.execution
+    _require_execution_schema(execution_store)
+    attempt = execution_store.get_attempt(execution_attempt_id)
+    if attempt is None:
+        raise ValueError(f"Unknown execution_attempt_id: {execution_attempt_id}")
+    if str(attempt["session_id"]) != session_id:
+        raise ValueError(f"Execution {execution_attempt_id} does not belong to session {session_id}")
+    broker_order_id = _as_text(attempt.get("broker_order_id"))
+    if broker_order_id is None:
+        raise ValueError("Execution does not have a broker order id to refresh")
 
-        client = create_alpaca_client_from_env()
-        order_snapshot = client.get_order(broker_order_id, nested=True)
-        payload = _sync_attempt_state(
-            execution_store=execution_store,
-            attempt=attempt.to_dict(),
-            client=client,
-            order_snapshot=order_snapshot,
-        )
-        message = f"Refreshed execution {execution_attempt_id}: {payload['status']}."
-        _publish_execution_attempt_event(payload, message=message)
-        return {
-            "action": "refresh",
-            "changed": True,
-            "message": message,
-            "attempt": payload,
-        }
-    finally:
-        storage.close()
+    client = create_alpaca_client_from_env()
+    order_snapshot = client.get_order(broker_order_id, nested=True)
+    payload = _sync_attempt_state(
+        execution_store=execution_store,
+        attempt=attempt.to_dict(),
+        client=client,
+        order_snapshot=order_snapshot,
+    )
+    message = f"Refreshed execution {execution_attempt_id}: {payload['status']}."
+    _publish_execution_attempt_event(payload, message=message)
+    return {
+        "action": "refresh",
+        "changed": True,
+        "message": message,
+        "attempt": payload,
+    }
 
 
+@with_storage()
 def submit_auto_session_execution(
     *,
     db_target: str,
@@ -900,6 +886,7 @@ def submit_auto_session_execution(
     cycle_id: str,
     policy: dict[str, Any] | None,
     job_run_id: str | None = None,
+    storage: Any | None = None,
 ) -> dict[str, Any]:
     normalized_policy = normalize_execution_policy(policy)
     if not normalized_policy["enabled"]:
@@ -911,45 +898,41 @@ def submit_auto_session_execution(
             "policy": normalized_policy,
         }
 
-    storage = build_storage_context(db_target)
-    collector_store = build_collector_repository(context=storage)
-    execution_store = build_execution_repository(context=storage)
-    try:
-        _require_execution_schema(execution_store)
-        _require_position_schema(execution_store)
-        board_candidates = collector_store.list_cycle_candidates(cycle_id, bucket="board")
-        if not board_candidates:
-            return {
-                "action": "auto_submit",
-                "changed": False,
-                "reason": "no_board_candidate",
-                "message": "Automatic execution skipped because the cycle does not have a board candidate.",
-                "policy": normalized_policy,
-            }
-
-        top_candidate = min(board_candidates, key=lambda candidate: int(candidate["position"]))
-        result = submit_live_session_execution(
-            db_target=db_target,
-            session_id=session_id,
-            candidate_id=int(top_candidate["candidate_id"]),
-            quantity=int(normalized_policy["quantity"]),
-            request_metadata={
-                "source": {
-                    "kind": "auto_session_execution",
-                    "mode": normalized_policy["mode"],
-                    "cycle_id": cycle_id,
-                    "job_run_id": job_run_id,
-                    "candidate_id": int(top_candidate["candidate_id"]),
-                },
-                "policy": normalized_policy,
-            },
-        )
+    collector_store = storage.collector
+    execution_store = storage.execution
+    _require_execution_schema(execution_store)
+    _require_position_schema(execution_store)
+    board_candidates = collector_store.list_cycle_candidates(cycle_id, bucket="board")
+    if not board_candidates:
         return {
-            **result,
             "action": "auto_submit",
-            "reason": None,
+            "changed": False,
+            "reason": "no_board_candidate",
+            "message": "Automatic execution skipped because the cycle does not have a board candidate.",
             "policy": normalized_policy,
-            "selected_candidate_id": int(top_candidate["candidate_id"]),
         }
-    finally:
-        storage.close()
+
+    top_candidate = min(board_candidates, key=lambda candidate: int(candidate["position"]))
+    result = submit_live_session_execution(
+        db_target=db_target,
+        session_id=session_id,
+        candidate_id=int(top_candidate["candidate_id"]),
+        quantity=int(normalized_policy["quantity"]),
+        request_metadata={
+            "source": {
+                "kind": "auto_session_execution",
+                "mode": normalized_policy["mode"],
+                "cycle_id": cycle_id,
+                "job_run_id": job_run_id,
+                "candidate_id": int(top_candidate["candidate_id"]),
+            },
+            "policy": normalized_policy,
+        },
+    )
+    return {
+        **result,
+        "action": "auto_submit",
+        "reason": None,
+        "policy": normalized_policy,
+        "selected_candidate_id": int(top_candidate["candidate_id"]),
+    }

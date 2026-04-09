@@ -8,7 +8,7 @@ from sqlalchemy import delete, select
 from spreads.storage.base import RepositoryBase
 from spreads.storage.generator_job_models import GeneratorJobModel
 from spreads.storage.records import GeneratorJobRecord
-from spreads.storage.serializers import parse_datetime, to_generator_job_record
+from spreads.storage.serializers import parse_datetime
 
 
 class GeneratorJobRepository(RepositoryBase):
@@ -40,7 +40,7 @@ class GeneratorJobRepository(RepositoryBase):
             session.add(row)
             session.flush()
             session.refresh(row)
-            return to_generator_job_record(row)
+            return self.row(row)
 
     def start_job(
         self,
@@ -63,7 +63,7 @@ class GeneratorJobRepository(RepositoryBase):
             row.error_text = None
             session.flush()
             session.refresh(row)
-            return to_generator_job_record(row)
+            return self.row(row)
 
     def complete_job(
         self,
@@ -86,7 +86,7 @@ class GeneratorJobRepository(RepositoryBase):
             row.error_text = None
             session.flush()
             session.refresh(row)
-            return to_generator_job_record(row)
+            return self.row(row)
 
     def fail_job(
         self,
@@ -107,14 +107,14 @@ class GeneratorJobRepository(RepositoryBase):
             row.error_text = error_text
             session.flush()
             session.refresh(row)
-            return to_generator_job_record(row)
+            return self.row(row)
 
     def get_job(self, generator_job_id: str) -> GeneratorJobRecord | None:
         with self.session_factory() as session:
             row = session.get(GeneratorJobModel, generator_job_id)
         if row is None:
             return None
-        return to_generator_job_record(row)
+        return self.row(row)
 
     def list_jobs(
         self,
@@ -131,7 +131,7 @@ class GeneratorJobRepository(RepositoryBase):
         statement = statement.order_by(GeneratorJobModel.created_at.desc()).limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [to_generator_job_record(row) for row in rows]
+        return self.rows(rows)
 
     def truncate_all(self) -> None:
         with self.session_scope() as session:

@@ -8,12 +8,7 @@ from sqlalchemy import delete, func, select
 from spreads.storage.alert_models import AlertEventModel, AlertStateModel
 from spreads.storage.base import RepositoryBase
 from spreads.storage.records import AlertEventRecord, AlertStateRecord
-from spreads.storage.serializers import (
-    parse_date,
-    parse_datetime,
-    to_alert_event_record,
-    to_alert_state_record,
-)
+from spreads.storage.serializers import parse_date, parse_datetime
 
 
 class AlertRepository(RepositoryBase):
@@ -25,7 +20,7 @@ class AlertRepository(RepositoryBase):
             row = session.get(AlertStateModel, dedupe_key)
         if row is None:
             return None
-        return to_alert_state_record(row)
+        return self.row(row)
 
     def upsert_alert_state(
         self,
@@ -86,7 +81,7 @@ class AlertRepository(RepositoryBase):
             session.add(row)
             session.flush()
             session.refresh(row)
-            return to_alert_event_record(row)
+            return self.row(row)
 
     def mark_alert_event_status(
         self,
@@ -105,7 +100,7 @@ class AlertRepository(RepositoryBase):
             row.error_text = error_text
             session.flush()
             session.refresh(row)
-            return to_alert_event_record(row)
+            return self.row(row)
 
     def list_alert_events(
         self,
@@ -125,7 +120,7 @@ class AlertRepository(RepositoryBase):
         statement = statement.order_by(AlertEventModel.created_at.desc(), AlertEventModel.alert_id.desc()).limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [to_alert_event_record(row) for row in rows]
+        return self.rows(rows)
 
     def count_alert_events(
         self,
@@ -147,7 +142,7 @@ class AlertRepository(RepositoryBase):
             row = session.get(AlertEventModel, alert_id)
         if row is None:
             return None
-        return to_alert_event_record(row)
+        return self.row(row)
 
     def truncate_all(self) -> None:
         with self.session_scope() as session:

@@ -3,8 +3,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from spreads.db.core import first_model_row
+from spreads.db.decorators import with_session
 from spreads.services.alpaca import create_alpaca_client_from_env, resolve_trading_environment
-from spreads.storage.factory import build_broker_repository
+from spreads.storage.broker_models import AccountSnapshotModel, BrokerSyncStateModel
+from spreads.storage.capabilities import StorageCapabilities
 
 AccountHistoryRange = Literal["1D", "1W", "1M"]
 
@@ -217,10 +223,17 @@ def _normalize_history(
     }
 
 
-def _sync_payload(broker_store: Any) -> dict[str, Any] | None:
-    if not broker_store.schema_ready():
+def _schema_ready(session: Session) -> bool:
+    return StorageCapabilities(session.get_bind()).has_tables("account_snapshots", "broker_sync_state")
+
+
+def _sync_payload(session: Session) -> dict[str, Any] | None:
+    if not _schema_ready(session):
         return None
-    state = broker_store.get_sync_state("broker_sync:alpaca")
+    state = first_model_row(
+        session,
+        select(BrokerSyncStateModel).where(BrokerSyncStateModel.sync_key == "broker_sync:alpaca"),
+    )
     if state is None:
         return None
     return {
@@ -275,20 +288,29 @@ def _overview_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def get_account_overview(*, history_range: str | None = None) -> dict[str, Any]:
-    broker_store = build_broker_repository()
+@with_session()
+def get_account_overview(
+    *,
+    history_range: str | None = None,
+    db_target: str | None = None,
+    session: Session | None = None,
+) -> dict[str, Any]:
+    sync = _sync_payload(session)
     try:
-        sync = _sync_payload(broker_store)
-        try:
-            overview = fetch_account_overview_live(history_range=history_range)
-        except Exception:
-            snapshot = None if not broker_store.schema_ready() else broker_store.get_latest_account_snapshot()
-            if snapshot is None:
-                raise
-            overview = _overview_from_snapshot(snapshot.to_dict())
-        return {
-            **overview,
-            "sync": sync,
-        }
-    finally:
-        broker_store.close()
+        overview = fetch_account_overview_live(history_range=history_range)
+    except Exception:
+        snapshot = None
+        if _schema_ready(session):
+            snapshot = first_model_row(
+                session,
+                select(AccountSnapshotModel)
+                .order_by(AccountSnapshotModel.captured_at.desc(), AccountSnapshotModel.snapshot_id.desc())
+                .limit(1),
+            )
+        if snapshot is None:
+            raise
+        overview = _overview_from_snapshot(snapshot.to_dict())
+    return {
+        **overview,
+        "sync": sync,
+    }

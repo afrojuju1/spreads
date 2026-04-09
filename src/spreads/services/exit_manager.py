@@ -5,8 +5,8 @@ from typing import Any
 
 import pandas_market_calendars as mcal
 
+from spreads.db.decorators import with_storage
 from spreads.services.execution_portfolio import build_session_execution_portfolio
-from spreads.storage.factory import build_execution_repository
 from spreads.storage.serializers import parse_datetime
 
 OPEN_POSITION_STATUSES = ["open", "partial_close"]
@@ -165,136 +165,137 @@ def _has_open_close_attempt(execution_store: Any, session_position_id: str) -> b
     )
 
 
-def _refresh_open_position_marks(*, db_target: str, session_ids: list[str]) -> None:
+def _refresh_open_position_marks(*, db_target: str, session_ids: list[str], storage: Any | None = None) -> None:
     for session_id in session_ids:
         build_session_execution_portfolio(
             db_target=db_target,
             session_id=session_id,
+            storage=storage,
         )
 
 
+@with_storage()
 def run_session_exit_manager(
     *,
     db_target: str,
+    storage: Any | None = None,
 ) -> dict[str, Any]:
-    execution_store = build_execution_repository(db_target)
-    try:
-        if not execution_store.positions_schema_ready():
-            return {
-                "status": "skipped",
-                "reason": "positions_schema_unavailable",
-            }
+    execution_store = storage.execution
+    if not execution_store.positions_schema_ready():
+        return {
+            "status": "skipped",
+            "reason": "positions_schema_unavailable",
+        }
 
-        open_positions = [
-            position.to_dict()
-            for position in execution_store.list_session_positions(
-                statuses=OPEN_POSITION_STATUSES,
-                limit=200,
-            )
-        ]
-        if not open_positions:
-            return {
-                "status": "ok",
-                "position_count": 0,
-                "evaluated": 0,
-                "submitted": 0,
-                "skipped": 0,
-                "failure_count": 0,
-            }
-
-        _refresh_open_position_marks(
-            db_target=db_target,
-            session_ids=sorted({str(position["session_id"]) for position in open_positions}),
+    open_positions = [
+        position.to_dict()
+        for position in execution_store.list_session_positions(
+            statuses=OPEN_POSITION_STATUSES,
+            limit=200,
         )
-        refreshed_positions = [
-            position.to_dict()
-            for position in execution_store.list_session_positions(
-                statuses=OPEN_POSITION_STATUSES,
-                limit=200,
-            )
-        ]
+    ]
+    if not open_positions:
+        return {
+            "status": "ok",
+            "position_count": 0,
+            "evaluated": 0,
+            "submitted": 0,
+            "skipped": 0,
+            "failure_count": 0,
+        }
 
-        evaluated = 0
-        submitted = 0
-        skipped = 0
-        failures: list[dict[str, str]] = []
-        decisions: list[dict[str, Any]] = []
-        now = datetime.now(UTC)
-        for position in refreshed_positions:
-            session_position_id = str(position["session_position_id"])
-            if _has_open_close_attempt(execution_store, session_position_id):
-                evaluated += 1
-                skipped += 1
-                execution_store.update_session_position(
-                    session_position_id=session_position_id,
-                    last_exit_evaluated_at=_utc_now(),
-                    last_exit_reason="close_already_open",
-                    updated_at=_utc_now(),
-                )
-                decisions.append(
-                    {
-                        "session_position_id": session_position_id,
-                        "reason": "close_already_open",
-                        "should_close": False,
-                    }
-                )
-                continue
+    _refresh_open_position_marks(
+        db_target=db_target,
+        session_ids=sorted({str(position["session_id"]) for position in open_positions}),
+        storage=storage,
+    )
+    refreshed_positions = [
+        position.to_dict()
+        for position in execution_store.list_session_positions(
+            statuses=OPEN_POSITION_STATUSES,
+            limit=200,
+        )
+    ]
 
-            decision = evaluate_exit_policy(
-                position=position,
-                mark=_coerce_float(position.get("close_mark")),
-                now=now,
-            )
+    evaluated = 0
+    submitted = 0
+    skipped = 0
+    failures: list[dict[str, str]] = []
+    decisions: list[dict[str, Any]] = []
+    now = datetime.now(UTC)
+    for position in refreshed_positions:
+        session_position_id = str(position["session_position_id"])
+        if _has_open_close_attempt(execution_store, session_position_id):
             evaluated += 1
+            skipped += 1
             execution_store.update_session_position(
                 session_position_id=session_position_id,
                 last_exit_evaluated_at=_utc_now(),
-                last_exit_reason=str(decision["reason"]),
+                last_exit_reason="close_already_open",
                 updated_at=_utc_now(),
             )
             decisions.append(
                 {
                     "session_position_id": session_position_id,
-                    "reason": decision["reason"],
-                    "should_close": bool(decision["should_close"]),
+                    "reason": "close_already_open",
+                    "should_close": False,
                 }
             )
-            if not decision["should_close"]:
-                skipped += 1
-                continue
-            try:
-                from spreads.services.execution import submit_session_position_close
+            continue
 
-                submit_session_position_close(
-                    db_target=db_target,
-                    session_id=str(position["session_id"]),
-                    session_position_id=session_position_id,
-                    limit_price=float(decision["limit_price"]),
-                    request_metadata={
-                        "source": {
-                            "kind": "exit_manager",
-                            "reason": decision["reason"],
-                        }
-                    },
-                )
-                submitted += 1
-            except Exception as exc:
-                failures.append(
-                    {
-                        "session_position_id": session_position_id,
-                        "error": str(exc),
+        decision = evaluate_exit_policy(
+            position=position,
+            mark=_coerce_float(position.get("close_mark")),
+            now=now,
+        )
+        evaluated += 1
+        execution_store.update_session_position(
+            session_position_id=session_position_id,
+            last_exit_evaluated_at=_utc_now(),
+            last_exit_reason=str(decision["reason"]),
+            updated_at=_utc_now(),
+        )
+        decisions.append(
+            {
+                "session_position_id": session_position_id,
+                "reason": decision["reason"],
+                "should_close": bool(decision["should_close"]),
+            }
+        )
+        if not decision["should_close"]:
+            skipped += 1
+            continue
+        try:
+            from spreads.services.execution import submit_session_position_close
+
+            submit_session_position_close(
+                db_target=db_target,
+                session_id=str(position["session_id"]),
+                session_position_id=session_position_id,
+                limit_price=float(decision["limit_price"]),
+                request_metadata={
+                    "source": {
+                        "kind": "exit_manager",
+                        "reason": decision["reason"],
                     }
-                )
+                },
+            )
+            submitted += 1
+        except Exception as exc:
+            failures.append(
+                {
+                    "session_position_id": session_position_id,
+                    "error": str(exc),
+                }
+            )
 
-        return {
-            "status": "degraded" if failures else "ok",
-            "position_count": len(refreshed_positions),
-            "evaluated": evaluated,
-            "submitted": submitted,
-            "skipped": skipped,
-            "failure_count": len(failures),
-            "decisions": decisions[:25],
-            "failures": failures[:25],
-        }
-    finally:
-        execution_store.close()
+    return {
+        "status": "degraded" if failures else "ok",
+        "position_count": len(refreshed_positions),
+        "evaluated": evaluated,
+        "submitted": submitted,
+        "skipped": skipped,
+        "failure_count": len(failures),
+        "decisions": decisions[:25],
+        "failures": failures[:25],
+    }

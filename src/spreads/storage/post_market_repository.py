@@ -8,11 +8,7 @@ from sqlalchemy import delete, select
 from spreads.storage.base import RepositoryBase
 from spreads.storage.post_market_models import PostMarketAnalysisRunModel
 from spreads.storage.records import PostMarketAnalysisRunRecord
-from spreads.storage.serializers import (
-    parse_date,
-    parse_datetime,
-    to_post_market_analysis_run_record,
-)
+from spreads.storage.serializers import parse_date, parse_datetime
 
 
 class PostMarketAnalysisRepository(RepositoryBase):
@@ -58,7 +54,7 @@ class PostMarketAnalysisRepository(RepositoryBase):
                 row.error_text = None
             session.flush()
             session.refresh(row)
-            return to_post_market_analysis_run_record(row)
+            return self.row(row)
 
     def complete_run(
         self,
@@ -86,7 +82,7 @@ class PostMarketAnalysisRepository(RepositoryBase):
             row.error_text = None
             session.flush()
             session.refresh(row)
-            return to_post_market_analysis_run_record(row)
+            return self.row(row)
 
     def fail_run(
         self,
@@ -107,7 +103,7 @@ class PostMarketAnalysisRepository(RepositoryBase):
             row.error_text = error_text
             session.flush()
             session.refresh(row)
-            return to_post_market_analysis_run_record(row)
+            return self.row(row)
 
     def skip_run(
         self,
@@ -132,14 +128,14 @@ class PostMarketAnalysisRepository(RepositoryBase):
             row.error_text = error_text
             session.flush()
             session.refresh(row)
-            return to_post_market_analysis_run_record(row)
+            return self.row(row)
 
     def get_run(self, analysis_run_id: str) -> PostMarketAnalysisRunRecord | None:
         with self.session_factory() as session:
             row = session.get(PostMarketAnalysisRunModel, analysis_run_id)
         if row is None:
             return None
-        return to_post_market_analysis_run_record(row)
+        return self.row(row)
 
     def get_latest_run(
         self,
@@ -162,7 +158,7 @@ class PostMarketAnalysisRepository(RepositoryBase):
             row = session.scalar(statement)
         if row is None:
             return None
-        return to_post_market_analysis_run_record(row)
+        return self.row(row)
 
     def list_runs(
         self,
@@ -186,7 +182,7 @@ class PostMarketAnalysisRepository(RepositoryBase):
         ).limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [to_post_market_analysis_run_record(row) for row in rows]
+        return self.rows(rows)
 
     def truncate_all(self) -> None:
         with self.session_scope() as session:

@@ -19,15 +19,7 @@ from spreads.storage.records import (
     SessionPositionCloseRecord,
     SessionPositionRecord,
 )
-from spreads.storage.serializers import (
-    parse_date,
-    parse_datetime,
-    to_execution_attempt_record,
-    to_execution_fill_record,
-    to_execution_order_record,
-    to_session_position_close_record,
-    to_session_position_record,
-)
+from spreads.storage.serializers import parse_date, parse_datetime
 
 
 class ExecutionRepository(RepositoryBase):
@@ -105,14 +97,14 @@ class ExecutionRepository(RepositoryBase):
             session.add(row)
             session.flush()
             session.refresh(row)
-            return to_execution_attempt_record(row)
+            return self.row(row)
 
     def get_attempt(self, execution_attempt_id: str) -> ExecutionAttemptRecord | None:
         with self.session_factory() as session:
             row = session.get(ExecutionAttemptModel, execution_attempt_id)
         if row is None:
             return None
-        return to_execution_attempt_record(row)
+        return self.row(row)
 
     def list_attempts(
         self,
@@ -128,7 +120,7 @@ class ExecutionRepository(RepositoryBase):
         )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [to_execution_attempt_record(row) for row in rows]
+        return self.rows(rows)
 
     def list_attempts_by_status(
         self,
@@ -146,7 +138,7 @@ class ExecutionRepository(RepositoryBase):
         ).limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [to_execution_attempt_record(row) for row in rows]
+        return self.rows(rows)
 
     def list_open_attempts_for_identity(
         self,
@@ -169,7 +161,7 @@ class ExecutionRepository(RepositoryBase):
         )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [to_execution_attempt_record(row) for row in rows]
+        return self.rows(rows)
 
     def list_open_attempts_for_session_position(
         self,
@@ -186,7 +178,7 @@ class ExecutionRepository(RepositoryBase):
         )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [to_execution_attempt_record(row) for row in rows]
+        return self.rows(rows)
 
     def update_attempt(
         self,
@@ -222,7 +214,7 @@ class ExecutionRepository(RepositoryBase):
                 row.error_text = None
             session.flush()
             session.refresh(row)
-            return to_execution_attempt_record(row)
+            return self.row(row)
 
     def list_orders(
         self,
@@ -241,7 +233,7 @@ class ExecutionRepository(RepositoryBase):
         )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [to_execution_order_record(row) for row in rows]
+        return self.rows(rows)
 
     def list_orders_by_broker_order_ids(
         self,
@@ -256,7 +248,7 @@ class ExecutionRepository(RepositoryBase):
         )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [to_execution_order_record(row) for row in rows]
+        return self.rows(rows)
 
     def upsert_orders(
         self,
@@ -306,7 +298,7 @@ class ExecutionRepository(RepositoryBase):
             session.flush()
             for row in persisted:
                 session.refresh(row)
-            return [to_execution_order_record(row) for row in persisted]
+            return self.rows(persisted)
 
     def list_fills(
         self,
@@ -325,7 +317,7 @@ class ExecutionRepository(RepositoryBase):
         )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [to_execution_fill_record(row) for row in rows]
+        return self.rows(rows)
 
     def upsert_fills(
         self,
@@ -368,14 +360,14 @@ class ExecutionRepository(RepositoryBase):
             session.flush()
             for row in persisted:
                 session.refresh(row)
-            return [to_execution_fill_record(row) for row in persisted]
+            return self.rows(persisted)
 
     def get_session_position(self, session_position_id: str) -> SessionPositionRecord | None:
         with self.session_factory() as session:
             row = session.get(SessionPositionModel, session_position_id)
         if row is None:
             return None
-        return to_session_position_record(row)
+        return self.row(row)
 
     def get_session_position_by_open_attempt(self, open_execution_attempt_id: str) -> SessionPositionRecord | None:
         statement = select(SessionPositionModel).where(
@@ -385,7 +377,7 @@ class ExecutionRepository(RepositoryBase):
             row = session.scalars(statement).first()
         if row is None:
             return None
-        return to_session_position_record(row)
+        return self.row(row)
 
     def list_session_positions(
         self,
@@ -404,7 +396,7 @@ class ExecutionRepository(RepositoryBase):
             statement = statement.limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [to_session_position_record(row) for row in rows]
+        return self.rows(rows)
 
     def create_session_position(
         self,
@@ -496,7 +488,7 @@ class ExecutionRepository(RepositoryBase):
             session.add(row)
             session.flush()
             session.refresh(row)
-            return to_session_position_record(row)
+            return self.row(row)
 
     def update_session_position(
         self,
@@ -590,7 +582,7 @@ class ExecutionRepository(RepositoryBase):
             row.updated_at = parse_datetime(updated_at) if updated_at is not None else row.updated_at
             session.flush()
             session.refresh(row)
-            return to_session_position_record(row)
+            return self.row(row)
 
     def list_session_position_closes(
         self,
@@ -609,7 +601,7 @@ class ExecutionRepository(RepositoryBase):
         )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [to_session_position_close_record(row) for row in rows]
+        return self.rows(rows)
 
     def upsert_session_position_close(
         self,
@@ -645,4 +637,4 @@ class ExecutionRepository(RepositoryBase):
             row.updated_at = parse_datetime(updated_at)
             session.flush()
             session.refresh(row)
-            return to_session_position_close_record(row)
+            return self.row(row)

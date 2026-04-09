@@ -8,11 +8,11 @@ from statistics import mean
 from typing import Any, Mapping
 
 from spreads.common import env_or_die, load_local_env
+from spreads.db.decorators import with_storage
 from spreads.integrations.alpaca.client import AlpacaClient, infer_trading_base_url
 from spreads.runtime.config import default_database_url
 from spreads.services.replay import summarize_replay
 from spreads.services.scanner import NEW_YORK
-from spreads.storage.factory import build_storage_context
 from spreads.storage.collector_repository import CollectorRepository
 from spreads.storage.run_history_repository import RunHistoryRepository
 
@@ -778,6 +778,7 @@ def build_session_outcomes(
     }
 
 
+@with_storage()
 def build_session_summary(
     *,
     db_target: str,
@@ -832,11 +833,7 @@ def build_session_summary(
             "tuning": build_signal_tuning(outcomes),
         }
 
-    if storage is not None:
-        return _build_summary(storage.history, storage.collector)
-
-    with build_storage_context(db_target) as resolved_storage:
-        return _build_summary(resolved_storage.history, resolved_storage.collector)
+    return _build_summary(storage.history, storage.collector)
 
 
 def render_event_summary(event_overview: Mapping[str, Any]) -> list[str]:

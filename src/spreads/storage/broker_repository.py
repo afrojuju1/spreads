@@ -7,11 +7,7 @@ from sqlalchemy import select
 from spreads.storage.base import RepositoryBase
 from spreads.storage.broker_models import AccountSnapshotModel, BrokerSyncStateModel
 from spreads.storage.records import AccountSnapshotRecord, BrokerSyncStateRecord
-from spreads.storage.serializers import (
-    parse_datetime,
-    to_account_snapshot_record,
-    to_broker_sync_state_record,
-)
+from spreads.storage.serializers import parse_datetime
 
 
 class BrokerRepository(RepositoryBase):
@@ -44,7 +40,7 @@ class BrokerRepository(RepositoryBase):
             session.add(row)
             session.flush()
             session.refresh(row)
-            return to_account_snapshot_record(row)
+            return self.row(row)
 
     def get_latest_account_snapshot(self, *, broker: str = "alpaca") -> AccountSnapshotRecord | None:
         statement = (
@@ -57,7 +53,7 @@ class BrokerRepository(RepositoryBase):
             row = session.scalars(statement).first()
         if row is None:
             return None
-        return to_account_snapshot_record(row)
+        return self.row(row)
 
     def upsert_sync_state(
         self,
@@ -86,11 +82,11 @@ class BrokerRepository(RepositoryBase):
             row.error_text = error_text
             session.flush()
             session.refresh(row)
-            return to_broker_sync_state_record(row)
+            return self.row(row)
 
     def get_sync_state(self, sync_key: str) -> BrokerSyncStateRecord | None:
         with self.session_factory() as session:
             row = session.get(BrokerSyncStateModel, sync_key)
         if row is None:
             return None
-        return to_broker_sync_state_record(row)
+        return self.row(row)

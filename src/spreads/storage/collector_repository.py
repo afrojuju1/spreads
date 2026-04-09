@@ -17,13 +17,7 @@ from spreads.storage.records import (
     CollectorCycleEventRecord,
     CollectorCycleRecord,
 )
-from spreads.storage.serializers import (
-    parse_date,
-    parse_datetime,
-    to_collector_cycle_candidate_record,
-    to_collector_cycle_event_record,
-    to_collector_cycle_record,
-)
+from spreads.storage.serializers import parse_date, parse_datetime
 
 NEW_YORK = ZoneInfo("America/New_York")
 
@@ -34,6 +28,23 @@ class CollectorRepository(RepositoryBase):
             "collector_cycles",
             "collector_cycle_candidates",
             "collector_cycle_events",
+        )
+
+    def _cycle_candidate_row(
+        self,
+        model: CollectorCycleCandidateModel,
+        *,
+        label: str,
+        session_date: date,
+        generated_at: datetime,
+    ) -> CollectorCycleCandidateRecord:
+        return self.row(
+            model,
+            extra={
+                "label": label,
+                "session_date": session_date,
+                "generated_at": generated_at,
+            },
         )
 
     def save_cycle(
@@ -129,7 +140,7 @@ class CollectorRepository(RepositoryBase):
             cycle = session.get(CollectorCycleModel, cycle_id)
         if cycle is None:
             return None
-        return to_collector_cycle_record(cycle)
+        return self.row(cycle)
 
     def get_latest_cycle(self, label: str) -> CollectorCycleRecord | None:
         statement = (
@@ -142,7 +153,7 @@ class CollectorRepository(RepositoryBase):
             cycle = session.scalar(statement)
         if cycle is None:
             return None
-        return to_collector_cycle_record(cycle)
+        return self.row(cycle)
 
     def list_cycles(
         self,
@@ -156,7 +167,7 @@ class CollectorRepository(RepositoryBase):
         statement = statement.order_by(CollectorCycleModel.generated_at.desc()).limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [to_collector_cycle_record(row) for row in rows]
+        return self.rows(rows)
 
     def list_session_labels(
         self,
@@ -207,7 +218,7 @@ class CollectorRepository(RepositoryBase):
             cycle = session.scalar(statement)
         if cycle is None:
             return None
-        return to_collector_cycle_record(cycle)
+        return self.row(cycle)
 
     def list_cycle_candidates(
         self,
@@ -228,7 +239,7 @@ class CollectorRepository(RepositoryBase):
         with self.session_factory() as session:
             rows = session.execute(statement).all()
         return [
-            to_collector_cycle_candidate_record(
+            self._cycle_candidate_row(
                 candidate,
                 label=cycle.label,
                 session_date=cycle.session_date,
@@ -249,7 +260,7 @@ class CollectorRepository(RepositoryBase):
         if row is None:
             return None
         candidate, cycle = row
-        return to_collector_cycle_candidate_record(
+        return self._cycle_candidate_row(
             candidate,
             label=cycle.label,
             session_date=cycle.session_date,
@@ -283,7 +294,7 @@ class CollectorRepository(RepositoryBase):
         with self.session_factory() as session:
             rows = session.execute(statement).all()
         return [
-            to_collector_cycle_candidate_record(
+            self._cycle_candidate_row(
                 candidate,
                 label=cycle.label,
                 session_date=cycle.session_date,
@@ -310,7 +321,7 @@ class CollectorRepository(RepositoryBase):
         )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [to_collector_cycle_event_record(row) for row in rows]
+        return self.rows(rows)
 
     def list_cycle_events(self, cycle_id: str) -> list[CollectorCycleEventRecord]:
         statement = (
@@ -320,7 +331,7 @@ class CollectorRepository(RepositoryBase):
         )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [to_collector_cycle_event_record(row) for row in rows]
+        return self.rows(rows)
 
     def truncate_all(self) -> None:
         with self.session_scope() as session:

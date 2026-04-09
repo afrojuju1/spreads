@@ -4,7 +4,7 @@ import asyncio
 import json
 import sys
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -18,7 +18,11 @@ from arq import create_pool
 from pydantic import BaseModel, Field
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 import redis.asyncio as redis_async
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
+from spreads.db.core import first_model_row, get_model_row, list_model_rows, to_storage_row
+from spreads.db.decorators import with_session
 from spreads.domain.profiles import UNIVERSE_PRESETS
 from spreads.events.bus import GLOBAL_EVENTS_CHANNEL, publish_global_event_async
 from spreads.jobs.orchestration import (
@@ -53,14 +57,19 @@ from spreads.services.execution import (
     submit_live_session_execution,
 )
 from spreads.services.sessions import get_session_detail, list_existing_sessions
-from spreads.storage.factory import (
-    build_alert_repository,
-    build_collector_repository,
-    build_generator_job_repository,
-    build_history_store,
-    build_job_repository,
-    build_post_market_repository,
+from spreads.storage.alert_models import AlertEventModel
+from spreads.storage.collector_models import (
+    CollectorCycleCandidateModel,
+    CollectorCycleEventModel,
+    CollectorCycleModel,
 )
+from spreads.storage.factory import (
+    build_generator_job_repository,
+)
+from spreads.storage.generator_job_models import GeneratorJobModel
+from spreads.storage.job_models import JobDefinitionModel, JobLeaseModel, JobRunModel
+from spreads.storage.models import ScanCandidateModel, ScanRunModel
+from spreads.storage.post_market_models import PostMarketAnalysisRunModel
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -147,6 +156,378 @@ def _generator_job_payload(job: Any, *, include_result: bool = True) -> dict[str
 
 def _job_run_payload(run: Any) -> dict[str, Any]:
     return enrich_live_collector_job_run_payload(run.to_dict())
+
+
+def _cycle_candidates_payload(
+    session: Session,
+    *,
+    cycle: dict[str, Any],
+    bucket: str,
+) -> list[dict[str, Any]]:
+    statement = (
+        select(CollectorCycleCandidateModel)
+        .where(CollectorCycleCandidateModel.cycle_id == str(cycle["cycle_id"]))
+        .where(CollectorCycleCandidateModel.bucket == bucket)
+        .order_by(CollectorCycleCandidateModel.position.asc())
+    )
+    return [
+        to_storage_row(
+            model,
+            extra={
+                "label": cycle["label"],
+                "session_date": cycle["session_date"],
+                "generated_at": cycle["generated_at"],
+            },
+        ).to_dict()
+        for model in session.scalars(statement).all()
+    ]
+
+
+@with_session()
+def _list_generator_job_rows(
+    *,
+    symbol: str | None,
+    status: str | None,
+    limit: int,
+    db_target: str | None = None,
+    session: Session | None = None,
+) -> list[dict[str, Any]]:
+    statement = select(GeneratorJobModel)
+    if symbol:
+        statement = statement.where(GeneratorJobModel.symbol == symbol.upper())
+    if status:
+        statement = statement.where(GeneratorJobModel.status == status)
+    statement = statement.order_by(GeneratorJobModel.created_at.desc()).limit(limit)
+    return [_generator_job_payload(row, include_result=False) for row in list_model_rows(session, statement)]
+
+
+@with_session()
+def _get_generator_job_row(
+    *,
+    generator_job_id: str,
+    db_target: str | None = None,
+    session: Session | None = None,
+) -> Any | None:
+    return get_model_row(session, GeneratorJobModel, generator_job_id)
+
+
+@with_session()
+def _get_live_snapshot_payload(
+    *,
+    label: str,
+    db_target: str | None = None,
+    session: Session | None = None,
+) -> dict[str, Any] | None:
+    cycle = first_model_row(
+        session,
+        select(CollectorCycleModel)
+        .where(CollectorCycleModel.label == label)
+        .order_by(CollectorCycleModel.generated_at.desc(), CollectorCycleModel.cycle_id.desc())
+        .limit(1),
+    )
+    if cycle is None:
+        return None
+    cycle_payload = cycle.to_dict()
+    cycle_payload["board_candidates"] = _cycle_candidates_payload(session, cycle=cycle_payload, bucket="board")
+    cycle_payload["watchlist_candidates"] = _cycle_candidates_payload(session, cycle=cycle_payload, bucket="watchlist")
+    cycle_payload["failures"] = list(cycle_payload.get("failures") or [])
+    return cycle_payload
+
+
+@with_session()
+def _list_live_cycles_payload(
+    *,
+    label: str,
+    session_date: str | None,
+    limit: int,
+    db_target: str | None = None,
+    session: Session | None = None,
+) -> list[dict[str, Any]]:
+    statement = select(CollectorCycleModel).where(CollectorCycleModel.label == label)
+    if session_date:
+        statement = statement.where(CollectorCycleModel.session_date == date.fromisoformat(session_date))
+    statement = statement.order_by(CollectorCycleModel.generated_at.desc()).limit(limit)
+    return [row.to_dict() for row in list_model_rows(session, statement)]
+
+
+@with_session()
+def _list_live_events_payload(
+    *,
+    label: str,
+    session_date: str | None,
+    limit: int,
+    db_target: str | None = None,
+    session: Session | None = None,
+) -> dict[str, Any] | None:
+    resolved_session_date = session_date
+    if resolved_session_date is None:
+        cycle = first_model_row(
+            session,
+            select(CollectorCycleModel)
+            .where(CollectorCycleModel.label == label)
+            .order_by(CollectorCycleModel.generated_at.desc(), CollectorCycleModel.cycle_id.desc())
+            .limit(1),
+        )
+        if cycle is None:
+            return None
+        resolved_session_date = str(cycle["session_date"])
+    statement = (
+        select(CollectorCycleEventModel)
+        .where(CollectorCycleEventModel.label == label)
+        .where(CollectorCycleEventModel.session_date == date.fromisoformat(resolved_session_date))
+        .order_by(CollectorCycleEventModel.generated_at.asc(), CollectorCycleEventModel.event_id.asc())
+        .limit(limit)
+    )
+    return {
+        "label": label,
+        "session_date": resolved_session_date,
+        "events": [row.to_dict() for row in list_model_rows(session, statement)],
+    }
+
+
+@with_session()
+def _list_history_runs_payload(
+    *,
+    symbol: str | None,
+    strategy: str | None,
+    limit: int,
+    db_target: str | None = None,
+    session: Session | None = None,
+) -> list[dict[str, Any]]:
+    statement = select(ScanRunModel)
+    if symbol:
+        statement = statement.where(ScanRunModel.symbol == symbol.upper())
+    if strategy:
+        statement = statement.where(ScanRunModel.strategy == strategy)
+    statement = statement.order_by(ScanRunModel.generated_at.desc()).limit(limit)
+    return [row.to_dict() for row in list_model_rows(session, statement)]
+
+
+@with_session()
+def _get_history_run_payload(
+    *,
+    run_id: str,
+    db_target: str | None = None,
+    session: Session | None = None,
+) -> dict[str, Any] | None:
+    row = get_model_row(session, ScanRunModel, run_id)
+    return None if row is None else row.to_dict()
+
+
+@with_session()
+def _list_history_run_candidates_payload(
+    *,
+    run_id: str,
+    db_target: str | None = None,
+    session: Session | None = None,
+) -> list[dict[str, Any]]:
+    statement = (
+        select(ScanCandidateModel)
+        .where(ScanCandidateModel.run_id == run_id)
+        .order_by(ScanCandidateModel.rank.asc())
+    )
+    return [row.to_dict() for row in list_model_rows(session, statement)]
+
+
+@with_session()
+def _list_alert_rows(
+    *,
+    session_date: str | None,
+    label: str | None,
+    symbol: str | None,
+    limit: int,
+    db_target: str | None = None,
+    session: Session | None = None,
+) -> list[dict[str, Any]]:
+    statement = select(AlertEventModel)
+    if session_date:
+        statement = statement.where(AlertEventModel.session_date == date.fromisoformat(session_date))
+    if label:
+        statement = statement.where(AlertEventModel.label == label)
+    if symbol:
+        statement = statement.where(AlertEventModel.symbol == symbol.upper())
+    statement = statement.order_by(AlertEventModel.created_at.desc(), AlertEventModel.alert_id.desc()).limit(limit)
+    return [row.to_dict() for row in list_model_rows(session, statement)]
+
+
+@with_session()
+def _get_alert_row(
+    *,
+    alert_id: int,
+    db_target: str | None = None,
+    session: Session | None = None,
+) -> dict[str, Any] | None:
+    row = get_model_row(session, AlertEventModel, alert_id)
+    return None if row is None else row.to_dict()
+
+
+@with_session()
+def _list_job_definition_rows(
+    *,
+    enabled_only: bool | None,
+    job_type: str | None,
+    db_target: str | None = None,
+    session: Session | None = None,
+) -> list[dict[str, Any]]:
+    statement = select(JobDefinitionModel)
+    if enabled_only is True:
+        statement = statement.where(JobDefinitionModel.enabled.is_(True))
+    elif enabled_only is False:
+        statement = statement.where(JobDefinitionModel.enabled.is_(False))
+    if job_type:
+        statement = statement.where(JobDefinitionModel.job_type == job_type)
+    statement = statement.order_by(JobDefinitionModel.job_key.asc())
+    return [row.to_dict() for row in list_model_rows(session, statement)]
+
+
+@with_session()
+def _list_job_run_rows(
+    *,
+    job_key: str | None = None,
+    job_type: str | None = None,
+    status: str | None = None,
+    session_id: str | None = None,
+    limit: int = 100,
+    db_target: str | None = None,
+    session: Session | None = None,
+) -> list[dict[str, Any]]:
+    statement = select(JobRunModel)
+    if job_key:
+        statement = statement.where(JobRunModel.job_key == job_key)
+    if job_type:
+        statement = statement.where(JobRunModel.job_type == job_type)
+    if status:
+        statement = statement.where(JobRunModel.status == status)
+    if session_id:
+        statement = statement.where(JobRunModel.session_id == session_id)
+    statement = statement.order_by(JobRunModel.scheduled_for.desc(), JobRunModel.job_run_id.desc()).limit(limit)
+    return [_job_run_payload(row) for row in list_model_rows(session, statement)]
+
+
+@with_session()
+def _get_job_run_row(
+    *,
+    job_run_id: str,
+    db_target: str | None = None,
+    session: Session | None = None,
+) -> dict[str, Any] | None:
+    row = get_model_row(session, JobRunModel, job_run_id)
+    return None if row is None else _job_run_payload(row)
+
+
+@with_session()
+def _get_jobs_health_payload(
+    *,
+    db_target: str | None = None,
+    session: Session | None = None,
+) -> dict[str, Any]:
+    definitions = list_model_rows(
+        session,
+        select(JobDefinitionModel)
+        .where(JobDefinitionModel.enabled.is_(True))
+        .order_by(JobDefinitionModel.job_key.asc()),
+    )
+    running = list_model_rows(
+        session,
+        select(JobRunModel)
+        .where(JobRunModel.status == "running")
+        .order_by(JobRunModel.scheduled_for.desc(), JobRunModel.job_run_id.desc())
+        .limit(100),
+    )
+    queued = list_model_rows(
+        session,
+        select(JobRunModel)
+        .where(JobRunModel.status == "queued")
+        .order_by(JobRunModel.scheduled_for.desc(), JobRunModel.job_run_id.desc())
+        .limit(100),
+    )
+    scheduler = get_model_row(session, JobLeaseModel, SCHEDULER_RUNTIME_LEASE_KEY)
+    workers = list_model_rows(
+        session,
+        select(JobLeaseModel)
+        .where(JobLeaseModel.lease_key.like(f"{WORKER_RUNTIME_LEASE_PREFIX}%"))
+        .where(JobLeaseModel.expires_at > func.now())
+        .order_by(JobLeaseModel.expires_at.desc(), JobLeaseModel.lease_key.asc()),
+    )
+    latest_collectors: dict[str, Any] = {}
+    for definition in definitions:
+        if definition["job_type"] != "live_collector":
+            continue
+        latest_run = first_model_row(
+            session,
+            select(JobRunModel)
+            .where(JobRunModel.job_key == str(definition["job_key"]))
+            .where(JobRunModel.status == "succeeded")
+            .order_by(JobRunModel.scheduled_for.desc(), JobRunModel.job_run_id.desc())
+            .limit(1),
+        )
+        latest_collectors[str(definition["job_key"])] = None if latest_run is None else _job_run_payload(latest_run)
+    return {
+        "scheduler": None if scheduler is None else scheduler.to_dict(),
+        "workers": [row.to_dict() for row in workers],
+        "running_jobs": [_job_run_payload(row) for row in running],
+        "queued_jobs": [_job_run_payload(row) for row in queued],
+        "latest_successful_collectors": latest_collectors,
+    }
+
+
+@with_session()
+def _list_post_market_run_rows(
+    *,
+    session_date: str | None,
+    label: str | None,
+    status: str | None,
+    limit: int,
+    db_target: str | None = None,
+    session: Session | None = None,
+) -> list[dict[str, Any]]:
+    statement = select(PostMarketAnalysisRunModel)
+    if session_date:
+        statement = statement.where(PostMarketAnalysisRunModel.session_date == date.fromisoformat(session_date))
+    if label:
+        statement = statement.where(PostMarketAnalysisRunModel.label == label)
+    if status:
+        statement = statement.where(PostMarketAnalysisRunModel.status == status)
+    statement = statement.order_by(
+        PostMarketAnalysisRunModel.completed_at.desc().nullslast(),
+        PostMarketAnalysisRunModel.created_at.desc(),
+        PostMarketAnalysisRunModel.analysis_run_id.desc(),
+    ).limit(limit)
+    return [row.to_dict() for row in list_model_rows(session, statement)]
+
+
+@with_session()
+def _get_post_market_run_row(
+    *,
+    analysis_run_id: str,
+    db_target: str | None = None,
+    session: Session | None = None,
+) -> dict[str, Any] | None:
+    row = get_model_row(session, PostMarketAnalysisRunModel, analysis_run_id)
+    return None if row is None else row.to_dict()
+
+
+@with_session()
+def _get_latest_post_market_run_row(
+    *,
+    session_date: str,
+    label: str,
+    db_target: str | None = None,
+    session: Session | None = None,
+) -> dict[str, Any] | None:
+    row = first_model_row(
+        session,
+        select(PostMarketAnalysisRunModel)
+        .where(PostMarketAnalysisRunModel.label == label)
+        .where(PostMarketAnalysisRunModel.session_date == date.fromisoformat(session_date))
+        .order_by(
+            PostMarketAnalysisRunModel.completed_at.desc().nullslast(),
+            PostMarketAnalysisRunModel.created_at.desc(),
+            PostMarketAnalysisRunModel.analysis_run_id.desc(),
+        )
+        .limit(1),
+    )
+    return None if row is None else row.to_dict()
 
 
 @app.get("/health")
@@ -265,28 +646,26 @@ def list_generator_jobs(
     limit: int = Query(default=12, ge=1, le=200),
     db: str | None = None,
 ) -> dict[str, Any]:
-    store = build_generator_job_repository(resolve_db(db))
-    try:
-        symbol_filter = symbol.strip().upper() if symbol and symbol.strip() else None
-        status_filter = status.strip().lower() if status and status.strip() else None
-        if status_filter == "all":
-            status_filter = None
-        jobs = store.list_jobs(symbol=symbol_filter, status=status_filter, limit=limit)
-        return {"jobs": [_generator_job_payload(job, include_result=False) for job in jobs]}
-    finally:
-        store.close()
+    symbol_filter = symbol.strip().upper() if symbol and symbol.strip() else None
+    status_filter = status.strip().lower() if status and status.strip() else None
+    if status_filter == "all":
+        status_filter = None
+    return {
+        "jobs": _list_generator_job_rows(
+            symbol=symbol_filter,
+            status=status_filter,
+            limit=limit,
+            db_target=resolve_db(db),
+        )
+    }
 
 
 @app.get("/generator/jobs/{generator_job_id}")
 def get_generator_job(generator_job_id: str, db: str | None = None) -> dict[str, Any]:
-    store = build_generator_job_repository(resolve_db(db))
-    try:
-        job = store.get_job(generator_job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail="Generator job not found")
-        return _generator_job_payload(job)
-    finally:
-        store.close()
+    job = _get_generator_job_row(generator_job_id=generator_job_id, db_target=resolve_db(db))
+    if job is None:
+        raise HTTPException(status_code=404, detail="Generator job not found")
+    return _generator_job_payload(job)
 
 
 @app.post("/generator/jobs/{generator_job_id}/actions")
@@ -348,6 +727,8 @@ async def global_events_ws(websocket: WebSocket) -> None:
                 else:
                     await websocket.send_json(payload)
             await asyncio.sleep(0.1)
+    except asyncio.CancelledError:
+        return
     except WebSocketDisconnect:
         return
     finally:
@@ -381,6 +762,8 @@ async def generator_job_ws(websocket: WebSocket, generator_job_id: str, db: str 
                 else:
                     await websocket.send_json(payload)
             await asyncio.sleep(0.1)
+    except asyncio.CancelledError:
+        return
     except WebSocketDisconnect:
         return
     finally:
@@ -392,21 +775,10 @@ async def generator_job_ws(websocket: WebSocket, generator_job_id: str, db: str 
 
 @app.get("/live/{label}")
 def get_live_snapshot(label: str, db: str | None = None) -> dict[str, Any]:
-    store = build_collector_repository(resolve_db(db))
-    try:
-        cycle = store.get_latest_cycle(label)
-        if cycle is None:
-            raise HTTPException(status_code=404, detail="Live cycle not found")
-        board = store.list_cycle_candidates(cycle["cycle_id"], bucket="board")
-        watchlist = store.list_cycle_candidates(cycle["cycle_id"], bucket="watchlist")
-        return {
-            **cycle.to_dict(),
-            "board_candidates": [candidate.to_dict() for candidate in board],
-            "watchlist_candidates": [candidate.to_dict() for candidate in watchlist],
-            "failures": cycle["failures"],
-        }
-    finally:
-        store.close()
+    payload = _get_live_snapshot_payload(label=label, db_target=resolve_db(db))
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Live cycle not found")
+    return payload
 
 
 @app.get("/live/{label}/cycles")
@@ -416,12 +788,14 @@ def list_live_cycles(
     limit: int = Query(default=50, ge=1, le=1000),
     db: str | None = None,
 ) -> dict[str, Any]:
-    store = build_collector_repository(resolve_db(db))
-    try:
-        cycles = store.list_cycles(label=label, session_date=session_date, limit=limit)
-        return {"cycles": [cycle.to_dict() for cycle in cycles]}
-    finally:
-        store.close()
+    return {
+        "cycles": _list_live_cycles_payload(
+            label=label,
+            session_date=session_date,
+            limit=limit,
+            db_target=resolve_db(db),
+        )
+    }
 
 
 @app.get("/live/{label}/events")
@@ -431,27 +805,15 @@ def list_live_events(
     limit: int = Query(default=200, ge=1, le=5000),
     db: str | None = None,
 ) -> dict[str, Any]:
-    store = build_collector_repository(resolve_db(db))
-    try:
-        resolved_session_date = session_date
-        if resolved_session_date is None:
-            cycle = store.get_latest_cycle(label)
-            if cycle is None:
-                raise HTTPException(status_code=404, detail="Live cycle not found")
-            resolved_session_date = cycle["session_date"]
-        events = store.list_events(
-            label=label,
-            session_date=resolved_session_date,
-            limit=limit,
-            ascending=True,
-        )
-        return {
-            "label": label,
-            "session_date": resolved_session_date,
-            "events": [event.to_dict() for event in events],
-        }
-    finally:
-        store.close()
+    payload = _list_live_events_payload(
+        label=label,
+        session_date=session_date,
+        limit=limit,
+        db_target=resolve_db(db),
+    )
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Live cycle not found")
+    return payload
 
 
 @app.get("/history/runs")
@@ -461,48 +823,33 @@ def list_history_runs(
     limit: int = Query(default=25, ge=1, le=500),
     db: str | None = None,
 ) -> dict[str, Any]:
-    store = build_history_store(resolve_db(db))
-    try:
-        return {
-            "runs": [
-                run.to_dict()
-                for run in store.list_runs(
-                    limit=limit,
-                    symbol=symbol,
-                    strategy=strategy,
-                )
-            ]
-        }
-    finally:
-        store.close()
+    return {
+        "runs": _list_history_runs_payload(
+            symbol=symbol,
+            strategy=strategy,
+            limit=limit,
+            db_target=resolve_db(db),
+        )
+    }
 
 
 @app.get("/history/runs/{run_id}")
 def get_history_run(run_id: str, db: str | None = None) -> dict[str, Any]:
-    store = build_history_store(resolve_db(db))
-    try:
-        run = store.get_run(run_id)
-        if run is None:
-            raise HTTPException(status_code=404, detail="Run not found")
-        return run.to_dict()
-    finally:
-        store.close()
+    run = _get_history_run_payload(run_id=run_id, db_target=resolve_db(db))
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return run
 
 
 @app.get("/history/runs/{run_id}/candidates")
 def get_history_run_candidates(run_id: str, db: str | None = None) -> dict[str, Any]:
-    store = build_history_store(resolve_db(db))
-    try:
-        run = store.get_run(run_id)
-        if run is None:
-            raise HTTPException(status_code=404, detail="Run not found")
-        candidates = store.list_candidates(run_id)
-        return {
-            "run_id": run_id,
-            "candidates": [candidate.to_dict() for candidate in candidates],
-        }
-    finally:
-        store.close()
+    run = _get_history_run_payload(run_id=run_id, db_target=resolve_db(db))
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return {
+        "run_id": run_id,
+        "candidates": _list_history_run_candidates_payload(run_id=run_id, db_target=resolve_db(db)),
+    }
 
 
 @app.get("/sessions")
@@ -610,17 +957,15 @@ def list_alerts(
     limit: int = Query(default=100, ge=1, le=1000),
     db: str | None = None,
 ) -> dict[str, Any]:
-    store = build_alert_repository(resolve_db(db))
-    try:
-        alerts = store.list_alert_events(
+    return {
+        "alerts": _list_alert_rows(
             session_date=session_date,
             label=label,
             symbol=symbol,
             limit=limit,
+            db_target=resolve_db(db),
         )
-        return {"alerts": [alert.to_dict() for alert in alerts]}
-    finally:
-        store.close()
+    }
 
 
 @app.get("/alerts/latest")
@@ -628,24 +973,23 @@ def list_latest_alerts(
     limit: int = Query(default=25, ge=1, le=250),
     db: str | None = None,
 ) -> dict[str, Any]:
-    store = build_alert_repository(resolve_db(db))
-    try:
-        alerts = store.list_alert_events(limit=limit)
-        return {"alerts": [alert.to_dict() for alert in alerts]}
-    finally:
-        store.close()
+    return {
+        "alerts": _list_alert_rows(
+            session_date=None,
+            label=None,
+            symbol=None,
+            limit=limit,
+            db_target=resolve_db(db),
+        )
+    }
 
 
 @app.get("/alerts/{alert_id}")
 def get_alert(alert_id: int, db: str | None = None) -> dict[str, Any]:
-    store = build_alert_repository(resolve_db(db))
-    try:
-        alert = store.get_alert_event(alert_id)
-        if alert is None:
-            raise HTTPException(status_code=404, detail="Alert not found")
-        return alert.to_dict()
-    finally:
-        store.close()
+    alert = _get_alert_row(alert_id=alert_id, db_target=resolve_db(db))
+    if alert is None:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return alert
 
 
 @app.get("/jobs")
@@ -654,12 +998,13 @@ def list_jobs(
     job_type: str | None = None,
     db: str | None = None,
 ) -> dict[str, Any]:
-    store = build_job_repository(resolve_db(db))
-    try:
-        rows = store.list_job_definitions(enabled_only=enabled_only, job_type=job_type)
-        return {"jobs": [row.to_dict() for row in rows]}
-    finally:
-        store.close()
+    return {
+        "jobs": _list_job_definition_rows(
+            enabled_only=enabled_only,
+            job_type=job_type,
+            db_target=resolve_db(db),
+        )
+    }
 
 
 @app.get("/jobs/runs")
@@ -671,56 +1016,29 @@ def list_job_runs(
     limit: int = Query(default=100, ge=1, le=1000),
     db: str | None = None,
 ) -> dict[str, Any]:
-    store = build_job_repository(resolve_db(db))
-    try:
-        rows = store.list_job_runs(
+    return {
+        "job_runs": _list_job_run_rows(
             job_key=job_key,
             job_type=job_type,
             status=status,
             session_id=session_id,
             limit=limit,
+            db_target=resolve_db(db),
         )
-        return {"job_runs": [_job_run_payload(row) for row in rows]}
-    finally:
-        store.close()
+    }
 
 
 @app.get("/jobs/runs/{job_run_id}")
 def get_job_run(job_run_id: str, db: str | None = None) -> dict[str, Any]:
-    store = build_job_repository(resolve_db(db))
-    try:
-        row = store.get_job_run(job_run_id)
-        if row is None:
-            raise HTTPException(status_code=404, detail="Job run not found")
-        return _job_run_payload(row)
-    finally:
-        store.close()
+    row = _get_job_run_row(job_run_id=job_run_id, db_target=resolve_db(db))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Job run not found")
+    return row
 
 
 @app.get("/jobs/health")
 def get_jobs_health(db: str | None = None) -> dict[str, Any]:
-    store = build_job_repository(resolve_db(db))
-    try:
-        definitions = store.list_job_definitions(enabled_only=True)
-        running = store.list_job_runs(status="running", limit=100)
-        queued = store.list_job_runs(status="queued", limit=100)
-        scheduler = store.get_lease(SCHEDULER_RUNTIME_LEASE_KEY)
-        workers = store.list_active_leases(prefix=WORKER_RUNTIME_LEASE_PREFIX)
-        latest_collectors: dict[str, Any] = {}
-        for definition in definitions:
-            if definition["job_type"] != "live_collector":
-                continue
-            runs = store.list_job_runs(job_key=definition["job_key"], status="succeeded", limit=1)
-            latest_collectors[definition["job_key"]] = None if not runs else _job_run_payload(runs[0])
-        return {
-            "scheduler": None if scheduler is None else scheduler.to_dict(),
-            "workers": [lease.to_dict() for lease in workers],
-            "running_jobs": [_job_run_payload(row) for row in running],
-            "queued_jobs": [_job_run_payload(row) for row in queued],
-            "latest_successful_collectors": latest_collectors,
-        }
-    finally:
-        store.close()
+    return _get_jobs_health_payload(db_target=resolve_db(db))
 
 
 @app.get("/analysis/{session_date}/{label}")
@@ -750,33 +1068,32 @@ def list_post_market_runs(
     limit: int = Query(default=100, ge=1, le=1000),
     db: str | None = None,
 ) -> dict[str, Any]:
-    store = build_post_market_repository(resolve_db(db))
-    try:
-        rows = store.list_runs(session_date=session_date, label=label, status=status, limit=limit)
-        return {"analysis_runs": [row.to_dict() for row in rows]}
-    finally:
-        store.close()
+    return {
+        "analysis_runs": _list_post_market_run_rows(
+            session_date=session_date,
+            label=label,
+            status=status,
+            limit=limit,
+            db_target=resolve_db(db),
+        )
+    }
 
 
 @app.get("/post-market/runs/{analysis_run_id}")
 def get_post_market_run(analysis_run_id: str, db: str | None = None) -> dict[str, Any]:
-    store = build_post_market_repository(resolve_db(db))
-    try:
-        row = store.get_run(analysis_run_id)
-        if row is None:
-            raise HTTPException(status_code=404, detail="Post-market analysis run not found")
-        return row.to_dict()
-    finally:
-        store.close()
+    row = _get_post_market_run_row(analysis_run_id=analysis_run_id, db_target=resolve_db(db))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Post-market analysis run not found")
+    return row
 
 
 @app.get("/post-market/{session_date}/{label}")
 def get_post_market_analysis(session_date: str, label: str, db: str | None = None) -> dict[str, Any]:
-    store = build_post_market_repository(resolve_db(db))
-    try:
-        row = store.get_latest_run(label=label, session_date=session_date)
-        if row is None:
-            raise HTTPException(status_code=404, detail="Post-market analysis not found")
-        return row.to_dict()
-    finally:
-        store.close()
+    row = _get_latest_post_market_run_row(
+        session_date=session_date,
+        label=label,
+        db_target=resolve_db(db),
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Post-market analysis not found")
+    return row

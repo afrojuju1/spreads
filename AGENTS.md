@@ -5,6 +5,7 @@
 - Keep changes minimal and focused unless broader refactors are explicitly requested.
 - Do not commit or push unless explicitly asked.
 - Prefer `uv run` for Python commands in this repo.
+- For Alpaca-related research, scanner design, or alerting work, read the canonical capability statement in [docs/research/alpaca_capabilities_statement.md](/Users/adeb/Projects/spreads/docs/research/alpaca_capabilities_statement.md) first. Re-check Alpaca's official docs/OpenAPI only when the task depends on current product changes, limits, or newly added endpoints.
 
 ## Dev Workflow
 

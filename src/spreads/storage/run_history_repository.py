@@ -14,14 +14,7 @@ from spreads.storage.records import (
     ScanRunRecord,
     SessionTopRunRecord,
 )
-from spreads.storage.serializers import (
-    parse_date,
-    parse_datetime,
-    to_option_quote_event_record,
-    to_scan_candidate_record,
-    to_scan_run_record,
-    to_session_top_run_record,
-)
+from spreads.storage.serializers import parse_date, parse_datetime
 
 
 class RunHistoryRepository(RepositoryBase):
@@ -45,6 +38,27 @@ class RunHistoryRepository(RepositoryBase):
             session.execute(delete(OptionQuoteEventModel))
             session.execute(delete(ScanCandidateModel))
             session.execute(delete(ScanRunModel))
+
+    def _session_top_run_row(
+        self,
+        run: ScanRunModel,
+        candidate: ScanCandidateModel | None,
+    ) -> SessionTopRunRecord:
+        return self.row(
+            run,
+            aliases={"setup_json": "setup_json"},
+            extra={
+                "short_symbol": None if candidate is None else candidate.short_symbol,
+                "long_symbol": None if candidate is None else candidate.long_symbol,
+                "short_strike": None if candidate is None else candidate.short_strike,
+                "long_strike": None if candidate is None else candidate.long_strike,
+                "midpoint_credit": None if candidate is None else candidate.midpoint_credit,
+                "quality_score": None if candidate is None else candidate.quality_score,
+                "calendar_status": None if candidate is None else candidate.calendar_status,
+                "expected_move": None if candidate is None else candidate.expected_move,
+                "short_vs_expected_move": None if candidate is None else candidate.short_vs_expected_move,
+            },
+        )
 
     def save_run(
         self,
@@ -113,7 +127,7 @@ class RunHistoryRepository(RepositoryBase):
             run = session.get(ScanRunModel, run_id)
         if run is None:
             return None
-        return to_scan_run_record(run)
+        return self.row(run)
 
     def get_latest_run(self, symbol: str, strategy: str | None = None) -> ScanRunRecord | None:
         statement = select(ScanRunModel).where(ScanRunModel.symbol == symbol.upper())
@@ -124,7 +138,7 @@ class RunHistoryRepository(RepositoryBase):
             run = session.scalar(statement)
         if run is None:
             return None
-        return to_scan_run_record(run)
+        return self.row(run)
 
     def list_candidates(self, run_id: str) -> list[ScanCandidateRecord]:
         statement = (
@@ -134,7 +148,7 @@ class RunHistoryRepository(RepositoryBase):
         )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [to_scan_candidate_record(row) for row in rows]
+        return self.rows(rows)
 
     def list_runs(
         self,
@@ -151,7 +165,7 @@ class RunHistoryRepository(RepositoryBase):
         statement = statement.order_by(ScanRunModel.generated_at.desc()).limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [to_scan_run_record(row) for row in rows]
+        return self.rows(rows)
 
     def list_session_top_runs(
         self,
@@ -179,7 +193,7 @@ class RunHistoryRepository(RepositoryBase):
 
         with self.session_factory() as session:
             rows = session.execute(statement).all()
-        return [to_session_top_run_record(run, candidate) for run, candidate in rows]
+        return [self._session_top_run_row(run, candidate) for run, candidate in rows]
 
     def list_session_quote_events(
         self,
@@ -198,7 +212,7 @@ class RunHistoryRepository(RepositoryBase):
         )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return [to_option_quote_event_record(row) for row in rows]
+        return self.rows(rows)
 
     def save_option_quote_events(
         self,
