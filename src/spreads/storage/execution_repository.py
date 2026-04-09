@@ -154,6 +154,24 @@ class ExecutionRepository:
             rows = session.scalars(statement).all()
         return [to_execution_attempt_record(row) for row in rows]
 
+    def list_attempts_by_status(
+        self,
+        *,
+        statuses: list[str],
+        trade_intent: str | None = None,
+        limit: int = 200,
+    ) -> list[ExecutionAttemptRecord]:
+        statement = select(ExecutionAttemptModel).where(ExecutionAttemptModel.status.in_(statuses))
+        if trade_intent is not None:
+            statement = statement.where(ExecutionAttemptModel.trade_intent == trade_intent)
+        statement = statement.order_by(
+            ExecutionAttemptModel.requested_at.desc(),
+            ExecutionAttemptModel.execution_attempt_id.desc(),
+        ).limit(limit)
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return [to_execution_attempt_record(row) for row in rows]
+
     def list_open_attempts_for_identity(
         self,
         *,
@@ -244,6 +262,21 @@ class ExecutionRepository:
         statement = statement.order_by(
             ExecutionOrderModel.updated_at.desc(),
             ExecutionOrderModel.execution_order_id.desc(),
+        )
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return [to_execution_order_record(row) for row in rows]
+
+    def list_orders_by_broker_order_ids(
+        self,
+        broker_order_ids: list[str],
+    ) -> list[ExecutionOrderRecord]:
+        if not broker_order_ids:
+            return []
+        statement = (
+            select(ExecutionOrderModel)
+            .where(ExecutionOrderModel.broker_order_id.in_(broker_order_ids))
+            .order_by(ExecutionOrderModel.updated_at.desc(), ExecutionOrderModel.execution_order_id.desc())
         )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
@@ -381,13 +414,18 @@ class ExecutionRepository:
     def list_session_positions(
         self,
         *,
-        session_id: str,
+        session_id: str | None = None,
+        statuses: list[str] | None = None,
+        limit: int | None = None,
     ) -> list[SessionPositionRecord]:
-        statement = (
-            select(SessionPositionModel)
-            .where(SessionPositionModel.session_id == session_id)
-            .order_by(SessionPositionModel.updated_at.desc(), SessionPositionModel.session_position_id.desc())
-        )
+        statement = select(SessionPositionModel)
+        if session_id is not None:
+            statement = statement.where(SessionPositionModel.session_id == session_id)
+        if statuses:
+            statement = statement.where(SessionPositionModel.status.in_(statuses))
+        statement = statement.order_by(SessionPositionModel.updated_at.desc(), SessionPositionModel.session_position_id.desc())
+        if limit is not None:
+            statement = statement.limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
         return [to_session_position_record(row) for row in rows]
@@ -423,6 +461,16 @@ class ExecutionRepository:
         close_mark_source: str | None,
         close_marked_at: str | None,
         last_broker_status: str | None,
+        exit_policy: dict[str, Any],
+        risk_policy: dict[str, Any],
+        source_job_type: str | None,
+        source_job_key: str | None,
+        source_job_run_id: str | None,
+        last_exit_evaluated_at: str | None,
+        last_exit_reason: str | None,
+        last_reconciled_at: str | None,
+        reconciliation_status: str | None,
+        reconciliation_note: str | None,
         created_at: str,
         updated_at: str,
     ) -> SessionPositionRecord:
@@ -456,6 +504,16 @@ class ExecutionRepository:
                 close_mark_source=close_mark_source,
                 close_marked_at=parse_datetime(close_marked_at),
                 last_broker_status=last_broker_status,
+                exit_policy_json=exit_policy,
+                risk_policy_json=risk_policy,
+                source_job_type=source_job_type,
+                source_job_key=source_job_key,
+                source_job_run_id=source_job_run_id,
+                last_exit_evaluated_at=parse_datetime(last_exit_evaluated_at),
+                last_exit_reason=last_exit_reason,
+                last_reconciled_at=parse_datetime(last_reconciled_at),
+                reconciliation_status=reconciliation_status,
+                reconciliation_note=reconciliation_note,
                 created_at=parse_datetime(created_at),
                 updated_at=parse_datetime(updated_at),
             )
@@ -484,6 +542,16 @@ class ExecutionRepository:
         close_mark_source: str | None = None,
         close_marked_at: str | None = None,
         last_broker_status: str | None = None,
+        exit_policy: dict[str, Any] | None = None,
+        risk_policy: dict[str, Any] | None = None,
+        source_job_type: str | None = None,
+        source_job_key: str | None = None,
+        source_job_run_id: str | None = None,
+        last_exit_evaluated_at: str | None = None,
+        last_exit_reason: str | None = None,
+        last_reconciled_at: str | None = None,
+        reconciliation_status: str | None = None,
+        reconciliation_note: str | None = None,
         updated_at: str | None = None,
     ) -> SessionPositionRecord:
         with self.session_scope() as session:
@@ -522,6 +590,27 @@ class ExecutionRepository:
                 row.close_marked_at = parse_datetime(close_marked_at)
             if last_broker_status is not None:
                 row.last_broker_status = last_broker_status
+            if exit_policy is not None:
+                row.exit_policy_json = exit_policy
+            if risk_policy is not None:
+                row.risk_policy_json = risk_policy
+            if source_job_type is not None:
+                row.source_job_type = source_job_type
+            if source_job_key is not None:
+                row.source_job_key = source_job_key
+            if source_job_run_id is not None:
+                row.source_job_run_id = source_job_run_id
+            if last_exit_evaluated_at is not None:
+                row.last_exit_evaluated_at = parse_datetime(last_exit_evaluated_at)
+            if last_exit_reason is not None:
+                row.last_exit_reason = last_exit_reason
+            if last_reconciled_at is not None:
+                row.last_reconciled_at = parse_datetime(last_reconciled_at)
+            if reconciliation_status is not None:
+                row.reconciliation_status = reconciliation_status
+                row.reconciliation_note = reconciliation_note
+            elif reconciliation_note is not None:
+                row.reconciliation_note = reconciliation_note
             row.updated_at = parse_datetime(updated_at) if updated_at is not None else row.updated_at
             session.flush()
             session.refresh(row)

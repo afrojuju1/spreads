@@ -4,6 +4,7 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 from spreads.storage.alert_models import AlertEventModel, AlertStateModel
+from spreads.storage.broker_models import AccountSnapshotModel, BrokerSyncStateModel
 from spreads.storage.collector_models import (
     CollectorCycleCandidateModel,
     CollectorCycleEventModel,
@@ -23,6 +24,8 @@ from spreads.storage.post_market_models import PostMarketAnalysisRunModel
 from spreads.storage.records import (
     AlertEventRecord,
     AlertStateRecord,
+    AccountSnapshotRecord,
+    BrokerSyncStateRecord,
     CollectorCycleCandidateRecord,
     CollectorCycleEventRecord,
     CollectorCycleRecord,
@@ -353,6 +356,16 @@ def to_session_position_record(model: SessionPositionModel) -> SessionPositionRe
         close_mark_source=model.close_mark_source,
         close_marked_at=render_value(model.close_marked_at),
         last_broker_status=model.last_broker_status,
+        exit_policy=dict(model.exit_policy_json or {}),
+        risk_policy=dict(model.risk_policy_json or {}),
+        source_job_type=model.source_job_type,
+        source_job_key=model.source_job_key,
+        source_job_run_id=model.source_job_run_id,
+        last_exit_evaluated_at=render_value(model.last_exit_evaluated_at),
+        last_exit_reason=model.last_exit_reason,
+        last_reconciled_at=render_value(model.last_reconciled_at),
+        reconciliation_status=model.reconciliation_status,
+        reconciliation_note=model.reconciliation_note,
         created_at=render_value(model.created_at),
         updated_at=render_value(model.updated_at),
     )
@@ -370,6 +383,32 @@ def to_session_position_close_record(model: SessionPositionCloseModel) -> Sessio
         closed_at=render_value(model.closed_at),
         created_at=render_value(model.created_at),
         updated_at=render_value(model.updated_at),
+    )
+
+
+def to_account_snapshot_record(model: AccountSnapshotModel) -> AccountSnapshotRecord:
+    return AccountSnapshotRecord(
+        snapshot_id=model.snapshot_id,
+        broker=model.broker,
+        environment=model.environment,
+        source=model.source,
+        captured_at=render_value(model.captured_at),
+        account=dict(model.account_json or {}),
+        pnl=dict(model.pnl_json or {}),
+        positions=list(model.positions_json or []),
+        history=dict(model.history_json or {}),
+    )
+
+
+def to_broker_sync_state_record(model: BrokerSyncStateModel) -> BrokerSyncStateRecord:
+    return BrokerSyncStateRecord(
+        sync_key=model.sync_key,
+        broker=model.broker,
+        status=model.status,
+        updated_at=render_value(model.updated_at),
+        cursor=dict(model.cursor_json or {}),
+        summary=dict(model.summary_json or {}),
+        error_text=model.error_text,
     )
 
 

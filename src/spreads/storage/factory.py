@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from spreads.runtime.config import DEFAULT_POSTGRES_URL, default_database_url
 from spreads.storage.alert_repository import AlertRepository
+from spreads.storage.broker_repository import BrokerRepository
 from spreads.storage.collector_repository import CollectorRepository
 from spreads.storage.execution_repository import ExecutionRepository
 from spreads.storage.generator_job_repository import GeneratorJobRepository
@@ -40,6 +41,17 @@ def build_alert_repository(path_or_url: str | None = None):
         return AlertRepository(value)
     raise RuntimeError(
         f"Alert storage is Postgres-only. Use a PostgreSQL URL, for example {DEFAULT_POSTGRES_URL}."
+    )
+
+
+def build_broker_repository(path_or_url: str | None = None):
+    if path_or_url is None:
+        path_or_url = default_database_url()
+    value = str(path_or_url)
+    if value.startswith("postgres://") or value.startswith("postgresql://") or value.startswith("postgresql+psycopg://"):
+        return BrokerRepository(value)
+    raise RuntimeError(
+        f"Broker storage is Postgres-only. Use a PostgreSQL URL, for example {DEFAULT_POSTGRES_URL}."
     )
 
 

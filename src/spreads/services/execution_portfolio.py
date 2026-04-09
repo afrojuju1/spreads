@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from spreads.services.risk_manager import assess_position_risk
 from spreads.services.alpaca import create_alpaca_client_from_env
 from spreads.services.scanner import LiveOptionQuote
 from spreads.services.session_positions import sync_session_position_from_attempt
@@ -140,6 +141,7 @@ def _empty_portfolio() -> dict[str, Any]:
             "estimated_close_pnl_total": None,
             "quoted_position_count": 0,
             "unquoted_position_count": 0,
+            "mismatch_position_count": 0,
             "mark_source": None,
             "mark_error": None,
             "retrieved_at": _utc_now(),
@@ -219,6 +221,7 @@ def build_session_execution_portfolio(
                 unrealized_pnl = 0.0
 
             realized_pnl = _coerce_float(persisted.get("realized_pnl")) or 0.0
+            position_risk = assess_position_risk(position=persisted)
             positions.append(
                 {
                     "position_id": str(persisted["session_position_id"]),
@@ -258,6 +261,13 @@ def build_session_execution_portfolio(
                     "estimated_close_pnl": _round_money(unrealized_pnl),
                     "mark_source": mark_source or _as_text(persisted.get("close_mark_source")),
                     "mark_timestamp": mark_timestamp,
+                    "risk_status": str(position_risk["status"]),
+                    "risk_note": _as_text(position_risk.get("note")),
+                    "reconciliation_status": _as_text(persisted.get("reconciliation_status")),
+                    "reconciliation_note": _as_text(persisted.get("reconciliation_note")),
+                    "last_reconciled_at": _as_text(persisted.get("last_reconciled_at")),
+                    "last_exit_evaluated_at": _as_text(persisted.get("last_exit_evaluated_at")),
+                    "last_exit_reason": _as_text(persisted.get("last_exit_reason")),
                     "short_quote": None if short_quote is None else _quote_payload(short_quote, source=sources[short_symbol]),
                     "long_quote": None if long_quote is None else _quote_payload(long_quote, source=sources[long_symbol]),
                 }
@@ -279,6 +289,9 @@ def build_session_execution_portfolio(
         open_positions = [item for item in positions if item["position_status"] == "open"]
         partial_positions = [item for item in positions if item["position_status"] == "partial_close"]
         closed_positions = [item for item in positions if item["position_status"] == "closed"]
+        mismatch_positions = [
+            item for item in positions if _as_text(item.get("reconciliation_status")) == "mismatch"
+        ]
         mark_sources = {str(item["mark_source"]) for item in positions if item.get("mark_source")}
         realized_total = _sum_or_none([_coerce_float(item.get("realized_pnl")) for item in positions])
         unrealized_total = _sum_or_none([_coerce_float(item.get("unrealized_pnl")) for item in positions])
@@ -316,6 +329,7 @@ def build_session_execution_portfolio(
                 "estimated_close_pnl_total": unrealized_total,
                 "quoted_position_count": quoted_position_count,
                 "unquoted_position_count": len(open_positions) + len(partial_positions) - quoted_position_count,
+                "mismatch_position_count": len(mismatch_positions),
                 "mark_source": None if not mark_sources else (next(iter(mark_sources)) if len(mark_sources) == 1 else "mixed"),
                 "mark_error": mark_error,
                 "retrieved_at": retrieved_at,

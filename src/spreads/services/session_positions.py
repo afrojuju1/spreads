@@ -69,6 +69,29 @@ def resolve_attempt_session_position_id(attempt: Mapping[str, Any]) -> str | Non
     return _as_text(attempt.get("session_position_id")) or _as_text(request_value)
 
 
+def _attempt_request(attempt: Mapping[str, Any]) -> Mapping[str, Any]:
+    request = attempt.get("request")
+    return request if isinstance(request, Mapping) else {}
+
+
+def _attempt_exit_policy(attempt: Mapping[str, Any]) -> dict[str, Any]:
+    request = _attempt_request(attempt)
+    policy = request.get("exit_policy")
+    return dict(policy) if isinstance(policy, Mapping) else {}
+
+
+def _attempt_risk_policy(attempt: Mapping[str, Any]) -> dict[str, Any]:
+    request = _attempt_request(attempt)
+    policy = request.get("risk_policy")
+    return dict(policy) if isinstance(policy, Mapping) else {}
+
+
+def _attempt_source_job(attempt: Mapping[str, Any]) -> dict[str, Any]:
+    request = _attempt_request(attempt)
+    payload = request.get("source_job")
+    return dict(payload) if isinstance(payload, Mapping) else {}
+
+
 def _resolve_primary_order(attempt: Mapping[str, Any]) -> Mapping[str, Any] | None:
     orders = attempt.get("orders")
     if not isinstance(orders, list):
@@ -324,6 +347,16 @@ def _sync_open_session_position(
             close_mark_source=None,
             close_marked_at=None,
             last_broker_status=(_as_text(attempt.get("status")) or "unknown").lower(),
+            exit_policy=_attempt_exit_policy(attempt),
+            risk_policy=_attempt_risk_policy(attempt),
+            source_job_type=_as_text(_attempt_source_job(attempt).get("job_type")),
+            source_job_key=_as_text(_attempt_source_job(attempt).get("job_key")),
+            source_job_run_id=_as_text(_attempt_source_job(attempt).get("job_run_id")),
+            last_exit_evaluated_at=None,
+            last_exit_reason=None,
+            last_reconciled_at=None,
+            reconciliation_status=None,
+            reconciliation_note=None,
             created_at=_utc_now(),
             updated_at=_utc_now(),
         )
@@ -338,6 +371,11 @@ def _sync_open_session_position(
             max_loss=max_loss,
             opened_at=_resolve_opened_at(attempt),
             last_broker_status=(_as_text(attempt.get("status")) or "unknown").lower(),
+            exit_policy=_attempt_exit_policy(attempt),
+            risk_policy=_attempt_risk_policy(attempt),
+            source_job_type=_as_text(_attempt_source_job(attempt).get("job_type")),
+            source_job_key=_as_text(_attempt_source_job(attempt).get("job_key")),
+            source_job_run_id=_as_text(_attempt_source_job(attempt).get("job_run_id")),
             updated_at=_utc_now(),
         )
 

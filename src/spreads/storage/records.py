@@ -219,6 +219,30 @@ class JobRunRecord(RecordMapping):
 
 
 @dataclass(frozen=True)
+class AccountSnapshotRecord(RecordMapping):
+    snapshot_id: int
+    broker: str
+    environment: str
+    source: str
+    captured_at: str
+    account: dict[str, Any]
+    pnl: dict[str, Any]
+    positions: list[dict[str, Any]]
+    history: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class BrokerSyncStateRecord(RecordMapping):
+    sync_key: str
+    broker: str
+    status: str
+    updated_at: str
+    cursor: dict[str, Any]
+    summary: dict[str, Any]
+    error_text: str | None
+
+
+@dataclass(frozen=True)
 class JobLeaseRecord(RecordMapping):
     lease_key: str
     job_run_id: str | None
@@ -366,6 +390,16 @@ class SessionPositionRecord(RecordMapping):
     close_mark_source: str | None
     close_marked_at: str | None
     last_broker_status: str | None
+    exit_policy: dict[str, Any]
+    risk_policy: dict[str, Any]
+    source_job_type: str | None
+    source_job_key: str | None
+    source_job_run_id: str | None
+    last_exit_evaluated_at: str | None
+    last_exit_reason: str | None
+    last_reconciled_at: str | None
+    reconciliation_status: str | None
+    reconciliation_note: str | None
     created_at: str
     updated_at: str
 

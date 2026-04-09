@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from spreads.services.alpaca import create_alpaca_client_from_env, resolve_trading_environment
+from spreads.storage.factory import build_broker_repository
 
 AccountHistoryRange = Literal["1D", "1W", "1M"]
 
@@ -216,7 +217,21 @@ def _normalize_history(
     }
 
 
-def get_account_overview(*, history_range: str | None = None) -> dict[str, Any]:
+def _sync_payload(broker_store: Any) -> dict[str, Any] | None:
+    if not broker_store.schema_ready():
+        return None
+    state = broker_store.get_sync_state("broker_sync:alpaca")
+    if state is None:
+        return None
+    return {
+        "status": state["status"],
+        "updated_at": state["updated_at"],
+        "summary": dict(state["summary"]),
+        "error_text": state["error_text"],
+    }
+
+
+def fetch_account_overview_live(*, history_range: str | None = None) -> dict[str, Any]:
     resolved_history_range = normalize_history_range(history_range)
     history_request = HISTORY_RANGE_REQUESTS[resolved_history_range]
     client = create_alpaca_client_from_env()
@@ -232,6 +247,7 @@ def get_account_overview(*, history_range: str | None = None) -> dict[str, Any]:
     return {
         "broker": "alpaca",
         "environment": resolve_trading_environment(client.trading_base_url),
+        "source": "live",
         "retrieved_at": _utc_now(),
         "account": account,
         "pnl": _build_pnl_snapshot(account),
@@ -242,3 +258,37 @@ def get_account_overview(*, history_range: str | None = None) -> dict[str, Any]:
         ),
         "positions": _normalize_positions(positions_payload),
     }
+
+
+def _overview_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    history = dict(snapshot.get("history") or {})
+    history.setdefault("points", list(history.get("points") or []))
+    return {
+        "broker": str(snapshot["broker"]),
+        "environment": str(snapshot["environment"]),
+        "source": "snapshot",
+        "retrieved_at": str(snapshot["captured_at"]),
+        "account": dict(snapshot.get("account") or {}),
+        "pnl": dict(snapshot.get("pnl") or {}),
+        "history": history,
+        "positions": list(snapshot.get("positions") or []),
+    }
+
+
+def get_account_overview(*, history_range: str | None = None) -> dict[str, Any]:
+    broker_store = build_broker_repository()
+    try:
+        sync = _sync_payload(broker_store)
+        try:
+            overview = fetch_account_overview_live(history_range=history_range)
+        except Exception:
+            snapshot = None if not broker_store.schema_ready() else broker_store.get_latest_account_snapshot()
+            if snapshot is None:
+                raise
+            overview = _overview_from_snapshot(snapshot.to_dict())
+        return {
+            **overview,
+            "sync": sync,
+        }
+    finally:
+        broker_store.close()

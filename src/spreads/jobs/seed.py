@@ -11,6 +11,28 @@ DEFAULT_AUTO_EXECUTION_POLICY = {
     "quantity": 1,
 }
 
+DEFAULT_AUTO_RISK_POLICY = {
+    "enabled": True,
+    "allow_live": False,
+    "max_open_positions_per_session": 1,
+    "max_open_positions_per_underlying": 1,
+    "max_open_positions_per_underlying_strategy": 1,
+    "max_contracts_per_position": 1,
+    "max_contracts_per_session": 1,
+    "max_position_notional": 1000.0,
+    "max_session_notional": 1000.0,
+    "max_position_max_loss": 1000.0,
+    "max_session_max_loss": 1000.0,
+    "stale_quote_after_seconds": 900,
+}
+
+DEFAULT_AUTO_EXIT_POLICY = {
+    "enabled": True,
+    "profit_target_pct": 0.5,
+    "stop_multiple": 2.0,
+    "force_close_minutes_before_close": 10,
+}
+
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Seed default ARQ-managed job definitions.")
@@ -23,6 +45,30 @@ def seed_definitions(db: str) -> list[str]:
     job_keys: list[str] = []
     try:
         definitions = [
+            {
+                "job_key": "broker_sync:alpaca",
+                "job_type": "broker_sync",
+                "enabled": True,
+                "schedule_type": "interval_minutes",
+                "schedule": {"minutes": 1},
+                "payload": {
+                    "history_range": "1D",
+                    "activity_lookback_days": 1,
+                    "allow_off_hours": False,
+                },
+                "singleton_scope": "alpaca",
+            },
+            {
+                "job_key": "session_exit_manager:live",
+                "job_type": "session_exit_manager",
+                "enabled": True,
+                "schedule_type": "interval_minutes",
+                "schedule": {"minutes": 1},
+                "payload": {
+                    "allow_off_hours": False,
+                },
+                "singleton_scope": "global",
+            },
             {
                 "job_key": "live_collector:explore_10_combined_0dte_auto",
                 "job_type": "live_collector",
@@ -43,6 +89,8 @@ def seed_definitions(db: str) -> list[str]:
                     "session_start_offset_minutes": -5,
                     "session_end_offset_minutes": 5,
                     "execution_policy": dict(DEFAULT_AUTO_EXECUTION_POLICY),
+                    "risk_policy": dict(DEFAULT_AUTO_RISK_POLICY),
+                    "exit_policy": dict(DEFAULT_AUTO_EXIT_POLICY),
                 },
                 "singleton_scope": "explore_10_combined_0dte_auto",
             },
@@ -66,6 +114,8 @@ def seed_definitions(db: str) -> list[str]:
                     "session_start_offset_minutes": -5,
                     "session_end_offset_minutes": 5,
                     "execution_policy": dict(DEFAULT_AUTO_EXECUTION_POLICY),
+                    "risk_policy": dict(DEFAULT_AUTO_RISK_POLICY),
+                    "exit_policy": dict(DEFAULT_AUTO_EXIT_POLICY),
                 },
                 "singleton_scope": "explore_10_combined_weekly_auto",
             },
@@ -89,6 +139,8 @@ def seed_definitions(db: str) -> list[str]:
                     "session_start_offset_minutes": -5,
                     "session_end_offset_minutes": 5,
                     "execution_policy": dict(DEFAULT_AUTO_EXECUTION_POLICY),
+                    "risk_policy": dict(DEFAULT_AUTO_RISK_POLICY),
+                    "exit_policy": dict(DEFAULT_AUTO_EXIT_POLICY),
                 },
                 "singleton_scope": "explore_10_combined_core_auto",
             },

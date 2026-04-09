@@ -118,6 +118,11 @@ type SessionPortfolioPositionRow = {
   strategy: string;
   status: string;
   brokerStatus: string;
+  riskStatus: string;
+  riskNote: string | null | undefined;
+  reconciliationStatus: string;
+  reconciliationNote: string | null | undefined;
+  lastReconciledAt: string | null | undefined;
   openedQuantity: number | null | undefined;
   remainingQuantity: number | null | undefined;
   entryCredit: number | null | undefined;
@@ -325,6 +330,53 @@ function PortfolioStatusBadge({ value }: { value: string | null | undefined }) {
   );
 }
 
+function riskTone(value: string): string {
+  switch (value) {
+    case "ok":
+      return "border-emerald-200 bg-emerald-100 text-emerald-900";
+    case "disabled":
+      return "border-amber-200 bg-amber-100 text-amber-900";
+    case "breach":
+    case "blocked":
+      return "border-rose-200 bg-rose-100 text-rose-900";
+    default:
+      return "border-border/70 bg-card text-foreground";
+  }
+}
+
+function RiskStatusBadge({ value }: { value: string | null | undefined }) {
+  const resolved = readString(value, "unknown");
+  return (
+    <Badge variant="outline" className={cn("rounded-full border px-2.5 py-1 text-[11px] uppercase tracking-[0.16em]", riskTone(resolved))}>
+      {resolved.replaceAll("_", " ")}
+    </Badge>
+  );
+}
+
+function reconciliationTone(value: string): string {
+  switch (value) {
+    case "matched":
+      return "border-emerald-200 bg-emerald-100 text-emerald-900";
+    case "pending":
+      return "border-amber-200 bg-amber-100 text-amber-900";
+    case "mismatch":
+      return "border-rose-200 bg-rose-100 text-rose-900";
+    case "clear":
+      return "border-stone-200 bg-stone-100 text-stone-900";
+    default:
+      return "border-border/70 bg-card text-foreground";
+  }
+}
+
+function ReconciliationStatusBadge({ value }: { value: string | null | undefined }) {
+  const resolved = readString(value, "unknown");
+  return (
+    <Badge variant="outline" className={cn("rounded-full border px-2.5 py-1 text-[11px] uppercase tracking-[0.16em]", reconciliationTone(resolved))}>
+      {resolved.replaceAll("_", " ")}
+    </Badge>
+  );
+}
+
 function AccountEnvironmentBadge({ value }: { value: string | null | undefined }) {
   const resolved = readString(value, "custom");
   const tone =
@@ -469,6 +521,11 @@ function buildSessionPortfolioPositionRows(
     strategy: position.strategy,
     status: position.position_status,
     brokerStatus: position.broker_status,
+    riskStatus: readString(position.risk_status, "unknown"),
+    riskNote: position.risk_note,
+    reconciliationStatus: readString(position.reconciliation_status, "unknown"),
+    reconciliationNote: position.reconciliation_note,
+    lastReconciledAt: position.last_reconciled_at,
     openedQuantity: position.opened_quantity ?? position.filled_quantity,
     remainingQuantity: position.remaining_quantity ?? position.filled_quantity,
     entryCredit: position.entry_credit,
@@ -675,11 +732,16 @@ function buildSessionPortfolioPositionColumns({
     accessorKey: "symbol",
     header: "Underlying",
     cell: ({ row }) => (
-      <div>
+      <div className="space-y-1">
         <div className="font-semibold tracking-[0.04em]">{row.original.symbol}</div>
         <div className="text-[11px] text-muted-foreground">
           {row.original.raw.short_symbol} / {row.original.raw.long_symbol}
         </div>
+        {row.original.reconciliationStatus === "mismatch" && row.original.reconciliationNote ? (
+          <div className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-900">
+            {row.original.reconciliationNote}
+          </div>
+        ) : null}
       </div>
     ),
   },
@@ -702,6 +764,8 @@ function buildSessionPortfolioPositionColumns({
       <div className="flex flex-col gap-1">
         <PortfolioStatusBadge value={row.original.status} />
         <ExecutionStatusBadge value={row.original.brokerStatus} />
+        <RiskStatusBadge value={row.original.riskStatus} />
+        <ReconciliationStatusBadge value={row.original.reconciliationStatus} />
       </div>
     ),
   },
@@ -933,9 +997,11 @@ function AccountOverviewSection({
                 </Badge>
                 <AccountEnvironmentBadge value={overview.environment} />
                 {overview.account.status ? <SessionStatusBadge value={overview.account.status.toLowerCase()} /> : null}
+                {overview.sync ? <SessionStatusBadge value={overview.sync.status} /> : null}
               </div>
               <div className="mt-3 text-sm text-foreground/70">
                 Account {maskAccountNumber(overview.account.account_number)} · refreshed {formatTimestamp(overview.retrieved_at)}
+                {overview.sync?.updated_at ? ` · background sync ${formatTimestamp(overview.sync.updated_at)}` : ""}
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -957,7 +1023,7 @@ function AccountOverviewSection({
             </div>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-7">
             <MetricTile
               label="equity"
               value={formatNullableCurrency(overview.account.equity)}
@@ -982,6 +1048,15 @@ function AccountOverviewSection({
               label="positions"
               value={String(overview.positions.length)}
               note="Currently open broker positions"
+            />
+            <MetricTile
+              label="broker sync"
+              value={readString(overview.sync?.status, "unknown").toUpperCase()}
+              note={
+                overview.sync?.updated_at
+                  ? `Last sync ${formatTimestamp(overview.sync.updated_at)}`
+                  : "Background sync has not run yet"
+              }
             />
             <MetricTile
               label="account status"
@@ -1038,6 +1113,7 @@ function SessionPortfolioSection({
   const portfolio = session.portfolio;
   const summary = portfolio.summary;
   const positionRows = buildSessionPortfolioPositionRows(portfolio.positions);
+  const mismatchRows = positionRows.filter((row) => row.reconciliationStatus === "mismatch");
   const columns = buildSessionPortfolioPositionColumns({
     closingPositionId,
     onClose: onClosePosition,
@@ -1054,7 +1130,7 @@ function SessionPortfolioSection({
         </div>
       ) : (
         <div className="flex flex-col gap-4">
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
             <MetricTile
               label="Open positions"
               value={String(summary.open_position_count)}
@@ -1075,12 +1151,31 @@ function SessionPortfolioSection({
               value={formatSignedCurrency(summary.unrealized_pnl_total)}
               note={`Marks as of ${formatTimestamp(summary.retrieved_at)}`}
             />
+            <MetricTile
+              label="Risk status"
+              value={readString(session.risk_status, "unknown").toUpperCase()}
+              note={readString(session.risk_note, "No session risk note")}
+            />
+            <MetricTile
+              label="Reconciliation"
+              value={readString(session.reconciliation_status, "unknown").toUpperCase()}
+              note={readString(session.reconciliation_note, "No reconciliation note")}
+            />
           </div>
           {summary.mark_error ? (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
               Quote enrichment was partial: {summary.mark_error}
             </div>
           ) : null}
+          {mismatchRows.map((row) => (
+            <div
+              key={`mismatch-${row.id}`}
+              className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900"
+            >
+              {row.symbol} {row.strategy.replaceAll("_", " ")} mismatch: {readString(row.reconciliationNote, "Broker state does not match the local session position.")}
+              {row.lastReconciledAt ? ` · last checked ${formatTimestamp(row.lastReconciledAt)}` : ""}
+            </div>
+          ))}
           {closeError ? (
             <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
               {closeError}

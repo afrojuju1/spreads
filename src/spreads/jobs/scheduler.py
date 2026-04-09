@@ -60,9 +60,11 @@ def _lease_is_active(lease: Any) -> bool:
 
 def _task_name_for_job_type(job_type: str) -> str | None:
     return {
+        "broker_sync": "run_broker_sync_job",
         "live_collector": "run_live_collector_job",
         "post_close_analysis": "run_post_close_analysis_job",
         "post_market_analysis": "run_post_market_analysis_job",
+        "session_exit_manager": "run_session_exit_manager_job",
     }.get(job_type)
 
 

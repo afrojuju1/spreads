@@ -7,7 +7,13 @@ from uuid import uuid4
 from spreads.events.bus import publish_global_event_sync
 from spreads.integrations.alpaca.client import AlpacaClient
 from spreads.services.alpaca import create_alpaca_client_from_env
+from spreads.services.exit_manager import normalize_exit_policy, resolve_exit_policy_snapshot
 from spreads.services.live_pipelines import build_live_session_id
+from spreads.services.risk_manager import (
+    normalize_risk_policy,
+    validate_close_execution,
+    validate_open_execution,
+)
 from spreads.services.scanner import make_close_order_payload
 from spreads.services.session_positions import (
     CLOSE_TRADE_INTENT,
@@ -15,7 +21,7 @@ from spreads.services.session_positions import (
     resolve_trade_intent,
     sync_session_position_from_attempt,
 )
-from spreads.storage.factory import build_collector_repository, build_execution_repository
+from spreads.storage.factory import build_collector_repository, build_execution_repository, build_job_repository
 
 BROKER_NAME = "alpaca"
 EXECUTION_SCHEMA_MESSAGE = "Execution tables are not available yet. Run the latest Alembic migrations."
@@ -229,6 +235,35 @@ def _build_order_request(
     request["limit_price"] = f"{float(resolved_limit_price):.2f}"
     request["client_order_id"] = client_order_id
     return request, int(resolved_quantity), round(float(resolved_limit_price), 2)
+
+
+def _resolve_source_policies(
+    *,
+    db_target: str,
+    cycle: dict[str, Any],
+) -> dict[str, Any]:
+    job_run_id = _as_text(cycle.get("job_run_id"))
+    if job_run_id is None:
+        return {
+            "source_job_type": None,
+            "source_job_key": None,
+            "source_job_run_id": None,
+            "risk_policy": normalize_risk_policy(None),
+            "exit_policy": normalize_exit_policy(None),
+        }
+    job_store = build_job_repository(db_target)
+    try:
+        job_run = job_store.get_job_run(job_run_id)
+    finally:
+        job_store.close()
+    payload = {} if job_run is None else dict(job_run["payload"])
+    return {
+        "source_job_type": None if job_run is None else _as_text(job_run.get("job_type")),
+        "source_job_key": None if job_run is None else _as_text(job_run.get("job_key")),
+        "source_job_run_id": job_run_id,
+        "risk_policy": normalize_risk_policy(payload.get("risk_policy")),
+        "exit_policy": normalize_exit_policy(payload.get("exit_policy")),
+    }
 
 
 def _resolve_session_position(
@@ -464,6 +499,10 @@ def submit_live_session_execution(
             session_id=session_id,
             candidate_id=candidate_id,
         )
+        source_policies = _resolve_source_policies(
+            db_target=db_target,
+            cycle=cycle,
+        )
 
         existing_attempts = execution_store.list_open_attempts_for_identity(
             session_id=session_id,
@@ -492,6 +531,29 @@ def submit_live_session_execution(
             quantity=quantity,
             limit_price=limit_price,
             client_order_id=client_order_id,
+        )
+        requested_risk_policy = (
+            request_metadata.get("risk_policy")
+            if isinstance(request_metadata, dict) and isinstance(request_metadata.get("risk_policy"), dict)
+            else source_policies["risk_policy"]
+        )
+        requested_exit_policy = (
+            request_metadata.get("exit_policy")
+            if isinstance(request_metadata, dict) and isinstance(request_metadata.get("exit_policy"), dict)
+            else source_policies["exit_policy"]
+        )
+        resolved_risk_policy = validate_open_execution(
+            execution_store=execution_store,
+            session_id=session_id,
+            candidate=candidate,
+            cycle=cycle,
+            quantity=resolved_quantity,
+            limit_price=resolved_limit_price,
+            risk_policy=requested_risk_policy,
+        )
+        resolved_exit_policy = resolve_exit_policy_snapshot(
+            session_date=str(cycle["session_date"]),
+            payload=requested_exit_policy,
         )
 
         attempt_id = _execution_attempt_id()
@@ -522,6 +584,13 @@ def submit_live_session_execution(
             request={
                 **({} if request_metadata is None else request_metadata),
                 "trade_intent": OPEN_TRADE_INTENT,
+                "risk_policy": resolved_risk_policy,
+                "exit_policy": resolved_exit_policy,
+                "source_job": {
+                    "job_type": source_policies["source_job_type"],
+                    "job_key": source_policies["source_job_key"],
+                    "job_run_id": source_policies["source_job_run_id"],
+                },
                 "order": order_request,
             },
             candidate=dict(candidate.get("candidate") or {}),
@@ -651,6 +720,11 @@ def submit_session_position_close(
             quantity=quantity,
             limit_price=limit_price,
             client_order_id=client_order_id,
+        )
+        validate_close_execution(
+            position=position,
+            quantity=resolved_quantity,
+            limit_price=resolved_limit_price,
         )
         trade_intent = resolve_trade_intent(CLOSE_TRADE_INTENT)
 
@@ -829,20 +903,6 @@ def submit_auto_session_execution(
     try:
         _require_execution_schema(execution_store)
         _require_position_schema(execution_store)
-        existing_attempts = execution_store.list_attempts(session_id=session_id, limit=1)
-        if existing_attempts:
-            return {
-                "action": "auto_submit",
-                "changed": False,
-                "reason": "session_already_has_execution",
-                "message": "Automatic execution skipped because this session already has an execution attempt.",
-                "policy": normalized_policy,
-                "attempt": _get_attempt_payload(
-                    execution_store,
-                    str(existing_attempts[0]["execution_attempt_id"]),
-                ),
-            }
-
         board_candidates = collector_store.list_cycle_candidates(cycle_id, bucket="board")
         if not board_candidates:
             return {

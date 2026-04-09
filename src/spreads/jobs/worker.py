@@ -23,6 +23,8 @@ from spreads.services.analysis import (
     resolve_date,
     run_post_close_analysis,
 )
+from spreads.services.broker_sync import run_broker_sync
+from spreads.services.exit_manager import run_session_exit_manager
 from spreads.services.generator import build_generator_args, generate_symbol_ideas, generator_job_channel
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
 from spreads.services.live_pipelines import build_live_session_catalog, build_live_session_id
@@ -730,6 +732,64 @@ async def _execute_managed_job(
             await asyncio.to_thread(job_store.release_lease, lease_key, owner=job_run_id)
 
 
+async def run_broker_sync_job(
+    ctx: dict[str, Any],
+    job_key: str,
+    job_run_id: str,
+    payload: dict[str, Any],
+    arq_job_id: str,
+) -> dict[str, Any]:
+    database_url = ctx["database_url"]
+
+    def runner(heartbeat: Any) -> dict[str, Any]:
+        heartbeat()
+        return run_broker_sync(
+            db_target=database_url,
+            history_range=str(payload.get("history_range", "1D")),
+            activity_lookback_days=int(payload.get("activity_lookback_days", 1)),
+        )
+
+    enriched_payload = dict(payload)
+    enriched_payload["job_type"] = "broker_sync"
+    return await _execute_managed_job(
+        ctx,
+        job_key=job_key,
+        job_run_id=job_run_id,
+        arq_job_id=arq_job_id,
+        payload=enriched_payload,
+        runner=runner,
+        compact_result=lambda result: result,
+    )
+
+
+async def run_session_exit_manager_job(
+    ctx: dict[str, Any],
+    job_key: str,
+    job_run_id: str,
+    payload: dict[str, Any],
+    arq_job_id: str,
+) -> dict[str, Any]:
+    database_url = ctx["database_url"]
+
+    def runner(heartbeat: Any) -> dict[str, Any]:
+        heartbeat()
+        return run_session_exit_manager(
+            db_target=database_url,
+        )
+
+    enriched_payload = dict(payload)
+    enriched_payload["job_type"] = "session_exit_manager"
+    return await _execute_managed_job(
+        ctx,
+        job_key=job_key,
+        job_run_id=job_run_id,
+        arq_job_id=arq_job_id,
+        payload=enriched_payload,
+        runner=runner,
+        compact_result=lambda result: result,
+    )
+
+
 async def run_live_collector_job(
     ctx: dict[str, Any],
     job_key: str,
@@ -948,7 +1008,14 @@ async def run_generator_job(
 
 
 class WorkerSettings:
-    functions = [run_live_collector_job, run_post_close_analysis_job, run_post_market_analysis_job, run_generator_job]
+    functions = [
+        run_broker_sync_job,
+        run_session_exit_manager_job,
+        run_live_collector_job,
+        run_post_close_analysis_job,
+        run_post_market_analysis_job,
+        run_generator_job,
+    ]
     redis_settings = build_redis_settings(default_redis_url())
     on_startup = startup
     on_shutdown = shutdown

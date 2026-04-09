@@ -4,13 +4,15 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from spreads.services.analysis import build_session_summary
-from spreads.services.execution_portfolio import build_session_execution_portfolio
 from spreads.services.execution import list_session_execution_attempts
+from spreads.services.execution_portfolio import build_session_execution_portfolio
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
 from spreads.services.live_pipelines import parse_live_session_id
+from spreads.services.risk_manager import build_session_risk_snapshot, normalize_risk_policy
 from spreads.storage.factory import (
     build_alert_repository,
     build_collector_repository,
+    build_execution_repository,
     build_job_repository,
     build_post_market_repository,
 )
@@ -103,6 +105,62 @@ def _resolve_session_identity(
         "session_id": session_id,
         "label": label,
         "session_date": session_date,
+    }
+
+
+def _session_risk_policy(latest_run: Mapping[str, Any] | None) -> dict[str, Any]:
+    if latest_run is None:
+        return normalize_risk_policy(None)
+    payload = latest_run.get("payload")
+    if not isinstance(payload, Mapping):
+        return normalize_risk_policy(None)
+    raw_policy = payload.get("risk_policy")
+    return normalize_risk_policy(raw_policy if isinstance(raw_policy, dict) else None)
+
+
+def _reconciliation_snapshot(portfolio: Mapping[str, Any]) -> dict[str, Any]:
+    positions = portfolio.get("positions")
+    if not isinstance(positions, list) or not positions:
+        return {
+            "status": "clear",
+            "note": "No session positions are open for reconciliation.",
+        }
+
+    open_positions = [
+        position
+        for position in positions
+        if isinstance(position, Mapping) and str(position.get("position_status") or "") in {"open", "partial_close"}
+    ]
+    if not open_positions:
+        return {
+            "status": "clear",
+            "note": "No session positions are open for reconciliation.",
+        }
+
+    mismatch_positions = [
+        position
+        for position in open_positions
+        if str(position.get("reconciliation_status") or "") == "mismatch"
+    ]
+    if mismatch_positions:
+        return {
+            "status": "mismatch",
+            "note": f"{len(mismatch_positions)} open position(s) have broker reconciliation mismatches.",
+        }
+
+    pending_positions = [
+        position
+        for position in open_positions
+        if not position.get("last_reconciled_at")
+    ]
+    if pending_positions:
+        return {
+            "status": "pending",
+            "note": f"{len(pending_positions)} open position(s) are waiting for broker reconciliation.",
+        }
+    return {
+        "status": "matched",
+        "note": "Open positions match the broker inventory snapshot.",
     }
 
 
@@ -215,6 +273,7 @@ def get_session_detail(
     job_store = build_job_repository(db_target)
     alert_store = build_alert_repository(db_target)
     post_market_store = build_post_market_repository(db_target)
+    execution_store = build_execution_repository(db_target)
     try:
         identity = _resolve_session_identity(
             session_id,
@@ -308,6 +367,12 @@ def get_session_detail(
             session_id=session_id,
             executions=executions,
         )
+        risk_snapshot = build_session_risk_snapshot(
+            execution_store=execution_store,
+            session_id=session_id,
+            risk_policy=_session_risk_policy(latest_run),
+        )
+        reconciliation_snapshot = _reconciliation_snapshot(portfolio)
 
         return {
             "session_id": session_id,
@@ -315,6 +380,10 @@ def get_session_detail(
             "session_date": identity["session_date"],
             "status": _derive_session_status(latest_run=latest_run, latest_cycle=current_cycle),
             "updated_at": updated_at,
+            "risk_status": risk_snapshot["status"],
+            "risk_note": risk_snapshot.get("note"),
+            "reconciliation_status": reconciliation_snapshot["status"],
+            "reconciliation_note": reconciliation_snapshot.get("note"),
             "latest_slot": latest_run,
             "current_cycle": current_cycle,
             "board_candidates": board_candidates,
@@ -327,6 +396,7 @@ def get_session_detail(
             "analysis": analysis,
         }
     finally:
+        execution_store.close()
         post_market_store.close()
         alert_store.close()
         job_store.close()

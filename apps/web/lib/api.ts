@@ -256,6 +256,15 @@ const accountOverviewSchema = z
     pnl: accountPnlSchema,
     history: accountHistorySchema,
     positions: z.array(accountPositionSchema),
+    sync: z
+      .object({
+        status: z.string(),
+        updated_at: z.string(),
+        summary: z.record(z.string(), z.unknown()).default({}),
+        error_text: z.string().nullable().optional(),
+      })
+      .nullable()
+      .optional(),
   })
   .passthrough();
 
@@ -526,6 +535,13 @@ const sessionPortfolioPositionSchema = z
     estimated_close_pnl: z.number().nullable().optional(),
     mark_source: z.string().nullable().optional(),
     mark_timestamp: z.string().nullable().optional(),
+    risk_status: z.string().nullable().optional(),
+    risk_note: z.string().nullable().optional(),
+    reconciliation_status: z.string().nullable().optional(),
+    reconciliation_note: z.string().nullable().optional(),
+    last_reconciled_at: z.string().nullable().optional(),
+    last_exit_evaluated_at: z.string().nullable().optional(),
+    last_exit_reason: z.string().nullable().optional(),
     short_quote: sessionPortfolioQuoteSchema.nullable().optional(),
     long_quote: sessionPortfolioQuoteSchema.nullable().optional(),
   })
@@ -550,6 +566,7 @@ const sessionPortfolioSummarySchema = z
     estimated_close_pnl_total: z.number().nullable().optional(),
     quoted_position_count: z.number(),
     unquoted_position_count: z.number(),
+    mismatch_position_count: z.number().optional(),
     mark_source: z.string().nullable().optional(),
     mark_error: z.string().nullable().optional(),
     retrieved_at: z.string(),
@@ -570,6 +587,10 @@ const sessionDetailSchema = z
     session_date: z.string(),
     status: z.string(),
     updated_at: z.string().nullable().optional(),
+    risk_status: z.string().nullable().optional(),
+    risk_note: z.string().nullable().optional(),
+    reconciliation_status: z.string().nullable().optional(),
+    reconciliation_note: z.string().nullable().optional(),
     latest_slot: jobRunSchema.nullable().optional(),
     current_cycle: liveResponseSchema.nullable().optional(),
     board_candidates: z.array(liveCandidateSchema),
