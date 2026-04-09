@@ -30,7 +30,7 @@ from spreads.services.live_collector_health import enrich_live_collector_job_run
 from spreads.services.live_pipelines import build_live_session_catalog, build_live_session_id
 from spreads.services.post_market_analysis import parse_args as parse_post_market_args
 from spreads.services.post_market_analysis import run_post_market_analysis
-from spreads.storage.factory import build_generator_job_repository, build_job_repository, build_post_market_repository
+from spreads.storage.factory import build_generator_job_repository, build_job_repository, build_post_market_repository, build_storage_context
 
 WORKER_HEARTBEAT_SECONDS = 30
 WORKER_LEASE_TTL_SECONDS = 90
@@ -129,8 +129,9 @@ async def startup(ctx: dict[str, Any]) -> None:
     ctx["database_url"] = default_database_url()
     ctx["redis_url"] = default_redis_url()
     ctx["worker_name"] = worker_name()
-    ctx["job_store"] = build_job_repository(ctx["database_url"])
-    ctx["generator_job_store"] = build_generator_job_repository(ctx["database_url"])
+    ctx["storage"] = build_storage_context(ctx["database_url"])
+    ctx["job_store"] = build_job_repository(context=ctx["storage"])
+    ctx["generator_job_store"] = build_generator_job_repository(context=ctx["storage"])
     ctx["event_bus"] = redis_async.from_url(ctx["redis_url"], decode_responses=True)
     ctx["runtime_heartbeat_task"] = asyncio.create_task(
         _heartbeat_runtime(ctx["job_store"], ctx["worker_name"])
@@ -156,6 +157,9 @@ async def shutdown(ctx: dict[str, Any]) -> None:
     generator_job_store = ctx.get("generator_job_store")
     if generator_job_store is not None:
         await asyncio.to_thread(generator_job_store.close)
+    storage = ctx.get("storage")
+    if storage is not None:
+        await asyncio.to_thread(storage.close)
     event_bus = ctx.get("event_bus")
     if event_bus is not None:
         await event_bus.aclose()

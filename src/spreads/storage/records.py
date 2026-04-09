@@ -1,418 +1,98 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
 from typing import Any
 
 
-class RecordMapping(Mapping[str, Any]):
+class StorageRow(Mapping[str, Any]):
+    __slots__ = ("_values",)
+
+    def __init__(self, values: Mapping[str, Any] | None = None, /, **kwargs: Any) -> None:
+        payload = {} if values is None else dict(values)
+        if kwargs:
+            payload.update(kwargs)
+        object.__setattr__(self, "_values", payload)
+
     def to_dict(self) -> dict[str, Any]:
-        return dict(self.__dict__)
+        return dict(self._values)
+
+    def copy(self, /, **updates: Any) -> StorageRow:
+        payload = self.to_dict()
+        payload.update(updates)
+        return type(self)(payload)
 
     def __getitem__(self, key: str) -> Any:
-        return self.__dict__[key]
+        return self._values[key]
 
     def __iter__(self) -> Iterator[str]:
-        return iter(self.__dict__)
+        return iter(self._values)
 
     def __len__(self) -> int:
-        return len(self.__dict__)
+        return len(self._values)
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self._values[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        raise AttributeError("StorageRow is immutable")
 
     def get(self, key: str, default: Any = None) -> Any:
-        return self.__dict__.get(key, default)
+        return self._values.get(key, default)
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self._values!r})"
 
 
-@dataclass(frozen=True)
-class ScanRunRecord(RecordMapping):
-    run_id: str
-    generated_at: str
-    symbol: str
-    strategy: str
-    session_label: str | None
-    profile: str
-    spot_price: float
-    candidate_count: int
-    output_path: str | None
-    filters: dict[str, Any]
-    setup_status: str | None
-    setup_score: float | None
-    setup: dict[str, Any] | None
+RecordMapping = StorageRow
+
+ScanRunRecord = StorageRow
+ScanCandidateRecord = StorageRow
+SessionTopRunRecord = StorageRow
+OptionQuoteEventRecord = StorageRow
+CollectorCycleRecord = StorageRow
+CollectorCycleCandidateRecord = StorageRow
+CollectorCycleEventRecord = StorageRow
+AlertEventRecord = StorageRow
+AlertStateRecord = StorageRow
+JobDefinitionRecord = StorageRow
+JobRunRecord = StorageRow
+AccountSnapshotRecord = StorageRow
+BrokerSyncStateRecord = StorageRow
+JobLeaseRecord = StorageRow
+PostMarketAnalysisRunRecord = StorageRow
+GeneratorJobRecord = StorageRow
+ExecutionAttemptRecord = StorageRow
+ExecutionOrderRecord = StorageRow
+ExecutionFillRecord = StorageRow
+SessionPositionRecord = StorageRow
+SessionPositionCloseRecord = StorageRow
 
 
-@dataclass(frozen=True)
-class ScanCandidateRecord(RecordMapping):
-    run_id: str
-    rank: int
-    strategy: str
-    expiration_date: str
-    short_symbol: str
-    long_symbol: str
-    short_strike: float
-    long_strike: float
-    width: float
-    midpoint_credit: float
-    natural_credit: float
-    breakeven: float
-    max_profit: float
-    max_loss: float
-    quality_score: float
-    return_on_risk: float
-    short_otm_pct: float
-    calendar_status: str | None
-    setup_status: str | None
-    expected_move: float | None
-    short_vs_expected_move: float | None
-
-
-@dataclass(frozen=True)
-class SessionTopRunRecord(RecordMapping):
-    run_id: str
-    generated_at: str
-    symbol: str
-    strategy: str
-    profile: str
-    spot_price: float
-    candidate_count: int
-    setup_status: str | None
-    setup_score: float | None
-    setup_json: dict[str, Any] | None
-    short_symbol: str | None
-    long_symbol: str | None
-    short_strike: float | None
-    long_strike: float | None
-    midpoint_credit: float | None
-    quality_score: float | None
-    calendar_status: str | None
-    expected_move: float | None
-    short_vs_expected_move: float | None
-
-
-@dataclass(frozen=True)
-class OptionQuoteEventRecord(RecordMapping):
-    quote_id: int
-    cycle_id: str
-    captured_at: str
-    label: str
-    underlying_symbol: str | None
-    strategy: str | None
-    profile: str | None
-    option_symbol: str
-    leg_role: str
-    bid: float
-    ask: float
-    midpoint: float
-    bid_size: int
-    ask_size: int
-    quote_timestamp: str | None
-    source: str
-
-
-@dataclass(frozen=True)
-class CollectorCycleRecord(RecordMapping):
-    cycle_id: str
-    label: str
-    session_date: str
-    generated_at: str
-    job_run_id: str | None
-    session_id: str | None
-    universe_label: str
-    strategy: str
-    profile: str
-    greeks_source: str
-    symbols: list[str]
-    failures: list[dict[str, Any]]
-    selection_state: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class CollectorCycleCandidateRecord(RecordMapping):
-    candidate_id: int
-    cycle_id: str
-    label: str
-    session_date: str
-    generated_at: str
-    bucket: str
-    position: int
-    run_id: str
-    underlying_symbol: str
-    strategy: str
-    expiration_date: str
-    short_symbol: str
-    long_symbol: str
-    quality_score: float
-    midpoint_credit: float
-    candidate: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class CollectorCycleEventRecord(RecordMapping):
-    event_id: int
-    cycle_id: str
-    label: str
-    session_date: str
-    generated_at: str
-    symbol: str
-    event_type: str
-    message: str
-    previous_candidate: dict[str, Any] | None
-    current_candidate: dict[str, Any] | None
-
-
-@dataclass(frozen=True)
-class AlertEventRecord(RecordMapping):
-    alert_id: int
-    created_at: str
-    session_date: str
-    label: str
-    cycle_id: str
-    symbol: str
-    alert_type: str
-    dedupe_key: str
-    status: str
-    delivery_target: str
-    payload: dict[str, Any]
-    response: dict[str, Any] | None
-    error_text: str | None
-
-
-@dataclass(frozen=True)
-class AlertStateRecord(RecordMapping):
-    dedupe_key: str
-    last_alert_at: str
-    last_cycle_id: str
-    last_alert_type: str
-    state: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class JobDefinitionRecord(RecordMapping):
-    job_key: str
-    job_type: str
-    enabled: bool
-    schedule_type: str
-    schedule: dict[str, Any]
-    payload: dict[str, Any]
-    market_calendar: str
-    singleton_scope: str | None
-    created_at: str
-    updated_at: str
-
-
-@dataclass(frozen=True)
-class JobRunRecord(RecordMapping):
-    job_run_id: str
-    job_key: str
-    arq_job_id: str | None
-    job_type: str
-    status: str
-    scheduled_for: str
-    session_id: str | None
-    slot_at: str | None
-    retry_count: int
-    started_at: str | None
-    finished_at: str | None
-    heartbeat_at: str | None
-    worker_name: str | None
-    payload: dict[str, Any]
-    result: dict[str, Any] | None
-    error_text: str | None
-
-
-@dataclass(frozen=True)
-class AccountSnapshotRecord(RecordMapping):
-    snapshot_id: int
-    broker: str
-    environment: str
-    source: str
-    captured_at: str
-    account: dict[str, Any]
-    pnl: dict[str, Any]
-    positions: list[dict[str, Any]]
-    history: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class BrokerSyncStateRecord(RecordMapping):
-    sync_key: str
-    broker: str
-    status: str
-    updated_at: str
-    cursor: dict[str, Any]
-    summary: dict[str, Any]
-    error_text: str | None
-
-
-@dataclass(frozen=True)
-class JobLeaseRecord(RecordMapping):
-    lease_key: str
-    job_run_id: str | None
-    owner: str
-    acquired_at: str
-    expires_at: str
-    lease_state: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class PostMarketAnalysisRunRecord(RecordMapping):
-    analysis_run_id: str
-    job_run_id: str | None
-    session_date: str
-    label: str
-    created_at: str
-    completed_at: str | None
-    status: str
-    summary: dict[str, Any] | None
-    diagnostics: dict[str, Any] | None
-    recommendations: list[dict[str, Any]] | None
-    report_markdown: str | None
-    error_text: str | None
-
-
-@dataclass(frozen=True)
-class GeneratorJobRecord(RecordMapping):
-    generator_job_id: str
-    arq_job_id: str | None
-    symbol: str
-    status: str
-    created_at: str
-    started_at: str | None
-    finished_at: str | None
-    request: dict[str, Any]
-    result: dict[str, Any] | None
-    error_text: str | None
-
-
-@dataclass(frozen=True)
-class ExecutionAttemptRecord(RecordMapping):
-    execution_attempt_id: str
-    session_id: str
-    session_date: str
-    label: str
-    cycle_id: str | None
-    candidate_id: int | None
-    bucket: str | None
-    candidate_generated_at: str | None
-    run_id: str | None
-    job_run_id: str | None
-    underlying_symbol: str
-    strategy: str
-    expiration_date: str
-    short_symbol: str
-    long_symbol: str
-    trade_intent: str
-    session_position_id: str | None
-    quantity: int
-    limit_price: float
-    requested_at: str
-    submitted_at: str | None
-    completed_at: str | None
-    status: str
-    broker: str
-    broker_order_id: str | None
-    client_order_id: str | None
-    request: dict[str, Any]
-    candidate: dict[str, Any]
-    error_text: str | None
-
-
-@dataclass(frozen=True)
-class ExecutionOrderRecord(RecordMapping):
-    execution_order_id: int
-    execution_attempt_id: str
-    broker: str
-    broker_order_id: str
-    parent_broker_order_id: str | None
-    client_order_id: str | None
-    order_status: str
-    order_type: str | None
-    time_in_force: str | None
-    order_class: str | None
-    side: str | None
-    symbol: str | None
-    leg_symbol: str | None
-    leg_side: str | None
-    position_intent: str | None
-    quantity: float | None
-    limit_price: float | None
-    filled_qty: float | None
-    filled_avg_price: float | None
-    submitted_at: str | None
-    updated_at: str
-    order: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class ExecutionFillRecord(RecordMapping):
-    execution_fill_id: int
-    execution_attempt_id: str
-    execution_order_id: int | None
-    broker: str
-    broker_fill_id: str
-    broker_order_id: str
-    symbol: str
-    side: str | None
-    fill_type: str | None
-    quantity: float
-    cumulative_quantity: float | None
-    remaining_quantity: float | None
-    price: float | None
-    filled_at: str
-    fill: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class SessionPositionRecord(RecordMapping):
-    session_position_id: str
-    session_id: str
-    session_date: str
-    label: str
-    candidate_id: int | None
-    open_execution_attempt_id: str
-    underlying_symbol: str
-    strategy: str
-    expiration_date: str
-    short_symbol: str
-    long_symbol: str
-    requested_quantity: int
-    opened_quantity: float
-    remaining_quantity: float
-    entry_credit: float | None
-    entry_notional: float | None
-    width: float | None
-    max_profit: float | None
-    max_loss: float | None
-    opened_at: str | None
-    closed_at: str | None
-    status: str
-    realized_pnl: float
-    unrealized_pnl: float | None
-    close_mark: float | None
-    close_mark_source: str | None
-    close_marked_at: str | None
-    last_broker_status: str | None
-    exit_policy: dict[str, Any]
-    risk_policy: dict[str, Any]
-    source_job_type: str | None
-    source_job_key: str | None
-    source_job_run_id: str | None
-    last_exit_evaluated_at: str | None
-    last_exit_reason: str | None
-    last_reconciled_at: str | None
-    reconciliation_status: str | None
-    reconciliation_note: str | None
-    created_at: str
-    updated_at: str
-
-
-@dataclass(frozen=True)
-class SessionPositionCloseRecord(RecordMapping):
-    session_position_close_id: int
-    session_position_id: str
-    execution_attempt_id: str
-    closed_quantity: float
-    exit_debit: float | None
-    realized_pnl: float
-    broker_order_id: str | None
-    closed_at: str | None
-    created_at: str
-    updated_at: str
+__all__ = [
+    "StorageRow",
+    "RecordMapping",
+    "ScanRunRecord",
+    "ScanCandidateRecord",
+    "SessionTopRunRecord",
+    "OptionQuoteEventRecord",
+    "CollectorCycleRecord",
+    "CollectorCycleCandidateRecord",
+    "CollectorCycleEventRecord",
+    "AlertEventRecord",
+    "AlertStateRecord",
+    "JobDefinitionRecord",
+    "JobRunRecord",
+    "AccountSnapshotRecord",
+    "BrokerSyncStateRecord",
+    "JobLeaseRecord",
+    "PostMarketAnalysisRunRecord",
+    "GeneratorJobRecord",
+    "ExecutionAttemptRecord",
+    "ExecutionOrderRecord",
+    "ExecutionFillRecord",
+    "SessionPositionRecord",
+    "SessionPositionCloseRecord",
+]

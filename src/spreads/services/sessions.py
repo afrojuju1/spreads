@@ -9,13 +9,7 @@ from spreads.services.execution_portfolio import build_session_execution_portfol
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
 from spreads.services.live_pipelines import parse_live_session_id
 from spreads.services.risk_manager import build_session_risk_snapshot, normalize_risk_policy
-from spreads.storage.factory import (
-    build_alert_repository,
-    build_collector_repository,
-    build_execution_repository,
-    build_job_repository,
-    build_post_market_repository,
-)
+from spreads.storage.factory import build_storage_context
 from spreads.storage.serializers import parse_datetime
 
 
@@ -170,10 +164,10 @@ def list_existing_sessions(
     limit: int = 100,
     session_date: str | None = None,
 ) -> dict[str, Any]:
-    collector_store = build_collector_repository(db_target)
-    job_store = build_job_repository(db_target)
-    alert_store = build_alert_repository(db_target)
-    try:
+    with build_storage_context(db_target) as storage:
+        collector_store = storage.collector
+        job_store = storage.jobs
+        alert_store = storage.alerts
         candidate_session_ids = set(job_store.list_session_ids(job_type="live_collector", limit=max(limit * 10, 200)))
         candidate_session_ids.update(
             collector_store.list_session_ids(session_date=session_date, limit=max(limit * 10, 200))
@@ -256,10 +250,6 @@ def list_existing_sessions(
             reverse=True,
         )
         return {"sessions": session_rows[:limit]}
-    finally:
-        alert_store.close()
-        job_store.close()
-        collector_store.close()
 
 
 def get_session_detail(
@@ -269,12 +259,12 @@ def get_session_detail(
     profit_target: float,
     stop_multiple: float,
 ) -> dict[str, Any]:
-    collector_store = build_collector_repository(db_target)
-    job_store = build_job_repository(db_target)
-    alert_store = build_alert_repository(db_target)
-    post_market_store = build_post_market_repository(db_target)
-    execution_store = build_execution_repository(db_target)
-    try:
+    with build_storage_context(db_target) as storage:
+        collector_store = storage.collector
+        job_store = storage.jobs
+        alert_store = storage.alerts
+        post_market_store = storage.post_market
+        execution_store = storage.execution
         identity = _resolve_session_identity(
             session_id,
             collector_store=collector_store,
@@ -344,6 +334,7 @@ def get_session_detail(
                 label=identity["label"],
                 profit_target=profit_target,
                 stop_multiple=stop_multiple,
+                storage=storage,
             )
             analysis = {
                 **summary,
@@ -361,11 +352,13 @@ def get_session_detail(
             db_target=db_target,
             session_id=session_id,
             limit=50,
+            execution_store=execution_store,
         )
         portfolio = build_session_execution_portfolio(
             db_target=db_target,
             session_id=session_id,
             executions=executions,
+            execution_store=execution_store,
         )
         risk_snapshot = build_session_risk_snapshot(
             execution_store=execution_store,
@@ -395,9 +388,3 @@ def get_session_detail(
             "portfolio": portfolio,
             "analysis": analysis,
         }
-    finally:
-        execution_store.close()
-        post_market_store.close()
-        alert_store.close()
-        job_store.close()
-        collector_store.close()

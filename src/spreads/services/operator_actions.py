@@ -8,7 +8,7 @@ from uuid import uuid4
 from spreads.alerts.dispatcher import resolve_session_date, send_or_skip_alert
 from spreads.events.bus import publish_global_event_sync
 from spreads.services.live_pipelines import build_live_session_id
-from spreads.storage.factory import build_alert_repository, build_collector_repository
+from spreads.storage.factory import build_storage_context
 from spreads.storage.records import GeneratorJobRecord
 
 MANUAL_ALERT_TYPE = "manual_generator_idea"
@@ -113,9 +113,9 @@ def create_manual_generator_alert(
         short_symbol=short_symbol,
         long_symbol=long_symbol,
     )
-    collector_store = build_collector_repository(db_target)
-    alert_store = build_alert_repository(db_target)
-    try:
+    with build_storage_context(db_target) as storage:
+        collector_store = storage.collector
+        alert_store = storage.alerts
         latest_cycle = collector_store.get_latest_cycle(live_label)
         if latest_cycle is None:
             raise ValueError(f"No live cycle is available for '{live_label}'")
@@ -174,9 +174,6 @@ def create_manual_generator_alert(
             "session_id": latest_cycle.get("session_id"),
             "alert": record,
         }
-    finally:
-        collector_store.close()
-        alert_store.close()
 
 
 def apply_generator_live_action(
@@ -198,8 +195,8 @@ def apply_generator_live_action(
         short_symbol=short_symbol,
         long_symbol=long_symbol,
     )
-    collector_store = build_collector_repository(db_target)
-    try:
+    with build_storage_context(db_target) as storage:
+        collector_store = storage.collector
         latest_cycle = collector_store.get_latest_cycle(live_label)
         if latest_cycle is None:
             raise ValueError(f"No live cycle is available for '{live_label}'")
@@ -362,5 +359,3 @@ def apply_generator_live_action(
         except Exception:
             pass
         return response
-    finally:
-        collector_store.close()

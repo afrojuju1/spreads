@@ -155,21 +155,21 @@ def build_session_execution_portfolio(
     db_target: str,
     session_id: str,
     executions: list[dict[str, Any]] | None = None,
+    execution_store: Any | None = None,
 ) -> dict[str, Any]:
-    execution_store = build_execution_repository(db_target)
-    try:
-        if not execution_store.positions_schema_ready():
+    def _build_portfolio(resolved_execution_store: Any) -> dict[str, Any]:
+        if not resolved_execution_store.positions_schema_ready():
             return _empty_portfolio()
 
         for attempt in executions or []:
             sync_session_position_from_attempt(
-                execution_store=execution_store,
+                execution_store=resolved_execution_store,
                 attempt=attempt,
             )
 
         persisted_positions = [
             position.to_dict()
-            for position in execution_store.list_session_positions(session_id=session_id)
+            for position in resolved_execution_store.list_session_positions(session_id=session_id)
         ]
         if not persisted_positions:
             return _empty_portfolio()
@@ -209,7 +209,7 @@ def build_session_execution_portfolio(
                 estimated_midpoint_pnl = (entry_credit - spread_mark_midpoint) * 100.0 * remaining_quantity
                 unrealized_pnl = (entry_credit - spread_mark_close) * 100.0 * remaining_quantity
                 mark_timestamp = _max_timestamp(short_quote.timestamp, long_quote.timestamp)
-                execution_store.update_session_position(
+                resolved_execution_store.update_session_position(
                     session_position_id=str(persisted["session_position_id"]),
                     close_mark=_round_money(spread_mark_close),
                     close_mark_source=mark_source,
@@ -336,5 +336,12 @@ def build_session_execution_portfolio(
             },
             "positions": positions,
         }
+
+    if execution_store is not None:
+        return _build_portfolio(execution_store)
+
+    resolved_execution_store = build_execution_repository(db_target)
+    try:
+        return _build_portfolio(resolved_execution_store)
     finally:
-        execution_store.close()
+        resolved_execution_store.close()

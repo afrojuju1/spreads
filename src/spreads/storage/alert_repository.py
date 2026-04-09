@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 from datetime import date, datetime
-from typing import Any, Iterator
+from typing import Any
 
-from sqlalchemy import delete, func, inspect, select
-from sqlalchemy.orm import Session
+from sqlalchemy import delete, func, select
 
 from spreads.storage.alert_models import AlertEventModel, AlertStateModel
-from spreads.storage.db import build_session_factory
+from spreads.storage.base import RepositoryBase
 from spreads.storage.records import AlertEventRecord, AlertStateRecord
 from spreads.storage.serializers import (
     parse_date,
@@ -18,29 +16,9 @@ from spreads.storage.serializers import (
 )
 
 
-class AlertRepository:
-    def __init__(self, database_url: str) -> None:
-        self.path = database_url
-        self.engine, self.session_factory = build_session_factory(database_url)
-        with self.session_factory() as session:
-            session.execute(select(1))
-
-    @contextmanager
-    def session_scope(self) -> Iterator[Session]:
-        session = self.session_factory()
-        try:
-            yield session
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
-
+class AlertRepository(RepositoryBase):
     def schema_ready(self) -> bool:
-        tables = set(inspect(self.engine).get_table_names(schema="public"))
-        required = {"alert_events", "alert_state"}
-        return required.issubset(tables)
+        return self.schema_has_tables("alert_events", "alert_state")
 
     def get_alert_state(self, dedupe_key: str) -> AlertStateRecord | None:
         with self.session_factory() as session:
@@ -175,6 +153,3 @@ class AlertRepository:
         with self.session_scope() as session:
             session.execute(delete(AlertEventModel))
             session.execute(delete(AlertStateModel))
-
-    def close(self) -> None:
-        self.engine.dispose()

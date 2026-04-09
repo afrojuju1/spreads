@@ -12,7 +12,7 @@ from spreads.integrations.alpaca.client import AlpacaClient, infer_trading_base_
 from spreads.runtime.config import default_database_url
 from spreads.services.replay import summarize_replay
 from spreads.services.scanner import NEW_YORK
-from spreads.storage.factory import build_collector_repository, build_history_store
+from spreads.storage.factory import build_storage_context
 from spreads.storage.collector_repository import CollectorRepository
 from spreads.storage.run_history_repository import RunHistoryRepository
 
@@ -785,10 +785,12 @@ def build_session_summary(
     label: str,
     profit_target: float,
     stop_multiple: float,
+    storage: Any | None = None,
 ) -> dict[str, Any]:
-    history_store = build_history_store(db_target)
-    collector_store = build_collector_repository(db_target)
-    try:
+    def _build_summary(
+        history_store: RunHistoryRepository,
+        collector_store: CollectorRepository,
+    ) -> dict[str, Any]:
         run_rows = history_store.list_session_top_runs(session_date=session_date, session_label=label)
         quote_rows = history_store.list_session_quote_events(session_date=session_date, label=label)
         cycles = collector_store.list_cycles(label, session_date=session_date, limit=5000)
@@ -811,28 +813,30 @@ def build_session_summary(
             profit_target=profit_target,
             stop_multiple=stop_multiple,
         )
-    finally:
-        collector_store.close()
-        history_store.close()
+        run_summaries, run_overview = summarize_runs(run_rows)
+        quote_summaries, leg_summaries, quote_overview = summarize_quotes(quote_rows)
+        event_overview = summarize_events(events)
+        symbol_breakdown = build_symbol_breakdown(run_summaries, quote_summaries)
 
-    run_summaries, run_overview = summarize_runs(run_rows)
-    quote_summaries, leg_summaries, quote_overview = summarize_quotes(quote_rows)
-    event_overview = summarize_events(events)
-    symbol_breakdown = build_symbol_breakdown(run_summaries, quote_summaries)
+        return {
+            "session_date": session_date,
+            "label": label,
+            "cycle_count": len(cycles),
+            "latest_cycle": latest_cycle_payload,
+            "run_overview": run_overview,
+            "quote_overview": quote_overview,
+            "event_overview": event_overview,
+            "symbol_breakdown": symbol_breakdown,
+            "leg_summaries": leg_summaries[:10],
+            "outcomes": outcomes,
+            "tuning": build_signal_tuning(outcomes),
+        }
 
-    return {
-        "session_date": session_date,
-        "label": label,
-        "cycle_count": len(cycles),
-        "latest_cycle": latest_cycle_payload,
-        "run_overview": run_overview,
-        "quote_overview": quote_overview,
-        "event_overview": event_overview,
-        "symbol_breakdown": symbol_breakdown,
-        "leg_summaries": leg_summaries[:10],
-        "outcomes": outcomes,
-        "tuning": build_signal_tuning(outcomes),
-    }
+    if storage is not None:
+        return _build_summary(storage.history, storage.collector)
+
+    with build_storage_context(db_target) as resolved_storage:
+        return _build_summary(resolved_storage.history, resolved_storage.collector)
 
 
 def render_event_summary(event_overview: Mapping[str, Any]) -> list[str]:

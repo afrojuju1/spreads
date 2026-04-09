@@ -21,7 +21,12 @@ from spreads.services.session_positions import (
     resolve_trade_intent,
     sync_session_position_from_attempt,
 )
-from spreads.storage.factory import build_collector_repository, build_execution_repository, build_job_repository
+from spreads.storage.factory import (
+    build_collector_repository,
+    build_execution_repository,
+    build_job_repository,
+    build_storage_context,
+)
 
 BROKER_NAME = "alpaca"
 EXECUTION_SCHEMA_MESSAGE = "Execution tables are not available yet. Run the latest Alembic migrations."
@@ -171,15 +176,23 @@ def list_session_execution_attempts(
     db_target: str,
     session_id: str,
     limit: int = 20,
+    execution_store: Any | None = None,
 ) -> list[dict[str, Any]]:
-    execution_store = build_execution_repository(db_target)
-    try:
+    if execution_store is not None:
         if not execution_store.schema_ready():
             return []
         attempts = [attempt.to_dict() for attempt in execution_store.list_attempts(session_id=session_id, limit=limit)]
         return _attach_attempt_details(execution_store=execution_store, attempts=attempts)
-    finally:
-        execution_store.close()
+
+    with build_storage_context(db_target) as storage:
+        resolved_execution_store = storage.execution
+        if not resolved_execution_store.schema_ready():
+            return []
+        attempts = [
+            attempt.to_dict()
+            for attempt in resolved_execution_store.list_attempts(session_id=session_id, limit=limit)
+        ]
+        return _attach_attempt_details(execution_store=resolved_execution_store, attempts=attempts)
 
 
 def _get_attempt_payload(execution_store: Any, execution_attempt_id: str) -> dict[str, Any]:
@@ -239,8 +252,8 @@ def _build_order_request(
 
 def _resolve_source_policies(
     *,
-    db_target: str,
     cycle: dict[str, Any],
+    job_store: Any | None = None,
 ) -> dict[str, Any]:
     job_run_id = _as_text(cycle.get("job_run_id"))
     if job_run_id is None:
@@ -251,11 +264,8 @@ def _resolve_source_policies(
             "risk_policy": normalize_risk_policy(None),
             "exit_policy": normalize_exit_policy(None),
         }
-    job_store = build_job_repository(db_target)
-    try:
-        job_run = job_store.get_job_run(job_run_id)
-    finally:
-        job_store.close()
+    resolved_job_store = build_job_repository() if job_store is None else job_store
+    job_run = resolved_job_store.get_job_run(job_run_id)
     payload = {} if job_run is None else dict(job_run["payload"])
     return {
         "source_job_type": None if job_run is None else _as_text(job_run.get("job_type")),
@@ -485,8 +495,10 @@ def submit_live_session_execution(
     limit_price: float | None = None,
     request_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    collector_store = build_collector_repository(db_target)
-    execution_store = build_execution_repository(db_target)
+    storage = build_storage_context(db_target)
+    collector_store = build_collector_repository(context=storage)
+    execution_store = build_execution_repository(context=storage)
+    job_store = build_job_repository(context=storage)
     requested_at = _utc_now()
     client_order_id = _execution_client_order_id()
     attempt_id: str | None = None
@@ -500,8 +512,8 @@ def submit_live_session_execution(
             candidate_id=candidate_id,
         )
         source_policies = _resolve_source_policies(
-            db_target=db_target,
             cycle=cycle,
+            job_store=job_store,
         )
 
         existing_attempts = execution_store.list_open_attempts_for_identity(
@@ -670,8 +682,7 @@ def submit_live_session_execution(
             }
         raise
     finally:
-        execution_store.close()
-        collector_store.close()
+        storage.close()
 
 
 def submit_session_position_close(
@@ -683,7 +694,8 @@ def submit_session_position_close(
     limit_price: float | None = None,
     request_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    execution_store = build_execution_repository(db_target)
+    storage = build_storage_context(db_target)
+    execution_store = build_execution_repository(context=storage)
     requested_at = _utc_now()
     client_order_id = _execution_client_order_id()
     attempt_id: str | None = None
@@ -839,7 +851,7 @@ def submit_session_position_close(
             }
         raise
     finally:
-        execution_store.close()
+        storage.close()
 
 
 def refresh_live_session_execution(
@@ -848,7 +860,8 @@ def refresh_live_session_execution(
     session_id: str,
     execution_attempt_id: str,
 ) -> dict[str, Any]:
-    execution_store = build_execution_repository(db_target)
+    storage = build_storage_context(db_target)
+    execution_store = build_execution_repository(context=storage)
     try:
         _require_execution_schema(execution_store)
         attempt = execution_store.get_attempt(execution_attempt_id)
@@ -877,7 +890,7 @@ def refresh_live_session_execution(
             "attempt": payload,
         }
     finally:
-        execution_store.close()
+        storage.close()
 
 
 def submit_auto_session_execution(
@@ -898,8 +911,9 @@ def submit_auto_session_execution(
             "policy": normalized_policy,
         }
 
-    collector_store = build_collector_repository(db_target)
-    execution_store = build_execution_repository(db_target)
+    storage = build_storage_context(db_target)
+    collector_store = build_collector_repository(context=storage)
+    execution_store = build_execution_repository(context=storage)
     try:
         _require_execution_schema(execution_store)
         _require_position_schema(execution_store)
@@ -938,5 +952,4 @@ def submit_auto_session_execution(
             "selected_candidate_id": int(top_candidate["candidate_id"]),
         }
     finally:
-        execution_store.close()
-        collector_store.close()
+        storage.close()

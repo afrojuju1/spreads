@@ -31,9 +31,7 @@ from spreads.services.scanner import (
 )
 from spreads.storage.alert_repository import AlertRepository
 from spreads.storage.factory import (
-    build_alert_repository,
-    build_collector_repository,
-    build_history_store,
+    build_storage_context,
 )
 from spreads.storage.collector_repository import CollectorRepository
 from spreads.storage.run_history_repository import RunHistoryRepository
@@ -942,9 +940,6 @@ def run_collection_tick(
         trading_base_url=infer_trading_base_url(key_id, scanner_args.trading_base_url),
         data_base_url=scanner_args.data_base_url,
     )
-    history_store = build_history_store(args.history_db)
-    alert_store = build_alert_repository(args.history_db)
-    collector_store = build_collector_repository(args.history_db)
     calendar_resolver = build_calendar_event_resolver(
         key_id=key_id,
         secret_key=secret_key,
@@ -953,25 +948,23 @@ def run_collection_tick(
     )
     greeks_provider = build_local_greeks_provider()
     try:
-        if heartbeat is not None:
-            heartbeat()
-        cycle_result = _run_collection_cycle(
-            args,
-            tick_context=tick_context,
-            scanner_args=scanner_args,
-            client=client,
-            history_store=history_store,
-            alert_store=alert_store,
-            collector_store=collector_store,
-            calendar_resolver=calendar_resolver,
-            greeks_provider=greeks_provider,
-            emit_output=emit_output,
-            heartbeat=heartbeat,
-        )
+        with build_storage_context(args.history_db) as storage:
+            if heartbeat is not None:
+                heartbeat()
+            cycle_result = _run_collection_cycle(
+                args,
+                tick_context=tick_context,
+                scanner_args=scanner_args,
+                client=client,
+                history_store=storage.history,
+                alert_store=storage.alerts,
+                collector_store=storage.collector,
+                calendar_resolver=calendar_resolver,
+                greeks_provider=greeks_provider,
+                emit_output=emit_output,
+                heartbeat=heartbeat,
+            )
     finally:
-        alert_store.close()
-        collector_store.close()
-        history_store.close()
         calendar_resolver.store.close()
 
     return {
@@ -1037,9 +1030,6 @@ def run_collection(
         trading_base_url=infer_trading_base_url(key_id, scanner_args.trading_base_url),
         data_base_url=scanner_args.data_base_url,
     )
-    history_store = build_history_store(args.history_db)
-    alert_store = build_alert_repository(args.history_db)
-    collector_store = build_collector_repository(args.history_db)
     calendar_resolver = build_calendar_event_resolver(
         key_id=key_id,
         secret_key=secret_key,
@@ -1056,50 +1046,48 @@ def run_collection(
     last_label: str | None = None
     iterations_completed = 0
     try:
-        for iteration in range(args.iterations):
-            iteration_started_at = time_module.monotonic()
-            if heartbeat is not None:
-                heartbeat()
-            if not args.allow_off_hours and not collection_window_is_open(
-                now=datetime.now(UTC),
-                session_start_offset_minutes=int(getattr(args, "session_start_offset_minutes", 0)),
-                session_end_offset_minutes=int(getattr(args, "session_end_offset_minutes", 0)),
-            ):
-                if emit_output:
-                    print("Market closed during collection window. Stopping.")
-                break
-            cycle_result = _run_collection_cycle(
-                args,
-                tick_context=None,
-                scanner_args=scanner_args,
-                client=client,
-                history_store=history_store,
-                alert_store=alert_store,
-                collector_store=collector_store,
-                calendar_resolver=calendar_resolver,
-                greeks_provider=greeks_provider,
-                emit_output=emit_output,
-                heartbeat=heartbeat,
-            )
-            cycle_ids.append(cycle_result["cycle_id"])
-            total_alerts += int(cycle_result["alerts_sent"])
-            total_quote_events += int(cycle_result["quote_events_saved"])
-            total_baseline_quote_events += int(cycle_result["baseline_quote_events_saved"])
-            total_websocket_quote_events += int(cycle_result["websocket_quote_events_saved"])
-            total_recovery_quote_events += int(cycle_result["recovery_quote_events_saved"])
-            iterations_completed += 1
-            last_label = str(cycle_result["label"])
-            if iteration < args.iterations - 1:
-                elapsed_seconds = time_module.monotonic() - iteration_started_at
-                sleep_seconds = max(float(max(args.interval_seconds, 1)) - elapsed_seconds, 0.0)
-                if sleep_seconds > 0:
-                    time_module.sleep(sleep_seconds)
+        with build_storage_context(args.history_db) as storage:
+            for iteration in range(args.iterations):
+                iteration_started_at = time_module.monotonic()
                 if heartbeat is not None:
                     heartbeat()
+                if not args.allow_off_hours and not collection_window_is_open(
+                    now=datetime.now(UTC),
+                    session_start_offset_minutes=int(getattr(args, "session_start_offset_minutes", 0)),
+                    session_end_offset_minutes=int(getattr(args, "session_end_offset_minutes", 0)),
+                ):
+                    if emit_output:
+                        print("Market closed during collection window. Stopping.")
+                    break
+                cycle_result = _run_collection_cycle(
+                    args,
+                    tick_context=None,
+                    scanner_args=scanner_args,
+                    client=client,
+                    history_store=storage.history,
+                    alert_store=storage.alerts,
+                    collector_store=storage.collector,
+                    calendar_resolver=calendar_resolver,
+                    greeks_provider=greeks_provider,
+                    emit_output=emit_output,
+                    heartbeat=heartbeat,
+                )
+                cycle_ids.append(cycle_result["cycle_id"])
+                total_alerts += int(cycle_result["alerts_sent"])
+                total_quote_events += int(cycle_result["quote_events_saved"])
+                total_baseline_quote_events += int(cycle_result["baseline_quote_events_saved"])
+                total_websocket_quote_events += int(cycle_result["websocket_quote_events_saved"])
+                total_recovery_quote_events += int(cycle_result["recovery_quote_events_saved"])
+                iterations_completed += 1
+                last_label = str(cycle_result["label"])
+                if iteration < args.iterations - 1:
+                    elapsed_seconds = time_module.monotonic() - iteration_started_at
+                    sleep_seconds = max(float(max(args.interval_seconds, 1)) - elapsed_seconds, 0.0)
+                    if sleep_seconds > 0:
+                        time_module.sleep(sleep_seconds)
+                    if heartbeat is not None:
+                        heartbeat()
     finally:
-        alert_store.close()
-        collector_store.close()
-        history_store.close()
         calendar_resolver.store.close()
 
     return {

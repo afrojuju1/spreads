@@ -8,7 +8,7 @@ from spreads.services.account_state import fetch_account_overview_live
 from spreads.services.alpaca import create_alpaca_client_from_env
 from spreads.services.execution import OPEN_STATUSES, refresh_live_session_execution
 from spreads.services.session_positions import sync_session_position_from_attempt
-from spreads.storage.factory import build_broker_repository, build_execution_repository
+from spreads.storage.factory import build_storage_context
 from spreads.storage.serializers import parse_datetime
 
 BROKER_SYNC_KEY = "broker_sync:alpaca"
@@ -268,169 +268,167 @@ def run_broker_sync(
     history_range: str = "1D",
     activity_lookback_days: int = 1,
 ) -> dict[str, Any]:
-    broker_store = build_broker_repository(db_target)
-    execution_store = build_execution_repository(db_target)
     now = _utc_now()
-    try:
-        if not broker_store.schema_ready() or not execution_store.schema_ready() or not execution_store.positions_schema_ready():
-            return {
-                "status": "skipped",
-                "reason": "broker_sync_schema_unavailable",
-            }
+    with build_storage_context(db_target) as storage:
+        broker_store = storage.broker
+        execution_store = storage.execution
+        try:
+            if not broker_store.schema_ready() or not execution_store.schema_ready() or not execution_store.positions_schema_ready():
+                return {
+                    "status": "skipped",
+                    "reason": "broker_sync_schema_unavailable",
+                }
 
-        overview = fetch_account_overview_live(history_range=history_range)
-        snapshot = broker_store.create_account_snapshot(
-            broker=str(overview["broker"]),
-            environment=str(overview["environment"]),
-            source="broker_sync",
-            captured_at=str(overview["retrieved_at"]),
-            account=dict(overview["account"]),
-            pnl=dict(overview["pnl"]),
-            positions=list(overview["positions"]),
-            history=dict(overview["history"]),
-        )
+            overview = fetch_account_overview_live(history_range=history_range)
+            snapshot = broker_store.create_account_snapshot(
+                broker=str(overview["broker"]),
+                environment=str(overview["environment"]),
+                source="broker_sync",
+                captured_at=str(overview["retrieved_at"]),
+                account=dict(overview["account"]),
+                pnl=dict(overview["pnl"]),
+                positions=list(overview["positions"]),
+                history=dict(overview["history"]),
+            )
 
-        activity_summary = _sync_recent_fill_activities(
-            broker_store=broker_store,
-            execution_store=execution_store,
-            lookback_days=activity_lookback_days,
-            synced_at=now,
-        )
+            activity_summary = _sync_recent_fill_activities(
+                broker_store=broker_store,
+                execution_store=execution_store,
+                lookback_days=activity_lookback_days,
+                synced_at=now,
+            )
 
-        refreshed_attempts = 0
-        refresh_errors: list[dict[str, str]] = []
-        active_attempts = execution_store.list_attempts_by_status(
-            statuses=sorted(OPEN_STATUSES),
-            limit=200,
-        )
-        for attempt in active_attempts:
-            try:
-                refresh_live_session_execution(
-                    db_target=db_target,
-                    session_id=str(attempt["session_id"]),
-                    execution_attempt_id=str(attempt["execution_attempt_id"]),
-                )
-                refreshed_attempts += 1
-            except Exception as exc:
-                refresh_errors.append(
-                    {
-                        "execution_attempt_id": str(attempt["execution_attempt_id"]),
-                        "error": str(exc),
-                    }
-                )
-
-        broker_positions_by_symbol = {
-            str(position["symbol"]): position
-            for position in overview["positions"]
-            if isinstance(position, dict) and position.get("symbol")
-        }
-        open_positions = [
-            position.to_dict()
-            for position in execution_store.list_session_positions(
-                statuses=OPEN_POSITION_STATUSES,
+            refreshed_attempts = 0
+            refresh_errors: list[dict[str, str]] = []
+            active_attempts = execution_store.list_attempts_by_status(
+                statuses=sorted(OPEN_STATUSES),
                 limit=200,
             )
-        ]
-        reconciled_positions = [
-            _reconcile_position(
-                execution_store=execution_store,
-                position=position,
-                broker_positions_by_symbol=broker_positions_by_symbol,
-                reconciled_at=now,
-            )
-            for position in open_positions
-        ]
-        mismatch_positions = [
-            position
-            for position in reconciled_positions
-            if str(position.get("reconciliation_status") or "") == "mismatch"
-        ]
-        tracked_symbols = {
-            symbol
-            for position in open_positions
-            for symbol in (str(position["short_symbol"]), str(position["long_symbol"]))
-        }
-        orphan_broker_positions = [
-            position
-            for symbol, position in broker_positions_by_symbol.items()
-            if symbol not in tracked_symbols and str(position.get("asset_class") or "").lower() == "option"
-        ]
+            for attempt in active_attempts:
+                try:
+                    refresh_live_session_execution(
+                        db_target=db_target,
+                        session_id=str(attempt["session_id"]),
+                        execution_attempt_id=str(attempt["execution_attempt_id"]),
+                    )
+                    refreshed_attempts += 1
+                except Exception as exc:
+                    refresh_errors.append(
+                        {
+                            "execution_attempt_id": str(attempt["execution_attempt_id"]),
+                            "error": str(exc),
+                        }
+                    )
 
-        summary = {
-            "history_range": history_range,
-            "activity_lookback_days": activity_lookback_days,
-            "snapshot_id": snapshot["snapshot_id"],
-            "snapshot_captured_at": snapshot["captured_at"],
-            "refreshed_attempt_count": refreshed_attempts,
-            "refresh_error_count": len(refresh_errors),
-            "open_position_count": len(open_positions),
-            "mismatch_position_count": len(mismatch_positions),
-            "orphan_broker_position_count": len(orphan_broker_positions),
-            "activity_count": activity_summary["activity_count"],
-            "matched_activity_count": activity_summary["matched_activity_count"],
-            "unmatched_activity_count": activity_summary["unmatched_activity_count"],
-            "account_equity": overview["account"].get("equity"),
-            "environment": overview["environment"],
-            "last_activity_timestamp": activity_summary["latest_activity_timestamp"],
-        }
-        status = "healthy"
-        if refresh_errors or activity_summary["error_count"] or mismatch_positions or orphan_broker_positions:
-            status = "degraded"
+            broker_positions_by_symbol = {
+                str(position["symbol"]): position
+                for position in overview["positions"]
+                if isinstance(position, dict) and position.get("symbol")
+            }
+            open_positions = [
+                position.to_dict()
+                for position in execution_store.list_session_positions(
+                    statuses=OPEN_POSITION_STATUSES,
+                    limit=200,
+                )
+            ]
+            reconciled_positions = [
+                _reconcile_position(
+                    execution_store=execution_store,
+                    position=position,
+                    broker_positions_by_symbol=broker_positions_by_symbol,
+                    reconciled_at=now,
+                )
+                for position in open_positions
+            ]
+            mismatch_positions = [
+                position
+                for position in reconciled_positions
+                if str(position.get("reconciliation_status") or "") == "mismatch"
+            ]
+            tracked_symbols = {
+                symbol
+                for position in open_positions
+                for symbol in (str(position["short_symbol"]), str(position["long_symbol"]))
+            }
+            orphan_broker_positions = [
+                position
+                for symbol, position in broker_positions_by_symbol.items()
+                if symbol not in tracked_symbols and str(position.get("asset_class") or "").lower() == "option"
+            ]
 
-        state = broker_store.upsert_sync_state(
-            sync_key=BROKER_SYNC_KEY,
-            broker="alpaca",
-            status=status,
-            updated_at=now,
-            cursor={
-                "last_snapshot_at": snapshot["captured_at"],
+            summary = {
+                "history_range": history_range,
+                "activity_lookback_days": activity_lookback_days,
+                "snapshot_id": snapshot["snapshot_id"],
+                "snapshot_captured_at": snapshot["captured_at"],
+                "refreshed_attempt_count": refreshed_attempts,
+                "refresh_error_count": len(refresh_errors),
+                "open_position_count": len(open_positions),
+                "mismatch_position_count": len(mismatch_positions),
+                "orphan_broker_position_count": len(orphan_broker_positions),
+                "activity_count": activity_summary["activity_count"],
+                "matched_activity_count": activity_summary["matched_activity_count"],
+                "unmatched_activity_count": activity_summary["unmatched_activity_count"],
+                "account_equity": overview["account"].get("equity"),
+                "environment": overview["environment"],
                 "last_activity_timestamp": activity_summary["latest_activity_timestamp"],
-            },
-            summary={
-                **summary,
-                "refresh_errors": refresh_errors[:25],
-                "activity_errors": activity_summary["errors"],
-                "mismatch_positions": [
-                    {
-                        "session_position_id": position["session_position_id"],
-                        "reconciliation_note": position.get("reconciliation_note"),
-                    }
-                    for position in mismatch_positions[:25]
-                ],
-                "orphan_broker_positions": orphan_broker_positions[:25],
-            },
-        )
-        publish_global_event_sync(
-            topic="broker.sync.updated",
-            entity_type="broker_sync",
-            entity_id=BROKER_SYNC_KEY,
-            payload={
-                "sync_key": state["sync_key"],
-                "status": state["status"],
-                "updated_at": state["updated_at"],
-                "summary": state["summary"],
-            },
-            timestamp=state["updated_at"],
-        )
-        return {
-            "status": status,
-            "snapshot_id": snapshot["snapshot_id"],
-            "summary": summary,
-            "refresh_errors": refresh_errors[:25],
-            "activity_errors": activity_summary["errors"],
-        }
-    except Exception as exc:
-        if broker_store.schema_ready():
-            broker_store.upsert_sync_state(
+            }
+            status = "healthy"
+            if refresh_errors or activity_summary["error_count"] or mismatch_positions or orphan_broker_positions:
+                status = "degraded"
+
+            state = broker_store.upsert_sync_state(
                 sync_key=BROKER_SYNC_KEY,
                 broker="alpaca",
-                status="failed",
+                status=status,
                 updated_at=now,
-                cursor={},
-                summary={},
-                error_text=str(exc),
+                cursor={
+                    "last_snapshot_at": snapshot["captured_at"],
+                    "last_activity_timestamp": activity_summary["latest_activity_timestamp"],
+                },
+                summary={
+                    **summary,
+                    "refresh_errors": refresh_errors[:25],
+                    "activity_errors": activity_summary["errors"],
+                    "mismatch_positions": [
+                        {
+                            "session_position_id": position["session_position_id"],
+                            "reconciliation_note": position.get("reconciliation_note"),
+                        }
+                        for position in mismatch_positions[:25]
+                    ],
+                    "orphan_broker_positions": orphan_broker_positions[:25],
+                },
             )
-        raise
-    finally:
-        execution_store.close()
-        broker_store.close()
+            publish_global_event_sync(
+                topic="broker.sync.updated",
+                entity_type="broker_sync",
+                entity_id=BROKER_SYNC_KEY,
+                payload={
+                    "sync_key": state["sync_key"],
+                    "status": state["status"],
+                    "updated_at": state["updated_at"],
+                    "summary": state["summary"],
+                },
+                timestamp=state["updated_at"],
+            )
+            return {
+                "status": status,
+                "snapshot_id": snapshot["snapshot_id"],
+                "summary": summary,
+                "refresh_errors": refresh_errors[:25],
+                "activity_errors": activity_summary["errors"],
+            }
+        except Exception as exc:
+            if broker_store.schema_ready():
+                broker_store.upsert_sync_state(
+                    sync_key=BROKER_SYNC_KEY,
+                    broker="alpaca",
+                    status="failed",
+                    updated_at=now,
+                    cursor={},
+                    summary={},
+                    error_text=str(exc),
+                )
+            raise

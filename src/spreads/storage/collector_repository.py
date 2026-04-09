@@ -1,19 +1,17 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 from datetime import date, datetime
-from typing import Any, Iterator
+from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, delete, inspect, select
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, delete, select
 
+from spreads.storage.base import RepositoryBase
 from spreads.storage.collector_models import (
     CollectorCycleCandidateModel,
     CollectorCycleEventModel,
     CollectorCycleModel,
 )
-from spreads.storage.db import build_session_factory
 from spreads.storage.records import (
     CollectorCycleCandidateRecord,
     CollectorCycleEventRecord,
@@ -30,29 +28,13 @@ from spreads.storage.serializers import (
 NEW_YORK = ZoneInfo("America/New_York")
 
 
-class CollectorRepository:
-    def __init__(self, database_url: str) -> None:
-        self.path = database_url
-        self.engine, self.session_factory = build_session_factory(database_url)
-        with self.session_factory() as session:
-            session.execute(select(1))
-
-    @contextmanager
-    def session_scope(self) -> Iterator[Session]:
-        session = self.session_factory()
-        try:
-            yield session
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
-
+class CollectorRepository(RepositoryBase):
     def schema_ready(self) -> bool:
-        tables = set(inspect(self.engine).get_table_names(schema="public"))
-        required = {"collector_cycles", "collector_cycle_candidates", "collector_cycle_events"}
-        return required.issubset(tables)
+        return self.schema_has_tables(
+            "collector_cycles",
+            "collector_cycle_candidates",
+            "collector_cycle_events",
+        )
 
     def save_cycle(
         self,
@@ -345,6 +327,3 @@ class CollectorRepository:
             session.execute(delete(CollectorCycleEventModel))
             session.execute(delete(CollectorCycleCandidateModel))
             session.execute(delete(CollectorCycleModel))
-
-    def close(self) -> None:
-        self.engine.dispose()
