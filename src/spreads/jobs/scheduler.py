@@ -8,6 +8,7 @@ from typing import Any
 from arq import create_pool
 
 from spreads.events.bus import publish_global_event_async
+from spreads.jobs.registry import get_job_spec
 from spreads.jobs.orchestration import (
     SCHEDULER_RUNTIME_LEASE_KEY,
     build_job_attempt_id,
@@ -57,17 +58,6 @@ def _lease_is_active(lease: Any) -> bool:
     expires_at = parse_datetime(lease["expires_at"])
     return expires_at is not None and expires_at > utc_now()
 
-
-def _task_name_for_job_type(job_type: str) -> str | None:
-    return {
-        "broker_sync": "run_broker_sync_job",
-        "live_collector": "run_live_collector_job",
-        "post_close_analysis": "run_post_close_analysis_job",
-        "post_market_analysis": "run_post_market_analysis_job",
-        "session_exit_manager": "run_session_exit_manager_job",
-    }.get(job_type)
-
-
 async def _enqueue_job_run(
     *,
     job_store: Any,
@@ -75,8 +65,8 @@ async def _enqueue_job_run(
     definition: Any,
     run_record: Any,
 ) -> bool:
-    task_name = _task_name_for_job_type(str(definition["job_type"]))
-    if task_name is None:
+    spec = get_job_spec(str(definition["job_type"]))
+    if spec is None:
         failed_record = await asyncio.to_thread(
             job_store.update_job_run_status,
             job_run_id=run_record["job_run_id"],
@@ -89,12 +79,13 @@ async def _enqueue_job_run(
         return False
     try:
         result = await redis.enqueue_job(
-            task_name,
+            spec.task_name,
             definition["job_key"],
             run_record["job_run_id"],
             run_record["payload"],
             run_record["arq_job_id"],
             _job_id=run_record["arq_job_id"],
+            _queue_name=spec.queue_name,
         )
         if result is None:
             skipped_record = await asyncio.to_thread(

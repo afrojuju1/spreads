@@ -61,7 +61,7 @@ services:
       - .:/app
     ports:
       - "58080:8000"
-  worker:
+  worker-fast:
     build:
       context: .
     restart: unless-stopped
@@ -76,7 +76,61 @@ services:
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
       REDIS_URL: redis://redis:6379/0
       SPREADS_INTERNAL_API_BASE_URL: http://api:8000
-    command: ["uv", "run", "arq", "spreads.jobs.worker.WorkerSettings"]
+    command: ["uv", "run", "arq", "spreads.jobs.worker.FastWorkerSettings"]
+    volumes:
+      - .:/app
+  worker-collector:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
+      REDIS_URL: redis://redis:6379/0
+      SPREADS_INTERNAL_API_BASE_URL: http://api:8000
+    command: ["uv", "run", "arq", "spreads.jobs.worker.CollectorWorkerSettings"]
+    volumes:
+      - .:/app
+  worker-analysis:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
+      REDIS_URL: redis://redis:6379/0
+      SPREADS_INTERNAL_API_BASE_URL: http://api:8000
+    command: ["uv", "run", "arq", "spreads.jobs.worker.AnalysisWorkerSettings"]
+    volumes:
+      - .:/app
+  worker-generator:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
+      REDIS_URL: redis://redis:6379/0
+      SPREADS_INTERNAL_API_BASE_URL: http://api:8000
+    command: ["uv", "run", "arq", "spreads.jobs.worker.GeneratorWorkerSettings"]
     volumes:
       - .:/app
   scheduler:

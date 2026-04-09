@@ -111,145 +111,146 @@ Short log of proposed features, why they matter, and the current direction.
 - V1: strict and warning modes for expected-move coverage, fill-ratio quality, expected-move cushion, and low-confidence single-name event coverage
 - Next: improve source quality and make the hardening logic more source-aware
 
-## 10. Post-Signal Outcome Analytics
+## 10. Evaluation, Calibration, And Outcome Engine
 
 - Status: proposed
 - Priority: high
-- Scope: research / evaluation
-- Why: every board and alert gets more valuable if we can measure what happened after detection
-- Direction: treat this as shared research infrastructure, not a one-off report
-- V1: continuation, fade, max excursion, time-to-move, and session-outcome summaries for board entries and alerts
-- Next: reuse the stored outcomes to tune UOA thresholds and future research features
+- Scope: shared research / truth layer
+- Why: every board, pattern, and alert needs one common answer to what happened next and whether our scores actually mean anything
+- Direction: unify outcome analytics, forward evaluation, and score calibration into one downstream engine
+- V1: continuation, fade, max excursion, adverse excursion, time-to-confirm, time-to-fail, and score-bucket quality summaries
+- Next: make this the default downstream layer for UOA, chart patterns, catalyst signals, and boards
 
 ### Notes
 
-- Highest-leverage adjacent feature after the UOA scanner
-- Uses Alpaca surfaces we already confirmed: stock bars, stock snapshots, option bars, and option trades
-- Improves every later scanner rather than just creating one more board
+- Folds together post-signal outcome analytics, the evaluation engine, and signal calibration
+- Core inputs: stock bars, stock snapshots, option bars, option trades, and relative-strength context
+- Highest-leverage proposed platform layer in the tracker
 
-## 11. Catalyst Reaction Tracker
+## 11. Catalyst And Event Intelligence
 
 - Status: proposed
 - Priority: high
-- Scope: research / operator view
-- Why: Alpaca is unusually strong at combining news, stock reaction, and option-chain context
-- Direction: build a reaction study layer that measures how headlines propagate through price, liquidity, and option activity
-- V1: multi-window stock reaction plus option snapshot and recent-trade overlays for shortlisted names
-- Next: classify headline types and attach post-signal outcome summaries
+- Scope: shared context / research layer
+- Why: the value is not just detecting headlines or events, but understanding whether price and options are confirming, rejecting, or ignoring them
+- Direction: unify catalyst context, reaction tracking, and event-study work into one reusable intelligence layer
+- V1: headline presence, catalyst freshness, stock reaction quality, options confirmation, and corporate-action overlays
+- Next: classify catalyst types and compare reaction quality by setup, symbol class, and session
 
 ### Notes
 
-- Strongest external-facing Alpaca-native research product after UOA
-- Core inputs: news, stock bars, stock snapshots, option chain snapshots, option trades
-- Best built once root and contract UOA signals already exist
+- Folds together catalyst reaction tracking, catalyst context, and the specialized corporate-action research idea
+- Builds on the existing event context layer instead of creating another separate event system
+- Core inputs: news, calendar events, corporate actions, stock bars, stock snapshots, option snapshots, and option trades
 
-## 12. Opening Drive And Closing Auction Board
+## 12. Session And Regime Intelligence
 
 - Status: proposed
 - Priority: high
-- Scope: operator board
-- Why: stock auction history is a hidden Alpaca strength and can produce a differentiated market board
-- Direction: rank names by open participation, close behavior, and follow-through
-- V1: opening-drive and closing-auction board with auction prints, stock bars, and stock snapshot context
-- Next: add session-transition analytics and tie results into post-signal outcome review
+- Scope: shared scoring / operator context
+- Why: the same move means different things before the open, at the open, midday, and into the close, especially when the regime is trend, chop, or expansion
+- Direction: combine session structure, open-close behavior, premarket prep, and regime labeling into one shared context layer
+- V1: premarket playbook, opening-drive and closing-auction views, session tags, and basic trend/chop/expansion labels
+- Next: use the layer to modulate alert confidence, board ranking, and pattern quality
 
 ### Notes
 
-- Reuses session-mode and board patterns from the UOA scanner
-- Core inputs: movers, auctions, bars, snapshots
-- Higher leverage than a generic stock mover board because it uses rarer context
+- Folds together the premarket playbook, opening or closing board, session context, and volatility or regime monitor
+- Core inputs: stock bars, stock snapshots, auctions, movers, news, and imbalances when available
+- Better as one shared context layer than several adjacent boards
 
-## 13. Market Leadership And Rotation Board
+## 13. Leadership, Rotation, And Relative Strength
 
 - Status: proposed
 - Priority: high
-- Scope: operator board
-- Why: this is the easiest always-on research board to ship and use every session
-- Direction: show what is truly leading, lagging, rotating, and confirming across the market
-- V1: ranked stock leadership board from movers, most actives, stock bars, stock snapshots, and news
-- Next: group by sector, ETF, and session bucket
+- Scope: shared market context / operator board
+- Why: raw price movement matters less than whether a name is leading, lagging, or rotating relative to the market and its peers
+- Direction: combine leadership boards with reusable relative-strength scoring
+- V1: ranked leadership board plus market-relative and sector-relative strength signals
+- Next: add sector, ETF, and session grouping along with persistence and breadth-style summaries
 
 ### Notes
 
-- Lowest-risk operator-facing extension of the stock-first UOA prefilter
-- Core inputs: most actives, movers, stock bars, stock snapshots, news
-- More practical daily value than a niche options-only research view
+- Folds together the leadership board and the relative-strength layer
+- Core inputs: most actives, movers, stock bars, stock snapshots, news, and curated ETF context
+- Strong fit for Alpaca because it relies on clean stock time series rather than deeper market structure
 
-## 14. Execution Research Dashboard
+## 14. Execution And Portfolio Research
 
 - Status: proposed
 - Priority: high
-- Scope: internal research / feedback loop
-- Why: once signals begin producing trades, execution research becomes one of the most valuable internal surfaces
-- Direction: combine broker activity and market context to explain fill quality and post-fill path
-- V1: fill quality, hold-time distribution, path analysis, and setup-level feedback
-- Next: separate paper and live results, then feed execution outcomes back into ranking
+- Scope: internal research / decision quality
+- Why: even good signals need fill-quality feedback, overlap handling, and exposure discipline before they become a usable trading process
+- Direction: unify execution analytics and paper portfolio research into one post-signal decision layer
+- V1: fill quality, hold-time distribution, post-fill path analysis, overlapping-signal handling, and simple exposure summaries
+- Next: separate paper and live results, compare portfolio policies, and feed execution outcomes back into ranking
 
 ### Notes
 
-- Core inputs: account, positions, fill activities, portfolio history
-- Depends more on having a meaningful trade stream than on new market-data work
-- Strong fit for Alpaca because account and execution APIs are already available
+- Folds together the execution research dashboard and the paper portfolio or allocation idea
+- Core inputs: account state, positions, fill activities, portfolio history, and signal metadata
+- More valuable once several signal families are producing steady output
 
-## 15. Option Positioning Heatmap
+## 15. Option Positioning And Flow Context
 
 - Status: proposed
 - Priority: medium
-- Scope: research / operator view
-- Why: Alpaca can support shortlist-based option positioning research even though it cannot support full options flow infrastructure
-- Direction: map strike and expiry concentration for shortlisted roots
-- V1: call/put dominance, near-spot concentration, strike clustering, and expiry concentration views
-- Next: overlay UOA signal strength and catalyst context on top of the heatmap
+- Scope: research / operator context
+- Why: Alpaca can support shortlist-based option positioning and flow confirmation even though it cannot support a full options flow terminal
+- Direction: treat options as an enrichment surface for roots already shortlisted elsewhere
+- V1: call or put dominance, strike clustering, expiry concentration, and recent-trade overlays
+- Next: overlay UOA, catalyst, and pattern context on top of the positioning view
 
 ### Notes
 
-- Core inputs: option contracts, chain snapshots, latest trades, recent trades, option bars
-- Best built after the option-enrichment part of UOA is stable
-- Useful, but less urgent than the stock-led and post-signal research surfaces
+- Folds the option positioning heatmap into a broader option-context framing
+- Core inputs: option contracts, chain snapshots, latest trades, recent trades, and option bars
+- Useful, but still downstream of the stock-first context layers
 
-## 16. Premarket Playbook Builder
+## 16. Price Structure And Pattern Detection
 
 - Status: proposed
-- Priority: medium
-- Scope: operator prep
-- Why: Alpaca is useful before the open even when live options flow is weak
-- Direction: build a prepared open watchlist with catalyst, gap, liquidity, and optionability context
-- V1: premarket shortlist with news, mover context, stock bars, and optionable-universe checks
-- Next: connect the playbook directly into market-open monitoring and alert warm starts
+- Priority: high
+- Scope: shared detection / market structure layer
+- Why: price action gets more useful when patterns are anchored to explicit market structure and key levels instead of treated as free-floating shapes
+- Direction: combine key levels and stock-first pattern detection into one price-structure layer
+- V1: prior day high or low, premarket high or low, opening range, VWAP, gap-fill, weekly levels, and core patterns like breakout, fade, reclaim, and continuation
+- Next: add confidence scoring, outcome tracking, and options or catalyst confirmation
 
 ### Notes
 
-- Core inputs: movers, news, stock bars, assets, option contracts
-- More of a packaging and workflow feature than a new analytical primitive
-- Practical daily value, but less differentiated than catalyst tracking or auction studies
+- Folds together the chart-pattern engine and the market-structure or key-levels layer
+- Core inputs: stock bars, stock snapshots, auctions, movers, most actives, and live stock bar updates
+- Best fit is stock-first pattern detection, with options as confirmation rather than the primary surface
 
-## 17. Volatility And Regime Monitor
+## 17. Tradeability And Liquidity Confidence Layer
 
 - Status: proposed
-- Priority: medium
-- Scope: shared scoring / research layer
-- Why: regime changes matter, but the value is mostly as a modifier for other boards and alerts
-- Direction: detect quiet, expansion, trend, chop, and event-driven states from stock and option context together
-- V1: regime labels from stock bars, stock snapshots, option snapshots, and option bars
-- Next: use regime state as a shared modifier in UOA and catalyst scoring
+- Priority: high
+- Scope: shared scoring / alert integrity
+- Why: interesting setups are not automatically actionable setups, and the system needs one shared view of whether data and liquidity are good enough to trust
+- Direction: build a common confidence layer around freshness, spread quality, quote quality, trade activity, and data health
+- V1: stock and option quote quality, trade freshness, spread stability, and stale-data penalties
+- Next: make the layer a hard gate for high-confidence alerts and a visible explanation field on boards
 
 ### Notes
 
-- Better as shared infrastructure than as the next standalone product
-- Useful, but lower priority than outcome analytics and catalyst work
+- This remains separate because it is a cross-cutting integrity layer rather than a board or detector
+- Core inputs: quotes, trades, bars, feed-health state, and session mode
+- More important than adding another detector if the goal is signal quality
 
-## 18. Corporate Action Radar
+## 18. Research Platform And Experimentation
 
 - Status: proposed
-- Priority: medium
-- Scope: research / event studies
-- Why: corporate actions plus market data unlock a real but secondary research surface
-- Direction: study dividends, splits, and adjustment-heavy periods with stock and option context
-- V1: event studies around dividend and split windows using corporate actions, stock bars, stock snapshots, and option contracts
-- Next: flag adjusted-contract periods and compare behavior before and after the event window
+- Priority: high
+- Scope: shared data / research platform
+- Why: once the system has multiple ideas, it needs aligned datasets and a reproducible way to compare hypotheses instead of accumulating one-off research paths
+- Direction: combine the research dataset builder and experiment framework into one platform layer
+- V1: aligned stock, option, news, session, and evaluation datasets for shortlisted symbols and configurable experiment runs with saved results
+- Next: add parameter sweeps, benchmark comparison, and model-assisted ranking research
 
 ### Notes
 
-- Alpaca returned real corporate action data in the live probe, so the surface is usable
-- Corporate action lag keeps this below the other backlog items
-- Better as a later specialized research view than an early core feature
+- Folds together the feature-store idea and the experiment or hypothesis engine
+- Depends on the evaluation layer more than on new Alpaca endpoints
+- This is infrastructure, but very high-leverage infrastructure

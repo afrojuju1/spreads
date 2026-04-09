@@ -65,19 +65,17 @@ Redis
            v                                               |
 +----------+-----------+                                   |
 |       Workers        |-----------------------------------+
-| live_collector       |
-| broker_sync          |
-| session_exit_manager |
-| generator            |
-| post_close           |
-| post_market          |
+| fast lane            |
+| collector lane       |
+| analysis lane        |
+| generator lane       |
 +----------+-----------+                      |
            |                                  |
            v                                  v
 +----------+----------------------------------+-----------+
 |                    Postgres                              |
 | collector tables | execution tables | broker tables     |
-| jobs | alerts | generator_jobs | post_market tables     |
+| jobs | alerts | post_market tables                      |
 +----------------------------------------------------------+
 
 External edges:
@@ -345,7 +343,7 @@ These are adjacent subsystems, not part of the core trade ownership model.
 Generator:
 
 - runs one-off symbol idea generation jobs
-- stores job state in `generator_jobs`
+- stores job state in `job_runs` under the generator job type
 - exposes both HTTP and dedicated realtime updates
 
 Alerts:
@@ -388,7 +386,6 @@ jobs:
   job_definitions
   job_runs
   job_leases
-  generator_jobs
 
 alerts:
   alert_events

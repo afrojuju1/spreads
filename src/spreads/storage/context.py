@@ -7,7 +7,6 @@ from spreads.storage.capabilities import StorageCapabilities
 from spreads.storage.collector_repository import CollectorRepository
 from spreads.storage.db import build_session_factory
 from spreads.storage.execution_repository import ExecutionRepository
-from spreads.storage.generator_job_repository import GeneratorJobRepository
 from spreads.storage.job_repository import JobRepository
 from spreads.storage.ops_store import OpsStore
 from spreads.storage.post_market_repository import PostMarketAnalysisRepository
@@ -55,10 +54,6 @@ class StorageContext:
         return self.trading
 
     @property
-    def generator_jobs(self) -> GeneratorJobRepository:
-        return self._build_repository("generator_jobs", GeneratorJobRepository)  # type: ignore[return-value]
-
-    @property
     def history(self) -> RunHistoryRepository:
         return self._build_repository("history", RunHistoryRepository)  # type: ignore[return-value]
 
@@ -77,7 +72,6 @@ class StorageContext:
             store = OpsStore(
                 alerts=self.alerts,
                 jobs=self.jobs,
-                generator_jobs=self.generator_jobs,
                 post_market=self.post_market,
             )
             self._repositories["ops"] = store

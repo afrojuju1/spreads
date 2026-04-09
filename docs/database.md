@@ -72,7 +72,10 @@ ARQ orchestration defaults:
 
 ```bash
 uv run spreads-scheduler
-uv run arq spreads.jobs.worker.WorkerSettings
+uv run arq spreads.jobs.worker.FastWorkerSettings
+uv run arq spreads.jobs.worker.CollectorWorkerSettings
+uv run arq spreads.jobs.worker.AnalysisWorkerSettings
+uv run arq spreads.jobs.worker.GeneratorWorkerSettings
 ```
 
 Redis default connection URL:

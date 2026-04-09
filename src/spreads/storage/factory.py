@@ -6,7 +6,6 @@ from spreads.storage.broker_repository import BrokerRepository
 from spreads.storage.collector_repository import CollectorRepository
 from spreads.storage.context import StorageContext
 from spreads.storage.execution_repository import ExecutionRepository
-from spreads.storage.generator_job_repository import GeneratorJobRepository
 from spreads.storage.job_repository import JobRepository
 from spreads.storage.ops_store import OpsStore
 from spreads.storage.post_market_repository import PostMarketAnalysisRepository
@@ -62,13 +61,6 @@ def build_job_repository(path_or_url: str | None = None, *, context: StorageCont
         return context.jobs
     value = _resolve_postgres_url(path_or_url)
     return JobRepository(value)
-
-
-def build_generator_job_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):
-    if context is not None:
-        return context.generator_jobs
-    value = _resolve_postgres_url(path_or_url)
-    return GeneratorJobRepository(value)
 
 
 def build_execution_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):

@@ -520,6 +520,36 @@ def generator_result_summary(result: Mapping[str, Any] | None) -> dict[str, Any]
     }
 
 
+def build_generator_job_payload(
+    job_run: Mapping[str, Any],
+    *,
+    include_result: bool = True,
+) -> dict[str, Any]:
+    payload = dict(job_run)
+    request = dict(payload.get("payload") or {})
+    result = payload.get("result")
+    if not include_result:
+        result = None
+    resolved_result = payload.get("result") if isinstance(payload.get("result"), Mapping) else None
+    return {
+        "generator_job_id": str(payload["job_run_id"]),
+        "job_run_id": str(payload["job_run_id"]),
+        "job_key": payload.get("job_key"),
+        "job_type": payload.get("job_type"),
+        "arq_job_id": payload.get("arq_job_id"),
+        "symbol": str(request.get("symbol") or ""),
+        "status": str(payload.get("status") or "queued"),
+        "created_at": payload.get("scheduled_for"),
+        "scheduled_for": payload.get("scheduled_for"),
+        "started_at": payload.get("started_at"),
+        "finished_at": payload.get("finished_at"),
+        "request": request,
+        "result": result,
+        "summary": generator_result_summary(resolved_result),
+        "error_text": payload.get("error_text"),
+    }
+
+
 def generate_symbol_ideas(args: argparse.Namespace) -> dict[str, Any]:
     load_local_env()
     if not args.symbol:

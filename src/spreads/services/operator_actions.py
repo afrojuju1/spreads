@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Mapping
 from uuid import uuid4
 
 from spreads.alerts.dispatcher import resolve_session_date, send_or_skip_alert
 from spreads.db.decorators import with_storage
 from spreads.events.bus import publish_global_event_sync
 from spreads.services.live_pipelines import build_live_session_id
-from spreads.storage.records import GeneratorJobRecord
 
 MANUAL_ALERT_TYPE = "manual_generator_idea"
 
@@ -54,14 +53,18 @@ def _build_manual_cycle_id(label: str, bucket: str) -> str:
     return f"{timestamp}_{label}_manual_{bucket}_{uuid4().hex[:8]}".lower()
 
 
-def _get_generator_result(job: GeneratorJobRecord) -> dict[str, Any]:
+def _get_generator_result(job: Mapping[str, Any]) -> dict[str, Any]:
     result = job["result"]
     if not isinstance(result, dict):
         raise ValueError("Generator job does not have a completed result")
     return result
 
 
-def _resolve_candidate_run_id(job: GeneratorJobRecord, result: dict[str, Any], candidate: dict[str, Any]) -> str:
+def _resolve_candidate_run_id(
+    job: Mapping[str, Any],
+    result: dict[str, Any],
+    candidate: dict[str, Any],
+) -> str:
     for run in result.get("strategy_runs") or []:
         if not isinstance(run, dict):
             continue
@@ -74,7 +77,7 @@ def _resolve_candidate_run_id(job: GeneratorJobRecord, result: dict[str, Any], c
 
 
 def _find_job_candidate(
-    job: GeneratorJobRecord,
+    job: Mapping[str, Any],
     *,
     strategy: str,
     short_symbol: str,
@@ -101,7 +104,7 @@ def _find_job_candidate(
 @with_storage()
 def create_manual_generator_alert(
     *,
-    job: GeneratorJobRecord,
+    job: Mapping[str, Any],
     live_label: str,
     strategy: str,
     short_symbol: str,
@@ -180,7 +183,7 @@ def create_manual_generator_alert(
 @with_storage()
 def apply_generator_live_action(
     *,
-    job: GeneratorJobRecord,
+    job: Mapping[str, Any],
     live_label: str,
     bucket: str,
     strategy: str,

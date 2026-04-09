@@ -2,6 +2,15 @@ from __future__ import annotations
 
 import argparse
 
+from spreads.jobs.registry import (
+    BROKER_SYNC_JOB_TYPE,
+    GENERATOR_ADHOC_JOB_KEY,
+    GENERATOR_JOB_TYPE,
+    LIVE_COLLECTOR_JOB_TYPE,
+    POST_CLOSE_ANALYSIS_JOB_TYPE,
+    POST_MARKET_ANALYSIS_JOB_TYPE,
+    SESSION_EXIT_MANAGER_JOB_TYPE,
+)
 from spreads.runtime.config import default_database_url
 from spreads.storage.factory import build_job_repository
 
@@ -47,7 +56,7 @@ def seed_definitions(db: str) -> list[str]:
         definitions = [
             {
                 "job_key": "broker_sync:alpaca",
-                "job_type": "broker_sync",
+                "job_type": BROKER_SYNC_JOB_TYPE,
                 "enabled": True,
                 "schedule_type": "interval_minutes",
                 "schedule": {"minutes": 1},
@@ -60,7 +69,7 @@ def seed_definitions(db: str) -> list[str]:
             },
             {
                 "job_key": "session_exit_manager:live",
-                "job_type": "session_exit_manager",
+                "job_type": SESSION_EXIT_MANAGER_JOB_TYPE,
                 "enabled": True,
                 "schedule_type": "interval_minutes",
                 "schedule": {"minutes": 1},
@@ -71,7 +80,7 @@ def seed_definitions(db: str) -> list[str]:
             },
             {
                 "job_key": "live_collector:explore_10_combined_0dte_auto",
-                "job_type": "live_collector",
+                "job_type": LIVE_COLLECTOR_JOB_TYPE,
                 "enabled": True,
                 "schedule_type": "market_open_plus_minutes",
                 "schedule": {"minutes": -5},
@@ -96,7 +105,7 @@ def seed_definitions(db: str) -> list[str]:
             },
             {
                 "job_key": "live_collector:explore_10_combined_weekly_auto",
-                "job_type": "live_collector",
+                "job_type": LIVE_COLLECTOR_JOB_TYPE,
                 "enabled": True,
                 "schedule_type": "market_open_plus_minutes",
                 "schedule": {"minutes": -5},
@@ -121,7 +130,7 @@ def seed_definitions(db: str) -> list[str]:
             },
             {
                 "job_key": "live_collector:explore_10_combined_core_auto",
-                "job_type": "live_collector",
+                "job_type": LIVE_COLLECTOR_JOB_TYPE,
                 "enabled": True,
                 "schedule_type": "market_open_plus_minutes",
                 "schedule": {"minutes": -5},
@@ -146,7 +155,7 @@ def seed_definitions(db: str) -> list[str]:
             },
             {
                 "job_key": "post_close_analysis:live_collectors",
-                "job_type": "post_close_analysis",
+                "job_type": POST_CLOSE_ANALYSIS_JOB_TYPE,
                 "enabled": True,
                 "schedule_type": "market_close_plus_minutes",
                 "schedule": {"minutes": 15},
@@ -159,7 +168,7 @@ def seed_definitions(db: str) -> list[str]:
             },
             {
                 "job_key": "post_market_analysis:live_collectors",
-                "job_type": "post_market_analysis",
+                "job_type": POST_MARKET_ANALYSIS_JOB_TYPE,
                 "enabled": True,
                 "schedule_type": "market_close_plus_minutes",
                 "schedule": {"minutes": 45},
@@ -172,7 +181,7 @@ def seed_definitions(db: str) -> list[str]:
             },
             {
                 "job_key": "post_close_analysis:explore_10_combined_0dte_auto",
-                "job_type": "post_close_analysis",
+                "job_type": POST_CLOSE_ANALYSIS_JOB_TYPE,
                 "enabled": False,
                 "schedule_type": "market_close_plus_minutes",
                 "schedule": {"minutes": 15},
@@ -186,7 +195,7 @@ def seed_definitions(db: str) -> list[str]:
             },
             {
                 "job_key": "post_close_analysis:explore_10_combined_weekly_auto",
-                "job_type": "post_close_analysis",
+                "job_type": POST_CLOSE_ANALYSIS_JOB_TYPE,
                 "enabled": False,
                 "schedule_type": "market_close_plus_minutes",
                 "schedule": {"minutes": 15},
@@ -200,7 +209,7 @@ def seed_definitions(db: str) -> list[str]:
             },
             {
                 "job_key": "post_market_analysis:explore_10_combined_0dte_auto",
-                "job_type": "post_market_analysis",
+                "job_type": POST_MARKET_ANALYSIS_JOB_TYPE,
                 "enabled": False,
                 "schedule_type": "market_close_plus_minutes",
                 "schedule": {"minutes": 45},
@@ -214,7 +223,7 @@ def seed_definitions(db: str) -> list[str]:
             },
             {
                 "job_key": "post_market_analysis:explore_10_combined_weekly_auto",
-                "job_type": "post_market_analysis",
+                "job_type": POST_MARKET_ANALYSIS_JOB_TYPE,
                 "enabled": False,
                 "schedule_type": "market_close_plus_minutes",
                 "schedule": {"minutes": 45},
@@ -224,6 +233,15 @@ def seed_definitions(db: str) -> list[str]:
                     "replay_profit_target": 0.5,
                     "replay_stop_multiple": 2.0,
                 },
+                "singleton_scope": None,
+            },
+            {
+                "job_key": GENERATOR_ADHOC_JOB_KEY,
+                "job_type": GENERATOR_JOB_TYPE,
+                "enabled": False,
+                "schedule_type": "manual",
+                "schedule": {},
+                "payload": {},
                 "singleton_scope": None,
             },
         ]

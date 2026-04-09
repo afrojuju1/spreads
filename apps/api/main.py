@@ -25,6 +25,11 @@ from spreads.db.core import first_model_row, get_model_row, list_model_rows, to_
 from spreads.db.decorators import with_session
 from spreads.domain.profiles import UNIVERSE_PRESETS
 from spreads.events.bus import GLOBAL_EVENTS_CHANNEL, publish_global_event_async
+from spreads.jobs.registry import (
+    GENERATOR_ADHOC_JOB_KEY,
+    GENERATOR_JOB_TYPE,
+    get_job_spec,
+)
 from spreads.jobs.orchestration import (
     SCHEDULER_RUNTIME_LEASE_KEY,
     WORKER_RUNTIME_LEASE_PREFIX,
@@ -39,9 +44,9 @@ from spreads.services.analysis import (
 )
 from spreads.services.generator import (
     build_generator_args,
+    build_generator_job_payload,
     generate_symbol_ideas,
     generator_job_channel,
-    generator_result_summary,
     list_generator_symbol_suggestions,
 )
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
@@ -68,10 +73,7 @@ from spreads.storage.collector_models import (
     CollectorCycleEventModel,
     CollectorCycleModel,
 )
-from spreads.storage.factory import (
-    build_generator_job_repository,
-)
-from spreads.storage.generator_job_models import GeneratorJobModel
+from spreads.storage.factory import build_job_repository
 from spreads.storage.job_models import JobDefinitionModel, JobLeaseModel, JobRunModel
 from spreads.storage.models import ScanCandidateModel, ScanRunModel
 from spreads.storage.post_market_models import PostMarketAnalysisRunModel
@@ -151,12 +153,19 @@ def _generator_request_payload(payload: GeneratorRequest, *, db_target: str) -> 
 
 
 def _generator_job_payload(job: Any, *, include_result: bool = True) -> dict[str, Any]:
-    payload = job.to_dict()
-    result = payload.get("result") if include_result else None
-    payload["summary"] = generator_result_summary(result)
-    if not include_result:
-        payload.pop("result", None)
-    return payload
+    return build_generator_job_payload(job, include_result=include_result)
+
+
+def _ensure_generator_job_definition(job_store: Any) -> None:
+    job_store.upsert_job_definition(
+        job_key=GENERATOR_ADHOC_JOB_KEY,
+        job_type=GENERATOR_JOB_TYPE,
+        enabled=False,
+        schedule_type="manual",
+        schedule={},
+        payload={},
+        singleton_scope=None,
+    )
 
 
 def _job_run_payload(run: Any) -> dict[str, Any]:
@@ -197,12 +206,12 @@ def _list_generator_job_rows(
     db_target: str | None = None,
     session: Session | None = None,
 ) -> list[dict[str, Any]]:
-    statement = select(GeneratorJobModel)
+    statement = select(JobRunModel).where(JobRunModel.job_type == GENERATOR_JOB_TYPE)
     if symbol:
-        statement = statement.where(GeneratorJobModel.symbol == symbol.upper())
+        statement = statement.where(JobRunModel.payload_json["symbol"].astext == symbol.upper())
     if status:
-        statement = statement.where(GeneratorJobModel.status == status)
-    statement = statement.order_by(GeneratorJobModel.created_at.desc()).limit(limit)
+        statement = statement.where(JobRunModel.status == status)
+    statement = statement.order_by(JobRunModel.scheduled_for.desc(), JobRunModel.job_run_id.desc()).limit(limit)
     return [_generator_job_payload(row, include_result=False) for row in list_model_rows(session, statement)]
 
 
@@ -213,7 +222,10 @@ def _get_generator_job_row(
     db_target: str | None = None,
     session: Session | None = None,
 ) -> Any | None:
-    return get_model_row(session, GeneratorJobModel, generator_job_id)
+    row = get_model_row(session, JobRunModel, generator_job_id)
+    if row is None or str(row["job_type"]) != GENERATOR_JOB_TYPE:
+        return None
+    return row
 
 
 @with_session()
@@ -611,29 +623,45 @@ def list_generator_symbols(
 @app.post("/generator/jobs")
 async def create_generator_job(payload: GeneratorJobRequest, db: str | None = None) -> dict[str, Any]:
     db_target = resolve_db(db)
-    store = build_generator_job_repository(db_target)
+    job_store = build_job_repository(db_target)
     redis = await create_pool(build_redis_settings(default_redis_url()))
     try:
+        spec = get_job_spec(GENERATOR_JOB_TYPE)
+        if spec is None:
+            raise RuntimeError("Generator job type is not registered")
         generator_job_id = f"generator:{uuid4().hex}"
+        created_at = datetime.now(UTC)
         request_payload = _generator_request_payload(payload, db_target=db_target)
-        job = store.create_job(
-            generator_job_id=generator_job_id,
+        _ensure_generator_job_definition(job_store)
+        job, _ = job_store.create_job_run(
+            job_run_id=generator_job_id,
+            job_key=GENERATOR_ADHOC_JOB_KEY,
             arq_job_id=generator_job_id,
-            symbol=payload.symbol.upper(),
-            created_at=datetime.now(UTC),
-            request=request_payload,
+            job_type=GENERATOR_JOB_TYPE,
             status="queued",
+            scheduled_for=created_at,
+            payload={
+                **request_payload,
+                "job_key": GENERATOR_ADHOC_JOB_KEY,
+                "job_type": GENERATOR_JOB_TYPE,
+                "scheduled_for": created_at.isoformat().replace("+00:00", "Z"),
+            },
         )
         try:
             await redis.enqueue_job(
-                "run_generator_job",
+                spec.task_name,
+                GENERATOR_ADHOC_JOB_KEY,
                 generator_job_id,
-                request_payload,
+                job["payload"],
+                generator_job_id,
                 _job_id=generator_job_id,
+                _queue_name=spec.queue_name,
             )
         except Exception as exc:
-            job = store.fail_job(
-                generator_job_id=generator_job_id,
+            job = job_store.update_job_run_status(
+                job_run_id=generator_job_id,
+                status="failed",
+                expected_arq_job_id=generator_job_id,
                 finished_at=datetime.now(UTC),
                 error_text=str(exc),
             )
@@ -641,7 +669,7 @@ async def create_generator_job(payload: GeneratorJobRequest, db: str | None = No
                 await publish_global_event_async(
                     redis,
                     topic="generator.job.updated",
-                    entity_type="generator_job",
+                    entity_type="job_run",
                     entity_id=generator_job_id,
                     payload=_generator_job_payload(job),
                 )
@@ -652,7 +680,7 @@ async def create_generator_job(payload: GeneratorJobRequest, db: str | None = No
             await publish_global_event_async(
                 redis,
                 topic="generator.job.updated",
-                entity_type="generator_job",
+                entity_type="job_run",
                 entity_id=generator_job_id,
                 payload=_generator_job_payload(job),
             )
@@ -660,8 +688,8 @@ async def create_generator_job(payload: GeneratorJobRequest, db: str | None = No
             pass
         return _generator_job_payload(job)
     finally:
-        await redis.close()
-        store.close()
+        await redis.aclose()
+        job_store.close()
 
 
 @app.get("/generator/jobs")
@@ -700,40 +728,37 @@ def apply_generator_job_action(
     db: str | None = None,
 ) -> dict[str, Any]:
     db_target = resolve_db(db)
-    store = build_generator_job_repository(db_target)
+    job = _get_generator_job_row(generator_job_id=generator_job_id, db_target=db_target)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Generator job not found")
+    job_payload = _generator_job_payload(job)
     try:
-        job = store.get_job(generator_job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail="Generator job not found")
-        try:
-            if payload.action == "create_alert":
-                if not payload.live_label:
-                    raise HTTPException(status_code=400, detail="live_label is required to create an alert")
-                return create_manual_generator_alert(
-                    job=job,
-                    live_label=payload.live_label,
-                    strategy=payload.strategy,
-                    short_symbol=payload.short_symbol,
-                    long_symbol=payload.long_symbol,
-                    db_target=db_target,
-                )
+        if payload.action == "create_alert":
             if not payload.live_label:
-                raise HTTPException(status_code=400, detail="live_label is required to update live workflow")
-            if payload.bucket is None:
-                raise HTTPException(status_code=400, detail="bucket is required to update live workflow")
-            return apply_generator_live_action(
-                job=job,
+                raise HTTPException(status_code=400, detail="live_label is required to create an alert")
+            return create_manual_generator_alert(
+                job=job_payload,
                 live_label=payload.live_label,
-                bucket=payload.bucket,
                 strategy=payload.strategy,
                 short_symbol=payload.short_symbol,
                 long_symbol=payload.long_symbol,
                 db_target=db_target,
             )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-    finally:
-        store.close()
+        if not payload.live_label:
+            raise HTTPException(status_code=400, detail="live_label is required to update live workflow")
+        if payload.bucket is None:
+            raise HTTPException(status_code=400, detail="bucket is required to update live workflow")
+        return apply_generator_live_action(
+            job=job_payload,
+            live_label=payload.live_label,
+            bucket=payload.bucket,
+            strategy=payload.strategy,
+            short_symbol=payload.short_symbol,
+            long_symbol=payload.long_symbol,
+            db_target=db_target,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.websocket("/ws/events")
@@ -764,13 +789,11 @@ async def global_events_ws(websocket: WebSocket) -> None:
 
 @app.websocket("/ws/generator/{generator_job_id}")
 async def generator_job_ws(websocket: WebSocket, generator_job_id: str, db: str | None = None) -> None:
-    db_target = resolve_db(db)
-    store = build_generator_job_repository(db_target)
     redis = redis_async.from_url(default_redis_url(), decode_responses=True)
     pubsub = redis.pubsub()
     channel = generator_job_channel(generator_job_id)
     try:
-        job = store.get_job(generator_job_id)
+        job = _get_generator_job_row(generator_job_id=generator_job_id, db_target=resolve_db(db))
         await websocket.accept()
         if job is None:
             await websocket.send_json({"type": "error", "detail": "Generator job not found"})
@@ -795,7 +818,6 @@ async def generator_job_ws(websocket: WebSocket, generator_job_id: str, db: str 
         await pubsub.unsubscribe(channel)
         await pubsub.aclose()
         await redis.aclose()
-        store.close()
 
 
 @app.get("/live/{label}")
