@@ -4,7 +4,7 @@ from datetime import date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, delete, select
+from sqlalchemy import and_, delete, func, select
 
 from spreads.storage.base import RepositoryBase
 from spreads.storage.collector_models import (
@@ -219,6 +219,62 @@ class CollectorRepository(RepositoryBase):
         if cycle is None:
             return None
         return self.row(cycle)
+
+    def list_latest_cycles_by_session_ids(
+        self,
+        session_ids: list[str],
+    ) -> list[CollectorCycleRecord]:
+        if not session_ids:
+            return []
+        ranked_cycles = (
+            select(
+                CollectorCycleModel.cycle_id.label("cycle_id"),
+                func.row_number()
+                .over(
+                    partition_by=CollectorCycleModel.session_id,
+                    order_by=(
+                        CollectorCycleModel.generated_at.desc(),
+                        CollectorCycleModel.cycle_id.desc(),
+                    ),
+                )
+                .label("cycle_rank"),
+            )
+            .where(CollectorCycleModel.session_id.in_(session_ids))
+            .subquery()
+        )
+        statement = (
+            select(CollectorCycleModel)
+            .join(ranked_cycles, CollectorCycleModel.cycle_id == ranked_cycles.c.cycle_id)
+            .where(ranked_cycles.c.cycle_rank == 1)
+        )
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return self.rows(rows)
+
+    def count_cycle_candidates_by_cycle_ids(
+        self,
+        cycle_ids: list[str],
+    ) -> dict[str, dict[str, int]]:
+        if not cycle_ids:
+            return {}
+        statement = (
+            select(
+                CollectorCycleCandidateModel.cycle_id,
+                CollectorCycleCandidateModel.bucket,
+                func.count().label("candidate_count"),
+            )
+            .where(CollectorCycleCandidateModel.cycle_id.in_(cycle_ids))
+            .group_by(
+                CollectorCycleCandidateModel.cycle_id,
+                CollectorCycleCandidateModel.bucket,
+            )
+        )
+        with self.session_factory() as session:
+            rows = session.execute(statement).all()
+        counts: dict[str, dict[str, int]] = {}
+        for cycle_id, bucket, candidate_count in rows:
+            counts.setdefault(str(cycle_id), {})[str(bucket)] = int(candidate_count or 0)
+        return counts
 
     def list_cycle_candidates(
         self,

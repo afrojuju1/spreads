@@ -56,7 +56,12 @@ from spreads.services.execution import (
     submit_session_position_close,
     submit_live_session_execution,
 )
-from spreads.services.sessions import get_session_detail, list_existing_sessions
+from spreads.services.sessions import (
+    DEFAULT_ANALYSIS_PROFIT_TARGET,
+    DEFAULT_ANALYSIS_STOP_MULTIPLE,
+    get_session_detail,
+    list_existing_sessions,
+)
 from spreads.storage.alert_models import AlertEventModel
 from spreads.storage.collector_models import (
     CollectorCycleCandidateModel,
@@ -449,19 +454,39 @@ def _get_jobs_health_payload(
         .where(JobLeaseModel.expires_at > func.now())
         .order_by(JobLeaseModel.expires_at.desc(), JobLeaseModel.lease_key.asc()),
     )
-    latest_collectors: dict[str, Any] = {}
-    for definition in definitions:
-        if definition["job_type"] != "live_collector":
-            continue
-        latest_run = first_model_row(
+    collector_job_keys = [
+        str(definition["job_key"])
+        for definition in definitions
+        if definition["job_type"] == "live_collector"
+    ]
+    latest_collectors = {job_key: None for job_key in collector_job_keys}
+    if collector_job_keys:
+        ranked_runs = (
+            select(
+                JobRunModel.job_run_id.label("job_run_id"),
+                func.row_number()
+                .over(
+                    partition_by=JobRunModel.job_key,
+                    order_by=(JobRunModel.scheduled_for.desc(), JobRunModel.job_run_id.desc()),
+                )
+                .label("run_rank"),
+            )
+            .where(JobRunModel.job_key.in_(collector_job_keys))
+            .where(JobRunModel.status == "succeeded")
+            .subquery()
+        )
+        latest_run_rows = list_model_rows(
             session,
             select(JobRunModel)
-            .where(JobRunModel.job_key == str(definition["job_key"]))
-            .where(JobRunModel.status == "succeeded")
-            .order_by(JobRunModel.scheduled_for.desc(), JobRunModel.job_run_id.desc())
-            .limit(1),
+            .join(ranked_runs, JobRunModel.job_run_id == ranked_runs.c.job_run_id)
+            .where(ranked_runs.c.run_rank == 1),
         )
-        latest_collectors[str(definition["job_key"])] = None if latest_run is None else _job_run_payload(latest_run)
+        latest_collectors.update(
+            {
+                str(row["job_key"]): _job_run_payload(row)
+                for row in latest_run_rows
+            }
+        )
     return {
         "scheduler": None if scheduler is None else scheduler.to_dict(),
         "workers": [row.to_dict() for row in workers],
@@ -1049,14 +1074,33 @@ def get_analysis_report(
     replay_stop_multiple: float = Query(default=2.0, gt=0),
     db: str | None = None,
 ) -> dict[str, Any]:
-    summary = build_session_summary(
-        db_target=resolve_db(db),
-        session_date=session_date,
-        label=label,
-        profit_target=replay_profit_target,
-        stop_multiple=replay_stop_multiple,
-    )
-    content = render_session_summary_markdown(summary)
+    content: str | None = None
+    if (
+        abs(float(replay_profit_target) - DEFAULT_ANALYSIS_PROFIT_TARGET) < 1e-9
+        and abs(float(replay_stop_multiple) - DEFAULT_ANALYSIS_STOP_MULTIPLE) < 1e-9
+    ):
+        analysis_run = _get_latest_post_market_run_row(
+            session_date=session_date,
+            label=label,
+            db_target=resolve_db(db),
+        )
+        if analysis_run is not None:
+            stored_report = analysis_run.get("report_markdown")
+            if isinstance(stored_report, str) and stored_report.strip():
+                content = stored_report
+            else:
+                stored_summary = analysis_run.get("summary")
+                if isinstance(stored_summary, dict):
+                    content = render_session_summary_markdown(stored_summary)
+    if content is None:
+        summary = build_session_summary(
+            db_target=resolve_db(db),
+            session_date=session_date,
+            label=label,
+            profit_target=replay_profit_target,
+            stop_multiple=replay_stop_multiple,
+        )
+        content = render_session_summary_markdown(summary)
     return {"session_date": session_date, "label": label, "content": content}
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -31,6 +32,7 @@ HISTORY_RANGE_REQUESTS: dict[AccountHistoryRange, dict[str, str | None]] = {
         "intraday_reporting": None,
     },
 }
+ACCOUNT_OVERVIEW_LIVE_TIMEOUT_SECONDS = 5.0
 
 
 def _utc_now() -> str:
@@ -244,17 +246,26 @@ def _sync_payload(session: Session) -> dict[str, Any] | None:
     }
 
 
-def fetch_account_overview_live(*, history_range: str | None = None) -> dict[str, Any]:
+def fetch_account_overview_live(
+    *,
+    history_range: str | None = None,
+    request_timeout_seconds: float | None = None,
+) -> dict[str, Any]:
     resolved_history_range = normalize_history_range(history_range)
     history_request = HISTORY_RANGE_REQUESTS[resolved_history_range]
-    client = create_alpaca_client_from_env()
-    account_payload = client.get_account()
-    positions_payload = client.list_positions()
-    history_payload = client.get_account_portfolio_history(
-        period=history_request["period"],
-        timeframe=history_request["timeframe"],
-        intraday_reporting=history_request["intraday_reporting"],
-    )
+    client = create_alpaca_client_from_env(request_timeout_seconds=request_timeout_seconds)
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        account_future = executor.submit(client.get_account)
+        positions_future = executor.submit(client.list_positions)
+        history_future = executor.submit(
+            client.get_account_portfolio_history,
+            period=history_request["period"],
+            timeframe=history_request["timeframe"],
+            intraday_reporting=history_request["intraday_reporting"],
+        )
+        account_payload = account_future.result()
+        positions_payload = positions_future.result()
+        history_payload = history_future.result()
 
     account = _normalize_account(account_payload)
     return {
@@ -297,7 +308,10 @@ def get_account_overview(
 ) -> dict[str, Any]:
     sync = _sync_payload(session)
     try:
-        overview = fetch_account_overview_live(history_range=history_range)
+        overview = fetch_account_overview_live(
+            history_range=history_range,
+            request_timeout_seconds=ACCOUNT_OVERVIEW_LIVE_TIMEOUT_SECONDS,
+        )
     except Exception:
         snapshot = None
         if _schema_ready(session):

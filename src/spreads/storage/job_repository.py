@@ -188,6 +188,79 @@ class JobRepository(RepositoryBase):
             rows = session.scalars(statement).all()
         return self.rows(rows)
 
+    def list_latest_runs_by_session_ids(
+        self,
+        *,
+        session_ids: list[str],
+        job_type: str | None = None,
+        statuses: list[str] | None = None,
+    ) -> list[JobRunRecord]:
+        if not session_ids:
+            return []
+        ranked_runs = (
+            select(
+                JobRunModel.job_run_id.label("job_run_id"),
+                func.row_number()
+                .over(
+                    partition_by=JobRunModel.session_id,
+                    order_by=(
+                        JobRunModel.scheduled_for.desc(),
+                        JobRunModel.job_run_id.desc(),
+                    ),
+                )
+                .label("run_rank"),
+            )
+            .where(JobRunModel.session_id.in_(session_ids))
+        )
+        if job_type:
+            ranked_runs = ranked_runs.where(JobRunModel.job_type == job_type)
+        if statuses:
+            ranked_runs = ranked_runs.where(JobRunModel.status.in_(statuses))
+        ranked_runs = ranked_runs.subquery()
+        statement = (
+            select(JobRunModel)
+            .join(ranked_runs, JobRunModel.job_run_id == ranked_runs.c.job_run_id)
+            .where(ranked_runs.c.run_rank == 1)
+        )
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return self.rows(rows)
+
+    def list_latest_runs_by_job_keys(
+        self,
+        *,
+        job_keys: list[str],
+        statuses: list[str] | None = None,
+    ) -> list[JobRunRecord]:
+        if not job_keys:
+            return []
+        ranked_runs = (
+            select(
+                JobRunModel.job_run_id.label("job_run_id"),
+                func.row_number()
+                .over(
+                    partition_by=JobRunModel.job_key,
+                    order_by=(
+                        JobRunModel.scheduled_for.desc(),
+                        JobRunModel.job_run_id.desc(),
+                    ),
+                )
+                .label("run_rank"),
+            )
+            .where(JobRunModel.job_key.in_(job_keys))
+        )
+        if statuses:
+            ranked_runs = ranked_runs.where(JobRunModel.status.in_(statuses))
+        ranked_runs = ranked_runs.subquery()
+        statement = (
+            select(JobRunModel)
+            .join(ranked_runs, JobRunModel.job_run_id == ranked_runs.c.job_run_id)
+            .where(ranked_runs.c.run_rank == 1)
+        )
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return self.rows(rows)
+
     def list_session_ids(
         self,
         *,

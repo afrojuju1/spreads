@@ -10,7 +10,7 @@ from spreads.integrations.alpaca.client import (
 )
 
 
-def create_alpaca_client_from_env() -> AlpacaClient:
+def create_alpaca_client_from_env(*, request_timeout_seconds: float | None = None) -> AlpacaClient:
     load_local_env()
     key_id = env_or_die("APCA_API_KEY_ID", "ALPACA_API_KEY")
     secret_key = env_or_die("APCA_API_SECRET_KEY", "ALPACA_SECRET_KEY")
@@ -21,6 +21,7 @@ def create_alpaca_client_from_env() -> AlpacaClient:
         secret_key=secret_key,
         trading_base_url=trading_base_url,
         data_base_url=data_base_url,
+        request_timeout_seconds=30.0 if request_timeout_seconds is None else float(request_timeout_seconds),
     )
 
 

@@ -6,7 +6,7 @@ from typing import Any
 import pandas_market_calendars as mcal
 
 from spreads.db.decorators import with_storage
-from spreads.services.execution_portfolio import build_session_execution_portfolio
+from spreads.services.execution_portfolio import refresh_session_position_marks
 from spreads.storage.serializers import parse_datetime
 
 OPEN_POSITION_STATUSES = ["open", "partial_close"]
@@ -166,12 +166,11 @@ def _has_open_close_attempt(execution_store: Any, session_position_id: str) -> b
 
 
 def _refresh_open_position_marks(*, db_target: str, session_ids: list[str], storage: Any | None = None) -> None:
-    for session_id in session_ids:
-        build_session_execution_portfolio(
-            db_target=db_target,
-            session_id=session_id,
-            storage=storage,
-        )
+    refresh_session_position_marks(
+        db_target=db_target,
+        session_ids=session_ids,
+        storage=storage,
+    )
 
 
 @with_storage()

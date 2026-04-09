@@ -830,9 +830,11 @@ class AlpacaClient:
         secret_key: str,
         trading_base_url: str,
         data_base_url: str,
+        request_timeout_seconds: float = 30.0,
     ) -> None:
         self.trading_base_url = trading_base_url.rstrip("/")
         self.data_base_url = data_base_url.rstrip("/")
+        self.request_timeout_seconds = float(request_timeout_seconds)
         self.headers = {
             "APCA-API-KEY-ID": key_id,
             "APCA-API-SECRET-KEY": secret_key,
@@ -865,7 +867,7 @@ class AlpacaClient:
             method=method.upper(),
         )
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
+            with urllib.request.urlopen(request, timeout=self.request_timeout_seconds) as response:
                 return json.load(response)
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")

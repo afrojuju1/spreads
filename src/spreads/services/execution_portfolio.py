@@ -4,10 +4,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from spreads.db.decorators import with_storage
-from spreads.services.risk_manager import assess_position_risk
 from spreads.services.alpaca import create_alpaca_client_from_env
+from spreads.services.risk_manager import assess_position_risk
 from spreads.services.scanner import LiveOptionQuote
-from spreads.services.session_positions import sync_session_position_from_attempt
 
 QUOTE_FEEDS = ("opra", "indicative")
 OPEN_POSITION_STATUSES = {"open", "partial_close"}
@@ -151,6 +150,99 @@ def _empty_portfolio() -> dict[str, Any]:
 
 
 @with_storage()
+def refresh_session_position_marks(
+    *,
+    db_target: str,
+    session_ids: list[str] | None = None,
+    storage: Any | None = None,
+) -> dict[str, Any]:
+    execution_store = storage.execution
+    if not execution_store.positions_schema_ready():
+        return {
+            "status": "skipped",
+            "reason": "positions_schema_unavailable",
+        }
+
+    open_positions = [
+        position.to_dict()
+        for position in execution_store.list_session_positions(
+            statuses=sorted(OPEN_POSITION_STATUSES),
+            limit=500,
+        )
+    ]
+    if session_ids is not None:
+        allowed_session_ids = {str(session_id) for session_id in session_ids}
+        open_positions = [
+            position
+            for position in open_positions
+            if str(position.get("session_id")) in allowed_session_ids
+        ]
+    if not open_positions:
+        return {
+            "status": "ok",
+            "position_count": 0,
+            "updated_position_count": 0,
+            "quoted_position_count": 0,
+            "unquoted_position_count": 0,
+            "mark_error": None,
+            "retrieved_at": _utc_now(),
+        }
+
+    quote_symbols = sorted(
+        {
+            str(symbol)
+            for position in open_positions
+            for symbol in (position.get("short_symbol"), position.get("long_symbol"))
+            if symbol
+        }
+    )
+    quotes, sources, mark_error = _fetch_latest_quotes(quote_symbols)
+    retrieved_at = _utc_now()
+    updated_position_count = 0
+    quoted_position_count = 0
+
+    for position in open_positions:
+        remaining_quantity = _coerce_float(position.get("remaining_quantity")) or 0.0
+        entry_credit = _coerce_float(position.get("entry_credit"))
+        short_symbol = str(position["short_symbol"])
+        long_symbol = str(position["long_symbol"])
+        short_quote = quotes.get(short_symbol)
+        long_quote = quotes.get(long_symbol)
+        if (
+            remaining_quantity <= 0
+            or entry_credit is None
+            or short_quote is None
+            or long_quote is None
+        ):
+            continue
+        spread_mark_close = max(short_quote.ask - long_quote.bid, 0.0)
+        unrealized_pnl = (entry_credit - spread_mark_close) * 100.0 * remaining_quantity
+        execution_store.update_session_position(
+            session_position_id=str(position["session_position_id"]),
+            close_mark=_round_money(spread_mark_close),
+            close_mark_source=_mark_source_for_symbols(sources, short_symbol, long_symbol),
+            close_marked_at=_max_timestamp(short_quote.timestamp, long_quote.timestamp),
+            unrealized_pnl=_round_money(unrealized_pnl),
+            updated_at=retrieved_at,
+        )
+        updated_position_count += 1
+        quoted_position_count += 1
+
+    status = "ok"
+    if mark_error and quoted_position_count < len(open_positions):
+        status = "degraded"
+    return {
+        "status": status,
+        "position_count": len(open_positions),
+        "updated_position_count": updated_position_count,
+        "quoted_position_count": quoted_position_count,
+        "unquoted_position_count": len(open_positions) - quoted_position_count,
+        "mark_error": mark_error,
+        "retrieved_at": retrieved_at,
+    }
+
+
+@with_storage()
 def build_session_execution_portfolio(
     *,
     db_target: str,
@@ -163,30 +255,12 @@ def build_session_execution_portfolio(
         if not resolved_execution_store.positions_schema_ready():
             return _empty_portfolio()
 
-        for attempt in executions or []:
-            sync_session_position_from_attempt(
-                execution_store=resolved_execution_store,
-                attempt=attempt,
-            )
-
         persisted_positions = [
             position.to_dict()
             for position in resolved_execution_store.list_session_positions(session_id=session_id)
         ]
         if not persisted_positions:
             return _empty_portfolio()
-
-        quote_symbols: set[str] = set()
-        for position in persisted_positions:
-            if str(position.get("status") or "") in OPEN_POSITION_STATUSES:
-                quote_symbols.update(
-                    {
-                        str(position["short_symbol"]),
-                        str(position["long_symbol"]),
-                    }
-                )
-
-        quotes, sources, mark_error = _fetch_latest_quotes(sorted(quote_symbols))
         retrieved_at = _utc_now()
         positions: list[dict[str, Any]] = []
 
@@ -196,29 +270,15 @@ def build_session_execution_portfolio(
             entry_credit = _coerce_float(persisted.get("entry_credit"))
             short_symbol = str(persisted["short_symbol"])
             long_symbol = str(persisted["long_symbol"])
-            short_quote = quotes.get(short_symbol)
-            long_quote = quotes.get(long_symbol)
-            mark_source = _mark_source_for_symbols(sources, short_symbol, long_symbol)
             spread_mark_midpoint = None
             spread_mark_close = _coerce_float(persisted.get("close_mark"))
             estimated_midpoint_pnl = None
             unrealized_pnl = _coerce_float(persisted.get("unrealized_pnl"))
             mark_timestamp = _as_text(persisted.get("close_marked_at"))
+            mark_source = _as_text(persisted.get("close_mark_source"))
 
-            if status in OPEN_POSITION_STATUSES and short_quote is not None and long_quote is not None and entry_credit is not None:
-                spread_mark_midpoint = max(short_quote.midpoint - long_quote.midpoint, 0.0)
-                spread_mark_close = max(short_quote.ask - long_quote.bid, 0.0)
-                estimated_midpoint_pnl = (entry_credit - spread_mark_midpoint) * 100.0 * remaining_quantity
+            if status in OPEN_POSITION_STATUSES and entry_credit is not None and spread_mark_close is not None:
                 unrealized_pnl = (entry_credit - spread_mark_close) * 100.0 * remaining_quantity
-                mark_timestamp = _max_timestamp(short_quote.timestamp, long_quote.timestamp)
-                resolved_execution_store.update_session_position(
-                    session_position_id=str(persisted["session_position_id"]),
-                    close_mark=_round_money(spread_mark_close),
-                    close_mark_source=mark_source,
-                    close_marked_at=mark_timestamp,
-                    unrealized_pnl=_round_money(unrealized_pnl),
-                    updated_at=retrieved_at,
-                )
             elif status == "closed":
                 unrealized_pnl = 0.0
 
@@ -270,8 +330,8 @@ def build_session_execution_portfolio(
                     "last_reconciled_at": _as_text(persisted.get("last_reconciled_at")),
                     "last_exit_evaluated_at": _as_text(persisted.get("last_exit_evaluated_at")),
                     "last_exit_reason": _as_text(persisted.get("last_exit_reason")),
-                    "short_quote": None if short_quote is None else _quote_payload(short_quote, source=sources[short_symbol]),
-                    "long_quote": None if long_quote is None else _quote_payload(long_quote, source=sources[long_symbol]),
+                    "short_quote": None,
+                    "long_quote": None,
                 }
             )
 
@@ -333,7 +393,7 @@ def build_session_execution_portfolio(
                 "unquoted_position_count": len(open_positions) + len(partial_positions) - quoted_position_count,
                 "mismatch_position_count": len(mismatch_positions),
                 "mark_source": None if not mark_sources else (next(iter(mark_sources)) if len(mark_sources) == 1 else "mixed"),
-                "mark_error": mark_error,
+                "mark_error": None,
                 "retrieved_at": retrieved_at,
             },
             "positions": positions,

@@ -8,6 +8,7 @@ from spreads.events.bus import publish_global_event_sync
 from spreads.services.account_state import fetch_account_overview_live
 from spreads.services.alpaca import create_alpaca_client_from_env
 from spreads.services.execution import OPEN_STATUSES, refresh_live_session_execution
+from spreads.services.execution_portfolio import refresh_session_position_marks
 from spreads.services.session_positions import sync_session_position_from_attempt
 from spreads.storage.serializers import parse_datetime
 
@@ -342,6 +343,11 @@ def run_broker_sync(
             )
             for position in open_positions
         ]
+        mark_summary = refresh_session_position_marks(
+            db_target=db_target,
+            session_ids=sorted({str(position["session_id"]) for position in open_positions}),
+            storage=storage,
+        )
         mismatch_positions = [
             position
             for position in reconciled_positions
@@ -368,6 +374,8 @@ def run_broker_sync(
             "open_position_count": len(open_positions),
             "mismatch_position_count": len(mismatch_positions),
             "orphan_broker_position_count": len(orphan_broker_positions),
+            "marked_position_count": int(mark_summary.get("updated_position_count") or 0),
+            "unquoted_position_count": int(mark_summary.get("unquoted_position_count") or 0),
             "activity_count": activity_summary["activity_count"],
             "matched_activity_count": activity_summary["matched_activity_count"],
             "unmatched_activity_count": activity_summary["unmatched_activity_count"],
@@ -376,7 +384,13 @@ def run_broker_sync(
             "last_activity_timestamp": activity_summary["latest_activity_timestamp"],
         }
         status = "healthy"
-        if refresh_errors or activity_summary["error_count"] or mismatch_positions or orphan_broker_positions:
+        if (
+            refresh_errors
+            or activity_summary["error_count"]
+            or mismatch_positions
+            or orphan_broker_positions
+            or str(mark_summary.get("status")) == "degraded"
+        ):
             status = "degraded"
 
         state = broker_store.upsert_sync_state(
@@ -392,6 +406,7 @@ def run_broker_sync(
                 **summary,
                 "refresh_errors": refresh_errors[:25],
                 "activity_errors": activity_summary["errors"],
+                "mark_error": mark_summary.get("mark_error"),
                 "mismatch_positions": [
                     {
                         "session_position_id": position["session_position_id"],
@@ -420,6 +435,7 @@ def run_broker_sync(
             "summary": summary,
             "refresh_errors": refresh_errors[:25],
             "activity_errors": activity_summary["errors"],
+            "mark_error": mark_summary.get("mark_error"),
         }
     except Exception as exc:
         if broker_store.schema_ready():

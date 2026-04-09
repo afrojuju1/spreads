@@ -6,6 +6,7 @@ Based on:
 
 - [Alpaca Capabilities Statement](/Users/adeb/Projects/spreads/docs/research/alpaca_capabilities_statement.md)
 - [Alpaca UOA API Inventory](/Users/adeb/Projects/spreads/docs/research/alpaca_uoa_api_inventory.md)
+- [Alpaca Option Trade Condition Research](/Users/adeb/Projects/spreads/docs/research/alpaca_option_trade_condition_research.md)
 - [Current System State](/Users/adeb/Projects/spreads/docs/current_system_state.md)
 
 ## Goal
@@ -286,6 +287,8 @@ Trade normalization for v1:
 - exclude all cancel, correction, late, floor, multi-leg, stock-option, compression, and extended-hours trade conditions from anomaly scoring
 - if a trade carries multiple condition flags, every flag must be in the allowlist or the trade is excluded from anomaly scoring
 - keep excluded trades in raw storage if captured, but do not let them affect premium, volume, trade count, or aggressiveness signals
+- treat condition codes as case-sensitive; `J` and `j` are different conditions
+- do not reject a contract from monitoring only because its snapshot `latestTrade.c` is excluded; normalize at the trade-event level
 
 Quote validity for v1:
 

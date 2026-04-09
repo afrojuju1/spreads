@@ -221,41 +221,84 @@ def list_existing_sessions(
     candidate_session_ids.update(
         collector_store.list_session_ids(session_date=session_date, limit=max(limit * 10, 200))
     )
+    if not candidate_session_ids:
+        return {"sessions": []}
 
-    session_rows: list[dict[str, Any]] = []
-    for session_id in candidate_session_ids:
-        identity = _resolve_session_identity(
-            session_id,
-            collector_store=collector_store,
-            job_store=job_store,
+    latest_cycles = collector_store.list_latest_cycles_by_session_ids(sorted(candidate_session_ids))
+    latest_cycles_by_session_id = {
+        str(cycle["session_id"]): cycle.to_dict()
+        for cycle in latest_cycles
+        if cycle.get("session_id")
+    }
+    latest_runs = [
+        enrich_live_collector_job_run_payload(row.to_dict())
+        for row in job_store.list_latest_runs_by_session_ids(
+            session_ids=sorted(candidate_session_ids),
+            job_type="live_collector",
         )
+    ]
+    latest_runs_by_session_id = {
+        str(run["session_id"]): run
+        for run in latest_runs
+        if run.get("session_id")
+    }
+    candidate_counts_by_cycle_id = collector_store.count_cycle_candidates_by_cycle_ids(
+        [
+            str(cycle["cycle_id"])
+            for cycle in latest_cycles
+        ]
+    )
+
+    resolved_sessions: list[dict[str, Any]] = []
+    for session_id in candidate_session_ids:
+        identity = parse_live_session_id(session_id)
+        latest_cycle_payload = latest_cycles_by_session_id.get(session_id)
+        latest_run = latest_runs_by_session_id.get(session_id)
+        if identity is None and latest_cycle_payload is not None:
+            identity = {
+                "session_id": session_id,
+                "label": str(latest_cycle_payload["label"]),
+                "session_date": str(latest_cycle_payload["session_date"]),
+            }
+        if identity is None and latest_run is not None:
+            payload = latest_run.get("payload")
+            label = payload.get("label") if isinstance(payload, Mapping) else None
+            resolved_session_date = payload.get("session_date") if isinstance(payload, Mapping) else None
+            if isinstance(label, str) and isinstance(resolved_session_date, str):
+                identity = {
+                    "session_id": session_id,
+                    "label": label,
+                    "session_date": resolved_session_date,
+                }
         if identity is None:
             continue
         if session_date and identity["session_date"] != session_date:
             continue
-
-        runs = _sort_session_runs(
-            enrich_live_collector_job_run_payload(row.to_dict())
-            for row in job_store.list_job_runs(
-                job_type="live_collector",
-                session_id=session_id,
-                limit=12,
-            )
+        resolved_sessions.append(
+            {
+                "session_id": session_id,
+                "label": identity["label"],
+                "session_date": identity["session_date"],
+                "latest_run": latest_run,
+                "latest_cycle": latest_cycle_payload,
+            }
         )
-        latest_run = runs[0] if runs else None
-        latest_cycle = collector_store.get_latest_session_cycle(session_id)
-        latest_cycle_payload = None if latest_cycle is None else latest_cycle.to_dict()
 
-        board_count = 0
-        watchlist_count = 0
-        if latest_cycle is not None:
-            board_count = len(
-                collector_store.list_cycle_candidates(latest_cycle["cycle_id"], bucket="board")
-            )
-            watchlist_count = len(
-                collector_store.list_cycle_candidates(latest_cycle["cycle_id"], bucket="watchlist")
-            )
-
+    alert_counts = alert_store.count_alert_events_by_session_keys(
+        [
+            (str(row["session_date"]), str(row["label"]))
+            for row in resolved_sessions
+        ]
+    )
+    session_rows: list[dict[str, Any]] = []
+    for row in resolved_sessions:
+        latest_run = row["latest_run"]
+        latest_cycle_payload = row["latest_cycle"]
+        cycle_counts = (
+            candidate_counts_by_cycle_id.get(str(latest_cycle_payload["cycle_id"]), {})
+            if latest_cycle_payload is not None
+            else {}
+        )
         updated_at = _latest_activity_timestamp(
             None if latest_run is None else str(latest_run.get("finished_at") or ""),
             None if latest_run is None else str(latest_run.get("heartbeat_at") or ""),
@@ -263,12 +306,11 @@ def list_existing_sessions(
             None if latest_run is None else str(latest_run.get("slot_at") or latest_run.get("scheduled_for") or ""),
             None if latest_cycle_payload is None else str(latest_cycle_payload.get("generated_at") or ""),
         )
-
         session_rows.append(
             {
-                "session_id": session_id,
-                "label": identity["label"],
-                "session_date": identity["session_date"],
+                "session_id": row["session_id"],
+                "label": row["label"],
+                "session_date": row["session_date"],
                 "status": _derive_session_status(latest_run=latest_run, latest_cycle=latest_cycle_payload),
                 "latest_slot_at": None if latest_run is None else latest_run.get("slot_at"),
                 "latest_slot_status": None if latest_run is None else latest_run.get("status"),
@@ -282,12 +324,9 @@ def list_existing_sessions(
                 "recovery_quote_events_saved": 0
                 if latest_run is None
                 else int((latest_run.get("quote_capture") or {}).get("recovery_quote_events_saved") or 0),
-                "board_count": board_count,
-                "watchlist_count": watchlist_count,
-                "alert_count": alert_store.count_alert_events(
-                    session_date=identity["session_date"],
-                    label=identity["label"],
-                ),
+                "board_count": int(cycle_counts.get("board") or 0),
+                "watchlist_count": int(cycle_counts.get("watchlist") or 0),
+                "alert_count": int(alert_counts.get((str(row["session_date"]), str(row["label"]))) or 0),
                 "updated_at": updated_at,
             }
         )
@@ -400,12 +439,14 @@ def get_session_detail(
         session_id=session_id,
         limit=50,
         execution_store=execution_store,
+        storage=storage,
     )
     portfolio = build_session_execution_portfolio(
         db_target=db_target,
         session_id=session_id,
         executions=executions,
         execution_store=execution_store,
+        storage=storage,
     )
     risk_snapshot = build_session_risk_snapshot(
         execution_store=execution_store,

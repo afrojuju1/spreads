@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, tuple_
 
 from spreads.storage.alert_models import AlertEventModel, AlertStateModel
 from spreads.storage.base import RepositoryBase
@@ -136,6 +136,32 @@ class AlertRepository(RepositoryBase):
         with self.session_factory() as session:
             count = session.scalar(statement)
         return int(count or 0)
+
+    def count_alert_events_by_session_keys(
+        self,
+        session_keys: list[tuple[str, str]],
+    ) -> dict[tuple[str, str], int]:
+        if not session_keys:
+            return {}
+        normalized_keys = [
+            (parse_date(session_date), label)
+            for session_date, label in session_keys
+        ]
+        statement = (
+            select(
+                AlertEventModel.session_date,
+                AlertEventModel.label,
+                func.count().label("alert_count"),
+            )
+            .where(tuple_(AlertEventModel.session_date, AlertEventModel.label).in_(normalized_keys))
+            .group_by(AlertEventModel.session_date, AlertEventModel.label)
+        )
+        with self.session_factory() as session:
+            rows = session.execute(statement).all()
+        counts: dict[tuple[str, str], int] = {}
+        for session_date, label, alert_count in rows:
+            counts[(str(session_date), str(label))] = int(alert_count or 0)
+        return counts
 
     def get_alert_event(self, alert_id: int) -> AlertEventRecord | None:
         with self.session_factory() as session:
