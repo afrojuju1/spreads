@@ -163,7 +163,7 @@ def create_manual_generator_alert(
             entity_type="alert_event",
             entity_id=str(record["alert_id"]),
             payload={
-                **record.to_dict(),
+                **record,
                 "session_id": build_live_session_id(record["label"], record["session_date"]),
             },
             timestamp=record["created_at"],

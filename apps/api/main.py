@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -28,6 +29,8 @@ from spreads.events.bus import GLOBAL_EVENTS_CHANNEL, publish_global_event_async
 from spreads.jobs.registry import (
     GENERATOR_ADHOC_JOB_KEY,
     GENERATOR_JOB_TYPE,
+    POST_CLOSE_ANALYSIS_ADHOC_JOB_KEY,
+    POST_CLOSE_ANALYSIS_JOB_TYPE,
     get_job_spec,
 )
 from spreads.jobs.orchestration import (
@@ -50,6 +53,7 @@ from spreads.services.generator import (
     list_generator_symbol_suggestions,
 )
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
+from spreads.services.live_pipelines import build_live_session_id
 from spreads.services.option_quote_capture import AlpacaOptionQuoteCaptureBroker
 from spreads.services.operator_actions import (
     apply_generator_live_action,
@@ -168,8 +172,121 @@ def _ensure_generator_job_definition(job_store: Any) -> None:
     )
 
 
+def _ensure_post_close_analysis_job_definition(job_store: Any) -> None:
+    job_store.upsert_job_definition(
+        job_key=POST_CLOSE_ANALYSIS_ADHOC_JOB_KEY,
+        job_type=POST_CLOSE_ANALYSIS_JOB_TYPE,
+        enabled=False,
+        schedule_type="manual",
+        schedule={},
+        payload={},
+        singleton_scope=None,
+    )
+
+
 def _job_run_payload(run: Any) -> dict[str, Any]:
-    return enrich_live_collector_job_run_payload(run.to_dict())
+    return enrich_live_collector_job_run_payload(run)
+
+
+def _analysis_replay_value(value: float) -> str:
+    return repr(float(value))
+
+
+def _analysis_report_from_job_run(run: Mapping[str, Any] | None) -> str | None:
+    if run is None:
+        return None
+    result = run.get("result")
+    if not isinstance(result, Mapping):
+        return None
+    report = result.get("report")
+    if not isinstance(report, str) or not report.strip():
+        return None
+    return report
+
+
+async def _publish_job_run_update(redis: Any, run_record: Mapping[str, Any]) -> None:
+    try:
+        payload = _job_run_payload(run_record)
+        await publish_global_event_async(
+            redis,
+            topic="job.run.updated",
+            entity_type="job_run",
+            entity_id=str(run_record["job_run_id"]),
+            payload=payload,
+            timestamp=run_record.get("finished_at")
+            or run_record.get("heartbeat_at")
+            or run_record.get("scheduled_for"),
+        )
+    except Exception:
+        pass
+
+
+async def _enqueue_post_close_analysis_replay(
+    *,
+    db_target: str,
+    session_date: str,
+    label: str,
+    replay_profit_target: float,
+    replay_stop_multiple: float,
+) -> dict[str, Any]:
+    spec = get_job_spec(POST_CLOSE_ANALYSIS_JOB_TYPE)
+    if spec is None:
+        raise RuntimeError("Post-close analysis job type is not registered")
+    job_store = build_job_repository(db_target)
+    redis = await create_pool(build_redis_settings(default_redis_url()))
+    try:
+        _ensure_post_close_analysis_job_definition(job_store)
+        scheduled_for = datetime.now(UTC)
+        job_run_id = f"analysis_replay:{uuid4().hex}"
+        session_id = build_live_session_id(label, session_date)
+        payload = {
+            "db": db_target,
+            "date": session_date,
+            "session_date": session_date,
+            "label": label,
+            "replay_profit_target": float(replay_profit_target),
+            "replay_stop_multiple": float(replay_stop_multiple),
+            "include_report": True,
+            "job_key": POST_CLOSE_ANALYSIS_ADHOC_JOB_KEY,
+            "job_type": POST_CLOSE_ANALYSIS_JOB_TYPE,
+            "scheduled_for": scheduled_for.isoformat().replace("+00:00", "Z"),
+        }
+        job_run, _ = job_store.create_job_run(
+            job_run_id=job_run_id,
+            job_key=POST_CLOSE_ANALYSIS_ADHOC_JOB_KEY,
+            arq_job_id=job_run_id,
+            job_type=POST_CLOSE_ANALYSIS_JOB_TYPE,
+            status="queued",
+            scheduled_for=scheduled_for,
+            session_id=session_id,
+            payload=payload,
+        )
+        try:
+            await redis.enqueue_job(
+                spec.task_name,
+                POST_CLOSE_ANALYSIS_ADHOC_JOB_KEY,
+                job_run_id,
+                payload,
+                job_run_id,
+                _job_id=job_run_id,
+                _queue_name=spec.queue_name,
+            )
+        except Exception as exc:
+            failed = job_store.update_job_run_status(
+                job_run_id=job_run_id,
+                status="failed",
+                expected_arq_job_id=job_run_id,
+                finished_at=datetime.now(UTC),
+                error_text=str(exc),
+            )
+            if failed is not None:
+                await _publish_job_run_update(redis, failed)
+            raise
+        await _publish_job_run_update(redis, job_run)
+        return _job_run_payload(job_run)
+    finally:
+        await redis.aclose()
+        job_store.close()
 
 
 def _cycle_candidates_payload(
@@ -192,7 +309,7 @@ def _cycle_candidates_payload(
                 "session_date": cycle["session_date"],
                 "generated_at": cycle["generated_at"],
             },
-        ).to_dict()
+        )
         for model in session.scalars(statement).all()
     ]
 
@@ -244,7 +361,7 @@ def _get_live_snapshot_payload(
     )
     if cycle is None:
         return None
-    cycle_payload = cycle.to_dict()
+    cycle_payload = dict(cycle)
     cycle_payload["board_candidates"] = _cycle_candidates_payload(session, cycle=cycle_payload, bucket="board")
     cycle_payload["watchlist_candidates"] = _cycle_candidates_payload(session, cycle=cycle_payload, bucket="watchlist")
     cycle_payload["failures"] = list(cycle_payload.get("failures") or [])
@@ -264,7 +381,7 @@ def _list_live_cycles_payload(
     if session_date:
         statement = statement.where(CollectorCycleModel.session_date == date.fromisoformat(session_date))
     statement = statement.order_by(CollectorCycleModel.generated_at.desc()).limit(limit)
-    return [row.to_dict() for row in list_model_rows(session, statement)]
+    return list_model_rows(session, statement)
 
 
 @with_session()
@@ -298,7 +415,7 @@ def _list_live_events_payload(
     return {
         "label": label,
         "session_date": resolved_session_date,
-        "events": [row.to_dict() for row in list_model_rows(session, statement)],
+        "events": list_model_rows(session, statement),
     }
 
 
@@ -317,7 +434,7 @@ def _list_history_runs_payload(
     if strategy:
         statement = statement.where(ScanRunModel.strategy == strategy)
     statement = statement.order_by(ScanRunModel.generated_at.desc()).limit(limit)
-    return [row.to_dict() for row in list_model_rows(session, statement)]
+    return list_model_rows(session, statement)
 
 
 @with_session()
@@ -328,7 +445,7 @@ def _get_history_run_payload(
     session: Session | None = None,
 ) -> dict[str, Any] | None:
     row = get_model_row(session, ScanRunModel, run_id)
-    return None if row is None else row.to_dict()
+    return row
 
 
 @with_session()
@@ -343,7 +460,7 @@ def _list_history_run_candidates_payload(
         .where(ScanCandidateModel.run_id == run_id)
         .order_by(ScanCandidateModel.rank.asc())
     )
-    return [row.to_dict() for row in list_model_rows(session, statement)]
+    return list_model_rows(session, statement)
 
 
 @with_session()
@@ -364,7 +481,7 @@ def _list_alert_rows(
     if symbol:
         statement = statement.where(AlertEventModel.symbol == symbol.upper())
     statement = statement.order_by(AlertEventModel.created_at.desc(), AlertEventModel.alert_id.desc()).limit(limit)
-    return [row.to_dict() for row in list_model_rows(session, statement)]
+    return list_model_rows(session, statement)
 
 
 @with_session()
@@ -375,7 +492,7 @@ def _get_alert_row(
     session: Session | None = None,
 ) -> dict[str, Any] | None:
     row = get_model_row(session, AlertEventModel, alert_id)
-    return None if row is None else row.to_dict()
+    return row
 
 
 @with_session()
@@ -394,7 +511,7 @@ def _list_job_definition_rows(
     if job_type:
         statement = statement.where(JobDefinitionModel.job_type == job_type)
     statement = statement.order_by(JobDefinitionModel.job_key.asc())
-    return [row.to_dict() for row in list_model_rows(session, statement)]
+    return list_model_rows(session, statement)
 
 
 @with_session()
@@ -500,8 +617,8 @@ def _get_jobs_health_payload(
             }
         )
     return {
-        "scheduler": None if scheduler is None else scheduler.to_dict(),
-        "workers": [row.to_dict() for row in workers],
+        "scheduler": scheduler,
+        "workers": workers,
         "running_jobs": [_job_run_payload(row) for row in running],
         "queued_jobs": [_job_run_payload(row) for row in queued],
         "latest_successful_collectors": latest_collectors,
@@ -530,7 +647,7 @@ def _list_post_market_run_rows(
         PostMarketAnalysisRunModel.created_at.desc(),
         PostMarketAnalysisRunModel.analysis_run_id.desc(),
     ).limit(limit)
-    return [row.to_dict() for row in list_model_rows(session, statement)]
+    return list_model_rows(session, statement)
 
 
 @with_session()
@@ -541,7 +658,7 @@ def _get_post_market_run_row(
     session: Session | None = None,
 ) -> dict[str, Any] | None:
     row = get_model_row(session, PostMarketAnalysisRunModel, analysis_run_id)
-    return None if row is None else row.to_dict()
+    return row
 
 
 @with_session()
@@ -564,7 +681,39 @@ def _get_latest_post_market_run_row(
         )
         .limit(1),
     )
-    return None if row is None else row.to_dict()
+    return row
+
+
+@with_session()
+def _get_latest_analysis_replay_job_row(
+    *,
+    session_date: str,
+    label: str,
+    replay_profit_target: float,
+    replay_stop_multiple: float,
+    db_target: str | None = None,
+    session: Session | None = None,
+) -> dict[str, Any] | None:
+    row = first_model_row(
+        session,
+        select(JobRunModel)
+        .where(JobRunModel.job_key == POST_CLOSE_ANALYSIS_ADHOC_JOB_KEY)
+        .where(JobRunModel.job_type == POST_CLOSE_ANALYSIS_JOB_TYPE)
+        .where(JobRunModel.session_id == build_live_session_id(label, session_date))
+        .where(JobRunModel.payload_json["session_date"].astext == session_date)
+        .where(JobRunModel.payload_json["label"].astext == label)
+        .where(
+            JobRunModel.payload_json["replay_profit_target"].astext
+            == _analysis_replay_value(replay_profit_target)
+        )
+        .where(
+            JobRunModel.payload_json["replay_stop_multiple"].astext
+            == _analysis_replay_value(replay_stop_multiple)
+        )
+        .order_by(JobRunModel.scheduled_for.desc(), JobRunModel.job_run_id.desc())
+        .limit(1),
+    )
+    return None if row is None else _job_run_payload(row)
 
 
 @app.get("/health")
@@ -1089,22 +1238,26 @@ def get_jobs_health(db: str | None = None) -> dict[str, Any]:
 
 
 @app.get("/analysis/{session_date}/{label}")
-def get_analysis_report(
+async def get_analysis_report(
     session_date: str,
     label: str,
     replay_profit_target: float = Query(default=0.5, gt=0),
     replay_stop_multiple: float = Query(default=2.0, gt=0),
     db: str | None = None,
 ) -> dict[str, Any]:
-    content: str | None = None
-    if (
+    db_target = resolve_db(db)
+    resolved_session_date = resolve_date(session_date)
+    queue_supported = db_target == default_database_url()
+    is_default_request = (
         abs(float(replay_profit_target) - DEFAULT_ANALYSIS_PROFIT_TARGET) < 1e-9
         and abs(float(replay_stop_multiple) - DEFAULT_ANALYSIS_STOP_MULTIPLE) < 1e-9
-    ):
+    )
+    content: str | None = None
+    if is_default_request:
         analysis_run = _get_latest_post_market_run_row(
-            session_date=session_date,
+            session_date=resolved_session_date,
             label=label,
-            db_target=resolve_db(db),
+            db_target=db_target,
         )
         if analysis_run is not None:
             stored_report = analysis_run.get("report_markdown")
@@ -1114,16 +1267,81 @@ def get_analysis_report(
                 stored_summary = analysis_run.get("summary")
                 if isinstance(stored_summary, dict):
                     content = render_session_summary_markdown(stored_summary)
-    if content is None:
+        source = "post_market_analysis" if content is not None else "inline_replay"
+        if content is None:
+            summary = build_session_summary(
+                db_target=db_target,
+                session_date=resolved_session_date,
+                label=label,
+                profit_target=replay_profit_target,
+                stop_multiple=replay_stop_multiple,
+            )
+            content = render_session_summary_markdown(summary)
+        return {
+            "session_date": resolved_session_date,
+            "label": label,
+            "replay_profit_target": float(replay_profit_target),
+            "replay_stop_multiple": float(replay_stop_multiple),
+            "status": "succeeded",
+            "source": source,
+            "job_run_id": None,
+            "job_run": None,
+            "content": content,
+        }
+
+    if not queue_supported:
         summary = build_session_summary(
-            db_target=resolve_db(db),
-            session_date=session_date,
+            db_target=db_target,
+            session_date=resolved_session_date,
             label=label,
             profit_target=replay_profit_target,
             stop_multiple=replay_stop_multiple,
         )
-        content = render_session_summary_markdown(summary)
-    return {"session_date": session_date, "label": label, "content": content}
+        return {
+            "session_date": resolved_session_date,
+            "label": label,
+            "replay_profit_target": float(replay_profit_target),
+            "replay_stop_multiple": float(replay_stop_multiple),
+            "status": "succeeded",
+            "source": "inline_replay",
+            "job_run_id": None,
+            "job_run": None,
+            "content": render_session_summary_markdown(summary),
+        }
+
+    job_run = _get_latest_analysis_replay_job_row(
+        session_date=resolved_session_date,
+        label=label,
+        replay_profit_target=replay_profit_target,
+        replay_stop_multiple=replay_stop_multiple,
+        db_target=db_target,
+    )
+    if (
+        job_run is None
+        or str(job_run.get("status") or "") in {"failed", "skipped"}
+        or (
+            str(job_run.get("status") or "") == "succeeded"
+            and _analysis_report_from_job_run(job_run) is None
+        )
+    ):
+        job_run = await _enqueue_post_close_analysis_replay(
+            db_target=db_target,
+            session_date=resolved_session_date,
+            label=label,
+            replay_profit_target=replay_profit_target,
+            replay_stop_multiple=replay_stop_multiple,
+        )
+    return {
+        "session_date": resolved_session_date,
+        "label": label,
+        "replay_profit_target": float(replay_profit_target),
+        "replay_stop_multiple": float(replay_stop_multiple),
+        "status": str(job_run.get("status") or "queued"),
+        "source": "analysis_replay_job",
+        "job_run_id": job_run.get("job_run_id"),
+        "job_run": job_run,
+        "content": _analysis_report_from_job_run(job_run),
+    }
 
 
 @app.get("/post-market/runs")

@@ -148,6 +148,32 @@ def build_collection_args(overrides: dict[str, Any] | None = None) -> argparse.N
     return args
 
 
+def _candidate_requires_favorable_setup(candidate: dict[str, Any]) -> bool:
+    return str(candidate.get("profile") or "").lower() == "0dte"
+
+
+def _candidate_has_intraday_setup_context(candidate: dict[str, Any]) -> bool:
+    if bool(candidate.get("setup_has_intraday_context")):
+        return True
+    score = candidate.get("setup_intraday_score")
+    if score not in (None, ""):
+        return True
+    minutes = candidate.get("setup_intraday_minutes")
+    try:
+        return int(float(minutes)) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _board_candidate_is_eligible(candidate: dict[str, Any]) -> bool:
+    if not _candidate_requires_favorable_setup(candidate):
+        return True
+    return (
+        str(candidate.get("setup_status") or "").lower() == "favorable"
+        and _candidate_has_intraday_setup_context(candidate)
+    )
+
+
 def collection_window_is_open(
     *,
     now: datetime | None = None,
@@ -326,7 +352,11 @@ def select_board_candidates(
             key=lambda candidate: candidate["quality_score"],
             reverse=True,
         )
-        viable = [candidate for candidate in options if candidate["quality_score"] >= BOARD_SCORE_FLOOR]
+        viable = [
+            candidate
+            for candidate in options
+            if candidate["quality_score"] >= BOARD_SCORE_FLOOR and _board_candidate_is_eligible(candidate)
+        ]
         winner = viable[0] if viable else None
         runner_up = viable[1] if len(viable) > 1 else None
         winner_gap = None
@@ -375,6 +405,8 @@ def select_board_candidates(
             None,
         )
         current_anchor = previous_match or previous_same_side
+        if current_anchor is not None and not _board_candidate_is_eligible(current_anchor):
+            current_anchor = None
 
         if current_anchor is not None and current_anchor["quality_score"] >= BOARD_SCORE_FLOOR - BOARD_HOLD_TOLERANCE:
             accepted = current_anchor
@@ -763,46 +795,13 @@ def _run_collection_cycle(
     )
     if heartbeat is not None:
         heartbeat()
-    auto_execution: dict[str, Any] | None = None
-    if tick_context is not None:
-        try:
-            auto_execution = submit_auto_session_execution(
-                db_target=args.history_db,
-                session_id=tick_context.session_id,
-                cycle_id=cycle_id,
-                policy=getattr(args, "execution_policy", None),
-                job_run_id=tick_context.job_run_id,
-            )
-        except Exception as exc:
-            auto_execution = {
-                "action": "auto_submit",
-                "changed": False,
-                "reason": "execution_error",
-                "message": f"Automatic execution failed: {exc}",
-                "error": str(exc),
-            }
-            print(f"Automatic execution unavailable: {exc}")
-        if heartbeat is not None:
-            heartbeat()
-    alerts: list[dict[str, Any]] = []
-    try:
-        alerts = dispatch_cycle_alerts(
-            collector_store=collector_store,
-            alert_store=alert_store,
-            cycle_id=cycle_id,
-            label=label,
-            generated_at=generated_at,
-            strategy_mode=args.strategy,
-            profile=args.profile,
-            board_candidates=board_payloads,
-            events=events,
-        )
-    except Exception as exc:
-        print(f"Alert dispatch unavailable: {exc}")
     quote_event_count = 0
     baseline_quote_event_count = 0
     websocket_quote_event_count = 0
     recovery_quote_event_count = 0
+    latest_quote_records: list[dict[str, Any]] = []
+    websocket_quote_records: list[dict[str, Any]] = []
+    recovery_quote_records: list[dict[str, Any]] = []
     quote_candidates = board_payloads + watchlist_payloads[:WATCHLIST_QUOTE_CAPTURE_TOP]
     expected_quote_symbols = list(build_quote_symbol_metadata(quote_candidates).keys())
     if quote_candidates:
@@ -865,6 +864,48 @@ def _run_collection_cycle(
     )
     if heartbeat is not None:
         heartbeat()
+    reactive_quote_records = [
+        *latest_quote_records,
+        *websocket_quote_records,
+        *recovery_quote_records,
+    ]
+    auto_execution: dict[str, Any] | None = None
+    if tick_context is not None:
+        try:
+            auto_execution = submit_auto_session_execution(
+                db_target=args.history_db,
+                session_id=tick_context.session_id,
+                cycle_id=cycle_id,
+                policy=getattr(args, "execution_policy", None),
+                job_run_id=tick_context.job_run_id,
+                reactive_quote_records=reactive_quote_records,
+            )
+        except Exception as exc:
+            auto_execution = {
+                "action": "auto_submit",
+                "changed": False,
+                "reason": "execution_error",
+                "message": f"Automatic execution failed: {exc}",
+                "error": str(exc),
+            }
+            print(f"Automatic execution unavailable: {exc}")
+        if heartbeat is not None:
+            heartbeat()
+    alerts: list[dict[str, Any]] = []
+    try:
+        alerts = dispatch_cycle_alerts(
+            collector_store=collector_store,
+            alert_store=alert_store,
+            cycle_id=cycle_id,
+            label=label,
+            generated_at=generated_at,
+            strategy_mode=args.strategy,
+            profile=args.profile,
+            board_candidates=board_payloads,
+            events=events,
+        )
+    except Exception as exc:
+        print(f"Alert dispatch unavailable: {exc}")
     if emit_output:
         print_cycle_summary(
             generated_at=generated_at,

@@ -156,7 +156,7 @@ def _candidate_max_loss(candidate: dict[str, Any], quantity: int) -> float | Non
 
 def _open_positions(execution_store: Any, *, session_id: str) -> list[dict[str, Any]]:
     return [
-        position.to_dict()
+        dict(position)
         for position in execution_store.list_session_positions(
             session_id=session_id,
             statuses=OPEN_POSITION_STATUSES,

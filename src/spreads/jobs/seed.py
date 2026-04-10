@@ -9,6 +9,7 @@ from spreads.jobs.registry import (
     GENERATOR_ADHOC_JOB_KEY,
     GENERATOR_JOB_TYPE,
     LIVE_COLLECTOR_JOB_TYPE,
+    POST_CLOSE_ANALYSIS_ADHOC_JOB_KEY,
     POST_CLOSE_ANALYSIS_JOB_TYPE,
     POST_MARKET_ANALYSIS_JOB_TYPE,
     SESSION_EXIT_MANAGER_JOB_TYPE,
@@ -20,6 +21,9 @@ DEFAULT_AUTO_EXECUTION_POLICY = {
     "enabled": True,
     "mode": "top_board",
     "quantity": 1,
+    "pricing_mode": "adaptive_credit",
+    "min_credit_retention_pct": 0.95,
+    "max_credit_concession": 0.02,
 }
 
 DEFAULT_AUTO_RISK_POLICY = {
@@ -66,6 +70,7 @@ def seed_definitions(db: str) -> list[str]:
                     "history_range": "1D",
                     "activity_lookback_days": 1,
                     "allow_off_hours": False,
+                    "post_close_grace_minutes": 5,
                 },
                 "singleton_scope": "alpaca",
             },
@@ -93,7 +98,8 @@ def seed_definitions(db: str) -> list[str]:
                     "greeks_source": "auto",
                     "top": 10,
                     "per_symbol_top": 1,
-                    "interval_seconds": 300,
+                    "interval_seconds": 60,
+                    "backfill_missed_slots": False,
                     "max_slot_retries": 3,
                     "quote_capture_seconds": 20,
                     "allow_off_hours": False,
@@ -235,6 +241,15 @@ def seed_definitions(db: str) -> list[str]:
                     "replay_profit_target": 0.5,
                     "replay_stop_multiple": 2.0,
                 },
+                "singleton_scope": None,
+            },
+            {
+                "job_key": POST_CLOSE_ANALYSIS_ADHOC_JOB_KEY,
+                "job_type": POST_CLOSE_ANALYSIS_JOB_TYPE,
+                "enabled": False,
+                "schedule_type": "manual",
+                "schedule": {},
+                "payload": {},
                 "singleton_scope": None,
             },
             {

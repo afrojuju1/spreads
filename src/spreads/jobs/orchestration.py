@@ -46,33 +46,44 @@ def isoformat_utc(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _interval_market_cutoff(payload: dict[str, object], *, market_close: datetime) -> datetime:
+    raw_grace_minutes = payload.get("post_close_grace_minutes", 0)
+    try:
+        grace_minutes = max(int(raw_grace_minutes), 0)
+    except (TypeError, ValueError):
+        grace_minutes = 0
+    return market_close + timedelta(minutes=grace_minutes)
+
+
 def resolve_scheduled_for(
     definition: JobDefinitionRecord,
     *,
     now: datetime | None = None,
 ) -> datetime | None:
     current = (now or utc_now()).astimezone(NEW_YORK)
-    schedule = definition.schedule
-    schedule_type = definition.schedule_type
+    schedule = dict(definition.get("schedule") or {})
+    schedule_type = str(definition["schedule_type"])
 
     if schedule_type == "interval_minutes":
         minutes = max(int(schedule.get("minutes", 0)), 1)
         slot = floor_to_interval(current, minutes)
-        if bool(definition.payload.get("allow_off_hours")):
+        payload = dict(definition.get("payload") or {})
+        if bool(payload.get("allow_off_hours")):
             return slot.astimezone(UTC)
-        market_window = _market_schedule(definition.market_calendar, current.date())
+        market_window = _market_schedule(str(definition.get("market_calendar") or "NYSE"), current.date())
         if market_window is None:
             return None
         market_open, market_close = market_window
-        if not (market_open <= current < market_close):
+        market_cutoff = _interval_market_cutoff(payload, market_close=market_close)
+        if not (market_open <= current < market_cutoff):
             return None
         if slot < market_open:
             slot = market_open.replace(second=0, microsecond=0)
-        if slot >= market_close:
+        if slot >= market_cutoff:
             return None
         return slot.astimezone(UTC)
 
-    market_window = _market_schedule(definition.market_calendar, current.date())
+    market_window = _market_schedule(str(definition.get("market_calendar") or "NYSE"), current.date())
     if market_window is None:
         return None
     market_open, market_close = market_window
@@ -121,14 +132,14 @@ def resolve_live_tick_plan(
     now: datetime | None = None,
 ) -> dict[str, object] | None:
     current = (now or utc_now()).astimezone(NEW_YORK)
-    market_window = _market_schedule(definition.market_calendar, current.date())
+    market_window = _market_schedule(str(definition.get("market_calendar") or "NYSE"), current.date())
     if market_window is None:
         return None
     market_open, market_close = market_window
-    payload = dict(definition.payload)
+    payload = dict(definition.get("payload") or {})
     interval_seconds = max(int(payload.get("interval_seconds", 300)), 1)
     session_start = market_open + timedelta(
-        minutes=int(payload.get("session_start_offset_minutes", definition.schedule.get("minutes", 0)))
+        minutes=int(payload.get("session_start_offset_minutes", (definition.get("schedule") or {}).get("minutes", 0)))
     )
     session_end = market_close + timedelta(minutes=int(payload.get("session_end_offset_minutes", 0)))
     recovery_deadline = session_end + timedelta(seconds=interval_seconds)
@@ -142,6 +153,8 @@ def resolve_live_tick_plan(
         now=current,
         interval_seconds=interval_seconds,
     )
+    if not bool(payload.get("backfill_missed_slots", True)) and slots:
+        slots = [slots[-1]]
     return {
         "label": label,
         "session_id": session_id,
@@ -158,9 +171,9 @@ def due_job_payload(definition: JobDefinitionRecord, *, now: datetime | None = N
     scheduled_for = resolve_scheduled_for(definition, now=now)
     if scheduled_for is None:
         return None
-    job_run_id = build_job_run_id(definition.job_key, scheduled_for)
-    payload = dict(definition.payload)
-    payload["job_key"] = definition.job_key
+    job_run_id = build_job_run_id(str(definition["job_key"]), scheduled_for)
+    payload = dict(definition.get("payload") or {})
+    payload["job_key"] = str(definition["job_key"])
     payload["scheduled_for"] = scheduled_for.isoformat().replace("+00:00", "Z")
-    payload["singleton_scope"] = definition.singleton_scope
+    payload["singleton_scope"] = definition.get("singleton_scope")
     return job_run_id, scheduled_for, payload

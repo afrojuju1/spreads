@@ -45,6 +45,32 @@ def _round_money(value: float | None) -> float | None:
     return round(float(value), 2)
 
 
+def _derive_live_exposure(
+    *,
+    entry_credit: float | None,
+    width: float | None,
+    quantity: float,
+) -> dict[str, float | None]:
+    normalized_quantity = max(float(quantity), 0.0)
+    if normalized_quantity <= 0:
+        return {
+            "entry_notional": 0.0,
+            "max_profit": 0.0,
+            "max_loss": 0.0,
+        }
+
+    entry_notional = None if entry_credit is None else round(entry_credit * 100.0 * normalized_quantity, 2)
+    max_profit = entry_notional
+    max_loss = None
+    if entry_credit is not None and width is not None:
+        max_loss = round(max(width - entry_credit, 0.0) * 100.0 * normalized_quantity, 2)
+    return {
+        "entry_notional": entry_notional,
+        "max_profit": max_profit,
+        "max_loss": max_loss,
+    }
+
+
 def _new_session_position_id() -> str:
     return f"session_position:{uuid4().hex}"
 
@@ -182,27 +208,31 @@ def _resolve_leg_average_price(attempt: Mapping[str, Any], symbol: str) -> float
     return _weighted_average(order_pairs)
 
 
-def _resolve_spread_price(
+def _resolve_spread_amount(
     attempt: Mapping[str, Any],
     primary_order: Mapping[str, Any] | None,
     filled_quantity: float,
 ) -> float | None:
-    if primary_order is not None:
-        price = _coerce_float(primary_order.get("filled_avg_price"))
-        if price is not None and filled_quantity > 0:
-            return price
-
     short_symbol = _as_text(attempt.get("short_symbol"))
     long_symbol = _as_text(attempt.get("long_symbol"))
     if short_symbol and long_symbol:
         short_price = _resolve_leg_average_price(attempt, short_symbol)
         long_price = _resolve_leg_average_price(attempt, long_symbol)
         if short_price is not None and long_price is not None:
-            return round(short_price - long_price, 4)
+            return round(abs(short_price - long_price), 4)
+
+    # Alpaca returns parent multi-leg fills as a signed net price:
+    # credit opens are negative, debit closes are positive. Session
+    # positions persist canonical economics instead: positive entry
+    # credit and positive exit debit.
+    if primary_order is not None:
+        price = _coerce_float(primary_order.get("filled_avg_price"))
+        if price is not None and filled_quantity > 0:
+            return round(abs(price), 4)
 
     limit_price = _coerce_float(attempt.get("limit_price"))
     if limit_price is not None and filled_quantity > 0:
-        return limit_price
+        return abs(limit_price)
     return None
 
 
@@ -264,6 +294,11 @@ def _recalculate_session_position(
     total_closed_quantity = sum(_coerce_float(close.get("closed_quantity")) or 0.0 for close in closes)
     remaining_quantity = max(opened_quantity - total_closed_quantity, 0.0)
     realized_pnl = round(sum(_coerce_float(close.get("realized_pnl")) or 0.0 for close in closes), 2)
+    exposure = _derive_live_exposure(
+        entry_credit=_coerce_float(position.get("entry_credit")),
+        width=_coerce_float(position.get("width")),
+        quantity=remaining_quantity,
+    )
 
     if total_closed_quantity <= 0:
         status = "open"
@@ -283,13 +318,16 @@ def _recalculate_session_position(
         session_position_id=session_position_id,
         remaining_quantity=remaining_quantity,
         status=status,
+        entry_notional=exposure["entry_notional"],
+        max_profit=exposure["max_profit"],
+        max_loss=exposure["max_loss"],
         realized_pnl=realized_pnl,
         unrealized_pnl=unrealized_pnl,
         closed_at=closed_at,
         last_broker_status=last_broker_status,
         updated_at=_utc_now(),
     )
-    return updated.to_dict()
+    return updated
 
 
 def _sync_open_session_position(
@@ -309,13 +347,13 @@ def _sync_open_session_position(
         else resolve_attempt_session_position_id(attempt) or _new_session_position_id()
     )
     requested_quantity = _coerce_int(attempt.get("quantity")) or max(int(round(filled_quantity)), 1)
-    entry_credit = _resolve_spread_price(attempt, primary_order, filled_quantity)
+    entry_credit = _resolve_spread_amount(attempt, primary_order, filled_quantity)
     width = _resolve_width(attempt)
-    entry_notional = None if entry_credit is None else round(entry_credit * 100.0 * filled_quantity, 2)
-    max_profit = entry_notional
-    max_loss = None
-    if entry_credit is not None and width is not None:
-        max_loss = round(max(width - entry_credit, 0.0) * 100.0 * filled_quantity, 2)
+    exposure = _derive_live_exposure(
+        entry_credit=entry_credit,
+        width=width,
+        quantity=filled_quantity,
+    )
 
     if existing is None:
         execution_store.create_session_position(
@@ -334,10 +372,10 @@ def _sync_open_session_position(
             opened_quantity=filled_quantity,
             remaining_quantity=filled_quantity,
             entry_credit=_round_money(entry_credit),
-            entry_notional=entry_notional,
+            entry_notional=exposure["entry_notional"],
             width=width,
-            max_profit=max_profit,
-            max_loss=max_loss,
+            max_profit=exposure["max_profit"],
+            max_loss=exposure["max_loss"],
             opened_at=_resolve_opened_at(attempt),
             closed_at=None,
             status=_resolve_position_status((_as_text(attempt.get("status")) or "unknown").lower(), filled_quantity),
@@ -365,10 +403,10 @@ def _sync_open_session_position(
             session_position_id=session_position_id,
             opened_quantity=filled_quantity,
             entry_credit=_round_money(entry_credit),
-            entry_notional=entry_notional,
+            entry_notional=exposure["entry_notional"],
             width=width,
-            max_profit=max_profit,
-            max_loss=max_loss,
+            max_profit=exposure["max_profit"],
+            max_loss=exposure["max_loss"],
             opened_at=_resolve_opened_at(attempt),
             last_broker_status=(_as_text(attempt.get("status")) or "unknown").lower(),
             exit_policy=_attempt_exit_policy(attempt),
@@ -422,7 +460,7 @@ def _sync_close_session_position(
             last_broker_status=broker_status,
         )
 
-    exit_debit = _resolve_spread_price(attempt, primary_order, filled_quantity)
+    exit_debit = _resolve_spread_amount(attempt, primary_order, filled_quantity)
     entry_credit = _coerce_float(position.get("entry_credit"))
     realized_pnl = 0.0
     if entry_credit is not None and exit_debit is not None:

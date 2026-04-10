@@ -60,6 +60,9 @@ OPEN_STATUSES = {
     "stopped",
     "suspended",
 }
+DEFAULT_ENTRY_PRICING_MODE = "adaptive_credit"
+DEFAULT_MIN_CREDIT_RETENTION_PCT = 0.95
+DEFAULT_MAX_CREDIT_CONCESSION = 0.02
 
 
 def _utc_now() -> str:
@@ -107,6 +110,264 @@ def _execution_submit_job_run_id(execution_attempt_id: str) -> str:
 
 def _is_terminal_status(status: str | None) -> bool:
     return str(status or "").lower() in TERMINAL_STATUSES
+
+
+def _candidate_has_intraday_setup_context(candidate: dict[str, Any]) -> bool:
+    if bool(candidate.get("setup_has_intraday_context")):
+        return True
+    score = candidate.get("setup_intraday_score")
+    if score not in (None, ""):
+        return True
+    minutes = candidate.get("setup_intraday_minutes")
+    try:
+        return int(float(minutes)) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _candidate_with_payload(candidate: dict[str, Any]) -> dict[str, Any]:
+    payload = candidate.get("candidate")
+    if isinstance(payload, dict):
+        return {
+            **dict(candidate),
+            **dict(payload),
+        }
+    return dict(candidate)
+
+
+def _validate_auto_execution_candidate(candidate: dict[str, Any]) -> tuple[str | None, str | None]:
+    profile = _as_text(candidate.get("profile"))
+    if profile != "0dte":
+        return None, None
+    setup_status = _as_text(candidate.get("setup_status")) or "unknown"
+    if setup_status != "favorable":
+        return (
+            "setup_not_favorable",
+            "Automatic 0DTE execution is limited to favorable technical setups.",
+        )
+    if not _candidate_has_intraday_setup_context(candidate):
+        return (
+            "awaiting_intraday_setup",
+            "Automatic 0DTE execution requires persisted intraday setup context on the selected candidate.",
+        )
+    return None, None
+
+
+def _clamp_fraction(value: float, *, minimum: float = 0.0, maximum: float = 1.0) -> float:
+    return max(minimum, min(maximum, float(value)))
+
+
+def _normalize_credit_limit(value: Any) -> float | None:
+    numeric = _coerce_float(value)
+    if numeric is None or numeric == 0:
+        return None
+    return abs(numeric)
+
+
+def _resolve_candidate_credit_prices(candidate_payload: dict[str, Any]) -> tuple[float | None, float | None]:
+    midpoint_credit = _normalize_credit_limit(candidate_payload.get("midpoint_credit"))
+    natural_credit = _normalize_credit_limit(candidate_payload.get("natural_credit"))
+    return midpoint_credit, natural_credit
+
+
+def _quote_record_sort_key(record: dict[str, Any]) -> tuple[str, str]:
+    return (
+        _as_text(record.get("quote_timestamp")) or "",
+        _as_text(record.get("captured_at")) or "",
+    )
+
+
+def _latest_quote_records_by_symbol(quote_records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    latest: dict[str, tuple[tuple[str, str], dict[str, Any]]] = {}
+    for record in quote_records:
+        symbol = _as_text(record.get("option_symbol"))
+        if symbol is None:
+            continue
+        sort_key = _quote_record_sort_key(record)
+        current = latest.get(symbol)
+        if current is None or sort_key >= current[0]:
+            latest[symbol] = (sort_key, dict(record))
+    return {symbol: row for symbol, (_, row) in latest.items()}
+
+
+def _resolve_reactive_quote_snapshot(
+    candidate: dict[str, Any],
+    quote_records: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    latest_quotes = _latest_quote_records_by_symbol(quote_records)
+    short_symbol = _as_text(candidate.get("short_symbol"))
+    long_symbol = _as_text(candidate.get("long_symbol"))
+    if short_symbol is None or long_symbol is None:
+        return None
+    short_quote = latest_quotes.get(short_symbol)
+    long_quote = latest_quotes.get(long_symbol)
+    if short_quote is None or long_quote is None:
+        return None
+
+    short_midpoint = _coerce_float(short_quote.get("midpoint"))
+    long_midpoint = _coerce_float(long_quote.get("midpoint"))
+    short_bid = _coerce_float(short_quote.get("bid"))
+    long_ask = _coerce_float(long_quote.get("ask"))
+    if short_midpoint is None or long_midpoint is None or short_bid is None or long_ask is None:
+        return None
+
+    captured_at = max(
+        _as_text(short_quote.get("quote_timestamp")) or _as_text(short_quote.get("captured_at")) or "",
+        _as_text(long_quote.get("quote_timestamp")) or _as_text(long_quote.get("captured_at")) or "",
+    )
+    return {
+        "captured_at": captured_at or None,
+        "short_symbol": short_symbol,
+        "long_symbol": long_symbol,
+        "midpoint_credit": round(short_midpoint - long_midpoint, 4),
+        "natural_credit": round(short_bid - long_ask, 4),
+        "short_bid": short_bid,
+        "short_ask": _coerce_float(short_quote.get("ask")),
+        "long_bid": _coerce_float(long_quote.get("bid")),
+        "long_ask": long_ask,
+    }
+
+
+def _resolve_reactive_auto_execution(
+    *,
+    candidate: dict[str, Any],
+    execution_policy: dict[str, Any],
+    quote_records: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    if not quote_records:
+        return {
+            "ok": False,
+            "reason": "awaiting_reactive_quotes",
+            "message": "Automatic 0DTE execution skipped because reactive quote capture did not return any quotes.",
+        }
+
+    live_snapshot = _resolve_reactive_quote_snapshot(candidate, quote_records)
+    if live_snapshot is None:
+        return {
+            "ok": False,
+            "reason": "awaiting_reactive_quotes",
+            "message": "Automatic 0DTE execution skipped because a current two-leg quote snapshot was not available.",
+        }
+
+    live_midpoint_credit = _normalize_credit_limit(live_snapshot.get("midpoint_credit"))
+    live_natural_credit = _normalize_credit_limit(live_snapshot.get("natural_credit"))
+    if live_midpoint_credit is None or live_natural_credit is None or live_midpoint_credit <= 0 or live_natural_credit <= 0:
+        return {
+            "ok": False,
+            "reason": "live_quotes_not_executable",
+            "message": "Automatic 0DTE execution skipped because live spread quotes were not executable.",
+            "reactive_quote": live_snapshot,
+        }
+
+    scanned_midpoint_credit = _normalize_credit_limit(candidate.get("midpoint_credit"))
+    if scanned_midpoint_credit is not None:
+        credit_floor = round(scanned_midpoint_credit * float(execution_policy["min_credit_retention_pct"]), 4)
+        if live_midpoint_credit < credit_floor:
+            return {
+                "ok": False,
+                "reason": "live_credit_below_floor",
+                "message": (
+                    "Automatic 0DTE execution skipped because the live spread credit fell below the retention floor."
+                ),
+                "reactive_quote": {
+                    **live_snapshot,
+                    "credit_floor": credit_floor,
+                },
+            }
+
+    pricing_candidate = {
+        **candidate,
+        "midpoint_credit": live_midpoint_credit,
+        "natural_credit": live_natural_credit,
+        "fill_ratio": 0.0 if live_midpoint_credit <= 0 else round(live_natural_credit / live_midpoint_credit, 4),
+    }
+    limit_price = _resolve_open_limit_price(
+        candidate_payload=pricing_candidate,
+        explicit_limit_price=None,
+        execution_policy=execution_policy,
+    )
+    return {
+        "ok": True,
+        "limit_price": limit_price,
+        "reactive_quote": {
+            **live_snapshot,
+            "fill_ratio": pricing_candidate["fill_ratio"],
+            "limit_price": limit_price,
+        },
+    }
+
+
+def _resolve_open_limit_price(
+    *,
+    candidate_payload: dict[str, Any],
+    explicit_limit_price: float | None,
+    execution_policy: dict[str, Any],
+) -> float:
+    explicit_credit = _normalize_credit_limit(explicit_limit_price)
+    if explicit_credit is not None:
+        return round(max(explicit_credit, 0.01), 2)
+
+    midpoint_credit, natural_credit = _resolve_candidate_credit_prices(candidate_payload)
+    if midpoint_credit is None:
+        order_payload = dict(candidate_payload.get("order_payload") or {})
+        midpoint_credit = _normalize_credit_limit(order_payload.get("limit_price"))
+    if midpoint_credit is None or midpoint_credit <= 0:
+        raise ValueError("Execution limit price must be positive")
+
+    pricing_mode = str(execution_policy.get("pricing_mode") or DEFAULT_ENTRY_PRICING_MODE)
+    if pricing_mode == "midpoint" or natural_credit is None or natural_credit <= 0:
+        return round(max(midpoint_credit, 0.01), 2)
+
+    fill_ratio = _clamp_fraction(_coerce_float(candidate_payload.get("fill_ratio")) or 0.0, maximum=1.0)
+    min_credit_retention_pct = _clamp_fraction(
+        _coerce_float(execution_policy.get("min_credit_retention_pct")) or DEFAULT_MIN_CREDIT_RETENTION_PCT,
+        minimum=0.5,
+        maximum=1.0,
+    )
+    max_credit_concession = max(
+        _coerce_float(execution_policy.get("max_credit_concession")) or DEFAULT_MAX_CREDIT_CONCESSION,
+        0.0,
+    )
+    credit_floor = max(natural_credit, midpoint_credit * min_credit_retention_pct, 0.01)
+    max_concession_to_floor = max(midpoint_credit - credit_floor, 0.0)
+    fill_ratio_concession = max(midpoint_credit - natural_credit, 0.0) * max(1.0 - fill_ratio, 0.0)
+    concession = min(fill_ratio_concession, max_credit_concession, max_concession_to_floor)
+    return round(max(midpoint_credit - concession, credit_floor, 0.01), 2)
+
+
+def _classify_auto_execution_block(exc: Exception) -> dict[str, Any] | None:
+    if not isinstance(exc, ValueError):
+        return None
+    message = str(exc).strip()
+    if not message:
+        return None
+    if message.startswith("Open execution exceeds ") and message.endswith("."):
+        constraint = message.removeprefix("Open execution exceeds ").removesuffix(".")
+        return {
+            "reason": "risk_policy_blocked",
+            "message": message,
+            "block_category": "risk_policy",
+            "constraint": constraint,
+        }
+    if message == "Open execution is blocked because the quote snapshot is stale.":
+        return {
+            "reason": "stale_quote",
+            "message": message,
+            "block_category": "quote_freshness",
+        }
+    if message == "Execution is blocked by SPREADS_EXECUTION_KILL_SWITCH.":
+        return {
+            "reason": "kill_switch_blocked",
+            "message": message,
+            "block_category": "kill_switch",
+        }
+    if message.startswith("Open execution is blocked on a live Alpaca account."):
+        return {
+            "reason": "environment_blocked",
+            "message": message,
+            "block_category": "environment",
+        }
+    return None
 
 
 def _resolve_completed_at(order: dict[str, Any]) -> str | None:
@@ -172,19 +433,45 @@ def _enqueue_ad_hoc_job(
 def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]:
     source = payload if isinstance(payload, dict) else {}
     raw_policy = source.get("execution_policy")
+    if not isinstance(raw_policy, dict) and {
+        "enabled",
+        "mode",
+        "quantity",
+        "pricing_mode",
+        "min_credit_retention_pct",
+        "max_credit_concession",
+    } & set(source):
+        raw_policy = source
     if isinstance(raw_policy, dict):
         enabled = bool(raw_policy.get("enabled"))
         mode = _as_text(raw_policy.get("mode")) or "disabled"
         quantity = _coerce_int(raw_policy.get("quantity")) or 1
+        pricing_mode = _as_text(raw_policy.get("pricing_mode")) or DEFAULT_ENTRY_PRICING_MODE
+        min_credit_retention_pct = (
+            _coerce_float(raw_policy.get("min_credit_retention_pct")) or DEFAULT_MIN_CREDIT_RETENTION_PCT
+        )
+        max_credit_concession = (
+            _coerce_float(raw_policy.get("max_credit_concession")) or DEFAULT_MAX_CREDIT_CONCESSION
+        )
     else:
         enabled = False
         mode = "disabled"
         quantity = 1
+        pricing_mode = DEFAULT_ENTRY_PRICING_MODE
+        min_credit_retention_pct = DEFAULT_MIN_CREDIT_RETENTION_PCT
+        max_credit_concession = DEFAULT_MAX_CREDIT_CONCESSION
+    if pricing_mode not in {"midpoint", "adaptive_credit"}:
+        raise ValueError(f"Unsupported execution pricing mode: {pricing_mode}")
+    min_credit_retention_pct = _clamp_fraction(min_credit_retention_pct, minimum=0.5, maximum=1.0)
+    max_credit_concession = max(float(max_credit_concession), 0.0)
     if not enabled:
         return {
             "enabled": False,
             "mode": "disabled",
             "quantity": quantity,
+            "pricing_mode": pricing_mode,
+            "min_credit_retention_pct": min_credit_retention_pct,
+            "max_credit_concession": max_credit_concession,
         }
     if mode != "top_board":
         raise ValueError(f"Unsupported execution policy mode: {mode}")
@@ -192,6 +479,9 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
         "enabled": True,
         "mode": "top_board",
         "quantity": max(quantity, 1),
+        "pricing_mode": pricing_mode,
+        "min_credit_retention_pct": min_credit_retention_pct,
+        "max_credit_concession": max_credit_concession,
     }
 
 
@@ -209,9 +499,9 @@ def _attach_attempt_details(
     fills_by_attempt: dict[str, list[dict[str, Any]]] = {}
 
     for order in orders:
-        orders_by_attempt.setdefault(str(order["execution_attempt_id"]), []).append(order.to_dict())
+        orders_by_attempt.setdefault(str(order["execution_attempt_id"]), []).append(dict(order))
     for fill in fills:
-        fills_by_attempt.setdefault(str(fill["execution_attempt_id"]), []).append(fill.to_dict())
+        fills_by_attempt.setdefault(str(fill["execution_attempt_id"]), []).append(dict(fill))
 
     return [
         {
@@ -235,10 +525,7 @@ def list_session_execution_attempts(
     resolved_execution_store = execution_store if execution_store is not None else storage.execution
     if not resolved_execution_store.schema_ready():
         return []
-    attempts = [
-        attempt.to_dict()
-        for attempt in resolved_execution_store.list_attempts(session_id=session_id, limit=limit)
-    ]
+    attempts = list(resolved_execution_store.list_attempts(session_id=session_id, limit=limit))
     return _attach_attempt_details(execution_store=resolved_execution_store, attempts=attempts)
 
 
@@ -246,7 +533,7 @@ def _get_attempt_payload(execution_store: Any, execution_attempt_id: str) -> dic
     attempt = execution_store.get_attempt(execution_attempt_id)
     if attempt is None:
         raise ValueError(f"Unknown execution_attempt_id: {execution_attempt_id}")
-    return _attach_attempt_details(execution_store=execution_store, attempts=[attempt.to_dict()])[0]
+    return _attach_attempt_details(execution_store=execution_store, attempts=[dict(attempt)])[0]
 
 
 def _resolve_session_candidate(
@@ -264,7 +551,7 @@ def _resolve_session_candidate(
     candidate_session_id = cycle.get("session_id") or build_live_session_id(cycle["label"], cycle["session_date"])
     if str(candidate_session_id) != session_id:
         raise ValueError(f"Candidate {candidate_id} does not belong to session {session_id}")
-    return candidate.to_dict(), cycle.to_dict()
+    return dict(candidate), dict(cycle)
 
 
 def _build_order_request(
@@ -272,6 +559,7 @@ def _build_order_request(
     candidate: dict[str, Any],
     quantity: int | None,
     limit_price: float | None,
+    execution_policy: dict[str, Any],
     client_order_id: str,
 ) -> tuple[dict[str, Any], int, float]:
     candidate_payload = dict(candidate.get("candidate") or {})
@@ -281,18 +569,16 @@ def _build_order_request(
     resolved_quantity = quantity if quantity is not None else _coerce_int(order_payload.get("qty")) or 1
     if resolved_quantity <= 0:
         raise ValueError("Execution quantity must be positive")
-    resolved_limit_price = (
-        limit_price
-        if limit_price is not None
-        else _coerce_float(order_payload.get("limit_price"))
-        or _coerce_float(candidate_payload.get("midpoint_credit"))
+    resolved_limit_price = _resolve_open_limit_price(
+        candidate_payload=candidate_payload,
+        explicit_limit_price=limit_price,
+        execution_policy=execution_policy,
     )
-    if resolved_limit_price is None or resolved_limit_price <= 0:
-        raise ValueError("Execution limit price must be positive")
 
     request = dict(order_payload)
     request["qty"] = str(int(resolved_quantity))
-    request["limit_price"] = f"{float(resolved_limit_price):.2f}"
+    # Alpaca expects negative net prices for credit mleg orders.
+    request["limit_price"] = f"{-abs(float(resolved_limit_price)):.2f}"
     request["client_order_id"] = client_order_id
     return request, int(resolved_quantity), round(float(resolved_limit_price), 2)
 
@@ -334,7 +620,7 @@ def _resolve_session_position(
         raise ValueError(f"Unknown session_position_id: {session_position_id}")
     if str(position["session_id"]) != session_id:
         raise ValueError(f"Session position {session_position_id} does not belong to session {session_id}")
-    return position.to_dict()
+    return dict(position)
 
 
 def _build_close_order_request(
@@ -358,6 +644,7 @@ def _build_close_order_request(
         if limit_price is not None
         else _coerce_float(position.get("close_mark"))
     )
+    resolved_limit_price = _normalize_credit_limit(resolved_limit_price)
     if resolved_limit_price is None or resolved_limit_price <= 0:
         raise ValueError("Close execution requires a positive limit price or a quoted close mark")
 
@@ -475,7 +762,7 @@ def _sync_attempt_state(
 ) -> dict[str, Any]:
     order_rows = _flatten_order_snapshot(order_snapshot)
     persisted_orders = [
-        row.to_dict()
+        dict(row)
         for row in execution_store.upsert_orders(
             execution_attempt_id=str(attempt["execution_attempt_id"]),
             rows=order_rows,
@@ -685,10 +972,17 @@ def submit_live_session_execution(
                 "attempt": payload,
             }
 
+        requested_execution_policy = (
+            request_metadata.get("execution_policy")
+            if isinstance(request_metadata, dict) and isinstance(request_metadata.get("execution_policy"), dict)
+            else None
+        )
+        resolved_execution_policy = normalize_execution_policy(requested_execution_policy)
         order_request, resolved_quantity, resolved_limit_price = _build_order_request(
             candidate=candidate,
             quantity=quantity,
             limit_price=limit_price,
+            execution_policy=resolved_execution_policy,
             client_order_id=client_order_id,
         )
         requested_risk_policy = (
@@ -743,6 +1037,7 @@ def submit_live_session_execution(
             request={
                 **({} if request_metadata is None else request_metadata),
                 "trade_intent": OPEN_TRADE_INTENT,
+                "execution_policy": resolved_execution_policy,
                 "risk_policy": resolved_risk_policy,
                 "exit_policy": resolved_exit_policy,
                 "source_job": {
@@ -753,7 +1048,7 @@ def submit_live_session_execution(
                 "order": order_request,
             },
             candidate=dict(candidate.get("candidate") or {}),
-        ).to_dict()
+        )
         payload = _queue_execution_attempt(
             job_store=job_store,
             execution_store=execution_store,
@@ -872,7 +1167,7 @@ def submit_session_position_close(
                 "order": order_request,
             },
             candidate={},
-        ).to_dict()
+        )
         payload = _queue_execution_attempt(
             job_store=job_store,
             execution_store=execution_store,
@@ -938,7 +1233,7 @@ def refresh_live_session_execution(
     order_snapshot = client.get_order(broker_order_id, nested=True)
     payload = _sync_attempt_state(
         execution_store=execution_store,
-        attempt=attempt.to_dict(),
+        attempt=dict(attempt),
         client=client,
         order_snapshot=order_snapshot,
     )
@@ -1079,6 +1374,7 @@ def submit_auto_session_execution(
     cycle_id: str,
     policy: dict[str, Any] | None,
     job_run_id: str | None = None,
+    reactive_quote_records: list[dict[str, Any]] | None = None,
     storage: Any | None = None,
 ) -> dict[str, Any]:
     normalized_policy = normalize_execution_policy(policy)
@@ -1106,26 +1402,79 @@ def submit_auto_session_execution(
         }
 
     top_candidate = min(board_candidates, key=lambda candidate: int(candidate["position"]))
-    result = submit_live_session_execution(
-        db_target=db_target,
-        session_id=session_id,
-        candidate_id=int(top_candidate["candidate_id"]),
-        quantity=int(normalized_policy["quantity"]),
-        request_metadata={
-            "source": {
-                "kind": "auto_session_execution",
-                "mode": normalized_policy["mode"],
-                "cycle_id": cycle_id,
-                "job_run_id": job_run_id,
-                "candidate_id": int(top_candidate["candidate_id"]),
-            },
+    selected_candidate = _candidate_with_payload(top_candidate)
+    blocked_reason, blocked_message = _validate_auto_execution_candidate(selected_candidate)
+    if blocked_reason is not None:
+        return {
+            "action": "auto_submit",
+            "changed": False,
+            "reason": blocked_reason,
+            "message": blocked_message,
             "policy": normalized_policy,
-        },
-    )
+            "selected_candidate_id": int(top_candidate["candidate_id"]),
+        }
+
+    reactive_quote: dict[str, Any] | None = None
+    limit_price: float | None = None
+    if _as_text(selected_candidate.get("profile")) == "0dte":
+        reactive_resolution = _resolve_reactive_auto_execution(
+            candidate=selected_candidate,
+            execution_policy=normalized_policy,
+            quote_records=reactive_quote_records,
+        )
+        if not reactive_resolution.get("ok"):
+            return {
+                "action": "auto_submit",
+                "changed": False,
+                "reason": str(reactive_resolution["reason"]),
+                "message": str(reactive_resolution["message"]),
+                "policy": normalized_policy,
+                "selected_candidate_id": int(top_candidate["candidate_id"]),
+                "reactive_quote": reactive_resolution.get("reactive_quote"),
+            }
+        limit_price = _coerce_float(reactive_resolution.get("limit_price"))
+        reactive_quote = (
+            dict(reactive_resolution["reactive_quote"])
+            if isinstance(reactive_resolution.get("reactive_quote"), dict)
+            else None
+        )
+
+    try:
+        result = submit_live_session_execution(
+            db_target=db_target,
+            session_id=session_id,
+            candidate_id=int(top_candidate["candidate_id"]),
+            quantity=int(normalized_policy["quantity"]),
+            limit_price=limit_price,
+            request_metadata={
+                "source": {
+                    "kind": "auto_session_execution",
+                    "mode": normalized_policy["mode"],
+                    "cycle_id": cycle_id,
+                    "job_run_id": job_run_id,
+                    "candidate_id": int(top_candidate["candidate_id"]),
+                },
+                "execution_policy": normalized_policy,
+                **({} if reactive_quote is None else {"reactive_quote": reactive_quote}),
+            },
+        )
+    except Exception as exc:
+        blocked = _classify_auto_execution_block(exc)
+        if blocked is None:
+            raise
+        return {
+            "action": "auto_submit",
+            "changed": False,
+            "policy": normalized_policy,
+            "selected_candidate_id": int(top_candidate["candidate_id"]),
+            **blocked,
+            **({} if reactive_quote is None else {"reactive_quote": reactive_quote}),
+        }
     return {
         **result,
         "action": "auto_submit",
         "reason": None,
         "policy": normalized_policy,
         "selected_candidate_id": int(top_candidate["candidate_id"]),
+        **({} if reactive_quote is None else {"reactive_quote": reactive_quote}),
     }

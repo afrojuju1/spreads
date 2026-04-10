@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 
 from spreads.storage.base import RepositoryBase
 from spreads.storage.job_models import JobDefinitionModel, JobLeaseModel, JobRunModel
@@ -387,20 +388,24 @@ class JobRepository(RepositoryBase):
     ) -> bool:
         now = datetime.now(UTC)
         expires_at = now + timedelta(seconds=max(expires_in_seconds, 1))
-        with self.session_scope() as session:
-            statement = select(JobLeaseModel).where(JobLeaseModel.lease_key == lease_key).with_for_update()
-            row = session.scalar(statement)
-            if row is not None and row.expires_at > now and row.owner != owner:
-                return False
-            if row is None:
-                row = JobLeaseModel(lease_key=lease_key)
-                session.add(row)
-            row.job_run_id = job_run_id
-            row.owner = owner
-            row.acquired_at = now
-            row.expires_at = expires_at
-            row.lease_state_json = state or {}
-            return True
+        try:
+            with self.session_scope() as session:
+                statement = select(JobLeaseModel).where(JobLeaseModel.lease_key == lease_key).with_for_update()
+                row = session.scalar(statement)
+                if row is not None and row.expires_at > now and row.owner != owner:
+                    return False
+                if row is None:
+                    row = JobLeaseModel(lease_key=lease_key)
+                    session.add(row)
+                row.job_run_id = job_run_id
+                row.owner = owner
+                row.acquired_at = now
+                row.expires_at = expires_at
+                row.lease_state_json = state or {}
+                session.flush()
+                return True
+        except IntegrityError:
+            return False
 
     def renew_lease(
         self,

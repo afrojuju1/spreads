@@ -182,6 +182,249 @@ Do not default to:
 - thin names with unstable spreads
 - names without usable options context when the strategy expects options confirmation
 
+## Signals By Market Tier
+
+This section answers a narrower question than the general strategy list:
+
+- which signals are most defensible for each market tier
+- which tiers are suitable for trading versus monitoring
+
+The tiers below are a system design view, not an exchange rulebook.
+
+## Tier 1: ETFs And Index Proxies
+
+Best use:
+
+- fully tradable
+- core default research universe
+
+Best signal families:
+
+- intraday momentum around the open and close
+- macro-catalyst reaction
+- VWAP and opening-range structure
+- relative strength between major ETFs
+- mean reversion to VWAP on non-catalyst range days
+
+Best indicator stack:
+
+- opening range
+- VWAP
+- relative volume
+- relative strength versus peer ETFs
+- macro calendar context
+
+Why this tier fits:
+
+- the strongest evidence in this document for intraday momentum is actually on `SPY` and other liquid ETFs
+- ETFs have cleaner liquidity, lower spread noise, and better market-structure behavior than thinner names
+
+Evidence status:
+
+- intraday momentum in liquid ETFs: `Tier A`
+- VWAP / opening-range execution logic: `Tier B`
+- macro-catalyst reaction framing: `Tier A/B`
+
+System view:
+
+- this should be the cleanest tier for systematic intraday strategies
+
+## Tier 2: Mega Caps And Liquid Large Caps
+
+Best use:
+
+- fully tradable
+- core default research universe
+
+Best signal families:
+
+- catalyst continuation
+- relative strength continuation
+- trend pullback continuation
+- gap and go / gap fade
+- price structure and breakout failure around key levels
+
+Best indicator stack:
+
+- key levels
+- VWAP
+- `9 EMA` / `20 EMA`
+- relative strength versus `SPY` / `QQQ`
+- catalyst context
+- options confirmation when useful
+
+Why this tier fits:
+
+- large caps have much better liquidity and cleaner price discovery than smaller names
+- they are better suited to chart-structure and session-based signals than thin small caps
+
+Evidence status:
+
+- relative strength / momentum: `Tier A`
+- catalyst continuation: `Tier A/B`
+- chart-pattern execution: `Tier B`
+
+System view:
+
+- this is the best single-name tier for stock-first pattern and catalyst strategies
+
+## Tier 3: Liquid Mid Caps
+
+Best use:
+
+- selectively tradable
+- not broad default universe
+
+Best signal families:
+
+- catalyst continuation
+- earnings-surprise continuation / PEAD-style follow-through
+- gap and go / failed open
+- relative strength continuation with strict liquidity filters
+
+Best indicator stack:
+
+- catalyst presence
+- abnormal dollar volume
+- relative volume
+- opening range / VWAP
+- relative strength versus market and sector
+- stricter spread and liquidity checks
+
+Why this tier fits:
+
+- smaller and less liquid firms can show stronger continuation after earnings or catalysts
+- but transaction costs, slippage, and spread quality matter much more
+
+Evidence status:
+
+- earnings-drift style continuation in smaller / illiquid names: `Tier A`
+- intraday chart execution on mid caps: `Tier B`
+
+Inference note:
+
+- the research supports stronger informational drift in smaller or less liquid names, but that does not automatically mean broad tradability
+- for this system, the correct read is selective mid-cap use with tight governance
+
+System view:
+
+- liquid mid caps are good for event-driven strategies
+- they are not good candidates for loose pattern scanning
+
+## Tier 4: Small Caps
+
+Best use:
+
+- restricted universe
+- event-driven only
+- better for alerts and research than for broad automated trading
+
+Best signal families:
+
+- news + abnormal volume continuation
+- halt-aware momentum continuation
+- strong opening drive after verified catalyst
+- dilution / financing / filing risk overlays
+- fraud-risk and abnormal-promotion monitoring
+
+Best indicator stack:
+
+- verified catalyst
+- abnormal dollar volume
+- float-turnover proxy
+- opening range
+- VWAP hold / loss
+- SEC filing status
+- financing / dilution flags
+- halt history / halt risk
+
+Why this tier fits poorly:
+
+- illiquidity reduces signal reliability
+- spreads and market impact get much worse
+- small names are more vulnerable to event distortion and quality problems
+
+Evidence status:
+
+- event continuation after information shock: `Tier A/B`
+- pure technical pattern trading: `Tier C`
+- fraud/manipulation risk monitoring: `Tier A` as a risk-control problem, not a profit signal
+
+System view:
+
+- small caps should be handled under a separate governance policy
+- the best small-cap signals are catalyst and quality signals, not naked technical patterns
+
+## Tier 5: Penny Stocks / Microcaps / Nanocaps
+
+Best use:
+
+- surveillance first
+- trading only under an explicit separate policy
+
+Best signal families for the system:
+
+- promotion-versus-filing mismatch
+- suspicious press-release spikes
+- abnormal turnover with weak disclosure
+- SEC filing gaps
+- reverse split / financing / dilution watch
+- SEC halt and fraud-risk monitoring
+
+Best indicator stack:
+
+- SEC filing status
+- disclosure quality
+- suspicious promotion signals
+- abnormal volume / turnover
+- price spike persistence failure
+- halt / suspension history
+
+Why this tier is different:
+
+- official SEC guidance explicitly warns that microcap information quality is often poor and prices are more vulnerable to manipulation
+- technical signals that look strong may just be promotion, inventory games, or fraud
+
+Evidence status:
+
+- fraud-risk and promotion-risk monitoring: `Tier A`
+- technical breakout trading: `Tier C`
+
+System view:
+
+- penny stocks are not a default systematic trading tier for this framework
+- if included at all, they belong in a specialized surveillance or highly restricted event-driven workflow
+
+## Tier Summary
+
+Best default trading tiers:
+
+- ETFs and index proxies
+- mega caps
+- liquid large caps
+
+Conditional trading tier:
+
+- liquid mid caps
+
+Restricted / event-driven only:
+
+- small caps
+
+Surveillance-first, not default trading:
+
+- penny stocks / microcaps / nanocaps
+
+## Practical Signal Ranking By Tier
+
+Most attractive signal families by tier:
+
+- ETFs / index proxies: intraday momentum, macro reaction, VWAP / opening-range structure, ETF relative strength
+- large caps: catalyst continuation, relative strength continuation, trend pullback, gap continuation / failure
+- liquid mid caps: earnings or catalyst continuation, abnormal-volume gap continuation, selective relative strength
+- small caps: verified-news continuation, abnormal-volume opening drive, dilution / filing-risk overlays
+- penny / microcaps: fraud-risk monitoring, promotion mismatch, disclosure-risk monitoring, suspension / halt risk
+
 ## Strategy Governance
 
 Every strategy must define these before it is considered real:
@@ -480,4 +723,9 @@ That keeps the strategy library systematic instead of turning it into disconnect
 - [Assessing the Profitability of Intraday Opening Range Breakout Strategies](https://www.sciencedirect.com/science/article/pii/S1544612312000438)
 - [The Arrival of News and Return Jumps in Stock Markets](https://arxiv.org/abs/1901.02691)
 - [Federal Reserve Bank of New York: The Joint Dynamics of Liquidity, Returns, and Volatility across Small and Large Firms](https://www.newyorkfed.org/research/staff_reports/sr207.html)
+- [Liquidity and the Post-Earnings-Announcement Drift](https://business.columbia.edu/faculty/research/liquidity-and-post-earnings-announcement-drift)
+- [Illiquidity and Earnings Predictability](https://business.columbia.edu/faculty/research/illiquidity-and-earnings-predictability)
+- [SEC Microcap Stock: A Guide for Investors](https://www.sec.gov/about/reports-publications/investorpubsmicrocapstock)
+- [Investor.gov Microcap Stock Basics](https://www.investor.gov/introduction-investing/general-resources/news-alerts/alerts-bulletins/investor-bulletins/investor-3)
+- [Investor.gov Pump and Dump Schemes](https://www.investor.gov/protect-your-investments/fraud/types-fraud/pump-and-dump-schemes)
 - [SEC Market Structure Data Downloads](https://www.sec.gov/data-research/market-structure-data)

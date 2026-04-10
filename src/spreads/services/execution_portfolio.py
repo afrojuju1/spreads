@@ -164,7 +164,7 @@ def refresh_session_position_marks(
         }
 
     open_positions = [
-        position.to_dict()
+        dict(position)
         for position in execution_store.list_session_positions(
             statuses=sorted(OPEN_POSITION_STATUSES),
             limit=500,
@@ -256,7 +256,7 @@ def build_session_execution_portfolio(
             return _empty_portfolio()
 
         persisted_positions = [
-            position.to_dict()
+            dict(position)
             for position in resolved_execution_store.list_session_positions(session_id=session_id)
         ]
         if not persisted_positions:

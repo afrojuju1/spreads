@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
+from time import perf_counter
 from typing import Any
 
 from arq import create_pool
@@ -29,6 +31,15 @@ SCHEDULER_LEASE_TTL_SECONDS = 90
 LIVE_SLOT_MAX_RETRIES = 3
 
 
+def _log_scheduler_event(event: str, **payload: Any) -> None:
+    record = {
+        "event": event,
+        "timestamp": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        **payload,
+    }
+    print(json.dumps(record, separators=(",", ":"), sort_keys=True), flush=True)
+
+
 async def _publish_job_run_update(redis: Any, run_record: Any) -> None:
     try:
         await publish_global_event_async(
@@ -36,7 +47,7 @@ async def _publish_job_run_update(redis: Any, run_record: Any) -> None:
             topic="job.run.updated",
             entity_type="job_run",
             entity_id=run_record["job_run_id"],
-            payload=run_record.to_dict(),
+            payload=run_record,
             timestamp=run_record.get("finished_at") or run_record.get("heartbeat_at") or run_record["scheduled_for"],
         )
     except Exception:
@@ -140,6 +151,13 @@ async def _reconcile_live_collector_jobs(job_store: Any, redis: Any, *, now: dat
         plan = resolve_live_tick_plan(definition, now=now)
         if plan is None:
             continue
+        latest_session_runs = await asyncio.to_thread(
+            job_store.list_job_runs,
+            job_key=definition["job_key"],
+            session_id=str(plan["session_id"]),
+            limit=1,
+        )
+        latest_session_run = latest_session_runs[0] if latest_session_runs else None
         max_retries = max(int(definition["payload"].get("max_slot_retries", LIVE_SLOT_MAX_RETRIES)), 0)
         for slot_at in plan["slots"]:
             run_record = await asyncio.to_thread(
@@ -149,6 +167,18 @@ async def _reconcile_live_collector_jobs(job_store: Any, redis: Any, *, now: dat
                 slot_at=slot_at,
             )
             if run_record is None:
+                if latest_session_run is not None and latest_session_run["status"] in {"queued", "running"} and _live_run_active(
+                    latest_session_run,
+                    now=now,
+                    interval_seconds=int(plan["interval_seconds"]),
+                ):
+                    skipped.append(
+                        {
+                            "job_key": definition["job_key"],
+                            "reason": "previous_slot_active",
+                        }
+                    )
+                    break
                 slot_iso = isoformat_utc(slot_at)
                 payload = dict(plan["payload"])
                 payload.update(
@@ -184,22 +214,27 @@ async def _reconcile_live_collector_jobs(job_store: Any, redis: Any, *, now: dat
                         run_record=created_record,
                     ):
                         enqueued.append(created_record["job_run_id"])
+                    latest_session_run = created_record
                     break
                 continue
 
             if run_record["status"] == "succeeded":
+                latest_session_run = run_record
                 continue
             if run_record["status"] == "failed" and int(run_record.get("retry_count", 0)) >= max_retries:
+                latest_session_run = run_record
                 continue
             if run_record["status"] in {"queued", "running"} and _live_run_active(
                 run_record,
                 now=now,
                 interval_seconds=int(plan["interval_seconds"]),
             ):
+                latest_session_run = run_record
                 break
 
             next_retry_count = int(run_record.get("retry_count", 0)) + 1
             if run_record["status"] in {"failed", "skipped"} and next_retry_count > max_retries:
+                latest_session_run = run_record
                 continue
             attempt_id = build_job_attempt_id(run_record["job_run_id"], next_retry_count)
             requeued_record = await asyncio.to_thread(
@@ -215,6 +250,7 @@ async def _reconcile_live_collector_jobs(job_store: Any, redis: Any, *, now: dat
                 run_record=requeued_record,
             ):
                 enqueued.append(requeued_record["job_run_id"])
+            latest_session_run = requeued_record
             break
 
     return {"enqueued": enqueued, "skipped": skipped}
@@ -284,22 +320,34 @@ async def enqueue_due_jobs(job_store: Any, redis: Any) -> dict[str, Any]:
 async def scheduler_loop(args: argparse.Namespace) -> int:
     job_store = build_job_repository(args.db)
     redis = await create_pool(build_redis_settings(args.redis_url))
+    _log_scheduler_event(
+        "scheduler_started",
+        poll_seconds=max(args.poll_seconds, 1),
+        once=bool(args.once),
+    )
     try:
         while True:
             owner = "scheduler"
+            tick_started = perf_counter()
+            lease_seconds = max(args.poll_seconds * 3, SCHEDULER_LEASE_TTL_SECONDS)
             await asyncio.to_thread(
                 job_store.acquire_lease,
                 lease_key=SCHEDULER_RUNTIME_LEASE_KEY,
                 owner=owner,
-                expires_in_seconds=max(args.poll_seconds * 3, SCHEDULER_LEASE_TTL_SECONDS),
+                expires_in_seconds=lease_seconds,
                 state={"kind": "scheduler", "last_tick_at": datetime.now(UTC).isoformat()},
             )
             result = await enqueue_due_jobs(job_store, redis)
-            if result["enqueued"] or result["skipped"]:
-                print(
-                    f"[{datetime.now(UTC).isoformat(timespec='seconds').replace('+00:00', 'Z')}] "
-                    f"enqueued={len(result['enqueued'])} skipped={len(result['skipped'])}"
-                )
+            _log_scheduler_event(
+                "scheduler_tick",
+                poll_seconds=max(args.poll_seconds, 1),
+                lease_seconds=lease_seconds,
+                elapsed_ms=round((perf_counter() - tick_started) * 1000, 1),
+                enqueued_count=len(result["enqueued"]),
+                skipped_count=len(result["skipped"]),
+                enqueued_job_run_ids=result["enqueued"][:5],
+                skipped_samples=result["skipped"][:5],
+            )
             if args.once:
                 break
             await asyncio.sleep(max(args.poll_seconds, 1))
@@ -307,6 +355,7 @@ async def scheduler_loop(args: argparse.Namespace) -> int:
         await asyncio.to_thread(job_store.release_lease, SCHEDULER_RUNTIME_LEASE_KEY, owner="scheduler")
         await redis.close()
         job_store.close()
+        _log_scheduler_event("scheduler_stopped")
     return 0
 
 

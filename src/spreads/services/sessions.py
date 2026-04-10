@@ -178,7 +178,7 @@ def _resolve_session_analysis(
     stop_multiple: float,
     storage: Any,
 ) -> dict[str, Any]:
-    analysis_run_payload = analysis_run.to_dict()
+    analysis_run_payload = dict(analysis_run)
     stored_summary = analysis_run_payload.get("summary")
     if _is_default_analysis_request(profit_target=profit_target, stop_multiple=stop_multiple) and isinstance(
         stored_summary,
@@ -226,12 +226,12 @@ def list_existing_sessions(
 
     latest_cycles = collector_store.list_latest_cycles_by_session_ids(sorted(candidate_session_ids))
     latest_cycles_by_session_id = {
-        str(cycle["session_id"]): cycle.to_dict()
+        str(cycle["session_id"]): dict(cycle)
         for cycle in latest_cycles
         if cycle.get("session_id")
     }
     latest_runs = [
-        enrich_live_collector_job_run_payload(row.to_dict())
+        enrich_live_collector_job_run_payload(row)
         for row in job_store.list_latest_runs_by_session_ids(
             session_ids=sorted(candidate_session_ids),
             job_type="live_collector",
@@ -363,7 +363,7 @@ def get_session_detail(
         raise ValueError(f"Unknown session_id: {session_id}")
 
     slot_runs = _sort_session_runs(
-        enrich_live_collector_job_run_payload(row.to_dict())
+        enrich_live_collector_job_run_payload(row)
         for row in job_store.list_job_runs(
             job_type="live_collector",
             session_id=session_id,
@@ -379,21 +379,21 @@ def get_session_detail(
     watchlist_candidates: list[dict[str, Any]] = []
     if latest_cycle is not None:
         board_candidates = [
-            candidate.to_dict()
+            dict(candidate)
             for candidate in collector_store.list_cycle_candidates(latest_cycle["cycle_id"], bucket="board")
         ]
         watchlist_candidates = [
-            candidate.to_dict()
+            dict(candidate)
             for candidate in collector_store.list_cycle_candidates(latest_cycle["cycle_id"], bucket="watchlist")
         ]
         current_cycle = {
-            **latest_cycle.to_dict(),
+            **latest_cycle,
             "board_candidates": board_candidates,
             "watchlist_candidates": watchlist_candidates,
         }
 
     alerts = [
-        alert.to_dict()
+        dict(alert)
         for alert in alert_store.list_alert_events(
             session_date=identity["session_date"],
             label=identity["label"],
@@ -401,7 +401,7 @@ def get_session_detail(
         )
     ]
     events = [
-        event.to_dict()
+        dict(event)
         for event in collector_store.list_events(
             label=identity["label"],
             session_date=identity["session_date"],

@@ -664,6 +664,10 @@ class SpreadCandidate:
     setup_status: str = "unknown"
     setup_score: float | None = None
     setup_reasons: tuple[str, ...] = ()
+    setup_daily_score: float | None = None
+    setup_intraday_score: float | None = None
+    setup_intraday_minutes: int | None = None
+    setup_has_intraday_context: bool = False
     data_status: str = "clean"
     data_reasons: tuple[str, ...] = ()
     board_notes: tuple[str, ...] = ()
@@ -731,11 +735,11 @@ PROFILE_CONFIGS: dict[str, ProfileConfig] = {
         short_delta_target=0.10,
         min_width=1.0,
         max_width_by_underlying={"etf_index_proxy": 2.0, "single_name_equity": 2.0},
-        min_credit=0.05,
+        min_credit=0.08,
         min_open_interest_by_underlying={"etf_index_proxy": 750, "single_name_equity": 750},
-        max_relative_spread_by_underlying={"etf_index_proxy": 0.12, "single_name_equity": 0.12},
+        max_relative_spread_by_underlying={"etf_index_proxy": 0.08, "single_name_equity": 0.08},
         min_return_on_risk=0.05,
-        min_fill_ratio=0.72,
+        min_fill_ratio=0.80,
         min_short_vs_expected_move_ratio=0.08,
         min_breakeven_vs_expected_move_ratio=0.03,
     ),
@@ -818,7 +822,7 @@ def effective_min_credit(width: float, args: argparse.Namespace) -> float:
     if session_bucket != "late":
         return threshold
     if width <= 1.0:
-        return max(threshold, 0.08)
+        return max(threshold, 0.10)
     return max(threshold, 0.15)
 
 
@@ -1896,12 +1900,17 @@ def attach_underlying_setup(
 ) -> list[SpreadCandidate]:
     if setup is None:
         return candidates
+    has_intraday_context = setup.intraday_score is not None and (setup.source_window_minutes or 0) > 0
     return [
         replace(
             candidate,
             setup_status=setup.status,
             setup_score=setup.score,
             setup_reasons=setup.reasons,
+            setup_daily_score=setup.daily_score,
+            setup_intraday_score=setup.intraday_score,
+            setup_intraday_minutes=setup.source_window_minutes,
+            setup_has_intraday_context=has_intraday_context,
         )
         for candidate in candidates
     ]
@@ -2114,7 +2123,8 @@ def make_open_order_payload(short_symbol: str, long_symbol: str, limit_price: fl
         "order_class": "mleg",
         "qty": "1",
         "type": "limit",
-        "limit_price": f"{limit_price:.2f}",
+        # Alpaca expects negative net prices for credit mleg orders.
+        "limit_price": f"{-abs(limit_price):.2f}",
         "time_in_force": "day",
         "legs": [
             {
@@ -2138,7 +2148,7 @@ def make_close_order_payload(short_symbol: str, long_symbol: str, limit_price: f
         "order_class": "mleg",
         "qty": "1",
         "type": "limit",
-        "limit_price": f"{limit_price:.2f}",
+        "limit_price": f"{abs(limit_price):.2f}",
         "time_in_force": "day",
         "legs": [
             {

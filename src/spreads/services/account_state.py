@@ -323,7 +323,7 @@ def get_account_overview(
             )
         if snapshot is None:
             raise
-        overview = _overview_from_snapshot(snapshot.to_dict())
+        overview = _overview_from_snapshot(snapshot)
     return {
         **overview,
         "sync": sync,

@@ -13,13 +13,11 @@ import redis.asyncio as redis_async
 from spreads.events.bus import publish_global_event_async
 from spreads.jobs.live_collector import LiveTickContext, build_collection_args, run_collection_tick
 from spreads.jobs.registry import (
-    ANALYSIS_QUEUE_NAME,
     BROKER_SYNC_JOB_TYPE,
     COLLECTOR_QUEUE_NAME,
     EXECUTION_SUBMIT_JOB_TYPE,
-    FAST_QUEUE_NAME,
-    GENERATOR_QUEUE_NAME,
     LIVE_COLLECTOR_JOB_TYPE,
+    MAIN_QUEUE_NAME,
     POST_CLOSE_ANALYSIS_JOB_TYPE,
     POST_MARKET_ANALYSIS_JOB_TYPE,
     SESSION_EXIT_MANAGER_JOB_TYPE,
@@ -71,10 +69,14 @@ class SupersededJobRun(RuntimeError):
     pass
 
 
-def _compact_single_analysis_result(result: dict[str, Any]) -> dict[str, Any]:
+def _compact_single_analysis_result(
+    result: dict[str, Any],
+    *,
+    include_report: bool = False,
+) -> dict[str, Any]:
     summary = result["summary"]
     outcomes = summary["outcomes"]
-    return {
+    payload = {
         "session_date": result["session_date"],
         "label": result["label"],
         "cycle_count": summary["cycle_count"],
@@ -84,20 +86,30 @@ def _compact_single_analysis_result(result: dict[str, Any]) -> dict[str, Any]:
         "quote_event_count": summary["quote_overview"]["quote_event_count"],
         "event_count": summary["event_overview"]["event_count"],
     }
+    if include_report:
+        payload["report"] = result.get("report")
+    return payload
 
 
-def compact_analysis_result(result: dict[str, Any]) -> dict[str, Any]:
+def compact_analysis_result(
+    result: dict[str, Any],
+    *,
+    include_report: bool = False,
+) -> dict[str, Any]:
     if result.get("mode") == "planner":
         return {
             "mode": "planner",
             "session_date": result["session_date"],
             "expected_labels": list(result.get("expected_labels") or []),
             "realized_labels": list(result.get("realized_labels") or []),
-            "runs": [_compact_single_analysis_result(item) for item in result.get("runs", [])],
+            "runs": [
+                _compact_single_analysis_result(item, include_report=include_report)
+                for item in result.get("runs", [])
+            ],
             "skipped_labels": [dict(item) for item in result.get("skipped_labels", [])],
             "failed_labels": [dict(item) for item in result.get("failed_labels", [])],
         }
-    return _compact_single_analysis_result(result)
+    return _compact_single_analysis_result(result, include_report=include_report)
 
 
 def _compact_single_post_market_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -213,7 +225,7 @@ async def _publish_job_run_event(ctx: dict[str, Any], run_record: Any) -> None:
     if event_bus is None:
         return
     try:
-        payload = enrich_live_collector_job_run_payload(run_record.to_dict())
+        payload = enrich_live_collector_job_run_payload(run_record)
         await publish_global_event_async(
             event_bus,
             topic="job.run.updated",
@@ -318,8 +330,10 @@ def _count_consecutive_websocket_zero_slots(
     )
     consecutive = 0
     for row in rows:
-        payload = enrich_live_collector_job_run_payload(row.to_dict())
+        payload = enrich_live_collector_job_run_payload(row)
         quote_capture = payload.get("quote_capture") or {}
+        if int(quote_capture.get("expected_quote_symbol_count", 0)) <= 0:
+            continue
         if int(quote_capture.get("websocket_quote_events_saved", 0)) > 0:
             break
         consecutive += 1
@@ -360,10 +374,13 @@ def _build_live_collector_degradation(
     slot_lag_slots: int,
 ) -> dict[str, Any] | None:
     quote_capture = run_payload.get("quote_capture") or {}
+    expected_quote_symbol_count = int(quote_capture.get("expected_quote_symbol_count", 0) or 0)
     reasons: list[str] = []
-    if int(quote_capture.get("total_quote_events_saved", 0)) == 0:
+    if expected_quote_symbol_count > 0 and int(quote_capture.get("total_quote_events_saved", 0)) == 0:
         reasons.append("quote_capture_empty")
     if (
+        expected_quote_symbol_count > 0
+        and
         int(quote_capture.get("websocket_quote_events_saved", 0)) == 0
         and consecutive_websocket_zero_slots >= LIVE_COLLECTOR_WEBSOCKET_STALL_THRESHOLD
     ):
@@ -390,7 +407,7 @@ def _build_live_collector_degradation(
 
 
 async def _emit_live_collector_observability(ctx: dict[str, Any], run_record: Any) -> None:
-    run_payload = enrich_live_collector_job_run_payload(run_record.to_dict())
+    run_payload = enrich_live_collector_job_run_payload(run_record)
     session_id = run_payload.get("session_id")
     if not isinstance(session_id, str) or not session_id:
         return
@@ -758,7 +775,7 @@ async def run_broker_sync_job(
     payload: dict[str, Any],
     arq_job_id: str,
 ) -> dict[str, Any]:
-    database_url = ctx["database_url"]
+    database_url = str(payload.get("db") or ctx["database_url"])
 
     def runner(heartbeat: Any) -> dict[str, Any]:
         heartbeat()
@@ -918,7 +935,10 @@ async def run_post_close_analysis_job(
         arq_job_id=arq_job_id,
         payload=enriched_payload,
         runner=runner,
-        compact_result=compact_analysis_result,
+        compact_result=lambda result: compact_analysis_result(
+            result,
+            include_report=bool(payload.get("include_report")),
+        ),
     )
 
 
@@ -929,7 +949,7 @@ async def run_post_market_analysis_job(
     payload: dict[str, Any],
     arq_job_id: str,
 ) -> dict[str, Any]:
-    database_url = ctx["database_url"]
+    database_url = str(payload.get("db") or ctx["database_url"])
     job_store = ctx["job_store"]
 
     def runner(heartbeat: Any) -> dict[str, Any]:
@@ -1069,19 +1089,22 @@ async def run_generator_job(
         raise
 
 
-class FastWorkerSettings:
+class MainWorkerSettings:
     functions = [
         run_broker_sync_job,
         run_execution_submit_job,
         run_session_exit_manager_job,
+        run_post_close_analysis_job,
+        run_post_market_analysis_job,
+        run_generator_job,
     ]
-    queue_name = FAST_QUEUE_NAME
+    queue_name = MAIN_QUEUE_NAME
     redis_settings = build_redis_settings(default_redis_url())
     on_startup = startup
     on_shutdown = shutdown
     keep_result = 0
     job_timeout = 8 * 60 * 60
-    max_jobs = 2
+    max_jobs = 4
 
 
 class CollectorWorkerSettings:
@@ -1097,31 +1120,4 @@ class CollectorWorkerSettings:
     max_jobs = 1
 
 
-class AnalysisWorkerSettings:
-    functions = [
-        run_post_close_analysis_job,
-        run_post_market_analysis_job,
-    ]
-    queue_name = ANALYSIS_QUEUE_NAME
-    redis_settings = build_redis_settings(default_redis_url())
-    on_startup = startup
-    on_shutdown = shutdown
-    keep_result = 0
-    job_timeout = 8 * 60 * 60
-    max_jobs = 1
-
-
-class GeneratorWorkerSettings:
-    functions = [
-        run_generator_job,
-    ]
-    queue_name = GENERATOR_QUEUE_NAME
-    redis_settings = build_redis_settings(default_redis_url())
-    on_startup = startup
-    on_shutdown = shutdown
-    keep_result = 0
-    job_timeout = 8 * 60 * 60
-    max_jobs = 1
-
-
-WorkerSettings = FastWorkerSettings
+WorkerSettings = MainWorkerSettings

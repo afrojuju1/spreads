@@ -7,6 +7,7 @@ import pandas_market_calendars as mcal
 
 from spreads.db.decorators import with_storage
 from spreads.services.execution_portfolio import refresh_session_position_marks
+from spreads.services.risk_manager import normalize_risk_policy
 from spreads.storage.serializers import parse_datetime
 
 OPEN_POSITION_STATUSES = ["open", "partial_close"]
@@ -119,6 +120,48 @@ def resolve_exit_policy_snapshot(*, session_date: str, payload: dict[str, Any] |
     return policy
 
 
+def _resolve_effective_exit_mark(
+    *,
+    position: dict[str, Any],
+    mark: float | None,
+    now: datetime,
+) -> tuple[float | None, str]:
+    if mark is None or mark <= 0:
+        return None, "awaiting_mark"
+
+    risk_policy = normalize_risk_policy(position.get("risk_policy"))
+    stale_quote_after_seconds = _coerce_float(risk_policy.get("stale_quote_after_seconds"))
+    if stale_quote_after_seconds is None:
+        return mark, "mark"
+
+    marked_at = parse_datetime(_as_text(position.get("close_marked_at")))
+    if marked_at is None:
+        return None, "awaiting_fresh_mark"
+
+    age_seconds = (now - marked_at).total_seconds()
+    if age_seconds > stale_quote_after_seconds:
+        return None, "awaiting_fresh_mark"
+    return mark, "mark"
+
+
+def _resolve_force_close_limit_price(
+    *,
+    position: dict[str, Any],
+    mark: float | None,
+    fallback_mark: float | None,
+) -> tuple[float | None, str | None]:
+    if mark is not None and mark > 0:
+        return round(max(mark, 0.01), 2), "mark"
+
+    width = _coerce_float(position.get("width"))
+    if width is not None and width > 0:
+        return round(max(width, 0.01), 2), "width"
+
+    if fallback_mark is not None and fallback_mark > 0:
+        return round(max(fallback_mark, 0.01), 2), "stale_mark"
+    return None, None
+
+
 def evaluate_exit_policy(
     *,
     position: dict[str, Any],
@@ -134,25 +177,50 @@ def evaluate_exit_policy(
     if not policy["enabled"]:
         return {"should_close": False, "reason": "policy_disabled"}
 
+    effective_mark, mark_state = _resolve_effective_exit_mark(
+        position=position,
+        mark=mark,
+        now=current_time,
+    )
     entry_credit = _coerce_float(position.get("entry_credit"))
     if (
         entry_credit is not None
-        and mark is not None
-        and mark <= entry_credit * max(1.0 - float(policy["profit_target_pct"]), 0.0)
+        and effective_mark is not None
+        and effective_mark <= entry_credit * max(1.0 - float(policy["profit_target_pct"]), 0.0)
     ):
-        return {"should_close": True, "reason": "profit_target", "limit_price": round(max(mark, 0.01), 2)}
+        return {
+            "should_close": True,
+            "reason": "profit_target",
+            "limit_price": round(max(effective_mark, 0.01), 2),
+            "limit_price_source": "mark",
+        }
     if (
         entry_credit is not None
-        and mark is not None
-        and mark >= entry_credit * float(policy["stop_multiple"])
+        and effective_mark is not None
+        and effective_mark >= entry_credit * float(policy["stop_multiple"])
     ):
-        return {"should_close": True, "reason": "stop_multiple", "limit_price": round(max(mark, 0.01), 2)}
+        return {
+            "should_close": True,
+            "reason": "stop_multiple",
+            "limit_price": round(max(effective_mark, 0.01), 2),
+            "limit_price_source": "mark",
+        }
     if force_close_at is not None and current_time >= force_close_at:
-        if mark is None or mark <= 0:
-            return {"should_close": False, "reason": "awaiting_mark_for_force_close"}
-        return {"should_close": True, "reason": "force_close", "limit_price": round(max(mark, 0.01), 2)}
-    if mark is None or mark <= 0:
-        return {"should_close": False, "reason": "awaiting_mark"}
+        limit_price, limit_price_source = _resolve_force_close_limit_price(
+            position=position,
+            mark=effective_mark,
+            fallback_mark=mark,
+        )
+        if limit_price is None:
+            return {"should_close": False, "reason": "awaiting_force_close_price"}
+        return {
+            "should_close": True,
+            "reason": "force_close",
+            "limit_price": limit_price,
+            "limit_price_source": limit_price_source,
+        }
+    if effective_mark is None:
+        return {"should_close": False, "reason": mark_state}
     return {"should_close": False, "reason": "hold"}
 
 
@@ -187,7 +255,7 @@ def run_session_exit_manager(
         }
 
     open_positions = [
-        position.to_dict()
+        dict(position)
         for position in execution_store.list_session_positions(
             statuses=OPEN_POSITION_STATUSES,
             limit=200,
@@ -209,7 +277,7 @@ def run_session_exit_manager(
         storage=storage,
     )
     refreshed_positions = [
-        position.to_dict()
+        dict(position)
         for position in execution_store.list_session_positions(
             statuses=OPEN_POSITION_STATUSES,
             limit=200,
@@ -276,6 +344,7 @@ def run_session_exit_manager(
                     "source": {
                         "kind": "exit_manager",
                         "reason": decision["reason"],
+                        "limit_price_source": _as_text(decision.get("limit_price_source")),
                     }
                 },
             )

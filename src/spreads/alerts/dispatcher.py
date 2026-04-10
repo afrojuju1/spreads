@@ -122,7 +122,7 @@ def send_or_skip_alert(
             dedupe_key=dedupe_key,
             state=dedupe_state,
         )
-        return persisted.to_dict()
+        return persisted
 
     discord_payload = build_discord_payload(payload)
     try:
@@ -140,14 +140,14 @@ def send_or_skip_alert(
             dedupe_key=dedupe_key,
             state=dedupe_state,
         )
-        return persisted.to_dict()
+        return persisted
     except Exception as exc:
         persisted = alert_store.mark_alert_event_status(
             alert_id=event["alert_id"],
             status="failed",
             error_text=str(exc),
         )
-        return persisted.to_dict()
+        return persisted
 
 
 def dispatch_cycle_alerts(
@@ -222,7 +222,7 @@ def dispatch_cycle_alerts(
                 entity_type="alert_event",
                 entity_id=str(record["alert_id"]),
                 payload={
-                    **record.to_dict(),
+                    **record,
                     "session_id": build_live_session_id(label, session_date),
                 },
                 timestamp=record["created_at"],

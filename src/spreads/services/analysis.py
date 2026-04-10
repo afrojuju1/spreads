@@ -802,9 +802,9 @@ def build_session_summary(
             board = collector_store.list_cycle_candidates(latest_cycle["cycle_id"], bucket="board")
             watchlist = collector_store.list_cycle_candidates(latest_cycle["cycle_id"], bucket="watchlist")
             latest_cycle_payload = {
-                **latest_cycle.to_dict(),
-                "board_candidates": [candidate.to_dict() for candidate in board],
-                "watchlist_candidates": [candidate.to_dict() for candidate in watchlist],
+                **latest_cycle,
+                "board_candidates": list(board),
+                "watchlist_candidates": list(watchlist),
             }
         outcomes = build_session_outcomes(
             history_store=history_store,

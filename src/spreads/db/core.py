@@ -10,7 +10,7 @@ from spreads.runtime.config import default_database_url
 from spreads.storage.context import StorageContext
 from spreads.storage.db import build_session_factory
 from spreads.storage.factory import build_storage_context
-from spreads.storage.records import StorageRow
+from spreads.storage.records import StorageRow, make_storage_row
 from spreads.storage.serializers import render_value
 
 ModelT = TypeVar("ModelT")
@@ -67,7 +67,7 @@ def to_storage_row(
     if extra:
         for key, value in extra.items():
             payload[key] = _copy_value(value)
-    return StorageRow(payload)
+    return make_storage_row(payload)
 
 
 def to_storage_rows(

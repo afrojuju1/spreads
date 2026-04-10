@@ -41,13 +41,13 @@ def _hydrate_attempt_payload(execution_store: Any, execution_attempt_id: str) ->
     attempt = execution_store.get_attempt(execution_attempt_id)
     if attempt is None:
         return None
-    payload = attempt.to_dict()
+    payload = dict(attempt)
     payload["orders"] = [
-        order.to_dict()
+        dict(order)
         for order in execution_store.list_orders(execution_attempt_id=execution_attempt_id)
     ]
     payload["fills"] = [
-        fill.to_dict()
+        dict(fill)
         for fill in execution_store.list_fills(execution_attempt_id=execution_attempt_id)
     ]
     return payload
@@ -112,7 +112,7 @@ def _sync_recent_fill_activities(
 ) -> dict[str, Any]:
     fill_sync_state = broker_store.get_sync_state(FILL_ACTIVITY_SYNC_KEY)
     activity_dates = _activity_dates(
-        None if fill_sync_state is None else fill_sync_state.to_dict(),
+        fill_sync_state,
         lookback_days=lookback_days,
     )
     activities, errors = _fetch_fill_activities(activity_dates=activity_dates)
@@ -125,7 +125,7 @@ def _sync_recent_fill_activities(
     )
     persisted_orders = execution_store.list_orders_by_broker_order_ids(broker_order_ids)
     orders_by_broker_order_id = {
-        str(order["broker_order_id"]): order.to_dict()
+        str(order["broker_order_id"]): dict(order)
         for order in persisted_orders
     }
 
@@ -232,8 +232,8 @@ def _reconcile_position(
     long_position = broker_positions_by_symbol.get(long_symbol)
 
     issues: list[str] = []
-    short_qty = _coerce_float(None if short_position is None else short_position.get("qty"))
-    long_qty = _coerce_float(None if long_position is None else long_position.get("qty"))
+    short_qty = abs(_coerce_float(None if short_position is None else short_position.get("qty")) or 0.0)
+    long_qty = abs(_coerce_float(None if long_position is None else long_position.get("qty")) or 0.0)
     short_side = _as_text(None if short_position is None else short_position.get("side"))
     long_side = _as_text(None if long_position is None else long_position.get("side"))
 
@@ -241,14 +241,14 @@ def _reconcile_position(
         issues.append(f"missing broker short leg {short_symbol}")
     elif short_side != "short":
         issues.append(f"short leg side mismatch for {short_symbol}")
-    elif short_qty is None or short_qty < remaining_quantity:
+    elif short_qty < remaining_quantity:
         issues.append(f"short leg quantity mismatch for {short_symbol}")
 
     if long_position is None:
         issues.append(f"missing broker long leg {long_symbol}")
     elif long_side != "long":
         issues.append(f"long leg side mismatch for {long_symbol}")
-    elif long_qty is None or long_qty < remaining_quantity:
+    elif long_qty < remaining_quantity:
         issues.append(f"long leg quantity mismatch for {long_symbol}")
 
     reconciliation_status = "matched" if not issues else "mismatch"
@@ -260,7 +260,7 @@ def _reconcile_position(
         reconciliation_note=reconciliation_note,
         updated_at=reconciled_at,
     )
-    return updated.to_dict()
+    return updated
 
 
 @with_storage()
@@ -335,7 +335,7 @@ def run_broker_sync(
             if isinstance(position, dict) and position.get("symbol")
         }
         open_positions = [
-            position.to_dict()
+            dict(position)
             for position in execution_store.list_session_positions(
                 statuses=OPEN_POSITION_STATUSES,
                 limit=200,

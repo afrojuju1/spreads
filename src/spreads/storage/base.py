@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from spreads.storage.capabilities import StorageCapabilities
 from spreads.storage.db import build_session_factory
-from spreads.storage.records import StorageRow
+from spreads.storage.records import StorageRow, make_storage_row
 from spreads.storage.serializers import render_value
 
 
@@ -75,7 +75,7 @@ class RepositoryBase:
         if extra:
             for key, value in extra.items():
                 payload[key] = _copy_value(value)
-        return StorageRow(payload)
+        return make_storage_row(payload)
 
     def rows(
         self,
