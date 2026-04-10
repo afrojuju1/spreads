@@ -1,0 +1,23 @@
+from __future__ import annotations
+
+import typer
+
+from spreads.cli.ops import sessions_command, status_command, trading_command
+
+app = typer.Typer(
+    add_completion=True,
+    help="Spreads operator CLI.",
+    no_args_is_help=True,
+)
+
+app.command("status", help="Show system and runtime health.")(status_command)
+app.command("trading", help="Show live trading safety and readiness.")(trading_command)
+app.command("sessions", help="List live sessions or inspect one session.")(sessions_command)
+
+
+def main() -> None:
+    app()
+
+
+if __name__ == "__main__":
+    main()

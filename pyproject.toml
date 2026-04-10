@@ -16,13 +16,16 @@ dependencies = [
   "python-dotenv>=1.1.1",
   "psycopg[binary]>=3.2.10",
   "py-vollib>=1.0.1",
+  "rich>=13.7.1",
   "sqlalchemy>=2.0.43",
+  "typer>=0.12.5",
   "uvicorn>=0.37.0",
   "websocket-client>=1.8.0",
   "websockets>=16.0",
 ]
 
 [project.scripts]
+spreads = "spreads.cli.main:main"
 spreads-scan = "spreads.cli.scan:main"
 spreads-collect = "spreads.cli.collect:main"
 spreads-analyze = "spreads.cli.analyze:main"
