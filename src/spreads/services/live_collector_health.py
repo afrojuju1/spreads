@@ -21,7 +21,7 @@ def _read_int(mapping: Mapping[str, Any] | None, key: str) -> int:
     return 0
 
 
-def normalize_expected_quote_symbols(value: Any) -> list[str]:
+def normalize_expected_symbols(value: Any) -> list[str]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
         return []
     normalized: list[str] = []
@@ -32,6 +32,14 @@ def normalize_expected_quote_symbols(value: Any) -> list[str]:
         if symbol and symbol not in normalized:
             normalized.append(symbol)
     return normalized
+
+
+def normalize_expected_quote_symbols(value: Any) -> list[str]:
+    return normalize_expected_symbols(value)
+
+
+def normalize_expected_trade_symbols(value: Any) -> list[str]:
+    return normalize_expected_symbols(value)
 
 
 def build_quote_capture_summary(
@@ -70,6 +78,32 @@ def build_quote_capture_summary(
     }
 
 
+def build_trade_capture_summary(
+    *,
+    expected_trade_symbols: Sequence[str] | None,
+    total_trade_events_saved: int,
+    websocket_trade_events_saved: int,
+) -> dict[str, Any]:
+    expected_symbols = normalize_expected_trade_symbols(expected_trade_symbols)
+    total = max(int(total_trade_events_saved), 0)
+    websocket = max(int(websocket_trade_events_saved), 0)
+
+    if total <= 0:
+        capture_status = "empty"
+    elif websocket > 0:
+        capture_status = "healthy"
+    else:
+        capture_status = "baseline_only"
+
+    return {
+        "capture_status": capture_status,
+        "expected_trade_symbols": expected_symbols,
+        "expected_trade_symbol_count": len(expected_symbols),
+        "total_trade_events_saved": total,
+        "websocket_trade_events_saved": websocket,
+    }
+
+
 def enrich_live_collector_result(result: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if result is None:
         return None
@@ -81,7 +115,13 @@ def enrich_live_collector_result(result: Mapping[str, Any] | None) -> dict[str, 
         websocket_quote_events_saved=_read_int(enriched, "websocket_quote_events_saved"),
         recovery_quote_events_saved=_read_int(enriched, "recovery_quote_events_saved"),
     )
+    trade_capture = build_trade_capture_summary(
+        expected_trade_symbols=enriched.get("expected_trade_symbols"),
+        total_trade_events_saved=_read_int(enriched, "trade_events_saved"),
+        websocket_trade_events_saved=_read_int(enriched, "websocket_trade_events_saved"),
+    )
     enriched["quote_capture"] = quote_capture
+    enriched["trade_capture"] = trade_capture
     return enriched
 
 
@@ -96,5 +136,8 @@ def enrich_live_collector_job_run_payload(payload: Mapping[str, Any]) -> dict[st
         return enriched
     enriched["result"] = result
     enriched["quote_capture"] = result["quote_capture"]
+    enriched["trade_capture"] = result["trade_capture"]
+    enriched["uoa_summary"] = result.get("uoa_summary") or {}
+    enriched["uoa_decisions"] = result.get("uoa_decisions") or {}
     enriched["capture_status"] = result["quote_capture"]["capture_status"]
     return enriched

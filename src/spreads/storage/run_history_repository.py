@@ -7,9 +7,10 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import and_, delete, func, select
 
 from spreads.storage.base import RepositoryBase
-from spreads.storage.models import OptionQuoteEventModel, ScanCandidateModel, ScanRunModel
+from spreads.storage.models import OptionQuoteEventModel, OptionTradeEventModel, ScanCandidateModel, ScanRunModel
 from spreads.storage.records import (
     OptionQuoteEventRecord,
+    OptionTradeEventRecord,
     ScanCandidateRecord,
     ScanRunRecord,
     SessionTopRunRecord,
@@ -23,7 +24,7 @@ class RunHistoryRepository(RepositoryBase):
 
     def table_counts(self) -> dict[str, int]:
         with self.session_factory() as session:
-            return {
+            counts = {
                 "scan_runs": int(session.scalar(select(func.count()).select_from(ScanRunModel)) or 0),
                 "scan_candidates": int(
                     session.scalar(select(func.count()).select_from(ScanCandidateModel)) or 0
@@ -32,9 +33,16 @@ class RunHistoryRepository(RepositoryBase):
                     session.scalar(select(func.count()).select_from(OptionQuoteEventModel)) or 0
                 ),
             }
+            if self.schema_has_tables("option_trade_events"):
+                counts["option_trade_events"] = int(
+                    session.scalar(select(func.count()).select_from(OptionTradeEventModel)) or 0
+                )
+            return counts
 
     def truncate_all(self) -> None:
         with self.session_scope() as session:
+            if self.schema_has_tables("option_trade_events"):
+                session.execute(delete(OptionTradeEventModel))
             session.execute(delete(OptionQuoteEventModel))
             session.execute(delete(ScanCandidateModel))
             session.execute(delete(ScanRunModel))
@@ -249,6 +257,134 @@ class RunHistoryRepository(RepositoryBase):
                 ]
             )
         return len(quotes)
+
+    def list_session_trade_events(
+        self,
+        *,
+        session_date: str,
+        label: str,
+    ) -> list[OptionTradeEventRecord]:
+        session_start, session_end = session_bounds(session_date)
+
+        statement = (
+            select(OptionTradeEventModel)
+            .where(OptionTradeEventModel.captured_at >= session_start)
+            .where(OptionTradeEventModel.captured_at < session_end)
+            .where(OptionTradeEventModel.label == label)
+            .order_by(OptionTradeEventModel.trade_id.asc())
+        )
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return self.rows(rows)
+
+    def summarize_scoreable_trade_flow(
+        self,
+        *,
+        label: str,
+        underlyings: list[str],
+        captured_from: str | datetime,
+        captured_to: str | datetime,
+    ) -> dict[str, dict[str, Any]]:
+        if not underlyings:
+            return {}
+        captured_from_dt = parse_datetime(captured_from)
+        captured_to_dt = parse_datetime(captured_to)
+        if captured_from_dt is None or captured_to_dt is None or captured_from_dt >= captured_to_dt:
+            return {}
+
+        statement = (
+            select(
+                OptionTradeEventModel.underlying_symbol,
+                func.count(OptionTradeEventModel.trade_id),
+                func.count(func.distinct(OptionTradeEventModel.option_symbol)),
+                func.coalesce(func.sum(OptionTradeEventModel.premium), 0.0),
+            )
+            .where(OptionTradeEventModel.label == label)
+            .where(OptionTradeEventModel.included_in_score.is_(True))
+            .where(OptionTradeEventModel.underlying_symbol.in_(underlyings))
+            .where(OptionTradeEventModel.captured_at >= captured_from_dt)
+            .where(OptionTradeEventModel.captured_at < captured_to_dt)
+            .group_by(OptionTradeEventModel.underlying_symbol)
+        )
+        with self.session_factory() as session:
+            rows = session.execute(statement).all()
+        duration_minutes = max((captured_to_dt - captured_from_dt).total_seconds() / 60.0, 1.0 / 60.0)
+        payload: dict[str, dict[str, Any]] = {}
+        for underlying_symbol, trade_count, contract_count, premium in rows:
+            symbol = str(underlying_symbol or "").strip()
+            if not symbol:
+                continue
+            premium_value = float(premium or 0.0)
+            trade_count_value = int(trade_count or 0)
+            contract_count_value = int(contract_count or 0)
+            payload[symbol] = {
+                "duration_minutes": round(duration_minutes, 4),
+                "scoreable_trade_count": trade_count_value,
+                "scoreable_contract_count": contract_count_value,
+                "scoreable_premium": round(premium_value, 4),
+                "trade_rate_per_minute": round(trade_count_value / duration_minutes, 4),
+                "contract_rate_per_minute": round(contract_count_value / duration_minutes, 4),
+                "premium_rate_per_minute": round(premium_value / duration_minutes, 4),
+            }
+        return payload
+
+    def latest_trade_session_date_before(
+        self,
+        *,
+        label: str,
+        before_session_date: str,
+    ) -> str | None:
+        current_session_start, _ = session_bounds(before_session_date)
+        statement = (
+            select(func.max(OptionTradeEventModel.captured_at))
+            .where(OptionTradeEventModel.label == label)
+            .where(OptionTradeEventModel.captured_at < current_session_start)
+        )
+        with self.session_factory() as session:
+            latest = session.scalar(statement)
+        if latest is None:
+            return None
+        latest_dt = latest if latest.tzinfo else latest.replace(tzinfo=timezone.utc)
+        return latest_dt.astimezone(NEW_YORK).date().isoformat()
+
+    def save_option_trade_events(
+        self,
+        *,
+        cycle_id: str,
+        label: str,
+        profile: str,
+        trades: list[dict[str, Any]],
+    ) -> int:
+        if not trades:
+            return 0
+
+        with self.session_scope() as session:
+            session.add_all(
+                [
+                    OptionTradeEventModel(
+                        cycle_id=cycle_id,
+                        captured_at=parse_datetime(trade["captured_at"]),
+                        label=label,
+                        underlying_symbol=trade.get("underlying_symbol"),
+                        strategy=trade.get("strategy"),
+                        profile=profile,
+                        option_symbol=trade["option_symbol"],
+                        leg_role=trade.get("leg_role", "contract"),
+                        price=trade["price"],
+                        size=trade["size"],
+                        premium=trade["premium"],
+                        exchange_code=trade.get("exchange_code"),
+                        conditions_json=list(trade.get("conditions") or []),
+                        trade_timestamp=parse_datetime(trade.get("trade_timestamp")),
+                        included_in_score=bool(trade.get("included_in_score")),
+                        exclusion_reason=trade.get("exclusion_reason"),
+                        raw_payload_json=dict(trade.get("raw_payload") or {}),
+                        source=trade.get("source", "alpaca_websocket"),
+                    )
+                    for trade in trades
+                ]
+            )
+        return len(trades)
 
 
 

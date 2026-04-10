@@ -1,6 +1,6 @@
 # Alpaca-Only Unusual Activity Scanner Design
 
-Status: proposed
+Status: phase 5 in progress
 
 Based on:
 
@@ -584,6 +584,7 @@ Goal: create the minimum storage and runtime shape for UOA without changing the 
 - add a UOA mode or sibling path inside the current collector flow
 - add session-mode resolution and feed-health state
 - define alert payload shape and dedupe key in code
+- current progress: option-trade capture, normalization, and persistence are now live in code
 
 Exit condition:
 
@@ -629,6 +630,14 @@ Exit condition:
 
 - the system maintains a bounded live monitor set without duplicate counting or churn-driven noise
 
+Current progress:
+
+- live option quote and trade capture are now wired into the collector
+- all captured trades are stored, while only allowlisted-condition trades are marked scoreable
+- capture health and scoreable-flow summaries are emitted per cycle
+- rolling session baselines are now derived from persisted scoreable trade history
+- root-level scanner decisions now classify observed flow into `none`, `watchlist`, `board`, or `high`
+
 ### Phase 5: Scoring And Alerting
 
 Goal: turn candidates into deduped alerts and operator-visible board state.
@@ -641,6 +650,13 @@ Goal: turn candidates into deduped alerts and operator-visible board state.
 Exit condition:
 
 - the system emits `watchlist`, `board`, `high`, and `critical` outcomes consistently from the same scoring model
+
+Current progress:
+
+- root and contract flow summaries now score only `included_in_score` trade prints
+- excluded prints remain in raw storage and are surfaced only as audit counts and exclusion reasons
+- baseline-aware root classification now emits first-pass `none/watchlist/board/high` decisions
+- full alert thresholds, cooldowns, escalation, and outbound notifications are still pending
 
 ### Phase 6: Calibration
 

@@ -118,6 +118,30 @@ def _event_summary(event: Mapping[str, Any]) -> str:
     if topic == "market.quote.captured":
         symbol = _as_text(payload.get("option_symbol")) or _as_text(payload.get("symbol")) or entity_key or "quote"
         return f"{symbol} quote captured."
+    if topic == "market.trade.captured":
+        symbol = _as_text(payload.get("option_symbol")) or _as_text(payload.get("symbol")) or entity_key or "trade"
+        return f"{symbol} trade captured."
+    if topic == "uoa.summary.updated":
+        overview = payload.get("overview") if isinstance(payload.get("overview"), Mapping) else {}
+        cycle_id = _as_text(payload.get("cycle_id")) or entity_key or "unknown_cycle"
+        scoreable_trades = int(overview.get("scoreable_trade_count") or 0)
+        scoreable_contracts = int(overview.get("scoreable_contract_count") or 0)
+        scoreable_roots = int(overview.get("scoreable_root_count") or 0)
+        return (
+            f"UOA summary updated for cycle {cycle_id}: "
+            f"{scoreable_trades} scoreable trades across "
+            f"{scoreable_contracts} contracts / {scoreable_roots} roots."
+        )
+    if topic == "uoa.decision.updated":
+        overview = payload.get("overview") if isinstance(payload.get("overview"), Mapping) else {}
+        cycle_id = _as_text(payload.get("cycle_id")) or entity_key or "unknown_cycle"
+        watchlist_count = int(overview.get("watchlist_count") or 0)
+        board_count = int(overview.get("board_count") or 0)
+        high_count = int(overview.get("high_count") or 0)
+        return (
+            f"UOA decisions updated for cycle {cycle_id}: "
+            f"{watchlist_count} watchlist / {board_count} board / {high_count} high."
+        )
     return _as_text(payload.get("message")) or topic or "event recorded"
 
 

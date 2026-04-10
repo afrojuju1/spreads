@@ -3,19 +3,34 @@ from __future__ import annotations
 from typing import Any
 
 
-def build_quote_symbol_metadata(candidates: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def build_option_symbol_metadata(candidates: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     metadata: dict[str, dict[str, Any]] = {}
     for candidate in candidates:
+        contract_symbol = str(candidate.get("option_symbol") or "").strip()
+        if contract_symbol:
+            metadata[contract_symbol] = {
+                "underlying_symbol": candidate.get("underlying_symbol"),
+                "strategy": candidate.get("strategy"),
+                "leg_role": candidate.get("leg_role") or candidate.get("contract_role") or "contract",
+            }
+            continue
         for leg_role, option_symbol in (
-            ("short", candidate["short_symbol"]),
-            ("long", candidate["long_symbol"]),
+            ("short", candidate.get("short_symbol")),
+            ("long", candidate.get("long_symbol")),
         ):
+            option_symbol = str(option_symbol or "").strip()
+            if not option_symbol:
+                continue
             metadata[option_symbol] = {
-                "underlying_symbol": candidate["underlying_symbol"],
-                "strategy": candidate["strategy"],
+                "underlying_symbol": candidate.get("underlying_symbol"),
+                "strategy": candidate.get("strategy"),
                 "leg_role": leg_role,
             }
     return metadata
+
+
+def build_quote_symbol_metadata(candidates: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return build_option_symbol_metadata(candidates)
 
 
 def build_quote_records(

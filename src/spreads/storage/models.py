@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, Date, DateTime, Float, ForeignKey, Index, Integer, Text
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -94,4 +94,33 @@ class OptionQuoteEventModel(Base):
     bid_size: Mapped[int] = mapped_column(Integer, nullable=False)
     ask_size: Mapped[int] = mapped_column(Integer, nullable=False)
     quote_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    source: Mapped[str] = mapped_column(Text, nullable=False, default="alpaca_websocket")
+
+
+class OptionTradeEventModel(Base):
+    __tablename__ = "option_trade_events"
+    __table_args__ = (
+        Index("idx_option_trade_events_cycle_id", "cycle_id"),
+        Index("idx_option_trade_events_symbol_captured_at", "option_symbol", "captured_at"),
+        Index("idx_option_trade_events_underlying_captured_at", "underlying_symbol", "captured_at"),
+    )
+
+    trade_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    cycle_id: Mapped[str] = mapped_column(Text, nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    underlying_symbol: Mapped[str | None] = mapped_column(Text, nullable=True)
+    strategy: Mapped[str | None] = mapped_column(Text, nullable=True)
+    profile: Mapped[str | None] = mapped_column(Text, nullable=True)
+    option_symbol: Mapped[str] = mapped_column(Text, nullable=False)
+    leg_role: Mapped[str] = mapped_column(Text, nullable=False)
+    price: Mapped[float] = mapped_column(Float, nullable=False)
+    size: Mapped[int] = mapped_column(Integer, nullable=False)
+    premium: Mapped[float] = mapped_column(Float, nullable=False)
+    exchange_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    conditions_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    trade_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    included_in_score: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    exclusion_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw_payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     source: Mapped[str] = mapped_column(Text, nullable=False, default="alpaca_websocket")

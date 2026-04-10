@@ -55,6 +55,7 @@ from spreads.services.generator import (
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
 from spreads.services.live_pipelines import build_live_session_id
 from spreads.services.option_quote_capture import AlpacaOptionQuoteCaptureBroker
+from spreads.services.option_trade_capture import AlpacaOptionTradeCaptureBroker
 from spreads.services.operator_actions import (
     apply_generator_live_action,
     create_manual_generator_alert,
@@ -96,9 +97,11 @@ from spreads.storage.post_market_models import PostMarketAnalysisRunModel
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.option_quote_capture_broker = AlpacaOptionQuoteCaptureBroker()
+    app.state.option_trade_capture_broker = AlpacaOptionTradeCaptureBroker()
     try:
         yield
     finally:
+        await app.state.option_trade_capture_broker.aclose()
         await app.state.option_quote_capture_broker.aclose()
 
 
@@ -131,6 +134,13 @@ class GeneratorCandidateActionRequest(BaseModel):
 
 
 class OptionQuoteCaptureRequest(BaseModel):
+    candidates: list[dict[str, Any]] = Field(default_factory=list)
+    feed: Literal["opra", "indicative"] = "opra"
+    duration_seconds: float = Field(default=20.0, gt=0, le=60.0)
+    data_base_url: str | None = None
+
+
+class OptionTradeCaptureRequest(BaseModel):
     candidates: list[dict[str, Any]] = Field(default_factory=list)
     feed: Literal["opra", "indicative"] = "opra"
     duration_seconds: float = Field(default=20.0, gt=0, le=60.0)
@@ -969,6 +979,21 @@ async def capture_option_quotes(payload: OptionQuoteCaptureRequest, request: Req
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"quotes": quotes}
+
+
+@app.post("/internal/market-data/option-trades/capture")
+async def capture_option_trades(payload: OptionTradeCaptureRequest, request: Request) -> dict[str, Any]:
+    broker = request.app.state.option_trade_capture_broker
+    try:
+        trades = await broker.capture_trade_records(
+            candidates=list(payload.candidates),
+            feed=payload.feed,
+            duration_seconds=payload.duration_seconds,
+            data_base_url=payload.data_base_url,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"trades": trades}
 
 
 @app.get("/universes")

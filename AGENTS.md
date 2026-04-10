@@ -10,9 +10,22 @@
 ## Dev Workflow
 
 - This repo is in active development by default.
+- For runtime verification of the API, workers, scheduler, or web app, prefer the existing `docker compose` services when they are already running instead of starting duplicate local processes.
+- Use `docker compose ps`, `docker compose logs`, and `docker compose restart` for stack-level checks before falling back to ad hoc local `uvicorn`, worker, or scheduler runs.
 - Do not run production build commands such as `npm run build` or `next build` unless the user explicitly asks for a production check or release validation.
 - Do not run repo-wide Python compile checks such as `python -m compileall` unless the user explicitly asks for them.
 - Prefer dev-safe verification during normal work, such as linting, targeted type checks, and narrow runtime checks.
+
+## Backend Services
+
+- For storage-backed backend work, use the repo’s configured Postgres target via existing helpers; do not assume SQLite or ad hoc local storage.
+- Prefer extending existing services and repositories with thin adapters before introducing new abstractions or frameworks.
+- For new API work, start with the narrowest interface that satisfies the current use case and expand only when there is a real caller.
+- Prefer targeted service, API, and data-backed smoke checks during normal development; avoid broad verification unless the user asks.
+
+## Planning Docs
+
+- If a planning document is being used as an active checkpoint for implementation work, keep its completion status current when a milestone meaningfully changes.
 
 ## Web App
 

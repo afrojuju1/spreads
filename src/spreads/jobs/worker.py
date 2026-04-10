@@ -359,6 +359,9 @@ def _build_live_collector_log_payload(
 ) -> dict[str, Any]:
     result = run_payload.get("result") or {}
     quote_capture = run_payload.get("quote_capture") or {}
+    trade_capture = run_payload.get("trade_capture") or {}
+    uoa_summary = run_payload.get("uoa_summary") or {}
+    uoa_decisions = run_payload.get("uoa_decisions") or {}
     cycle_ids = result.get("cycle_ids") or []
     return {
         "event": "live_collector_slot_completed",
@@ -373,6 +376,13 @@ def _build_live_collector_log_payload(
         "board_candidate_count": int(result.get("board_candidate_count") or 0),
         "watchlist_candidate_count": int(result.get("watchlist_candidate_count") or 0),
         "quote_capture": quote_capture,
+        "trade_capture": trade_capture,
+        "uoa_overview": dict(uoa_summary.get("overview") or {}),
+        "uoa_top_roots": [dict(item) for item in (uoa_summary.get("top_roots") or [])[:3]],
+        "uoa_top_contracts": [dict(item) for item in (uoa_summary.get("top_contracts") or [])[:3]],
+        "uoa_decision_overview": dict(uoa_decisions.get("overview") or {}),
+        "uoa_board_roots": [dict(item) for item in (uoa_decisions.get("top_board_roots") or [])[:3]],
+        "uoa_high_roots": [dict(item) for item in (uoa_decisions.get("top_high_roots") or [])[:3]],
         "consecutive_websocket_zero_slots": consecutive_websocket_zero_slots,
         "slot_lag_slots": slot_lag_slots,
     }

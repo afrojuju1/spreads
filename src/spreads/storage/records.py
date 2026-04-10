@@ -18,6 +18,7 @@ ScanRunRecord = StorageRow
 ScanCandidateRecord = StorageRow
 SessionTopRunRecord = StorageRow
 OptionQuoteEventRecord = StorageRow
+OptionTradeEventRecord = StorageRow
 CollectorCycleRecord = StorageRow
 CollectorCycleCandidateRecord = StorageRow
 CollectorCycleEventRecord = StorageRow
@@ -52,6 +53,7 @@ __all__ = [
     "ScanCandidateRecord",
     "SessionTopRunRecord",
     "OptionQuoteEventRecord",
+    "OptionTradeEventRecord",
     "CollectorCycleRecord",
     "CollectorCycleCandidateRecord",
     "CollectorCycleEventRecord",
