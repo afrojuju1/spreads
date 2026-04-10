@@ -38,6 +38,12 @@ def _score_log_scale(value: float, *, ceiling: float) -> float:
     return clamp(log1p(float(value)) / log1p(float(ceiling)))
 
 
+def _volume_oi_ratio(*, volume: int | None, open_interest: int | None) -> float | None:
+    if volume is None or open_interest is None or open_interest <= 0:
+        return None
+    return round(volume / open_interest, 4)
+
+
 def _render_timestamp(value: Any) -> str | None:
     parsed = parse_datetime(value)
     return None if parsed is None else str(render_value(parsed))
@@ -278,9 +284,7 @@ def build_uoa_trade_summary(
         underlying_price = parse_float(contract.get("underlying_price"))
         strike_price = parse_float(contract.get("strike_price"))
         option_type = str(contract.get("option_type") or "").strip().lower() or None
-        volume_oi_ratio = None
-        if open_interest is not None and open_interest > 0 and volume is not None:
-            volume_oi_ratio = round(volume / open_interest, 4)
+        volume_oi_ratio = _volume_oi_ratio(volume=volume, open_interest=open_interest)
         summary = {
             "option_symbol": contract["option_symbol"],
             "underlying_symbol": contract.get("underlying_symbol"),
@@ -430,6 +434,10 @@ def build_uoa_trade_summary(
                 for contract in contracts_for_root[:TOP_CONTRACT_PREVIEW_LIMIT]
             ],
         }
+        summary["supporting_volume_oi_ratio"] = _volume_oi_ratio(
+            volume=int(summary["supporting_volume"]),
+            open_interest=int(summary["supporting_open_interest"]),
+        )
         summary["root_score"] = _build_root_score(summary)
         root_summaries.append(summary)
 

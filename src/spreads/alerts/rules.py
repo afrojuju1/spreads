@@ -8,8 +8,15 @@ from spreads.storage.collector_repository import CollectorRepository
 from spreads.storage.records import CollectorCycleCandidateRecord
 
 ALERT_SCORE_FLOOR = 72.0
-SCORE_BREAKOUT_THRESHOLDS = (85.0, 75.0)
-SCORE_BREAKOUT_DELTA = 8.0
+STRICT_PROFILE_ALERT_SCORE_FLOOR = 75.0
+WATCHLIST_PROMOTION_MIN_SCORE = 75.0
+WATCHLIST_PROMOTION_DISABLED_PROFILES = frozenset({"weekly", "swing", "core"})
+STRICTER_SPREAD_PROFILES = frozenset({"weekly", "swing", "core"})
+SCORE_BREAKOUT_THRESHOLDS = (88.0, 80.0)
+STRICT_SCORE_BREAKOUT_THRESHOLDS = (90.0, 82.0)
+SCORE_BREAKOUT_DELTA = 10.0
+STRICT_SCORE_BREAKOUT_DELTA = 12.0
+SAME_SIDE_REPLACEMENT_MIN_SCORE_GAIN = 5.0
 UOA_ALERT_STATES = ("high",)
 
 
@@ -71,6 +78,35 @@ def uoa_threshold_dedupe_key(
     dominant_flow: str,
 ) -> str:
     return f"{label}|{session_date}|{symbol}|uoa_flow|{decision_state}|{dominant_flow}"
+
+
+def candidate_profile(label: str, candidate: dict[str, Any] | CollectorCycleCandidateRecord) -> str:
+    explicit = str(candidate.get("profile") or "").strip().lower()
+    if explicit:
+        return explicit
+    lowered = label.lower()
+    for profile in ("0dte", "micro", "weekly", "swing", "core"):
+        if profile in lowered:
+            return profile
+    return "unknown"
+
+
+def alert_score_floor_for_profile(profile: str) -> float:
+    if profile in STRICTER_SPREAD_PROFILES:
+        return STRICT_PROFILE_ALERT_SCORE_FLOOR
+    return ALERT_SCORE_FLOOR
+
+
+def score_breakout_thresholds_for_profile(profile: str) -> tuple[float, ...]:
+    if profile in STRICTER_SPREAD_PROFILES:
+        return STRICT_SCORE_BREAKOUT_THRESHOLDS
+    return SCORE_BREAKOUT_THRESHOLDS
+
+
+def score_breakout_delta_for_profile(profile: str) -> float:
+    if profile in STRICTER_SPREAD_PROFILES:
+        return STRICT_SCORE_BREAKOUT_DELTA
+    return SCORE_BREAKOUT_DELTA
 
 
 def is_before_current_cycle(
@@ -143,10 +179,22 @@ def resolve_event_alert_type(
     return None
 
 
-def should_send_event_alert(alert_type: str, candidate: dict[str, Any]) -> bool:
+def should_send_event_alert(*, label: str, alert_type: str, event: dict[str, Any], candidate: dict[str, Any]) -> bool:
+    profile = candidate_profile(label, candidate)
+    score = float(candidate["quality_score"])
     if alert_type in {"watchlist_promoted", "side_flip"}:
+        if alert_type == "watchlist_promoted":
+            if profile in WATCHLIST_PROMOTION_DISABLED_PROFILES:
+                return False
+            return score >= WATCHLIST_PROMOTION_MIN_SCORE
         return True
-    return float(candidate["quality_score"]) >= ALERT_SCORE_FLOOR
+    if alert_type == "board_replaced":
+        previous = event.get("previous")
+        if isinstance(previous, dict) and str(previous.get("strategy") or "") == str(candidate.get("strategy") or ""):
+            previous_score = float(previous.get("quality_score") or 0.0)
+            if score - previous_score < SAME_SIDE_REPLACEMENT_MIN_SCORE_GAIN:
+                return False
+    return score >= alert_score_floor_for_profile(profile)
 
 
 def build_event_alert_decisions(
@@ -177,7 +225,12 @@ def build_event_alert_decisions(
             prior_watchlist_identities=prior_watchlist_identities,
             prior_board_symbols=prior_board_symbols,
         )
-        if alert_type is None or not should_send_event_alert(alert_type, current):
+        if alert_type is None or not should_send_event_alert(
+            label=label,
+            alert_type=alert_type,
+            event=event,
+            candidate=current,
+        ):
             continue
         dedupe_key = event_dedupe_key(
             label,
@@ -213,13 +266,16 @@ def build_score_breakout_decisions(
 ) -> list[AlertDecision]:
     decisions: list[AlertDecision] = []
     for candidate in board_candidates:
+        profile = candidate_profile(label, candidate)
         score = float(candidate["quality_score"])
-        if score < ALERT_SCORE_FLOOR:
+        if score < alert_score_floor_for_profile(profile):
             continue
         symbol = str(candidate["underlying_symbol"])
+        thresholds = score_breakout_thresholds_for_profile(profile)
+        delta = score_breakout_delta_for_profile(profile)
 
         threshold_to_alert: float | None = None
-        for threshold in SCORE_BREAKOUT_THRESHOLDS:
+        for threshold in thresholds:
             if score < threshold:
                 continue
             dedupe_key = threshold_dedupe_key(label, session_date, candidate, threshold)
@@ -249,7 +305,7 @@ def build_score_breakout_decisions(
         last_score = anchor_state["state"].get("last_score")
         if last_score is None:
             continue
-        if score - float(last_score) < SCORE_BREAKOUT_DELTA:
+        if score - float(last_score) < delta:
             continue
         decisions.append(
             AlertDecision(
@@ -301,6 +357,11 @@ def build_uoa_alert_decisions(
         premium = float(current.get("scoreable_premium") or 0.0)
         trade_count = int(current.get("scoreable_trade_count") or 0)
         contract_count = int(current.get("scoreable_contract_count") or 0)
+        supporting_volume = int(current.get("supporting_volume") or 0)
+        supporting_open_interest = int(current.get("supporting_open_interest") or 0)
+        volume_context = ""
+        if supporting_volume > 0 or supporting_open_interest > 0:
+            volume_context = f" | session vol/oi {supporting_volume:,}/{supporting_open_interest:,}"
         decisions.append(
             AlertDecision(
                 alert_type=f"uoa_{decision_state}",
@@ -310,7 +371,7 @@ def build_uoa_alert_decisions(
                     f"{symbol} {dominant_flow} UOA {decision_state}: "
                     f"${premium:,.0f} premium across {trade_count} trade"
                     f"{'' if trade_count == 1 else 's'} / {contract_count} contract"
-                    f"{'' if contract_count == 1 else 's'}"
+                    f"{'' if contract_count == 1 else 's'}{volume_context}"
                 ),
                 candidate=root,
                 dedupe_state={

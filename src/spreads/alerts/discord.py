@@ -58,6 +58,20 @@ def compact_dte(value: Any, *, fallback: str = "n/a") -> str:
     return f"{int(value)}DTE"
 
 
+def compact_count(value: Any, *, fallback: str = "n/a") -> str:
+    if value is None:
+        return fallback
+    rendered = float(value)
+    absolute = abs(rendered)
+    if absolute >= 1_000_000:
+        return f"{rendered / 1_000_000:.1f}m"
+    if absolute >= 10_000:
+        return f"{rendered / 1_000:.0f}k"
+    if absolute >= 1_000:
+        return f"{rendered / 1_000:.1f}k"
+    return f"{int(rendered)}" if rendered.is_integer() else f"{rendered:.1f}"
+
+
 def compact_ratio(value: Any, *, fallback: str = "n/a") -> str:
     if value is None:
         return fallback
@@ -174,11 +188,17 @@ def _uoa_contract_line(contract: dict[str, Any]) -> str:
         strike_text = f"{float(strike):.0f}" if float(strike).is_integer() else f"{float(strike):.2f}"
     dte = contract.get("dte")
     dte_text = "n/a" if dte is None else f"{int(dte)}DTE"
-    size = int(contract.get("scoreable_size") or 0)
+    flow_size = int(contract.get("scoreable_size") or 0)
     premium = compact_money(contract.get("scoreable_premium"))
     midpoint = compact_value(contract.get("midpoint"))
     spread_pct = compact_pct(contract.get("spread_pct"))
-    return f"{strike_text}{option_type} {dte_text} vol {size} prem {premium} mid {midpoint} spr {spread_pct}"
+    session_volume = compact_count(contract.get("volume"))
+    open_interest = compact_count(contract.get("open_interest"))
+    volume_oi_ratio = compact_ratio(contract.get("volume_oi_ratio"))
+    return (
+        f"{strike_text}{option_type} {dte_text} flow {compact_count(flow_size)} prem {premium} "
+        f"vol {session_volume} oi {open_interest} v/oi {volume_oi_ratio} mid {midpoint} spr {spread_pct}"
+    )
 
 
 def _build_uoa_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
@@ -207,9 +227,12 @@ def _build_uoa_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
         {"name": "Score", "value": f"{float(candidate.get('decision_score') or 0.0):.1f}", "inline": True},
         {"name": "DTE", "value": _uoa_dte_preview(contracts), "inline": True},
         {"name": "Premium", "value": compact_money(current.get("scoreable_premium")), "inline": True},
-        {"name": "Volume", "value": str(int(current.get("scoreable_size") or 0)), "inline": True},
+        {"name": "Flow Size", "value": compact_count(current.get("scoreable_size")), "inline": True},
         {"name": "Trades", "value": str(int(current.get("scoreable_trade_count") or 0)), "inline": True},
         {"name": "Contracts", "value": str(int(current.get("scoreable_contract_count") or 0)), "inline": True},
+        {"name": "Session Vol", "value": compact_count(current.get("supporting_volume")), "inline": True},
+        {"name": "Session OI", "value": compact_count(current.get("supporting_open_interest")), "inline": True},
+        {"name": "Vol/OI", "value": compact_ratio(current.get("supporting_volume_oi_ratio")), "inline": True},
         {"name": "Quotes", "value": " | ".join(quote_parts), "inline": True},
     ]
     if baseline_parts:

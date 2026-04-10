@@ -17,12 +17,11 @@ from spreads.runtime.config import default_database_url
 from spreads.services.execution import submit_auto_session_execution
 from spreads.services.live_collector_health import build_quote_capture_summary, build_trade_capture_summary
 from spreads.services.live_pipelines import build_live_snapshot_label
-from spreads.services.option_quote_capture import request_option_quote_capture
+from spreads.services.option_market_data_capture import request_option_market_data_capture
 from spreads.services.option_quote_records import build_quote_records, build_quote_symbol_metadata
 from spreads.services.uoa_quote_summary import build_uoa_quote_summary
 from spreads.services.uoa_root_decisions import build_uoa_root_decisions
 from spreads.services.uoa_trade_baselines import build_uoa_trade_baselines
-from spreads.services.option_trade_capture import request_option_trade_capture
 from spreads.services.option_trade_records import build_trade_symbol_metadata
 from spreads.services.signal_state import sync_live_collector_signal_layer
 from spreads.services.uoa_trade_summary import build_uoa_trade_summary
@@ -58,7 +57,6 @@ WATCHLIST_PER_STRATEGY = 3
 WATCHLIST_PER_SYMBOL = 2
 WATCHLIST_TOP = 12
 WATCHLIST_QUOTE_CAPTURE_TOP = 6
-STREAM_CAPTURE_HANDOFF_SECONDS = 1.25
 
 
 @dataclass(frozen=True)
@@ -664,34 +662,26 @@ def collect_latest_quote_records(
     return []
 
 
-def collect_websocket_quote_records(
+def collect_websocket_market_data_records(
     *,
     args: argparse.Namespace,
     candidates: list[dict[str, Any]],
     feed: str,
-) -> list[dict[str, Any]]:
-    if args.quote_capture_seconds <= 0 or not candidates:
-        return []
-    return request_option_quote_capture(
+) -> dict[str, Any]:
+    quote_duration_seconds = float(max(getattr(args, "quote_capture_seconds", 0), 0))
+    trade_duration_seconds = float(max(getattr(args, "trade_capture_seconds", 0), 0))
+    if not candidates or (quote_duration_seconds <= 0 and trade_duration_seconds <= 0):
+        return {
+            "quotes": [],
+            "trades": [],
+            "quote_error": None,
+            "trade_error": None,
+        }
+    return request_option_market_data_capture(
         candidates=candidates,
         feed=feed,
-        duration_seconds=float(args.quote_capture_seconds),
-        data_base_url=getattr(args, "data_base_url", None),
-    )
-
-
-def collect_websocket_trade_records(
-    *,
-    args: argparse.Namespace,
-    candidates: list[dict[str, Any]],
-    feed: str,
-) -> list[dict[str, Any]]:
-    if args.trade_capture_seconds <= 0 or not candidates:
-        return []
-    return request_option_trade_capture(
-        candidates=candidates,
-        feed=feed,
-        duration_seconds=float(args.trade_capture_seconds),
+        quote_duration_seconds=quote_duration_seconds,
+        trade_duration_seconds=trade_duration_seconds,
         data_base_url=getattr(args, "data_base_url", None),
     )
 
@@ -1071,6 +1061,8 @@ def _run_collection_cycle(
     websocket_quote_records: list[dict[str, Any]] = []
     recovery_quote_records: list[dict[str, Any]] = []
     websocket_trade_records: list[dict[str, Any]] = []
+    websocket_quote_error: str | None = None
+    websocket_trade_error: str | None = None
     quote_candidates = board_payloads + watchlist_payloads[:WATCHLIST_QUOTE_CAPTURE_TOP]
     contract_metadata_by_symbol = build_quote_symbol_metadata(quote_candidates)
     expected_quote_symbols = list(contract_metadata_by_symbol.keys())
@@ -1111,34 +1103,81 @@ def _run_collection_cycle(
                 print(f"Live latest quote event normalization unavailable: {exc}")
         except Exception as exc:
             print(f"Live latest quote capture unavailable: {exc}")
-        try:
-            websocket_quote_records = collect_websocket_quote_records(
-                args=args,
-                candidates=quote_candidates,
-                feed=scanner_args.feed,
-            )
-            websocket_quote_event_count = history_store.save_option_quote_events(
-                cycle_id=cycle_id,
-                label=label,
-                profile=args.profile,
-                quotes=websocket_quote_records,
-            )
-            quote_event_count += websocket_quote_event_count
+        trade_storage_ready = history_store.schema_has_tables("option_trade_events")
+        if args.trade_capture_seconds > 0 and not trade_storage_ready:
+            print("Option trade capture unavailable: option_trade_events table is missing.")
+        websocket_quote_duration_seconds = float(max(args.quote_capture_seconds, 0))
+        websocket_trade_duration_seconds = float(args.trade_capture_seconds) if trade_storage_ready else 0.0
+        if websocket_quote_duration_seconds > 0 or websocket_trade_duration_seconds > 0:
             try:
-                _record_quote_market_events(
-                    event_store=event_store,
-                    cycle_id=cycle_id,
-                    label=label,
-                    profile=args.profile,
-                    session_date=session_date,
-                    session_id=None if tick_context is None else tick_context.session_id,
-                    job_run_id=None if tick_context is None else tick_context.job_run_id,
-                    quotes=websocket_quote_records,
+                capture_args = argparse.Namespace(**vars(args))
+                capture_args.quote_capture_seconds = websocket_quote_duration_seconds
+                capture_args.trade_capture_seconds = websocket_trade_duration_seconds
+                capture_response = collect_websocket_market_data_records(
+                    args=capture_args,
+                    candidates=quote_candidates,
+                    feed=scanner_args.feed,
                 )
+                websocket_quote_records = [
+                    dict(item)
+                    for item in (capture_response.get("quotes") or [])
+                    if isinstance(item, dict)
+                ]
+                websocket_trade_records = [
+                    dict(item)
+                    for item in (capture_response.get("trades") or [])
+                    if isinstance(item, dict)
+                ]
+                websocket_quote_error = None if capture_response.get("quote_error") in (None, "") else str(capture_response.get("quote_error"))
+                websocket_trade_error = None if capture_response.get("trade_error") in (None, "") else str(capture_response.get("trade_error"))
+                if websocket_quote_error:
+                    print(f"Live websocket quote capture unavailable: {websocket_quote_error}")
+                if websocket_trade_error:
+                    print(f"Live websocket trade capture unavailable: {websocket_trade_error}")
+                if websocket_quote_records:
+                    websocket_quote_event_count = history_store.save_option_quote_events(
+                        cycle_id=cycle_id,
+                        label=label,
+                        profile=args.profile,
+                        quotes=websocket_quote_records,
+                    )
+                    quote_event_count += websocket_quote_event_count
+                    try:
+                        _record_quote_market_events(
+                            event_store=event_store,
+                            cycle_id=cycle_id,
+                            label=label,
+                            profile=args.profile,
+                            session_date=session_date,
+                            session_id=None if tick_context is None else tick_context.session_id,
+                            job_run_id=None if tick_context is None else tick_context.job_run_id,
+                            quotes=websocket_quote_records,
+                        )
+                    except Exception as exc:
+                        print(f"Live websocket quote event normalization unavailable: {exc}")
+                if websocket_trade_records:
+                    websocket_trade_event_count = history_store.save_option_trade_events(
+                        cycle_id=cycle_id,
+                        label=label,
+                        profile=args.profile,
+                        trades=websocket_trade_records,
+                    )
+                    trade_event_count += websocket_trade_event_count
+                    try:
+                        _record_trade_market_events(
+                            event_store=event_store,
+                            cycle_id=cycle_id,
+                            label=label,
+                            profile=args.profile,
+                            session_date=session_date,
+                            session_id=None if tick_context is None else tick_context.session_id,
+                            job_run_id=None if tick_context is None else tick_context.job_run_id,
+                            trades=websocket_trade_records,
+                        )
+                    except Exception as exc:
+                        print(f"Live websocket trade event normalization unavailable: {exc}")
             except Exception as exc:
-                print(f"Live websocket quote event normalization unavailable: {exc}")
-        except Exception as exc:
-            print(f"Live websocket quote capture unavailable: {exc}")
+                print(f"Live websocket market-data capture unavailable: {exc}")
         if quote_event_count == 0:
             try:
                 recovery_quote_records = collect_latest_quote_records(
@@ -1179,40 +1218,6 @@ def _run_collection_cycle(
         websocket_quote_events_saved=websocket_quote_event_count,
         recovery_quote_events_saved=recovery_quote_event_count,
     )
-    trade_storage_ready = history_store.schema_has_tables("option_trade_events")
-    if quote_candidates and args.trade_capture_seconds > 0 and not trade_storage_ready:
-        print("Option trade capture unavailable: option_trade_events table is missing.")
-    if quote_candidates and args.trade_capture_seconds > 0 and trade_storage_ready:
-        if args.quote_capture_seconds > 0:
-            time_module.sleep(STREAM_CAPTURE_HANDOFF_SECONDS)
-        try:
-            websocket_trade_records = collect_websocket_trade_records(
-                args=args,
-                candidates=quote_candidates,
-                feed=scanner_args.feed,
-            )
-            websocket_trade_event_count = history_store.save_option_trade_events(
-                cycle_id=cycle_id,
-                label=label,
-                profile=args.profile,
-                trades=websocket_trade_records,
-            )
-            trade_event_count += websocket_trade_event_count
-            try:
-                _record_trade_market_events(
-                    event_store=event_store,
-                    cycle_id=cycle_id,
-                    label=label,
-                    profile=args.profile,
-                    session_date=session_date,
-                    session_id=None if tick_context is None else tick_context.session_id,
-                    job_run_id=None if tick_context is None else tick_context.job_run_id,
-                    trades=websocket_trade_records,
-                )
-            except Exception as exc:
-                print(f"Live websocket trade event normalization unavailable: {exc}")
-        except Exception as exc:
-            print(f"Live websocket trade capture unavailable: {exc}")
     trade_capture = build_trade_capture_summary(
         expected_trade_symbols=expected_trade_symbols,
         total_trade_events_saved=trade_event_count,
@@ -1344,9 +1349,11 @@ def _run_collection_cycle(
         "websocket_quote_events_saved": websocket_quote_event_count,
         "recovery_quote_events_saved": recovery_quote_event_count,
         "expected_quote_symbols": expected_quote_symbols,
+        "websocket_quote_error": websocket_quote_error,
         "trade_events_saved": trade_event_count,
         "websocket_trade_events_saved": websocket_trade_event_count,
         "expected_trade_symbols": expected_trade_symbols,
+        "websocket_trade_error": websocket_trade_error,
         "board_candidate_count": len(board_payloads),
         "watchlist_candidate_count": len(watchlist_payloads),
         "signal_states_upserted": int(signal_sync["signal_states_upserted"]),

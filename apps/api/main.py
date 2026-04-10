@@ -54,7 +54,9 @@ from spreads.services.generator import (
 )
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
 from spreads.services.live_pipelines import build_live_session_id
+from spreads.services.option_market_data_capture import AlpacaOptionMarketDataCaptureBroker
 from spreads.services.option_quote_capture import AlpacaOptionQuoteCaptureBroker
+from spreads.services.option_stream_broker import AlpacaOptionStreamBroker, OPTION_STREAM_SHUTDOWN_MESSAGE
 from spreads.services.option_trade_capture import AlpacaOptionTradeCaptureBroker
 from spreads.services.operator_actions import (
     apply_generator_live_action,
@@ -97,13 +99,20 @@ from spreads.storage.post_market_models import PostMarketAnalysisRunModel
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.option_quote_capture_broker = AlpacaOptionQuoteCaptureBroker()
-    app.state.option_trade_capture_broker = AlpacaOptionTradeCaptureBroker()
+    app.state.option_stream_broker = AlpacaOptionStreamBroker()
+    app.state.option_quote_capture_broker = AlpacaOptionQuoteCaptureBroker(
+        option_stream_broker=app.state.option_stream_broker
+    )
+    app.state.option_trade_capture_broker = AlpacaOptionTradeCaptureBroker(
+        option_stream_broker=app.state.option_stream_broker
+    )
+    app.state.option_market_data_capture_broker = AlpacaOptionMarketDataCaptureBroker(
+        option_stream_broker=app.state.option_stream_broker
+    )
     try:
         yield
     finally:
-        await app.state.option_trade_capture_broker.aclose()
-        await app.state.option_quote_capture_broker.aclose()
+        await app.state.option_stream_broker.aclose()
 
 
 app = FastAPI(title="Spreads API", version="0.2.0", lifespan=lifespan)
@@ -145,6 +154,14 @@ class OptionTradeCaptureRequest(BaseModel):
     candidates: list[dict[str, Any]] = Field(default_factory=list)
     feed: Literal["opra", "indicative"] = "opra"
     duration_seconds: float = Field(default=20.0, gt=0, le=60.0)
+    data_base_url: str | None = None
+
+
+class OptionMarketDataCaptureRequest(BaseModel):
+    candidates: list[dict[str, Any]] = Field(default_factory=list)
+    feed: Literal["opra", "indicative"] = "opra"
+    quote_duration_seconds: float = Field(default=20.0, ge=0, le=60.0)
+    trade_duration_seconds: float = Field(default=20.0, ge=0, le=60.0)
     data_base_url: str | None = None
 
 
@@ -977,6 +994,8 @@ async def capture_option_quotes(payload: OptionQuoteCaptureRequest, request: Req
             duration_seconds=payload.duration_seconds,
             data_base_url=payload.data_base_url,
         )
+    except asyncio.CancelledError as exc:
+        raise HTTPException(status_code=503, detail=OPTION_STREAM_SHUTDOWN_MESSAGE) from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"quotes": quotes}
@@ -992,9 +1011,36 @@ async def capture_option_trades(payload: OptionTradeCaptureRequest, request: Req
             duration_seconds=payload.duration_seconds,
             data_base_url=payload.data_base_url,
         )
+    except asyncio.CancelledError as exc:
+        raise HTTPException(status_code=503, detail=OPTION_STREAM_SHUTDOWN_MESSAGE) from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"trades": trades}
+
+
+@app.post("/internal/market-data/options/capture")
+async def capture_option_market_data(payload: OptionMarketDataCaptureRequest, request: Request) -> dict[str, Any]:
+    if payload.quote_duration_seconds <= 0 and payload.trade_duration_seconds <= 0:
+        raise HTTPException(status_code=400, detail="At least one option capture duration must be greater than zero")
+
+    broker = request.app.state.option_market_data_capture_broker
+    try:
+        return await broker.capture_market_data_records(
+            candidates=list(payload.candidates),
+            feed=payload.feed,
+            quote_duration_seconds=payload.quote_duration_seconds,
+            trade_duration_seconds=payload.trade_duration_seconds,
+            data_base_url=payload.data_base_url,
+        )
+    except asyncio.CancelledError as exc:
+        raise HTTPException(status_code=503, detail=OPTION_STREAM_SHUTDOWN_MESSAGE) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/internal/market-data/options/stream-health")
+async def get_option_stream_health(request: Request) -> dict[str, Any]:
+    return await request.app.state.option_stream_broker.snapshot()
 
 
 @app.get("/internal/uoa/state")

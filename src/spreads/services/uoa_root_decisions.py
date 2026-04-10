@@ -83,6 +83,11 @@ def _quote_context(summary: Mapping[str, Any] | None) -> dict[str, Any] | None:
         "average_quality_score": round(float(summary.get("average_quality_score") or 0.0), 4),
         "supporting_volume": int(summary.get("supporting_volume") or 0),
         "supporting_open_interest": int(summary.get("supporting_open_interest") or 0),
+        "supporting_volume_oi_ratio": (
+            None
+            if summary.get("supporting_volume_oi_ratio") is None
+            else round(float(summary.get("supporting_volume_oi_ratio") or 0.0), 4)
+        ),
         "max_volume_oi_ratio": round(float(summary.get("max_volume_oi_ratio") or 0.0), 4),
         "quality_state": str(summary.get("quality_state") or "unknown"),
     }
@@ -175,6 +180,9 @@ def _explanation(
         quality_state = str(quote_context.get("quality_state") or "unknown")
         fresh_contract_count = int(quote_context.get("fresh_contract_count") or 0)
         liquid_contract_count = int(quote_context.get("liquid_contract_count") or 0)
+        supporting_volume = int(quote_context.get("supporting_volume") or 0)
+        supporting_open_interest = int(quote_context.get("supporting_open_interest") or 0)
+        supporting_volume_oi_ratio = quote_context.get("supporting_volume_oi_ratio")
         max_volume_oi_ratio = float(quote_context.get("max_volume_oi_ratio") or 0.0)
         if quality_state == "strong":
             segments.append(f"quotes strong ({liquid_contract_count} liquid)")
@@ -184,8 +192,12 @@ def _explanation(
             segments.append("quotes stale")
         elif quality_state == "weak":
             segments.append("quotes weak")
+        if supporting_volume > 0 or supporting_open_interest > 0:
+            segments.append(f"session vol/oi {supporting_volume:,}/{supporting_open_interest:,}")
+        if supporting_volume_oi_ratio is not None and float(supporting_volume_oi_ratio) > 0:
+            segments.append(f"root vol/oi {float(supporting_volume_oi_ratio):.2f}x")
         if max_volume_oi_ratio > 0:
-            segments.append(f"vol/oi {max_volume_oi_ratio:.2f}x")
+            segments.append(f"best contract vol/oi {max_volume_oi_ratio:.2f}x")
     return ", ".join(segments)
 
 
@@ -288,7 +300,28 @@ def build_uoa_root_decisions(
         quote_root = quote_root_map.get(symbol)
         quote_context = _quote_context(quote_root)
         quote_quality_score = 0.0 if not quote_root else float(quote_root.get("average_quality_score") or 0.0)
-        max_volume_oi_ratio = 0.0 if not quote_root else float(quote_root.get("max_volume_oi_ratio") or 0.0)
+        supporting_volume_oi_ratio = float(root.get("supporting_volume_oi_ratio") or 0.0)
+        max_volume_oi_ratio = float(root.get("max_volume_oi_ratio") or 0.0)
+        if quote_root:
+            supporting_volume_oi_ratio = float(quote_root.get("supporting_volume_oi_ratio") or 0.0)
+            max_volume_oi_ratio = float(quote_root.get("max_volume_oi_ratio") or 0.0)
+        effective_supporting_volume = int(root.get("supporting_volume") or 0)
+        effective_supporting_open_interest = int(root.get("supporting_open_interest") or 0)
+        effective_supporting_volume_oi_ratio = (
+            round(float(root.get("supporting_volume_oi_ratio") or 0.0), 4)
+            if root.get("supporting_volume_oi_ratio") is not None
+            else None
+        )
+        effective_max_volume_oi_ratio = round(float(root.get("max_volume_oi_ratio") or 0.0), 4)
+        if quote_context:
+            effective_supporting_volume = int(quote_context.get("supporting_volume") or 0)
+            effective_supporting_open_interest = int(quote_context.get("supporting_open_interest") or 0)
+            effective_supporting_volume_oi_ratio = (
+                None
+                if quote_context.get("supporting_volume_oi_ratio") is None
+                else round(float(quote_context.get("supporting_volume_oi_ratio") or 0.0), 4)
+            )
+            effective_max_volume_oi_ratio = round(float(quote_context.get("max_volume_oi_ratio") or 0.0), 4)
         decision_score = round(
             root_score * 0.55
             + _ratio_component(max_premium_ratio, max_points=20.0, full_scale_ratio=5.0)
@@ -299,7 +332,10 @@ def build_uoa_root_decisions(
             1,
         )
         decision_score = round(
-            decision_score + clamp(quote_quality_score) * 5.0 + clamp(max_volume_oi_ratio / 1.0) * 5.0,
+            decision_score
+            + clamp(quote_quality_score) * 5.0
+            + clamp(supporting_volume_oi_ratio / 1.0) * 3.0
+            + clamp(max_volume_oi_ratio / 1.0) * 5.0,
             1,
         )
         base_state = _decision_state(decision_score)
@@ -321,6 +357,10 @@ def build_uoa_root_decisions(
             reason_codes.append("contract_volume_ge_open_interest")
         elif max_volume_oi_ratio >= 0.5:
             reason_codes.append("contract_volume_gt_half_open_interest")
+        if supporting_volume_oi_ratio >= 1.0:
+            reason_codes.append("root_volume_ge_open_interest")
+        elif supporting_volume_oi_ratio >= 0.5:
+            reason_codes.append("root_volume_gt_half_open_interest")
         reason_codes.extend(quote_reason_codes)
         if state_cap_applied is not None:
             reason_codes.append(f"decision_capped_to_{state_cap_applied}")
@@ -353,9 +393,10 @@ def build_uoa_root_decisions(
                     "scoreable_trade_count": int(root.get("scoreable_trade_count") or 0),
                     "scoreable_contract_count": contract_count,
                     "scoreable_size": int(root.get("scoreable_size") or 0),
-                    "supporting_volume": int(root.get("supporting_volume") or 0),
-                    "supporting_open_interest": int(root.get("supporting_open_interest") or 0),
-                    "max_volume_oi_ratio": round(float(root.get("max_volume_oi_ratio") or 0.0), 4),
+                    "supporting_volume": effective_supporting_volume,
+                    "supporting_open_interest": effective_supporting_open_interest,
+                    "supporting_volume_oi_ratio": effective_supporting_volume_oi_ratio,
+                    "max_volume_oi_ratio": effective_max_volume_oi_ratio,
                     "premium_rate_per_minute": round(premium_rate, 4),
                     "trade_rate_per_minute": round(float(current_trade_rate or 0.0), 4),
                     "contract_rate_per_minute": round(float(current_contract_rate or 0.0), 4),

@@ -15,6 +15,12 @@ def _render_timestamp(value: Any) -> str | None:
     return None if parsed is None else str(render_value(parsed))
 
 
+def _volume_oi_ratio(*, volume: int | None, open_interest: int | None) -> float | None:
+    if volume is None or open_interest is None or open_interest <= 0:
+        return None
+    return round(volume / open_interest, 4)
+
+
 def _quote_thresholds(dte: int | None) -> dict[str, float]:
     if dte == 0:
         return {
@@ -111,9 +117,7 @@ def build_uoa_quote_summary(
                 percent_otm = round((underlying_price - strike_price) / underlying_price, 4)
         open_interest = parse_int(metadata.get("open_interest"))
         volume = parse_int(metadata.get("volume"))
-        volume_oi_ratio = None
-        if open_interest is not None and open_interest > 0 and volume is not None:
-            volume_oi_ratio = round(volume / open_interest, 4)
+        volume_oi_ratio = _volume_oi_ratio(volume=volume, open_interest=open_interest)
         quality_score = round(
             freshness_component * 0.35
             + spread_component * 0.30
@@ -207,6 +211,10 @@ def build_uoa_quote_summary(
             "average_quality_score": average_quality_score,
             "supporting_volume": int(root["supporting_volume"]),
             "supporting_open_interest": int(root["supporting_open_interest"]),
+            "supporting_volume_oi_ratio": _volume_oi_ratio(
+                volume=int(root["supporting_volume"]),
+                open_interest=int(root["supporting_open_interest"]),
+            ),
             "max_volume_oi_ratio": round(float(root["max_volume_oi_ratio"]), 4),
             "quality_state": _quality_state(
                 is_fresh=int(root["fresh_contract_count"]) > 0,
@@ -216,13 +224,19 @@ def build_uoa_quote_summary(
             "top_contracts": [dict(item) for item in root_contracts[:3]],
         }
 
+    supporting_volume = sum(int(item.get("volume") or 0) for item in contracts)
+    supporting_open_interest = sum(int(item.get("open_interest") or 0) for item in contracts)
     overview = {
         "expected_contract_count": len(expected_symbols),
         "observed_contract_count": len(contract_map),
         "fresh_contract_count": sum(1 for item in contracts if item["is_fresh"]),
         "liquid_contract_count": sum(1 for item in contracts if item["passes_liquidity_gate"]),
-        "supporting_volume": sum(int(item.get("volume") or 0) for item in contracts),
-        "supporting_open_interest": sum(int(item.get("open_interest") or 0) for item in contracts),
+        "supporting_volume": supporting_volume,
+        "supporting_open_interest": supporting_open_interest,
+        "supporting_volume_oi_ratio": _volume_oi_ratio(
+            volume=supporting_volume,
+            open_interest=supporting_open_interest,
+        ),
         "missing_expected_contract_count": len([symbol for symbol in expected_symbols if symbol not in contract_map]),
     }
     return {

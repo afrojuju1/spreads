@@ -637,6 +637,8 @@ Current progress:
 - capture health and scoreable-flow summaries are emitted per cycle
 - rolling session baselines are now derived from persisted scoreable trade history
 - root-level scanner decisions now classify observed flow into `none`, `watchlist`, `board`, or `high`
+- the collector now captures live option quotes and trades through one unified broker-backed internal request, eliminating the intra-process quote/trade connection collision that was hitting Alpaca's single-connection stream budget; details are tracked in [unified_option_stream_broker_architecture.md](/Users/adeb/Projects/spreads/docs/planning/unified_option_stream_broker_architecture.md)
+- broker health metrics now expose active capture pressure, desired symbol counts, `406` auth rejects, and shutdown cancellations for operator diagnostics
 
 ### Phase 5: Scoring And Alerting
 
@@ -658,9 +660,9 @@ Current progress:
 - baseline-aware root classification now emits first-pass `none/watchlist/board/high` decisions
 - quote freshness and liquidity now feed into root decisions and can cap stale or weak-flow outcomes
 - UOA contract payloads now carry enriched market context including `spot`, `%OTM`, `volume`, `open_interest`, `IV`, and quote-quality fields
-- the root decision model now uses contract `volume / OI` context in addition to premium, trade-rate, and quote-quality signals
+- the root decision model now carries root-level session `volume`, `open_interest`, and aggregate `volume / OI` context in addition to premium, trade-rate, and quote-quality signals
 - internal UOA state APIs now expose latest and cycle-specific scanner state for backend consumers and future UI work
-- UOA Discord alerts are now root-first, attach up to `3` supporting contracts, and include DTE, volume, premium, and quote-quality context
+- UOA Discord alerts are now root-first, attach up to `3` supporting contracts, separate captured `flow size` from full-session contract `volume`, and include session `OI`, `volume / OI`, DTE, premium, and quote-quality context
 - the first outbound policy is `high` only; cooldown, escalation, and degraded-mode alert suppression are still pending
 
 ### Phase 6: Calibration
