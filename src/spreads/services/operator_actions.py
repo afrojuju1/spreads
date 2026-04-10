@@ -160,6 +160,7 @@ def create_manual_generator_alert(
     try:
         publish_global_event_sync(
             topic="alert.event.created",
+            event_class="control_event",
             entity_type="alert_event",
             entity_id=str(record["alert_id"]),
             payload={
@@ -167,6 +168,9 @@ def create_manual_generator_alert(
                 "session_id": build_live_session_id(record["label"], record["session_date"]),
             },
             timestamp=record["created_at"],
+            source="operator_actions",
+            session_date=_as_text(record.get("session_date")),
+            correlation_id=_as_text(job.get("generator_job_id")),
         )
     except Exception:
         pass
@@ -344,6 +348,7 @@ def apply_generator_live_action(
         "changed": True,
         "message": message,
         "live_label": latest_cycle["label"],
+        "session_date": latest_cycle["session_date"],
         "session_id": latest_cycle.get("session_id"),
         "bucket": bucket,
         "cycle_id": cycle_id,
@@ -356,10 +361,14 @@ def apply_generator_live_action(
     try:
         publish_global_event_sync(
             topic="live.cycle.updated",
+            event_class="control_event",
             entity_type="collector_cycle",
             entity_id=cycle_id,
             payload=response,
             timestamp=generated_at,
+            source="operator_actions",
+            session_date=_as_text(latest_cycle.get("session_date")),
+            correlation_id=_as_text(latest_cycle.get("session_id")),
         )
     except Exception:
         pass

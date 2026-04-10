@@ -5,11 +5,13 @@ from spreads.storage.alert_repository import AlertRepository
 from spreads.storage.broker_repository import BrokerRepository
 from spreads.storage.collector_repository import CollectorRepository
 from spreads.storage.context import StorageContext
+from spreads.storage.event_repository import EventRepository
 from spreads.storage.execution_repository import ExecutionRepository
 from spreads.storage.job_repository import JobRepository
 from spreads.storage.ops_store import OpsStore
 from spreads.storage.post_market_repository import PostMarketAnalysisRepository
 from spreads.storage.run_history_repository import RunHistoryRepository
+from spreads.storage.signal_repository import SignalRepository
 from spreads.storage.trading_store import TradingStore
 
 
@@ -68,6 +70,20 @@ def build_execution_repository(path_or_url: str | None = None, *, context: Stora
         return context.execution
     value = _resolve_postgres_url(path_or_url)
     return ExecutionRepository(value)
+
+
+def build_event_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):
+    if context is not None:
+        return context.events
+    value = _resolve_postgres_url(path_or_url)
+    return EventRepository(value)
+
+
+def build_signal_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):
+    if context is not None:
+        return context.signals
+    value = _resolve_postgres_url(path_or_url)
+    return SignalRepository(value)
 
 
 def build_trading_store(path_or_url: str | None = None, *, context: StorageContext | None = None):

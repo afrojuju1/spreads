@@ -27,6 +27,10 @@ JobDefinitionRecord = StorageRow
 JobRunRecord = StorageRow
 AccountSnapshotRecord = StorageRow
 BrokerSyncStateRecord = StorageRow
+EventLogRecord = StorageRow
+SignalStateRecord = StorageRow
+SignalStateTransitionRecord = StorageRow
+OpportunityRecord = StorageRow
 JobLeaseRecord = StorageRow
 PostMarketAnalysisRunRecord = StorageRow
 ExecutionAttemptRecord = StorageRow
@@ -53,6 +57,10 @@ __all__ = [
     "JobRunRecord",
     "AccountSnapshotRecord",
     "BrokerSyncStateRecord",
+    "EventLogRecord",
+    "SignalStateRecord",
+    "SignalStateTransitionRecord",
+    "OpportunityRecord",
     "JobLeaseRecord",
     "PostMarketAnalysisRunRecord",
     "ExecutionAttemptRecord",

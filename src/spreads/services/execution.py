@@ -26,6 +26,7 @@ from spreads.services.risk_manager import (
     validate_open_execution,
 )
 from spreads.services.scanner import make_close_order_payload
+from spreads.services.signal_state import publish_opportunity_event
 from spreads.services.session_positions import (
     CLOSE_TRADE_INTENT,
     OPEN_TRADE_INTENT,
@@ -805,6 +806,7 @@ def _publish_execution_attempt_event(attempt: dict[str, Any], *, message: str) -
     try:
         publish_global_event_sync(
             topic="execution.attempt.updated",
+            event_class="broker_event",
             entity_type="execution_attempt",
             entity_id=str(attempt["execution_attempt_id"]),
             payload={
@@ -815,6 +817,10 @@ def _publish_execution_attempt_event(attempt: dict[str, Any], *, message: str) -
             or attempt.get("submitted_at")
             or attempt.get("requested_at")
             or _utc_now(),
+            source="execution",
+            session_date=_as_text(attempt.get("session_date")),
+            correlation_id=_as_text(attempt.get("session_id")),
+            causation_id=_as_text(attempt.get("broker_order_id")),
         )
     except Exception:
         pass
@@ -934,6 +940,7 @@ def submit_live_session_execution(
     collector_store = storage.collector
     execution_store = storage.execution
     job_store = storage.jobs
+    signal_store = getattr(storage, "signals", None)
     requested_at = _utc_now()
     client_order_id = _execution_client_order_id()
     attempt_id: str | None = None
@@ -948,6 +955,19 @@ def submit_live_session_execution(
         source_policies = _resolve_source_policies(
             cycle=cycle,
             job_store=job_store,
+        )
+        opportunity = None
+        if signal_store is not None and hasattr(signal_store, "schema_ready") and signal_store.schema_ready():
+            opportunity = signal_store.find_active_opportunity_by_candidate_id(candidate_id)
+        opportunity_ref = (
+            None
+            if opportunity is None
+            else {
+                "opportunity_id": str(opportunity["opportunity_id"]),
+                "signal_state_ref": opportunity.get("signal_state_ref"),
+                "lifecycle_state": opportunity.get("lifecycle_state"),
+                "classification": opportunity.get("classification"),
+            }
         )
 
         existing_attempts = execution_store.list_open_attempts_for_identity(
@@ -1036,6 +1056,7 @@ def submit_live_session_execution(
             client_order_id=client_order_id,
             request={
                 **({} if request_metadata is None else request_metadata),
+                **({} if opportunity_ref is None else {"opportunity": opportunity_ref}),
                 "trade_intent": OPEN_TRADE_INTENT,
                 "execution_policy": resolved_execution_policy,
                 "risk_policy": resolved_risk_policy,
@@ -1054,6 +1075,25 @@ def submit_live_session_execution(
             execution_store=execution_store,
             attempt=attempt,
         )
+        if opportunity_ref is not None and signal_store is not None:
+            try:
+                consumed_opportunity, consumed_changed = signal_store.mark_opportunity_consumed(
+                    opportunity_id=str(opportunity_ref["opportunity_id"]),
+                    execution_attempt_id=attempt_id,
+                    consumed_at=requested_at,
+                )
+                if consumed_opportunity is not None and consumed_changed:
+                    publish_opportunity_event(
+                        topic="opportunity.lifecycle.updated",
+                        opportunity=consumed_opportunity,
+                        session_date=str(cycle["session_date"]),
+                        correlation_id=str(cycle["cycle_id"]),
+                        causation_id=attempt_id,
+                        timestamp=requested_at,
+                        source="execution",
+                    )
+            except Exception:
+                pass
         message = _submission_message(payload, queued=True)
         return {
             "action": "submit",

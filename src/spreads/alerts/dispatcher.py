@@ -219,6 +219,7 @@ def dispatch_cycle_alerts(
         try:
             publish_global_event_sync(
                 topic="alert.event.created",
+                event_class="control_event",
                 entity_type="alert_event",
                 entity_id=str(record["alert_id"]),
                 payload={
@@ -226,6 +227,9 @@ def dispatch_cycle_alerts(
                     "session_id": build_live_session_id(label, session_date),
                 },
                 timestamp=record["created_at"],
+                source="alerts.dispatcher",
+                session_date=session_date,
+                correlation_id=cycle_id,
             )
         except Exception:
             pass

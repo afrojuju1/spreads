@@ -427,6 +427,7 @@ def run_broker_sync(
         )
         publish_global_event_sync(
             topic="broker.sync.updated",
+            event_class="broker_event",
             entity_type="broker_sync",
             entity_id=BROKER_SYNC_KEY,
             payload={
@@ -436,6 +437,7 @@ def run_broker_sync(
                 "summary": state["summary"],
             },
             timestamp=state["updated_at"],
+            source="broker_sync",
         )
         return {
             "status": status,

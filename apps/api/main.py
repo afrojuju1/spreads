@@ -77,7 +77,7 @@ from spreads.storage.collector_models import (
     CollectorCycleEventModel,
     CollectorCycleModel,
 )
-from spreads.storage.factory import build_job_repository
+from spreads.storage.factory import build_event_repository, build_job_repository, build_signal_repository
 from spreads.storage.job_models import JobDefinitionModel, JobLeaseModel, JobRunModel
 from spreads.storage.models import ScanCandidateModel, ScanRunModel
 from spreads.storage.post_market_models import PostMarketAnalysisRunModel
@@ -210,12 +210,16 @@ async def _publish_job_run_update(redis: Any, run_record: Mapping[str, Any]) -> 
         await publish_global_event_async(
             redis,
             topic="job.run.updated",
+            event_class="control_event",
             entity_type="job_run",
             entity_id=str(run_record["job_run_id"]),
             payload=payload,
             timestamp=run_record.get("finished_at")
             or run_record.get("heartbeat_at")
             or run_record.get("scheduled_for"),
+            source="api",
+            session_date=payload.get("session_date") if isinstance(payload.get("session_date"), str) else None,
+            correlation_id=str(run_record["job_key"]),
         )
     except Exception:
         pass
@@ -721,6 +725,120 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/events")
+def list_events(
+    event_class: str | None = Query(default=None),
+    topic: str | None = Query(default=None),
+    entity_type: str | None = Query(default=None),
+    entity_id: str | None = Query(default=None),
+    session_date: str | None = Query(default=None),
+    correlation_id: str | None = Query(default=None),
+    occurred_from: str | None = Query(default=None),
+    occurred_to: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=1000),
+    db: str | None = None,
+) -> dict[str, Any]:
+    repo = build_event_repository(resolve_db(db))
+    try:
+        if not repo.schema_ready():
+            return {"events": []}
+        return {
+            "events": repo.list_events(
+                event_class=event_class,
+                topic=topic,
+                entity_type=entity_type,
+                entity_key=entity_id,
+                session_date=session_date,
+                correlation_id=correlation_id,
+                occurred_from=occurred_from,
+                occurred_to=occurred_to,
+                limit=limit,
+            )
+        }
+    finally:
+        repo.close()
+
+
+@app.get("/signal-state")
+def list_signal_state(
+    label: str | None = Query(default=None),
+    session_date: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+    underlying_symbol: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=1000),
+    db: str | None = None,
+) -> dict[str, Any]:
+    repo = build_signal_repository(resolve_db(db))
+    try:
+        if not repo.schema_ready():
+            return {"signal_states": []}
+        return {
+            "signal_states": repo.list_signal_states(
+                label=label,
+                session_date=session_date,
+                state=state,
+                underlying_symbol=underlying_symbol,
+                limit=limit,
+            )
+        }
+    finally:
+        repo.close()
+
+
+@app.get("/signal-state/transitions")
+def list_signal_transitions(
+    label: str | None = Query(default=None),
+    session_date: str | None = Query(default=None),
+    signal_state_id: str | None = Query(default=None),
+    underlying_symbol: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=1000),
+    db: str | None = None,
+) -> dict[str, Any]:
+    repo = build_signal_repository(resolve_db(db))
+    try:
+        if not repo.schema_ready():
+            return {"transitions": []}
+        return {
+            "transitions": repo.list_signal_transitions(
+                label=label,
+                session_date=session_date,
+                signal_state_id=signal_state_id,
+                underlying_symbol=underlying_symbol,
+                limit=limit,
+            )
+        }
+    finally:
+        repo.close()
+
+
+@app.get("/opportunities")
+def list_opportunities(
+    label: str | None = Query(default=None),
+    session_date: str | None = Query(default=None),
+    lifecycle_state: str | None = Query(default=None),
+    underlying_symbol: str | None = Query(default=None),
+    strategy_family: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=1000),
+    db: str | None = None,
+) -> dict[str, Any]:
+    repo = build_signal_repository(resolve_db(db))
+    try:
+        if not repo.schema_ready():
+            return {"opportunities": []}
+        return {
+            "opportunities": repo.list_opportunities(
+                label=label,
+                session_date=session_date,
+                lifecycle_state=lifecycle_state,
+                underlying_symbol=underlying_symbol,
+                strategy_family=strategy_family,
+                limit=limit,
+            )
+        }
+    finally:
+        repo.close()
+
+
 @app.get("/account/overview")
 def get_account_overview(
     history_range: Literal["1D", "1W", "1M"] = Query(default="1D"),
@@ -818,9 +936,12 @@ async def create_generator_job(payload: GeneratorJobRequest, db: str | None = No
                 await publish_global_event_async(
                     redis,
                     topic="generator.job.updated",
+                    event_class="control_event",
                     entity_type="job_run",
                     entity_id=generator_job_id,
                     payload=_generator_job_payload(job),
+                    source="api",
+                    correlation_id=GENERATOR_ADHOC_JOB_KEY,
                 )
             except Exception:
                 pass
@@ -829,9 +950,12 @@ async def create_generator_job(payload: GeneratorJobRequest, db: str | None = No
             await publish_global_event_async(
                 redis,
                 topic="generator.job.updated",
+                event_class="control_event",
                 entity_type="job_run",
                 entity_id=generator_job_id,
                 payload=_generator_job_payload(job),
+                source="api",
+                correlation_id=GENERATOR_ADHOC_JOB_KEY,
             )
         except Exception:
             pass

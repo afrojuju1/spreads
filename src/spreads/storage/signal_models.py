@@ -1,0 +1,132 @@
+from __future__ import annotations
+
+from datetime import date, datetime
+from typing import Any
+
+from sqlalchemy import BigInteger, Date, DateTime, Float, ForeignKey, Index, Text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from spreads.storage.db import Base
+
+
+class SignalStateModel(Base):
+    __tablename__ = "signal_states"
+    __table_args__ = (
+        Index("idx_signal_states_label_state_updated", "label", "state", "updated_at"),
+        Index("idx_signal_states_entity_updated", "entity_type", "entity_key", "updated_at"),
+        Index("idx_signal_states_session_updated", "session_date", "updated_at"),
+    )
+
+    signal_state_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    strategy_family: Mapped[str] = mapped_column(Text, nullable=False)
+    profile: Mapped[str] = mapped_column(Text, nullable=False)
+    entity_type: Mapped[str] = mapped_column(Text, nullable=False)
+    entity_key: Mapped[str] = mapped_column(Text, nullable=False)
+    underlying_symbol: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reason_codes_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    blockers_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    evidence_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    active_cycle_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active_candidate_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    active_bucket: Mapped[str | None] = mapped_column(Text, nullable=True)
+    opportunity_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    market_session: Mapped[str] = mapped_column(Text, nullable=False)
+    first_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    transitions: Mapped[list["SignalStateTransitionModel"]] = relationship(
+        back_populates="signal_state",
+        cascade="all, delete-orphan",
+        order_by="SignalStateTransitionModel.occurred_at",
+    )
+
+
+class SignalStateTransitionModel(Base):
+    __tablename__ = "signal_state_transitions"
+    __table_args__ = (
+        Index("idx_signal_state_transitions_state_occurred", "signal_state_id", "occurred_at"),
+        Index(
+            "idx_signal_state_transitions_label_session_occurred",
+            "label",
+            "session_date",
+            "occurred_at",
+        ),
+        Index(
+            "idx_signal_state_transitions_entity_occurred",
+            "entity_type",
+            "entity_key",
+            "occurred_at",
+        ),
+    )
+
+    transition_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    signal_state_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("signal_states.signal_state_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    strategy_family: Mapped[str] = mapped_column(Text, nullable=False)
+    profile: Mapped[str] = mapped_column(Text, nullable=False)
+    entity_type: Mapped[str] = mapped_column(Text, nullable=False)
+    entity_key: Mapped[str] = mapped_column(Text, nullable=False)
+    underlying_symbol: Mapped[str] = mapped_column(Text, nullable=False)
+    from_state: Mapped[str | None] = mapped_column(Text, nullable=True)
+    to_state: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reason_codes_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    blockers_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    evidence_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    active_cycle_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active_candidate_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    active_bucket: Mapped[str | None] = mapped_column(Text, nullable=True)
+    opportunity_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    market_session: Mapped[str] = mapped_column(Text, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    signal_state: Mapped[SignalStateModel] = relationship(back_populates="transitions")
+
+
+class OpportunityModel(Base):
+    __tablename__ = "opportunities"
+    __table_args__ = (
+        Index("idx_opportunities_label_session_lifecycle", "label", "session_date", "lifecycle_state"),
+        Index("idx_opportunities_entity_updated", "entity_type", "entity_key", "updated_at"),
+        Index("idx_opportunities_source_candidate", "source_candidate_id"),
+        Index("idx_opportunities_updated_at", "updated_at"),
+    )
+
+    opportunity_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    strategy_family: Mapped[str] = mapped_column(Text, nullable=False)
+    profile: Mapped[str] = mapped_column(Text, nullable=False)
+    entity_type: Mapped[str] = mapped_column(Text, nullable=False)
+    entity_key: Mapped[str] = mapped_column(Text, nullable=False)
+    underlying_symbol: Mapped[str] = mapped_column(Text, nullable=False)
+    side: Mapped[str | None] = mapped_column(Text, nullable=True)
+    classification: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    signal_state_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lifecycle_state: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason_codes_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    blockers_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    execution_shape_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    risk_hints_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    source_cycle_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_candidate_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    source_bucket: Mapped[str | None] = mapped_column(Text, nullable=True)
+    candidate_identity: Mapped[str | None] = mapped_column(Text, nullable=True)
+    candidate_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    consumed_by_execution_attempt_id: Mapped[str | None] = mapped_column(Text, nullable=True)

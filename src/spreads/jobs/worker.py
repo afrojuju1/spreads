@@ -209,10 +209,13 @@ async def _publish_generator_job_event(
         await publish_global_event_async(
             event_bus,
             topic="generator.job.updated",
+            event_class="control_event",
             entity_type="job_run",
             entity_id=str(run_record["job_run_id"]),
             payload=build_generator_job_payload(run_record),
             timestamp=run_record.get("finished_at") or run_record.get("started_at") or run_record["scheduled_for"],
+            source="worker",
+            correlation_id=str(run_record["job_key"]),
         )
     except Exception:
         pass
@@ -229,10 +232,14 @@ async def _publish_job_run_event(ctx: dict[str, Any], run_record: Any) -> None:
         await publish_global_event_async(
             event_bus,
             topic="job.run.updated",
+            event_class="control_event",
             entity_type="job_run",
             entity_id=run_record["job_run_id"],
             payload=payload,
             timestamp=run_record.get("finished_at") or run_record.get("heartbeat_at") or run_record["scheduled_for"],
+            source="worker",
+            session_date=payload.get("session_date") if isinstance(payload.get("session_date"), str) else None,
+            correlation_id=str(run_record["job_key"]),
         )
     except Exception:
         pass
@@ -257,6 +264,7 @@ async def _publish_post_market_event(
         await publish_global_event_async(
             event_bus,
             topic="post_market.analysis.updated",
+            event_class="analytics_event",
             entity_type="post_market_analysis",
             entity_id=analysis_run_id,
             payload={
@@ -264,6 +272,9 @@ async def _publish_post_market_event(
                 **({} if session_id is None else {"session_id": session_id}),
             },
             timestamp=timestamp,
+            source="worker",
+            session_date=session_date if isinstance(session_date, str) else None,
+            correlation_id=session_id,
         )
     except Exception:
         pass
@@ -447,11 +458,15 @@ async def _emit_live_collector_observability(ctx: dict[str, Any], run_record: An
         await publish_global_event_async(
             event_bus,
             topic="live.collector.degraded",
+            event_class="control_event",
             entity_type="job_run",
             entity_id=run_payload["job_run_id"],
             payload=degradation,
             event_type="alert",
             timestamp=run_payload.get("finished_at") or run_payload.get("slot_at"),
+            source="worker",
+            session_date=run_payload.get("session_date") if isinstance(run_payload.get("session_date"), str) else None,
+            correlation_id=session_id,
         )
     except Exception:
         pass

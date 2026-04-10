@@ -482,6 +482,16 @@ This prevents platform work from breaking the most valuable current invariants.
 
 ## Phase 1: Canonical Event Layer
 
+Status: completed
+
+Implemented:
+
+- normalized event envelope
+- durable `event_log`
+- market-event adapter for captured option quotes
+- broker-event adapters for broker sync and execution updates
+- control/analytics adapters for job, operator, alert, and analysis events
+
 Build:
 
 - normalized event envelope
@@ -496,6 +506,17 @@ Deliverable:
 - one durable event stream that can be replayed and joined across domains
 
 ## Phase 2: Signal State And Opportunity Layer
+
+Status: completed
+
+Implemented:
+
+- durable current `signal_states` store
+- append-only `signal_state_transitions` log
+- generic `opportunities` table with lifecycle state
+- live collector adapter mapping board/watchlist candidates into signal state and opportunities
+- opportunity lookup and consume handoff on the existing execution path
+- read paths for `/signal-state`, `/signal-state/transitions`, and `/opportunities`
 
 Build:
 

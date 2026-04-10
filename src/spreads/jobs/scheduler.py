@@ -42,13 +42,18 @@ def _log_scheduler_event(event: str, **payload: Any) -> None:
 
 async def _publish_job_run_update(redis: Any, run_record: Any) -> None:
     try:
+        payload = dict(run_record.get("payload") or {})
         await publish_global_event_async(
             redis,
             topic="job.run.updated",
+            event_class="control_event",
             entity_type="job_run",
             entity_id=run_record["job_run_id"],
             payload=run_record,
             timestamp=run_record.get("finished_at") or run_record.get("heartbeat_at") or run_record["scheduled_for"],
+            source="scheduler",
+            session_date=str(payload["session_date"]) if isinstance(payload.get("session_date"), str) else None,
+            correlation_id=str(run_record["job_key"]),
         )
     except Exception:
         pass

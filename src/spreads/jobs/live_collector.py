@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from spreads.common import env_or_die, load_local_env
 from spreads.alerts.dispatcher import dispatch_cycle_alerts
+from spreads.events.bus import build_global_event
 from spreads.integrations.alpaca.client import AlpacaClient, infer_trading_base_url
 from spreads.integrations.calendar_events import build_calendar_event_resolver
 from spreads.integrations.greeks import build_local_greeks_provider
@@ -18,6 +19,7 @@ from spreads.services.live_collector_health import build_quote_capture_summary
 from spreads.services.live_pipelines import build_live_snapshot_label
 from spreads.services.option_quote_capture import request_option_quote_capture
 from spreads.services.option_quote_records import build_quote_records, build_quote_symbol_metadata
+from spreads.services.signal_state import sync_live_collector_signal_layer
 from spreads.services.scanner import (
     NEW_YORK,
     SpreadCandidate,
@@ -34,7 +36,9 @@ from spreads.storage.factory import (
     build_storage_context,
 )
 from spreads.storage.collector_repository import CollectorRepository
+from spreads.storage.event_repository import EventRepository
 from spreads.storage.run_history_repository import RunHistoryRepository
+from spreads.storage.signal_repository import SignalRepository
 
 BOARD_SCORE_FLOOR = 65.0
 BOARD_STRONG_SCORE = 82.0
@@ -719,6 +723,58 @@ def _resolve_collection_reference_time(slot_at: str | datetime | None) -> dateti
     return datetime.now(UTC)
 
 
+def _session_date_for_generated_at(generated_at: str) -> str:
+    normalized = generated_at.replace("Z", "+00:00") if generated_at.endswith("Z") else generated_at
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(NEW_YORK).date().isoformat()
+
+
+def _record_quote_market_events(
+    *,
+    event_store: EventRepository,
+    cycle_id: str,
+    label: str,
+    profile: str,
+    session_date: str,
+    session_id: str | None,
+    job_run_id: str | None,
+    quotes: list[dict[str, Any]],
+) -> int:
+    if not quotes or not event_store.schema_ready():
+        return 0
+    envelopes = [
+        build_global_event(
+            topic="market.quote.captured",
+            event_class="market_event",
+            event_type="option_quote.captured",
+            entity_type="option_quote",
+            entity_id=str(quote["option_symbol"]),
+            payload={
+                **dict(quote),
+                "cycle_id": cycle_id,
+                "label": label,
+                "profile": profile,
+                **({} if session_id is None else {"session_id": session_id}),
+                **({} if job_run_id is None else {"job_run_id": job_run_id}),
+            },
+            timestamp=str(quote["captured_at"]),
+            source=str(quote.get("source") or "option_quote_capture"),
+            session_date=session_date,
+            market_session="regular",
+            correlation_id=cycle_id,
+            causation_id=job_run_id,
+        )
+        for quote in quotes
+        if quote.get("option_symbol") and quote.get("captured_at")
+    ]
+    if not envelopes:
+        return 0
+    event_store.create_events(envelopes)
+    return len(envelopes)
+
+
 def _run_collection_cycle(
     args: argparse.Namespace,
     *,
@@ -728,12 +784,15 @@ def _run_collection_cycle(
     history_store: RunHistoryRepository,
     alert_store: AlertRepository,
     collector_store: CollectorRepository,
+    event_store: EventRepository,
+    signal_store: SignalRepository,
     calendar_resolver: Any,
     greeks_provider: Any,
     emit_output: bool,
     heartbeat: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     generated_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    session_date = _session_date_for_generated_at(generated_at)
     if heartbeat is not None:
         heartbeat()
     symbols, universe_label, scan_results, failures, _ = run_universe_cycle(
@@ -793,6 +852,29 @@ def _run_collection_cycle(
         watchlist_candidates=watchlist_payloads,
         events=events,
     )
+    signal_sync = {
+        "signal_states_upserted": 0,
+        "signal_transitions_recorded": 0,
+        "opportunities_upserted": 0,
+        "opportunities_expired": 0,
+    }
+    try:
+        signal_sync = sync_live_collector_signal_layer(
+            signal_store=signal_store,
+            label=label,
+            session_date=session_date,
+            generated_at=generated_at,
+            cycle_id=cycle_id,
+            strategy=args.strategy,
+            profile=args.profile,
+            symbols=symbols,
+            symbol_candidates=symbol_strategy_candidates,
+            selection_state=selection_state,
+            failures=[asdict(failure) for failure in failures],
+            persisted_candidates=collector_store.list_cycle_candidates(cycle_id),
+        )
+    except Exception as exc:
+        print(f"Signal-state sync unavailable: {exc}")
     if heartbeat is not None:
         heartbeat()
     quote_event_count = 0
@@ -818,6 +900,19 @@ def _run_collection_cycle(
                 quotes=latest_quote_records,
             )
             quote_event_count += baseline_quote_event_count
+            try:
+                _record_quote_market_events(
+                    event_store=event_store,
+                    cycle_id=cycle_id,
+                    label=label,
+                    profile=args.profile,
+                    session_date=session_date,
+                    session_id=None if tick_context is None else tick_context.session_id,
+                    job_run_id=None if tick_context is None else tick_context.job_run_id,
+                    quotes=latest_quote_records,
+                )
+            except Exception as exc:
+                print(f"Live latest quote event normalization unavailable: {exc}")
         except Exception as exc:
             print(f"Live latest quote capture unavailable: {exc}")
         try:
@@ -833,6 +928,19 @@ def _run_collection_cycle(
                 quotes=websocket_quote_records,
             )
             quote_event_count += websocket_quote_event_count
+            try:
+                _record_quote_market_events(
+                    event_store=event_store,
+                    cycle_id=cycle_id,
+                    label=label,
+                    profile=args.profile,
+                    session_date=session_date,
+                    session_id=None if tick_context is None else tick_context.session_id,
+                    job_run_id=None if tick_context is None else tick_context.job_run_id,
+                    quotes=websocket_quote_records,
+                )
+            except Exception as exc:
+                print(f"Live websocket quote event normalization unavailable: {exc}")
         except Exception as exc:
             print(f"Live websocket quote capture unavailable: {exc}")
         if quote_event_count == 0:
@@ -851,8 +959,21 @@ def _run_collection_cycle(
                     profile=args.profile,
                     quotes=recovery_quote_records,
                 )
-                recovery_quote_event_count = recovered_quote_event_count
                 quote_event_count += recovered_quote_event_count
+                try:
+                    _record_quote_market_events(
+                        event_store=event_store,
+                        cycle_id=cycle_id,
+                        label=label,
+                        profile=args.profile,
+                        session_date=session_date,
+                        session_id=None if tick_context is None else tick_context.session_id,
+                        job_run_id=None if tick_context is None else tick_context.job_run_id,
+                        quotes=recovery_quote_records,
+                    )
+                except Exception as exc:
+                    print(f"Live recovery quote event normalization unavailable: {exc}")
+                recovery_quote_event_count = recovered_quote_event_count
             except Exception as exc:
                 print(f"Live quote recovery unavailable: {exc}")
     quote_capture = build_quote_capture_summary(
@@ -930,6 +1051,10 @@ def _run_collection_cycle(
         "expected_quote_symbols": expected_quote_symbols,
         "board_candidate_count": len(board_payloads),
         "watchlist_candidate_count": len(watchlist_payloads),
+        "signal_states_upserted": int(signal_sync["signal_states_upserted"]),
+        "signal_transitions_recorded": int(signal_sync["signal_transitions_recorded"]),
+        "opportunities_upserted": int(signal_sync["opportunities_upserted"]),
+        "opportunities_expired": int(signal_sync["opportunities_expired"]),
         "quote_capture": quote_capture,
         "auto_execution": auto_execution,
     }
@@ -962,6 +1087,10 @@ def run_collection_tick(
             "websocket_quote_events_saved": 0,
             "recovery_quote_events_saved": 0,
             "expected_quote_symbols": [],
+            "signal_states_upserted": 0,
+            "signal_transitions_recorded": 0,
+            "opportunities_upserted": 0,
+            "opportunities_expired": 0,
             "quote_capture": build_quote_capture_summary(
                 expected_quote_symbols=[],
                 total_quote_events_saved=0,
@@ -1000,6 +1129,8 @@ def run_collection_tick(
                 history_store=storage.history,
                 alert_store=storage.alerts,
                 collector_store=storage.collector,
+                event_store=storage.events,
+                signal_store=storage.signals,
                 calendar_resolver=calendar_resolver,
                 greeks_provider=greeks_provider,
                 emit_output=emit_output,
@@ -1020,6 +1151,10 @@ def run_collection_tick(
         "expected_quote_symbols": list(cycle_result["expected_quote_symbols"]),
         "board_candidate_count": cycle_result["board_candidate_count"],
         "watchlist_candidate_count": cycle_result["watchlist_candidate_count"],
+        "signal_states_upserted": cycle_result["signal_states_upserted"],
+        "signal_transitions_recorded": cycle_result["signal_transitions_recorded"],
+        "opportunities_upserted": cycle_result["opportunities_upserted"],
+        "opportunities_expired": cycle_result["opportunities_expired"],
         "quote_capture": dict(cycle_result["quote_capture"]),
         "auto_execution": cycle_result["auto_execution"],
         "label": cycle_result["label"],
@@ -1054,6 +1189,10 @@ def run_collection(
             "websocket_quote_events_saved": 0,
             "recovery_quote_events_saved": 0,
             "expected_quote_symbols": [],
+            "signal_states_upserted": 0,
+            "signal_transitions_recorded": 0,
+            "opportunities_upserted": 0,
+            "opportunities_expired": 0,
             "quote_capture": build_quote_capture_summary(
                 expected_quote_symbols=[],
                 total_quote_events_saved=0,
@@ -1084,6 +1223,10 @@ def run_collection(
     total_baseline_quote_events = 0
     total_websocket_quote_events = 0
     total_recovery_quote_events = 0
+    total_signal_states = 0
+    total_signal_transitions = 0
+    total_opportunities = 0
+    total_opportunities_expired = 0
     last_label: str | None = None
     iterations_completed = 0
     try:
@@ -1108,6 +1251,8 @@ def run_collection(
                     history_store=storage.history,
                     alert_store=storage.alerts,
                     collector_store=storage.collector,
+                    event_store=storage.events,
+                    signal_store=storage.signals,
                     calendar_resolver=calendar_resolver,
                     greeks_provider=greeks_provider,
                     emit_output=emit_output,
@@ -1119,6 +1264,10 @@ def run_collection(
                 total_baseline_quote_events += int(cycle_result["baseline_quote_events_saved"])
                 total_websocket_quote_events += int(cycle_result["websocket_quote_events_saved"])
                 total_recovery_quote_events += int(cycle_result["recovery_quote_events_saved"])
+                total_signal_states += int(cycle_result["signal_states_upserted"])
+                total_signal_transitions += int(cycle_result["signal_transitions_recorded"])
+                total_opportunities += int(cycle_result["opportunities_upserted"])
+                total_opportunities_expired += int(cycle_result["opportunities_expired"])
                 iterations_completed += 1
                 last_label = str(cycle_result["label"])
                 if iteration < args.iterations - 1:
@@ -1140,6 +1289,10 @@ def run_collection(
         "baseline_quote_events_saved": total_baseline_quote_events,
         "websocket_quote_events_saved": total_websocket_quote_events,
         "recovery_quote_events_saved": total_recovery_quote_events,
+        "signal_states_upserted": total_signal_states,
+        "signal_transitions_recorded": total_signal_transitions,
+        "opportunities_upserted": total_opportunities,
+        "opportunities_expired": total_opportunities_expired,
         "quote_capture": build_quote_capture_summary(
             expected_quote_symbols=[],
             total_quote_events_saved=total_quote_events,
