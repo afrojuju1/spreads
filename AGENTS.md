@@ -5,7 +5,21 @@
 - Keep changes minimal and focused unless broader refactors are explicitly requested.
 - Do not commit or push unless explicitly asked.
 - Prefer `uv run` for Python commands in this repo.
-- For Alpaca-related research, scanner design, or alerting work, read the canonical capability statement in [docs/research/alpaca_capabilities_statement.md](/Users/adeb/Projects/spreads/docs/research/alpaca_capabilities_statement.md) first. Re-check Alpaca's official docs/OpenAPI only when the task depends on current product changes, limits, or newly added endpoints.
+- For Alpaca-related research, scanner design, or alerting work, read the canonical capability statement in [docs/research/alpaca_capabilities_statement.md](docs/research/alpaca_capabilities_statement.md) first. Re-check Alpaca's official docs/OpenAPI only when the task depends on current product changes, limits, or newly added endpoints.
+
+## Code Quality And Architecture
+
+- Prefer clean, reusable, modular code over narrow patch work.
+- Before implementing, check whether the change duplicates logic, creates a parallel path, or deepens a weak abstraction. If it does, prefer a small structural cleanup or shared helper/service extraction.
+- Extend one canonical path per behavior instead of maintaining near-duplicate flows.
+- If the current architecture is weak, call it out explicitly and propose the better approach before proceeding. Weigh:
+  - current callers
+  - migration cost
+  - runtime risk
+  - verification cost
+  - whether the user asked for the smallest change or the most durable fix
+- Prefer a targeted refactor over a fragile minimal patch when the refactor materially improves structure and can be validated safely.
+- If debt is being accepted, state it explicitly rather than hiding it behind vague follow-up language.
 
 ## Dev Workflow
 
@@ -17,30 +31,13 @@
 - Do not run repo-wide Python compile checks such as `python -m compileall` unless the user explicitly asks for them.
 - Prefer dev-safe verification during normal work, such as linting, targeted type checks, and narrow runtime checks.
 
-## End-Of-Day And Ops Queries
-
-- For questions about "how did we do today", market-close summaries, collector health, or live ops status, prefer the running Docker-backed system state before code inspection.
-- Use the existing stack and narrow live reads first:
-  - account and trading health: `account_state.py` or `http://localhost:58080/account/overview?history_range=1D`
-  - session health: `sessions.py` or `http://localhost:58080/sessions?limit=...`
-  - closed-session analysis: `post_market_repository.py` / `post_market_analysis.py` or `http://localhost:58080/post-market/{session_date}/{label}`
-- Always distinguish actual account PnL from modeled post-market outcomes. Do not present modeled idea outcomes as realized account performance.
-- After market close, use exact dates in summaries.
-
-## Backend Services
+## Backend Work
 
 - For storage-backed backend work, use the repo’s configured Postgres target via existing helpers; do not assume SQLite or ad hoc local storage.
-- Prefer extending existing services and repositories with thin adapters before introducing new abstractions or frameworks.
 - For new API work, start with the narrowest interface that satisfies the current use case and expand only when there is a real caller.
 - Prefer targeted service, API, and data-backed smoke checks during normal development; avoid broad verification unless the user asks.
-
-## Backend Rollout Checklist
-
-- After schema changes, run `uv run alembic upgrade head`.
-- If job definitions or scheduled/manual job keys changed, run `uv run spreads-seed-jobs`.
-- After changing code imported by `worker-main`, `worker-collector`, or `scheduler`, restart those containers before trusting runtime behavior.
-- Use `docker compose ps` and recent `docker compose logs` to verify startup and job execution after restart.
-- Restart `api` or `web` only when needed for changed runtime surfaces or when explicitly requested.
+- Read and follow the more specific backend instructions in [src/spreads/AGENTS.md](src/spreads/AGENTS.md) when working under `src/spreads`.
+- Read and follow the API-specific instructions in [apps/api/AGENTS.md](apps/api/AGENTS.md) when working under `apps/api`.
 
 ## Planning Docs
 
@@ -48,6 +45,4 @@
 
 ## Web App
 
-- Prefer established utility helpers over bespoke one-off implementations for common collection, object, and string transforms.
-- In `apps/web`, prefer `lodash-es` when it covers the job cleanly instead of writing custom utility code from scratch.
-- Read and follow the more specific instructions in [apps/web/AGENTS.md](/Users/adeb/Projects/spreads/apps/web/AGENTS.md) when working under `apps/web`.
+- Read and follow the more specific instructions in [apps/web/AGENTS.md](apps/web/AGENTS.md) when working under `apps/web`.

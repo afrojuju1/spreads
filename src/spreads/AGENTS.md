@@ -1,6 +1,17 @@
-# Backend Service Map
+# Backend Instructions
 
-- Prefer extending existing service entrypoints before adding new aggregators.
+## Backend Architecture Rules
+
+- Prefer extending existing service entrypoints instead of adding parallel aggregators.
+- Keep module boundaries clear: `services/` owns business logic, `storage/` owns persistence and query shapes, `jobs/` owns scheduling and worker entrypoints, and `apps/api` stays a thin adapter over services.
+- Favor one canonical backend path per responsibility. If logic is already repeated, extract the shared behavior before adding more.
+- Prefer small composable helpers when they remove duplication, but do not add abstraction layers with only one caller and no clear reuse value.
+- If a requested change pushes against a bad boundary, call it out and propose the boundary fix first. Unless the user explicitly wants the smallest patch only, prefer the boundary fix.
+- When changing architecture, explain the tradeoff in terms of:
+  - duplicate logic removed
+  - callers affected
+  - migration or rollout risk
+  - validation needed after the change
 
 ## Canonical Ownership
 
@@ -14,3 +25,21 @@
 
 - For operator visibility work, reuse these modules with thin adapters instead of introducing parallel API-only logic.
 - For closed-session investigations, check post-market analysis before tuning strategy thresholds from raw session counts alone.
+
+## End-Of-Day And Ops Queries
+
+- For questions about "how did we do today", market-close summaries, collector health, or live ops status, prefer the running Docker-backed system state before code inspection.
+- Use the existing stack and narrow live reads first:
+  - account and trading health: `services/account_state.py` or `http://localhost:58080/account/overview?history_range=1D`
+  - session health: `services/sessions.py` or `http://localhost:58080/sessions?limit=...`
+  - closed-session analysis: `storage/post_market_repository.py` / `services/post_market_analysis.py` or `http://localhost:58080/post-market/{session_date}/{label}`
+- Always distinguish actual account PnL from modeled post-market outcomes. Do not present modeled idea outcomes as realized account performance.
+- After market close, use exact dates in summaries.
+
+## Rollout Checklist
+
+- After schema changes, run `uv run alembic upgrade head`.
+- If job definitions or scheduled/manual job keys changed, run `uv run spreads-seed-jobs`.
+- After changing code imported by `worker-main`, `worker-collector`, or `scheduler`, restart those containers before trusting runtime behavior.
+- Use `docker compose ps` and recent `docker compose logs` to verify startup and job execution after restart.
+- Restart `api` only when the changed runtime surface requires it or when explicitly requested.
