@@ -138,6 +138,7 @@ def enrich_live_collector_job_run_payload(payload: Mapping[str, Any]) -> dict[st
     enriched["quote_capture"] = result["quote_capture"]
     enriched["trade_capture"] = result["trade_capture"]
     enriched["uoa_summary"] = result.get("uoa_summary") or {}
+    enriched["uoa_quote_summary"] = result.get("uoa_quote_summary") or {}
     enriched["uoa_decisions"] = result.get("uoa_decisions") or {}
     enriched["capture_status"] = result["quote_capture"]["capture_status"]
     return enriched

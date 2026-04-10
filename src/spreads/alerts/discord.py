@@ -28,7 +28,22 @@ def compact_value(value: Any, *, fallback: str = "n/a") -> str:
     return str(value)
 
 
-def build_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
+def compact_money(value: Any, *, fallback: str = "n/a") -> str:
+    if value is None:
+        return fallback
+    rendered = float(value)
+    if abs(rendered) >= 100:
+        return f"${rendered:,.0f}"
+    return f"${rendered:,.2f}"
+
+
+def compact_pct(value: Any, *, fallback: str = "n/a") -> str:
+    if value is None:
+        return fallback
+    return f"{float(value) * 100:.1f}%"
+
+
+def _build_spread_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
     candidate = alert["candidate"]
     strategy = str(candidate["strategy"])
     setup_status = str(candidate.get("setup_status") or "unknown")
@@ -56,6 +71,102 @@ def build_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
         "timestamp": alert["created_at"],
     }
     return {"embeds": [embed]}
+
+
+def _uoa_color(*, dominant_flow: str, decision_state: str) -> int:
+    if dominant_flow == "call":
+        return SUCCESS_GREEN
+    if dominant_flow == "put":
+        return BEARISH_RED
+    if decision_state == "high":
+        return NEUTRAL_YELLOW
+    return INFO_BLUE
+
+
+def _uoa_dte_preview(contracts: list[dict[str, Any]]) -> str:
+    values = sorted(
+        {
+            int(contract["dte"])
+            for contract in contracts
+            if contract.get("dte") is not None
+        }
+    )
+    if not values:
+        return "n/a"
+    return ", ".join(f"{value}DTE" for value in values[:3])
+
+
+def _uoa_contract_line(contract: dict[str, Any]) -> str:
+    option_type = str(contract.get("option_type") or "?").upper()[:1]
+    strike = contract.get("strike_price")
+    strike_text = "?"
+    if strike is not None:
+        strike_text = f"{float(strike):.0f}" if float(strike).is_integer() else f"{float(strike):.2f}"
+    dte = contract.get("dte")
+    dte_text = "n/a" if dte is None else f"{int(dte)}DTE"
+    size = int(contract.get("scoreable_size") or 0)
+    premium = compact_money(contract.get("scoreable_premium"))
+    midpoint = compact_value(contract.get("midpoint"))
+    spread_pct = compact_pct(contract.get("spread_pct"))
+    return f"{strike_text}{option_type} {dte_text} vol {size} prem {premium} mid {midpoint} spr {spread_pct}"
+
+
+def _build_uoa_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
+    candidate = alert["candidate"]
+    current = candidate.get("current") if isinstance(candidate.get("current"), dict) else {}
+    quote_context = candidate.get("quote_context") if isinstance(candidate.get("quote_context"), dict) else {}
+    deltas = candidate.get("deltas") if isinstance(candidate.get("deltas"), dict) else {}
+    contracts = [dict(item) for item in (candidate.get("top_contracts") or []) if isinstance(item, dict)]
+    decision_state = str(candidate.get("decision_state") or "none")
+    dominant_flow = str(current.get("dominant_flow") or "mixed")
+    title = f"{alert['symbol']} {dominant_flow.upper()} UOA {decision_state.upper()}"
+    baseline_parts: list[str] = []
+    max_premium_ratio = deltas.get("max_premium_rate_ratio")
+    max_trade_ratio = deltas.get("max_trade_rate_ratio")
+    if max_premium_ratio is not None:
+        baseline_parts.append(f"prem {float(max_premium_ratio):.1f}x")
+    if max_trade_ratio is not None:
+        baseline_parts.append(f"trades {float(max_trade_ratio):.1f}x")
+    quote_parts = [
+        str(quote_context.get("quality_state") or "unknown"),
+        f"{int(quote_context.get('fresh_contract_count') or 0)} fresh",
+        f"{int(quote_context.get('liquid_contract_count') or 0)} liquid",
+    ]
+    fields = [
+        {"name": "State", "value": decision_state, "inline": True},
+        {"name": "Score", "value": f"{float(candidate.get('decision_score') or 0.0):.1f}", "inline": True},
+        {"name": "DTE", "value": _uoa_dte_preview(contracts), "inline": True},
+        {"name": "Premium", "value": compact_money(current.get("scoreable_premium")), "inline": True},
+        {"name": "Volume", "value": str(int(current.get("scoreable_size") or 0)), "inline": True},
+        {"name": "Trades", "value": str(int(current.get("scoreable_trade_count") or 0)), "inline": True},
+        {"name": "Contracts", "value": str(int(current.get("scoreable_contract_count") or 0)), "inline": True},
+        {"name": "Quotes", "value": " | ".join(quote_parts), "inline": True},
+    ]
+    if baseline_parts:
+        fields.append({"name": "Baselines", "value": " | ".join(baseline_parts), "inline": False})
+    if contracts:
+        fields.append(
+            {
+                "name": "Top Contracts",
+                "value": "\n".join(_uoa_contract_line(contract) for contract in contracts[:3]),
+                "inline": False,
+            }
+        )
+    embed = {
+        "title": title,
+        "description": alert["description"],
+        "color": _uoa_color(dominant_flow=dominant_flow, decision_state=decision_state),
+        "fields": fields,
+        "footer": {"text": f"{alert['label']} | {alert['profile']} | {alert['strategy_mode']}"},
+        "timestamp": alert["created_at"],
+    }
+    return {"embeds": [embed]}
+
+
+def build_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
+    if str(alert.get("alert_type") or "").startswith("uoa_"):
+        return _build_uoa_discord_payload(alert)
+    return _build_spread_discord_payload(alert)
 
 
 def send_discord_webhook(webhook_url: str, payload: dict[str, Any]) -> dict[str, Any]:

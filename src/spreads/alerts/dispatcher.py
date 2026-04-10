@@ -10,6 +10,7 @@ from spreads.alerts.rules import (
     AlertDecision,
     build_event_alert_decisions,
     build_score_breakout_decisions,
+    build_uoa_alert_decisions,
     score_anchor_key,
 )
 from spreads.events.bus import publish_global_event_sync
@@ -161,6 +162,7 @@ def dispatch_cycle_alerts(
     profile: str,
     board_candidates: list[dict[str, Any]],
     events: list[dict[str, Any]],
+    uoa_decisions: dict[str, Any] | None = None,
     webhook_url: str | None = None,
 ) -> list[dict[str, Any]]:
     session_date = resolve_session_date(generated_at)
@@ -187,6 +189,12 @@ def dispatch_cycle_alerts(
             board_candidates=board_candidates,
             get_alert_state=get_state,
         ),
+        *build_uoa_alert_decisions(
+            label=label,
+            session_date=session_date,
+            uoa_decisions=uoa_decisions,
+            get_alert_state=get_state,
+        ),
     ]
 
     delivered: list[dict[str, Any]] = []
@@ -207,15 +215,16 @@ def dispatch_cycle_alerts(
             dedupe_key=decision.dedupe_key,
             dedupe_state=decision.dedupe_state,
         )
-        update_score_anchor(
-            alert_store=alert_store,
-            label=label,
-            session_date=session_date,
-            generated_at=generated_at,
-            cycle_id=cycle_id,
-            candidate=decision.candidate,
-            alert_type=decision.alert_type,
-        )
+        if decision.candidate.get("quality_score") is not None:
+            update_score_anchor(
+                alert_store=alert_store,
+                label=label,
+                session_date=session_date,
+                generated_at=generated_at,
+                cycle_id=cycle_id,
+                candidate=decision.candidate,
+                alert_type=decision.alert_type,
+            )
         try:
             publish_global_event_sync(
                 topic="alert.event.created",

@@ -10,6 +10,7 @@ from spreads.storage.records import CollectorCycleCandidateRecord
 ALERT_SCORE_FLOOR = 72.0
 SCORE_BREAKOUT_THRESHOLDS = (85.0, 75.0)
 SCORE_BREAKOUT_DELTA = 8.0
+UOA_ALERT_STATES = ("high",)
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,17 @@ def threshold_dedupe_key(label: str, session_date: str, candidate: dict[str, Any
 
 def delta_breakout_key(label: str, session_date: str, candidate: dict[str, Any]) -> str:
     return f"{label}|{session_date}|{candidate['underlying_symbol']}|score_breakout_delta|{idea_fragment(candidate)}"
+
+
+def uoa_threshold_dedupe_key(
+    label: str,
+    session_date: str,
+    symbol: str,
+    *,
+    decision_state: str,
+    dominant_flow: str,
+) -> str:
+    return f"{label}|{session_date}|{symbol}|uoa_flow|{decision_state}|{dominant_flow}"
 
 
 def is_before_current_cycle(
@@ -250,6 +262,63 @@ def build_score_breakout_decisions(
                     "score": score,
                     "previous_score": float(last_score),
                     "mode": "delta_jump",
+                },
+            )
+        )
+    return decisions
+
+
+def build_uoa_alert_decisions(
+    *,
+    label: str,
+    session_date: str,
+    uoa_decisions: dict[str, Any] | None,
+    get_alert_state: callable,
+) -> list[AlertDecision]:
+    payload = {} if uoa_decisions is None else dict(uoa_decisions)
+    roots = payload.get("roots") or []
+    decisions: list[AlertDecision] = []
+    for root in roots:
+        if not isinstance(root, dict):
+            continue
+        decision_state = str(root.get("decision_state") or "none")
+        if decision_state not in UOA_ALERT_STATES:
+            continue
+        symbol = str(root.get("underlying_symbol") or "").strip()
+        if not symbol:
+            continue
+        dominant_flow = str((root.get("current") or {}).get("dominant_flow") or "mixed")
+        dedupe_key = uoa_threshold_dedupe_key(
+            label,
+            session_date,
+            symbol,
+            decision_state=decision_state,
+            dominant_flow=dominant_flow,
+        )
+        if get_alert_state(dedupe_key) is not None:
+            continue
+        current = root.get("current") if isinstance(root.get("current"), dict) else {}
+        premium = float(current.get("scoreable_premium") or 0.0)
+        trade_count = int(current.get("scoreable_trade_count") or 0)
+        contract_count = int(current.get("scoreable_contract_count") or 0)
+        decisions.append(
+            AlertDecision(
+                alert_type=f"uoa_{decision_state}",
+                dedupe_key=dedupe_key,
+                symbol=symbol,
+                description=(
+                    f"{symbol} {dominant_flow} UOA {decision_state}: "
+                    f"${premium:,.0f} premium across {trade_count} trade"
+                    f"{'' if trade_count == 1 else 's'} / {contract_count} contract"
+                    f"{'' if contract_count == 1 else 's'}"
+                ),
+                candidate=root,
+                dedupe_state={
+                    "decision_state": decision_state,
+                    "decision_score": float(root.get("decision_score") or 0.0),
+                    "dominant_flow": dominant_flow,
+                    "root_score": float(current.get("root_score") or 0.0),
+                    "reason_codes": list(root.get("reason_codes") or []),
                 },
             )
         )

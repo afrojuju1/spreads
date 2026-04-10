@@ -102,6 +102,7 @@ def _root_top_contract_preview(summary: Mapping[str, Any]) -> dict[str, Any]:
         "contract_score": summary.get("contract_score"),
         "scoreable_premium": summary.get("scoreable_premium"),
         "scoreable_trade_count": summary.get("scoreable_trade_count"),
+        "scoreable_size": summary.get("scoreable_size"),
     }
     for key in ("option_type", "expiration_date", "strike_price", "leg_roles"):
         if summary.get(key) is not None:
@@ -111,6 +112,7 @@ def _root_top_contract_preview(summary: Mapping[str, Any]) -> dict[str, Any]:
 
 def build_uoa_trade_summary(
     *,
+    as_of: str | None = None,
     expected_trade_symbols: Sequence[str] | None,
     trades: Sequence[Mapping[str, Any]] | None,
     top_contracts_limit: int = 10,
@@ -118,6 +120,8 @@ def build_uoa_trade_summary(
 ) -> dict[str, Any]:
     expected_symbols = _normalize_symbols(expected_trade_symbols)
     rows = [dict(trade) for trade in trades or [] if isinstance(trade, Mapping)]
+    as_of_dt = parse_datetime(as_of)
+    as_of_date = None if as_of_dt is None else as_of_dt.date()
 
     contracts: dict[str, dict[str, Any]] = {}
     overview_condition_counts: dict[str, int] = defaultdict(int)
@@ -201,14 +205,19 @@ def build_uoa_trade_summary(
     for contract in contracts.values():
         raw_trade_count = int(contract["raw_trade_count"])
         scoreable_trade_count = int(contract["scoreable_trade_count"])
+        expiration_date = contract.get("expiration_date")
+        dte = None
+        if expiration_date and as_of_date is not None:
+            dte = max((date.fromisoformat(str(expiration_date)) - as_of_date).days, 0)
         summary = {
             "option_symbol": contract["option_symbol"],
             "underlying_symbol": contract.get("underlying_symbol"),
             "strategy": contract.get("strategy"),
             "leg_roles": sorted(contract["leg_roles"]),
             "option_type": contract.get("option_type"),
-            "expiration_date": contract.get("expiration_date"),
+            "expiration_date": expiration_date,
             "strike_price": contract.get("strike_price"),
+            "dte": dte,
             "raw_trade_count": raw_trade_count,
             "raw_size": int(contract["raw_size"]),
             "raw_premium": round(float(contract["raw_premium"]), 4),
@@ -253,6 +262,7 @@ def build_uoa_trade_summary(
                 "scoreable_contract_count": 0,
                 "raw_trade_count": 0,
                 "scoreable_trade_count": 0,
+                "scoreable_size": 0,
                 "excluded_trade_count": 0,
                 "raw_premium": 0.0,
                 "scoreable_premium": 0.0,
@@ -269,6 +279,7 @@ def build_uoa_trade_summary(
             root["scoreable_contract_count"] += 1
         root["raw_trade_count"] += int(contract["raw_trade_count"])
         root["scoreable_trade_count"] += int(contract["scoreable_trade_count"])
+        root["scoreable_size"] += int(contract["scoreable_size"])
         root["excluded_trade_count"] += int(contract["excluded_trade_count"])
         root["raw_premium"] += float(contract["raw_premium"])
         root["scoreable_premium"] += float(contract["scoreable_premium"])
@@ -307,6 +318,7 @@ def build_uoa_trade_summary(
             "scoreable_contract_count": int(root["scoreable_contract_count"]),
             "raw_trade_count": int(root["raw_trade_count"]),
             "scoreable_trade_count": int(root["scoreable_trade_count"]),
+            "scoreable_size": int(root["scoreable_size"]),
             "excluded_trade_count": int(root["excluded_trade_count"]),
             "raw_premium": round(float(root["raw_premium"]), 4),
             "scoreable_premium": round(float(root["scoreable_premium"]), 4),

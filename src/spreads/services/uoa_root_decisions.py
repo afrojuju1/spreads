@@ -9,6 +9,12 @@ from spreads.common import clamp
 WATCHLIST_DECISION_FLOOR = 60.0
 BOARD_DECISION_FLOOR = 75.0
 HIGH_DECISION_FLOOR = 80.0
+DECISION_STATE_RANK = {
+    "none": 0,
+    "watchlist": 1,
+    "board": 2,
+    "high": 3,
+}
 
 
 def _score_log_scale(value: float, *, ceiling: float) -> float:
@@ -50,7 +56,97 @@ def _decision_state(score: float) -> str:
     return "none"
 
 
-def _explanation(summary: Mapping[str, Any], decision: Mapping[str, Any]) -> str:
+def _apply_state_cap(state: str, cap_state: str | None) -> tuple[str, str | None]:
+    if cap_state is None:
+        return state, None
+    if DECISION_STATE_RANK.get(state, 0) <= DECISION_STATE_RANK.get(cap_state, 0):
+        return state, None
+    return cap_state, cap_state
+
+
+def _dedupe_reason_codes(values: Sequence[str]) -> list[str]:
+    deduped: list[str] = []
+    for value in values:
+        rendered = str(value or "").strip()
+        if rendered and rendered not in deduped:
+            deduped.append(rendered)
+    return deduped
+
+
+def _quote_context(summary: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if not summary:
+        return None
+    return {
+        "observed_contract_count": int(summary.get("observed_contract_count") or 0),
+        "fresh_contract_count": int(summary.get("fresh_contract_count") or 0),
+        "liquid_contract_count": int(summary.get("liquid_contract_count") or 0),
+        "average_quality_score": round(float(summary.get("average_quality_score") or 0.0), 4),
+        "quality_state": str(summary.get("quality_state") or "unknown"),
+    }
+
+
+def _quote_state_cap(summary: Mapping[str, Any] | None) -> tuple[str | None, list[str]]:
+    if not summary:
+        return None, ["quote_context_missing"]
+    quality_state = str(summary.get("quality_state") or "unknown")
+    fresh_contract_count = int(summary.get("fresh_contract_count") or 0)
+    liquid_contract_count = int(summary.get("liquid_contract_count") or 0)
+    average_quality_score = float(summary.get("average_quality_score") or 0.0)
+    if fresh_contract_count <= 0:
+        return "watchlist", ["quote_context_stale"]
+    if liquid_contract_count <= 0:
+        return "watchlist", ["quote_liquidity_unconfirmed"]
+    if quality_state == "weak" or average_quality_score < 0.45:
+        return "watchlist", ["quote_quality_weak"]
+    if quality_state == "strong":
+        return None, ["quote_quality_strong"]
+    if quality_state == "acceptable":
+        return None, ["quote_quality_acceptable"]
+    return None, []
+
+
+def _merge_contract_quote_fields(
+    contract: Mapping[str, Any],
+    *,
+    quote_contracts: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    merged = dict(contract)
+    option_symbol = str(contract.get("option_symbol") or "").strip()
+    if not option_symbol:
+        return merged
+    quote = quote_contracts.get(option_symbol)
+    if not quote:
+        return merged
+    for key in (
+        "expiration_date",
+        "dte",
+        "strike_price",
+        "bid",
+        "ask",
+        "midpoint",
+        "spread",
+        "spread_pct",
+        "bid_size",
+        "ask_size",
+        "min_size",
+        "quote_timestamp",
+        "quote_age_seconds",
+        "is_fresh",
+        "passes_liquidity_gate",
+        "quality_score",
+        "quality_state",
+    ):
+        if quote.get(key) is not None:
+            merged[key] = quote.get(key)
+    return merged
+
+
+def _explanation(
+    summary: Mapping[str, Any],
+    decision: Mapping[str, Any],
+    *,
+    quote_context: Mapping[str, Any] | None,
+) -> str:
     dominant_flow = str(summary.get("dominant_flow") or "mixed")
     premium = float(summary.get("scoreable_premium") or 0.0)
     contracts = int(summary.get("scoreable_contract_count") or 0)
@@ -65,6 +161,18 @@ def _explanation(summary: Mapping[str, Any], decision: Mapping[str, Any]) -> str
         segments.append(f"{float(max_premium_ratio):.1f}x premium rate vs baseline")
     elif max_trade_ratio is not None and float(max_trade_ratio) > 1.0:
         segments.append(f"{float(max_trade_ratio):.1f}x trade rate vs baseline")
+    if quote_context:
+        quality_state = str(quote_context.get("quality_state") or "unknown")
+        fresh_contract_count = int(quote_context.get("fresh_contract_count") or 0)
+        liquid_contract_count = int(quote_context.get("liquid_contract_count") or 0)
+        if quality_state == "strong":
+            segments.append(f"quotes strong ({liquid_contract_count} liquid)")
+        elif quality_state == "acceptable":
+            segments.append(f"quotes acceptable ({fresh_contract_count} fresh)")
+        elif quality_state == "stale":
+            segments.append("quotes stale")
+        elif quality_state == "weak":
+            segments.append("quotes weak")
     return ", ".join(segments)
 
 
@@ -87,6 +195,7 @@ def build_uoa_root_decisions(
     *,
     uoa_summary: Mapping[str, Any] | None,
     baselines_by_symbol: Mapping[str, Mapping[str, Any]] | None,
+    quote_summary: Mapping[str, Any] | None = None,
     capture_window_seconds: float,
 ) -> dict[str, Any]:
     summary_payload = {} if uoa_summary is None else dict(uoa_summary)
@@ -97,6 +206,27 @@ def build_uoa_root_decisions(
     ]
     duration_minutes = max(float(capture_window_seconds), 1.0) / 60.0
     baseline_map = {} if baselines_by_symbol is None else dict(baselines_by_symbol)
+    quote_summary_payload = {} if quote_summary is None else dict(quote_summary)
+    quote_roots = quote_summary_payload.get("roots")
+    quote_root_map = (
+        {}
+        if not isinstance(quote_roots, Mapping)
+        else {
+            str(symbol): dict(payload)
+            for symbol, payload in quote_roots.items()
+            if isinstance(payload, Mapping)
+        }
+    )
+    quote_contracts = quote_summary_payload.get("contracts")
+    quote_contract_map = (
+        {}
+        if not isinstance(quote_contracts, Mapping)
+        else {
+            str(symbol): dict(payload)
+            for symbol, payload in quote_contracts.items()
+            if isinstance(payload, Mapping)
+        }
+    )
     decisions: list[dict[str, Any]] = []
 
     for root in roots:
@@ -142,6 +272,9 @@ def build_uoa_root_decisions(
         dominant_flow_ratio = float(root.get("dominant_flow_ratio") or 0.0)
         contract_count = int(root.get("scoreable_contract_count") or 0)
         premium_rate = float(current_premium_rate or 0.0)
+        quote_root = quote_root_map.get(symbol)
+        quote_context = _quote_context(quote_root)
+        quote_quality_score = 0.0 if not quote_root else float(quote_root.get("average_quality_score") or 0.0)
         decision_score = round(
             root_score * 0.55
             + _ratio_component(max_premium_ratio, max_points=20.0, full_scale_ratio=5.0)
@@ -151,7 +284,13 @@ def build_uoa_root_decisions(
             + _score_log_scale(premium_rate, ceiling=6_000.0) * 5.0,
             1,
         )
-        state = _decision_state(decision_score)
+        decision_score = round(
+            decision_score + clamp(quote_quality_score) * 5.0,
+            1,
+        )
+        base_state = _decision_state(decision_score)
+        state_cap, quote_reason_codes = _quote_state_cap(quote_root)
+        state, state_cap_applied = _apply_state_cap(base_state, state_cap)
         reason_codes: list[str] = []
         if max_premium_ratio is not None and max_premium_ratio >= 3.0:
             reason_codes.append("premium_rate_gt_3x_baseline")
@@ -164,27 +303,46 @@ def build_uoa_root_decisions(
         dominant_flow = str(root.get("dominant_flow") or "mixed")
         if dominant_flow in {"call", "put"} and dominant_flow_ratio >= 0.85:
             reason_codes.append(f"dominant_{dominant_flow}_flow")
+        reason_codes.extend(quote_reason_codes)
+        if state_cap_applied is not None:
+            reason_codes.append(f"decision_capped_to_{state_cap_applied}")
         if not reason_codes:
             reason_codes.append("absolute_flow_observed")
+        enriched_top_contracts = [
+            _merge_contract_quote_fields(item, quote_contracts=quote_contract_map)
+            for item in (root.get("top_contracts") or [])[:3]
+            if isinstance(item, Mapping)
+        ]
 
         decisions.append(
             {
                 "underlying_symbol": symbol,
                 "decision_state": state,
+                "decision_state_pre_quote_cap": base_state,
                 "decision_score": decision_score,
-                "reason_codes": reason_codes,
-                "explanation": _explanation(root, {"max_premium_rate_ratio": max_premium_ratio, "max_trade_rate_ratio": max_trade_ratio}),
+                "reason_codes": _dedupe_reason_codes(reason_codes),
+                "explanation": _explanation(
+                    root,
+                    {
+                        "max_premium_rate_ratio": max_premium_ratio,
+                        "max_trade_rate_ratio": max_trade_ratio,
+                    },
+                    quote_context=quote_context,
+                ),
                 "current": {
                     "root_score": root_score,
                     "scoreable_premium": float(root.get("scoreable_premium") or 0.0),
                     "scoreable_trade_count": int(root.get("scoreable_trade_count") or 0),
                     "scoreable_contract_count": contract_count,
+                    "scoreable_size": int(root.get("scoreable_size") or 0),
                     "premium_rate_per_minute": round(premium_rate, 4),
                     "trade_rate_per_minute": round(float(current_trade_rate or 0.0), 4),
                     "contract_rate_per_minute": round(float(current_contract_rate or 0.0), 4),
                     "dominant_flow": dominant_flow,
                     "dominant_flow_ratio": dominant_flow_ratio,
                 },
+                "quote_context": quote_context,
+                "state_cap_applied": state_cap_applied,
                 "baselines": {
                     "rolling_5m": _baseline_payload(rolling),
                     "session_to_time": _baseline_payload(session),
@@ -200,7 +358,7 @@ def build_uoa_root_decisions(
                     "max_premium_rate_ratio": None if max_premium_ratio is None else round(float(max_premium_ratio), 4),
                     "max_trade_rate_ratio": None if max_trade_ratio is None else round(float(max_trade_ratio), 4),
                 },
-                "top_contracts": [dict(item) for item in (root.get("top_contracts") or [])[:3]],
+                "top_contracts": enriched_top_contracts,
             }
         )
 

@@ -656,7 +656,9 @@ Current progress:
 - root and contract flow summaries now score only `included_in_score` trade prints
 - excluded prints remain in raw storage and are surfaced only as audit counts and exclusion reasons
 - baseline-aware root classification now emits first-pass `none/watchlist/board/high` decisions
-- full alert thresholds, cooldowns, escalation, and outbound notifications are still pending
+- quote freshness and liquidity now feed into root decisions and can cap stale or weak-flow outcomes
+- UOA Discord alerts are now root-first, attach up to `3` supporting contracts, and include DTE, volume, premium, and quote-quality context
+- the first outbound policy is `high` only; cooldown, escalation, and degraded-mode alert suppression are still pending
 
 ### Phase 6: Calibration
 

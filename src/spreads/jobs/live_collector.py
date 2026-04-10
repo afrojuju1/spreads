@@ -19,6 +19,7 @@ from spreads.services.live_collector_health import build_quote_capture_summary, 
 from spreads.services.live_pipelines import build_live_snapshot_label
 from spreads.services.option_quote_capture import request_option_quote_capture
 from spreads.services.option_quote_records import build_quote_records, build_quote_symbol_metadata
+from spreads.services.uoa_quote_summary import build_uoa_quote_summary
 from spreads.services.uoa_root_decisions import build_uoa_root_decisions
 from spreads.services.uoa_trade_baselines import build_uoa_trade_baselines
 from spreads.services.option_trade_capture import request_option_trade_capture
@@ -1216,11 +1217,22 @@ def _run_collection_cycle(
         total_trade_events_saved=trade_event_count,
         websocket_trade_events_saved=websocket_trade_event_count,
     )
+    reactive_quote_records = [
+        *latest_quote_records,
+        *websocket_quote_records,
+        *recovery_quote_records,
+    ]
     uoa_summary = build_uoa_trade_summary(
+        as_of=generated_at,
         expected_trade_symbols=expected_trade_symbols,
         trades=websocket_trade_records,
         top_contracts_limit=max(len(expected_trade_symbols), 10),
         top_roots_limit=max(len(expected_uoa_roots), 10),
+    )
+    uoa_quote_summary = build_uoa_quote_summary(
+        as_of=generated_at,
+        expected_quote_symbols=expected_quote_symbols,
+        quotes=reactive_quote_records,
     )
     uoa_baselines = build_uoa_trade_baselines(
         history_store=history_store,
@@ -1232,6 +1244,7 @@ def _run_collection_cycle(
     uoa_decisions = build_uoa_root_decisions(
         uoa_summary=uoa_summary,
         baselines_by_symbol=uoa_baselines,
+        quote_summary=uoa_quote_summary,
         capture_window_seconds=float(max(args.trade_capture_seconds, 1)),
     )
     if expected_trade_symbols or websocket_trade_records:
@@ -1265,11 +1278,6 @@ def _run_collection_cycle(
             print(f"UOA decision event publish unavailable: {exc}")
     if heartbeat is not None:
         heartbeat()
-    reactive_quote_records = [
-        *latest_quote_records,
-        *websocket_quote_records,
-        *recovery_quote_records,
-    ]
     auto_execution: dict[str, Any] | None = None
     if tick_context is not None:
         try:
@@ -1304,6 +1312,7 @@ def _run_collection_cycle(
             profile=args.profile,
             board_candidates=board_payloads,
             events=events,
+            uoa_decisions=uoa_decisions,
         )
     except Exception as exc:
         print(f"Alert dispatch unavailable: {exc}")
@@ -1344,6 +1353,7 @@ def _run_collection_cycle(
         "quote_capture": quote_capture,
         "trade_capture": trade_capture,
         "uoa_summary": uoa_summary,
+        "uoa_quote_summary": uoa_quote_summary,
         "uoa_decisions": uoa_decisions,
         "auto_execution": auto_execution,
     }
@@ -1396,9 +1406,11 @@ def run_collection_tick(
                 websocket_trade_events_saved=0,
             ),
             "uoa_summary": build_uoa_trade_summary(expected_trade_symbols=[], trades=[]),
+            "uoa_quote_summary": build_uoa_quote_summary(as_of=tick_context.slot_at, expected_quote_symbols=[], quotes=[]),
             "uoa_decisions": build_uoa_root_decisions(
                 uoa_summary={},
                 baselines_by_symbol={},
+                quote_summary={},
                 capture_window_seconds=0,
             ),
             "session_id": tick_context.session_id,
@@ -1464,6 +1476,7 @@ def run_collection_tick(
         "quote_capture": dict(cycle_result["quote_capture"]),
         "trade_capture": dict(cycle_result["trade_capture"]),
         "uoa_summary": dict(cycle_result["uoa_summary"]),
+        "uoa_quote_summary": dict(cycle_result["uoa_quote_summary"]),
         "uoa_decisions": dict(cycle_result["uoa_decisions"]),
         "auto_execution": cycle_result["auto_execution"],
         "label": cycle_result["label"],
@@ -1518,9 +1531,11 @@ def run_collection(
                 websocket_trade_events_saved=0,
             ),
             "uoa_summary": build_uoa_trade_summary(expected_trade_symbols=[], trades=[]),
+            "uoa_quote_summary": build_uoa_quote_summary(as_of=datetime.now(UTC).isoformat(), expected_quote_symbols=[], quotes=[]),
             "uoa_decisions": build_uoa_root_decisions(
                 uoa_summary={},
                 baselines_by_symbol={},
+                quote_summary={},
                 capture_window_seconds=0,
             ),
         }
@@ -1554,9 +1569,15 @@ def run_collection(
     total_opportunities_expired = 0
     last_label: str | None = None
     last_uoa_summary = build_uoa_trade_summary(expected_trade_symbols=[], trades=[])
+    last_uoa_quote_summary = build_uoa_quote_summary(
+        as_of=datetime.now(UTC).isoformat(),
+        expected_quote_symbols=[],
+        quotes=[],
+    )
     last_uoa_decisions = build_uoa_root_decisions(
         uoa_summary={},
         baselines_by_symbol={},
+        quote_summary={},
         capture_window_seconds=0,
     )
     iterations_completed = 0
@@ -1604,6 +1625,7 @@ def run_collection(
                 iterations_completed += 1
                 last_label = str(cycle_result["label"])
                 last_uoa_summary = dict(cycle_result["uoa_summary"])
+                last_uoa_quote_summary = dict(cycle_result["uoa_quote_summary"])
                 last_uoa_decisions = dict(cycle_result["uoa_decisions"])
                 if iteration < args.iterations - 1:
                     elapsed_seconds = time_module.monotonic() - iteration_started_at
@@ -1643,6 +1665,7 @@ def run_collection(
             websocket_trade_events_saved=total_websocket_trade_events,
         ),
         "uoa_summary": last_uoa_summary,
+        "uoa_quote_summary": last_uoa_quote_summary,
         "uoa_decisions": last_uoa_decisions,
         "label": last_label,
     }

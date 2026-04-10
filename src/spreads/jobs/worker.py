@@ -361,6 +361,7 @@ def _build_live_collector_log_payload(
     quote_capture = run_payload.get("quote_capture") or {}
     trade_capture = run_payload.get("trade_capture") or {}
     uoa_summary = run_payload.get("uoa_summary") or {}
+    uoa_quote_summary = run_payload.get("uoa_quote_summary") or {}
     uoa_decisions = run_payload.get("uoa_decisions") or {}
     cycle_ids = result.get("cycle_ids") or []
     return {
@@ -378,6 +379,7 @@ def _build_live_collector_log_payload(
         "quote_capture": quote_capture,
         "trade_capture": trade_capture,
         "uoa_overview": dict(uoa_summary.get("overview") or {}),
+        "uoa_quote_overview": dict(uoa_quote_summary.get("overview") or {}),
         "uoa_top_roots": [dict(item) for item in (uoa_summary.get("top_roots") or [])[:3]],
         "uoa_top_contracts": [dict(item) for item in (uoa_summary.get("top_contracts") or [])[:3]],
         "uoa_decision_overview": dict(uoa_decisions.get("overview") or {}),
