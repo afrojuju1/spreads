@@ -657,6 +657,9 @@ Current progress:
 - excluded prints remain in raw storage and are surfaced only as audit counts and exclusion reasons
 - baseline-aware root classification now emits first-pass `none/watchlist/board/high` decisions
 - quote freshness and liquidity now feed into root decisions and can cap stale or weak-flow outcomes
+- UOA contract payloads now carry enriched market context including `spot`, `%OTM`, `volume`, `open_interest`, `IV`, and quote-quality fields
+- the root decision model now uses contract `volume / OI` context in addition to premium, trade-rate, and quote-quality signals
+- internal UOA state APIs now expose latest and cycle-specific scanner state for backend consumers and future UI work
 - UOA Discord alerts are now root-first, attach up to `3` supporting contracts, and include DTE, volume, premium, and quote-quality context
 - the first outbound policy is `high` only; cooldown, escalation, and degraded-mode alert suppression are still pending
 

@@ -43,6 +43,28 @@ def _render_timestamp(value: Any) -> str | None:
     return None if parsed is None else str(render_value(parsed))
 
 
+def _merge_contract_metadata(
+    option_symbol: str,
+    *,
+    contract_metadata_by_symbol: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    metadata = contract_metadata_by_symbol.get(option_symbol)
+    return {} if metadata is None else dict(metadata)
+
+
+def _percent_otm(
+    *,
+    option_type: str | None,
+    strike_price: float | None,
+    underlying_price: float | None,
+) -> float | None:
+    if option_type not in {"call", "put"} or strike_price is None or underlying_price is None or underlying_price <= 0:
+        return None
+    if option_type == "call":
+        return round((strike_price - underlying_price) / underlying_price, 4)
+    return round((underlying_price - strike_price) / underlying_price, 4)
+
+
 def parse_option_symbol_details(option_symbol: str) -> dict[str, Any]:
     symbol = str(option_symbol or "").strip()
     if len(symbol) <= OPTION_SYMBOL_TRAILER_LENGTH:
@@ -67,12 +89,14 @@ def _build_contract_score(summary: Mapping[str, Any]) -> float:
     scoreable_trade_count = int(summary.get("scoreable_trade_count") or 0)
     scoreable_size = int(summary.get("scoreable_size") or 0)
     raw_trade_count = int(summary.get("raw_trade_count") or 0)
+    volume_oi_ratio = float(summary.get("volume_oi_ratio") or 0.0)
     included_ratio = 0.0 if raw_trade_count <= 0 else scoreable_trade_count / raw_trade_count
     return round(
-        _score_log_scale(scoreable_premium, ceiling=25_000.0) * 55.0
-        + clamp(scoreable_trade_count / 6.0) * 20.0
-        + clamp(scoreable_size / 20.0) * 15.0
-        + clamp(included_ratio) * 10.0,
+        _score_log_scale(scoreable_premium, ceiling=25_000.0) * 50.0
+        + clamp(scoreable_trade_count / 6.0) * 18.0
+        + clamp(scoreable_size / 20.0) * 14.0
+        + clamp(volume_oi_ratio / 1.0) * 10.0
+        + clamp(included_ratio) * 8.0,
         1,
     )
 
@@ -104,7 +128,27 @@ def _root_top_contract_preview(summary: Mapping[str, Any]) -> dict[str, Any]:
         "scoreable_trade_count": summary.get("scoreable_trade_count"),
         "scoreable_size": summary.get("scoreable_size"),
     }
-    for key in ("option_type", "expiration_date", "strike_price", "leg_roles"):
+    for key in (
+        "option_type",
+        "expiration_date",
+        "strike_price",
+        "leg_roles",
+        "dte",
+        "underlying_price",
+        "percent_otm",
+        "open_interest",
+        "volume",
+        "volume_oi_ratio",
+        "implied_volatility",
+        "delta",
+        "bid",
+        "ask",
+        "midpoint",
+        "bid_size",
+        "ask_size",
+        "relative_spread",
+        "last_trade_price",
+    ):
         if summary.get(key) is not None:
             preview[key] = summary.get(key)
     return preview
@@ -114,6 +158,7 @@ def build_uoa_trade_summary(
     *,
     as_of: str | None = None,
     expected_trade_symbols: Sequence[str] | None,
+    contract_metadata_by_symbol: Mapping[str, Mapping[str, Any]] | None = None,
     trades: Sequence[Mapping[str, Any]] | None,
     top_contracts_limit: int = 10,
     top_roots_limit: int = 10,
@@ -122,6 +167,7 @@ def build_uoa_trade_summary(
     rows = [dict(trade) for trade in trades or [] if isinstance(trade, Mapping)]
     as_of_dt = parse_datetime(as_of)
     as_of_date = None if as_of_dt is None else as_of_dt.date()
+    metadata_map = {} if contract_metadata_by_symbol is None else dict(contract_metadata_by_symbol)
 
     contracts: dict[str, dict[str, Any]] = {}
     overview_condition_counts: dict[str, int] = defaultdict(int)
@@ -135,6 +181,7 @@ def build_uoa_trade_summary(
             continue
         included_in_score = bool(trade.get("included_in_score"))
         parsed_details = parse_option_symbol_details(option_symbol)
+        contract_metadata = _merge_contract_metadata(option_symbol, contract_metadata_by_symbol=metadata_map)
         trade_timestamp = parse_datetime(trade.get("trade_timestamp")) or parse_datetime(trade.get("captured_at"))
         if trade_timestamp is not None:
             if first_trade_at is None or trade_timestamp < first_trade_at:
@@ -145,12 +192,29 @@ def build_uoa_trade_summary(
         if contract is None:
             contract = {
                 "option_symbol": option_symbol,
-                "underlying_symbol": trade.get("underlying_symbol") or parsed_details.get("parsed_underlying_symbol"),
-                "strategy": trade.get("strategy"),
+                "underlying_symbol": (
+                    trade.get("underlying_symbol")
+                    or contract_metadata.get("underlying_symbol")
+                    or parsed_details.get("parsed_underlying_symbol")
+                ),
+                "strategy": trade.get("strategy") or contract_metadata.get("strategy"),
                 "leg_roles": set(),
-                "option_type": parsed_details.get("option_type"),
-                "expiration_date": parsed_details.get("expiration_date"),
-                "strike_price": parsed_details.get("strike_price"),
+                "option_type": contract_metadata.get("option_type") or parsed_details.get("option_type"),
+                "expiration_date": contract_metadata.get("expiration_date") or parsed_details.get("expiration_date"),
+                "strike_price": contract_metadata.get("strike_price") or parsed_details.get("strike_price"),
+                "days_to_expiration": parse_int(contract_metadata.get("days_to_expiration")),
+                "underlying_price": parse_float(contract_metadata.get("underlying_price")),
+                "open_interest": parse_int(contract_metadata.get("open_interest")),
+                "volume": parse_int(contract_metadata.get("volume")),
+                "implied_volatility": parse_float(contract_metadata.get("implied_volatility")),
+                "delta": parse_float(contract_metadata.get("delta")),
+                "bid": parse_float(contract_metadata.get("bid")),
+                "ask": parse_float(contract_metadata.get("ask")),
+                "midpoint": parse_float(contract_metadata.get("midpoint")),
+                "bid_size": parse_int(contract_metadata.get("bid_size")),
+                "ask_size": parse_int(contract_metadata.get("ask_size")),
+                "last_trade_price": parse_float(contract_metadata.get("last_trade_price")),
+                "relative_spread": parse_float(contract_metadata.get("relative_spread")),
                 "raw_trade_count": 0,
                 "raw_size": 0,
                 "raw_premium": 0.0,
@@ -206,18 +270,44 @@ def build_uoa_trade_summary(
         raw_trade_count = int(contract["raw_trade_count"])
         scoreable_trade_count = int(contract["scoreable_trade_count"])
         expiration_date = contract.get("expiration_date")
-        dte = None
-        if expiration_date and as_of_date is not None:
+        dte = parse_int(contract.get("days_to_expiration"))
+        if dte is None and expiration_date and as_of_date is not None:
             dte = max((date.fromisoformat(str(expiration_date)) - as_of_date).days, 0)
+        open_interest = parse_int(contract.get("open_interest"))
+        volume = parse_int(contract.get("volume"))
+        underlying_price = parse_float(contract.get("underlying_price"))
+        strike_price = parse_float(contract.get("strike_price"))
+        option_type = str(contract.get("option_type") or "").strip().lower() or None
+        volume_oi_ratio = None
+        if open_interest is not None and open_interest > 0 and volume is not None:
+            volume_oi_ratio = round(volume / open_interest, 4)
         summary = {
             "option_symbol": contract["option_symbol"],
             "underlying_symbol": contract.get("underlying_symbol"),
             "strategy": contract.get("strategy"),
             "leg_roles": sorted(contract["leg_roles"]),
-            "option_type": contract.get("option_type"),
+            "option_type": option_type,
             "expiration_date": expiration_date,
-            "strike_price": contract.get("strike_price"),
+            "strike_price": strike_price,
             "dte": dte,
+            "underlying_price": underlying_price,
+            "percent_otm": _percent_otm(
+                option_type=option_type,
+                strike_price=strike_price,
+                underlying_price=underlying_price,
+            ),
+            "open_interest": open_interest,
+            "volume": volume,
+            "volume_oi_ratio": volume_oi_ratio,
+            "implied_volatility": parse_float(contract.get("implied_volatility")),
+            "delta": parse_float(contract.get("delta")),
+            "bid": parse_float(contract.get("bid")),
+            "ask": parse_float(contract.get("ask")),
+            "midpoint": parse_float(contract.get("midpoint")),
+            "bid_size": parse_int(contract.get("bid_size")),
+            "ask_size": parse_int(contract.get("ask_size")),
+            "last_trade_price": parse_float(contract.get("last_trade_price")),
+            "relative_spread": parse_float(contract.get("relative_spread")),
             "raw_trade_count": raw_trade_count,
             "raw_size": int(contract["raw_size"]),
             "raw_premium": round(float(contract["raw_premium"]), 4),
@@ -329,6 +419,12 @@ def build_uoa_trade_summary(
             "put_scoreable_trade_count": int(root["put_scoreable_trade_count"]),
             "dominant_flow": dominant_flow,
             "dominant_flow_ratio": round(dominant_flow_ratio, 4),
+            "supporting_volume": sum(int(contract.get("volume") or 0) for contract in contracts_for_root),
+            "supporting_open_interest": sum(int(contract.get("open_interest") or 0) for contract in contracts_for_root),
+            "max_volume_oi_ratio": max(
+                (float(contract.get("volume_oi_ratio") or 0.0) for contract in contracts_for_root),
+                default=0.0,
+            ),
             "top_contracts": [
                 _root_top_contract_preview(contract)
                 for contract in contracts_for_root[:TOP_CONTRACT_PREVIEW_LIMIT]

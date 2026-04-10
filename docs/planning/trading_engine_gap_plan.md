@@ -469,6 +469,21 @@ That is a layering refactor, not a rewrite.
 
 ## Implementation Plan
 
+## Current Checkpoint
+
+Status as of 2026-04-10:
+
+- completed: Phase 1 Canonical Event Layer
+- completed: Phase 2 Signal State And Opportunity Layer
+- completed: Phase 3 Formalize OMS/Risk Decisions
+- completed: Phase 4 Control Plane Formalization
+- partially completed: Phase 5 Replay Platform
+  - completed: audit replay
+  - next: decision replay
+  - later: execution simulation
+
+Phase 0 remains the standing boundary constraint for the platform work rather than a separate implementation checkpoint.
+
 ## Phase 0: Freeze The Good Boundaries
 
 Before introducing new abstractions, explicitly preserve:
@@ -580,6 +595,21 @@ Deliverable:
 - operator behavior becomes replayable and auditable instead of implicit
 
 ## Phase 5: Replay Platform
+
+Status: partially completed
+
+Implemented:
+
+- audit replay service
+- `GET /replay/audit/{session_id}`
+- ordered replay timeline built from persisted events plus collector session events
+- compact state summary covering signals, opportunities, risk decisions, executions, control snapshot, and portfolio state
+- bounded replay output with timeline truncation and collapsed quote-capture batches
+
+Remaining:
+
+- decision replay
+- execution simulation
 
 Build:
 

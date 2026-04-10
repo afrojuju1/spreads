@@ -1,0 +1,97 @@
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from typing import Any
+
+from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
+from spreads.storage.factory import build_storage_context
+
+
+def _cycle_id_from_run_payload(run_payload: Mapping[str, Any]) -> str | None:
+    result = run_payload.get("result")
+    if isinstance(result, Mapping):
+        cycle_id = str(result.get("cycle_id") or "").strip()
+        if cycle_id:
+            return cycle_id
+        cycle_ids = result.get("cycle_ids")
+        if isinstance(cycle_ids, Sequence) and not isinstance(cycle_ids, (str, bytes)):
+            for item in cycle_ids:
+                rendered = str(item or "").strip()
+                if rendered:
+                    return rendered
+    rendered = str(run_payload.get("cycle_id") or "").strip()
+    return rendered or None
+
+
+def _collector_cycle_payload(collector_store: Any, *, cycle_id: str) -> dict[str, Any] | None:
+    cycle = collector_store.get_cycle(cycle_id)
+    return None if cycle is None else dict(cycle)
+
+
+def _build_uoa_state_payload(
+    *,
+    run_record: Mapping[str, Any],
+    collector_store: Any,
+) -> dict[str, Any]:
+    run_payload = enrich_live_collector_job_run_payload(run_record)
+    if run_payload is None:
+        raise ValueError("Job run payload is unavailable")
+    cycle_id = _cycle_id_from_run_payload(run_payload)
+    if cycle_id is None:
+        raise ValueError("Live collector run is missing cycle_id")
+    cycle = _collector_cycle_payload(collector_store, cycle_id=cycle_id)
+    board_candidates = collector_store.list_cycle_candidates(cycle_id, bucket="board")
+    watchlist_candidates = collector_store.list_cycle_candidates(cycle_id, bucket="watchlist")
+    cycle_events = collector_store.list_cycle_events(cycle_id)
+    return {
+        "job_run": {
+            "job_run_id": run_payload.get("job_run_id"),
+            "job_key": run_payload.get("job_key"),
+            "job_type": run_payload.get("job_type"),
+            "status": run_payload.get("status"),
+            "scheduled_for": run_payload.get("scheduled_for"),
+            "started_at": run_payload.get("started_at"),
+            "finished_at": run_payload.get("finished_at"),
+            "session_id": run_payload.get("session_id"),
+            "slot_at": run_payload.get("slot_at"),
+            "worker_name": run_payload.get("worker_name"),
+        },
+        "cycle": cycle,
+        "quote_capture": dict(run_payload.get("quote_capture") or {}),
+        "trade_capture": dict(run_payload.get("trade_capture") or {}),
+        "uoa_summary": dict(run_payload.get("uoa_summary") or {}),
+        "uoa_quote_summary": dict(run_payload.get("uoa_quote_summary") or {}),
+        "uoa_decisions": dict(run_payload.get("uoa_decisions") or {}),
+        "board_candidates": [dict(item) for item in board_candidates],
+        "watchlist_candidates": [dict(item) for item in watchlist_candidates],
+        "cycle_events": [dict(item) for item in cycle_events],
+    }
+
+
+def get_latest_uoa_state(
+    *,
+    db_target: str,
+    label: str | None = None,
+) -> dict[str, Any]:
+    with build_storage_context(db_target) as storage:
+        run_record = storage.jobs.get_latest_live_collector_run(label=label, status="succeeded")
+        if run_record is None:
+            raise ValueError("No completed live collector run was found")
+        return _build_uoa_state_payload(run_record=run_record, collector_store=storage.collector)
+
+
+def get_uoa_state_for_cycle(
+    *,
+    db_target: str,
+    cycle_id: str,
+    label: str | None = None,
+) -> dict[str, Any]:
+    with build_storage_context(db_target) as storage:
+        run_record = storage.jobs.get_live_collector_run_by_cycle_id(
+            cycle_id=cycle_id,
+            label=label,
+            status="succeeded",
+        )
+        if run_record is None:
+            raise ValueError(f"No completed live collector run was found for cycle_id={cycle_id}")
+        return _build_uoa_state_payload(run_record=run_record, collector_store=storage.collector)

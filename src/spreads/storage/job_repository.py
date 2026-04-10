@@ -189,6 +189,50 @@ class JobRepository(RepositoryBase):
             rows = session.scalars(statement).all()
         return self.rows(rows)
 
+    def get_latest_live_collector_run(
+        self,
+        *,
+        label: str | None = None,
+        status: str | None = "succeeded",
+    ) -> JobRunRecord | None:
+        statement = select(JobRunModel).where(JobRunModel.job_type == "live_collector")
+        if label:
+            statement = statement.where(JobRunModel.payload_json["label"].astext == label)
+        if status:
+            statement = statement.where(JobRunModel.status == status)
+        statement = statement.order_by(JobRunModel.scheduled_for.desc(), JobRunModel.job_run_id.desc()).limit(1)
+        with self.session_factory() as session:
+            row = session.scalar(statement)
+        if row is None:
+            return None
+        return self.row(row)
+
+    def get_live_collector_run_by_cycle_id(
+        self,
+        *,
+        cycle_id: str,
+        label: str | None = None,
+        status: str | None = "succeeded",
+    ) -> JobRunRecord | None:
+        statement = select(JobRunModel).where(JobRunModel.job_type == "live_collector")
+        if label:
+            statement = statement.where(JobRunModel.payload_json["label"].astext == label)
+        if status:
+            statement = statement.where(JobRunModel.status == status)
+        statement = statement.order_by(JobRunModel.scheduled_for.desc(), JobRunModel.job_run_id.desc()).limit(500)
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        for row in rows:
+            payload = self.row(row)
+            result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+            result_cycle_id = str(result.get("cycle_id") or "").strip()
+            if result_cycle_id == cycle_id:
+                return payload
+            result_cycle_ids = result.get("cycle_ids")
+            if isinstance(result_cycle_ids, list) and cycle_id in [str(item or "").strip() for item in result_cycle_ids]:
+                return payload
+        return None
+
     def list_latest_runs_by_session_ids(
         self,
         *,

@@ -60,6 +60,7 @@ from spreads.services.operator_actions import (
     apply_generator_live_action,
     create_manual_generator_alert,
 )
+from spreads.services.uoa_state import get_latest_uoa_state, get_uoa_state_for_cycle
 from spreads.services.execution import (
     EXECUTION_SCHEMA_MESSAGE,
     refresh_live_session_execution,
@@ -994,6 +995,36 @@ async def capture_option_trades(payload: OptionTradeCaptureRequest, request: Req
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"trades": trades}
+
+
+@app.get("/internal/uoa/state")
+def get_internal_uoa_state(
+    label: str | None = None,
+    db: str | None = None,
+) -> dict[str, Any]:
+    try:
+        return get_latest_uoa_state(
+            db_target=resolve_db(db),
+            label=label,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/internal/uoa/cycles/{cycle_id}")
+def get_internal_uoa_cycle_state(
+    cycle_id: str,
+    label: str | None = None,
+    db: str | None = None,
+) -> dict[str, Any]:
+    try:
+        return get_uoa_state_for_cycle(
+            db_target=resolve_db(db),
+            cycle_id=cycle_id,
+            label=label,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/universes")

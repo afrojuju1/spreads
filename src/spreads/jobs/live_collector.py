@@ -1072,7 +1072,8 @@ def _run_collection_cycle(
     recovery_quote_records: list[dict[str, Any]] = []
     websocket_trade_records: list[dict[str, Any]] = []
     quote_candidates = board_payloads + watchlist_payloads[:WATCHLIST_QUOTE_CAPTURE_TOP]
-    expected_quote_symbols = list(build_quote_symbol_metadata(quote_candidates).keys())
+    contract_metadata_by_symbol = build_quote_symbol_metadata(quote_candidates)
+    expected_quote_symbols = list(contract_metadata_by_symbol.keys())
     expected_trade_symbols = list(build_trade_symbol_metadata(quote_candidates).keys())
     expected_uoa_roots = sorted(
         {
@@ -1225,6 +1226,7 @@ def _run_collection_cycle(
     uoa_summary = build_uoa_trade_summary(
         as_of=generated_at,
         expected_trade_symbols=expected_trade_symbols,
+        contract_metadata_by_symbol=contract_metadata_by_symbol,
         trades=websocket_trade_records,
         top_contracts_limit=max(len(expected_trade_symbols), 10),
         top_roots_limit=max(len(expected_uoa_roots), 10),
@@ -1232,6 +1234,7 @@ def _run_collection_cycle(
     uoa_quote_summary = build_uoa_quote_summary(
         as_of=generated_at,
         expected_quote_symbols=expected_quote_symbols,
+        contract_metadata_by_symbol=contract_metadata_by_symbol,
         quotes=reactive_quote_records,
     )
     uoa_baselines = build_uoa_trade_baselines(

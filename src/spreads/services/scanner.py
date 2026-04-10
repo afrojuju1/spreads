@@ -520,6 +520,7 @@ class OptionSnapshot:
     vega: float | None
     implied_volatility: float | None
     last_trade_price: float | None
+    daily_volume: int | None = None
     greeks_source: str | None = None
 
 
@@ -671,6 +672,14 @@ class SpreadCandidate:
     data_status: str = "clean"
     data_reasons: tuple[str, ...] = ()
     board_notes: tuple[str, ...] = ()
+    short_bid_size: int = 0
+    short_ask_size: int = 0
+    long_bid_size: int = 0
+    long_ask_size: int = 0
+    short_implied_volatility: float | None = None
+    long_implied_volatility: float | None = None
+    short_volume: int | None = None
+    long_volume: int | None = None
 
 
 @dataclass(frozen=True)
@@ -1284,6 +1293,7 @@ class AlpacaClient:
         latest_quote = snapshot.get("latestQuote") or snapshot.get("latest_quote") or {}
         greeks = snapshot.get("greeks") or {}
         latest_trade = snapshot.get("latestTrade") or snapshot.get("latest_trade") or {}
+        daily_bar = snapshot.get("dailyBar") or snapshot.get("daily_bar") or {}
 
         bid = parse_float(pick(latest_quote, "bp", "bid_price"))
         ask = parse_float(pick(latest_quote, "ap", "ask_price"))
@@ -1314,6 +1324,7 @@ class AlpacaClient:
                 pick(snapshot, "impliedVolatility", "implied_volatility", "iv")
             ),
             last_trade_price=parse_float(pick(latest_trade, "p", "price")),
+            daily_volume=parse_int(pick(daily_bar, "v", "volume")),
             greeks_source="alpaca" if delta_value is not None else None,
         )
 
@@ -2456,6 +2467,14 @@ def build_credit_spreads(
                             long_contract.symbol,
                             midpoint_credit,
                         ),
+                        short_bid_size=short_snapshot.bid_size,
+                        short_ask_size=short_snapshot.ask_size,
+                        long_bid_size=long_snapshot.bid_size,
+                        long_ask_size=long_snapshot.ask_size,
+                        short_implied_volatility=short_snapshot.implied_volatility,
+                        long_implied_volatility=long_snapshot.implied_volatility,
+                        short_volume=short_snapshot.daily_volume,
+                        long_volume=long_snapshot.daily_volume,
                     )
                 )
 
