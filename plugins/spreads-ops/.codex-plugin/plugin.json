@@ -1,0 +1,28 @@
+{
+  "name": "spreads-ops",
+  "version": "0.1.0",
+  "description": "Repo-local skills for operating and triaging the spreads system.",
+  "author": {
+    "name": "Adeb"
+  },
+  "license": "MIT",
+  "keywords": [
+    "spreads",
+    "operations",
+    "incident-triage",
+    "trading"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Spreads Ops",
+    "shortDescription": "Triage runtime, capture, and strategy issues in spreads",
+    "developerName": "Adeb",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive"
+    ],
+    "defaultPrompt": [
+      "Triage a spreads collector, worker, or end-of-day incident"
+    ]
+  }
+}
