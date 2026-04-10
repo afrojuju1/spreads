@@ -77,7 +77,12 @@ from spreads.storage.collector_models import (
     CollectorCycleEventModel,
     CollectorCycleModel,
 )
-from spreads.storage.factory import build_event_repository, build_job_repository, build_signal_repository
+from spreads.storage.factory import (
+    build_event_repository,
+    build_job_repository,
+    build_risk_repository,
+    build_signal_repository,
+)
 from spreads.storage.job_models import JobDefinitionModel, JobLeaseModel, JobRunModel
 from spreads.storage.models import ScanCandidateModel, ScanRunModel
 from spreads.storage.post_market_models import PostMarketAnalysisRunModel
@@ -835,6 +840,53 @@ def list_opportunities(
                 limit=limit,
             )
         }
+    finally:
+        repo.close()
+
+
+@app.get("/risk-decisions")
+def list_risk_decisions(
+    session_id: str | None = Query(default=None),
+    session_date: str | None = Query(default=None),
+    label: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    opportunity_id: str | None = Query(default=None),
+    execution_attempt_id: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=1000),
+    db: str | None = None,
+) -> dict[str, Any]:
+    repo = build_risk_repository(resolve_db(db))
+    try:
+        if not repo.schema_ready():
+            return {"risk_decisions": []}
+        return {
+            "risk_decisions": repo.list_risk_decisions(
+                session_id=session_id,
+                session_date=session_date,
+                label=label,
+                status=status,
+                opportunity_id=opportunity_id,
+                execution_attempt_id=execution_attempt_id,
+                limit=limit,
+            )
+        }
+    finally:
+        repo.close()
+
+
+@app.get("/risk-decisions/{risk_decision_id}")
+def get_risk_decision(
+    risk_decision_id: str,
+    db: str | None = None,
+) -> dict[str, Any]:
+    repo = build_risk_repository(resolve_db(db))
+    try:
+        if not repo.schema_ready():
+            raise HTTPException(status_code=404, detail="Risk decision storage is not available")
+        row = repo.get_risk_decision(risk_decision_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Risk decision not found")
+        return row
     finally:
         repo.close()
 

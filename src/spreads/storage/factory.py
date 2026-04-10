@@ -10,6 +10,7 @@ from spreads.storage.execution_repository import ExecutionRepository
 from spreads.storage.job_repository import JobRepository
 from spreads.storage.ops_store import OpsStore
 from spreads.storage.post_market_repository import PostMarketAnalysisRepository
+from spreads.storage.risk_repository import RiskDecisionRepository
 from spreads.storage.run_history_repository import RunHistoryRepository
 from spreads.storage.signal_repository import SignalRepository
 from spreads.storage.trading_store import TradingStore
@@ -63,6 +64,13 @@ def build_job_repository(path_or_url: str | None = None, *, context: StorageCont
         return context.jobs
     value = _resolve_postgres_url(path_or_url)
     return JobRepository(value)
+
+
+def build_risk_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):
+    if context is not None:
+        return context.risk
+    value = _resolve_postgres_url(path_or_url)
+    return RiskDecisionRepository(value)
 
 
 def build_execution_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):

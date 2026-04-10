@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -21,9 +23,9 @@ from spreads.services.alpaca import create_alpaca_client_from_env
 from spreads.services.exit_manager import normalize_exit_policy, resolve_exit_policy_snapshot
 from spreads.services.live_pipelines import build_live_session_id
 from spreads.services.risk_manager import (
+    evaluate_open_execution,
     normalize_risk_policy,
     validate_close_execution,
-    validate_open_execution,
 )
 from spreads.services.scanner import make_close_order_payload
 from spreads.services.signal_state import publish_opportunity_event
@@ -101,6 +103,10 @@ def _execution_attempt_id() -> str:
     return f"execution:{uuid4().hex}"
 
 
+def _risk_decision_id() -> str:
+    return f"risk_decision:{uuid4().hex}"
+
+
 def _execution_client_order_id() -> str:
     return f"spr-exec-{uuid4().hex[:20]}"
 
@@ -109,8 +115,36 @@ def _execution_submit_job_run_id(execution_attempt_id: str) -> str:
     return f"execution_submit:{execution_attempt_id}"
 
 
+def _order_intent_key(execution_attempt_id: str) -> str:
+    return f"order_intent:{execution_attempt_id}"
+
+
 def _is_terminal_status(status: str | None) -> bool:
     return str(status or "").lower() in TERMINAL_STATUSES
+
+
+def _policy_version_token(payload: dict[str, Any]) -> str:
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:12]
+
+
+def _policy_ref(
+    *,
+    family: str,
+    resolved_policy: dict[str, Any],
+    source_kind: str,
+    source_key: str,
+    source_job_key: str | None,
+    source_job_run_id: str | None,
+) -> dict[str, Any]:
+    return {
+        "family": family,
+        "key": source_key,
+        "version": _policy_version_token(resolved_policy),
+        "source_kind": source_kind,
+        "source_job_key": source_job_key,
+        "source_job_run_id": source_job_run_id,
+    }
 
 
 def _candidate_has_intraday_setup_context(candidate: dict[str, Any]) -> bool:
@@ -507,6 +541,8 @@ def _attach_attempt_details(
     return [
         {
             **attempt,
+            "order_intent_id": str(attempt["execution_attempt_id"]),
+            "order_intent_key": _order_intent_key(str(attempt["execution_attempt_id"])),
             "orders": orders_by_attempt.get(str(attempt["execution_attempt_id"]), []),
             "fills": fills_by_attempt.get(str(attempt["execution_attempt_id"]), []),
         }
@@ -607,6 +643,69 @@ def _resolve_source_policies(
         "source_job_run_id": job_run_id,
         "risk_policy": normalize_risk_policy(payload.get("risk_policy")),
         "exit_policy": normalize_exit_policy(payload.get("exit_policy")),
+    }
+
+
+def _policy_source_kind(
+    *,
+    request_metadata: dict[str, Any] | None,
+    policy_name: str,
+    source_job_key: str | None,
+) -> str:
+    if isinstance(request_metadata, dict) and isinstance(request_metadata.get(policy_name), dict):
+        return "request_override"
+    if source_job_key is not None:
+        return "source_job"
+    return "default"
+
+
+def _build_policy_refs(
+    *,
+    request_metadata: dict[str, Any] | None,
+    source_policies: dict[str, Any],
+    resolved_risk_policy: dict[str, Any],
+    resolved_execution_policy: dict[str, Any],
+    resolved_exit_policy: dict[str, Any],
+) -> dict[str, Any]:
+    source_job_key = _as_text(source_policies.get("source_job_key"))
+    source_job_run_id = _as_text(source_policies.get("source_job_run_id"))
+    return {
+        "risk_policy": _policy_ref(
+            family="risk_policy",
+            resolved_policy=resolved_risk_policy,
+            source_kind=_policy_source_kind(
+                request_metadata=request_metadata,
+                policy_name="risk_policy",
+                source_job_key=source_job_key,
+            ),
+            source_key="risk_policy" if source_job_key is None else source_job_key,
+            source_job_key=source_job_key,
+            source_job_run_id=source_job_run_id,
+        ),
+        "execution_policy": _policy_ref(
+            family="execution_policy",
+            resolved_policy=resolved_execution_policy,
+            source_kind=_policy_source_kind(
+                request_metadata=request_metadata,
+                policy_name="execution_policy",
+                source_job_key=source_job_key,
+            ),
+            source_key="execution_policy" if source_job_key is None else source_job_key,
+            source_job_key=source_job_key,
+            source_job_run_id=source_job_run_id,
+        ),
+        "exit_policy": _policy_ref(
+            family="exit_policy",
+            resolved_policy=resolved_exit_policy,
+            source_kind=_policy_source_kind(
+                request_metadata=request_metadata,
+                policy_name="exit_policy",
+                source_job_key=source_job_key,
+            ),
+            source_key="exit_policy" if source_job_key is None else source_job_key,
+            source_job_key=source_job_key,
+            source_job_run_id=source_job_run_id,
+        ),
     }
 
 
@@ -826,6 +925,24 @@ def _publish_execution_attempt_event(attempt: dict[str, Any], *, message: str) -
         pass
 
 
+def _publish_risk_decision_event(risk_decision: dict[str, Any]) -> None:
+    try:
+        publish_global_event_sync(
+            topic="risk.decision.recorded",
+            event_class="risk_event",
+            entity_type="risk_decision",
+            entity_id=str(risk_decision["risk_decision_id"]),
+            payload=risk_decision,
+            timestamp=risk_decision.get("decided_at") or _utc_now(),
+            source="execution",
+            session_date=_as_text(risk_decision.get("session_date")),
+            correlation_id=_as_text(risk_decision.get("opportunity_id")) or _as_text(risk_decision.get("session_id")),
+            causation_id=_as_text(risk_decision.get("candidate_id")),
+        )
+    except Exception:
+        pass
+
+
 def _submission_message(attempt: dict[str, Any], *, queued: bool) -> str:
     if str(attempt.get("trade_intent") or OPEN_TRADE_INTENT) == CLOSE_TRADE_INTENT:
         prefix = "Queued close for" if queued else "Submitted close for"
@@ -941,9 +1058,11 @@ def submit_live_session_execution(
     execution_store = storage.execution
     job_store = storage.jobs
     signal_store = getattr(storage, "signals", None)
+    risk_store = getattr(storage, "risk", None)
     requested_at = _utc_now()
     client_order_id = _execution_client_order_id()
     attempt_id: str | None = None
+    risk_decision: dict[str, Any] | None = None
     try:
         _require_execution_schema(execution_store)
         _require_position_schema(execution_store)
@@ -1015,7 +1134,11 @@ def submit_live_session_execution(
             if isinstance(request_metadata, dict) and isinstance(request_metadata.get("exit_policy"), dict)
             else source_policies["exit_policy"]
         )
-        resolved_risk_policy = validate_open_execution(
+        resolved_exit_policy = resolve_exit_policy_snapshot(
+            session_date=str(cycle["session_date"]),
+            payload=requested_exit_policy,
+        )
+        risk_evaluation = evaluate_open_execution(
             execution_store=execution_store,
             session_id=session_id,
             candidate=candidate,
@@ -1024,10 +1147,60 @@ def submit_live_session_execution(
             limit_price=resolved_limit_price,
             risk_policy=requested_risk_policy,
         )
-        resolved_exit_policy = resolve_exit_policy_snapshot(
-            session_date=str(cycle["session_date"]),
-            payload=requested_exit_policy,
+        resolved_risk_policy = dict(risk_evaluation["policy"])
+        policy_refs = _build_policy_refs(
+            request_metadata=request_metadata,
+            source_policies=source_policies,
+            resolved_risk_policy=resolved_risk_policy,
+            resolved_execution_policy=resolved_execution_policy,
+            resolved_exit_policy=resolved_exit_policy,
         )
+        if risk_store is not None and hasattr(risk_store, "schema_ready") and risk_store.schema_ready():
+            risk_decision = risk_store.create_risk_decision(
+                risk_decision_id=_risk_decision_id(),
+                decision_kind="open_execution",
+                status=str(risk_evaluation["status"]),
+                note=str(risk_evaluation["note"]),
+                session_id=session_id,
+                session_date=str(cycle["session_date"]),
+                label=str(cycle["label"]),
+                cycle_id=_as_text(cycle.get("cycle_id")),
+                candidate_id=_coerce_int(candidate.get("candidate_id")),
+                opportunity_id=None if opportunity_ref is None else str(opportunity_ref["opportunity_id"]),
+                execution_attempt_id=None,
+                trade_intent=OPEN_TRADE_INTENT,
+                entity_type="signal_subject",
+                entity_key=(
+                    str(opportunity.get("entity_key"))
+                    if isinstance(opportunity, dict) and opportunity.get("entity_key")
+                    else f"signal_subject:{cycle['label']}:{candidate['underlying_symbol']}"
+                ),
+                underlying_symbol=str(candidate["underlying_symbol"]),
+                strategy=str(candidate["strategy"]),
+                quantity=resolved_quantity,
+                limit_price=resolved_limit_price,
+                reason_codes=[str(value) for value in risk_evaluation.get("reason_codes") or []],
+                blockers=[str(value) for value in risk_evaluation.get("blockers") or []],
+                metrics=dict(risk_evaluation.get("metrics") or {}),
+                evidence={
+                    "candidate_generated_at": _as_text(candidate.get("generated_at")),
+                    "opportunity": opportunity_ref,
+                    "source_job": {
+                        "job_type": source_policies["source_job_type"],
+                        "job_key": source_policies["source_job_key"],
+                        "job_run_id": source_policies["source_job_run_id"],
+                    },
+                    "requested_limit_price": resolved_limit_price,
+                    "requested_quantity": resolved_quantity,
+                },
+                policy_refs=policy_refs,
+                resolved_risk_policy=resolved_risk_policy,
+                decided_at=requested_at,
+            )
+        if str(risk_evaluation["status"]) in {"blocked", "unknown"}:
+            if risk_decision is not None:
+                _publish_risk_decision_event(risk_decision)
+            raise ValueError(str(risk_evaluation["note"]))
 
         attempt_id = _execution_attempt_id()
         attempt = execution_store.create_attempt(
@@ -1036,6 +1209,8 @@ def submit_live_session_execution(
             session_date=str(cycle["session_date"]),
             label=str(cycle["label"]),
             cycle_id=_as_text(cycle.get("cycle_id")),
+            opportunity_id=None if opportunity_ref is None else str(opportunity_ref["opportunity_id"]),
+            risk_decision_id=None if risk_decision is None else str(risk_decision["risk_decision_id"]),
             candidate_id=_coerce_int(candidate.get("candidate_id")),
             bucket=_as_text(candidate.get("bucket")),
             candidate_generated_at=_as_text(candidate.get("generated_at")),
@@ -1057,6 +1232,17 @@ def submit_live_session_execution(
             request={
                 **({} if request_metadata is None else request_metadata),
                 **({} if opportunity_ref is None else {"opportunity": opportunity_ref}),
+                **(
+                    {}
+                    if risk_decision is None
+                    else {
+                        "risk_decision": {
+                            "risk_decision_id": str(risk_decision["risk_decision_id"]),
+                            "status": str(risk_decision["status"]),
+                            "policy_refs": dict(risk_decision.get("policy_refs") or {}),
+                        }
+                    }
+                ),
                 "trade_intent": OPEN_TRADE_INTENT,
                 "execution_policy": resolved_execution_policy,
                 "risk_policy": resolved_risk_policy,
@@ -1075,6 +1261,15 @@ def submit_live_session_execution(
             execution_store=execution_store,
             attempt=attempt,
         )
+        if risk_decision is not None and risk_store is not None:
+            try:
+                risk_decision = risk_store.attach_execution_attempt(
+                    risk_decision_id=str(risk_decision["risk_decision_id"]),
+                    execution_attempt_id=attempt_id,
+                )
+                _publish_risk_decision_event(risk_decision)
+            except Exception:
+                pass
         if opportunity_ref is not None and signal_store is not None:
             try:
                 consumed_opportunity, consumed_changed = signal_store.mark_opportunity_consumed(
@@ -1099,6 +1294,7 @@ def submit_live_session_execution(
             "action": "submit",
             "changed": True,
             "message": message,
+            **({} if risk_decision is None else {"risk_decision": risk_decision}),
             "attempt": payload,
         }
     except Exception as exc:
@@ -1182,6 +1378,8 @@ def submit_session_position_close(
             session_date=str(position["session_date"]),
             label=str(position["label"]),
             cycle_id=None,
+            opportunity_id=None,
+            risk_decision_id=None,
             candidate_id=_coerce_int(position.get("candidate_id")),
             bucket="position_close",
             candidate_generated_at=None,

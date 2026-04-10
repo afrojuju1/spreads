@@ -354,6 +354,7 @@ def get_session_detail(
     alert_store = storage.alerts
     post_market_store = storage.post_market
     execution_store = storage.execution
+    risk_store = getattr(storage, "risk", None)
     identity = _resolve_session_identity(
         session_id,
         collector_store=collector_store,
@@ -453,6 +454,17 @@ def get_session_detail(
         session_id=session_id,
         risk_policy=_session_risk_policy(latest_run),
     )
+    risk_decisions = (
+        []
+        if risk_store is None or not risk_store.schema_ready()
+        else [
+            dict(row)
+            for row in risk_store.list_risk_decisions(
+                session_id=session_id,
+                limit=100,
+            )
+        ]
+    )
     reconciliation_snapshot = _reconciliation_snapshot(portfolio)
 
     return {
@@ -473,6 +485,7 @@ def get_session_detail(
         "alerts": alerts,
         "events": events,
         "executions": executions,
+        "risk_decisions": risk_decisions,
         "portfolio": portfolio,
         "analysis": analysis,
     }

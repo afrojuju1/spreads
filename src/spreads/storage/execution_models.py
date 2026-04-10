@@ -17,6 +17,8 @@ class ExecutionAttemptModel(Base):
         Index("idx_execution_attempts_status_requested", "status", "requested_at"),
         Index("idx_execution_attempts_candidate_requested", "candidate_id", "requested_at"),
         Index("idx_execution_attempts_position_requested", "session_position_id", "requested_at"),
+        Index("idx_execution_attempts_opportunity_requested", "opportunity_id", "requested_at"),
+        Index("idx_execution_attempts_risk_decision_requested", "risk_decision_id", "requested_at"),
     )
 
     execution_attempt_id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -26,6 +28,16 @@ class ExecutionAttemptModel(Base):
     cycle_id: Mapped[str | None] = mapped_column(
         Text,
         ForeignKey("collector_cycles.cycle_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    opportunity_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("opportunities.opportunity_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    risk_decision_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("risk_decisions.risk_decision_id", ondelete="SET NULL"),
         nullable=True,
     )
     candidate_id: Mapped[int | None] = mapped_column(

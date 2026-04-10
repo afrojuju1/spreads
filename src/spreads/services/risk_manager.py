@@ -323,7 +323,7 @@ def build_session_risk_snapshot(
     }
 
 
-def validate_open_execution(
+def evaluate_open_execution(
     *,
     execution_store: Any,
     session_id: str,
@@ -334,85 +334,241 @@ def validate_open_execution(
     risk_policy: dict[str, Any] | None,
 ) -> dict[str, Any]:
     normalized_policy = normalize_risk_policy(risk_policy)
-
-    kill_switch_reason = _kill_switch_reason()
-    if kill_switch_reason is not None:
-        raise ValueError(kill_switch_reason)
-
-    environment_reason = _environment_reason(normalized_policy)
-    if environment_reason is not None:
-        raise ValueError(environment_reason)
-
-    if not normalized_policy["enabled"]:
-        return normalized_policy
-
-    if quantity > int(normalized_policy["max_contracts_per_position"]):
-        raise ValueError("Open execution exceeds max_contracts_per_position.")
-
-    candidate_timestamp = _candidate_timestamp(candidate, cycle)
-    if candidate_timestamp is not None:
-        age_seconds = (datetime.now(UTC) - candidate_timestamp).total_seconds()
-        stale_quote_after_seconds = _coerce_float(normalized_policy.get("stale_quote_after_seconds"))
-        if stale_quote_after_seconds is not None and age_seconds > stale_quote_after_seconds:
-            raise ValueError("Open execution is blocked because the quote snapshot is stale.")
-
     open_positions = _open_positions(execution_store, session_id=session_id)
-    if len(open_positions) >= int(normalized_policy["max_open_positions_per_session"]):
-        raise ValueError("Open execution exceeds max_open_positions_per_session.")
-
+    session_metrics = _session_position_metrics(open_positions)
+    position_notional = _candidate_entry_notional(candidate, quantity, limit_price)
+    position_max_loss = _candidate_max_loss(candidate, quantity)
+    candidate_timestamp = _candidate_timestamp(candidate, cycle)
+    candidate_age_seconds = None
+    if candidate_timestamp is not None:
+        candidate_age_seconds = round((datetime.now(UTC) - candidate_timestamp).total_seconds(), 3)
     underlying_symbol = str(candidate["underlying_symbol"])
     strategy = str(candidate["strategy"])
     matching_underlyings = [
         position for position in open_positions if str(position.get("underlying_symbol")) == underlying_symbol
     ]
-    if len(matching_underlyings) >= int(normalized_policy["max_open_positions_per_underlying"]):
-        raise ValueError("Open execution exceeds max_open_positions_per_underlying.")
-
     matching_strategy = [
         position
         for position in matching_underlyings
         if str(position.get("strategy")) == strategy
     ]
+    session_notional = sum(_coerce_float(position.get("entry_notional")) or 0.0 for position in open_positions)
+    session_max_loss = sum(_coerce_float(position.get("max_loss")) or 0.0 for position in open_positions)
+    metrics = {
+        **session_metrics,
+        "requested_quantity": int(quantity),
+        "requested_limit_price": limit_price,
+        "candidate_age_seconds": candidate_age_seconds,
+        "position_notional": position_notional,
+        "position_max_loss": position_max_loss,
+        "session_notional_before": round(session_notional, 2),
+        "session_notional_after": (
+            None if position_notional is None else round(session_notional + position_notional, 2)
+        ),
+        "session_max_loss_before": round(session_max_loss, 2),
+        "session_max_loss_after": (
+            None if position_max_loss is None else round(session_max_loss + position_max_loss, 2)
+        ),
+        "matching_underlying_count": len(matching_underlyings),
+        "matching_underlying_strategy_count": len(matching_strategy),
+    }
+
+    kill_switch_reason = _kill_switch_reason()
+    if kill_switch_reason is not None:
+        return {
+            "status": "blocked",
+            "note": kill_switch_reason,
+            "reason_codes": ["kill_switch_enabled"],
+            "blockers": ["kill_switch_enabled"],
+            "policy": normalized_policy,
+            "metrics": metrics,
+        }
+
+    try:
+        environment_reason = _environment_reason(normalized_policy)
+    except Exception as exc:
+        return {
+            "status": "unknown",
+            "note": f"Could not resolve the trading environment: {exc}",
+            "reason_codes": ["environment_resolution_failed"],
+            "blockers": ["environment_resolution_failed"],
+            "policy": normalized_policy,
+            "metrics": metrics,
+        }
+    if environment_reason is not None:
+        return {
+            "status": "blocked",
+            "note": environment_reason,
+            "reason_codes": ["live_environment_blocked"],
+            "blockers": ["live_environment_blocked"],
+            "policy": normalized_policy,
+            "metrics": metrics,
+        }
+
+    if not normalized_policy["enabled"]:
+        return {
+            "status": "approved",
+            "note": "Risk policy is disabled for this submission.",
+            "reason_codes": ["risk_policy_disabled"],
+            "blockers": [],
+            "policy": normalized_policy,
+            "metrics": metrics,
+        }
+
+    if quantity > int(normalized_policy["max_contracts_per_position"]):
+        return {
+            "status": "blocked",
+            "note": "Open execution exceeds max_contracts_per_position.",
+            "reason_codes": ["max_contracts_per_position_exceeded"],
+            "blockers": ["max_contracts_per_position_exceeded"],
+            "policy": normalized_policy,
+            "metrics": metrics,
+        }
+
+    stale_quote_after_seconds = _coerce_float(normalized_policy.get("stale_quote_after_seconds"))
+    if (
+        candidate_age_seconds is not None
+        and stale_quote_after_seconds is not None
+        and candidate_age_seconds > stale_quote_after_seconds
+    ):
+        return {
+            "status": "blocked",
+            "note": "Open execution is blocked because the quote snapshot is stale.",
+            "reason_codes": ["stale_quote_snapshot"],
+            "blockers": ["stale_quote_snapshot"],
+            "policy": normalized_policy,
+            "metrics": metrics,
+        }
+
+    if len(open_positions) >= int(normalized_policy["max_open_positions_per_session"]):
+        return {
+            "status": "blocked",
+            "note": "Open execution exceeds max_open_positions_per_session.",
+            "reason_codes": ["max_open_positions_per_session_exceeded"],
+            "blockers": ["max_open_positions_per_session_exceeded"],
+            "policy": normalized_policy,
+            "metrics": metrics,
+        }
+
+    if len(matching_underlyings) >= int(normalized_policy["max_open_positions_per_underlying"]):
+        return {
+            "status": "blocked",
+            "note": "Open execution exceeds max_open_positions_per_underlying.",
+            "reason_codes": ["max_open_positions_per_underlying_exceeded"],
+            "blockers": ["max_open_positions_per_underlying_exceeded"],
+            "policy": normalized_policy,
+            "metrics": metrics,
+        }
+
     if len(matching_strategy) >= int(normalized_policy["max_open_positions_per_underlying_strategy"]):
-        raise ValueError("Open execution exceeds max_open_positions_per_underlying_strategy.")
+        return {
+            "status": "blocked",
+            "note": "Open execution exceeds max_open_positions_per_underlying_strategy.",
+            "reason_codes": ["max_open_positions_per_underlying_strategy_exceeded"],
+            "blockers": ["max_open_positions_per_underlying_strategy_exceeded"],
+            "policy": normalized_policy,
+            "metrics": metrics,
+        }
 
     open_contracts = sum(_coerce_float(position.get("remaining_quantity")) or 0.0 for position in open_positions)
     if open_contracts + quantity > float(normalized_policy["max_contracts_per_session"]):
-        raise ValueError("Open execution exceeds max_contracts_per_session.")
+        return {
+            "status": "blocked",
+            "note": "Open execution exceeds max_contracts_per_session.",
+            "reason_codes": ["max_contracts_per_session_exceeded"],
+            "blockers": ["max_contracts_per_session_exceeded"],
+            "policy": normalized_policy,
+            "metrics": metrics,
+        }
 
-    position_notional = _candidate_entry_notional(candidate, quantity, limit_price)
     max_position_notional = _coerce_float(normalized_policy.get("max_position_notional"))
     if position_notional is not None and max_position_notional is not None and position_notional > max_position_notional:
-        raise ValueError("Open execution exceeds max_position_notional.")
+        return {
+            "status": "blocked",
+            "note": "Open execution exceeds max_position_notional.",
+            "reason_codes": ["max_position_notional_exceeded"],
+            "blockers": ["max_position_notional_exceeded"],
+            "policy": normalized_policy,
+            "metrics": metrics,
+        }
 
-    session_notional = sum(_coerce_float(position.get("entry_notional")) or 0.0 for position in open_positions)
     max_session_notional = _coerce_float(normalized_policy.get("max_session_notional"))
     if (
         position_notional is not None
         and max_session_notional is not None
         and session_notional + position_notional > max_session_notional
     ):
-        raise ValueError("Open execution exceeds max_session_notional.")
+        return {
+            "status": "blocked",
+            "note": "Open execution exceeds max_session_notional.",
+            "reason_codes": ["max_session_notional_exceeded"],
+            "blockers": ["max_session_notional_exceeded"],
+            "policy": normalized_policy,
+            "metrics": metrics,
+        }
 
-    position_max_loss = _candidate_max_loss(candidate, quantity)
     max_position_max_loss = _coerce_float(normalized_policy.get("max_position_max_loss"))
     if (
         position_max_loss is not None
         and max_position_max_loss is not None
         and position_max_loss > max_position_max_loss
     ):
-        raise ValueError("Open execution exceeds max_position_max_loss.")
+        return {
+            "status": "blocked",
+            "note": "Open execution exceeds max_position_max_loss.",
+            "reason_codes": ["max_position_max_loss_exceeded"],
+            "blockers": ["max_position_max_loss_exceeded"],
+            "policy": normalized_policy,
+            "metrics": metrics,
+        }
 
-    session_max_loss = sum(_coerce_float(position.get("max_loss")) or 0.0 for position in open_positions)
     max_session_max_loss = _coerce_float(normalized_policy.get("max_session_max_loss"))
     if (
         position_max_loss is not None
         and max_session_max_loss is not None
         and session_max_loss + position_max_loss > max_session_max_loss
     ):
-        raise ValueError("Open execution exceeds max_session_max_loss.")
+        return {
+            "status": "blocked",
+            "note": "Open execution exceeds max_session_max_loss.",
+            "reason_codes": ["max_session_max_loss_exceeded"],
+            "blockers": ["max_session_max_loss_exceeded"],
+            "policy": normalized_policy,
+            "metrics": metrics,
+        }
 
-    return normalized_policy
+    return {
+        "status": "approved",
+        "note": "Open execution is approved under the current risk policy.",
+        "reason_codes": ["approved"],
+        "blockers": [],
+        "policy": normalized_policy,
+        "metrics": metrics,
+    }
+
+
+def validate_open_execution(
+    *,
+    execution_store: Any,
+    session_id: str,
+    candidate: dict[str, Any],
+    cycle: dict[str, Any],
+    quantity: int,
+    limit_price: float | None,
+    risk_policy: dict[str, Any] | None,
+) -> dict[str, Any]:
+    decision = evaluate_open_execution(
+        execution_store=execution_store,
+        session_id=session_id,
+        candidate=candidate,
+        cycle=cycle,
+        quantity=quantity,
+        limit_price=limit_price,
+        risk_policy=risk_policy,
+    )
+    if decision["status"] in {"blocked", "unknown"}:
+        raise ValueError(str(decision["note"]))
+    return dict(decision["policy"])
 
 
 def validate_close_execution(

@@ -535,6 +535,15 @@ Deliverable:
 
 ## Phase 3: Formalize OMS/Risk Decisions
 
+Status: completed
+
+Implemented:
+
+- durable `risk_decisions` store with policy references, evidence, and decision metrics
+- explicit `opportunity_id` and `risk_decision_id` handoff fields on `execution_attempts`
+- structured risk evaluation output on the open-execution path
+- API read paths for `/risk-decisions` and session-level risk decision views
+
 Build:
 
 - explicit risk decision object
