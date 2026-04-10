@@ -70,6 +70,7 @@ from spreads.services.control_plane import (
     get_control_state_snapshot,
     set_control_mode,
 )
+from spreads.services.audit_replay import build_audit_replay
 from spreads.services.sessions import (
     DEFAULT_ANALYSIS_PROFIT_TARGET,
     DEFAULT_ANALYSIS_STOP_MULTIPLE,
@@ -925,6 +926,22 @@ def update_control_mode(
         if str(exc) == CONTROL_SCHEMA_MESSAGE:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/replay/audit/{session_id}")
+def get_audit_replay(
+    session_id: str,
+    timeline_limit: int = Query(default=500, ge=1, le=2000),
+    db: str | None = None,
+) -> dict[str, Any]:
+    try:
+        return build_audit_replay(
+            db_target=resolve_db(db),
+            session_id=session_id,
+            timeline_limit=timeline_limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/account/overview")

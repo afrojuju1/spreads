@@ -102,6 +102,7 @@ class EventRepository(RepositoryBase):
         *,
         event_class: str | None = None,
         topic: str | None = None,
+        label: str | None = None,
         entity_type: str | None = None,
         entity_key: str | None = None,
         session_date: str | None = None,
@@ -115,6 +116,8 @@ class EventRepository(RepositoryBase):
             statement = statement.where(EventLogModel.event_class == event_class)
         if topic:
             statement = statement.where(EventLogModel.topic == topic)
+        if label:
+            statement = statement.where(EventLogModel.payload_json["label"].astext == label)
         if entity_type:
             statement = statement.where(EventLogModel.entity_type == entity_type)
         if entity_key:
