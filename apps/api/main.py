@@ -522,7 +522,7 @@ def _list_alert_rows(
     db_target: str | None = None,
     session: Session | None = None,
 ) -> list[dict[str, Any]]:
-    statement = select(AlertEventModel)
+    statement = select(AlertEventModel).where(AlertEventModel.record_kind == "delivery")
     if session_date:
         statement = statement.where(AlertEventModel.session_date == date.fromisoformat(session_date))
     if label:

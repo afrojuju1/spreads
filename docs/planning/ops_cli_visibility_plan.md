@@ -1,6 +1,6 @@
 # Ops CLI Visibility Plan
 
-Status: proposed
+Status: proposed, refined after April 10, 2026 live and post-market review
 
 Related:
 
@@ -19,6 +19,7 @@ Define one operator-facing CLI for visibility into:
 - UOA scanner state
 - alerts and executions
 - session investigation and replay
+- post-market effectiveness and tuning signals
 
 This should give us a fast terminal-first view of what the system is doing right now without needing the web UI.
 
@@ -44,6 +45,9 @@ We need a CLI that answers questions like:
 - what positions and risks are open
 - did alerts fire
 - is UOA actually active or just empty
+- did a stream only "run" or did it produce usable ideas
+- is board promotion outperforming watchlist ideas or lagging it
+- is the same label degrading for multiple sessions in a row
 - what broke in the last few minutes
 
 ## Design Principles
@@ -335,6 +339,8 @@ Examples:
 
 - live collector slot status
 - board/watchlist state
+- post-market verdicts and recommendations
+- board vs watchlist outcome spread
 - alerts
 - executions
 - risk decisions
@@ -347,6 +353,7 @@ Primary sources:
 - collector repository
 - alert repository
 - execution repository
+- post-market repository
 
 ### 3. Trading State
 
@@ -405,11 +412,14 @@ Initial checks should include:
 - scheduler lease missing or stale
 - no active worker leases
 - collector jobs queued but not advancing
-- latest collector runs degraded
+- latest collector runs degraded or empty
 - quote capture advancing while trade capture is not
+- repeated empty or degraded capture for the same label across recent sessions
 - broker sync stale
 - reconciliation mismatches present
 - alert delivery failures present
+- latest post-market verdict weak for one or more labels
+- board ideas trailing watchlist ideas by a material margin
 
 Output shape should be:
 
@@ -433,6 +443,20 @@ Use this to confirm:
 - runtime healthy
 - trading allowed
 - collector sessions active
+
+### End-Of-Day Review
+
+```text
+spreads sessions --date YYYY-MM-DD
+spreads sessions <session-id>
+```
+
+Use this to confirm:
+
+- which labels were degraded or empty
+- latest post-market verdict per label
+- whether board ideas beat or lagged watchlist ideas
+- whether recommendations are repeating across days
 
 ### UOA Check
 
@@ -582,8 +606,11 @@ Key outputs for list mode:
 - status
 - latest slot
 - capture status
+- websocket/baseline quote counts
 - board/watchlist counts
 - alert count
+- latest post-market verdict when analysis exists
+- board vs watchlist modeled PnL spread when analysis exists
 - updated at
 
 Key outputs for detail mode:
@@ -591,11 +618,14 @@ Key outputs for detail mode:
 - current cycle summary
 - board/watchlist candidates
 - latest slot runs
+- quote capture health and empty-capture flags
 - alerts
 - executions
 - portfolio
 - risk snapshot
 - reconciliation snapshot
+- post-market verdict, recommendations, and board vs watchlist comparison when analysis exists
+- top and bottom modeled ideas when analysis exists
 
 This is the main path for strategy-specific operational visibility.
 
@@ -672,6 +702,9 @@ That command is the right place to catch issues like:
 - scheduler lease missing
 - worker processes stale after code change
 - collector rows advancing but trade capture rows not advancing
+- repeated empty or degraded capture for the same label across recent sessions
+- post-market board ideas trailing watchlist ideas by a material margin
+- recurring weak verdicts or repeated tuning recommendations for one label
 - broker sync stale
 - control mode halted
 
@@ -793,6 +826,7 @@ It also gives the future web UI a reusable backend-friendly aggregation layer.
 - audit replay in [audit_replay.py](/Users/adeb/Projects/spreads/src/spreads/services/audit_replay.py)
 - alerts via [alert_repository.py](/Users/adeb/Projects/spreads/src/spreads/storage/alert_repository.py)
 - jobs via [job_repository.py](/Users/adeb/Projects/spreads/src/spreads/storage/job_repository.py)
+- post-market runs via [post_market_repository.py](/Users/adeb/Projects/spreads/src/spreads/storage/post_market_repository.py)
 
 ### UOA
 
@@ -987,7 +1021,7 @@ Why first:
 - lowest UX ambiguity
 - immediately useful during live hours
 
-### Phase 2: Sessions And Jobs
+### Phase 2: Sessions, Jobs, And End-Of-Day Visibility
 
 Ship:
 
@@ -1000,6 +1034,7 @@ Why second:
 
 - builds on existing session and job services
 - gives us daily operational debugging coverage
+- captures the closed-session scorecard operators needed on April 10, 2026 without extra API curls
 
 ### Phase 3: UOA Visibility
 
@@ -1040,11 +1075,17 @@ If we want the fastest path to value, build this first:
 2. `spreads trading`
 3. `spreads sessions`
 
+Requirement for that first `sessions` slice:
+
+- list mode should show capture health plus latest post-market verdict when analysis exists
+- detail mode should show recommendations and the top/bottom modeled ideas when analysis exists
+
 That gives us:
 
 - runtime health
 - trading safety
 - collector/session visibility
+- enough end-of-day context to tell "system degraded" from "strategy weak"
 
 without waiting for the deeper UOA and audit subcommands.
 

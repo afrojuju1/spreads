@@ -957,6 +957,7 @@ def _run_collection_cycle(
     client: AlpacaClient,
     history_store: RunHistoryRepository,
     alert_store: AlertRepository,
+    job_store: Any,
     collector_store: CollectorRepository,
     event_store: EventRepository,
     signal_store: SignalRepository,
@@ -1313,6 +1314,7 @@ def _run_collection_cycle(
         alerts = dispatch_cycle_alerts(
             collector_store=collector_store,
             alert_store=alert_store,
+            job_store=job_store,
             cycle_id=cycle_id,
             label=label,
             generated_at=generated_at,
@@ -1321,6 +1323,8 @@ def _run_collection_cycle(
             board_candidates=board_payloads,
             events=events,
             uoa_decisions=uoa_decisions,
+            session_id=None if tick_context is None else tick_context.session_id,
+            planner_job_run_id=None if tick_context is None else tick_context.job_run_id,
         )
     except Exception as exc:
         print(f"Alert dispatch unavailable: {exc}")
@@ -1453,6 +1457,7 @@ def run_collection_tick(
                 client=client,
                 history_store=storage.history,
                 alert_store=storage.alerts,
+                job_store=storage.jobs,
                 collector_store=storage.collector,
                 event_store=storage.events,
                 signal_store=storage.signals,
@@ -1612,6 +1617,7 @@ def run_collection(
                     client=client,
                     history_store=storage.history,
                     alert_store=storage.alerts,
+                    job_store=storage.jobs,
                     collector_store=storage.collector,
                     event_store=storage.events,
                     signal_store=storage.signals,

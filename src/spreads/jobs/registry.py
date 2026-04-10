@@ -7,6 +7,8 @@ COLLECTOR_QUEUE_NAME = "arq:queue:collector"
 
 BROKER_SYNC_JOB_TYPE = "broker_sync"
 EXECUTION_SUBMIT_JOB_TYPE = "execution_submit"
+ALERT_DELIVERY_JOB_TYPE = "alert_delivery"
+ALERT_RECONCILE_JOB_TYPE = "alert_reconcile"
 LIVE_COLLECTOR_JOB_TYPE = "live_collector"
 POST_CLOSE_ANALYSIS_JOB_TYPE = "post_close_analysis"
 POST_MARKET_ANALYSIS_JOB_TYPE = "post_market_analysis"
@@ -14,6 +16,8 @@ SESSION_EXIT_MANAGER_JOB_TYPE = "session_exit_manager"
 GENERATOR_JOB_TYPE = "generator"
 
 EXECUTION_SUBMIT_ADHOC_JOB_KEY = "execution_submit:adhoc"
+ALERT_DELIVERY_ADHOC_JOB_KEY = "alert_delivery:adhoc"
+ALERT_RECONCILE_JOB_KEY = "alert_reconcile:scheduled"
 POST_CLOSE_ANALYSIS_ADHOC_JOB_KEY = "post_close_analysis:adhoc"
 GENERATOR_ADHOC_JOB_KEY = "generator:adhoc"
 
@@ -44,6 +48,16 @@ JOB_SPECS = {
         JobSpec(
             job_type=EXECUTION_SUBMIT_JOB_TYPE,
             task_name="run_execution_submit_job",
+            queue_name=MAIN_QUEUE_NAME,
+        ),
+        JobSpec(
+            job_type=ALERT_DELIVERY_JOB_TYPE,
+            task_name="run_alert_delivery_job",
+            queue_name=MAIN_QUEUE_NAME,
+        ),
+        JobSpec(
+            job_type=ALERT_RECONCILE_JOB_TYPE,
+            task_name="run_alert_reconcile_job",
             queue_name=MAIN_QUEUE_NAME,
         ),
         JobSpec(
@@ -81,6 +95,8 @@ WORKER_LANES = (
         task_names=(
             JOB_SPECS[BROKER_SYNC_JOB_TYPE].task_name,
             JOB_SPECS[EXECUTION_SUBMIT_JOB_TYPE].task_name,
+            JOB_SPECS[ALERT_DELIVERY_JOB_TYPE].task_name,
+            JOB_SPECS[ALERT_RECONCILE_JOB_TYPE].task_name,
             JOB_SPECS[SESSION_EXIT_MANAGER_JOB_TYPE].task_name,
             JOB_SPECS[POST_CLOSE_ANALYSIS_JOB_TYPE].task_name,
             JOB_SPECS[POST_MARKET_ANALYSIS_JOB_TYPE].task_name,

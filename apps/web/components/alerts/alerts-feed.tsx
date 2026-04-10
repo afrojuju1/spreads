@@ -34,12 +34,19 @@ function formatTimestamp(value: string): string {
 
 function statusTone(value: string): string {
   switch (value) {
+    case "delivered":
     case "sent":
     case "succeeded":
     case "created":
       return "border-emerald-200 bg-emerald-100 text-emerald-900";
+    case "pending":
+    case "dispatching":
+    case "retry_wait":
+      return "border-sky-200 bg-sky-100 text-sky-900";
+    case "suppressed":
     case "skipped":
       return "border-amber-200 bg-amber-100 text-amber-900";
+    case "dead_letter":
     case "failed":
       return "border-rose-200 bg-rose-100 text-rose-900";
     default:

@@ -17,12 +17,30 @@
 - Do not run repo-wide Python compile checks such as `python -m compileall` unless the user explicitly asks for them.
 - Prefer dev-safe verification during normal work, such as linting, targeted type checks, and narrow runtime checks.
 
+## End-Of-Day And Ops Queries
+
+- For questions about "how did we do today", market-close summaries, collector health, or live ops status, prefer the running Docker-backed system state before code inspection.
+- Use the existing stack and narrow live reads first:
+  - account and trading health: `account_state.py` or `http://localhost:58080/account/overview?history_range=1D`
+  - session health: `sessions.py` or `http://localhost:58080/sessions?limit=...`
+  - closed-session analysis: `post_market_repository.py` / `post_market_analysis.py` or `http://localhost:58080/post-market/{session_date}/{label}`
+- Always distinguish actual account PnL from modeled post-market outcomes. Do not present modeled idea outcomes as realized account performance.
+- After market close, use exact dates in summaries.
+
 ## Backend Services
 
 - For storage-backed backend work, use the repo’s configured Postgres target via existing helpers; do not assume SQLite or ad hoc local storage.
 - Prefer extending existing services and repositories with thin adapters before introducing new abstractions or frameworks.
 - For new API work, start with the narrowest interface that satisfies the current use case and expand only when there is a real caller.
 - Prefer targeted service, API, and data-backed smoke checks during normal development; avoid broad verification unless the user asks.
+
+## Backend Rollout Checklist
+
+- After schema changes, run `uv run alembic upgrade head`.
+- If job definitions or scheduled/manual job keys changed, run `uv run spreads-seed-jobs`.
+- After changing code imported by `worker-main`, `worker-collector`, or `scheduler`, restart those containers before trusting runtime behavior.
+- Use `docker compose ps` and recent `docker compose logs` to verify startup and job execution after restart.
+- Restart `api` or `web` only when needed for changed runtime surfaces or when explicitly requested.
 
 ## Planning Docs
 

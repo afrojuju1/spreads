@@ -95,7 +95,8 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
         tone: status === "succeeded" ? "success" : status === "no_play" ? "warning" : "error",
       };
     }
-    case "alert.event.created": {
+    case "alert.event.created":
+    case "alert.event.updated": {
       const symbol = readText(payload.symbol) ?? "alert";
       const alertType = humanizeToken(readText(payload.alert_type) ?? "event");
       const status = readText(payload.status) ?? "created";
@@ -107,7 +108,14 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
         href: sessionId ? buildSessionHref(sessionId) : "/alerts",
         summary: `Alert ${symbol} ${humanizeToken(status)}`,
         timestamp: event.timestamp,
-        tone: status === "failed" ? "error" : status === "skipped" ? "warning" : "info",
+        tone:
+          status === "dead_letter" || status === "failed"
+            ? "error"
+            : status === "suppressed" || status === "skipped"
+              ? "warning"
+              : status === "delivered"
+                ? "success"
+                : "info",
       };
     }
     case "live.cycle.updated": {
@@ -270,6 +278,7 @@ function GlobalRealtimeBridge({
         queryClient.invalidateQueries({ queryKey: ["generator-job", realtimeEvent.entity_id] });
         break;
       case "alert.event.created":
+      case "alert.event.updated":
         queryClient.invalidateQueries({ queryKey: ["alerts-latest"] });
         queryClient.invalidateQueries({ queryKey: ["sessions"] });
         if (sessionId) {

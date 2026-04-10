@@ -1,20 +1,26 @@
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime
 from typing import Any, Mapping
 from uuid import uuid4
 
-from spreads.alerts.dispatcher import resolve_session_date, send_or_skip_alert
+from spreads.alerts.dispatcher import resolve_session_date
 from spreads.db.decorators import with_storage
 from spreads.events.bus import publish_global_event_sync
-from spreads.services.live_pipelines import build_live_session_id
+from spreads.services.alert_delivery import plan_alert_delivery
 
 MANUAL_ALERT_TYPE = "manual_generator_idea"
 
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _as_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    rendered = str(value).strip()
+    return rendered or None
 
 
 def _selector_identity(*, strategy: str, short_symbol: str, long_symbol: str) -> tuple[str, str, str]:
@@ -120,6 +126,7 @@ def create_manual_generator_alert(
     )
     collector_store = storage.collector
     alert_store = storage.alerts
+    job_store = storage.jobs
     latest_cycle = collector_store.get_latest_cycle(live_label)
     if latest_cycle is None:
         raise ValueError(f"No live cycle is available for '{live_label}'")
@@ -141,9 +148,9 @@ def create_manual_generator_alert(
             "kind": "manual_generator_action",
         },
     }
-    record = send_or_skip_alert(
-        webhook_url=os.environ.get("SPREADS_DISCORD_WEBHOOK_URL") or os.environ.get("DISCORD_WEBHOOK_URL"),
+    record, created = plan_alert_delivery(
         alert_store=alert_store,
+        job_store=job_store,
         payload=payload,
         dedupe_key=(
             f"manual_generator_alert|{latest_cycle['label']}|{job['generator_job_id']}|"
@@ -156,27 +163,14 @@ def create_manual_generator_alert(
             "long_symbol": candidate["long_symbol"],
             "kind": "manual_generator_action",
         },
+        session_id=_as_text(latest_cycle.get("session_id")),
+        planner_job_run_id=None,
+        source="operator_actions",
+        correlation_id=_as_text(job.get("generator_job_id")),
     )
-    try:
-        publish_global_event_sync(
-            topic="alert.event.created",
-            event_class="control_event",
-            entity_type="alert_event",
-            entity_id=str(record["alert_id"]),
-            payload={
-                **record,
-                "session_id": build_live_session_id(record["label"], record["session_date"]),
-            },
-            timestamp=record["created_at"],
-            source="operator_actions",
-            session_date=_as_text(record.get("session_date")),
-            correlation_id=_as_text(job.get("generator_job_id")),
-        )
-    except Exception:
-        pass
     return {
         "action": "create_alert",
-        "changed": True,
+        "changed": created,
         "message": f"Manual alert {record['status']} for {candidate['underlying_symbol']} on {latest_cycle['label']}.",
         "live_label": latest_cycle["label"],
         "session_id": latest_cycle.get("session_id"),

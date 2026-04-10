@@ -13,6 +13,8 @@ import redis.asyncio as redis_async
 from spreads.events.bus import publish_global_event_async
 from spreads.jobs.live_collector import LiveTickContext, build_collection_args, run_collection_tick
 from spreads.jobs.registry import (
+    ALERT_DELIVERY_JOB_TYPE,
+    ALERT_RECONCILE_JOB_TYPE,
     BROKER_SYNC_JOB_TYPE,
     COLLECTOR_QUEUE_NAME,
     EXECUTION_SUBMIT_JOB_TYPE,
@@ -32,6 +34,11 @@ from spreads.services.analysis import (
     build_analysis_args,
     resolve_date,
     run_post_close_analysis,
+)
+from spreads.services.alert_delivery import (
+    ALERT_DELIVERY_STALE_SECONDS,
+    reconcile_alert_delivery,
+    run_alert_delivery,
 )
 from spreads.services.broker_sync import run_broker_sync
 from spreads.services.exit_manager import run_session_exit_manager
@@ -883,6 +890,64 @@ async def run_session_exit_manager_job(
     )
 
 
+async def run_alert_delivery_job(
+    ctx: dict[str, Any],
+    job_key: str,
+    job_run_id: str,
+    payload: dict[str, Any],
+    arq_job_id: str,
+) -> dict[str, Any]:
+    def runner(heartbeat: Any) -> dict[str, Any]:
+        heartbeat()
+        return run_alert_delivery(
+            alert_store=ctx["storage"].alerts,
+            alert_id=int(payload["alert_id"]),
+            delivery_job_run_id=job_run_id,
+            worker_name=ctx["worker_name"],
+        )
+
+    enriched_payload = dict(payload)
+    enriched_payload["job_type"] = ALERT_DELIVERY_JOB_TYPE
+    return await _execute_managed_job(
+        ctx,
+        job_key=job_key,
+        job_run_id=job_run_id,
+        arq_job_id=arq_job_id,
+        payload=enriched_payload,
+        runner=runner,
+        compact_result=lambda result: result,
+    )
+
+
+async def run_alert_reconcile_job(
+    ctx: dict[str, Any],
+    job_key: str,
+    job_run_id: str,
+    payload: dict[str, Any],
+    arq_job_id: str,
+) -> dict[str, Any]:
+    def runner(heartbeat: Any) -> dict[str, Any]:
+        heartbeat()
+        return reconcile_alert_delivery(
+            alert_store=ctx["storage"].alerts,
+            job_store=ctx["job_store"],
+            limit=int(payload.get("limit", 200)),
+            stale_after_seconds=int(payload.get("stale_after_seconds", ALERT_DELIVERY_STALE_SECONDS)),
+        )
+
+    enriched_payload = dict(payload)
+    enriched_payload["job_type"] = ALERT_RECONCILE_JOB_TYPE
+    return await _execute_managed_job(
+        ctx,
+        job_key=job_key,
+        job_run_id=job_run_id,
+        arq_job_id=arq_job_id,
+        payload=enriched_payload,
+        runner=runner,
+        compact_result=lambda result: result,
+    )
+
+
 async def run_live_collector_job(
     ctx: dict[str, Any],
     job_key: str,
@@ -1120,6 +1185,8 @@ class MainWorkerSettings:
     functions = [
         run_broker_sync_job,
         run_execution_submit_job,
+        run_alert_delivery_job,
+        run_alert_reconcile_job,
         run_session_exit_manager_job,
         run_post_close_analysis_job,
         run_post_market_analysis_job,

@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 
 from spreads.jobs.registry import (
+    ALERT_RECONCILE_JOB_KEY,
+    ALERT_RECONCILE_JOB_TYPE,
     BROKER_SYNC_JOB_TYPE,
     EXECUTION_SUBMIT_ADHOC_JOB_KEY,
     EXECUTION_SUBMIT_JOB_TYPE,
@@ -60,6 +62,19 @@ def seed_definitions(db: str) -> list[str]:
     job_keys: list[str] = []
     try:
         definitions = [
+            {
+                "job_key": ALERT_RECONCILE_JOB_KEY,
+                "job_type": ALERT_RECONCILE_JOB_TYPE,
+                "enabled": True,
+                "schedule_type": "interval_minutes",
+                "schedule": {"minutes": 1},
+                "payload": {
+                    "limit": 200,
+                    "stale_after_seconds": 300,
+                    "allow_off_hours": True,
+                },
+                "singleton_scope": "global",
+            },
             {
                 "job_key": "broker_sync:alpaca",
                 "job_type": BROKER_SYNC_JOB_TYPE,

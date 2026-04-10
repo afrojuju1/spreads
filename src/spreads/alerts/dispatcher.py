@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import os
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from spreads.alerts.discord import build_discord_payload, send_discord_webhook
 from spreads.alerts.rules import (
     AlertDecision,
     build_event_alert_decisions,
@@ -13,13 +11,13 @@ from spreads.alerts.rules import (
     build_uoa_alert_decisions,
     score_anchor_key,
 )
-from spreads.events.bus import publish_global_event_sync
+from spreads.services.alert_delivery import plan_alert_delivery
 from spreads.services.live_pipelines import build_live_session_id
 from spreads.storage.alert_repository import AlertRepository
 from spreads.storage.collector_repository import CollectorRepository
+from spreads.storage.job_repository import JobRepository
 
 NEW_YORK = ZoneInfo("America/New_York")
-DISCORD_DELIVERY_TARGET = "discord_webhook"
 
 
 def resolve_session_date(generated_at: str) -> str:
@@ -51,110 +49,39 @@ def alert_payload(
     }
 
 
-def persist_alert_state(
-    *,
-    alert_store: AlertRepository,
-    generated_at: str,
-    cycle_id: str,
-    alert_type: str,
-    dedupe_key: str,
-    state: dict[str, Any],
-) -> None:
-    alert_store.upsert_alert_state(
-        dedupe_key=dedupe_key,
-        last_alert_at=generated_at,
-        last_cycle_id=cycle_id,
-        last_alert_type=alert_type,
-        state=state,
-    )
-
-
-def update_score_anchor(
+def update_score_anchors(
     *,
     alert_store: AlertRepository,
     label: str,
     session_date: str,
+    session_id: str,
     generated_at: str,
     cycle_id: str,
-    candidate: dict[str, Any],
-    alert_type: str,
+    planner_job_run_id: str | None,
+    board_candidates: list[dict[str, Any]],
 ) -> None:
-    persist_alert_state(
-        alert_store=alert_store,
-        generated_at=generated_at,
-        cycle_id=cycle_id,
-        alert_type=alert_type,
-        dedupe_key=score_anchor_key(label, session_date, candidate),
-        state={"last_score": float(candidate["quality_score"])},
-    )
-
-
-def send_or_skip_alert(
-    *,
-    webhook_url: str | None,
-    alert_store: AlertRepository,
-    payload: dict[str, Any],
-    dedupe_key: str,
-    dedupe_state: dict[str, Any],
-) -> dict[str, Any]:
-    event = alert_store.create_alert_event(
-        created_at=payload["created_at"],
-        session_date=payload["session_date"],
-        label=payload["label"],
-        cycle_id=payload["cycle_id"],
-        symbol=payload["symbol"],
-        alert_type=payload["alert_type"],
-        dedupe_key=dedupe_key,
-        status="pending",
-        delivery_target=DISCORD_DELIVERY_TARGET,
-        payload=payload,
-    )
-    if not webhook_url:
-        persisted = alert_store.mark_alert_event_status(
-            alert_id=event["alert_id"],
-            status="skipped",
-            response={"reason": "missing_SPREADS_DISCORD_WEBHOOK_URL"},
+    for candidate in board_candidates:
+        quality_score = candidate.get("quality_score")
+        if quality_score is None:
+            continue
+        alert_store.upsert_score_anchor(
+            created_at=generated_at,
+            session_date=session_date,
+            label=label,
+            session_id=session_id,
+            cycle_id=cycle_id,
+            symbol=str(candidate["underlying_symbol"]),
+            dedupe_key=score_anchor_key(label, session_date, candidate),
+            state={"last_score": float(quality_score)},
+            planner_job_run_id=planner_job_run_id,
         )
-        persist_alert_state(
-            alert_store=alert_store,
-            generated_at=payload["created_at"],
-            cycle_id=payload["cycle_id"],
-            alert_type=payload["alert_type"],
-            dedupe_key=dedupe_key,
-            state=dedupe_state,
-        )
-        return persisted
-
-    discord_payload = build_discord_payload(payload)
-    try:
-        response = send_discord_webhook(webhook_url, discord_payload)
-        persisted = alert_store.mark_alert_event_status(
-            alert_id=event["alert_id"],
-            status="delivered",
-            response=response,
-        )
-        persist_alert_state(
-            alert_store=alert_store,
-            generated_at=payload["created_at"],
-            cycle_id=payload["cycle_id"],
-            alert_type=payload["alert_type"],
-            dedupe_key=dedupe_key,
-            state=dedupe_state,
-        )
-        return persisted
-    except Exception as exc:
-        persisted = alert_store.mark_alert_event_status(
-            alert_id=event["alert_id"],
-            status="failed",
-            error_text=str(exc),
-        )
-        return persisted
 
 
 def dispatch_cycle_alerts(
     *,
     collector_store: CollectorRepository,
     alert_store: AlertRepository,
+    job_store: JobRepository,
     cycle_id: str,
     label: str,
     generated_at: str,
@@ -163,15 +90,13 @@ def dispatch_cycle_alerts(
     board_candidates: list[dict[str, Any]],
     events: list[dict[str, Any]],
     uoa_decisions: dict[str, Any] | None = None,
+    session_id: str | None = None,
+    planner_job_run_id: str | None = None,
     webhook_url: str | None = None,
 ) -> list[dict[str, Any]]:
     session_date = resolve_session_date(generated_at)
+    resolved_session_id = session_id or build_live_session_id(label, session_date)
     get_state = alert_store.get_alert_state
-    webhook = (
-        webhook_url
-        if webhook_url is not None
-        else os.environ.get("SPREADS_DISCORD_WEBHOOK_URL") or os.environ.get("DISCORD_WEBHOOK_URL")
-    )
 
     decisions = [
         *build_event_alert_decisions(
@@ -197,7 +122,7 @@ def dispatch_cycle_alerts(
         ),
     ]
 
-    delivered: list[dict[str, Any]] = []
+    planned: list[dict[str, Any]] = []
     for decision in decisions:
         payload = alert_payload(
             label=label,
@@ -208,39 +133,28 @@ def dispatch_cycle_alerts(
             session_date=session_date,
             alert=decision,
         )
-        record = send_or_skip_alert(
-            webhook_url=webhook,
+        record, _ = plan_alert_delivery(
             alert_store=alert_store,
+            job_store=job_store,
             payload=payload,
             dedupe_key=decision.dedupe_key,
             dedupe_state=decision.dedupe_state,
+            session_id=resolved_session_id,
+            planner_job_run_id=planner_job_run_id,
+            source="alerts.dispatcher",
+            correlation_id=cycle_id,
+            webhook_url=webhook_url,
         )
-        if decision.candidate.get("quality_score") is not None:
-            update_score_anchor(
-                alert_store=alert_store,
-                label=label,
-                session_date=session_date,
-                generated_at=generated_at,
-                cycle_id=cycle_id,
-                candidate=decision.candidate,
-                alert_type=decision.alert_type,
-            )
-        try:
-            publish_global_event_sync(
-                topic="alert.event.created",
-                event_class="control_event",
-                entity_type="alert_event",
-                entity_id=str(record["alert_id"]),
-                payload={
-                    **record,
-                    "session_id": build_live_session_id(label, session_date),
-                },
-                timestamp=record["created_at"],
-                source="alerts.dispatcher",
-                session_date=session_date,
-                correlation_id=cycle_id,
-            )
-        except Exception:
-            pass
-        delivered.append(record)
-    return delivered
+        planned.append(record)
+
+    update_score_anchors(
+        alert_store=alert_store,
+        label=label,
+        session_date=session_date,
+        session_id=resolved_session_id,
+        generated_at=generated_at,
+        cycle_id=cycle_id,
+        planner_job_run_id=planner_job_run_id,
+        board_candidates=board_candidates,
+    )
+    return planned
