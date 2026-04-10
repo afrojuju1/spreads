@@ -1,6 +1,6 @@
 # Ops CLI Visibility Plan
 
-Status: proposed, refined after April 10, 2026 live and post-market review
+Status: in progress; phase 1 and phase 2 shipped on April 10, 2026, phase 3 and phase 4 pending
 
 Related:
 
