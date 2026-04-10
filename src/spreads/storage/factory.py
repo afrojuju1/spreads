@@ -4,6 +4,7 @@ from spreads.runtime.config import DEFAULT_POSTGRES_URL, default_database_url
 from spreads.storage.alert_repository import AlertRepository
 from spreads.storage.broker_repository import BrokerRepository
 from spreads.storage.collector_repository import CollectorRepository
+from spreads.storage.control_repository import ControlRepository
 from spreads.storage.context import StorageContext
 from spreads.storage.event_repository import EventRepository
 from spreads.storage.execution_repository import ExecutionRepository
@@ -64,6 +65,13 @@ def build_job_repository(path_or_url: str | None = None, *, context: StorageCont
         return context.jobs
     value = _resolve_postgres_url(path_or_url)
     return JobRepository(value)
+
+
+def build_control_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):
+    if context is not None:
+        return context.control
+    value = _resolve_postgres_url(path_or_url)
+    return ControlRepository(value)
 
 
 def build_risk_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):

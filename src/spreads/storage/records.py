@@ -28,6 +28,9 @@ JobRunRecord = StorageRow
 AccountSnapshotRecord = StorageRow
 BrokerSyncStateRecord = StorageRow
 EventLogRecord = StorageRow
+ControlStateRecord = StorageRow
+OperatorActionRecord = StorageRow
+PolicyRolloutRecord = StorageRow
 SignalStateRecord = StorageRow
 SignalStateTransitionRecord = StorageRow
 OpportunityRecord = StorageRow
@@ -59,6 +62,9 @@ __all__ = [
     "AccountSnapshotRecord",
     "BrokerSyncStateRecord",
     "EventLogRecord",
+    "ControlStateRecord",
+    "OperatorActionRecord",
+    "PolicyRolloutRecord",
     "SignalStateRecord",
     "SignalStateTransitionRecord",
     "OpportunityRecord",

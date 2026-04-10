@@ -20,6 +20,13 @@ from spreads.jobs.registry import (
 from spreads.runtime.config import default_redis_url
 from spreads.runtime.redis import build_redis_settings
 from spreads.services.alpaca import create_alpaca_client_from_env
+from spreads.services.control_plane import (
+    OPEN_ACTIVITY_AUTO,
+    OPEN_ACTIVITY_MANUAL,
+    assess_open_activity_gate,
+    get_active_policy_rollout_map,
+    publish_control_gate_event,
+)
 from spreads.services.exit_manager import normalize_exit_policy, resolve_exit_policy_snapshot
 from spreads.services.live_pipelines import build_live_session_id
 from spreads.services.risk_manager import (
@@ -136,15 +143,20 @@ def _policy_ref(
     source_key: str,
     source_job_key: str | None,
     source_job_run_id: str | None,
+    version_token: str | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "family": family,
         "key": source_key,
-        "version": _policy_version_token(resolved_policy),
+        "version": version_token or _policy_version_token(resolved_policy),
         "source_kind": source_kind,
         "source_job_key": source_job_key,
         "source_job_run_id": source_job_run_id,
     }
+    if extra:
+        payload.update(extra)
+    return payload
 
 
 def _candidate_has_intraday_setup_context(candidate: dict[str, Any]) -> bool:
@@ -396,6 +408,12 @@ def _classify_auto_execution_block(exc: Exception) -> dict[str, Any] | None:
             "message": message,
             "block_category": "kill_switch",
         }
+    if message == "Open execution is blocked because control mode is halted.":
+        return {
+            "reason": "control_mode_halted",
+            "message": message,
+            "block_category": "control_mode",
+        }
     if message.startswith("Open execution is blocked on a live Alpaca account."):
         return {
             "reason": "environment_blocked",
@@ -631,6 +649,7 @@ def _resolve_source_policies(
             "source_job_type": None,
             "source_job_key": None,
             "source_job_run_id": None,
+            "execution_policy": normalize_execution_policy(None),
             "risk_policy": normalize_risk_policy(None),
             "exit_policy": normalize_exit_policy(None),
         }
@@ -641,6 +660,7 @@ def _resolve_source_policies(
         "source_job_type": None if job_run is None else _as_text(job_run.get("job_type")),
         "source_job_key": None if job_run is None else _as_text(job_run.get("job_key")),
         "source_job_run_id": job_run_id,
+        "execution_policy": normalize_execution_policy(payload.get("execution_policy")),
         "risk_policy": normalize_risk_policy(payload.get("risk_policy")),
         "exit_policy": normalize_exit_policy(payload.get("exit_policy")),
     }
@@ -651,24 +671,46 @@ def _policy_source_kind(
     request_metadata: dict[str, Any] | None,
     policy_name: str,
     source_job_key: str | None,
+    rollout: dict[str, Any] | None,
 ) -> str:
     if isinstance(request_metadata, dict) and isinstance(request_metadata.get(policy_name), dict):
         return "request_override"
+    if rollout is not None:
+        return "policy_rollout"
     if source_job_key is not None:
         return "source_job"
     return "default"
+
+
+def _requested_policy_payload(
+    *,
+    request_metadata: dict[str, Any] | None,
+    policy_name: str,
+    source_policies: dict[str, Any],
+    active_policy_rollouts: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    if isinstance(request_metadata, dict) and isinstance(request_metadata.get(policy_name), dict):
+        return dict(request_metadata[policy_name])
+    rollout = active_policy_rollouts.get(policy_name)
+    if rollout is not None and isinstance(rollout.get("policy"), dict):
+        return dict(rollout["policy"])
+    return dict(source_policies[policy_name])
 
 
 def _build_policy_refs(
     *,
     request_metadata: dict[str, Any] | None,
     source_policies: dict[str, Any],
+    active_policy_rollouts: dict[str, dict[str, Any]],
     resolved_risk_policy: dict[str, Any],
     resolved_execution_policy: dict[str, Any],
     resolved_exit_policy: dict[str, Any],
 ) -> dict[str, Any]:
     source_job_key = _as_text(source_policies.get("source_job_key"))
     source_job_run_id = _as_text(source_policies.get("source_job_run_id"))
+    risk_rollout = active_policy_rollouts.get("risk_policy")
+    execution_rollout = active_policy_rollouts.get("execution_policy")
+    exit_rollout = active_policy_rollouts.get("exit_policy")
     return {
         "risk_policy": _policy_ref(
             family="risk_policy",
@@ -677,10 +719,24 @@ def _build_policy_refs(
                 request_metadata=request_metadata,
                 policy_name="risk_policy",
                 source_job_key=source_job_key,
+                rollout=risk_rollout,
             ),
-            source_key="risk_policy" if source_job_key is None else source_job_key,
-            source_job_key=source_job_key,
-            source_job_run_id=source_job_run_id,
+            source_key=(
+                str(risk_rollout["policy_rollout_id"])
+                if risk_rollout is not None
+                else ("risk_policy" if source_job_key is None else source_job_key)
+            ),
+            source_job_key=None if risk_rollout is not None else source_job_key,
+            source_job_run_id=None if risk_rollout is not None else source_job_run_id,
+            version_token=None if risk_rollout is None else str(risk_rollout["version_token"]),
+            extra=(
+                {}
+                if risk_rollout is None
+                else {
+                    "policy_rollout_id": str(risk_rollout["policy_rollout_id"]),
+                    "operator_action_id": _as_text(risk_rollout.get("operator_action_id")),
+                }
+            ),
         ),
         "execution_policy": _policy_ref(
             family="execution_policy",
@@ -689,10 +745,24 @@ def _build_policy_refs(
                 request_metadata=request_metadata,
                 policy_name="execution_policy",
                 source_job_key=source_job_key,
+                rollout=execution_rollout,
             ),
-            source_key="execution_policy" if source_job_key is None else source_job_key,
-            source_job_key=source_job_key,
-            source_job_run_id=source_job_run_id,
+            source_key=(
+                str(execution_rollout["policy_rollout_id"])
+                if execution_rollout is not None
+                else ("execution_policy" if source_job_key is None else source_job_key)
+            ),
+            source_job_key=None if execution_rollout is not None else source_job_key,
+            source_job_run_id=None if execution_rollout is not None else source_job_run_id,
+            version_token=None if execution_rollout is None else str(execution_rollout["version_token"]),
+            extra=(
+                {}
+                if execution_rollout is None
+                else {
+                    "policy_rollout_id": str(execution_rollout["policy_rollout_id"]),
+                    "operator_action_id": _as_text(execution_rollout.get("operator_action_id")),
+                }
+            ),
         ),
         "exit_policy": _policy_ref(
             family="exit_policy",
@@ -701,10 +771,24 @@ def _build_policy_refs(
                 request_metadata=request_metadata,
                 policy_name="exit_policy",
                 source_job_key=source_job_key,
+                rollout=exit_rollout,
             ),
-            source_key="exit_policy" if source_job_key is None else source_job_key,
-            source_job_key=source_job_key,
-            source_job_run_id=source_job_run_id,
+            source_key=(
+                str(exit_rollout["policy_rollout_id"])
+                if exit_rollout is not None
+                else ("exit_policy" if source_job_key is None else source_job_key)
+            ),
+            source_job_key=None if exit_rollout is not None else source_job_key,
+            source_job_run_id=None if exit_rollout is not None else source_job_run_id,
+            version_token=None if exit_rollout is None else str(exit_rollout["version_token"]),
+            extra=(
+                {}
+                if exit_rollout is None
+                else {
+                    "policy_rollout_id": str(exit_rollout["policy_rollout_id"]),
+                    "operator_action_id": _as_text(exit_rollout.get("operator_action_id")),
+                }
+            ),
         ),
     }
 
@@ -1075,6 +1159,7 @@ def submit_live_session_execution(
             cycle=cycle,
             job_store=job_store,
         )
+        active_policy_rollouts = get_active_policy_rollout_map(storage=storage)
         opportunity = None
         if signal_store is not None and hasattr(signal_store, "schema_ready") and signal_store.schema_ready():
             opportunity = signal_store.find_active_opportunity_by_candidate_id(candidate_id)
@@ -1111,10 +1196,28 @@ def submit_live_session_execution(
                 "attempt": payload,
             }
 
-        requested_execution_policy = (
-            request_metadata.get("execution_policy")
-            if isinstance(request_metadata, dict) and isinstance(request_metadata.get("execution_policy"), dict)
-            else None
+        gate = assess_open_activity_gate(
+            activity_kind=OPEN_ACTIVITY_MANUAL,
+            storage=storage,
+        )
+        if not gate["allowed"]:
+            publish_control_gate_event(
+                db_target=db_target,
+                decision=gate,
+                activity_kind=OPEN_ACTIVITY_MANUAL,
+                session_id=session_id,
+                session_date=str(cycle["session_date"]),
+                label=str(cycle["label"]),
+                candidate_id=_coerce_int(candidate.get("candidate_id")),
+                cycle_id=_as_text(cycle.get("cycle_id")),
+            )
+            raise ValueError(str(gate["message"]))
+
+        requested_execution_policy = _requested_policy_payload(
+            request_metadata=request_metadata,
+            policy_name="execution_policy",
+            source_policies=source_policies,
+            active_policy_rollouts=active_policy_rollouts,
         )
         resolved_execution_policy = normalize_execution_policy(requested_execution_policy)
         order_request, resolved_quantity, resolved_limit_price = _build_order_request(
@@ -1124,15 +1227,17 @@ def submit_live_session_execution(
             execution_policy=resolved_execution_policy,
             client_order_id=client_order_id,
         )
-        requested_risk_policy = (
-            request_metadata.get("risk_policy")
-            if isinstance(request_metadata, dict) and isinstance(request_metadata.get("risk_policy"), dict)
-            else source_policies["risk_policy"]
+        requested_risk_policy = _requested_policy_payload(
+            request_metadata=request_metadata,
+            policy_name="risk_policy",
+            source_policies=source_policies,
+            active_policy_rollouts=active_policy_rollouts,
         )
-        requested_exit_policy = (
-            request_metadata.get("exit_policy")
-            if isinstance(request_metadata, dict) and isinstance(request_metadata.get("exit_policy"), dict)
-            else source_policies["exit_policy"]
+        requested_exit_policy = _requested_policy_payload(
+            request_metadata=request_metadata,
+            policy_name="exit_policy",
+            source_policies=source_policies,
+            active_policy_rollouts=active_policy_rollouts,
         )
         resolved_exit_policy = resolve_exit_policy_snapshot(
             session_date=str(cycle["session_date"]),
@@ -1151,6 +1256,7 @@ def submit_live_session_execution(
         policy_refs = _build_policy_refs(
             request_metadata=request_metadata,
             source_policies=source_policies,
+            active_policy_rollouts=active_policy_rollouts,
             resolved_risk_policy=resolved_risk_policy,
             resolved_execution_policy=resolved_execution_policy,
             resolved_exit_policy=resolved_exit_policy,
@@ -1615,7 +1721,14 @@ def submit_auto_session_execution(
     reactive_quote_records: list[dict[str, Any]] | None = None,
     storage: Any | None = None,
 ) -> dict[str, Any]:
-    normalized_policy = normalize_execution_policy(policy)
+    active_policy_rollouts = get_active_policy_rollout_map(storage=storage)
+    execution_rollout = active_policy_rollouts.get("execution_policy")
+    requested_policy = (
+        dict(execution_rollout["policy"])
+        if execution_rollout is not None and isinstance(execution_rollout.get("policy"), dict)
+        else policy
+    )
+    normalized_policy = normalize_execution_policy(requested_policy)
     if not normalized_policy["enabled"]:
         return {
             "action": "auto_submit",
@@ -1623,6 +1736,30 @@ def submit_auto_session_execution(
             "reason": "execution_disabled",
             "message": "Automatic execution is disabled for this live collector.",
             "policy": normalized_policy,
+        }
+
+    gate = assess_open_activity_gate(
+        activity_kind=OPEN_ACTIVITY_AUTO,
+        storage=storage,
+    )
+    if not gate["allowed"]:
+        publish_control_gate_event(
+            db_target=db_target,
+            decision=gate,
+            activity_kind=OPEN_ACTIVITY_AUTO,
+            session_id=session_id,
+            session_date=None,
+            label=None,
+            candidate_id=None,
+            cycle_id=cycle_id,
+        )
+        return {
+            "action": "auto_submit",
+            "changed": False,
+            "reason": str(gate["reason"]),
+            "message": str(gate["message"]),
+            "policy": normalized_policy,
+            "control": dict(gate["control"]),
         }
 
     collector_store = storage.collector

@@ -5,6 +5,7 @@ from typing import Any
 
 from spreads.db.decorators import with_storage
 from spreads.services.analysis import build_session_summary
+from spreads.services.control_plane import get_control_state_snapshot
 from spreads.services.execution import list_session_execution_attempts
 from spreads.services.execution_portfolio import build_session_execution_portfolio
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
@@ -466,6 +467,7 @@ def get_session_detail(
         ]
     )
     reconciliation_snapshot = _reconciliation_snapshot(portfolio)
+    control_snapshot = get_control_state_snapshot(storage=storage)
 
     return {
         "session_id": session_id,
@@ -486,6 +488,7 @@ def get_session_detail(
         "events": events,
         "executions": executions,
         "risk_decisions": risk_decisions,
+        "control": control_snapshot,
         "portfolio": portfolio,
         "analysis": analysis,
     }

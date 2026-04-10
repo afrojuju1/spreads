@@ -65,6 +65,11 @@ from spreads.services.execution import (
     submit_session_position_close,
     submit_live_session_execution,
 )
+from spreads.services.control_plane import (
+    CONTROL_SCHEMA_MESSAGE,
+    get_control_state_snapshot,
+    set_control_mode,
+)
 from spreads.services.sessions import (
     DEFAULT_ANALYSIS_PROFIT_TARGET,
     DEFAULT_ANALYSIS_STOP_MULTIPLE,
@@ -140,6 +145,12 @@ class SessionExecutionRequest(BaseModel):
 class SessionPositionCloseRequest(BaseModel):
     quantity: int | None = Field(default=None, ge=1, le=25)
     limit_price: float | None = Field(default=None, gt=0)
+
+
+class ControlModeRequest(BaseModel):
+    mode: Literal["normal", "degraded", "halted"]
+    reason_code: str = Field(..., min_length=1)
+    note: str | None = Field(default=None, min_length=1)
 
 
 def resolve_db(db: str | None) -> str:
@@ -889,6 +900,31 @@ def get_risk_decision(
         return row
     finally:
         repo.close()
+
+
+@app.get("/control/state")
+def get_control_state(db: str | None = None) -> dict[str, Any]:
+    return get_control_state_snapshot(db_target=resolve_db(db))
+
+
+@app.post("/control/mode")
+def update_control_mode(
+    payload: ControlModeRequest,
+    db: str | None = None,
+) -> dict[str, Any]:
+    try:
+        return set_control_mode(
+            db_target=resolve_db(db),
+            mode=payload.mode,
+            reason_code=payload.reason_code,
+            note=payload.note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        if str(exc) == CONTROL_SCHEMA_MESSAGE:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.get("/account/overview")

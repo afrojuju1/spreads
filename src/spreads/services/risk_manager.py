@@ -180,6 +180,10 @@ def _kill_switch_reason() -> str | None:
     return None
 
 
+def resolve_execution_kill_switch_reason() -> str | None:
+    return _kill_switch_reason()
+
+
 def _environment_reason(normalized_policy: dict[str, Any]) -> str | None:
     environment = _current_trading_environment()
     allow_live_env = _coerce_bool(os.environ.get("SPREADS_ALLOW_LIVE_TRADING"))

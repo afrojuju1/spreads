@@ -557,6 +557,16 @@ Deliverable:
 
 ## Phase 4: Control Plane Formalization
 
+Status: completed
+
+Implemented:
+
+- durable global `control_state` record with `normal`, `degraded`, and `halted` modes
+- append-only `operator_actions` audit log for mode changes
+- internal `policy_rollouts` history with active rollout refs in control resolution
+- minimal operator API surface at `/control/state` and `/control/mode`
+- control-event emission for mode changes and control-based open-execution skips and blocks
+
 Build:
 
 - control events

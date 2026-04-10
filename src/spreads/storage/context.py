@@ -5,6 +5,7 @@ from spreads.storage.alert_repository import AlertRepository
 from spreads.storage.broker_repository import BrokerRepository
 from spreads.storage.capabilities import StorageCapabilities
 from spreads.storage.collector_repository import CollectorRepository
+from spreads.storage.control_repository import ControlRepository
 from spreads.storage.event_repository import EventRepository
 from spreads.storage.db import build_session_factory
 from spreads.storage.execution_repository import ExecutionRepository
@@ -59,6 +60,10 @@ class StorageContext:
     @property
     def events(self) -> EventRepository:
         return self._build_repository("events", EventRepository)  # type: ignore[return-value]
+
+    @property
+    def control(self) -> ControlRepository:
+        return self._build_repository("control", ControlRepository)  # type: ignore[return-value]
 
     @property
     def signals(self) -> SignalRepository:

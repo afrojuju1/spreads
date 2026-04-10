@@ -2,6 +2,7 @@ from .capabilities import StorageCapabilities
 from .context import StorageContext
 from .alert_repository import AlertRepository
 from .broker_repository import BrokerRepository
+from .control_repository import ControlRepository
 from .db import DEFAULT_POSTGRES_URL, default_database_url
 from .collector_repository import CollectorRepository
 from .event_repository import EventRepository
@@ -11,6 +12,7 @@ from .factory import (
     build_alert_repository,
     build_broker_repository,
     build_collector_repository,
+    build_control_repository,
     build_event_repository,
     build_execution_repository,
     build_history_store,
@@ -33,6 +35,7 @@ __all__ = [
     "AlertRepository",
     "BrokerRepository",
     "CollectorRepository",
+    "ControlRepository",
     "DEFAULT_POSTGRES_URL",
     "ExecutionRepository",
     "EventRepository",
@@ -48,6 +51,7 @@ __all__ = [
     "build_alert_repository",
     "build_broker_repository",
     "build_collector_repository",
+    "build_control_repository",
     "build_event_repository",
     "build_execution_repository",
     "build_history_store",
