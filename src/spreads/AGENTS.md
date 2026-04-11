@@ -24,11 +24,20 @@
 ## Operator Visibility
 
 - For operator visibility work, reuse these modules with thin adapters instead of introducing parallel API-only logic.
+- Prefer the shipped ops CLI for first-pass checks before dropping to raw storage or HTTP:
+  - `uv run spreads status`
+  - `uv run spreads trading`
+  - `uv run spreads sessions`
+  - `uv run spreads jobs`
+  - `uv run spreads uoa`
+  - `uv run spreads audit <session-id>`
+- `uv run spreads doctor` is not a current command; do not rely on it in investigations or automations.
 - For closed-session investigations, check post-market analysis before tuning strategy thresholds from raw session counts alone.
 
 ## End-Of-Day And Ops Queries
 
 - For questions about "how did we do today", market-close summaries, collector health, or live ops status, prefer the running Docker-backed system state before code inspection.
+- For the covered visibility surfaces, use the shipped `spreads` ops commands before ad hoc curls or direct repository reads.
 - Use the existing stack and narrow live reads first:
   - account and trading health: `services/account_state.py` or `http://localhost:58080/account/overview?history_range=1D`
   - session health: `services/sessions.py` or `http://localhost:58080/sessions?limit=...`

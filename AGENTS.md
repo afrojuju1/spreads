@@ -24,6 +24,14 @@
 ## Dev Workflow
 
 - This repo is in active development by default.
+- For operator visibility or runtime triage, prefer the shipped ops CLI first when it fits the question:
+  - `uv run spreads status`
+  - `uv run spreads trading`
+  - `uv run spreads sessions`
+  - `uv run spreads jobs`
+  - `uv run spreads uoa`
+  - `uv run spreads audit <session-id>`
+- Do not assume `uv run spreads doctor` exists; it is intentionally deferred.
 - For runtime verification of the API, workers, scheduler, or web app, prefer the existing `docker compose` services when they are already running instead of starting duplicate local processes.
 - Use `docker compose ps`, `docker compose logs`, and `docker compose restart` for stack-level checks before falling back to ad hoc local `uvicorn`, worker, or scheduler runs.
 - In Docker, the `api` service hot-reloads source changes, but the `worker-main`, `worker-collector`, and `scheduler` processes do not. After changing job, worker, or shared backend runtime code that those services import, restart the affected containers before trusting runtime behavior.

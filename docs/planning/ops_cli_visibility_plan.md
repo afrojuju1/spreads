@@ -1,6 +1,6 @@
 # Ops CLI Visibility Plan
 
-Status: in progress; phase 1, phase 2, and phase 3 shipped on April 10, 2026, phase 4 audit shipped on April 11, 2026, doctor pending
+Status: implemented for current scope; phase 1, phase 2, phase 3, and phase 4 audit shipped, doctor deferred
 
 Related:
 
@@ -8,6 +8,24 @@ Related:
 - [0DTE System Architecture](/Users/adeb/Projects/spreads/docs/planning/0dte_system_architecture.md)
 - [Unusual Activity Scanner Design](/Users/adeb/Projects/spreads/docs/planning/unusual_activity_scanner_design.md)
 - [Alert Delivery Refactor Plan](/Users/adeb/Projects/spreads/docs/planning/alert_delivery_refactor_plan.md)
+
+## Shipped Scope
+
+As of April 11, 2026, the operator visibility CLI ships:
+
+- `spreads status`
+- `spreads trading`
+- `spreads sessions`
+- `spreads sessions <session-id>`
+- `spreads jobs`
+- `spreads jobs run <job-run-id>`
+- `spreads uoa`
+- `spreads uoa cycle <cycle-id>`
+- `spreads audit <session-id>`
+
+Deferred for now:
+
+- `spreads doctor`
 
 ## Goal
 
@@ -239,6 +257,23 @@ spreads
   collect
   analyze
 ```
+
+Implemented now:
+
+- `status`
+- `trading`
+- `sessions`
+- `jobs`
+- `uoa`
+- `audit`
+
+Planned or deferred:
+
+- `alerts`
+- `doctor`
+- `scan`
+- `collect`
+- `analyze`
 
 Each subcommand should follow the same internal flow:
 
@@ -1062,7 +1097,7 @@ Why fourth:
 Status note:
 
 - `audit` shipped on April 11, 2026
-- `doctor` pending
+- `doctor` deferred for now and not required for the shipped operator surface
 
 ## Non-Goals For V1
 
