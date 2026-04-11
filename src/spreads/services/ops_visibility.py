@@ -13,6 +13,7 @@ from spreads.jobs.orchestration import (
     singleton_lease_key,
 )
 from spreads.services.account_state import get_account_overview
+from spreads.services.audit_replay import DEFAULT_EVENT_SCAN_LIMIT, build_audit_replay
 from spreads.services.broker_sync import BROKER_SYNC_KEY
 from spreads.services.control_plane import (
     get_control_state_snapshot,
@@ -145,6 +146,15 @@ def _control_status(control: Mapping[str, Any]) -> str:
         return "degraded"
     if mode == "normal":
         return "healthy"
+    return "unknown"
+
+
+def _session_status(status: Any) -> str:
+    normalized = str(status or "unknown").strip().lower()
+    if normalized == "failed":
+        return "blocked"
+    if normalized in {"healthy", "idle", "degraded"}:
+        return normalized
     return "unknown"
 
 
@@ -1847,6 +1857,308 @@ def build_job_run_view(
             "singleton_lease": None
             if singleton_lease is None
             else dict(singleton_lease),
+        },
+    }
+
+
+@with_storage()
+def build_audit_view(
+    *,
+    session_id: str,
+    db_target: str | None = None,
+    timeline_limit: int = 120,
+    event_scan_limit: int = DEFAULT_EVENT_SCAN_LIMIT,
+    storage: Any | None = None,
+) -> dict[str, Any]:
+    generated_at = _utc_now()
+    try:
+        replay = build_audit_replay(
+            db_target=db_target or "",
+            session_id=session_id,
+            timeline_limit=timeline_limit,
+            event_scan_limit=event_scan_limit,
+            storage=storage,
+        )
+    except ValueError as exc:
+        raise OpsLookupError(str(exc)) from exc
+
+    session = (
+        replay.get("session") if isinstance(replay.get("session"), Mapping) else {}
+    )
+    timeline_stats = (
+        replay.get("timeline_stats")
+        if isinstance(replay.get("timeline_stats"), Mapping)
+        else {}
+    )
+    state_summary = (
+        replay.get("state_summary")
+        if isinstance(replay.get("state_summary"), Mapping)
+        else {}
+    )
+    explanations = (
+        replay.get("explanations")
+        if isinstance(replay.get("explanations"), Mapping)
+        else {}
+    )
+    control = (
+        state_summary.get("control_snapshot")
+        if isinstance(state_summary.get("control_snapshot"), Mapping)
+        else {}
+    )
+    current_cycle = (
+        state_summary.get("current_cycle")
+        if isinstance(state_summary.get("current_cycle"), Mapping)
+        else {}
+    )
+    counts = (
+        state_summary.get("counts")
+        if isinstance(state_summary.get("counts"), Mapping)
+        else {}
+    )
+    portfolio = (
+        state_summary.get("portfolio")
+        if isinstance(state_summary.get("portfolio"), Mapping)
+        else {}
+    )
+    portfolio_summary = (
+        portfolio.get("summary")
+        if isinstance(portfolio.get("summary"), Mapping)
+        else {}
+    )
+    post_market = (
+        replay.get("post_market")
+        if isinstance(replay.get("post_market"), Mapping)
+        else {}
+    )
+    selected_opportunities = [
+        dict(row)
+        for row in list(explanations.get("selected_opportunities") or [])
+        if isinstance(row, Mapping)
+    ]
+    risk_decisions = [
+        dict(row)
+        for row in list(explanations.get("risk_decisions") or [])
+        if isinstance(row, Mapping)
+    ]
+    execution_outcomes = [
+        dict(row)
+        for row in list(explanations.get("execution_outcomes") or [])
+        if isinstance(row, Mapping)
+    ]
+    control_actions = [
+        dict(row)
+        for row in list(explanations.get("control_actions") or [])
+        if isinstance(row, Mapping)
+    ]
+
+    attention: list[dict[str, str]] = []
+    statuses = [
+        _session_status(session.get("status") or state_summary.get("status")),
+        _control_status(control),
+    ]
+
+    session_status = _session_status(
+        session.get("status") or state_summary.get("status")
+    )
+    if session_status == "blocked":
+        attention.append(
+            _attention(
+                severity="high",
+                code="audit_session_failed",
+                message=f"Session {session_id} is recorded as failed.",
+            )
+        )
+    elif session_status == "degraded":
+        attention.append(
+            _attention(
+                severity="medium",
+                code="audit_session_degraded",
+                message=f"Session {session_id} is degraded.",
+            )
+        )
+
+    control_mode = _as_text(control.get("mode"))
+    if control_mode == "halted":
+        attention.append(
+            _attention(
+                severity="high",
+                code="audit_control_halted",
+                message="Control mode was halted during the session.",
+            )
+        )
+    elif control_mode == "degraded":
+        attention.append(
+            _attention(
+                severity="medium",
+                code="audit_control_degraded",
+                message="Control mode was degraded during the session.",
+            )
+        )
+
+    risk_status = str(session.get("risk_status") or "").strip().lower()
+    if risk_status == "blocked":
+        statuses.append("blocked")
+        attention.append(
+            _attention(
+                severity="high",
+                code="audit_risk_blocked",
+                message=_as_text(session.get("risk_note"))
+                or "Session risk state was blocked.",
+            )
+        )
+    elif risk_status not in {"", "ok", "disabled"}:
+        statuses.append("degraded")
+
+    reconciliation_status = (
+        str(session.get("reconciliation_status") or "").strip().lower()
+    )
+    if reconciliation_status == "mismatch":
+        statuses.append("degraded")
+        attention.append(
+            _attention(
+                severity="medium",
+                code="audit_reconciliation_mismatch",
+                message=_as_text(session.get("reconciliation_note"))
+                or "Session reconciliation had mismatches.",
+            )
+        )
+
+    weak_verdict = (
+        str(post_market.get("overall_verdict") or "").strip().lower() == "weak"
+    )
+    if weak_verdict:
+        statuses.append("degraded")
+        attention.append(
+            _attention(
+                severity="medium",
+                code="audit_post_market_weak",
+                message="Post-market verdict is weak.",
+            )
+        )
+
+    blocked_risk_count = sum(
+        1
+        for row in risk_decisions
+        if str(row.get("status") or "").strip().lower()
+        in {"blocked", "rejected", "denied"}
+    )
+    if blocked_risk_count:
+        statuses.append("degraded")
+        attention.append(
+            _attention(
+                severity="medium",
+                code="audit_risk_decisions_blocked",
+                message=f"{blocked_risk_count} risk decision(s) were blocked by policy.",
+            )
+        )
+
+    failed_execution_count = sum(
+        1
+        for row in execution_outcomes
+        if _as_text(row.get("error_text")) is not None
+        or str(row.get("status") or "").strip().lower() in {"failed", "rejected"}
+    )
+    if failed_execution_count:
+        statuses.append("degraded")
+        attention.append(
+            _attention(
+                severity="high",
+                code="audit_execution_failed",
+                message=f"{failed_execution_count} execution attempt(s) failed or were rejected.",
+            )
+        )
+
+    open_execution_count = sum(
+        1
+        for row in execution_outcomes
+        if str(row.get("status") or "").strip().lower() in OPEN_STATUSES
+    )
+    if open_execution_count:
+        statuses.append("degraded")
+        attention.append(
+            _attention(
+                severity="medium",
+                code="audit_execution_open",
+                message=f"{open_execution_count} execution attempt(s) are still open.",
+            )
+        )
+
+    if bool(timeline_stats.get("timeline_truncated")):
+        attention.append(
+            _attention(
+                severity="low",
+                code="audit_timeline_truncated",
+                message=(
+                    f"Timeline output was truncated to {timeline_stats.get('returned_timeline_item_count')} "
+                    f"items; {timeline_stats.get('omitted_timeline_item_count')} item(s) were omitted."
+                ),
+            )
+        )
+
+    if bool(timeline_stats.get("event_scan_limit_hit")):
+        attention.append(
+            _attention(
+                severity="low",
+                code="audit_event_scan_limited",
+                message=(
+                    f"Replay hit the event scan limit of {timeline_stats.get('event_scan_limit')}; "
+                    "older events may be omitted."
+                ),
+            )
+        )
+
+    return {
+        "status": _combine_statuses(*statuses),
+        "generated_at": generated_at,
+        "summary": {
+            "view": "audit",
+            "session_id": session.get("session_id") or session_id,
+            "label": session.get("label"),
+            "session_date": session.get("session_date"),
+            "session_status": session.get("status") or state_summary.get("status"),
+            "control_mode": control.get("mode"),
+            "risk_status": session.get("risk_status"),
+            "reconciliation_status": session.get("reconciliation_status"),
+            "alert_count": counts.get("alerts"),
+            "opportunity_count": counts.get("opportunities"),
+            "risk_decision_count": counts.get("risk_decisions"),
+            "execution_count": counts.get("executions"),
+            "timeline_item_count": timeline_stats.get("timeline_item_count"),
+            "returned_timeline_item_count": timeline_stats.get(
+                "returned_timeline_item_count"
+            ),
+            "post_market_verdict": post_market.get("overall_verdict"),
+            "net_pnl_total": portfolio_summary.get("net_pnl_total"),
+        },
+        "attention": attention[:10],
+        "details": {
+            "view": "audit",
+            "session": dict(session),
+            "control": dict(control),
+            "current_cycle": dict(current_cycle),
+            "counts": dict(counts),
+            "portfolio_summary": dict(portfolio_summary),
+            "post_market": dict(post_market),
+            "slot_runs": [
+                dict(row)
+                for row in list(replay.get("slot_runs") or [])
+                if isinstance(row, Mapping)
+            ],
+            "alerts": [
+                dict(row)
+                for row in list(replay.get("alerts") or [])
+                if isinstance(row, Mapping)
+            ],
+            "selected_opportunities": selected_opportunities,
+            "risk_decisions": risk_decisions,
+            "execution_outcomes": execution_outcomes,
+            "control_actions": control_actions,
+            "timeline_stats": dict(timeline_stats),
+            "timeline": [
+                dict(row)
+                for row in list(replay.get("timeline") or [])
+                if isinstance(row, Mapping)
+            ],
         },
     }
 

@@ -23,6 +23,15 @@ def _as_text(value: Any) -> str | None:
     return rendered or None
 
 
+def _coerce_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _timeline_sort_key(item: Mapping[str, Any]) -> tuple[Any, str, str, str]:
     timestamp = parse_datetime(_as_text(item.get("at")) or "1970-01-01T00:00:00Z")
     return (
@@ -62,11 +71,7 @@ def _detail_subset(payload: Mapping[str, Any]) -> dict[str, Any]:
         "job_run_id",
         "job_type",
     )
-    details = {
-        key: payload[key]
-        for key in detail_keys
-        if payload.get(key) is not None
-    }
+    details = {key: payload[key] for key in detail_keys if payload.get(key) is not None}
     if payload.get("reason_codes"):
         details["reason_codes"] = list(payload["reason_codes"])
     if payload.get("blockers"):
@@ -104,9 +109,17 @@ def _event_summary(event: Mapping[str, Any]) -> str:
     if topic == "control.execution.blocked" or topic == "control.execution.skipped":
         return _as_text(payload.get("message")) or topic
     if topic == "control.mode.updated":
-        control = payload.get("control") if isinstance(payload.get("control"), Mapping) else {}
-        mode = _as_text(control.get("mode")) or _as_text(payload.get("mode")) or "updated"
-        reason_code = _as_text(control.get("reason_code")) or _as_text(payload.get("reason_code"))
+        control = (
+            payload.get("control")
+            if isinstance(payload.get("control"), Mapping)
+            else {}
+        )
+        mode = (
+            _as_text(control.get("mode")) or _as_text(payload.get("mode")) or "updated"
+        )
+        reason_code = _as_text(control.get("reason_code")) or _as_text(
+            payload.get("reason_code")
+        )
         return f"Control mode set to {mode}{'' if reason_code is None else f' ({reason_code})'}."
     if topic == "job.run.updated":
         job_type = _as_text(payload.get("job_type")) or "job"
@@ -116,13 +129,27 @@ def _event_summary(event: Mapping[str, Any]) -> str:
     if topic == "broker.sync.updated":
         return f"Broker sync is {status or 'updated'}."
     if topic == "market.quote.captured":
-        symbol = _as_text(payload.get("option_symbol")) or _as_text(payload.get("symbol")) or entity_key or "quote"
+        symbol = (
+            _as_text(payload.get("option_symbol"))
+            or _as_text(payload.get("symbol"))
+            or entity_key
+            or "quote"
+        )
         return f"{symbol} quote captured."
     if topic == "market.trade.captured":
-        symbol = _as_text(payload.get("option_symbol")) or _as_text(payload.get("symbol")) or entity_key or "trade"
+        symbol = (
+            _as_text(payload.get("option_symbol"))
+            or _as_text(payload.get("symbol"))
+            or entity_key
+            or "trade"
+        )
         return f"{symbol} trade captured."
     if topic == "uoa.summary.updated":
-        overview = payload.get("overview") if isinstance(payload.get("overview"), Mapping) else {}
+        overview = (
+            payload.get("overview")
+            if isinstance(payload.get("overview"), Mapping)
+            else {}
+        )
         cycle_id = _as_text(payload.get("cycle_id")) or entity_key or "unknown_cycle"
         scoreable_trades = int(overview.get("scoreable_trade_count") or 0)
         scoreable_contracts = int(overview.get("scoreable_contract_count") or 0)
@@ -133,7 +160,11 @@ def _event_summary(event: Mapping[str, Any]) -> str:
             f"{scoreable_contracts} contracts / {scoreable_roots} roots."
         )
     if topic == "uoa.decision.updated":
-        overview = payload.get("overview") if isinstance(payload.get("overview"), Mapping) else {}
+        overview = (
+            payload.get("overview")
+            if isinstance(payload.get("overview"), Mapping)
+            else {}
+        )
         cycle_id = _as_text(payload.get("cycle_id")) or entity_key or "unknown_cycle"
         watchlist_count = int(overview.get("watchlist_count") or 0)
         board_count = int(overview.get("board_count") or 0)
@@ -161,7 +192,9 @@ def _normalize_event_item(event: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _collapse_market_quote_events(events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+def _collapse_market_quote_events(
+    events: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
     grouped: dict[tuple[str | None, str | None, str | None], dict[str, Any]] = {}
     ordered_groups: list[tuple[str | None, str | None, str | None]] = []
     normalized_items: list[dict[str, Any]] = []
@@ -191,7 +224,8 @@ def _collapse_market_quote_events(events: list[dict[str, Any]]) -> tuple[list[di
                 "topic": MARKET_QUOTE_CAPTURE_TOPIC,
                 "source": _as_text(event.get("source")),
                 "entity_type": "option_quote_batch",
-                "entity_id": _as_text(payload.get("cycle_id")) or str(event.get("entity_key") or ""),
+                "entity_id": _as_text(payload.get("cycle_id"))
+                or str(event.get("entity_key") or ""),
                 "correlation_id": _as_text(event.get("correlation_id")),
                 "causation_id": _as_text(event.get("causation_id")),
                 "details": {
@@ -206,7 +240,11 @@ def _collapse_market_quote_events(events: list[dict[str, Any]]) -> tuple[list[di
             grouped[group_key] = entry
             ordered_groups.append(group_key)
         entry["details"]["quote_count"] += 1
-        if symbol and symbol not in entry["details"]["symbols_sample"] and len(entry["details"]["symbols_sample"]) < 5:
+        if (
+            symbol
+            and symbol not in entry["details"]["symbols_sample"]
+            and len(entry["details"]["symbols_sample"]) < 5
+        ):
             entry["details"]["symbols_sample"].append(symbol)
         collapsed_count += 1
 
@@ -288,7 +326,9 @@ def _apply_timeline_limit(
     return items[:head_count] + [marker] + items[-tail_count:], True, hidden_count
 
 
-def _current_cycle_summary(current_cycle: Mapping[str, Any] | None) -> dict[str, Any] | None:
+def _current_cycle_summary(
+    current_cycle: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
     if current_cycle is None:
         return None
     board_candidates = list(current_cycle.get("board_candidates") or [])
@@ -315,7 +355,9 @@ def _summarize_opportunity(opportunity: Mapping[str, Any]) -> dict[str, Any]:
         "confidence": opportunity.get("confidence"),
         "reason_codes": list(opportunity.get("reason_codes") or []),
         "blockers": list(opportunity.get("blockers") or []),
-        "consumed_by_execution_attempt_id": _as_text(opportunity.get("consumed_by_execution_attempt_id")),
+        "consumed_by_execution_attempt_id": _as_text(
+            opportunity.get("consumed_by_execution_attempt_id")
+        ),
         "updated_at": _as_text(opportunity.get("updated_at")),
     }
 
@@ -356,6 +398,94 @@ def _summarize_execution(attempt: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _summarize_slot_run(run: Mapping[str, Any]) -> dict[str, Any]:
+    quote_capture = (
+        run.get("quote_capture")
+        if isinstance(run.get("quote_capture"), Mapping)
+        else {}
+    )
+    trade_capture = (
+        run.get("trade_capture")
+        if isinstance(run.get("trade_capture"), Mapping)
+        else {}
+    )
+    return {
+        "job_run_id": _as_text(run.get("job_run_id")),
+        "slot_at": _as_text(run.get("slot_at")),
+        "scheduled_for": _as_text(run.get("scheduled_for")),
+        "status": _as_text(run.get("status")),
+        "capture_status": _as_text(run.get("capture_status")),
+        "started_at": _as_text(run.get("started_at")),
+        "finished_at": _as_text(run.get("finished_at")),
+        "quote_capture": {
+            "capture_status": _as_text(quote_capture.get("capture_status")),
+            "websocket_quote_events_saved": quote_capture.get(
+                "websocket_quote_events_saved"
+            ),
+            "baseline_quote_events_saved": quote_capture.get(
+                "baseline_quote_events_saved"
+            ),
+            "recovery_quote_events_saved": quote_capture.get(
+                "recovery_quote_events_saved"
+            ),
+        },
+        "trade_capture": {
+            "capture_status": _as_text(trade_capture.get("capture_status")),
+            "total_trade_events_saved": trade_capture.get("total_trade_events_saved"),
+            "websocket_trade_events_saved": trade_capture.get(
+                "websocket_trade_events_saved"
+            ),
+        },
+    }
+
+
+def _summarize_alert(alert: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "alert_id": _as_text(alert.get("alert_id")),
+        "created_at": _as_text(alert.get("created_at")),
+        "label": _as_text(alert.get("label")),
+        "symbol": _as_text(alert.get("symbol")),
+        "alert_type": _as_text(alert.get("alert_type")),
+        "delivery_target": _as_text(alert.get("delivery_target")),
+        "status": _as_text(alert.get("status")),
+    }
+
+
+def _board_watchlist_pnl_spread(summary: Mapping[str, Any] | None) -> float | None:
+    if not isinstance(summary, Mapping):
+        return None
+    outcomes = summary.get("outcomes")
+    if not isinstance(outcomes, Mapping):
+        return None
+    averages = outcomes.get("average_estimated_pnl_by_bucket")
+    if not isinstance(averages, Mapping):
+        return None
+    board = _coerce_float(averages.get("board"))
+    watchlist = _coerce_float(averages.get("watchlist"))
+    if board is None or watchlist is None:
+        return None
+    return round(board - watchlist, 2)
+
+
+def _summarize_post_market(analysis: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(analysis, Mapping):
+        return {
+            "overall_verdict": None,
+            "board_watchlist_pnl_spread": None,
+            "recommendations": [],
+        }
+    diagnostics = (
+        analysis.get("diagnostics")
+        if isinstance(analysis.get("diagnostics"), Mapping)
+        else {}
+    )
+    return {
+        "overall_verdict": _as_text(diagnostics.get("overall_verdict")),
+        "board_watchlist_pnl_spread": _board_watchlist_pnl_spread(analysis),
+        "recommendations": list(analysis.get("recommendations") or []),
+    }
+
+
 @with_storage()
 def build_audit_replay(
     *,
@@ -374,6 +504,9 @@ def build_audit_replay(
     )
     label = str(session["label"])
     session_date = str(session["session_date"])
+    analysis = (
+        session.get("analysis") if isinstance(session.get("analysis"), Mapping) else {}
+    )
     event_store = storage.events
     signal_store = storage.signals
 
@@ -419,8 +552,7 @@ def build_audit_replay(
 
     timeline_items, collapsed_quote_count = _collapse_market_quote_events(raw_events)
     timeline_items.extend(
-        _normalize_collector_event(dict(event))
-        for event in session.get("events") or []
+        _normalize_collector_event(dict(event)) for event in session.get("events") or []
     )
     timeline_items.sort(key=_timeline_sort_key)
     limited_timeline, timeline_truncated, hidden_count = _apply_timeline_limit(
@@ -464,6 +596,16 @@ def build_audit_replay(
         "executions": list(session.get("executions") or []),
         "portfolio": dict(session.get("portfolio") or {}),
     }
+    slot_runs = [
+        _summarize_slot_run(dict(row))
+        for row in list(session.get("slot_runs") or [])[:10]
+        if isinstance(row, Mapping)
+    ]
+    alerts = [
+        _summarize_alert(dict(row))
+        for row in list(session.get("alerts") or [])[:25]
+        if isinstance(row, Mapping)
+    ]
 
     return {
         "session": {
@@ -472,6 +614,10 @@ def build_audit_replay(
             "session_date": session_date,
             "status": session.get("status"),
             "updated_at": session.get("updated_at"),
+            "risk_status": session.get("risk_status"),
+            "risk_note": session.get("risk_note"),
+            "reconciliation_status": session.get("reconciliation_status"),
+            "reconciliation_note": session.get("reconciliation_note"),
         },
         "timeline": limited_timeline,
         "timeline_stats": {
@@ -484,15 +630,21 @@ def build_audit_replay(
             "event_scan_limit_hit": len(raw_events) >= event_scan_limit,
             "collapsed_market_quote_event_count": collapsed_quote_count,
             "timeline_window": {
-                "started_at": None if not timeline_items else timeline_items[0].get("at"),
-                "ended_at": None if not timeline_items else timeline_items[-1].get("at"),
+                "started_at": None
+                if not timeline_items
+                else timeline_items[0].get("at"),
+                "ended_at": None
+                if not timeline_items
+                else timeline_items[-1].get("at"),
             },
         },
         "state_summary": state_summary,
+        "slot_runs": slot_runs,
+        "alerts": alerts,
+        "post_market": _summarize_post_market(analysis),
         "explanations": {
             "selected_opportunities": [
-                _summarize_opportunity(row)
-                for row in prioritized_opportunities[:5]
+                _summarize_opportunity(row) for row in prioritized_opportunities[:5]
             ],
             "risk_decisions": [
                 _summarize_risk_decision(dict(row))

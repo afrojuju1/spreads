@@ -1,6 +1,6 @@
 # Ops CLI Visibility Plan
 
-Status: in progress; phase 1, phase 2, and phase 3 shipped on April 10, 2026, phase 4 pending
+Status: in progress; phase 1, phase 2, and phase 3 shipped on April 10, 2026, phase 4 audit shipped on April 11, 2026, doctor pending
 
 Related:
 
@@ -1058,6 +1058,11 @@ Ship:
 Why fourth:
 
 - best for deeper investigation once the main surfaces are in place
+
+Status note:
+
+- `audit` shipped on April 11, 2026
+- `doctor` pending
 
 ## Non-Goals For V1
 

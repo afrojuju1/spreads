@@ -311,6 +311,10 @@ def render_uoa_view(console: Console, payload: dict[str, Any]) -> None:
     _render_uoa_detail(console, payload)
 
 
+def render_audit_view(console: Console, payload: dict[str, Any]) -> None:
+    _render_audit_detail(console, payload)
+
+
 def _render_sessions_list(console: Console, payload: dict[str, Any]) -> None:
     summary = dict(payload.get("summary") or {})
     details = dict(payload.get("details") or {})
@@ -848,5 +852,258 @@ def _render_uoa_detail(console: Console, payload: dict[str, Any]) -> None:
                 str(row.get("symbol") or "-"),
                 str(row.get("event_type") or "-"),
                 _truncate(row.get("message"), length=72),
+            )
+        console.print(table)
+
+
+def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
+    summary = dict(payload.get("summary") or {})
+    details = dict(payload.get("details") or {})
+    current_cycle = dict(details.get("current_cycle") or {})
+    portfolio_summary = dict(details.get("portfolio_summary") or {})
+    post_market = dict(details.get("post_market") or {})
+    timeline_stats = dict(details.get("timeline_stats") or {})
+
+    overview = Table.grid(padding=(0, 2))
+    overview.add_row("Overall", _status_text(payload.get("status")))
+    overview.add_row("Generated", _render_value(payload.get("generated_at")))
+    overview.add_row("Session", _render_value(summary.get("session_id")))
+    overview.add_row("Label", _render_value(summary.get("label")))
+    overview.add_row("Date", _render_value(summary.get("session_date")))
+    overview.add_row("Session Status", _render_value(summary.get("session_status")))
+    overview.add_row("Control", _render_value(summary.get("control_mode")))
+    overview.add_row("Risk", _render_value(summary.get("risk_status")))
+    overview.add_row(
+        "Reconciliation", _render_value(summary.get("reconciliation_status"))
+    )
+    overview.add_row("Verdict", _render_value(summary.get("post_market_verdict")))
+    overview.add_row("Net PnL", _render_money(summary.get("net_pnl_total")))
+    overview.add_row(
+        "Counts",
+        (
+            f"alerts {_render_value(summary.get('alert_count'))} | "
+            f"risk {_render_value(summary.get('risk_decision_count'))} | "
+            f"exec {_render_value(summary.get('execution_count'))}"
+        ),
+    )
+    overview.add_row(
+        "Timeline",
+        (
+            f"{_render_value(summary.get('returned_timeline_item_count'))}/"
+            f"{_render_value(summary.get('timeline_item_count'))} "
+            f"items"
+        ),
+    )
+    console.print(
+        Panel(
+            overview,
+            title="Audit",
+            border_style=STATUS_STYLES.get(str(payload.get("status")), "white"),
+        )
+    )
+
+    _render_attention(console, payload)
+
+    if current_cycle:
+        table = Table(title="Current Cycle", show_edge=False, header_style="bold")
+        table.add_column("Field", style="bold")
+        table.add_column("Value")
+        table.add_row("Cycle", _render_value(current_cycle.get("cycle_id")))
+        table.add_row("Generated", _render_value(current_cycle.get("generated_at")))
+        table.add_row("Job Run", _render_value(current_cycle.get("job_run_id")))
+        table.add_row("Strategy", _render_value(current_cycle.get("strategy")))
+        table.add_row("Profile", _render_value(current_cycle.get("profile")))
+        table.add_row("Universe", _render_value(current_cycle.get("universe_label")))
+        table.add_row(
+            "Candidates",
+            (
+                f"board {_render_value(current_cycle.get('board_candidate_count'))} | "
+                f"watchlist {_render_value(current_cycle.get('watchlist_candidate_count'))}"
+            ),
+        )
+        console.print(table)
+
+    portfolio_table = Table(
+        title="Portfolio Summary", show_edge=False, header_style="bold"
+    )
+    portfolio_table.add_column("Field", style="bold")
+    portfolio_table.add_column("Value")
+    portfolio_table.add_row(
+        "Positions", _render_value(portfolio_summary.get("position_count"))
+    )
+    portfolio_table.add_row(
+        "Open Positions", _render_value(portfolio_summary.get("open_position_count"))
+    )
+    portfolio_table.add_row(
+        "Realized PnL", _render_money(portfolio_summary.get("realized_pnl_total"))
+    )
+    portfolio_table.add_row(
+        "Unrealized PnL", _render_money(portfolio_summary.get("unrealized_pnl_total"))
+    )
+    portfolio_table.add_row(
+        "Net PnL", _render_money(portfolio_summary.get("net_pnl_total"))
+    )
+    portfolio_table.add_row(
+        "Mismatches",
+        _render_value(portfolio_summary.get("mismatch_position_count")),
+    )
+    portfolio_table.add_row(
+        "Mark Source", _render_value(portfolio_summary.get("mark_source"))
+    )
+    console.print(portfolio_table)
+
+    recommendations = list(post_market.get("recommendations") or [])
+    post_market_table = Table(title="Post-Market", show_edge=False, header_style="bold")
+    post_market_table.add_column("Field", style="bold")
+    post_market_table.add_column("Value")
+    post_market_table.add_row(
+        "Verdict", _render_value(post_market.get("overall_verdict"))
+    )
+    post_market_table.add_row(
+        "Board vs WL",
+        _render_money(post_market.get("board_watchlist_pnl_spread")),
+    )
+    post_market_table.add_row("Recommendations", _render_value(len(recommendations)))
+    console.print(post_market_table)
+
+    if recommendations:
+        table = Table(title="Recommendations", header_style="bold")
+        table.add_column("Priority")
+        table.add_column("Code")
+        table.add_column("Reason")
+        for row in recommendations[:5]:
+            table.add_row(
+                str(row.get("priority") or "-"),
+                str(row.get("code") or row.get("title") or "-"),
+                _truncate(row.get("reason") or row.get("title"), length=80),
+            )
+        console.print(table)
+
+    slot_runs = list(details.get("slot_runs") or [])
+    if slot_runs:
+        table = Table(title="Collector Slots", header_style="bold")
+        table.add_column("Slot")
+        table.add_column("Status")
+        table.add_column("Capture")
+        table.add_column("Quote WS/Base", justify="right")
+        table.add_column("Trades WS/Total", justify="right")
+        for row in slot_runs:
+            quote_capture = dict(row.get("quote_capture") or {})
+            trade_capture = dict(row.get("trade_capture") or {})
+            table.add_row(
+                str(row.get("slot_at") or row.get("scheduled_for") or "-"),
+                str(row.get("status") or "-"),
+                str(row.get("capture_status") or "-"),
+                f"{_render_value(quote_capture.get('websocket_quote_events_saved'))}/{_render_value(quote_capture.get('baseline_quote_events_saved'))}",
+                f"{_render_value(trade_capture.get('websocket_trade_events_saved'))}/{_render_value(trade_capture.get('total_trade_events_saved'))}",
+            )
+        console.print(table)
+
+    alerts = list(details.get("alerts") or [])
+    if alerts:
+        table = Table(title="Alerts", header_style="bold")
+        table.add_column("Created")
+        table.add_column("Symbol")
+        table.add_column("Type")
+        table.add_column("Target")
+        table.add_column("Status")
+        for row in alerts:
+            table.add_row(
+                str(row.get("created_at") or "-"),
+                str(row.get("symbol") or "-"),
+                str(row.get("alert_type") or "-"),
+                str(row.get("delivery_target") or "-"),
+                str(row.get("status") or "-"),
+            )
+        console.print(table)
+
+    selected_opportunities = list(details.get("selected_opportunities") or [])
+    if selected_opportunities:
+        table = Table(title="Selected Opportunities", header_style="bold")
+        table.add_column("Underlying")
+        table.add_column("Class")
+        table.add_column("State")
+        table.add_column("Confidence", justify="right")
+        table.add_column("Reasons")
+        for row in selected_opportunities:
+            table.add_row(
+                str(row.get("underlying_symbol") or "-"),
+                str(row.get("classification") or "-"),
+                str(row.get("lifecycle_state") or "-"),
+                _render_value(row.get("confidence")),
+                _truncate(", ".join(row.get("reason_codes") or []), length=56),
+            )
+        console.print(table)
+
+    risk_decisions = list(details.get("risk_decisions") or [])
+    if risk_decisions:
+        table = Table(title="Risk Decisions", header_style="bold")
+        table.add_column("At")
+        table.add_column("Underlying")
+        table.add_column("Kind")
+        table.add_column("Status")
+        table.add_column("Reasons")
+        for row in risk_decisions:
+            table.add_row(
+                str(row.get("decided_at") or "-"),
+                str(row.get("underlying_symbol") or "-"),
+                str(row.get("decision_kind") or "-"),
+                str(row.get("status") or "-"),
+                _truncate(", ".join(row.get("reason_codes") or []), length=56),
+            )
+        console.print(table)
+
+    execution_outcomes = list(details.get("execution_outcomes") or [])
+    if execution_outcomes:
+        table = Table(title="Execution Outcomes", header_style="bold")
+        table.add_column("At")
+        table.add_column("Underlying")
+        table.add_column("Intent")
+        table.add_column("Status")
+        table.add_column("Orders/Fills", justify="right")
+        table.add_column("Error")
+        for row in execution_outcomes:
+            table.add_row(
+                str(row.get("requested_at") or row.get("submitted_at") or "-"),
+                str(row.get("underlying_symbol") or "-"),
+                str(row.get("trade_intent") or "-"),
+                str(row.get("status") or "-"),
+                f"{_render_value(row.get('order_count'))}/{_render_value(row.get('fill_count'))}",
+                _truncate(row.get("error_text"), length=48),
+            )
+        console.print(table)
+
+    control_actions = list(details.get("control_actions") or [])
+    if control_actions:
+        table = Table(title="Control Actions", header_style="bold")
+        table.add_column("At")
+        table.add_column("Topic")
+        table.add_column("Summary")
+        for row in control_actions:
+            table.add_row(
+                str(row.get("at") or "-"),
+                str(row.get("topic") or "-"),
+                _truncate(row.get("summary"), length=84),
+            )
+        console.print(table)
+
+    timeline = list(details.get("timeline") or [])
+    if timeline:
+        title = "Timeline"
+        if timeline_stats.get("timeline_window"):
+            window = dict(timeline_stats.get("timeline_window") or {})
+            title = (
+                "Timeline "
+                f"({_render_value(window.get('started_at'))} -> {_render_value(window.get('ended_at'))})"
+            )
+        table = Table(title=title, header_style="bold")
+        table.add_column("At")
+        table.add_column("Topic")
+        table.add_column("Summary")
+        for row in timeline:
+            table.add_row(
+                str(row.get("at") or "-"),
+                str(row.get("topic") or "-"),
+                _truncate(row.get("summary"), length=88),
             )
         console.print(table)

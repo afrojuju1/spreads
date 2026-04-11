@@ -8,6 +8,7 @@ import typer
 
 from spreads.cli.ops_render import (
     build_console,
+    render_audit_view,
     render_jobs_view,
     render_json_payload,
     render_sessions_view,
@@ -17,6 +18,7 @@ from spreads.cli.ops_render import (
 )
 from spreads.services.ops_visibility import (
     OpsLookupError,
+    build_audit_view,
     build_job_run_view,
     build_jobs_overview,
     build_sessions_view,
@@ -46,9 +48,9 @@ def _validate_watch_interval(value: float | None) -> float | None:
     return value
 
 
-def _validate_limit(value: int) -> int:
+def _validate_limit(value: int, *, option_name: str = "--limit") -> int:
     if value <= 0:
-        raise ValueError("--limit must be greater than 0.")
+        raise ValueError(f"{option_name} must be greater than 0.")
     return value
 
 
@@ -165,7 +167,7 @@ def sessions_command(
     try:
         if session_id is not None and date is not None:
             raise ValueError("--date cannot be used with a session id.")
-        resolved_limit = _validate_limit(limit)
+        resolved_limit = _validate_limit(limit, option_name="--limit")
     except ValueError as exc:
         typer.secho(str(exc), err=True, fg=typer.colors.RED)
         raise typer.Exit(3) from None
@@ -177,6 +179,51 @@ def sessions_command(
             limit=resolved_limit,
         ),
         renderer=render_sessions_view,
+        json_output=json_output,
+        watch_seconds=watch,
+        no_color=no_color,
+    )
+
+
+def audit_command(
+    session_id: str = typer.Argument(..., help="Session id to audit."),
+    timeline_limit: int = typer.Option(
+        120,
+        "--timeline-limit",
+        help="Maximum timeline items to return.",
+    ),
+    event_scan_limit: int = typer.Option(
+        5000,
+        "--event-scan-limit",
+        help="Maximum events to scan while building the replay.",
+    ),
+    db: str | None = typer.Option(None, "--db", help="Database URL override."),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
+    watch: float | None = typer.Option(
+        None, "--watch", help="Refresh every N seconds."
+    ),
+    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
+) -> None:
+    try:
+        resolved_timeline_limit = _validate_limit(
+            timeline_limit,
+            option_name="--timeline-limit",
+        )
+        resolved_event_scan_limit = _validate_limit(
+            event_scan_limit,
+            option_name="--event-scan-limit",
+        )
+    except ValueError as exc:
+        typer.secho(str(exc), err=True, fg=typer.colors.RED)
+        raise typer.Exit(3) from None
+    _run_visibility_command(
+        builder=lambda: build_audit_view(
+            session_id=session_id,
+            db_target=db,
+            timeline_limit=resolved_timeline_limit,
+            event_scan_limit=resolved_event_scan_limit,
+        ),
+        renderer=render_audit_view,
         json_output=json_output,
         watch_seconds=watch,
         no_color=no_color,
@@ -209,7 +256,7 @@ def jobs_command(
     if ctx.invoked_subcommand is not None:
         return
     try:
-        resolved_limit = _validate_limit(limit)
+        resolved_limit = _validate_limit(limit, option_name="--limit")
     except ValueError as exc:
         typer.secho(str(exc), err=True, fg=typer.colors.RED)
         raise typer.Exit(3) from None
