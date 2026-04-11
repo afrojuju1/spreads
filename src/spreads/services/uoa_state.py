@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from spreads.db.decorators import with_storage
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
-from spreads.storage.factory import build_storage_context
 
 
 def _cycle_id_from_run_payload(run_payload: Mapping[str, Any]) -> str | None:
@@ -23,7 +23,9 @@ def _cycle_id_from_run_payload(run_payload: Mapping[str, Any]) -> str | None:
     return rendered or None
 
 
-def _collector_cycle_payload(collector_store: Any, *, cycle_id: str) -> dict[str, Any] | None:
+def _collector_cycle_payload(
+    collector_store: Any, *, cycle_id: str
+) -> dict[str, Any] | None:
     cycle = collector_store.get_cycle(cycle_id)
     return None if cycle is None else dict(cycle)
 
@@ -41,7 +43,9 @@ def _build_uoa_state_payload(
         raise ValueError("Live collector run is missing cycle_id")
     cycle = _collector_cycle_payload(collector_store, cycle_id=cycle_id)
     board_candidates = collector_store.list_cycle_candidates(cycle_id, bucket="board")
-    watchlist_candidates = collector_store.list_cycle_candidates(cycle_id, bucket="watchlist")
+    watchlist_candidates = collector_store.list_cycle_candidates(
+        cycle_id, bucket="watchlist"
+    )
     cycle_events = collector_store.list_cycle_events(cycle_id)
     return {
         "job_run": {
@@ -68,30 +72,40 @@ def _build_uoa_state_payload(
     }
 
 
+@with_storage()
 def get_latest_uoa_state(
     *,
-    db_target: str,
+    db_target: str | None = None,
     label: str | None = None,
+    storage: Any | None = None,
 ) -> dict[str, Any]:
-    with build_storage_context(db_target) as storage:
-        run_record = storage.jobs.get_latest_live_collector_run(label=label, status="succeeded")
-        if run_record is None:
-            raise ValueError("No completed live collector run was found")
-        return _build_uoa_state_payload(run_record=run_record, collector_store=storage.collector)
+    run_record = storage.jobs.get_latest_live_collector_run(
+        label=label, status="succeeded"
+    )
+    if run_record is None:
+        raise ValueError("No completed live collector run was found")
+    return _build_uoa_state_payload(
+        run_record=run_record, collector_store=storage.collector
+    )
 
 
+@with_storage()
 def get_uoa_state_for_cycle(
     *,
-    db_target: str,
+    db_target: str | None = None,
     cycle_id: str,
     label: str | None = None,
+    storage: Any | None = None,
 ) -> dict[str, Any]:
-    with build_storage_context(db_target) as storage:
-        run_record = storage.jobs.get_live_collector_run_by_cycle_id(
-            cycle_id=cycle_id,
-            label=label,
-            status="succeeded",
+    run_record = storage.jobs.get_live_collector_run_by_cycle_id(
+        cycle_id=cycle_id,
+        label=label,
+        status="succeeded",
+    )
+    if run_record is None:
+        raise ValueError(
+            f"No completed live collector run was found for cycle_id={cycle_id}"
         )
-        if run_record is None:
-            raise ValueError(f"No completed live collector run was found for cycle_id={cycle_id}")
-        return _build_uoa_state_payload(run_record=run_record, collector_store=storage.collector)
+    return _build_uoa_state_payload(
+        run_record=run_record, collector_store=storage.collector
+    )

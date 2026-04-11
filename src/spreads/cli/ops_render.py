@@ -62,6 +62,13 @@ def _render_duration(value: Any) -> str:
     return f"{hours}h {minutes}m"
 
 
+def _truncate(value: Any, *, length: int = 48) -> str:
+    text = _render_value(value)
+    if len(text) <= length:
+        return text
+    return text[: max(length - 1, 0)].rstrip() + "…"
+
+
 def _job_run_status_text(status: str | None) -> Text:
     normalized = str(status or "unknown").strip().lower()
     style = {
@@ -298,6 +305,10 @@ def render_jobs_view(console: Console, payload: dict[str, Any]) -> None:
         _render_job_run_detail(console, payload)
         return
     _render_jobs_list(console, payload)
+
+
+def render_uoa_view(console: Console, payload: dict[str, Any]) -> None:
+    _render_uoa_detail(console, payload)
 
 
 def _render_sessions_list(console: Console, payload: dict[str, Any]) -> None:
@@ -621,3 +632,221 @@ def _render_job_run_detail(console: Console, payload: dict[str, Any]) -> None:
 
     _render_json_panel(console, title="Payload", value=details.get("payload") or {})
     _render_json_panel(console, title="Result", value=details.get("result") or {})
+
+
+def _render_uoa_detail(console: Console, payload: dict[str, Any]) -> None:
+    summary = dict(payload.get("summary") or {})
+    details = dict(payload.get("details") or {})
+    quote_capture = dict(details.get("quote_capture") or {})
+    trade_capture = dict(details.get("trade_capture") or {})
+    uoa_overview = dict(details.get("uoa_overview") or {})
+    quote_overview = dict(details.get("uoa_quote_overview") or {})
+    decision_overview = dict(details.get("uoa_decision_overview") or {})
+
+    overview = Table.grid(padding=(0, 2))
+    overview.add_row("Overall", _status_text(payload.get("status")))
+    overview.add_row("Generated", _render_value(payload.get("generated_at")))
+    overview.add_row("Label", _render_value(summary.get("label")))
+    overview.add_row("Cycle", _render_value(summary.get("cycle_id")))
+    overview.add_row("Session", _render_value(summary.get("session_id")))
+    overview.add_row("Job Run", _render_value(summary.get("job_run_id")))
+    overview.add_row("Slot", _render_value(summary.get("slot_at")))
+    overview.add_row(
+        "Capture",
+        f"quotes {_render_value(summary.get('quote_capture_status'))} | trades {_render_value(summary.get('trade_capture_status'))}",
+    )
+    overview.add_row(
+        "UOA",
+        f"{_render_value(summary.get('uoa_summary_status'))} | decisions {_render_value(summary.get('decision_status'))}",
+    )
+    overview.add_row(
+        "Observed",
+        (
+            f"contracts {_render_value(summary.get('observed_contract_count'))} | "
+            f"scoreable roots {_render_value(summary.get('scoreable_root_count'))}"
+        ),
+    )
+    overview.add_row(
+        "Decisions",
+        (
+            f"watchlist {_render_value(summary.get('watchlist_count'))} | "
+            f"board {_render_value(summary.get('board_count'))} | "
+            f"high {_render_value(summary.get('high_count'))}"
+        ),
+    )
+    overview.add_row(
+        "Top Decision",
+        (
+            f"{_render_value(summary.get('top_decision_symbol'))} "
+            f"{_render_value(summary.get('top_decision_state'))} "
+            f"({_render_value(summary.get('top_decision_score'))})"
+        ),
+    )
+    console.print(
+        Panel(
+            overview,
+            title="UOA",
+            border_style=STATUS_STYLES.get(str(payload.get("status")), "white"),
+        )
+    )
+
+    _render_attention(console, payload)
+
+    capture = Table(title="Capture Summary", header_style="bold")
+    capture.add_column("Type")
+    capture.add_column("Status")
+    capture.add_column("Expected", justify="right")
+    capture.add_column("Observed", justify="right")
+    capture.add_column("Fresh/Liquid", justify="right")
+    capture.add_row(
+        "Quotes",
+        _render_value(quote_capture.get("capture_status")),
+        _render_value(quote_capture.get("expected_quote_symbol_count")),
+        _render_value(quote_capture.get("total_quote_events_saved")),
+        f"{_render_value(quote_overview.get('fresh_contract_count'))}/{_render_value(quote_overview.get('liquid_contract_count'))}",
+    )
+    capture.add_row(
+        "Trades",
+        _render_value(trade_capture.get("capture_status")),
+        _render_value(trade_capture.get("expected_trade_symbol_count")),
+        _render_value(trade_capture.get("total_trade_events_saved")),
+        (
+            f"roots {_render_value(decision_overview.get('root_count'))} | "
+            f"scoreable {_render_value(uoa_overview.get('scoreable_trade_count'))}"
+        ),
+    )
+    console.print(capture)
+
+    exclusion_rows = list(details.get("top_exclusion_reasons") or [])
+    if exclusion_rows:
+        table = Table(title="Top Exclusions", header_style="bold")
+        table.add_column("Reason")
+        table.add_column("Count", justify="right")
+        for row in exclusion_rows:
+            table.add_row(str(row.get("name") or "-"), _render_value(row.get("count")))
+        console.print(table)
+
+    condition_rows = list(details.get("top_conditions") or [])
+    if condition_rows:
+        table = Table(title="Top Conditions", header_style="bold")
+        table.add_column("Condition")
+        table.add_column("Count", justify="right")
+        for row in condition_rows:
+            table.add_row(str(row.get("name") or "-"), _render_value(row.get("count")))
+        console.print(table)
+
+    decision_rows = list(details.get("top_watchlist_roots") or [])
+    if decision_rows:
+        table = Table(title="Decision Roots", header_style="bold")
+        table.add_column("Symbol")
+        table.add_column("State")
+        table.add_column("Score", justify="right")
+        table.add_column("Premium", justify="right")
+        table.add_column("Trades", justify="right")
+        table.add_column("Vol/OI", justify="right")
+        table.add_column("Quote")
+        table.add_column("Why")
+        for row in decision_rows:
+            table.add_row(
+                str(row.get("underlying_symbol") or "-"),
+                str(row.get("decision_state") or "-"),
+                _render_value(row.get("decision_score")),
+                _render_money(row.get("scoreable_premium")),
+                _render_value(row.get("scoreable_trade_count")),
+                _render_value(row.get("supporting_volume_oi_ratio")),
+                _render_value(row.get("quality_state")),
+                _truncate(row.get("explanation"), length=60),
+            )
+        console.print(table)
+
+    top_roots = list(details.get("top_roots") or [])
+    if top_roots:
+        table = Table(title="Top UOA Roots", header_style="bold")
+        table.add_column("Symbol")
+        table.add_column("Flow")
+        table.add_column("Root Score", justify="right")
+        table.add_column("Premium", justify="right")
+        table.add_column("Trades", justify="right")
+        table.add_column("Contracts", justify="right")
+        table.add_column("Vol/OI", justify="right")
+        for row in top_roots:
+            table.add_row(
+                str(row.get("underlying_symbol") or "-"),
+                str(row.get("dominant_flow") or "-"),
+                _render_value(row.get("root_score")),
+                _render_money(row.get("scoreable_premium")),
+                _render_value(row.get("scoreable_trade_count")),
+                _render_value(row.get("scoreable_contract_count")),
+                _render_value(row.get("supporting_volume_oi_ratio")),
+            )
+        console.print(table)
+
+    top_contracts = list(details.get("top_contracts") or [])
+    if top_contracts:
+        table = Table(title="Top Contracts", header_style="bold")
+        table.add_column("Option")
+        table.add_column("Root")
+        table.add_column("Type")
+        table.add_column("DTE", justify="right")
+        table.add_column("Premium", justify="right")
+        table.add_column("Trades", justify="right")
+        table.add_column("%OTM", justify="right")
+        table.add_column("Vol/OI", justify="right")
+        table.add_column("Quality")
+        for row in top_contracts:
+            table.add_row(
+                _truncate(row.get("option_symbol"), length=24),
+                str(row.get("underlying_symbol") or "-"),
+                str(row.get("option_type") or "-"),
+                _render_value(row.get("dte")),
+                _render_money(row.get("scoreable_premium")),
+                _render_value(row.get("scoreable_trade_count")),
+                _render_percent(row.get("percent_otm")),
+                _render_value(row.get("volume_oi_ratio")),
+                _render_value(row.get("quality_state") or row.get("contract_score")),
+            )
+        console.print(table)
+
+    for title, rows in (
+        ("Board Candidates", list(details.get("board_candidates") or [])),
+        ("Watchlist Candidates", list(details.get("watchlist_candidates") or [])),
+    ):
+        if not rows:
+            continue
+        table = Table(title=title, header_style="bold")
+        table.add_column("Pos", justify="right")
+        table.add_column("Symbol")
+        table.add_column("Strategy")
+        table.add_column("Credit", justify="right")
+        table.add_column("DTE", justify="right")
+        table.add_column("Quality", justify="right")
+        table.add_column("Max Loss", justify="right")
+        table.add_column("Setup")
+        for row in rows:
+            table.add_row(
+                _render_value(row.get("position")),
+                str(row.get("underlying_symbol") or "-"),
+                str(row.get("strategy") or "-"),
+                _render_money(row.get("midpoint_credit")),
+                _render_value(row.get("dte")),
+                _render_value(row.get("quality_score")),
+                _render_money(row.get("max_loss")),
+                str(row.get("setup_status") or "-"),
+            )
+        console.print(table)
+
+    events = list(details.get("cycle_events") or [])
+    if events:
+        table = Table(title="Cycle Events", header_style="bold")
+        table.add_column("When")
+        table.add_column("Symbol")
+        table.add_column("Type")
+        table.add_column("Message")
+        for row in events:
+            table.add_row(
+                str(row.get("generated_at") or "-"),
+                str(row.get("symbol") or "-"),
+                str(row.get("event_type") or "-"),
+                _truncate(row.get("message"), length=72),
+            )
+        console.print(table)

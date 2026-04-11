@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import typer
 
-from spreads.cli.ops import jobs_app, sessions_command, status_command, trading_command
+from spreads.cli.ops import (
+    jobs_app,
+    sessions_command,
+    status_command,
+    trading_command,
+    uoa_app,
+)
 
 app = typer.Typer(
     add_completion=True,
@@ -16,6 +22,7 @@ app.command("sessions", help="List live sessions or inspect one session.")(
     sessions_command
 )
 app.add_typer(jobs_app, name="jobs")
+app.add_typer(uoa_app, name="uoa")
 
 
 def main() -> None:

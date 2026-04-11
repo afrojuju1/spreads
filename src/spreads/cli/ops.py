@@ -13,6 +13,7 @@ from spreads.cli.ops_render import (
     render_sessions_view,
     render_system_status,
     render_trading_health,
+    render_uoa_view,
 )
 from spreads.services.ops_visibility import (
     OpsLookupError,
@@ -21,6 +22,8 @@ from spreads.services.ops_visibility import (
     build_sessions_view,
     build_system_status,
     build_trading_health,
+    build_uoa_cycle_view,
+    build_uoa_overview,
 )
 
 
@@ -240,6 +243,67 @@ def jobs_run_command(
             job_run_id=job_run_id,
         ),
         renderer=render_jobs_view,
+        json_output=json_output,
+        watch_seconds=watch,
+        no_color=no_color,
+    )
+
+
+uoa_app = typer.Typer(
+    add_completion=False,
+    help="Inspect UOA activity and cycle state.",
+    invoke_without_command=True,
+    no_args_is_help=False,
+)
+
+
+@uoa_app.callback(invoke_without_command=True)
+def uoa_command(
+    ctx: typer.Context,
+    label: str | None = typer.Option(
+        None, "--label", help="Filter to one collector label."
+    ),
+    db: str | None = typer.Option(None, "--db", help="Database URL override."),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
+    watch: float | None = typer.Option(
+        None, "--watch", help="Refresh every N seconds."
+    ),
+    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
+) -> None:
+    if ctx.invoked_subcommand is not None:
+        return
+    _run_visibility_command(
+        builder=lambda: build_uoa_overview(
+            db_target=db,
+            label=label,
+        ),
+        renderer=render_uoa_view,
+        json_output=json_output,
+        watch_seconds=watch,
+        no_color=no_color,
+    )
+
+
+@uoa_app.command("cycle", help="Inspect one UOA cycle.")
+def uoa_cycle_command(
+    cycle_id: str = typer.Argument(..., help="Collector cycle id to inspect."),
+    label: str | None = typer.Option(
+        None, "--label", help="Filter to one collector label."
+    ),
+    db: str | None = typer.Option(None, "--db", help="Database URL override."),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
+    watch: float | None = typer.Option(
+        None, "--watch", help="Refresh every N seconds."
+    ),
+    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
+) -> None:
+    _run_visibility_command(
+        builder=lambda: build_uoa_cycle_view(
+            cycle_id=cycle_id,
+            db_target=db,
+            label=label,
+        ),
+        renderer=render_uoa_view,
         json_output=json_output,
         watch_seconds=watch,
         no_color=no_color,

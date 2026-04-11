@@ -1,6 +1,6 @@
 # Ops CLI Visibility Plan
 
-Status: in progress; phase 1 and phase 2 shipped on April 10, 2026, phase 3 and phase 4 pending
+Status: in progress; phase 1, phase 2, and phase 3 shipped on April 10, 2026, phase 4 pending
 
 Related:
 
