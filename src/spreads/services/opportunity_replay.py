@@ -1219,6 +1219,36 @@ def _build_summary(
     return summary, warnings
 
 
+def _resolve_recent_analysis_targets(
+    *,
+    storage: Any,
+    recent: int,
+    label: str | None = None,
+) -> list[dict[str, Any]]:
+    if recent <= 0:
+        raise ValueError("--recent must be greater than 0.")
+    seen: set[tuple[str, str]] = set()
+    targets: list[dict[str, Any]] = []
+    fetched = storage.post_market.list_runs(
+        status="succeeded",
+        label=label,
+        limit=max(recent * 5, recent),
+    )
+    for run in fetched:
+        run_label = _as_text(run.get("label"))
+        session_date = _as_text(run.get("session_date"))
+        if run_label is None or session_date is None:
+            continue
+        key = (run_label, session_date)
+        if key in seen:
+            continue
+        seen.add(key)
+        targets.append({"label": run_label, "session_date": session_date})
+        if len(targets) >= recent:
+            break
+    return targets
+
+
 @with_storage()
 def build_opportunity_replay(
     *,
@@ -1309,6 +1339,127 @@ def build_opportunity_replay(
     return replay.to_payload()
 
 
+@with_storage()
+def build_recent_opportunity_replay_batch(
+    *,
+    db_target: str | None = None,
+    recent: int = 5,
+    label: str | None = None,
+    storage: Any | None = None,
+) -> dict[str, Any]:
+    targets = _resolve_recent_analysis_targets(
+        storage=storage,
+        recent=recent,
+        label=label,
+    )
+    if not targets:
+        scope = "latest succeeded sessions" if label is None else f"label {label}"
+        raise OpportunityReplayLookupError(
+            f"No succeeded post-market sessions are available for {scope}."
+        )
+
+    sessions: list[dict[str, Any]] = []
+    verdict_counts: dict[str, int] = defaultdict(int)
+    promoted_from_watchlist_total = 0
+    rejected_legacy_board_total = 0
+    allocator_vs_legacy_board_total = 0
+    allocator_vs_rank_only_total = 0
+    skipped_sessions: list[dict[str, Any]] = []
+
+    for target in targets:
+        try:
+            payload = build_opportunity_replay(
+                db_target=db_target,
+                label=target["label"],
+                session_date=target["session_date"],
+                storage=storage,
+            )
+        except OpportunityReplayLookupError as exc:
+            skipped_sessions.append(
+                {
+                    "label": target["label"],
+                    "session_date": target["session_date"],
+                    "reason": str(exc),
+                }
+            )
+            continue
+        summary = dict(payload.get("summary") or {})
+        comparison = dict(payload.get("comparison") or {})
+        verdict = _as_text(summary.get("analysis_verdict")) or "unknown"
+        verdict_counts[verdict] += 1
+        promoted_from_watchlist = list(comparison.get("promoted_from_watchlist") or [])
+        rejected_legacy_board = list(comparison.get("rejected_legacy_board") or [])
+        overlap = dict(comparison.get("overlap") or {})
+        promoted_from_watchlist_total += len(promoted_from_watchlist)
+        rejected_legacy_board_total += len(rejected_legacy_board)
+        allocator_vs_legacy_board_total += int(
+            overlap.get("allocator_vs_legacy_board_count") or 0
+        )
+        allocator_vs_rank_only_total += int(
+            overlap.get("allocator_vs_rank_only_count") or 0
+        )
+        sessions.append(
+            {
+                "session": payload.get("session"),
+                "summary": summary,
+                "comparison": {
+                    "comparison_size": comparison.get("comparison_size"),
+                    "legacy_board_candidate_ids": (
+                        comparison.get("legacy_board") or {}
+                    ).get("candidate_ids", []),
+                    "rank_only_candidate_ids": (
+                        comparison.get("rank_only_top") or {}
+                    ).get("candidate_ids", []),
+                    "allocator_candidate_ids": (
+                        comparison.get("provisional_allocator") or {}
+                    ).get("candidate_ids", []),
+                    "promoted_from_watchlist": promoted_from_watchlist,
+                    "rejected_legacy_board": rejected_legacy_board,
+                    "overlap": overlap,
+                },
+                "warnings": list(payload.get("warnings") or []),
+            }
+        )
+
+    session_count = len(sessions)
+    if session_count == 0:
+        scope = "latest succeeded sessions" if label is None else f"label {label}"
+        raise OpportunityReplayLookupError(
+            f"No replayable sessions are available for {scope}."
+        )
+    aggregate = {
+        "session_count": session_count,
+        "label_filter": label,
+        "verdict_counts": dict(sorted(verdict_counts.items())),
+        "skipped_session_count": len(skipped_sessions),
+        "sessions_with_watchlist_promotions": sum(
+            1 for item in sessions if item["comparison"]["promoted_from_watchlist"]
+        ),
+        "sessions_with_rejected_legacy_board": sum(
+            1 for item in sessions if item["comparison"]["rejected_legacy_board"]
+        ),
+        "promoted_from_watchlist_total": promoted_from_watchlist_total,
+        "rejected_legacy_board_total": rejected_legacy_board_total,
+        "average_allocator_vs_legacy_board_overlap": round(
+            allocator_vs_legacy_board_total / session_count,
+            3,
+        ),
+        "average_allocator_vs_rank_only_overlap": round(
+            allocator_vs_rank_only_total / session_count,
+            3,
+        ),
+    }
+    return {
+        "target": {
+            "recent": recent,
+            "label": label,
+        },
+        "aggregate": aggregate,
+        "sessions": sessions,
+        "skipped_sessions": skipped_sessions,
+    }
+
+
 def _render_text(payload: Mapping[str, Any]) -> str:
     session = payload.get("session") or {}
     summary = payload.get("summary") or {}
@@ -1385,6 +1536,50 @@ def _render_text(payload: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _render_batch_text(payload: Mapping[str, Any]) -> str:
+    target = payload.get("target") or {}
+    aggregate = payload.get("aggregate") or {}
+    sessions = payload.get("sessions") or []
+    skipped_sessions = payload.get("skipped_sessions") or []
+    lines = [
+        f"Recent sessions: {aggregate.get('session_count')} | label filter {target.get('label') or 'all'}",
+        f"Skipped sessions: {aggregate.get('skipped_session_count')}",
+        f"Watchlist promotions: {aggregate.get('promoted_from_watchlist_total')} across {aggregate.get('sessions_with_watchlist_promotions')} sessions",
+        f"Rejected legacy board candidates: {aggregate.get('rejected_legacy_board_total')} across {aggregate.get('sessions_with_rejected_legacy_board')} sessions",
+        f"Average overlap | allocator vs legacy board {aggregate.get('average_allocator_vs_legacy_board_overlap')} | allocator vs rank-only {aggregate.get('average_allocator_vs_rank_only_overlap')}",
+        f"Verdicts: {aggregate.get('verdict_counts')}",
+        "",
+        "Sessions:",
+    ]
+    for item in sessions:
+        if not isinstance(item, Mapping):
+            continue
+        session = item.get("session") or {}
+        summary = item.get("summary") or {}
+        comparison = item.get("comparison") or {}
+        promoted = comparison.get("promoted_from_watchlist") or []
+        rejected = comparison.get("rejected_legacy_board") or []
+        lines.append(
+            "- "
+            f"{session.get('label')} {session.get('session_date')} "
+            f"| verdict {summary.get('analysis_verdict') or 'n/a'} "
+            f"| allocated {summary.get('allocated_count')} "
+            f"| promoted_watchlist {[row.get('candidate_id') for row in promoted]} "
+            f"| rejected_board {[row.get('candidate_id') for row in rejected]}"
+        )
+    if skipped_sessions:
+        lines.append("")
+        lines.append("Skipped:")
+        for item in skipped_sessions:
+            if not isinstance(item, Mapping):
+                continue
+            lines.append(
+                "- "
+                f"{item.get('label')} {item.get('session_date')} | reason {item.get('reason')}"
+            )
+    return "\n".join(lines)
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build an offline opportunity-design replay from stored collector and post-market data.",
@@ -1395,6 +1590,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--session-id", help="Session id to replay.")
     parser.add_argument("--label", help="Collector label to replay.")
     parser.add_argument("--date", help="Session date in YYYY-MM-DD.")
+    parser.add_argument(
+        "--recent",
+        type=int,
+        help="Build a batch report across the most recent succeeded post-market sessions.",
+    )
     parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     return parser.parse_args(argv)
 
@@ -1402,25 +1602,40 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        payload = build_opportunity_replay(
-            db_target=args.db,
-            session_id=args.session_id,
-            label=args.label,
-            session_date=args.date,
-        )
+        if args.recent is not None:
+            if args.session_id is not None or args.date is not None:
+                raise SystemExit(
+                    "--recent cannot be combined with --session-id or --date"
+                )
+            payload = build_recent_opportunity_replay_batch(
+                db_target=args.db,
+                recent=args.recent,
+                label=args.label,
+            )
+        else:
+            payload = build_opportunity_replay(
+                db_target=args.db,
+                session_id=args.session_id,
+                label=args.label,
+                session_date=args.date,
+            )
     except OpportunityReplayLookupError as exc:
         raise SystemExit(str(exc)) from None
 
     if args.json:
         print(json.dumps(payload, indent=2, default=str))
     else:
-        print(_render_text(payload))
+        if args.recent is not None:
+            print(_render_batch_text(payload))
+        else:
+            print(_render_text(payload))
     return 0
 
 
 __all__ = [
     "OpportunityReplayLookupError",
     "build_opportunity_replay",
+    "build_recent_opportunity_replay_batch",
     "main",
     "parse_args",
 ]
