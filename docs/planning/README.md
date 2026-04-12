@@ -8,6 +8,11 @@ Use these entrypoints:
 - [Spread Selection Review And Refactor Plan](./2026-04-11_spread_selection_refactor_plan.md) for the diagnosis of the current selection path
 - [Ops CLI Visibility Plan](./ops_cli_visibility_plan.md) for shipped and deferred operator tooling
 
+Implementation and evaluation companion:
+
+- use `uv run spreads replay` for single-session offline decision replays
+- use `uv run spreads replay recent --limit <N>` for batch policy comparison across recent sessions
+
 Detailed design specifications:
 
 - [Regime Detection Specification](./2026-04-11_regime_detection_spec.md)

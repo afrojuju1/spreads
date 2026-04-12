@@ -10,6 +10,7 @@ from spreads.cli.ops import (
     trading_command,
     uoa_app,
 )
+from spreads.cli.replay import replay_app
 
 app = typer.Typer(
     add_completion=True,
@@ -26,6 +27,7 @@ app.command("audit", help="Replay one session for operator investigation.")(
     audit_command
 )
 app.add_typer(jobs_app, name="jobs")
+app.add_typer(replay_app, name="replay")
 app.add_typer(uoa_app, name="uoa")
 
 

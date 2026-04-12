@@ -31,6 +31,10 @@
   - `uv run spreads jobs`
   - `uv run spreads uoa`
   - `uv run spreads audit <session-id>`
+- For offline opportunity-selection research or threshold tuning, use the canonical replay CLI:
+  - `uv run spreads replay`
+  - `uv run spreads replay --label <label> --date <YYYY-MM-DD>`
+  - `uv run spreads replay recent --limit <N>`
 - `uv run spreads doctor` is not a current command; do not rely on it in investigations or automations.
 - For closed-session investigations, check post-market analysis before tuning strategy thresholds from raw session counts alone.
 
@@ -43,6 +47,7 @@
   - session health: `services/sessions.py` or `http://localhost:58080/sessions?limit=...`
   - closed-session analysis: `storage/post_market_repository.py` / `services/post_market_analysis.py` or `http://localhost:58080/post-market/{session_date}/{label}`
 - Always distinguish actual account PnL from modeled post-market outcomes. Do not present modeled idea outcomes as realized account performance.
+- Replay output now includes modeled close/final PnL and actual traded-position PnL. Treat modeled and actual metrics as separate evaluation planes.
 - After market close, use exact dates in summaries.
 
 ## Rollout Checklist

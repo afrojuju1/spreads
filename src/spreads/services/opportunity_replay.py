@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-import argparse
-import csv
-import json
 from collections import defaultdict
 from collections.abc import Mapping
 from datetime import UTC, date, datetime
-from pathlib import Path
 from statistics import mean
 from typing import Any
 
@@ -21,7 +17,6 @@ from spreads.domain.opportunity_models import (
     RegimeSnapshot,
     StrategyIntent,
 )
-from spreads.runtime.config import default_database_url
 from spreads.services.analysis import candidate_identity, resolved_estimated_pnl
 from spreads.services.candidate_policy import (
     candidate_has_intraday_setup_context,
@@ -246,6 +241,48 @@ def _profile_specific_score_components(
         components["carry_buffer_delta"] = round(buffer_delta, 3)
         evidence["buffer_ratio"] = round(buffer_ratio, 4)
 
+    if style_profile == "tactical":
+        setup_status = str(candidate.get("setup_status") or "").strip().lower()
+        if setup_status == "favorable":
+            components["tactical_setup_delta"] = 2.5
+        elif setup_status == "neutral":
+            components["tactical_setup_penalty"] = 3.0
+        elif setup_status not in {"", "unknown"}:
+            components["tactical_setup_penalty"] = 8.0
+        evidence["setup_status"] = setup_status or "unknown"
+
+        short_delta = abs(_as_float(candidate.get("short_delta")) or 0.0)
+        if short_delta > 0.0:
+            delta_fit = _clamp(1.5 - abs(short_delta - 0.13) * 60.0, 0.0, 1.5)
+            if delta_fit > 0.0:
+                components["tactical_delta_fit_delta"] = round(delta_fit, 3)
+            evidence["short_delta"] = round(short_delta, 4)
+
+        expected_move = _as_float(candidate.get("expected_move"))
+        short_vs_expected_move = _as_float(candidate.get("short_vs_expected_move"))
+        if expected_move not in (None, 0.0) and short_vs_expected_move is not None:
+            tactical_buffer_ratio = _clamp(
+                short_vs_expected_move / expected_move,
+                0.0,
+                1.5,
+            )
+            buffer_delta = _clamp((tactical_buffer_ratio - 0.6) * 12.0, 0.0, 2.0)
+            if buffer_delta > 0.0:
+                components["tactical_buffer_delta"] = round(buffer_delta, 3)
+            evidence["buffer_ratio"] = round(tactical_buffer_ratio, 4)
+
+        if str(candidate.get("calendar_status") or "").strip().lower() == "penalized":
+            days_to_event = int(
+                _as_float(candidate.get("calendar_days_to_nearest_event")) or 0
+            )
+            if days_to_event <= 1:
+                components["tactical_event_proximity_penalty"] = 4.0
+            elif days_to_event == 2:
+                components["tactical_event_proximity_penalty"] = 2.0
+            else:
+                components["tactical_event_proximity_penalty"] = 1.0
+            evidence["days_to_nearest_event"] = days_to_event
+
     if style_profile == "reactive":
         stale_minutes = _minutes_between(
             candidate.get("recovered_from_run_generated_at"),
@@ -280,8 +317,49 @@ def _calendar_blocks_strategy(
     if normalized in {"blocked", "unknown"}:
         return True
     if normalized == "penalized":
-        return style_profile != "carry"
+        return style_profile == "reactive"
     return True
+
+
+def _calendar_penalty(
+    *,
+    calendar_status: str,
+    style_profile: str,
+) -> float:
+    normalized = calendar_status.strip().lower()
+    if normalized in {"", "clean"}:
+        return 0.0
+    if normalized == "penalized":
+        if style_profile == "reactive":
+            return 6.0
+        if style_profile == "tactical":
+            return 2.0
+        return 3.0
+    if normalized == "unknown":
+        return 8.0
+    return 12.0
+
+
+def _calibration_dimensions(
+    style_profile: str,
+) -> tuple[tuple[str, str | None, float], ...]:
+    weights = {
+        "classification": 1.0,
+        "strategy": 0.8,
+        "symbol": 0.5,
+        "setup_status": 0.7,
+    }
+    if style_profile == "tactical":
+        weights["classification"] = 0.0
+        weights["strategy"] = 0.9
+        weights["symbol"] = 0.6
+        weights["setup_status"] = 0.8
+    return (
+        ("classification", None, weights["classification"]),
+        ("strategy", None, weights["strategy"]),
+        ("symbol", None, weights["symbol"]),
+        ("setup_status", None, weights["setup_status"]),
+    )
 
 
 def _product_policy_blockers(
@@ -901,16 +979,21 @@ def _build_opportunities(
         )
         calibration_breakdown: list[dict[str, Any]] = []
         calibration_delta = 0.0
-        for dimension, bucket, weight in (
-            ("classification", _as_text(row.get("bucket")), 1.0),
-            (
-                "strategy",
-                _as_text(candidate.get("strategy")) or _as_text(row.get("strategy")),
-                0.8,
-            ),
-            ("symbol", symbol, 0.5),
-            ("setup_status", _as_text(candidate.get("setup_status")), 0.7),
+        for dimension, _, weight in _calibration_dimensions(
+            strategy_intent.style_profile
         ):
+            if weight <= 0.0:
+                continue
+            if dimension == "classification":
+                bucket = _as_text(row.get("bucket"))
+            elif dimension == "strategy":
+                bucket = _as_text(candidate.get("strategy")) or _as_text(
+                    row.get("strategy")
+                )
+            elif dimension == "symbol":
+                bucket = symbol
+            else:
+                bucket = _as_text(candidate.get("setup_status"))
             delta, evidence = _dimension_adjustment(
                 dimension_lookup=dimension_lookup,
                 dimension=dimension,
@@ -944,8 +1027,10 @@ def _build_opportunities(
         penalty = 0.0
         if str(candidate.get("data_status") or "") != "clean":
             penalty += 8.0
-        if str(candidate.get("calendar_status") or "") not in {"", "clean"}:
-            penalty += 6.0
+        penalty += _calendar_penalty(
+            calendar_status=str(candidate.get("calendar_status") or ""),
+            style_profile=strategy_intent.style_profile,
+        )
         if strategy_intent.policy_state == "blocked":
             penalty += 20.0
 
@@ -965,6 +1050,9 @@ def _build_opportunities(
         if strategy_intent.style_profile == "reactive":
             promotion_floor = 78.0
             monitor_floor = 62.0
+        elif strategy_intent.style_profile == "tactical":
+            promotion_floor = 72.0
+            monitor_floor = 60.0
         elif strategy_intent.style_profile == "carry":
             promotion_floor = 68.0
             monitor_floor = 58.0
@@ -1271,14 +1359,106 @@ def _opportunity_identity(opportunity: Opportunity) -> tuple[str, str, str, str,
     )
 
 
+def _position_identity(position: Mapping[str, Any]) -> tuple[str, str, str, str, str]:
+    return (
+        str(position.get("underlying_symbol") or ""),
+        str(position.get("strategy") or ""),
+        str(position.get("expiration_date") or ""),
+        str(position.get("short_symbol") or ""),
+        str(position.get("long_symbol") or ""),
+    )
+
+
+def _build_position_matches(
+    *,
+    opportunities: list[Opportunity],
+    storage: Any,
+    session_id: str | None,
+) -> dict[str, dict[str, Any]]:
+    if session_id is None or not storage.execution.positions_schema_ready():
+        return {}
+
+    positions = storage.execution.list_session_positions(session_id=session_id)
+    positions_by_identity: dict[
+        tuple[str, str, str, str, str], list[Mapping[str, Any]]
+    ] = defaultdict(list)
+    for position in positions:
+        positions_by_identity[_position_identity(position)].append(position)
+
+    matches: dict[str, dict[str, Any]] = {}
+    for opportunity in opportunities:
+        matched_positions = positions_by_identity.get(
+            _opportunity_identity(opportunity), []
+        )
+        if not matched_positions:
+            matches[opportunity.opportunity_id] = {
+                "actual_position_matched": False,
+                "actual_position_count": 0,
+                "actual_position_ids": [],
+                "actual_position_status_counts": {},
+                "actual_closed_rate": None,
+                "actual_realized_pnl": None,
+                "actual_unrealized_pnl": None,
+                "actual_net_pnl": None,
+                "actual_positive_outcome": None,
+            }
+            continue
+
+        status_counts: dict[str, int] = defaultdict(int)
+        for row in matched_positions:
+            status_counts[str(row.get("status") or "unknown")] += 1
+        position_count = len(matched_positions)
+        realized_total = round(
+            sum(_as_float(row.get("realized_pnl")) or 0.0 for row in matched_positions),
+            4,
+        )
+        unrealized_values = [
+            _as_float(row.get("unrealized_pnl")) for row in matched_positions
+        ]
+        unrealized_total = (
+            None
+            if not any(value is not None for value in unrealized_values)
+            else round(sum(value or 0.0 for value in unrealized_values), 4)
+        )
+        net_total = round(realized_total + (unrealized_total or 0.0), 4)
+        closed_count = sum(
+            count
+            for status, count in status_counts.items()
+            if status in {"closed", "expired"}
+        )
+        matches[opportunity.opportunity_id] = {
+            "actual_position_matched": True,
+            "actual_position_count": position_count,
+            "actual_position_ids": [
+                str(row.get("session_position_id"))
+                for row in matched_positions
+                if row.get("session_position_id") is not None
+            ],
+            "actual_position_status_counts": dict(sorted(status_counts.items())),
+            "actual_closed_rate": round(closed_count / position_count, 4),
+            "actual_realized_pnl": realized_total,
+            "actual_unrealized_pnl": unrealized_total,
+            "actual_net_pnl": net_total,
+            "actual_positive_outcome": net_total > 0.0,
+        }
+    return matches
+
+
 def _build_outcome_matches(
     *,
     opportunities: list[Opportunity],
     analysis_run: Mapping[str, Any] | None,
+    storage: Any,
+    session_id: str | None,
 ) -> dict[str, dict[str, Any]]:
     summary = analysis_run.get("summary") if isinstance(analysis_run, Mapping) else None
     outcomes = summary.get("outcomes") if isinstance(summary, Mapping) else None
     ideas = list(outcomes.get("ideas") or []) if isinstance(outcomes, Mapping) else []
+    position_matches = _build_position_matches(
+        opportunities=opportunities,
+        storage=storage,
+        session_id=session_id,
+    )
 
     lookup: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
     for idea in ideas:
@@ -1293,9 +1473,28 @@ def _build_outcome_matches(
     matches: dict[str, dict[str, Any]] = {}
     for opportunity in opportunities:
         idea = lookup.get(_opportunity_identity(opportunity))
+        position_match = position_matches.get(opportunity.opportunity_id) or {}
+        estimated_close_pnl = (
+            None if idea is None else _as_float(idea.get("estimated_close_pnl"))
+        )
+        estimated_expiry_pnl = (
+            None if idea is None else _as_float(idea.get("estimated_expiry_pnl"))
+        )
         estimated_pnl = None if idea is None else resolved_estimated_pnl(idea)
         matches[opportunity.opportunity_id] = {
             "matched": idea is not None,
+            "estimated_close_pnl": None
+            if estimated_close_pnl is None
+            else round(float(estimated_close_pnl), 4),
+            "estimated_close_positive": None
+            if estimated_close_pnl is None
+            else float(estimated_close_pnl) > 0.0,
+            "estimated_expiry_pnl": None
+            if estimated_expiry_pnl is None
+            else round(float(estimated_expiry_pnl), 4),
+            "estimated_expiry_positive": None
+            if estimated_expiry_pnl is None
+            else float(estimated_expiry_pnl) > 0.0,
             "estimated_pnl": None
             if estimated_pnl is None
             else round(float(estimated_pnl), 4),
@@ -1311,16 +1510,14 @@ def _build_outcome_matches(
             if idea is None
             else idea.get("opening_range_regime"),
             "classification": None if idea is None else idea.get("classification"),
+            **position_match,
         }
     return matches
 
 
 def _summarize_outcome_rows(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
-    pnl_values = [
-        float(row["estimated_pnl"])
-        for row in rows
-        if row.get("estimated_pnl") is not None
-    ]
+    modeled_final_rows = [row for row in rows if row.get("estimated_pnl") is not None]
+    pnl_values = [float(row["estimated_pnl"]) for row in modeled_final_rows]
     signed_rows = [row for row in rows if row.get("positive_outcome") is not None]
     outcome_bucket_counts: dict[str, int] = defaultdict(int)
     for row in rows:
@@ -1328,8 +1525,33 @@ def _summarize_outcome_rows(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
         if bucket is not None:
             outcome_bucket_counts[bucket] += 1
     still_open_count = int(outcome_bucket_counts.get("still_open") or 0)
+    modeled_close_rows = [
+        row for row in rows if row.get("estimated_close_pnl") is not None
+    ]
+    modeled_expiry_rows = [
+        row for row in rows if row.get("estimated_expiry_pnl") is not None
+    ]
+    actual_rows = [row for row in rows if row.get("actual_net_pnl") is not None]
+    actual_realized_rows = [
+        row for row in rows if row.get("actual_realized_pnl") is not None
+    ]
+    actual_status_counts: dict[str, int] = defaultdict(int)
+    for row in actual_rows:
+        for status, count in dict(
+            row.get("actual_position_status_counts") or {}
+        ).items():
+            actual_status_counts[str(status)] += int(count or 0)
+    actual_closed_rates = [
+        float(row["actual_closed_rate"])
+        for row in actual_rows
+        if row.get("actual_closed_rate") is not None
+    ]
     return {
         "average_estimated_pnl": None if not pnl_values else round(mean(pnl_values), 4),
+        "estimated_pnl_count": len(modeled_final_rows),
+        "estimated_pnl_coverage_rate": None
+        if not rows
+        else round(len(modeled_final_rows) / len(rows), 4),
         "positive_rate": None
         if not signed_rows
         else round(
@@ -1346,6 +1568,69 @@ def _summarize_outcome_rows(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
         "outcome_bucket_counts": dict(sorted(outcome_bucket_counts.items())),
         "still_open_count": still_open_count,
         "still_open_rate": None if not rows else round(still_open_count / len(rows), 4),
+        "average_estimated_close_pnl": None
+        if not modeled_close_rows
+        else round(
+            mean(float(row["estimated_close_pnl"]) for row in modeled_close_rows), 4
+        ),
+        "estimated_close_count": len(modeled_close_rows),
+        "estimated_close_coverage_rate": None
+        if not rows
+        else round(len(modeled_close_rows) / len(rows), 4),
+        "estimated_close_positive_rate": None
+        if not modeled_close_rows
+        else round(
+            sum(
+                1
+                for row in modeled_close_rows
+                if bool(row.get("estimated_close_positive"))
+            )
+            / len(modeled_close_rows),
+            4,
+        ),
+        "average_estimated_expiry_pnl": None
+        if not modeled_expiry_rows
+        else round(
+            mean(float(row["estimated_expiry_pnl"]) for row in modeled_expiry_rows), 4
+        ),
+        "estimated_expiry_count": len(modeled_expiry_rows),
+        "estimated_expiry_coverage_rate": None
+        if not rows
+        else round(len(modeled_expiry_rows) / len(rows), 4),
+        "estimated_expiry_positive_rate": None
+        if not modeled_expiry_rows
+        else round(
+            sum(
+                1
+                for row in modeled_expiry_rows
+                if bool(row.get("estimated_expiry_positive"))
+            )
+            / len(modeled_expiry_rows),
+            4,
+        ),
+        "average_actual_net_pnl": None
+        if not actual_rows
+        else round(mean(float(row["actual_net_pnl"]) for row in actual_rows), 4),
+        "average_actual_realized_pnl": None
+        if not actual_realized_rows
+        else round(
+            mean(float(row["actual_realized_pnl"]) for row in actual_realized_rows), 4
+        ),
+        "actual_count": len(actual_rows),
+        "actual_coverage_rate": None
+        if not rows
+        else round(len(actual_rows) / len(rows), 4),
+        "actual_positive_rate": None
+        if not actual_rows
+        else round(
+            sum(1 for row in actual_rows if bool(row.get("actual_positive_outcome")))
+            / len(actual_rows),
+            4,
+        ),
+        "actual_position_status_counts": dict(sorted(actual_status_counts.items())),
+        "actual_closed_rate": None
+        if not actual_closed_rates
+        else round(mean(actual_closed_rates), 4),
     }
 
 
@@ -1354,12 +1639,13 @@ def _slice_metrics(
     items: list[Opportunity],
     outcome_matches: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
-    matched = [
+    rows = [
         outcome_matches[item.opportunity_id]
         for item in items
-        if outcome_matches.get(item.opportunity_id, {}).get("matched")
+        if outcome_matches.get(item.opportunity_id) is not None
     ]
-    metrics = _summarize_outcome_rows(matched)
+    matched = [row for row in rows if row.get("matched")]
+    metrics = _summarize_outcome_rows(rows)
     return {
         "count": len(items),
         "matched_count": len(matched),
@@ -1429,6 +1715,8 @@ def _flatten_opportunity_rows(
                 if allocation is None
                 else allocation.allocation_reason,
                 "matched_outcome": outcome.get("matched"),
+                "estimated_close_pnl": outcome.get("estimated_close_pnl"),
+                "estimated_expiry_pnl": outcome.get("estimated_expiry_pnl"),
                 "estimated_pnl": outcome.get("estimated_pnl"),
                 "positive_outcome": outcome.get("positive_outcome"),
                 "outcome_bucket": outcome.get("outcome_bucket"),
@@ -1437,6 +1725,16 @@ def _flatten_opportunity_rows(
                 "vwap_regime": outcome.get("vwap_regime"),
                 "trend_regime": outcome.get("trend_regime"),
                 "opening_range_regime": outcome.get("opening_range_regime"),
+                "actual_position_matched": outcome.get("actual_position_matched"),
+                "actual_position_count": outcome.get("actual_position_count"),
+                "actual_position_status_counts": outcome.get(
+                    "actual_position_status_counts"
+                ),
+                "actual_closed_rate": outcome.get("actual_closed_rate"),
+                "actual_realized_pnl": outcome.get("actual_realized_pnl"),
+                "actual_unrealized_pnl": outcome.get("actual_unrealized_pnl"),
+                "actual_net_pnl": outcome.get("actual_net_pnl"),
+                "actual_positive_outcome": outcome.get("actual_positive_outcome"),
                 "is_legacy_board": opportunity.legacy_bucket == "board",
                 "is_legacy_watchlist": opportunity.legacy_bucket == "watchlist",
                 "is_rank_only_top": opportunity.opportunity_id in rank_only_ids,
@@ -1462,7 +1760,7 @@ def _aggregate_dimension_rows(
     result: list[dict[str, Any]] = []
     for bucket, bucket_rows in grouped.items():
         matched = [row for row in bucket_rows if row.get("matched_outcome")]
-        metrics = _summarize_outcome_rows(matched)
+        metrics = _summarize_outcome_rows(bucket_rows)
         result.append(
             {
                 "bucket": bucket,
@@ -1548,16 +1846,45 @@ def _build_scorecard(
             outcome_matches=outcome_matches,
         ),
     }
-    legacy_avg = scorecard["legacy_board"]["average_estimated_pnl"]
-    rank_only_avg = scorecard["rank_only_top"]["average_estimated_pnl"]
-    allocator_avg = scorecard["allocator_selected"]["average_estimated_pnl"]
+
+    def metric_delta(
+        *,
+        allocator_field: str,
+        baseline: dict[str, Any],
+    ) -> float | None:
+        allocator_value = _as_float(
+            scorecard["allocator_selected"].get(allocator_field)
+        )
+        baseline_value = _as_float(baseline.get(allocator_field))
+        if allocator_value is None or baseline_value is None:
+            return None
+        return round(allocator_value - baseline_value, 4)
+
     scorecard["deltas"] = {
-        "allocator_minus_legacy_board_avg_estimated_pnl": None
-        if allocator_avg is None or legacy_avg is None
-        else round(float(allocator_avg) - float(legacy_avg), 4),
-        "allocator_minus_rank_only_avg_estimated_pnl": None
-        if allocator_avg is None or rank_only_avg is None
-        else round(float(allocator_avg) - float(rank_only_avg), 4),
+        "allocator_minus_legacy_board_avg_estimated_pnl": metric_delta(
+            allocator_field="average_estimated_pnl",
+            baseline=scorecard["legacy_board"],
+        ),
+        "allocator_minus_rank_only_avg_estimated_pnl": metric_delta(
+            allocator_field="average_estimated_pnl",
+            baseline=scorecard["rank_only_top"],
+        ),
+        "allocator_minus_legacy_board_avg_estimated_close_pnl": metric_delta(
+            allocator_field="average_estimated_close_pnl",
+            baseline=scorecard["legacy_board"],
+        ),
+        "allocator_minus_rank_only_avg_estimated_close_pnl": metric_delta(
+            allocator_field="average_estimated_close_pnl",
+            baseline=scorecard["rank_only_top"],
+        ),
+        "allocator_minus_legacy_board_avg_actual_net_pnl": metric_delta(
+            allocator_field="average_actual_net_pnl",
+            baseline=scorecard["legacy_board"],
+        ),
+        "allocator_minus_rank_only_avg_actual_net_pnl": metric_delta(
+            allocator_field="average_actual_net_pnl",
+            baseline=scorecard["rank_only_top"],
+        ),
         "watchlist_promotion_hit_rate": scorecard["promoted_from_watchlist"][
             "positive_rate"
         ],
@@ -1804,25 +2131,6 @@ def _build_summary(
     return summary, warnings
 
 
-def _write_json_export(path: str, payload: Mapping[str, Any]) -> None:
-    output_path = Path(path).expanduser()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(payload, indent=2, default=str) + "\n")
-
-
-def _write_csv_export(path: str, rows: list[dict[str, Any]]) -> None:
-    output_path = Path(path).expanduser()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    if not rows:
-        output_path.write_text("")
-        return
-    fieldnames = sorted({key for row in rows for key in row.keys()})
-    with output_path.open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-
-
 def _wrap_recovered_candidate_rows(
     *,
     cycle_id: str,
@@ -1962,6 +2270,8 @@ def build_opportunity_replay(
     outcome_matches = _build_outcome_matches(
         opportunities=opportunities,
         analysis_run=analysis_run,
+        storage=storage,
+        session_id=_as_text(cycle.get("session_id")),
     )
     execution_intents = _build_execution_intents(
         opportunities=opportunities,
@@ -2021,6 +2331,11 @@ def build_opportunity_replay(
     ):
         warnings.append(
             "Allocator scorecard outcomes are dominated by still_open post-market ideas, so average estimated PnL reflects modeled close-state rather than realized lifecycle results."
+        )
+    allocator_actual_coverage = _as_float(allocator_metrics.get("actual_coverage_rate"))
+    if allocator_actual_coverage is not None and allocator_actual_coverage < 0.5:
+        warnings.append(
+            "Actual traded-position coverage for allocator-selected opportunities is sparse, so realized PnL comparisons are lower-confidence than modeled replay comparisons."
         )
     warnings.extend(recovery_warnings)
 
@@ -2158,7 +2473,7 @@ def build_recent_opportunity_replay_batch(
     def pooled_metrics(flag_field: str) -> dict[str, Any]:
         scoped_rows = [row for row in all_rows if row.get(flag_field)]
         matched_rows = [row for row in scoped_rows if row.get("matched_outcome")]
-        metrics = _summarize_outcome_rows(matched_rows)
+        metrics = _summarize_outcome_rows(scoped_rows)
         return {
             "count": len(scoped_rows),
             "matched_count": len(matched_rows),
@@ -2222,6 +2537,38 @@ def build_recent_opportunity_replay_batch(
             - float(rank_only_top_metrics["average_estimated_pnl"]),
             4,
         ),
+        "allocator_minus_legacy_board_avg_estimated_close_pnl": None
+        if allocator_selected_metrics["average_estimated_close_pnl"] is None
+        or legacy_board_metrics["average_estimated_close_pnl"] is None
+        else round(
+            float(allocator_selected_metrics["average_estimated_close_pnl"])
+            - float(legacy_board_metrics["average_estimated_close_pnl"]),
+            4,
+        ),
+        "allocator_minus_rank_only_avg_estimated_close_pnl": None
+        if allocator_selected_metrics["average_estimated_close_pnl"] is None
+        or rank_only_top_metrics["average_estimated_close_pnl"] is None
+        else round(
+            float(allocator_selected_metrics["average_estimated_close_pnl"])
+            - float(rank_only_top_metrics["average_estimated_close_pnl"]),
+            4,
+        ),
+        "allocator_minus_legacy_board_avg_actual_net_pnl": None
+        if allocator_selected_metrics["average_actual_net_pnl"] is None
+        or legacy_board_metrics["average_actual_net_pnl"] is None
+        else round(
+            float(allocator_selected_metrics["average_actual_net_pnl"])
+            - float(legacy_board_metrics["average_actual_net_pnl"]),
+            4,
+        ),
+        "allocator_minus_rank_only_avg_actual_net_pnl": None
+        if allocator_selected_metrics["average_actual_net_pnl"] is None
+        or rank_only_top_metrics["average_actual_net_pnl"] is None
+        else round(
+            float(allocator_selected_metrics["average_actual_net_pnl"])
+            - float(rank_only_top_metrics["average_actual_net_pnl"]),
+            4,
+        ),
         "watchlist_promotion_hit_rate": promoted_from_watchlist_metrics[
             "positive_rate"
         ],
@@ -2251,6 +2598,11 @@ def build_recent_opportunity_replay_batch(
         warnings.append(
             "Allocator scorecard outcomes are dominated by still_open post-market ideas, so average estimated PnL reflects modeled close-state rather than realized lifecycle results."
         )
+    allocator_actual_coverage = allocator_selected_metrics.get("actual_coverage_rate")
+    if allocator_actual_coverage is not None and float(allocator_actual_coverage) < 0.5:
+        warnings.append(
+            "Actual traded-position coverage for allocator-selected opportunities is sparse, so realized PnL comparisons are lower-confidence than modeled replay comparisons."
+        )
     return {
         "target": {
             "recent": recent,
@@ -2264,247 +2616,8 @@ def build_recent_opportunity_replay_batch(
     }
 
 
-def _render_text(payload: Mapping[str, Any]) -> str:
-    session = payload.get("session") or {}
-    summary = payload.get("summary") or {}
-    comparison = payload.get("comparison") or {}
-    scorecard = payload.get("scorecard") or {}
-    opportunities = payload.get("opportunities") or []
-    allocations = {
-        row["opportunity_id"]: row
-        for row in payload.get("allocation_decisions") or []
-        if isinstance(row, Mapping)
-    }
-
-    lines = [
-        f"Session: {session.get('label')} | {session.get('session_date')} | cycle {session.get('cycle_id')}",
-        f"Style: {summary.get('style_profile')} | candidates {summary.get('candidate_count')} | promotable {summary.get('promotable_count')} | allocated {summary.get('allocated_count')}",
-        f"Analysis verdict: {summary.get('analysis_verdict') or 'n/a'}",
-        "",
-        "Top opportunities:",
-    ]
-    for row in opportunities[:6]:
-        if not isinstance(row, Mapping):
-            continue
-        allocation = allocations.get(str(row.get("opportunity_id"))) or {}
-        lines.append(
-            "- "
-            f"{row.get('symbol')} {row.get('strategy_family')} "
-            f"| candidate {row.get('candidate_id')} "
-            f"| rank {row.get('rank')} "
-            f"| state {row.get('state')} "
-            f"| promo {row.get('promotion_score')} "
-            f"| alloc {allocation.get('allocation_state', 'n/a')} "
-            f"| alloc_score {allocation.get('allocation_score', 'n/a')} "
-            f"| legacy {row.get('legacy_bucket')} "
-            f"| reason {allocation.get('allocation_reason', row.get('state_reason'))}"
-        )
-    if comparison:
-        lines.append("")
-        lines.append("Comparison:")
-        lines.append(
-            "- "
-            f"legacy board ids {comparison.get('legacy_board', {}).get('candidate_ids', [])} "
-            f"| symbols {comparison.get('legacy_board', {}).get('symbols', [])}"
-        )
-        lines.append(
-            "- "
-            f"rank-only top ids {comparison.get('rank_only_top', {}).get('candidate_ids', [])} "
-            f"| symbols {comparison.get('rank_only_top', {}).get('symbols', [])}"
-        )
-        lines.append(
-            "- "
-            f"allocator ids {comparison.get('provisional_allocator', {}).get('candidate_ids', [])} "
-            f"| symbols {comparison.get('provisional_allocator', {}).get('symbols', [])}"
-        )
-        promoted_from_watchlist = comparison.get("promoted_from_watchlist") or []
-        if promoted_from_watchlist:
-            lines.append(
-                "- "
-                f"promoted from watchlist {[item.get('candidate_id') for item in promoted_from_watchlist]}"
-            )
-        rejected_legacy_board = comparison.get("rejected_legacy_board") or []
-        if rejected_legacy_board:
-            lines.append("- rejected legacy board:")
-            for item in rejected_legacy_board[:4]:
-                lines.append(
-                    "  "
-                    f"{item.get('candidate_id')} {item.get('symbol')} {item.get('strategy_family')} "
-                    f"| reason {item.get('allocation_reason')}"
-                )
-    if scorecard:
-        allocator_metrics = scorecard.get("allocator_selected") or {}
-        legacy_metrics = scorecard.get("legacy_board") or {}
-        rank_only_metrics = scorecard.get("rank_only_top") or {}
-        deltas = scorecard.get("deltas") or {}
-        lines.append("")
-        lines.append("Scorecard:")
-        lines.append(
-            "- "
-            f"legacy board avg pnl {legacy_metrics.get('average_estimated_pnl')} "
-            f"| positive_rate {legacy_metrics.get('positive_rate')} "
-            f"| still_open_rate {legacy_metrics.get('still_open_rate')}"
-        )
-        lines.append(
-            "- "
-            f"rank-only avg pnl {rank_only_metrics.get('average_estimated_pnl')} "
-            f"| positive_rate {rank_only_metrics.get('positive_rate')} "
-            f"| still_open_rate {rank_only_metrics.get('still_open_rate')}"
-        )
-        lines.append(
-            "- "
-            f"allocator avg pnl {allocator_metrics.get('average_estimated_pnl')} "
-            f"| positive_rate {allocator_metrics.get('positive_rate')} "
-            f"| still_open_rate {allocator_metrics.get('still_open_rate')}"
-        )
-        lines.append(
-            "- "
-            f"allocator minus legacy board {deltas.get('allocator_minus_legacy_board_avg_estimated_pnl')} "
-            f"| watchlist hit rate {deltas.get('watchlist_promotion_hit_rate')} "
-            f"| rejected board miss rate {deltas.get('rejected_board_miss_rate')}"
-        )
-    warnings = payload.get("warnings") or []
-    if warnings:
-        lines.append("")
-        lines.append("Warnings:")
-        for warning in warnings:
-            lines.append(f"- {warning}")
-    return "\n".join(lines)
-
-
-def _render_batch_text(payload: Mapping[str, Any]) -> str:
-    target = payload.get("target") or {}
-    aggregate = payload.get("aggregate") or {}
-    sessions = payload.get("sessions") or []
-    skipped_sessions = payload.get("skipped_sessions") or []
-    warnings = payload.get("warnings") or []
-    lines = [
-        f"Recent sessions: {aggregate.get('session_count')} of requested {aggregate.get('requested_recent')} | label filter {target.get('label') or 'all'}",
-        f"Skipped sessions: {aggregate.get('skipped_session_count')}",
-        f"Allocator selections: {(aggregate.get('allocator_selected_metrics') or {}).get('count')} opportunities across {aggregate.get('sessions_with_allocator_selections')} sessions",
-        f"Watchlist promotions: {aggregate.get('promoted_from_watchlist_total')} across {aggregate.get('sessions_with_watchlist_promotions')} sessions",
-        f"Rejected legacy board candidates: {aggregate.get('rejected_legacy_board_total')} across {aggregate.get('sessions_with_rejected_legacy_board')} sessions",
-        f"Average overlap | allocator vs legacy board {aggregate.get('average_allocator_vs_legacy_board_overlap')} | allocator vs rank-only {aggregate.get('average_allocator_vs_rank_only_overlap')}",
-        f"Pooled avg pnl | legacy board {(aggregate.get('legacy_board_metrics') or {}).get('average_estimated_pnl')} | rank-only {(aggregate.get('rank_only_top_metrics') or {}).get('average_estimated_pnl')} | allocator {(aggregate.get('allocator_selected_metrics') or {}).get('average_estimated_pnl')}",
-        f"Still-open rate | legacy board {(aggregate.get('legacy_board_metrics') or {}).get('still_open_rate')} | rank-only {(aggregate.get('rank_only_top_metrics') or {}).get('still_open_rate')} | allocator {(aggregate.get('allocator_selected_metrics') or {}).get('still_open_rate')}",
-        f"Pooled deltas | allocator minus legacy board {aggregate.get('allocator_minus_legacy_board_avg_estimated_pnl')} | allocator minus rank-only {aggregate.get('allocator_minus_rank_only_avg_estimated_pnl')}",
-        f"Hit rates | watchlist promotions {aggregate.get('watchlist_promotion_hit_rate')} | rejected board miss rate {aggregate.get('rejected_board_miss_rate')}",
-        f"Verdicts: {aggregate.get('verdict_counts')}",
-        "",
-        "Sessions:",
-    ]
-    for item in sessions:
-        if not isinstance(item, Mapping):
-            continue
-        session = item.get("session") or {}
-        summary = item.get("summary") or {}
-        comparison = item.get("comparison") or {}
-        promoted = comparison.get("promoted_from_watchlist") or []
-        rejected = comparison.get("rejected_legacy_board") or []
-        lines.append(
-            "- "
-            f"{session.get('label')} {session.get('session_date')} "
-            f"| verdict {summary.get('analysis_verdict') or 'n/a'} "
-            f"| allocated {summary.get('allocated_count')} "
-            f"| promoted_watchlist {[row.get('candidate_id') for row in promoted]} "
-            f"| rejected_board {[row.get('candidate_id') for row in rejected]}"
-        )
-    if skipped_sessions:
-        lines.append("")
-        lines.append("Skipped:")
-        for item in skipped_sessions:
-            if not isinstance(item, Mapping):
-                continue
-            lines.append(
-                "- "
-                f"{item.get('label')} {item.get('session_date')} | reason {item.get('reason')}"
-            )
-    if warnings:
-        lines.append("")
-        lines.append("Warnings:")
-        for warning in warnings:
-            lines.append(f"- {warning}")
-    return "\n".join(lines)
-
-
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Build an offline opportunity-design replay from stored collector and post-market data.",
-    )
-    parser.add_argument(
-        "--db", default=default_database_url(), help="Postgres database URL."
-    )
-    parser.add_argument("--session-id", help="Session id to replay.")
-    parser.add_argument("--label", help="Collector label to replay.")
-    parser.add_argument("--date", help="Session date in YYYY-MM-DD.")
-    parser.add_argument(
-        "--recent",
-        type=int,
-        help="Build a batch report across the most recent succeeded post-market sessions.",
-    )
-    parser.add_argument(
-        "--export-json",
-        help="Write the full replay payload to a JSON file.",
-    )
-    parser.add_argument(
-        "--export-csv",
-        help="Write flattened opportunity rows to a CSV file.",
-    )
-    parser.add_argument("--json", action="store_true", help="Emit JSON output.")
-    return parser.parse_args(argv)
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    try:
-        if args.recent is not None:
-            if args.session_id is not None or args.date is not None:
-                raise SystemExit(
-                    "--recent cannot be combined with --session-id or --date"
-                )
-            payload = build_recent_opportunity_replay_batch(
-                db_target=args.db,
-                recent=args.recent,
-                label=args.label,
-            )
-        else:
-            payload = build_opportunity_replay(
-                db_target=args.db,
-                session_id=args.session_id,
-                label=args.label,
-                session_date=args.date,
-            )
-    except OpportunityReplayLookupError as exc:
-        raise SystemExit(str(exc)) from None
-
-    if args.export_json:
-        _write_json_export(args.export_json, payload)
-    if args.export_csv:
-        rows = payload.get("rows") or []
-        if not isinstance(rows, list):
-            rows = []
-        _write_csv_export(
-            args.export_csv, [dict(row) for row in rows if isinstance(row, Mapping)]
-        )
-
-    if args.json:
-        print(json.dumps(payload, indent=2, default=str))
-    else:
-        if args.recent is not None:
-            print(_render_batch_text(payload))
-        else:
-            print(_render_text(payload))
-    return 0
-
-
 __all__ = [
     "OpportunityReplayLookupError",
     "build_opportunity_replay",
     "build_recent_opportunity_replay_batch",
-    "main",
-    "parse_args",
 ]
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
