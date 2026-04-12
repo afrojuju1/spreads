@@ -1,0 +1,15 @@
+flowchart TD
+    A["Construct candidate"] --> B["Apply hard filters<br/>delta, width, credit, fill, expected move"]
+    B --> C["Compute discovery_score"]
+    C --> D["Cluster near-duplicates"]
+    D --> E["Per-symbol side arbitration<br/>best call vs best put"]
+    E --> F["Compute promotion_score"]
+    F --> G["Assign rank, state, and state_reason"]
+    G --> H["Persist ranked opportunity list"]
+    H --> I["Compute execution_score from current top slice"]
+    I --> J{"Best executable candidate valid now?"}
+    J -- "no" --> K["Skip auto execution"]
+    J -- "yes" --> L["Submit candidate with strongest execution edge"]
+    H --> M["Post-market analysis"]
+    M --> N["Calibration tables"]
+    N --> F

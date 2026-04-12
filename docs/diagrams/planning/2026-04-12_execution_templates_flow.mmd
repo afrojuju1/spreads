@@ -1,0 +1,9 @@
+flowchart TD
+    A["Allocated Opportunity"] --> B["Execution Planner"]
+    B --> C["Choose family template"]
+    C --> D["Build ExecutionIntent"]
+    D --> E["Validate live quotes and product policy"]
+    E --> F["Submit order policy"]
+    F --> G["Replace ladder and timeout handling"]
+    G --> H["Fill or cancel outcome"]
+    H --> I["Position and Exit Engine"]

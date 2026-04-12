@@ -1,0 +1,10 @@
+flowchart TD
+    A["RegimeSnapshot"] --> E["Horizon Selection Engine"]
+    B["StrategyIntent"] --> E
+    C["Product policy"] --> E
+    D["Liquidity and data quality"] --> E
+    E --> F["Generate admissible horizon bands"]
+    F --> G["Apply event timing rules"]
+    G --> H["Apply style-specific constraints"]
+    H --> I["Score horizons by fit and urgency"]
+    I --> J["Emit HorizonIntent"]

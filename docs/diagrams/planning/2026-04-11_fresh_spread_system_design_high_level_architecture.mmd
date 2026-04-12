@@ -1,0 +1,45 @@
+flowchart LR
+    A["Market Session Gate"] --> B["Stock-Led Signal Engine"]
+    A --> C["Option-Led Signal Engine"]
+    D["Stock bars, quotes, trades, auctions, statuses"] --> B
+    E["Option trades, quotes, snapshots, bars"] --> C
+    F["Calendar and event data"] --> B
+    F --> C
+    B --> G["Regime Engine"]
+    C --> G
+    G --> H["Strategy Policy Engine"]
+    I["Vol Surface and Realized Vol Service"] --> H
+    J["Market Data Quality Service"] --> H
+    H --> K["Horizon Selection Engine"]
+    I --> K
+    J --> K
+    K --> L["Armed Symbol Registry"]
+    K --> M["Strategy Registry and Builders"]
+    L --> N["Option Enrichment Engine"]
+    J --> N
+    N --> M
+    M --> O["Profile Ranking Engine"]
+    P["Calibration Tables"] --> O
+    J --> O
+    O --> Q["Canonical Opportunity Store"]
+    Q --> R["Portfolio Allocation and Risk Budget Engine"]
+    S["Broker and account state"] --> R
+    T["Product and Assignment Policy Engine"] --> R
+    R --> U["Allocated Opportunity Slice"]
+    U --> V["Execution Planner"]
+    T --> V
+    J --> V
+    V --> W["Execution Orchestrator"]
+    X["Venue and order policy"] --> W
+    T --> W
+    J --> W
+    W --> Y["Broker OMS"]
+    Y --> Z["Position and Exit Engine"]
+    Z --> AA["Execution and Position Store"]
+    Q --> AB["Opportunity Outcome Evaluator"]
+    AA --> AB
+    AA --> AC["Execution Quality Evaluator"]
+    AB --> P
+    AC --> AD["Execution Policy Tuning"]
+    Q --> AE["Alerts, Signal State, CLI, API"]
+    AA --> AE

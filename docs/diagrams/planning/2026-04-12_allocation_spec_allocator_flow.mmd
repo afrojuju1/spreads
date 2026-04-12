@@ -1,0 +1,19 @@
+flowchart TD
+    A["Ranked Opportunity Book"] --> B["Apply Hard Constraints"]
+    C["Portfolio State"] --> B
+    D["Product Policy"] --> B
+    E["Account Risk Budget"] --> B
+
+    B --> F{"Eligible?"}
+    F -- "No" --> G["Persist not_allocated with rejection codes"]
+    F -- "Yes" --> H["Compute allocation score"]
+
+    H --> I["Apply slot and concentration rules"]
+    I --> J["Apply reservation logic"]
+    J --> K{"Improves portfolio?"}
+    K -- "No" --> G
+    K -- "Yes" --> L["Persist allocated with budget impact"]
+
+    L --> M["Execution Planning"]
+    G --> N["Post-Market Analysis"]
+    L --> N

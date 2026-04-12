@@ -1,0 +1,10 @@
+flowchart LR
+    A["Alpaca contracts, chain snapshots, stock bars"] --> B["scanner.py<br/>construct credit spreads"]
+    B --> C["score_candidate()<br/>single quality_score"]
+    C --> D["merge_strategy_candidates()<br/>call + put merged by raw score"]
+    D --> E["live_collector.py<br/>board/watchlist selection"]
+    E --> F["collector storage<br/>cycles, board, watchlist, events"]
+    F --> G["alerts/rules.py<br/>separate alert thresholds"]
+    F --> H["signal_state.py<br/>confidence normalized from score"]
+    F --> I["execution.py<br/>auto execution takes board position 1"]
+    F --> J["post_market_analysis.py<br/>board vs watchlist diagnostics"]

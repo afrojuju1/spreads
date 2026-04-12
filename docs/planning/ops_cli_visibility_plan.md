@@ -4,10 +4,10 @@ Status: implemented for current scope; phase 1, phase 2, phase 3, and phase 4 au
 
 Related:
 
-- [Database Setup](/Users/adeb/Projects/spreads/docs/database.md)
-- [0DTE System Architecture](/Users/adeb/Projects/spreads/docs/planning/0dte_system_architecture.md)
-- [Unusual Activity Scanner Design](/Users/adeb/Projects/spreads/docs/planning/unusual_activity_scanner_design.md)
-- [Alert Delivery Refactor Plan](/Users/adeb/Projects/spreads/docs/planning/alert_delivery_refactor_plan.md)
+- [Database Setup](../database.md)
+- [0DTE System Architecture](./0dte_system_architecture.md)
+- [Unusual Activity Scanner Design](./unusual_activity_scanner_design.md)
+- [Alert Delivery Refactor Plan](./alert_delivery_refactor_plan.md)
 
 ## Shipped Scope
 

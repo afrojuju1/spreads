@@ -1,0 +1,9 @@
+flowchart LR
+    A["regime_snapshots"] --> B["strategy_intents"]
+    B --> C["horizon_intents"]
+    C --> D["opportunities"]
+    D --> E["opportunity_legs"]
+    D --> F["execution_intents"]
+    D --> G["opportunity_state_events"]
+    D --> H["opportunity_outcomes"]
+    F --> I["execution_results"]

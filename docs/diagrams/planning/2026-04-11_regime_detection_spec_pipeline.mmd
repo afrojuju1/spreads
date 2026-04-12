@@ -1,0 +1,18 @@
+flowchart TD
+    A["Stock-led inputs"] --> F["Feature normalization"]
+    B["Option-led inputs"] --> F
+    C["Vol surface and realized vol"] --> F
+    D["Calendar and event context"] --> F
+    E["Market data quality state"] --> F
+    F --> G["Readiness gates"]
+    G --> H["Directional evidence"]
+    G --> I["Intraday structure classification"]
+    G --> J["Volatility classification"]
+    G --> K["Event state classification"]
+    G --> L["Liquidity state classification"]
+    H --> M["Regime confidence and hysteresis"]
+    I --> M
+    J --> M
+    K --> M
+    L --> M
+    M --> N["RegimeSnapshot"]

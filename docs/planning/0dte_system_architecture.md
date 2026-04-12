@@ -4,10 +4,10 @@ Status: proposed
 
 Based on:
 
-- [Alpaca Capabilities Statement](/Users/adeb/Projects/spreads/docs/research/alpaca_capabilities_statement.md)
-- [Current System State](/Users/adeb/Projects/spreads/docs/current_system_state.md)
-- [Alpaca-Only Unusual Activity Scanner Design](/Users/adeb/Projects/spreads/docs/planning/unusual_activity_scanner_design.md)
-- [Signal State Platform](/Users/adeb/Projects/spreads/docs/planning/signal_state_platform.md)
+- [Alpaca Capabilities Statement](../research/alpaca_capabilities_statement.md)
+- [Current System State](../current_system_state.md)
+- [Alpaca-Only Unusual Activity Scanner Design](./unusual_activity_scanner_design.md)
+- [Signal State Platform](./signal_state_platform.md)
 
 ## Goal
 
@@ -20,7 +20,7 @@ Build a 0DTE credit-spread system that is:
 
 This should not be designed as a "scan everything every minute" system. The right design is to react to intraday market structure changes, then selectively enrich options only when the underlying context justifies it.
 
-This 0DTE architecture should be treated as one strategy-specific application of the broader [Signal State Platform](/Users/adeb/Projects/spreads/docs/planning/signal_state_platform.md), not as its own independent state framework.
+This 0DTE architecture should be treated as one strategy-specific application of the broader [Signal State Platform](./signal_state_platform.md), not as its own independent state framework.
 
 ## Design Principles
 
@@ -492,7 +492,7 @@ In practice:
 
 ## References
 
-- [Alpaca Capabilities Statement](/Users/adeb/Projects/spreads/docs/research/alpaca_capabilities_statement.md)
+- [Alpaca Capabilities Statement](../research/alpaca_capabilities_statement.md)
 - [Alpaca Market Data Overview](https://docs.alpaca.markets/v1.3/docs/about-market-data-api)
 - [Alpaca Real-time Stock Data](https://docs.alpaca.markets/docs/real-time-stock-pricing-data)
 - [Alpaca Real-time Option Data](https://docs.alpaca.markets/docs/real-time-option-data)

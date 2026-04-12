@@ -1,0 +1,12 @@
+flowchart LR
+    A["Alpaca contracts, snapshots, stock bars, quote/trade capture"] --> B["scanner.py<br/>candidate construction + raw features"]
+    B --> C["spread_selection.py<br/>canonical selection policy"]
+    C --> D["Discovery score<br/>surface candidates"]
+    C --> E["Promotion score<br/>assign candidate state on ranked list"]
+    C --> F["Execution score<br/>choose best executable top-slice candidate"]
+    E --> G["collector storage<br/>ranked opportunities + state reasons"]
+    F --> H["execution.py<br/>auto execution from ranked top slice"]
+    G --> I["alerts + signal state<br/>consume canonical state transitions"]
+    G --> J["post_market_analysis.py<br/>rank-band and top-slice calibration tables"]
+    J --> K["spread_calibration.py<br/>profile-aware additive adjustments"]
+    K --> C

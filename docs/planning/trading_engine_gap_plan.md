@@ -4,10 +4,10 @@ Status: proposed
 
 Related:
 
-- [Current System State](/Users/adeb/Projects/spreads/docs/current_system_state.md)
-- [Trading Engine Architecture](/Users/adeb/Projects/spreads/docs/planning/trading_engine_architecture.md)
-- [Signal State Platform](/Users/adeb/Projects/spreads/docs/planning/signal_state_platform.md)
-- [0DTE System Architecture](/Users/adeb/Projects/spreads/docs/planning/0dte_system_architecture.md)
+- [Current System State](../current_system_state.md)
+- [Trading Engine Architecture](./trading_engine_architecture.md)
+- [Signal State Platform](./signal_state_platform.md)
+- [0DTE System Architecture](./0dte_system_architecture.md)
 
 ## Goal
 
@@ -83,7 +83,7 @@ Already implemented:
 
 Evidence:
 
-- [current_system_state.md](/Users/adeb/Projects/spreads/docs/current_system_state.md)
+- [current_system_state.md](../current_system_state.md)
 - [risk_manager.py](/Users/adeb/Projects/spreads/src/spreads/services/risk_manager.py)
 - [providers.tsx](/Users/adeb/Projects/spreads/apps/web/components/providers.tsx)
 
@@ -117,7 +117,7 @@ Already implemented:
 
 Evidence:
 
-- [current_system_state.md](/Users/adeb/Projects/spreads/docs/current_system_state.md)
+- [current_system_state.md](../current_system_state.md)
 - [scanner.py](/Users/adeb/Projects/spreads/src/spreads/services/scanner.py)
 - [live_collector.py](/Users/adeb/Projects/spreads/src/spreads/jobs/live_collector.py)
 - [collector_models.py](/Users/adeb/Projects/spreads/src/spreads/storage/collector_models.py)
@@ -160,7 +160,7 @@ Already implemented:
 
 Evidence:
 
-- [current_system_state.md](/Users/adeb/Projects/spreads/docs/current_system_state.md)
+- [current_system_state.md](../current_system_state.md)
 - [execution.py](/Users/adeb/Projects/spreads/src/spreads/services/execution.py)
 - [broker_sync.py](/Users/adeb/Projects/spreads/src/spreads/services/broker_sync.py)
 - [risk_manager.py](/Users/adeb/Projects/spreads/src/spreads/services/risk_manager.py)

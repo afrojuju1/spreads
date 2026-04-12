@@ -4,10 +4,10 @@ Status: phase 5 in progress
 
 Based on:
 
-- [Alpaca Capabilities Statement](/Users/adeb/Projects/spreads/docs/research/alpaca_capabilities_statement.md)
-- [Alpaca UOA API Inventory](/Users/adeb/Projects/spreads/docs/research/alpaca_uoa_api_inventory.md)
-- [Alpaca Option Trade Condition Research](/Users/adeb/Projects/spreads/docs/research/alpaca_option_trade_condition_research.md)
-- [Current System State](/Users/adeb/Projects/spreads/docs/current_system_state.md)
+- [Alpaca Capabilities Statement](../research/alpaca_capabilities_statement.md)
+- [Alpaca UOA API Inventory](../research/alpaca_uoa_api_inventory.md)
+- [Alpaca Option Trade Condition Research](../research/alpaca_option_trade_condition_research.md)
+- [Current System State](../current_system_state.md)
 
 ## Goal
 
@@ -637,7 +637,7 @@ Current progress:
 - capture health and scoreable-flow summaries are emitted per cycle
 - rolling session baselines are now derived from persisted scoreable trade history
 - root-level scanner decisions now classify observed flow into `none`, `watchlist`, `board`, or `high`
-- the collector now captures live option quotes and trades through one unified broker-backed internal request, eliminating the intra-process quote/trade connection collision that was hitting Alpaca's single-connection stream budget; details are tracked in [unified_option_stream_broker_architecture.md](/Users/adeb/Projects/spreads/docs/planning/unified_option_stream_broker_architecture.md)
+- the collector now captures live option quotes and trades through one unified broker-backed internal request, eliminating the intra-process quote/trade connection collision that was hitting Alpaca's single-connection stream budget; details are tracked in [unified_option_stream_broker_architecture.md](./unified_option_stream_broker_architecture.md)
 - broker health metrics now expose active capture pressure, desired symbol counts, `406` auth rejects, and shutdown cancellations for operator diagnostics
 
 ### Phase 5: Scoring And Alerting

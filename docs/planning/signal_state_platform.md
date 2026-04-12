@@ -4,9 +4,9 @@ Status: proposed
 
 Related:
 
-- [Current System State](/Users/adeb/Projects/spreads/docs/current_system_state.md)
-- [0DTE System Architecture](/Users/adeb/Projects/spreads/docs/planning/0dte_system_architecture.md)
-- [Alpaca Capabilities Statement](/Users/adeb/Projects/spreads/docs/research/alpaca_capabilities_statement.md)
+- [Current System State](../current_system_state.md)
+- [0DTE System Architecture](./0dte_system_architecture.md)
+- [Alpaca Capabilities Statement](../research/alpaca_capabilities_statement.md)
 
 ## Goal
 

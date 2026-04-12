@@ -4,9 +4,9 @@ Status: proposed
 
 Related:
 
-- [Ops CLI Visibility Plan](/Users/adeb/Projects/spreads/docs/planning/ops_cli_visibility_plan.md)
-- [0DTE System Architecture](/Users/adeb/Projects/spreads/docs/planning/0dte_system_architecture.md)
-- [Unusual Activity Scanner Design](/Users/adeb/Projects/spreads/docs/planning/unusual_activity_scanner_design.md)
+- [Ops CLI Visibility Plan](./ops_cli_visibility_plan.md)
+- [0DTE System Architecture](./0dte_system_architecture.md)
+- [Unusual Activity Scanner Design](./unusual_activity_scanner_design.md)
 
 ## Context
 

@@ -1,0 +1,15 @@
+flowchart LR
+    A["Design Spec"] --> B["Frozen Dataset Replay"]
+    B --> C{"Beats baseline?"}
+    C -- "No" --> D["Revise policy or calibration"]
+    D --> B
+    C -- "Yes" --> E["Shadow Mode"]
+
+    E --> F{"Stable and explainable?"}
+    F -- "No" --> D
+    F -- "Yes" --> G["Limited Live Rollout"]
+
+    G --> H{"Meets live safety and quality gates?"}
+    H -- "No" --> I["Scoped rollback"]
+    I --> D
+    H -- "Yes" --> J["Broader Family or Product Expansion"]
