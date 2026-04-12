@@ -163,6 +163,7 @@ class DecisionReplay:
     allocation_decisions: list[AllocationDecision] = field(default_factory=list)
     execution_intents: list[ExecutionIntent] = field(default_factory=list)
     summary: dict[str, Any] = field(default_factory=dict)
+    comparison: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
 
     def to_payload(self) -> dict[str, Any]:
@@ -178,6 +179,7 @@ class DecisionReplay:
             ],
             "execution_intents": [item.to_payload() for item in self.execution_intents],
             "summary": dict(self.summary),
+            "comparison": dict(self.comparison),
             "warnings": list(self.warnings),
         }
 

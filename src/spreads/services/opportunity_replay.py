@@ -988,6 +988,132 @@ def _build_execution_intents(
     return intents
 
 
+def _comparison_item(
+    opportunity: Opportunity,
+    allocation: AllocationDecision | None,
+) -> dict[str, Any]:
+    return {
+        "opportunity_id": opportunity.opportunity_id,
+        "candidate_id": opportunity.candidate_id,
+        "symbol": opportunity.symbol,
+        "strategy_family": opportunity.strategy_family,
+        "rank": opportunity.rank,
+        "promotion_score": opportunity.promotion_score,
+        "legacy_bucket": opportunity.legacy_bucket,
+        "allocation_state": None if allocation is None else allocation.allocation_state,
+        "allocation_reason": None
+        if allocation is None
+        else allocation.allocation_reason,
+        "allocation_score": None if allocation is None else allocation.allocation_score,
+    }
+
+
+def _build_comparison(
+    *,
+    opportunities: list[Opportunity],
+    allocation_decisions: list[AllocationDecision],
+) -> dict[str, Any]:
+    allocation_by_opportunity_id = {
+        item.opportunity_id: item for item in allocation_decisions
+    }
+    legacy_board = [item for item in opportunities if item.legacy_bucket == "board"]
+    legacy_watchlist = [
+        item for item in opportunities if item.legacy_bucket == "watchlist"
+    ]
+    allocated = [
+        item
+        for item in opportunities
+        if allocation_by_opportunity_id.get(item.opportunity_id) is not None
+        and allocation_by_opportunity_id[item.opportunity_id].allocation_state
+        == "allocated"
+    ]
+    comparison_size = max(len(legacy_board), len(allocated), 1)
+    promotable_rank_only = [
+        item for item in opportunities if item.state == "promotable"
+    ]
+    rank_only_top = (
+        promotable_rank_only[:comparison_size] or opportunities[:comparison_size]
+    )
+
+    allocated_ids = {item.opportunity_id for item in allocated}
+    legacy_board_ids = {item.opportunity_id for item in legacy_board}
+    rank_only_ids = {item.opportunity_id for item in rank_only_top}
+
+    return {
+        "comparison_size": comparison_size,
+        "legacy_board": {
+            "count": len(legacy_board),
+            "symbols": sorted({item.symbol for item in legacy_board}),
+            "candidate_ids": [item.candidate_id for item in legacy_board],
+            "items": [
+                _comparison_item(
+                    item, allocation_by_opportunity_id.get(item.opportunity_id)
+                )
+                for item in legacy_board
+            ],
+        },
+        "legacy_watchlist": {
+            "count": len(legacy_watchlist),
+            "symbols": sorted({item.symbol for item in legacy_watchlist}),
+            "candidate_ids": [item.candidate_id for item in legacy_watchlist],
+        },
+        "rank_only_top": {
+            "count": len(rank_only_top),
+            "symbols": sorted({item.symbol for item in rank_only_top}),
+            "candidate_ids": [item.candidate_id for item in rank_only_top],
+            "items": [
+                _comparison_item(
+                    item, allocation_by_opportunity_id.get(item.opportunity_id)
+                )
+                for item in rank_only_top
+            ],
+        },
+        "provisional_allocator": {
+            "count": len(allocated),
+            "symbols": sorted({item.symbol for item in allocated}),
+            "candidate_ids": [item.candidate_id for item in allocated],
+            "items": [
+                _comparison_item(
+                    item, allocation_by_opportunity_id.get(item.opportunity_id)
+                )
+                for item in allocated
+            ],
+        },
+        "promoted_from_watchlist": [
+            _comparison_item(
+                item, allocation_by_opportunity_id.get(item.opportunity_id)
+            )
+            for item in allocated
+            if item.legacy_bucket == "watchlist"
+        ],
+        "rejected_legacy_board": [
+            _comparison_item(
+                item, allocation_by_opportunity_id.get(item.opportunity_id)
+            )
+            for item in legacy_board
+            if item.opportunity_id not in allocated_ids
+        ],
+        "rank_only_rejected_by_allocator": [
+            _comparison_item(
+                item, allocation_by_opportunity_id.get(item.opportunity_id)
+            )
+            for item in rank_only_top
+            if item.opportunity_id not in allocated_ids
+        ],
+        "allocator_added_outside_rank_only": [
+            _comparison_item(
+                item, allocation_by_opportunity_id.get(item.opportunity_id)
+            )
+            for item in allocated
+            if item.opportunity_id not in rank_only_ids
+        ],
+        "overlap": {
+            "allocator_vs_legacy_board_count": len(allocated_ids & legacy_board_ids),
+            "allocator_vs_rank_only_count": len(allocated_ids & rank_only_ids),
+        },
+    }
+
+
 def _build_summary(
     *,
     cycle: Mapping[str, Any],
@@ -995,18 +1121,19 @@ def _build_summary(
     opportunities: list[Opportunity],
     allocation_decisions: list[AllocationDecision],
 ) -> tuple[dict[str, Any], list[str]]:
+    allocation_by_opportunity_id = {
+        item.opportunity_id: item for item in allocation_decisions
+    }
     legacy_board_symbols = sorted(
         {item.symbol for item in opportunities if item.legacy_bucket == "board"}
     )
     allocated_symbols = sorted(
         {
             item.symbol
-            for item, decision in zip(
-                opportunities,
-                sorted(allocation_decisions, key=lambda row: row.opportunity_id),
-                strict=False,
-            )
-            if decision.allocation_state == "allocated"
+            for item in opportunities
+            if allocation_by_opportunity_id.get(item.opportunity_id) is not None
+            and allocation_by_opportunity_id[item.opportunity_id].allocation_state
+            == "allocated"
         }
     )
     allocated_opportunity_ids = [
@@ -1139,6 +1266,10 @@ def build_opportunity_replay(
         opportunities=opportunities,
         allocation_decisions=allocation_decisions,
     )
+    comparison = _build_comparison(
+        opportunities=opportunities,
+        allocation_decisions=allocation_decisions,
+    )
     summary, warnings = _build_summary(
         cycle=cycle,
         analysis_run=analysis_run,
@@ -1172,6 +1303,7 @@ def build_opportunity_replay(
         allocation_decisions=allocation_decisions,
         execution_intents=execution_intents,
         summary=summary,
+        comparison=comparison,
         warnings=warnings,
     )
     return replay.to_payload()
@@ -1180,6 +1312,7 @@ def build_opportunity_replay(
 def _render_text(payload: Mapping[str, Any]) -> str:
     session = payload.get("session") or {}
     summary = payload.get("summary") or {}
+    comparison = payload.get("comparison") or {}
     opportunities = payload.get("opportunities") or []
     allocations = {
         row["opportunity_id"]: row
@@ -1210,6 +1343,39 @@ def _render_text(payload: Mapping[str, Any]) -> str:
             f"| legacy {row.get('legacy_bucket')} "
             f"| reason {allocation.get('allocation_reason', row.get('state_reason'))}"
         )
+    if comparison:
+        lines.append("")
+        lines.append("Comparison:")
+        lines.append(
+            "- "
+            f"legacy board ids {comparison.get('legacy_board', {}).get('candidate_ids', [])} "
+            f"| symbols {comparison.get('legacy_board', {}).get('symbols', [])}"
+        )
+        lines.append(
+            "- "
+            f"rank-only top ids {comparison.get('rank_only_top', {}).get('candidate_ids', [])} "
+            f"| symbols {comparison.get('rank_only_top', {}).get('symbols', [])}"
+        )
+        lines.append(
+            "- "
+            f"allocator ids {comparison.get('provisional_allocator', {}).get('candidate_ids', [])} "
+            f"| symbols {comparison.get('provisional_allocator', {}).get('symbols', [])}"
+        )
+        promoted_from_watchlist = comparison.get("promoted_from_watchlist") or []
+        if promoted_from_watchlist:
+            lines.append(
+                "- "
+                f"promoted from watchlist {[item.get('candidate_id') for item in promoted_from_watchlist]}"
+            )
+        rejected_legacy_board = comparison.get("rejected_legacy_board") or []
+        if rejected_legacy_board:
+            lines.append("- rejected legacy board:")
+            for item in rejected_legacy_board[:4]:
+                lines.append(
+                    "  "
+                    f"{item.get('candidate_id')} {item.get('symbol')} {item.get('strategy_family')} "
+                    f"| reason {item.get('allocation_reason')}"
+                )
     warnings = payload.get("warnings") or []
     if warnings:
         lines.append("")
