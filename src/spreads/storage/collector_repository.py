@@ -64,6 +64,7 @@ class CollectorRepository(RepositoryBase):
         selection_state: dict[str, Any],
         board_candidates: list[dict[str, Any]],
         watchlist_candidates: list[dict[str, Any]],
+        recovered_candidates: list[dict[str, Any]] | None = None,
         events: list[dict[str, Any]],
     ) -> None:
         generated_at_dt = parse_datetime(generated_at)
@@ -115,6 +116,7 @@ class CollectorRepository(RepositoryBase):
             candidates=[
                 *build_candidate_models("board", board_candidates),
                 *build_candidate_models("watchlist", watchlist_candidates),
+                *build_candidate_models("recovered", list(recovered_candidates or [])),
             ],
             events=[
                 CollectorCycleEventModel(
@@ -146,7 +148,10 @@ class CollectorRepository(RepositoryBase):
         statement = (
             select(CollectorCycleModel)
             .where(CollectorCycleModel.label == label)
-            .order_by(CollectorCycleModel.generated_at.desc(), CollectorCycleModel.cycle_id.desc())
+            .order_by(
+                CollectorCycleModel.generated_at.desc(),
+                CollectorCycleModel.cycle_id.desc(),
+            )
             .limit(1)
         )
         with self.session_factory() as session:
@@ -161,10 +166,16 @@ class CollectorRepository(RepositoryBase):
         session_date: str | None = None,
         limit: int = 100,
     ) -> list[CollectorCycleRecord]:
-        statement = select(CollectorCycleModel).where(CollectorCycleModel.label == label)
+        statement = select(CollectorCycleModel).where(
+            CollectorCycleModel.label == label
+        )
         if session_date:
-            statement = statement.where(CollectorCycleModel.session_date == date.fromisoformat(session_date))
-        statement = statement.order_by(CollectorCycleModel.generated_at.desc()).limit(limit)
+            statement = statement.where(
+                CollectorCycleModel.session_date == date.fromisoformat(session_date)
+            )
+        statement = statement.order_by(CollectorCycleModel.generated_at.desc()).limit(
+            limit
+        )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
         return self.rows(rows)
@@ -193,8 +204,10 @@ class CollectorRepository(RepositoryBase):
         session_date: str | None = None,
         limit: int | None = None,
     ) -> list[str]:
-        statement = select(CollectorCycleModel.session_id).distinct().where(
-            CollectorCycleModel.session_id.is_not(None)
+        statement = (
+            select(CollectorCycleModel.session_id)
+            .distinct()
+            .where(CollectorCycleModel.session_id.is_not(None))
         )
         if session_date:
             statement = statement.where(
@@ -211,7 +224,10 @@ class CollectorRepository(RepositoryBase):
         statement = (
             select(CollectorCycleModel)
             .where(CollectorCycleModel.session_id == session_id)
-            .order_by(CollectorCycleModel.generated_at.desc(), CollectorCycleModel.cycle_id.desc())
+            .order_by(
+                CollectorCycleModel.generated_at.desc(),
+                CollectorCycleModel.cycle_id.desc(),
+            )
             .limit(1)
         )
         with self.session_factory() as session:
@@ -244,7 +260,9 @@ class CollectorRepository(RepositoryBase):
         )
         statement = (
             select(CollectorCycleModel)
-            .join(ranked_cycles, CollectorCycleModel.cycle_id == ranked_cycles.c.cycle_id)
+            .join(
+                ranked_cycles, CollectorCycleModel.cycle_id == ranked_cycles.c.cycle_id
+            )
             .where(ranked_cycles.c.cycle_rank == 1)
         )
         with self.session_factory() as session:
@@ -273,7 +291,9 @@ class CollectorRepository(RepositoryBase):
             rows = session.execute(statement).all()
         counts: dict[str, dict[str, int]] = {}
         for cycle_id, bucket, candidate_count in rows:
-            counts.setdefault(str(cycle_id), {})[str(bucket)] = int(candidate_count or 0)
+            counts.setdefault(str(cycle_id), {})[str(bucket)] = int(
+                candidate_count or 0
+            )
         return counts
 
     def list_cycle_candidates(
@@ -283,7 +303,10 @@ class CollectorRepository(RepositoryBase):
     ) -> list[CollectorCycleCandidateRecord]:
         statement = (
             select(CollectorCycleCandidateModel, CollectorCycleModel)
-            .join(CollectorCycleModel, CollectorCycleCandidateModel.cycle_id == CollectorCycleModel.cycle_id)
+            .join(
+                CollectorCycleModel,
+                CollectorCycleCandidateModel.cycle_id == CollectorCycleModel.cycle_id,
+            )
             .where(CollectorCycleCandidateModel.cycle_id == cycle_id)
         )
         if bucket:
@@ -307,7 +330,10 @@ class CollectorRepository(RepositoryBase):
     def get_candidate(self, candidate_id: int) -> CollectorCycleCandidateRecord | None:
         statement = (
             select(CollectorCycleCandidateModel, CollectorCycleModel)
-            .join(CollectorCycleModel, CollectorCycleCandidateModel.cycle_id == CollectorCycleModel.cycle_id)
+            .join(
+                CollectorCycleModel,
+                CollectorCycleCandidateModel.cycle_id == CollectorCycleModel.cycle_id,
+            )
             .where(CollectorCycleCandidateModel.candidate_id == candidate_id)
             .limit(1)
         )
@@ -333,7 +359,10 @@ class CollectorRepository(RepositoryBase):
         session_date_value = date.fromisoformat(session_date)
         statement = (
             select(CollectorCycleCandidateModel, CollectorCycleModel)
-            .join(CollectorCycleModel, CollectorCycleCandidateModel.cycle_id == CollectorCycleModel.cycle_id)
+            .join(
+                CollectorCycleModel,
+                CollectorCycleCandidateModel.cycle_id == CollectorCycleModel.cycle_id,
+            )
             .where(
                 and_(
                     CollectorCycleModel.label == label,
@@ -367,11 +396,18 @@ class CollectorRepository(RepositoryBase):
         *,
         ascending: bool = False,
     ) -> list[CollectorCycleEventRecord]:
-        order_column = CollectorCycleEventModel.generated_at.asc() if ascending else CollectorCycleEventModel.generated_at.desc()
+        order_column = (
+            CollectorCycleEventModel.generated_at.asc()
+            if ascending
+            else CollectorCycleEventModel.generated_at.desc()
+        )
         statement = (
             select(CollectorCycleEventModel)
             .where(CollectorCycleEventModel.label == label)
-            .where(CollectorCycleEventModel.session_date == date.fromisoformat(session_date))
+            .where(
+                CollectorCycleEventModel.session_date
+                == date.fromisoformat(session_date)
+            )
             .order_by(order_column, CollectorCycleEventModel.event_id.asc())
             .limit(limit)
         )
@@ -383,7 +419,10 @@ class CollectorRepository(RepositoryBase):
         statement = (
             select(CollectorCycleEventModel)
             .where(CollectorCycleEventModel.cycle_id == cycle_id)
-            .order_by(CollectorCycleEventModel.generated_at.asc(), CollectorCycleEventModel.event_id.asc())
+            .order_by(
+                CollectorCycleEventModel.generated_at.asc(),
+                CollectorCycleEventModel.event_id.asc(),
+            )
         )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()

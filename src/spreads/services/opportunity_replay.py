@@ -5,6 +5,7 @@ import csv
 import json
 from collections import defaultdict
 from collections.abc import Mapping
+from datetime import UTC, date, datetime
 from pathlib import Path
 from statistics import mean
 from typing import Any
@@ -22,6 +23,13 @@ from spreads.domain.opportunity_models import (
 )
 from spreads.runtime.config import default_database_url
 from spreads.services.analysis import candidate_identity, resolved_estimated_pnl
+from spreads.services.candidate_policy import (
+    candidate_has_intraday_setup_context,
+    candidate_requires_favorable_setup,
+)
+from spreads.services.candidate_history_recovery import (
+    recover_session_candidates_from_history,
+)
 from spreads.services.live_pipelines import parse_live_session_id
 
 TOP_TIER_ETF_SYMBOLS = {"SPY", "QQQ", "IWM", "DIA", "GLD", "TLT"}
@@ -48,6 +56,8 @@ SLOT_LIMITS = {
     "tactical": {"slot_limit": 3, "risk_budget": 1000.0},
     "carry": {"slot_limit": 3, "risk_budget": 2000.0},
 }
+RECOVERY_TOP = 12
+RECOVERY_PER_STRATEGY = 3
 
 
 class OpportunityReplayLookupError(LookupError):
@@ -184,6 +194,96 @@ def _event_state(candidate: Mapping[str, Any]) -> str:
     return "event_risk"
 
 
+def _minutes_between(start: Any, end: Any) -> float | None:
+    start_text = _as_text(start)
+    end_text = _as_text(end)
+    if start_text is None or end_text is None:
+        return None
+    normalized_start = (
+        start_text.replace("Z", "+00:00") if start_text.endswith("Z") else start_text
+    )
+    normalized_end = (
+        end_text.replace("Z", "+00:00") if end_text.endswith("Z") else end_text
+    )
+    try:
+        start_dt = datetime.fromisoformat(normalized_start)
+        end_dt = datetime.fromisoformat(normalized_end)
+    except ValueError:
+        return None
+    if start_dt.tzinfo is None:
+        start_dt = start_dt.replace(tzinfo=UTC)
+    if end_dt.tzinfo is None:
+        end_dt = end_dt.replace(tzinfo=UTC)
+    return round((end_dt - start_dt).total_seconds() / 60.0, 1)
+
+
+def _profile_specific_blockers(
+    *,
+    candidate: Mapping[str, Any],
+    style_profile: str,
+) -> list[str]:
+    blockers: list[str] = []
+    if style_profile == "reactive" and candidate_requires_favorable_setup(candidate):
+        if str(candidate.get("setup_status") or "").lower() != "favorable":
+            blockers.append("reactive_setup_not_favorable")
+        if not candidate_has_intraday_setup_context(candidate):
+            blockers.append("missing_intraday_context")
+    return blockers
+
+
+def _profile_specific_score_components(
+    *,
+    candidate: Mapping[str, Any],
+    style_profile: str,
+    cycle: Mapping[str, Any],
+) -> tuple[dict[str, float], dict[str, Any]]:
+    components: dict[str, float] = {}
+    evidence: dict[str, Any] = {}
+
+    buffer_ratio = _carry_buffer_ratio(candidate)
+    if style_profile == "carry" and buffer_ratio is not None:
+        buffer_delta = _clamp((buffer_ratio - 0.15) * 30.0, 0.0, 6.0)
+        components["carry_buffer_delta"] = round(buffer_delta, 3)
+        evidence["buffer_ratio"] = round(buffer_ratio, 4)
+
+    if style_profile == "reactive":
+        stale_minutes = _minutes_between(
+            candidate.get("recovered_from_run_generated_at"),
+            cycle.get("generated_at"),
+        )
+        if stale_minutes is not None:
+            evidence["stale_minutes"] = stale_minutes
+            if stale_minutes > 20.0:
+                components["reactive_staleness_penalty"] = round(
+                    _clamp((stale_minutes - 20.0) * 0.25, 0.0, 25.0),
+                    3,
+                )
+        intraday_score = _as_float(candidate.get("setup_intraday_score"))
+        if intraday_score is not None:
+            intraday_delta = _clamp((intraday_score - 55.0) * 0.12, -8.0, 6.0)
+            components["reactive_intraday_delta"] = round(intraday_delta, 3)
+            evidence["intraday_score"] = round(intraday_score, 3)
+        if candidate.get("selection_source") == "session_history_recovery":
+            components["reactive_recovery_penalty"] = 8.0
+            evidence["selection_source"] = str(candidate.get("selection_source"))
+    return components, evidence
+
+
+def _calendar_blocks_strategy(
+    *,
+    calendar_status: str,
+    style_profile: str,
+) -> bool:
+    normalized = calendar_status.strip().lower()
+    if normalized in {"", "clean"}:
+        return False
+    if normalized in {"blocked", "unknown"}:
+        return True
+    if normalized == "penalized":
+        return style_profile != "carry"
+    return True
+
+
 def _product_policy_blockers(
     *,
     family: str,
@@ -208,28 +308,112 @@ def _product_policy_blockers(
     return blockers
 
 
-def _build_dimension_lookup(
-    summary: Mapping[str, Any] | None,
-) -> dict[str, dict[str, dict[str, Any]]]:
-    tuning = summary.get("tuning") if isinstance(summary, Mapping) else None
-    dimensions = tuning.get("dimensions") if isinstance(tuning, Mapping) else None
-    if not isinstance(dimensions, Mapping):
-        return {}
-    lookup: dict[str, dict[str, dict[str, Any]]] = {}
-    for dimension, rows in dimensions.items():
-        if not isinstance(rows, list):
+def _build_historical_dimension_lookup(
+    *,
+    storage: Any,
+    label: str,
+    session_date: str | None,
+    lookback_sessions: int = 20,
+) -> tuple[dict[str, dict[str, dict[str, Any]]], dict[str, Any]]:
+    if session_date is None:
+        return {}, {"source_session_count": 0}
+    try:
+        current_session_date = date.fromisoformat(session_date)
+    except ValueError:
+        return {}, {"source_session_count": 0}
+
+    fetched_runs = storage.post_market.list_runs(
+        label=label,
+        status="succeeded",
+        limit=max(lookback_sessions * 6, lookback_sessions),
+    )
+    session_summaries: list[Mapping[str, Any]] = []
+    seen_dates: set[str] = set()
+    used_session_dates: list[str] = []
+    for run in fetched_runs:
+        run_session_date = _as_text(run.get("session_date"))
+        if run_session_date is None or run_session_date in seen_dates:
             continue
-        bucket_lookup: dict[str, dict[str, Any]] = {}
-        for row in rows:
-            if not isinstance(row, Mapping):
+        try:
+            parsed_run_date = date.fromisoformat(run_session_date)
+        except ValueError:
+            continue
+        if parsed_run_date >= current_session_date:
+            continue
+        summary = run.get("summary")
+        if not isinstance(summary, Mapping):
+            continue
+        session_summaries.append(summary)
+        seen_dates.add(run_session_date)
+        used_session_dates.append(run_session_date)
+        if len(session_summaries) >= lookback_sessions:
+            break
+
+    totals: dict[str, dict[str, dict[str, float]]] = defaultdict(dict)
+    for summary in session_summaries:
+        tuning = summary.get("tuning")
+        dimensions = tuning.get("dimensions") if isinstance(tuning, Mapping) else None
+        if not isinstance(dimensions, Mapping):
+            continue
+        for dimension, rows in dimensions.items():
+            if not isinstance(rows, list):
                 continue
-            bucket = _as_text(row.get("bucket"))
-            if bucket is None:
+            dimension_key = str(dimension)
+            for row in rows:
+                if not isinstance(row, Mapping):
+                    continue
+                bucket = _as_text(row.get("bucket"))
+                if bucket is None:
+                    continue
+                count = max(int(_as_float(row.get("count")) or 0), 0)
+                average_estimated_pnl = (
+                    _as_float(row.get("average_estimated_pnl")) or 0.0
+                )
+                board_count = max(int(_as_float(row.get("board_count")) or 0), 0)
+                watchlist_count = max(
+                    int(_as_float(row.get("watchlist_count")) or 0), 0
+                )
+                bucket_totals = totals[dimension_key].setdefault(
+                    bucket,
+                    {
+                        "count": 0.0,
+                        "board_count": 0.0,
+                        "watchlist_count": 0.0,
+                        "estimated_pnl_total": 0.0,
+                    },
+                )
+                bucket_totals["count"] += float(count)
+                bucket_totals["board_count"] += float(board_count)
+                bucket_totals["watchlist_count"] += float(watchlist_count)
+                bucket_totals["estimated_pnl_total"] += average_estimated_pnl * float(
+                    count
+                )
+
+    lookup: dict[str, dict[str, dict[str, Any]]] = {}
+    for dimension, bucket_totals in totals.items():
+        dimension_lookup: dict[str, dict[str, Any]] = {}
+        for bucket, totals_row in bucket_totals.items():
+            count = int(totals_row["count"])
+            if count <= 0:
                 continue
-            bucket_lookup[bucket] = dict(row)
-        if bucket_lookup:
-            lookup[str(dimension)] = bucket_lookup
-    return lookup
+            dimension_lookup[bucket] = {
+                "bucket": bucket,
+                "count": count,
+                "board_count": int(totals_row["board_count"]),
+                "watchlist_count": int(totals_row["watchlist_count"]),
+                "average_estimated_pnl": round(
+                    totals_row["estimated_pnl_total"] / float(count),
+                    4,
+                ),
+            }
+        if dimension_lookup:
+            lookup[dimension] = dimension_lookup
+    metadata = {
+        "source_session_count": len(session_summaries),
+        "source_session_dates": used_session_dates,
+        "lookback_sessions": lookback_sessions,
+    }
+    return lookup, metadata
 
 
 def _dimension_adjustment(
@@ -278,8 +462,8 @@ def _regime_confidence(candidate: Mapping[str, Any]) -> float:
 
 
 def _execution_complexity(family: str) -> float:
-    if family == "iron_condor":
-        return 0.8
+    if family in {"long_call", "long_put"}:
+        return 0.2
     if family in {
         "call_credit_spread",
         "put_credit_spread",
@@ -287,7 +471,41 @@ def _execution_complexity(family: str) -> float:
         "put_debit_spread",
     }:
         return 0.4
-    return 0.2
+    if family == "iron_condor":
+        return 0.8
+    return 0.5
+
+
+def _carry_buffer_ratio(candidate: Mapping[str, Any] | None) -> float | None:
+    if not isinstance(candidate, Mapping):
+        return None
+    short_vs_expected_move = _as_float(candidate.get("short_vs_expected_move"))
+    expected_move = _as_float(candidate.get("expected_move"))
+    if short_vs_expected_move is None or expected_move in (None, 0.0):
+        return None
+    return _clamp(short_vs_expected_move / expected_move, 0.0, 1.5)
+
+
+def _opportunity_buffer_ratio(opportunity: Opportunity) -> float | None:
+    evidence = opportunity.evidence
+    if not isinstance(evidence, Mapping):
+        return None
+    profile_evidence = evidence.get("profile_score_evidence")
+    if not isinstance(profile_evidence, Mapping):
+        return None
+    value = _as_float(profile_evidence.get("buffer_ratio"))
+    if value is None:
+        return None
+    return _clamp(value, 0.0, 1.5)
+
+
+def _opportunity_rank_score(opportunity: Opportunity) -> float:
+    if opportunity.style_profile != "carry":
+        return opportunity.promotion_score
+    buffer_ratio = _opportunity_buffer_ratio(opportunity)
+    if buffer_ratio is None:
+        return opportunity.promotion_score
+    return round(opportunity.promotion_score + min(buffer_ratio * 2.0, 2.5), 4)
 
 
 def _build_legs(candidate: Mapping[str, Any]) -> list[OpportunityLeg]:
@@ -497,9 +715,19 @@ def _build_strategy_intents(
             product_class=product_class,
             horizon_band=horizon_band,
         )
+        blockers.extend(
+            _profile_specific_blockers(
+                candidate=candidate,
+                style_profile=snapshot.style_profile,
+            )
+        )
         if str(candidate.get("data_status") or "") != "clean":
             blockers.append("data_quality_not_clean")
-        if str(candidate.get("calendar_status") or "") not in {"", "clean"}:
+        calendar_status = str(candidate.get("calendar_status") or "")
+        if _calendar_blocks_strategy(
+            calendar_status=calendar_status,
+            style_profile=snapshot.style_profile,
+        ):
             blockers.append("calendar_risk_present")
 
         quality = _normalize_score(candidate.get("quality_score"), default=0.4)
@@ -639,7 +867,7 @@ def _build_opportunities(
     candidates: list[Mapping[str, Any]],
     strategy_intents: list[StrategyIntent],
     horizon_intents: list[HorizonIntent],
-    analysis_run: Mapping[str, Any] | None,
+    dimension_lookup: dict[str, dict[str, dict[str, Any]]],
 ) -> list[Opportunity]:
     strategy_by_key = {
         (item.symbol, item.strategy_family): item for item in strategy_intents
@@ -647,10 +875,6 @@ def _build_opportunities(
     horizon_by_key = {
         (item.symbol, item.strategy_family): item for item in horizon_intents
     }
-    dimension_lookup = _build_dimension_lookup(
-        analysis_run.get("summary") if isinstance(analysis_run, Mapping) else None
-    )
-
     built: list[Opportunity] = []
     for row in candidates:
         candidate = row.get("candidate")
@@ -702,6 +926,21 @@ def _build_opportunities(
         fill_ratio_delta = (
             (_as_float(candidate.get("fill_ratio")) or 0.8) - 0.8
         ) * 25.0
+        profile_components, profile_evidence = _profile_specific_score_components(
+            candidate=candidate,
+            style_profile=strategy_intent.style_profile,
+            cycle=cycle,
+        )
+        component_boost = sum(
+            value
+            for key, value in profile_components.items()
+            if not key.endswith("_penalty")
+        )
+        component_penalty = sum(
+            value
+            for key, value in profile_components.items()
+            if key.endswith("_penalty")
+        )
         penalty = 0.0
         if str(candidate.get("data_status") or "") != "clean":
             penalty += 8.0
@@ -710,26 +949,33 @@ def _build_opportunities(
         if strategy_intent.policy_state == "blocked":
             penalty += 20.0
 
-        promotion_score = round(
-            _clamp(
-                discovery_score
-                + setup_delta
-                + fill_ratio_delta
-                + calibration_delta
-                - penalty,
-                0.0,
-                100.0,
-            ),
-            1,
+        raw_promotion_score = (
+            discovery_score
+            + setup_delta
+            + fill_ratio_delta
+            + calibration_delta
+            + component_boost
+            - penalty
+            - component_penalty
         )
+        promotion_score = round(_clamp(raw_promotion_score, 0.0, 100.0), 1)
+
+        promotion_floor = 70.0
+        monitor_floor = 55.0
+        if strategy_intent.style_profile == "reactive":
+            promotion_floor = 78.0
+            monitor_floor = 62.0
+        elif strategy_intent.style_profile == "carry":
+            promotion_floor = 68.0
+            monitor_floor = 58.0
 
         if strategy_intent.policy_state == "blocked":
             state = "blocked"
             state_reason = "Blocked by product or event policy."
-        elif promotion_score >= 70.0:
+        elif promotion_score >= promotion_floor:
             state = "promotable"
             state_reason = "Meets provisional promotion floor."
-        elif promotion_score >= 55.0:
+        elif promotion_score >= monitor_floor:
             state = "monitor"
             state_reason = "Retained but below promotion floor."
         else:
@@ -773,6 +1019,8 @@ def _build_opportunities(
                 "fill_ratio_delta": round(fill_ratio_delta, 3),
                 "calibration_delta": round(calibration_delta, 3),
                 "calibration_breakdown": calibration_breakdown,
+                "profile_score_components": profile_components,
+                "profile_score_evidence": profile_evidence,
                 "penalty": round(penalty, 3),
                 "setup_status": _as_text(candidate.get("setup_status")),
                 "data_status": _as_text(candidate.get("data_status")),
@@ -787,6 +1035,7 @@ def _build_opportunities(
     ranked = sorted(
         built,
         key=lambda item: (
+            _opportunity_rank_score(item),
             item.promotion_score,
             item.discovery_score,
             -(item.execution_complexity or 0.0),
@@ -816,6 +1065,20 @@ def _allocation_score(
     readiness = 1.0 if opportunity.state == "promotable" else 0.5
     max_loss = opportunity.max_loss or policy["risk_budget"]
     capital_efficiency = 1.0 - _clamp(max_loss / policy["risk_budget"], 0.0, 1.0)
+    if style_profile == "carry":
+        buffer_ratio = _opportunity_buffer_ratio(opportunity) or 0.0
+        structure_quality = _clamp((buffer_ratio - 0.15) / 0.20, 0.0, 1.0)
+        return round(
+            100.0
+            * (
+                0.40 * desirability
+                + 0.25 * edge_value
+                + 0.10 * readiness
+                + 0.15 * capital_efficiency
+                + 0.10 * structure_quality
+            ),
+            1,
+        )
     return round(
         100.0
         * (
@@ -1349,12 +1612,14 @@ def _build_comparison(
         and allocation_by_opportunity_id[item.opportunity_id].allocation_state
         == "allocated"
     ]
-    comparison_size = max(len(legacy_board), len(allocated), 1)
+    comparison_size = max(len(legacy_board), len(allocated))
     promotable_rank_only = [
         item for item in opportunities if item.state == "promotable"
     ]
     rank_only_top = (
-        promotable_rank_only[:comparison_size] or opportunities[:comparison_size]
+        []
+        if comparison_size <= 0
+        else (promotable_rank_only[:comparison_size] or opportunities[:comparison_size])
     )
 
     allocated_ids = {item.opportunity_id for item in allocated}
@@ -1453,9 +1718,10 @@ def _build_comparison(
 def _build_summary(
     *,
     cycle: Mapping[str, Any],
-    analysis_run: Mapping[str, Any] | None,
     opportunities: list[Opportunity],
     allocation_decisions: list[AllocationDecision],
+    calibration_lookup: dict[str, dict[str, dict[str, Any]]],
+    calibration_meta: Mapping[str, Any],
 ) -> tuple[dict[str, Any], list[str]]:
     allocation_by_opportunity_id = {
         item.opportunity_id: item for item in allocation_decisions
@@ -1499,59 +1765,42 @@ def _build_summary(
         "allocated_symbols": allocated_symbols,
         "legacy_board_symbols": legacy_board_symbols,
         "newly_promoted_watchlist_symbols": newly_promoted_watchlist,
-        "analysis_verdict": None
-        if analysis_run is None
-        else ((analysis_run.get("diagnostics") or {}).get("overall_verdict")),
+        "analysis_verdict": None,
+        "historical_calibration_session_count": int(
+            calibration_meta.get("source_session_count") or 0
+        ),
     }
 
     warnings = [
         "Regime fields are inferred from persisted candidate payloads because collector cycles do not store full regime snapshots yet.",
         "The allocator is provisional and uses deterministic heuristic budgets; it is for offline comparison only.",
     ]
-    if analysis_run is not None:
-        dimensions = ((analysis_run.get("summary") or {}).get("tuning") or {}).get(
-            "dimensions"
-        ) or {}
-        classification_rows = (
-            dimensions.get("classification")
-            if isinstance(dimensions, Mapping)
-            else None
+    if int(calibration_meta.get("source_session_count") or 0) <= 0:
+        warnings.append(
+            "No prior succeeded post-market sessions were available for calibration, so promotion scores rely on raw candidate features only."
         )
-        if isinstance(classification_rows, list):
-            board_row = next(
-                (
-                    row
-                    for row in classification_rows
-                    if str(row.get("bucket")) == "board"
-                ),
-                None,
+    else:
+        classification_lookup = calibration_lookup.get("classification", {})
+        board_row = classification_lookup.get("board")
+        watchlist_row = classification_lookup.get("watchlist")
+        board_pnl = (
+            None
+            if board_row is None
+            else _as_float(board_row.get("average_estimated_pnl"))
+        )
+        watchlist_pnl = (
+            None
+            if watchlist_row is None
+            else _as_float(watchlist_row.get("average_estimated_pnl"))
+        )
+        if (
+            board_pnl is not None
+            and watchlist_pnl is not None
+            and watchlist_pnl > board_pnl
+        ):
+            warnings.append(
+                "Prior-session calibration for this label favors watchlist ideas over legacy board ideas, so watchlist candidates may surface as promotable."
             )
-            watchlist_row = next(
-                (
-                    row
-                    for row in classification_rows
-                    if str(row.get("bucket")) == "watchlist"
-                ),
-                None,
-            )
-            board_pnl = (
-                None
-                if board_row is None
-                else _as_float(board_row.get("average_estimated_pnl"))
-            )
-            watchlist_pnl = (
-                None
-                if watchlist_row is None
-                else _as_float(watchlist_row.get("average_estimated_pnl"))
-            )
-            if (
-                board_pnl is not None
-                and watchlist_pnl is not None
-                and watchlist_pnl > board_pnl
-            ):
-                warnings.append(
-                    "Historical tuning for this label favors watchlist ideas over legacy board ideas, so watchlist candidates may surface as promotable."
-                )
     return summary, warnings
 
 
@@ -1572,6 +1821,66 @@ def _write_csv_export(path: str, rows: list[dict[str, Any]]) -> None:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _wrap_recovered_candidate_rows(
+    *,
+    cycle_id: str,
+    recovered_candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index, payload in enumerate(recovered_candidates, start=1):
+        rows.append(
+            {
+                "candidate_id": -index,
+                "cycle_id": cycle_id,
+                "bucket": "recovered",
+                "position": index,
+                "run_id": payload.get("run_id"),
+                "underlying_symbol": payload.get("underlying_symbol"),
+                "strategy": payload.get("strategy"),
+                "expiration_date": payload.get("expiration_date"),
+                "short_symbol": payload.get("short_symbol"),
+                "long_symbol": payload.get("long_symbol"),
+                "quality_score": payload.get("quality_score"),
+                "midpoint_credit": payload.get("midpoint_credit"),
+                "candidate": payload,
+            }
+        )
+    return rows
+
+
+def _load_cycle_candidates(
+    *,
+    storage: Any,
+    cycle: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    persisted_rows = [
+        dict(row)
+        for row in storage.collector.list_cycle_candidates(str(cycle["cycle_id"]))
+    ]
+    warnings: list[str] = []
+    if persisted_rows:
+        return persisted_rows, warnings
+
+    recovered_candidates = recover_session_candidates_from_history(
+        history_store=storage.history,
+        session_date=str(cycle["session_date"]),
+        session_label=str(cycle["label"]),
+        generated_at=str(cycle["generated_at"]),
+        top=RECOVERY_TOP,
+        max_per_strategy=RECOVERY_PER_STRATEGY,
+    )
+    if not recovered_candidates:
+        return [], warnings
+
+    warnings.append(
+        f"Collector cycle {cycle['cycle_id']} has no stored candidates; replay recovered {len(recovered_candidates)} candidates from scan history."
+    )
+    return _wrap_recovered_candidate_rows(
+        cycle_id=str(cycle["cycle_id"]),
+        recovered_candidates=recovered_candidates,
+    ), warnings
 
 
 def _resolve_recent_analysis_targets(
@@ -1617,14 +1926,19 @@ def build_opportunity_replay(
         label=label,
         session_date=session_date,
     )
-    candidate_rows = [
-        dict(row)
-        for row in storage.collector.list_cycle_candidates(str(cycle["cycle_id"]))
-    ]
+    candidate_rows, recovery_warnings = _load_cycle_candidates(
+        storage=storage,
+        cycle=cycle,
+    )
     if not candidate_rows:
         raise OpportunityReplayLookupError(
             f"Collector cycle {cycle['cycle_id']} has no stored candidates."
         )
+    calibration_lookup, calibration_meta = _build_historical_dimension_lookup(
+        storage=storage,
+        label=str(cycle["label"]),
+        session_date=_as_text(cycle.get("session_date")),
+    )
 
     regime_snapshots = _build_regime_snapshots(cycle=cycle, candidates=candidate_rows)
     strategy_intents = _build_strategy_intents(
@@ -1642,7 +1956,7 @@ def build_opportunity_replay(
         candidates=candidate_rows,
         strategy_intents=strategy_intents,
         horizon_intents=horizon_intents,
-        analysis_run=analysis_run,
+        dimension_lookup=calibration_lookup,
     )
     allocation_decisions = _build_allocation_decisions(opportunities)
     outcome_matches = _build_outcome_matches(
@@ -1666,10 +1980,16 @@ def build_opportunity_replay(
     )
     summary, warnings = _build_summary(
         cycle=cycle,
-        analysis_run=analysis_run,
         opportunities=opportunities,
         allocation_decisions=allocation_decisions,
+        calibration_lookup=calibration_lookup,
+        calibration_meta=calibration_meta,
     )
+    summary["analysis_verdict"] = None
+    if analysis_run is not None:
+        summary["analysis_verdict"] = (analysis_run.get("diagnostics") or {}).get(
+            "overall_verdict"
+        )
     rows = _flatten_opportunity_rows(
         session={
             "label": cycle.get("label"),
@@ -1702,6 +2022,7 @@ def build_opportunity_replay(
         warnings.append(
             "Allocator scorecard outcomes are dominated by still_open post-market ideas, so average estimated PnL reflects modeled close-state rather than realized lifecycle results."
         )
+    warnings.extend(recovery_warnings)
 
     replay = DecisionReplay(
         target={

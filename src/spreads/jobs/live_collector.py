@@ -14,13 +14,28 @@ from spreads.integrations.alpaca.client import AlpacaClient, infer_trading_base_
 from spreads.integrations.calendar_events import build_calendar_event_resolver
 from spreads.integrations.greeks import build_local_greeks_provider
 from spreads.runtime.config import default_database_url
+from spreads.services.candidate_policy import (
+    candidate_has_intraday_setup_context,
+    candidate_requires_favorable_setup,
+)
 from spreads.services.execution import submit_auto_session_execution
-from spreads.services.live_collector_health import build_quote_capture_summary, build_trade_capture_summary
+from spreads.services.live_collector_health import (
+    build_quote_capture_summary,
+    build_trade_capture_summary,
+)
 from spreads.services.live_pipelines import build_live_snapshot_label
-from spreads.services.option_market_data_capture import request_option_market_data_capture
-from spreads.services.option_quote_records import build_quote_records, build_quote_symbol_metadata
+from spreads.services.option_market_data_capture import (
+    request_option_market_data_capture,
+)
+from spreads.services.option_quote_records import (
+    build_quote_records,
+    build_quote_symbol_metadata,
+)
 from spreads.services.uoa_quote_summary import build_uoa_quote_summary
 from spreads.services.uoa_root_decisions import build_uoa_root_decisions
+from spreads.services.candidate_history_recovery import (
+    recover_session_candidates_from_history,
+)
 from spreads.services.uoa_trade_baselines import build_uoa_trade_baselines
 from spreads.services.option_trade_records import build_trade_symbol_metadata
 from spreads.services.signal_state import sync_live_collector_signal_layer
@@ -76,7 +91,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Universe preset to scan. Default: 0dte_core",
     )
     parser.add_argument("--symbols", help="Optional comma-separated symbol list.")
-    parser.add_argument("--symbols-file", help="Optional file containing one symbol per line.")
+    parser.add_argument(
+        "--symbols-file", help="Optional file containing one symbol per line."
+    )
     parser.add_argument(
         "--strategy",
         default="combined",
@@ -156,37 +173,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def build_collection_args(overrides: dict[str, Any] | None = None) -> argparse.Namespace:
+def build_collection_args(
+    overrides: dict[str, Any] | None = None,
+) -> argparse.Namespace:
     args = parse_args([])
     for key, value in (overrides or {}).items():
         setattr(args, key, value)
     return args
 
 
-def _candidate_requires_favorable_setup(candidate: dict[str, Any]) -> bool:
-    return str(candidate.get("profile") or "").lower() == "0dte"
-
-
-def _candidate_has_intraday_setup_context(candidate: dict[str, Any]) -> bool:
-    if bool(candidate.get("setup_has_intraday_context")):
-        return True
-    score = candidate.get("setup_intraday_score")
-    if score not in (None, ""):
-        return True
-    minutes = candidate.get("setup_intraday_minutes")
-    try:
-        return int(float(minutes)) > 0
-    except (TypeError, ValueError):
-        return False
-
-
 def _board_candidate_is_eligible(candidate: dict[str, Any]) -> bool:
-    if not _candidate_requires_favorable_setup(candidate):
+    if not candidate_requires_favorable_setup(candidate):
         return True
-    return (
-        str(candidate.get("setup_status") or "").lower() == "favorable"
-        and _candidate_has_intraday_setup_context(candidate)
-    )
+    return str(
+        candidate.get("setup_status") or ""
+    ).lower() == "favorable" and candidate_has_intraday_setup_context(candidate)
 
 
 def collection_window_is_open(
@@ -198,12 +199,12 @@ def collection_window_is_open(
     current = datetime.now(NEW_YORK) if now is None else now.astimezone(NEW_YORK)
     if current.weekday() >= 5:
         return False
-    session_start = current.replace(hour=9, minute=30, second=0, microsecond=0) + timedelta(
-        minutes=session_start_offset_minutes
-    )
-    session_end = current.replace(hour=16, minute=0, second=0, microsecond=0) + timedelta(
-        minutes=session_end_offset_minutes
-    )
+    session_start = current.replace(
+        hour=9, minute=30, second=0, microsecond=0
+    ) + timedelta(minutes=session_start_offset_minutes)
+    session_end = current.replace(
+        hour=16, minute=0, second=0, microsecond=0
+    ) + timedelta(minutes=session_end_offset_minutes)
     return session_start <= current <= session_end
 
 
@@ -232,7 +233,13 @@ def run_universe_cycle(
     calendar_resolver: Any,
     greeks_provider: Any,
     history_store: RunHistoryRepository,
-) -> tuple[list[str], str, list[SymbolScanResult], list[UniverseScanFailure], list[SpreadCandidate]]:
+) -> tuple[
+    list[str],
+    str,
+    list[SymbolScanResult],
+    list[UniverseScanFailure],
+    list[SpreadCandidate],
+]:
     symbols, universe_label = resolve_symbols(scanner_args)
     scanner_args.session_label = build_live_snapshot_label(
         universe_label=universe_label,
@@ -273,10 +280,13 @@ def build_cycle_id(label: str) -> str:
     return f"{timestamp}_{label}"
 
 
-def serialize_candidate(candidate: SpreadCandidate, run_id: str | None) -> dict[str, Any]:
+def serialize_candidate(
+    candidate: SpreadCandidate, run_id: str | None
+) -> dict[str, Any]:
     payload = asdict(candidate)
     payload["run_id"] = run_id
     return payload
+
 
 def read_previous_cycle_state(
     collector_store: CollectorRepository,
@@ -286,7 +296,9 @@ def read_previous_cycle_state(
     if latest_cycle is None:
         return {}, {}
 
-    board = collector_store.list_cycle_candidates(latest_cycle["cycle_id"], bucket="board")
+    board = collector_store.list_cycle_candidates(
+        latest_cycle["cycle_id"], bucket="board"
+    )
     previous: dict[str, dict[str, Any]] = {}
     for candidate in board:
         payload = dict(candidate["candidate"])
@@ -304,9 +316,7 @@ def read_previous_cycle_state(
 
 
 def candidate_identity(candidate: dict[str, Any]) -> str:
-    return (
-        f"{candidate['strategy']}|{candidate['short_symbol']}|{candidate['long_symbol']}"
-    )
+    return f"{candidate['strategy']}|{candidate['short_symbol']}|{candidate['long_symbol']}"
 
 
 def build_symbol_strategy_candidates(
@@ -326,7 +336,9 @@ def build_symbol_strategy_candidates(
             )
             grouped.setdefault(result.symbol, []).append(payload)
     for symbol in grouped:
-        grouped[symbol].sort(key=lambda candidate: candidate["quality_score"], reverse=True)
+        grouped[symbol].sort(
+            key=lambda candidate: candidate["quality_score"], reverse=True
+        )
     return grouped
 
 
@@ -370,7 +382,8 @@ def select_board_candidates(
         viable = [
             candidate
             for candidate in options
-            if candidate["quality_score"] >= BOARD_SCORE_FLOOR and _board_candidate_is_eligible(candidate)
+            if candidate["quality_score"] >= BOARD_SCORE_FLOOR
+            and _board_candidate_is_eligible(candidate)
         ]
         winner = viable[0] if viable else None
         runner_up = viable[1] if len(viable) > 1 else None
@@ -414,16 +427,33 @@ def select_board_candidates(
             continue
 
         previous_id = candidate_identity(previous)
-        previous_match = next((candidate for candidate in options if candidate_identity(candidate) == previous_id), None)
+        previous_match = next(
+            (
+                candidate
+                for candidate in options
+                if candidate_identity(candidate) == previous_id
+            ),
+            None,
+        )
         previous_same_side = next(
-            (candidate for candidate in options if candidate["strategy"] == previous["strategy"]),
+            (
+                candidate
+                for candidate in options
+                if candidate["strategy"] == previous["strategy"]
+            ),
             None,
         )
         current_anchor = previous_match or previous_same_side
-        if current_anchor is not None and not _board_candidate_is_eligible(current_anchor):
+        if current_anchor is not None and not _board_candidate_is_eligible(
+            current_anchor
+        ):
             current_anchor = None
 
-        if current_anchor is not None and current_anchor["quality_score"] >= BOARD_SCORE_FLOOR - BOARD_HOLD_TOLERANCE:
+        if (
+            current_anchor is not None
+            and current_anchor["quality_score"]
+            >= BOARD_SCORE_FLOOR - BOARD_HOLD_TOLERANCE
+        ):
             accepted = current_anchor
         elif winner is not None:
             if winner["strategy"] == previous["strategy"]:
@@ -459,9 +489,8 @@ def select_board_candidates(
                     else:
                         accepted = accepted
                 else:
-                    if (
-                        score_gap >= BOARD_SIDE_SWITCH_MARGIN
-                        and (winner_gap is None or winner_gap >= BOARD_WINNER_GAP)
+                    if score_gap >= BOARD_SIDE_SWITCH_MARGIN and (
+                        winner_gap is None or winner_gap >= BOARD_WINNER_GAP
                     ):
                         confirmed, state_update = evaluate_pending_candidate(
                             symbol=symbol,
@@ -486,7 +515,10 @@ def select_board_candidates(
                         "accepted_score": accepted_score,
                     }
                 )
-                if state_update.get("pending_identity") == state_update["accepted_identity"]:
+                if (
+                    state_update.get("pending_identity")
+                    == state_update["accepted_identity"]
+                ):
                     state_update.pop("pending_identity", None)
                     state_update.pop("pending_strategy", None)
                     state_update.pop("pending_count", None)
@@ -597,7 +629,11 @@ def build_events(
         if prev is None or curr is None:
             continue
 
-        previous_identity = (prev["strategy"], prev["short_symbol"], prev["long_symbol"])
+        previous_identity = (
+            prev["strategy"],
+            prev["short_symbol"],
+            prev["long_symbol"],
+        )
         current_identity = (curr["strategy"], curr["short_symbol"], curr["long_symbol"])
         if prev["strategy"] != curr["strategy"]:
             message = f"{symbol} side flipped: {summarize_candidate(prev)} -> {summarize_candidate(curr)}"
@@ -650,7 +686,9 @@ def collect_latest_quote_records(
     for attempt in range(max_attempts):
         latest_quotes = client.get_latest_option_quotes(stream_symbols, feed=feed)
         if latest_quotes:
-            latest_captured_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+            latest_captured_at = (
+                datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+            )
             return build_quote_records(
                 captured_at=latest_captured_at,
                 symbol_metadata=symbol_metadata,
@@ -684,6 +722,7 @@ def collect_websocket_market_data_records(
         trade_duration_seconds=trade_duration_seconds,
         data_base_url=getattr(args, "data_base_url", None),
     )
+
 
 def print_cycle_summary(
     *,
@@ -756,14 +795,20 @@ def _resolve_collection_reference_time(slot_at: str | datetime | None) -> dateti
     if isinstance(slot_at, datetime):
         return slot_at
     if isinstance(slot_at, str) and slot_at:
-        normalized = slot_at.replace("Z", "+00:00") if slot_at.endswith("Z") else slot_at
+        normalized = (
+            slot_at.replace("Z", "+00:00") if slot_at.endswith("Z") else slot_at
+        )
         parsed = datetime.fromisoformat(normalized)
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
     return datetime.now(UTC)
 
 
 def _session_date_for_generated_at(generated_at: str) -> str:
-    normalized = generated_at.replace("Z", "+00:00") if generated_at.endswith("Z") else generated_at
+    normalized = (
+        generated_at.replace("Z", "+00:00")
+        if generated_at.endswith("Z")
+        else generated_at
+    )
     parsed = datetime.fromisoformat(normalized)
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
@@ -873,14 +918,20 @@ def _record_uoa_summary_event(
     if not event_store.schema_ready():
         return 0
     overview = dict(summary.get("overview") or {})
-    if not overview and not summary.get("top_contracts") and not summary.get("top_roots"):
+    if (
+        not overview
+        and not summary.get("top_contracts")
+        and not summary.get("top_roots")
+    ):
         return 0
     payload = {
         "cycle_id": cycle_id,
         "label": label,
         "profile": profile,
         "overview": overview,
-        "top_contracts": [dict(item) for item in (summary.get("top_contracts") or [])[:3]],
+        "top_contracts": [
+            dict(item) for item in (summary.get("top_contracts") or [])[:3]
+        ],
         "top_roots": [dict(item) for item in (summary.get("top_roots") or [])[:3]],
         **({} if session_id is None else {"session_id": session_id}),
         **({} if job_run_id is None else {"job_run_id": job_run_id}),
@@ -925,9 +976,15 @@ def _record_uoa_decision_event(
         "label": label,
         "profile": profile,
         "overview": overview,
-        "top_watchlist_roots": [dict(item) for item in (decisions.get("top_watchlist_roots") or [])[:3]],
-        "top_board_roots": [dict(item) for item in (decisions.get("top_board_roots") or [])[:3]],
-        "top_high_roots": [dict(item) for item in (decisions.get("top_high_roots") or [])[:3]],
+        "top_watchlist_roots": [
+            dict(item) for item in (decisions.get("top_watchlist_roots") or [])[:3]
+        ],
+        "top_board_roots": [
+            dict(item) for item in (decisions.get("top_board_roots") or [])[:3]
+        ],
+        "top_high_roots": [
+            dict(item) for item in (decisions.get("top_high_roots") or [])[:3]
+        ],
         **({} if session_id is None else {"session_id": session_id}),
         **({} if job_run_id is None else {"job_run_id": job_run_id}),
     }
@@ -966,16 +1023,20 @@ def _run_collection_cycle(
     emit_output: bool,
     heartbeat: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
-    generated_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    generated_at = (
+        datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    )
     session_date = _session_date_for_generated_at(generated_at)
     if heartbeat is not None:
         heartbeat()
-    symbols, universe_label, scan_results, failures, _ = run_universe_cycle(
-        scanner_args=scanner_args,
-        client=client,
-        calendar_resolver=calendar_resolver,
-        greeks_provider=greeks_provider,
-        history_store=history_store,
+    symbols, universe_label, scan_results, failures, _raw_top_candidates = (
+        run_universe_cycle(
+            scanner_args=scanner_args,
+            client=client,
+            calendar_resolver=calendar_resolver,
+            greeks_provider=greeks_provider,
+            history_store=history_store,
+        )
     )
     label = build_live_snapshot_label(
         universe_label=universe_label,
@@ -984,13 +1045,17 @@ def _run_collection_cycle(
         greeks_source=args.greeks_source,
     )
     cycle_id = build_cycle_id(label)
-    run_ids = {(result.symbol, result.args.strategy): result.run_id for result in scan_results}
+    run_ids = {
+        (result.symbol, result.args.strategy): result.run_id for result in scan_results
+    }
     symbol_strategy_candidates = build_symbol_strategy_candidates(
         scan_results,
         run_ids,
         max_per_strategy=WATCHLIST_PER_STRATEGY,
     )
-    previous_map, previous_selection_state = read_previous_cycle_state(collector_store, label)
+    previous_map, previous_selection_state = read_previous_cycle_state(
+        collector_store, label
+    )
     board_payloads, selection_state = select_board_candidates(
         symbol_candidates=symbol_strategy_candidates,
         previous_board=previous_map,
@@ -1002,6 +1067,16 @@ def _run_collection_cycle(
         board_candidates=board_payloads,
         top=WATCHLIST_TOP,
     )
+    recovered_payloads: list[dict[str, Any]] = []
+    if args.profile == "0dte" and not board_payloads and not watchlist_payloads:
+        recovered_payloads = recover_session_candidates_from_history(
+            history_store=history_store,
+            session_date=session_date,
+            session_label=label,
+            generated_at=generated_at,
+            top=WATCHLIST_TOP,
+            max_per_strategy=WATCHLIST_PER_STRATEGY,
+        )
     current_map = {payload["underlying_symbol"]: payload for payload in board_payloads}
     events = build_events(
         label=label,
@@ -1025,6 +1100,7 @@ def _run_collection_cycle(
         selection_state=selection_state,
         board_candidates=board_payloads,
         watchlist_candidates=watchlist_payloads,
+        recovered_candidates=recovered_payloads,
         events=events,
     )
     signal_sync = {
@@ -1096,8 +1172,12 @@ def _run_collection_cycle(
                     label=label,
                     profile=args.profile,
                     session_date=session_date,
-                    session_id=None if tick_context is None else tick_context.session_id,
-                    job_run_id=None if tick_context is None else tick_context.job_run_id,
+                    session_id=None
+                    if tick_context is None
+                    else tick_context.session_id,
+                    job_run_id=None
+                    if tick_context is None
+                    else tick_context.job_run_id,
                     quotes=latest_quote_records,
                 )
             except Exception as exc:
@@ -1106,9 +1186,13 @@ def _run_collection_cycle(
             print(f"Live latest quote capture unavailable: {exc}")
         trade_storage_ready = history_store.schema_has_tables("option_trade_events")
         if args.trade_capture_seconds > 0 and not trade_storage_ready:
-            print("Option trade capture unavailable: option_trade_events table is missing.")
+            print(
+                "Option trade capture unavailable: option_trade_events table is missing."
+            )
         websocket_quote_duration_seconds = float(max(args.quote_capture_seconds, 0))
-        websocket_trade_duration_seconds = float(args.trade_capture_seconds) if trade_storage_ready else 0.0
+        websocket_trade_duration_seconds = (
+            float(args.trade_capture_seconds) if trade_storage_ready else 0.0
+        )
         if websocket_quote_duration_seconds > 0 or websocket_trade_duration_seconds > 0:
             try:
                 capture_args = argparse.Namespace(**vars(args))
@@ -1129,18 +1213,32 @@ def _run_collection_cycle(
                     for item in (capture_response.get("trades") or [])
                     if isinstance(item, dict)
                 ]
-                websocket_quote_error = None if capture_response.get("quote_error") in (None, "") else str(capture_response.get("quote_error"))
-                websocket_trade_error = None if capture_response.get("trade_error") in (None, "") else str(capture_response.get("trade_error"))
+                websocket_quote_error = (
+                    None
+                    if capture_response.get("quote_error") in (None, "")
+                    else str(capture_response.get("quote_error"))
+                )
+                websocket_trade_error = (
+                    None
+                    if capture_response.get("trade_error") in (None, "")
+                    else str(capture_response.get("trade_error"))
+                )
                 if websocket_quote_error:
-                    print(f"Live websocket quote capture unavailable: {websocket_quote_error}")
+                    print(
+                        f"Live websocket quote capture unavailable: {websocket_quote_error}"
+                    )
                 if websocket_trade_error:
-                    print(f"Live websocket trade capture unavailable: {websocket_trade_error}")
+                    print(
+                        f"Live websocket trade capture unavailable: {websocket_trade_error}"
+                    )
                 if websocket_quote_records:
-                    websocket_quote_event_count = history_store.save_option_quote_events(
-                        cycle_id=cycle_id,
-                        label=label,
-                        profile=args.profile,
-                        quotes=websocket_quote_records,
+                    websocket_quote_event_count = (
+                        history_store.save_option_quote_events(
+                            cycle_id=cycle_id,
+                            label=label,
+                            profile=args.profile,
+                            quotes=websocket_quote_records,
+                        )
                     )
                     quote_event_count += websocket_quote_event_count
                     try:
@@ -1150,18 +1248,26 @@ def _run_collection_cycle(
                             label=label,
                             profile=args.profile,
                             session_date=session_date,
-                            session_id=None if tick_context is None else tick_context.session_id,
-                            job_run_id=None if tick_context is None else tick_context.job_run_id,
+                            session_id=None
+                            if tick_context is None
+                            else tick_context.session_id,
+                            job_run_id=None
+                            if tick_context is None
+                            else tick_context.job_run_id,
                             quotes=websocket_quote_records,
                         )
                     except Exception as exc:
-                        print(f"Live websocket quote event normalization unavailable: {exc}")
+                        print(
+                            f"Live websocket quote event normalization unavailable: {exc}"
+                        )
                 if websocket_trade_records:
-                    websocket_trade_event_count = history_store.save_option_trade_events(
-                        cycle_id=cycle_id,
-                        label=label,
-                        profile=args.profile,
-                        trades=websocket_trade_records,
+                    websocket_trade_event_count = (
+                        history_store.save_option_trade_events(
+                            cycle_id=cycle_id,
+                            label=label,
+                            profile=args.profile,
+                            trades=websocket_trade_records,
+                        )
                     )
                     trade_event_count += websocket_trade_event_count
                     try:
@@ -1171,12 +1277,18 @@ def _run_collection_cycle(
                             label=label,
                             profile=args.profile,
                             session_date=session_date,
-                            session_id=None if tick_context is None else tick_context.session_id,
-                            job_run_id=None if tick_context is None else tick_context.job_run_id,
+                            session_id=None
+                            if tick_context is None
+                            else tick_context.session_id,
+                            job_run_id=None
+                            if tick_context is None
+                            else tick_context.job_run_id,
                             trades=websocket_trade_records,
                         )
                     except Exception as exc:
-                        print(f"Live websocket trade event normalization unavailable: {exc}")
+                        print(
+                            f"Live websocket trade event normalization unavailable: {exc}"
+                        )
             except Exception as exc:
                 print(f"Live websocket market-data capture unavailable: {exc}")
         if quote_event_count == 0:
@@ -1203,8 +1315,12 @@ def _run_collection_cycle(
                         label=label,
                         profile=args.profile,
                         session_date=session_date,
-                        session_id=None if tick_context is None else tick_context.session_id,
-                        job_run_id=None if tick_context is None else tick_context.job_run_id,
+                        session_id=None
+                        if tick_context is None
+                        else tick_context.session_id,
+                        job_run_id=None
+                        if tick_context is None
+                        else tick_context.job_run_id,
                         quotes=recovery_quote_records,
                     )
                 except Exception as exc:
@@ -1324,7 +1440,9 @@ def _run_collection_cycle(
             events=events,
             uoa_decisions=uoa_decisions,
             session_id=None if tick_context is None else tick_context.session_id,
-            planner_job_run_id=None if tick_context is None else tick_context.job_run_id,
+            planner_job_run_id=None
+            if tick_context is None
+            else tick_context.job_run_id,
         )
     except Exception as exc:
         print(f"Alert dispatch unavailable: {exc}")
@@ -1384,7 +1502,9 @@ def run_collection_tick(
     reference_time = _resolve_collection_reference_time(tick_context.slot_at)
     if not args.allow_off_hours and not collection_window_is_open(
         now=reference_time,
-        session_start_offset_minutes=int(getattr(args, "session_start_offset_minutes", 0)),
+        session_start_offset_minutes=int(
+            getattr(args, "session_start_offset_minutes", 0)
+        ),
         session_end_offset_minutes=int(getattr(args, "session_end_offset_minutes", 0)),
     ):
         if emit_output:
@@ -1419,8 +1539,12 @@ def run_collection_tick(
                 total_trade_events_saved=0,
                 websocket_trade_events_saved=0,
             ),
-            "uoa_summary": build_uoa_trade_summary(expected_trade_symbols=[], trades=[]),
-            "uoa_quote_summary": build_uoa_quote_summary(as_of=tick_context.slot_at, expected_quote_symbols=[], quotes=[]),
+            "uoa_summary": build_uoa_trade_summary(
+                expected_trade_symbols=[], trades=[]
+            ),
+            "uoa_quote_summary": build_uoa_quote_summary(
+                as_of=tick_context.slot_at, expected_quote_symbols=[], quotes=[]
+            ),
             "uoa_decisions": build_uoa_root_decisions(
                 uoa_summary={},
                 baselines_by_symbol={},
@@ -1510,7 +1634,9 @@ def run_collection(
 
     if not args.allow_off_hours and not collection_window_is_open(
         now=_resolve_collection_reference_time(None),
-        session_start_offset_minutes=int(getattr(args, "session_start_offset_minutes", 0)),
+        session_start_offset_minutes=int(
+            getattr(args, "session_start_offset_minutes", 0)
+        ),
         session_end_offset_minutes=int(getattr(args, "session_end_offset_minutes", 0)),
     ):
         if emit_output:
@@ -1545,8 +1671,14 @@ def run_collection(
                 total_trade_events_saved=0,
                 websocket_trade_events_saved=0,
             ),
-            "uoa_summary": build_uoa_trade_summary(expected_trade_symbols=[], trades=[]),
-            "uoa_quote_summary": build_uoa_quote_summary(as_of=datetime.now(UTC).isoformat(), expected_quote_symbols=[], quotes=[]),
+            "uoa_summary": build_uoa_trade_summary(
+                expected_trade_symbols=[], trades=[]
+            ),
+            "uoa_quote_summary": build_uoa_quote_summary(
+                as_of=datetime.now(UTC).isoformat(),
+                expected_quote_symbols=[],
+                quotes=[],
+            ),
             "uoa_decisions": build_uoa_root_decisions(
                 uoa_summary={},
                 baselines_by_symbol={},
@@ -1604,8 +1736,12 @@ def run_collection(
                     heartbeat()
                 if not args.allow_off_hours and not collection_window_is_open(
                     now=datetime.now(UTC),
-                    session_start_offset_minutes=int(getattr(args, "session_start_offset_minutes", 0)),
-                    session_end_offset_minutes=int(getattr(args, "session_end_offset_minutes", 0)),
+                    session_start_offset_minutes=int(
+                        getattr(args, "session_start_offset_minutes", 0)
+                    ),
+                    session_end_offset_minutes=int(
+                        getattr(args, "session_end_offset_minutes", 0)
+                    ),
                 ):
                     if emit_output:
                         print("Market closed during collection window. Stopping.")
@@ -1629,15 +1765,27 @@ def run_collection(
                 cycle_ids.append(cycle_result["cycle_id"])
                 total_alerts += int(cycle_result["alerts_sent"])
                 total_quote_events += int(cycle_result["quote_events_saved"])
-                total_baseline_quote_events += int(cycle_result["baseline_quote_events_saved"])
-                total_websocket_quote_events += int(cycle_result["websocket_quote_events_saved"])
-                total_recovery_quote_events += int(cycle_result["recovery_quote_events_saved"])
+                total_baseline_quote_events += int(
+                    cycle_result["baseline_quote_events_saved"]
+                )
+                total_websocket_quote_events += int(
+                    cycle_result["websocket_quote_events_saved"]
+                )
+                total_recovery_quote_events += int(
+                    cycle_result["recovery_quote_events_saved"]
+                )
                 total_trade_events += int(cycle_result["trade_events_saved"])
-                total_websocket_trade_events += int(cycle_result["websocket_trade_events_saved"])
+                total_websocket_trade_events += int(
+                    cycle_result["websocket_trade_events_saved"]
+                )
                 total_signal_states += int(cycle_result["signal_states_upserted"])
-                total_signal_transitions += int(cycle_result["signal_transitions_recorded"])
+                total_signal_transitions += int(
+                    cycle_result["signal_transitions_recorded"]
+                )
                 total_opportunities += int(cycle_result["opportunities_upserted"])
-                total_opportunities_expired += int(cycle_result["opportunities_expired"])
+                total_opportunities_expired += int(
+                    cycle_result["opportunities_expired"]
+                )
                 iterations_completed += 1
                 last_label = str(cycle_result["label"])
                 last_uoa_summary = dict(cycle_result["uoa_summary"])
@@ -1645,7 +1793,9 @@ def run_collection(
                 last_uoa_decisions = dict(cycle_result["uoa_decisions"])
                 if iteration < args.iterations - 1:
                     elapsed_seconds = time_module.monotonic() - iteration_started_at
-                    sleep_seconds = max(float(max(args.interval_seconds, 1)) - elapsed_seconds, 0.0)
+                    sleep_seconds = max(
+                        float(max(args.interval_seconds, 1)) - elapsed_seconds, 0.0
+                    )
                     if sleep_seconds > 0:
                         time_module.sleep(sleep_seconds)
                     if heartbeat is not None:

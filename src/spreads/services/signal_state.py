@@ -4,6 +4,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from spreads.events.bus import publish_global_event_sync
+from spreads.services.candidate_policy import (
+    candidate_has_intraday_setup_context,
+    candidate_requires_favorable_setup,
+)
 from spreads.storage.signal_repository import SignalRepository
 
 BOARD_STRONG_SCORE = 82.0
@@ -25,29 +29,12 @@ def _candidate_with_payload(candidate: dict[str, Any]) -> dict[str, Any]:
     return base
 
 
-def _candidate_requires_favorable_setup(candidate: dict[str, Any]) -> bool:
-    return str(candidate.get("profile") or "").lower() == "0dte"
-
-
-def _candidate_has_intraday_setup_context(candidate: dict[str, Any]) -> bool:
-    if bool(candidate.get("setup_has_intraday_context")):
-        return True
-    score = candidate.get("setup_intraday_score")
-    if score not in (None, ""):
-        return True
-    minutes = candidate.get("setup_intraday_minutes")
-    try:
-        return int(float(minutes)) > 0
-    except (TypeError, ValueError):
-        return False
-
-
 def _candidate_blockers(candidate: dict[str, Any]) -> list[str]:
     blockers: list[str] = []
-    if _candidate_requires_favorable_setup(candidate):
+    if candidate_requires_favorable_setup(candidate):
         if str(candidate.get("setup_status") or "").lower() != "favorable":
             blockers.append("setup_not_favorable")
-        if not _candidate_has_intraday_setup_context(candidate):
+        if not candidate_has_intraday_setup_context(candidate):
             blockers.append("missing_intraday_context")
     data_status = str(candidate.get("data_status") or "clean").lower()
     if data_status != "clean":
@@ -66,7 +53,9 @@ def build_signal_state_id(label: str, symbol: str) -> str:
     return f"signal_state:{label}:{symbol}"
 
 
-def build_opportunity_id(label: str, session_date: str, candidate: dict[str, Any]) -> str:
+def build_opportunity_id(
+    label: str, session_date: str, candidate: dict[str, Any]
+) -> str:
     return (
         f"opportunity:{label}:{session_date}:{candidate['underlying_symbol']}:"
         f"{candidate['strategy']}:{candidate['short_symbol']}:{candidate['long_symbol']}"
@@ -89,7 +78,9 @@ def _candidate_confidence(candidate: dict[str, Any] | None) -> float | None:
         score = float(candidate.get("quality_score"))
     except (TypeError, ValueError):
         return None
-    normalized = (score - WATCHLIST_SCORE_FLOOR) / max(BOARD_STRONG_SCORE - WATCHLIST_SCORE_FLOOR, 1.0)
+    normalized = (score - WATCHLIST_SCORE_FLOOR) / max(
+        BOARD_STRONG_SCORE - WATCHLIST_SCORE_FLOOR, 1.0
+    )
     return round(max(0.0, min(normalized, 1.0)), 4)
 
 
@@ -101,8 +92,14 @@ def _expires_at(generated_at: str, profile: str) -> str:
         "core": 30,
         "swing": 60,
     }.get(str(profile or "").lower(), 30)
-    observed_at = datetime.fromisoformat(generated_at.replace("Z", "+00:00")).astimezone(UTC)
-    return (observed_at + timedelta(minutes=ttl_minutes)).isoformat().replace("+00:00", "Z")
+    observed_at = datetime.fromisoformat(
+        generated_at.replace("Z", "+00:00")
+    ).astimezone(UTC)
+    return (
+        (observed_at + timedelta(minutes=ttl_minutes))
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def publish_opportunity_event(
@@ -380,8 +377,12 @@ def _derive_symbol_slice(
                 if candidate is None or candidate.get("candidate_id") in (None, "")
                 else int(candidate["candidate_id"])
             ),
-            "active_bucket": None if candidate is None else str(candidate.get("bucket") or classification),
-            "opportunity_id": None if opportunity is None else opportunity["opportunity_id"],
+            "active_bucket": None
+            if candidate is None
+            else str(candidate.get("bucket") or classification),
+            "opportunity_id": None
+            if opportunity is None
+            else opportunity["opportunity_id"],
             "session_date": session_date,
             "market_session": "regular",
             "observed_at": generated_at,
@@ -421,7 +422,9 @@ def sync_live_collector_signal_layer(
         symbol = str(candidate["underlying_symbol"])
         if str(row.get("bucket")) == "board":
             board_by_symbol[symbol] = candidate
-        elif symbol not in watchlist_by_symbol:
+        elif (
+            str(row.get("bucket")) == "watchlist" and symbol not in watchlist_by_symbol
+        ):
             watchlist_by_symbol[symbol] = candidate
 
     raw_by_symbol: dict[str, list[dict[str, Any]]] = {}
@@ -467,9 +470,15 @@ def sync_live_collector_signal_layer(
             failure_error=failures_by_symbol.get(symbol),
         )
 
-        signal_state, transition, changed = signal_store.upsert_signal_state(**slice_payload["signal_state"])
+        signal_state, transition, changed = signal_store.upsert_signal_state(
+            **slice_payload["signal_state"]
+        )
         signal_states_upserted += 1
-        causation_id = None if signal_state.get("active_candidate_id") is None else str(signal_state["active_candidate_id"])
+        causation_id = (
+            None
+            if signal_state.get("active_candidate_id") is None
+            else str(signal_state["active_candidate_id"])
+        )
         if changed:
             _publish_signal_state_event(
                 signal_state=signal_state,
@@ -489,7 +498,9 @@ def sync_live_collector_signal_layer(
         opportunity_payload = slice_payload["opportunity"]
         if opportunity_payload is None:
             continue
-        opportunity, opportunity_changed = signal_store.upsert_opportunity(**opportunity_payload)
+        opportunity, opportunity_changed = signal_store.upsert_opportunity(
+            **opportunity_payload
+        )
         opportunities_upserted += 1
         active_opportunity_ids.append(str(opportunity["opportunity_id"]))
         if opportunity_changed:
@@ -514,7 +525,9 @@ def sync_live_collector_signal_layer(
             opportunity=opportunity,
             session_date=session_date,
             correlation_id=cycle_id,
-            causation_id=None if opportunity.get("source_candidate_id") is None else str(opportunity["source_candidate_id"]),
+            causation_id=None
+            if opportunity.get("source_candidate_id") is None
+            else str(opportunity["source_candidate_id"]),
             timestamp=generated_at,
         )
 
