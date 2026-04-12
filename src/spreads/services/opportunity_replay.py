@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 from collections import defaultdict
 from collections.abc import Mapping
+from pathlib import Path
+from statistics import mean
 from typing import Any
 
 from spreads.db.decorators import with_storage
@@ -18,6 +21,7 @@ from spreads.domain.opportunity_models import (
     StrategyIntent,
 )
 from spreads.runtime.config import default_database_url
+from spreads.services.analysis import candidate_identity, resolved_estimated_pnl
 from spreads.services.live_pipelines import parse_live_session_id
 
 TOP_TIER_ETF_SYMBOLS = {"SPY", "QQQ", "IWM", "DIA", "GLD", "TLT"}
@@ -739,6 +743,12 @@ def _build_opportunities(
             or f"historical:{cycle['label']}:{cycle['session_date']}",
             candidate_id=int(row["candidate_id"]),
             symbol=symbol,
+            legacy_strategy=_as_text(candidate.get("strategy"))
+            or _as_text(row.get("strategy"))
+            or "unknown",
+            expiration_date=str(row["expiration_date"]),
+            short_symbol=str(row["short_symbol"]),
+            long_symbol=str(row["long_symbol"]),
             style_profile=strategy_intent.style_profile,
             strategy_family=family,
             regime_snapshot_id=strategy_intent.regime_snapshot_id,
@@ -988,9 +998,315 @@ def _build_execution_intents(
     return intents
 
 
+def _opportunity_identity(opportunity: Opportunity) -> tuple[str, str, str, str, str]:
+    return (
+        opportunity.symbol,
+        opportunity.legacy_strategy,
+        opportunity.expiration_date,
+        opportunity.short_symbol,
+        opportunity.long_symbol,
+    )
+
+
+def _build_outcome_matches(
+    *,
+    opportunities: list[Opportunity],
+    analysis_run: Mapping[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    summary = analysis_run.get("summary") if isinstance(analysis_run, Mapping) else None
+    outcomes = summary.get("outcomes") if isinstance(summary, Mapping) else None
+    ideas = list(outcomes.get("ideas") or []) if isinstance(outcomes, Mapping) else []
+
+    lookup: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+    for idea in ideas:
+        if not isinstance(idea, Mapping):
+            continue
+        try:
+            identity = candidate_identity(idea)
+        except KeyError:
+            continue
+        lookup[identity] = dict(idea)
+
+    matches: dict[str, dict[str, Any]] = {}
+    for opportunity in opportunities:
+        idea = lookup.get(_opportunity_identity(opportunity))
+        estimated_pnl = None if idea is None else resolved_estimated_pnl(idea)
+        matches[opportunity.opportunity_id] = {
+            "matched": idea is not None,
+            "estimated_pnl": None
+            if estimated_pnl is None
+            else round(float(estimated_pnl), 4),
+            "positive_outcome": None
+            if estimated_pnl is None
+            else float(estimated_pnl) > 0.0,
+            "outcome_bucket": None if idea is None else idea.get("outcome_bucket"),
+            "replay_verdict": None if idea is None else idea.get("replay_verdict"),
+            "setup_status": None if idea is None else idea.get("setup_status"),
+            "vwap_regime": None if idea is None else idea.get("vwap_regime"),
+            "trend_regime": None if idea is None else idea.get("trend_regime"),
+            "opening_range_regime": None
+            if idea is None
+            else idea.get("opening_range_regime"),
+            "classification": None if idea is None else idea.get("classification"),
+        }
+    return matches
+
+
+def _summarize_outcome_rows(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
+    pnl_values = [
+        float(row["estimated_pnl"])
+        for row in rows
+        if row.get("estimated_pnl") is not None
+    ]
+    signed_rows = [row for row in rows if row.get("positive_outcome") is not None]
+    outcome_bucket_counts: dict[str, int] = defaultdict(int)
+    for row in rows:
+        bucket = _as_text(row.get("outcome_bucket"))
+        if bucket is not None:
+            outcome_bucket_counts[bucket] += 1
+    still_open_count = int(outcome_bucket_counts.get("still_open") or 0)
+    return {
+        "average_estimated_pnl": None if not pnl_values else round(mean(pnl_values), 4),
+        "positive_rate": None
+        if not signed_rows
+        else round(
+            sum(1 for row in signed_rows if bool(row.get("positive_outcome")))
+            / len(signed_rows),
+            4,
+        ),
+        "positive_count": sum(
+            1 for row in signed_rows if bool(row.get("positive_outcome"))
+        ),
+        "negative_or_flat_count": sum(
+            1 for row in signed_rows if not bool(row.get("positive_outcome"))
+        ),
+        "outcome_bucket_counts": dict(sorted(outcome_bucket_counts.items())),
+        "still_open_count": still_open_count,
+        "still_open_rate": None if not rows else round(still_open_count / len(rows), 4),
+    }
+
+
+def _slice_metrics(
+    *,
+    items: list[Opportunity],
+    outcome_matches: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    matched = [
+        outcome_matches[item.opportunity_id]
+        for item in items
+        if outcome_matches.get(item.opportunity_id, {}).get("matched")
+    ]
+    metrics = _summarize_outcome_rows(matched)
+    return {
+        "count": len(items),
+        "matched_count": len(matched),
+        "coverage_rate": None if not items else round(len(matched) / len(items), 4),
+        **metrics,
+    }
+
+
+def _flatten_opportunity_rows(
+    *,
+    session: Mapping[str, Any],
+    opportunities: list[Opportunity],
+    allocation_decisions: list[AllocationDecision],
+    comparison: Mapping[str, Any],
+    outcome_matches: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    allocation_by_id = {item.opportunity_id: item for item in allocation_decisions}
+    rank_only_ids = {
+        str(item.get("opportunity_id"))
+        for item in (comparison.get("rank_only_top", {}) or {}).get("items", [])
+        if isinstance(item, Mapping)
+    }
+    allocator_ids = {
+        str(item.get("opportunity_id"))
+        for item in (comparison.get("provisional_allocator", {}) or {}).get("items", [])
+        if isinstance(item, Mapping)
+    }
+    promoted_watchlist_ids = {
+        str(item.get("opportunity_id"))
+        for item in (comparison.get("promoted_from_watchlist") or [])
+        if isinstance(item, Mapping)
+    }
+    rejected_board_ids = {
+        str(item.get("opportunity_id"))
+        for item in (comparison.get("rejected_legacy_board") or [])
+        if isinstance(item, Mapping)
+    }
+
+    rows: list[dict[str, Any]] = []
+    for opportunity in opportunities:
+        allocation = allocation_by_id.get(opportunity.opportunity_id)
+        outcome = outcome_matches.get(opportunity.opportunity_id, {})
+        rows.append(
+            {
+                "label": session.get("label"),
+                "session_date": session.get("session_date"),
+                "cycle_id": session.get("cycle_id"),
+                "candidate_id": opportunity.candidate_id,
+                "opportunity_id": opportunity.opportunity_id,
+                "symbol": opportunity.symbol,
+                "strategy_family": opportunity.strategy_family,
+                "legacy_strategy": opportunity.legacy_strategy,
+                "expiration_date": opportunity.expiration_date,
+                "short_symbol": opportunity.short_symbol,
+                "long_symbol": opportunity.long_symbol,
+                "legacy_bucket": opportunity.legacy_bucket,
+                "rank": opportunity.rank,
+                "state": opportunity.state,
+                "promotion_score": opportunity.promotion_score,
+                "allocation_state": None
+                if allocation is None
+                else allocation.allocation_state,
+                "allocation_score": None
+                if allocation is None
+                else allocation.allocation_score,
+                "allocation_reason": None
+                if allocation is None
+                else allocation.allocation_reason,
+                "matched_outcome": outcome.get("matched"),
+                "estimated_pnl": outcome.get("estimated_pnl"),
+                "positive_outcome": outcome.get("positive_outcome"),
+                "outcome_bucket": outcome.get("outcome_bucket"),
+                "replay_verdict": outcome.get("replay_verdict"),
+                "setup_status": outcome.get("setup_status"),
+                "vwap_regime": outcome.get("vwap_regime"),
+                "trend_regime": outcome.get("trend_regime"),
+                "opening_range_regime": outcome.get("opening_range_regime"),
+                "is_legacy_board": opportunity.legacy_bucket == "board",
+                "is_legacy_watchlist": opportunity.legacy_bucket == "watchlist",
+                "is_rank_only_top": opportunity.opportunity_id in rank_only_ids,
+                "is_allocator_selected": opportunity.opportunity_id in allocator_ids,
+                "is_promoted_from_watchlist": opportunity.opportunity_id
+                in promoted_watchlist_ids,
+                "is_rejected_legacy_board": opportunity.opportunity_id
+                in rejected_board_ids,
+            }
+        )
+    return rows
+
+
+def _aggregate_dimension_rows(
+    rows: list[dict[str, Any]],
+    *,
+    field: str,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[str(row.get(field) or "unknown")].append(row)
+
+    result: list[dict[str, Any]] = []
+    for bucket, bucket_rows in grouped.items():
+        matched = [row for row in bucket_rows if row.get("matched_outcome")]
+        metrics = _summarize_outcome_rows(matched)
+        result.append(
+            {
+                "bucket": bucket,
+                "count": len(bucket_rows),
+                "matched_count": len(matched),
+                "coverage_rate": None
+                if not bucket_rows
+                else round(len(matched) / len(bucket_rows), 4),
+                "allocator_selected_count": sum(
+                    1 for row in bucket_rows if row.get("is_allocator_selected")
+                ),
+                "legacy_board_count": sum(
+                    1 for row in bucket_rows if row.get("is_legacy_board")
+                ),
+                "rank_only_top_count": sum(
+                    1 for row in bucket_rows if row.get("is_rank_only_top")
+                ),
+                "promoted_from_watchlist_count": sum(
+                    1 for row in bucket_rows if row.get("is_promoted_from_watchlist")
+                ),
+                "rejected_legacy_board_count": sum(
+                    1 for row in bucket_rows if row.get("is_rejected_legacy_board")
+                ),
+                **metrics,
+            }
+        )
+    result.sort(key=lambda row: (-int(row["count"]), row["bucket"]))
+    return result
+
+
+def _build_scorecard(
+    *,
+    opportunities: list[Opportunity],
+    allocation_decisions: list[AllocationDecision],
+    comparison: Mapping[str, Any],
+    outcome_matches: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    allocation_by_id = {item.opportunity_id: item for item in allocation_decisions}
+    rank_only_ids = {
+        str(row.get("opportunity_id"))
+        for row in (comparison.get("rank_only_top", {}) or {}).get("items", [])
+        if isinstance(row, Mapping)
+    }
+    rank_only_top = [
+        item for item in opportunities if item.opportunity_id in rank_only_ids
+    ]
+    allocator_selected = [
+        item
+        for item in opportunities
+        if allocation_by_id.get(item.opportunity_id) is not None
+        and allocation_by_id[item.opportunity_id].allocation_state == "allocated"
+    ]
+    legacy_board = [item for item in opportunities if item.legacy_bucket == "board"]
+    promoted_from_watchlist = [
+        item for item in allocator_selected if item.legacy_bucket == "watchlist"
+    ]
+    rejected_legacy_board = [
+        item
+        for item in legacy_board
+        if allocation_by_id.get(item.opportunity_id) is None
+        or allocation_by_id[item.opportunity_id].allocation_state != "allocated"
+    ]
+
+    scorecard = {
+        "legacy_board": _slice_metrics(
+            items=legacy_board,
+            outcome_matches=outcome_matches,
+        ),
+        "rank_only_top": _slice_metrics(
+            items=rank_only_top,
+            outcome_matches=outcome_matches,
+        ),
+        "allocator_selected": _slice_metrics(
+            items=allocator_selected,
+            outcome_matches=outcome_matches,
+        ),
+        "promoted_from_watchlist": _slice_metrics(
+            items=promoted_from_watchlist,
+            outcome_matches=outcome_matches,
+        ),
+        "rejected_legacy_board": _slice_metrics(
+            items=rejected_legacy_board,
+            outcome_matches=outcome_matches,
+        ),
+    }
+    legacy_avg = scorecard["legacy_board"]["average_estimated_pnl"]
+    rank_only_avg = scorecard["rank_only_top"]["average_estimated_pnl"]
+    allocator_avg = scorecard["allocator_selected"]["average_estimated_pnl"]
+    scorecard["deltas"] = {
+        "allocator_minus_legacy_board_avg_estimated_pnl": None
+        if allocator_avg is None or legacy_avg is None
+        else round(float(allocator_avg) - float(legacy_avg), 4),
+        "allocator_minus_rank_only_avg_estimated_pnl": None
+        if allocator_avg is None or rank_only_avg is None
+        else round(float(allocator_avg) - float(rank_only_avg), 4),
+        "watchlist_promotion_hit_rate": scorecard["promoted_from_watchlist"][
+            "positive_rate"
+        ],
+        "rejected_board_miss_rate": scorecard["rejected_legacy_board"]["positive_rate"],
+    }
+    return scorecard
+
+
 def _comparison_item(
     opportunity: Opportunity,
     allocation: AllocationDecision | None,
+    outcome: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "opportunity_id": opportunity.opportunity_id,
@@ -1005,6 +1321,11 @@ def _comparison_item(
         if allocation is None
         else allocation.allocation_reason,
         "allocation_score": None if allocation is None else allocation.allocation_score,
+        "estimated_pnl": None if outcome is None else outcome.get("estimated_pnl"),
+        "outcome_bucket": None if outcome is None else outcome.get("outcome_bucket"),
+        "positive_outcome": None
+        if outcome is None
+        else outcome.get("positive_outcome"),
     }
 
 
@@ -1012,6 +1333,7 @@ def _build_comparison(
     *,
     opportunities: list[Opportunity],
     allocation_decisions: list[AllocationDecision],
+    outcome_matches: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
     allocation_by_opportunity_id = {
         item.opportunity_id: item for item in allocation_decisions
@@ -1047,7 +1369,9 @@ def _build_comparison(
             "candidate_ids": [item.candidate_id for item in legacy_board],
             "items": [
                 _comparison_item(
-                    item, allocation_by_opportunity_id.get(item.opportunity_id)
+                    item,
+                    allocation_by_opportunity_id.get(item.opportunity_id),
+                    outcome_matches.get(item.opportunity_id),
                 )
                 for item in legacy_board
             ],
@@ -1063,7 +1387,9 @@ def _build_comparison(
             "candidate_ids": [item.candidate_id for item in rank_only_top],
             "items": [
                 _comparison_item(
-                    item, allocation_by_opportunity_id.get(item.opportunity_id)
+                    item,
+                    allocation_by_opportunity_id.get(item.opportunity_id),
+                    outcome_matches.get(item.opportunity_id),
                 )
                 for item in rank_only_top
             ],
@@ -1074,35 +1400,45 @@ def _build_comparison(
             "candidate_ids": [item.candidate_id for item in allocated],
             "items": [
                 _comparison_item(
-                    item, allocation_by_opportunity_id.get(item.opportunity_id)
+                    item,
+                    allocation_by_opportunity_id.get(item.opportunity_id),
+                    outcome_matches.get(item.opportunity_id),
                 )
                 for item in allocated
             ],
         },
         "promoted_from_watchlist": [
             _comparison_item(
-                item, allocation_by_opportunity_id.get(item.opportunity_id)
+                item,
+                allocation_by_opportunity_id.get(item.opportunity_id),
+                outcome_matches.get(item.opportunity_id),
             )
             for item in allocated
             if item.legacy_bucket == "watchlist"
         ],
         "rejected_legacy_board": [
             _comparison_item(
-                item, allocation_by_opportunity_id.get(item.opportunity_id)
+                item,
+                allocation_by_opportunity_id.get(item.opportunity_id),
+                outcome_matches.get(item.opportunity_id),
             )
             for item in legacy_board
             if item.opportunity_id not in allocated_ids
         ],
         "rank_only_rejected_by_allocator": [
             _comparison_item(
-                item, allocation_by_opportunity_id.get(item.opportunity_id)
+                item,
+                allocation_by_opportunity_id.get(item.opportunity_id),
+                outcome_matches.get(item.opportunity_id),
             )
             for item in rank_only_top
             if item.opportunity_id not in allocated_ids
         ],
         "allocator_added_outside_rank_only": [
             _comparison_item(
-                item, allocation_by_opportunity_id.get(item.opportunity_id)
+                item,
+                allocation_by_opportunity_id.get(item.opportunity_id),
+                outcome_matches.get(item.opportunity_id),
             )
             for item in allocated
             if item.opportunity_id not in rank_only_ids
@@ -1219,6 +1555,25 @@ def _build_summary(
     return summary, warnings
 
 
+def _write_json_export(path: str, payload: Mapping[str, Any]) -> None:
+    output_path = Path(path).expanduser()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(payload, indent=2, default=str) + "\n")
+
+
+def _write_csv_export(path: str, rows: list[dict[str, Any]]) -> None:
+    output_path = Path(path).expanduser()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if not rows:
+        output_path.write_text("")
+        return
+    fieldnames = sorted({key for row in rows for key in row.keys()})
+    with output_path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def _resolve_recent_analysis_targets(
     *,
     storage: Any,
@@ -1244,8 +1599,6 @@ def _resolve_recent_analysis_targets(
             continue
         seen.add(key)
         targets.append({"label": run_label, "session_date": session_date})
-        if len(targets) >= recent:
-            break
     return targets
 
 
@@ -1292,6 +1645,10 @@ def build_opportunity_replay(
         analysis_run=analysis_run,
     )
     allocation_decisions = _build_allocation_decisions(opportunities)
+    outcome_matches = _build_outcome_matches(
+        opportunities=opportunities,
+        analysis_run=analysis_run,
+    )
     execution_intents = _build_execution_intents(
         opportunities=opportunities,
         allocation_decisions=allocation_decisions,
@@ -1299,6 +1656,13 @@ def build_opportunity_replay(
     comparison = _build_comparison(
         opportunities=opportunities,
         allocation_decisions=allocation_decisions,
+        outcome_matches=outcome_matches,
+    )
+    scorecard = _build_scorecard(
+        opportunities=opportunities,
+        allocation_decisions=allocation_decisions,
+        comparison=comparison,
+        outcome_matches=outcome_matches,
     )
     summary, warnings = _build_summary(
         cycle=cycle,
@@ -1306,6 +1670,38 @@ def build_opportunity_replay(
         opportunities=opportunities,
         allocation_decisions=allocation_decisions,
     )
+    rows = _flatten_opportunity_rows(
+        session={
+            "label": cycle.get("label"),
+            "session_date": cycle.get("session_date"),
+            "cycle_id": cycle.get("cycle_id"),
+        },
+        opportunities=opportunities,
+        allocation_decisions=allocation_decisions,
+        comparison=comparison,
+        outcome_matches=outcome_matches,
+    )
+    if analysis_run is not None:
+        matched_count = sum(
+            1 for match in outcome_matches.values() if bool(match.get("matched"))
+        )
+        if matched_count < len(opportunities):
+            warnings.append(
+                f"Only {matched_count} of {len(opportunities)} latest-cycle opportunities matched persisted post-market ideas."
+            )
+    allocator_metrics = scorecard.get("allocator_selected") or {}
+    if int(allocator_metrics.get("count") or 0) == 0:
+        warnings.append(
+            "No opportunities cleared the provisional allocator for this session, so allocator-vs-board comparisons are based on zero selected opportunities."
+        )
+    allocator_still_open_rate = allocator_metrics.get("still_open_rate")
+    if (
+        allocator_still_open_rate is not None
+        and float(allocator_still_open_rate) >= 0.5
+    ):
+        warnings.append(
+            "Allocator scorecard outcomes are dominated by still_open post-market ideas, so average estimated PnL reflects modeled close-state rather than realized lifecycle results."
+        )
 
     replay = DecisionReplay(
         target={
@@ -1334,6 +1730,8 @@ def build_opportunity_replay(
         execution_intents=execution_intents,
         summary=summary,
         comparison=comparison,
+        scorecard=scorecard,
+        rows=rows,
         warnings=warnings,
     )
     return replay.to_payload()
@@ -1365,6 +1763,7 @@ def build_recent_opportunity_replay_batch(
     allocator_vs_legacy_board_total = 0
     allocator_vs_rank_only_total = 0
     skipped_sessions: list[dict[str, Any]] = []
+    all_rows: list[dict[str, Any]] = []
 
     for target in targets:
         try:
@@ -1385,6 +1784,7 @@ def build_recent_opportunity_replay_batch(
             continue
         summary = dict(payload.get("summary") or {})
         comparison = dict(payload.get("comparison") or {})
+        scorecard = dict(payload.get("scorecard") or {})
         verdict = _as_text(summary.get("analysis_verdict")) or "unknown"
         verdict_counts[verdict] += 1
         promoted_from_watchlist = list(comparison.get("promoted_from_watchlist") or [])
@@ -1398,10 +1798,14 @@ def build_recent_opportunity_replay_batch(
         allocator_vs_rank_only_total += int(
             overlap.get("allocator_vs_rank_only_count") or 0
         )
+        for row in payload.get("rows") or []:
+            if isinstance(row, Mapping):
+                all_rows.append(dict(row))
         sessions.append(
             {
                 "session": payload.get("session"),
                 "summary": summary,
+                "scorecard": scorecard,
                 "comparison": {
                     "comparison_size": comparison.get("comparison_size"),
                     "legacy_board_candidate_ids": (
@@ -1420,6 +1824,8 @@ def build_recent_opportunity_replay_batch(
                 "warnings": list(payload.get("warnings") or []),
             }
         )
+        if len(sessions) >= recent:
+            break
 
     session_count = len(sessions)
     if session_count == 0:
@@ -1427,11 +1833,37 @@ def build_recent_opportunity_replay_batch(
         raise OpportunityReplayLookupError(
             f"No replayable sessions are available for {scope}."
         )
+
+    def pooled_metrics(flag_field: str) -> dict[str, Any]:
+        scoped_rows = [row for row in all_rows if row.get(flag_field)]
+        matched_rows = [row for row in scoped_rows if row.get("matched_outcome")]
+        metrics = _summarize_outcome_rows(matched_rows)
+        return {
+            "count": len(scoped_rows),
+            "matched_count": len(matched_rows),
+            "coverage_rate": None
+            if not scoped_rows
+            else round(len(matched_rows) / len(scoped_rows), 4),
+            **metrics,
+        }
+
+    legacy_board_metrics = pooled_metrics("is_legacy_board")
+    rank_only_top_metrics = pooled_metrics("is_rank_only_top")
+    allocator_selected_metrics = pooled_metrics("is_allocator_selected")
+    promoted_from_watchlist_metrics = pooled_metrics("is_promoted_from_watchlist")
+    rejected_legacy_board_metrics = pooled_metrics("is_rejected_legacy_board")
+    sessions_with_allocator_selections = sum(
+        1
+        for item in sessions
+        if int((item.get("summary") or {}).get("allocated_count") or 0) > 0
+    )
     aggregate = {
         "session_count": session_count,
+        "requested_recent": recent,
         "label_filter": label,
         "verdict_counts": dict(sorted(verdict_counts.items())),
         "skipped_session_count": len(skipped_sessions),
+        "sessions_with_allocator_selections": sessions_with_allocator_selections,
         "sessions_with_watchlist_promotions": sum(
             1 for item in sessions if item["comparison"]["promoted_from_watchlist"]
         ),
@@ -1448,7 +1880,56 @@ def build_recent_opportunity_replay_batch(
             allocator_vs_rank_only_total / session_count,
             3,
         ),
+        "legacy_board_metrics": legacy_board_metrics,
+        "rank_only_top_metrics": rank_only_top_metrics,
+        "allocator_selected_metrics": allocator_selected_metrics,
+        "promoted_from_watchlist_metrics": promoted_from_watchlist_metrics,
+        "rejected_legacy_board_metrics": rejected_legacy_board_metrics,
+        "allocator_minus_legacy_board_avg_estimated_pnl": None
+        if allocator_selected_metrics["average_estimated_pnl"] is None
+        or legacy_board_metrics["average_estimated_pnl"] is None
+        else round(
+            float(allocator_selected_metrics["average_estimated_pnl"])
+            - float(legacy_board_metrics["average_estimated_pnl"]),
+            4,
+        ),
+        "allocator_minus_rank_only_avg_estimated_pnl": None
+        if allocator_selected_metrics["average_estimated_pnl"] is None
+        or rank_only_top_metrics["average_estimated_pnl"] is None
+        else round(
+            float(allocator_selected_metrics["average_estimated_pnl"])
+            - float(rank_only_top_metrics["average_estimated_pnl"]),
+            4,
+        ),
+        "watchlist_promotion_hit_rate": promoted_from_watchlist_metrics[
+            "positive_rate"
+        ],
+        "rejected_board_miss_rate": rejected_legacy_board_metrics["positive_rate"],
+        "by_label": _aggregate_dimension_rows(all_rows, field="label"),
+        "by_family": _aggregate_dimension_rows(all_rows, field="strategy_family"),
+        "by_symbol": _aggregate_dimension_rows(all_rows, field="symbol"),
     }
+    warnings: list[str] = []
+    if session_count < recent:
+        warnings.append(
+            f"Only {session_count} replayable sessions were available out of the requested {recent}."
+        )
+    if skipped_sessions:
+        warnings.append(
+            f"Skipped {len(skipped_sessions)} sessions because stored collector candidates were unavailable."
+        )
+    if sessions_with_allocator_selections < session_count:
+        warnings.append(
+            f"Allocator selections only appeared in {sessions_with_allocator_selections} of {session_count} replayed sessions, so pooled allocator metrics are sparse."
+        )
+    allocator_still_open_rate = allocator_selected_metrics.get("still_open_rate")
+    if (
+        allocator_still_open_rate is not None
+        and float(allocator_still_open_rate) >= 0.5
+    ):
+        warnings.append(
+            "Allocator scorecard outcomes are dominated by still_open post-market ideas, so average estimated PnL reflects modeled close-state rather than realized lifecycle results."
+        )
     return {
         "target": {
             "recent": recent,
@@ -1457,6 +1938,8 @@ def build_recent_opportunity_replay_batch(
         "aggregate": aggregate,
         "sessions": sessions,
         "skipped_sessions": skipped_sessions,
+        "rows": all_rows,
+        "warnings": warnings,
     }
 
 
@@ -1464,6 +1947,7 @@ def _render_text(payload: Mapping[str, Any]) -> str:
     session = payload.get("session") or {}
     summary = payload.get("summary") or {}
     comparison = payload.get("comparison") or {}
+    scorecard = payload.get("scorecard") or {}
     opportunities = payload.get("opportunities") or []
     allocations = {
         row["opportunity_id"]: row
@@ -1527,6 +2011,37 @@ def _render_text(payload: Mapping[str, Any]) -> str:
                     f"{item.get('candidate_id')} {item.get('symbol')} {item.get('strategy_family')} "
                     f"| reason {item.get('allocation_reason')}"
                 )
+    if scorecard:
+        allocator_metrics = scorecard.get("allocator_selected") or {}
+        legacy_metrics = scorecard.get("legacy_board") or {}
+        rank_only_metrics = scorecard.get("rank_only_top") or {}
+        deltas = scorecard.get("deltas") or {}
+        lines.append("")
+        lines.append("Scorecard:")
+        lines.append(
+            "- "
+            f"legacy board avg pnl {legacy_metrics.get('average_estimated_pnl')} "
+            f"| positive_rate {legacy_metrics.get('positive_rate')} "
+            f"| still_open_rate {legacy_metrics.get('still_open_rate')}"
+        )
+        lines.append(
+            "- "
+            f"rank-only avg pnl {rank_only_metrics.get('average_estimated_pnl')} "
+            f"| positive_rate {rank_only_metrics.get('positive_rate')} "
+            f"| still_open_rate {rank_only_metrics.get('still_open_rate')}"
+        )
+        lines.append(
+            "- "
+            f"allocator avg pnl {allocator_metrics.get('average_estimated_pnl')} "
+            f"| positive_rate {allocator_metrics.get('positive_rate')} "
+            f"| still_open_rate {allocator_metrics.get('still_open_rate')}"
+        )
+        lines.append(
+            "- "
+            f"allocator minus legacy board {deltas.get('allocator_minus_legacy_board_avg_estimated_pnl')} "
+            f"| watchlist hit rate {deltas.get('watchlist_promotion_hit_rate')} "
+            f"| rejected board miss rate {deltas.get('rejected_board_miss_rate')}"
+        )
     warnings = payload.get("warnings") or []
     if warnings:
         lines.append("")
@@ -1541,12 +2056,18 @@ def _render_batch_text(payload: Mapping[str, Any]) -> str:
     aggregate = payload.get("aggregate") or {}
     sessions = payload.get("sessions") or []
     skipped_sessions = payload.get("skipped_sessions") or []
+    warnings = payload.get("warnings") or []
     lines = [
-        f"Recent sessions: {aggregate.get('session_count')} | label filter {target.get('label') or 'all'}",
+        f"Recent sessions: {aggregate.get('session_count')} of requested {aggregate.get('requested_recent')} | label filter {target.get('label') or 'all'}",
         f"Skipped sessions: {aggregate.get('skipped_session_count')}",
+        f"Allocator selections: {(aggregate.get('allocator_selected_metrics') or {}).get('count')} opportunities across {aggregate.get('sessions_with_allocator_selections')} sessions",
         f"Watchlist promotions: {aggregate.get('promoted_from_watchlist_total')} across {aggregate.get('sessions_with_watchlist_promotions')} sessions",
         f"Rejected legacy board candidates: {aggregate.get('rejected_legacy_board_total')} across {aggregate.get('sessions_with_rejected_legacy_board')} sessions",
         f"Average overlap | allocator vs legacy board {aggregate.get('average_allocator_vs_legacy_board_overlap')} | allocator vs rank-only {aggregate.get('average_allocator_vs_rank_only_overlap')}",
+        f"Pooled avg pnl | legacy board {(aggregate.get('legacy_board_metrics') or {}).get('average_estimated_pnl')} | rank-only {(aggregate.get('rank_only_top_metrics') or {}).get('average_estimated_pnl')} | allocator {(aggregate.get('allocator_selected_metrics') or {}).get('average_estimated_pnl')}",
+        f"Still-open rate | legacy board {(aggregate.get('legacy_board_metrics') or {}).get('still_open_rate')} | rank-only {(aggregate.get('rank_only_top_metrics') or {}).get('still_open_rate')} | allocator {(aggregate.get('allocator_selected_metrics') or {}).get('still_open_rate')}",
+        f"Pooled deltas | allocator minus legacy board {aggregate.get('allocator_minus_legacy_board_avg_estimated_pnl')} | allocator minus rank-only {aggregate.get('allocator_minus_rank_only_avg_estimated_pnl')}",
+        f"Hit rates | watchlist promotions {aggregate.get('watchlist_promotion_hit_rate')} | rejected board miss rate {aggregate.get('rejected_board_miss_rate')}",
         f"Verdicts: {aggregate.get('verdict_counts')}",
         "",
         "Sessions:",
@@ -1577,6 +2098,11 @@ def _render_batch_text(payload: Mapping[str, Any]) -> str:
                 "- "
                 f"{item.get('label')} {item.get('session_date')} | reason {item.get('reason')}"
             )
+    if warnings:
+        lines.append("")
+        lines.append("Warnings:")
+        for warning in warnings:
+            lines.append(f"- {warning}")
     return "\n".join(lines)
 
 
@@ -1594,6 +2120,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--recent",
         type=int,
         help="Build a batch report across the most recent succeeded post-market sessions.",
+    )
+    parser.add_argument(
+        "--export-json",
+        help="Write the full replay payload to a JSON file.",
+    )
+    parser.add_argument(
+        "--export-csv",
+        help="Write flattened opportunity rows to a CSV file.",
     )
     parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     return parser.parse_args(argv)
@@ -1621,6 +2155,16 @@ def main(argv: list[str] | None = None) -> int:
             )
     except OpportunityReplayLookupError as exc:
         raise SystemExit(str(exc)) from None
+
+    if args.export_json:
+        _write_json_export(args.export_json, payload)
+    if args.export_csv:
+        rows = payload.get("rows") or []
+        if not isinstance(rows, list):
+            rows = []
+        _write_csv_export(
+            args.export_csv, [dict(row) for row in rows if isinstance(row, Mapping)]
+        )
 
     if args.json:
         print(json.dumps(payload, indent=2, default=str))

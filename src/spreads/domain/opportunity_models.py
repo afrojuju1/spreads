@@ -88,6 +88,10 @@ class Opportunity:
     session_id: str
     candidate_id: int
     symbol: str
+    legacy_strategy: str
+    expiration_date: str
+    short_symbol: str
+    long_symbol: str
     style_profile: str
     strategy_family: str
     regime_snapshot_id: str
@@ -164,6 +168,8 @@ class DecisionReplay:
     execution_intents: list[ExecutionIntent] = field(default_factory=list)
     summary: dict[str, Any] = field(default_factory=dict)
     comparison: dict[str, Any] = field(default_factory=dict)
+    scorecard: dict[str, Any] = field(default_factory=dict)
+    rows: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
     def to_payload(self) -> dict[str, Any]:
@@ -180,6 +186,8 @@ class DecisionReplay:
             "execution_intents": [item.to_payload() for item in self.execution_intents],
             "summary": dict(self.summary),
             "comparison": dict(self.comparison),
+            "scorecard": dict(self.scorecard),
+            "rows": [dict(row) for row in self.rows],
             "warnings": list(self.warnings),
         }
 
