@@ -17,7 +17,10 @@ from spreads.domain.opportunity_models import (
     RegimeSnapshot,
     StrategyIntent,
 )
-from spreads.services.analysis import candidate_identity, resolved_estimated_pnl
+from spreads.services.analysis_helpers import (
+    candidate_identity,
+    resolved_estimated_pnl,
+)
 from spreads.services.candidate_policy import (
     candidate_has_intraday_setup_context,
     candidate_requires_favorable_setup,
@@ -25,6 +28,7 @@ from spreads.services.candidate_policy import (
 from spreads.services.candidate_history_recovery import (
     recover_session_candidates_from_history,
 )
+from spreads.services.execution import list_session_execution_attempts
 from spreads.services.live_pipelines import parse_live_session_id
 
 TOP_TIER_ETF_SYMBOLS = {"SPY", "QQQ", "IWM", "DIA", "GLD", "TLT"}
@@ -189,27 +193,34 @@ def _event_state(candidate: Mapping[str, Any]) -> str:
     return "event_risk"
 
 
-def _minutes_between(start: Any, end: Any) -> float | None:
-    start_text = _as_text(start)
-    end_text = _as_text(end)
-    if start_text is None or end_text is None:
+def _parse_datetime(value: Any) -> datetime | None:
+    text = _as_text(value)
+    if text is None:
         return None
-    normalized_start = (
-        start_text.replace("Z", "+00:00") if start_text.endswith("Z") else start_text
-    )
-    normalized_end = (
-        end_text.replace("Z", "+00:00") if end_text.endswith("Z") else end_text
-    )
+    normalized = text.replace("Z", "+00:00") if text.endswith("Z") else text
     try:
-        start_dt = datetime.fromisoformat(normalized_start)
-        end_dt = datetime.fromisoformat(normalized_end)
+        parsed = datetime.fromisoformat(normalized)
     except ValueError:
         return None
-    if start_dt.tzinfo is None:
-        start_dt = start_dt.replace(tzinfo=UTC)
-    if end_dt.tzinfo is None:
-        end_dt = end_dt.replace(tzinfo=UTC)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def _minutes_between(start: Any, end: Any) -> float | None:
+    start_dt = _parse_datetime(start)
+    end_dt = _parse_datetime(end)
+    if start_dt is None or end_dt is None:
+        return None
     return round((end_dt - start_dt).total_seconds() / 60.0, 1)
+
+
+def _timestamp_is_after(left: Any, right: Any) -> bool | None:
+    left_dt = _parse_datetime(left)
+    right_dt = _parse_datetime(right)
+    if left_dt is None or right_dt is None:
+        return None
+    return left_dt > right_dt
 
 
 def _profile_specific_blockers(
@@ -1114,6 +1125,9 @@ def _build_opportunities(
                 "data_status": _as_text(candidate.get("data_status")),
                 "calendar_status": _as_text(candidate.get("calendar_status")),
                 "days_to_expiration": candidate.get("days_to_expiration"),
+                "midpoint_credit": _as_float(candidate.get("midpoint_credit")),
+                "natural_credit": _as_float(candidate.get("natural_credit")),
+                "selection_source": _as_text(candidate.get("selection_source")),
                 "run_id": row.get("run_id"),
             },
             legs=_build_legs(candidate),
@@ -1369,20 +1383,105 @@ def _position_identity(position: Mapping[str, Any]) -> tuple[str, str, str, str,
     )
 
 
+def _attempt_trade_intent(attempt: Mapping[str, Any]) -> str:
+    request = attempt.get("request")
+    if isinstance(request, Mapping):
+        requested = _as_text(request.get("trade_intent"))
+        if requested is not None:
+            return requested.lower()
+    return (_as_text(attempt.get("trade_intent")) or "open").lower()
+
+
+def _attempt_force_close_at(attempt: Mapping[str, Any]) -> str | None:
+    request = attempt.get("request")
+    if not isinstance(request, Mapping):
+        return None
+    exit_policy = request.get("exit_policy")
+    if not isinstance(exit_policy, Mapping):
+        return None
+    return _as_text(exit_policy.get("force_close_at"))
+
+
+def _attempt_source_reason(attempt: Mapping[str, Any]) -> str | None:
+    request = attempt.get("request")
+    if not isinstance(request, Mapping):
+        return None
+    source = request.get("source")
+    if not isinstance(source, Mapping):
+        return None
+    return _as_text(source.get("reason"))
+
+
+def _attempt_fill_timestamp(attempt: Mapping[str, Any]) -> str | None:
+    fill_times = [
+        _as_text(fill.get("filled_at"))
+        for fill in attempt.get("fills") or []
+        if isinstance(fill, Mapping)
+    ]
+    filtered = [value for value in fill_times if value]
+    if filtered:
+        return max(filtered)
+    return _as_text(attempt.get("completed_at")) or _as_text(
+        attempt.get("submitted_at")
+    )
+
+
+def _empty_execution_match() -> dict[str, Any]:
+    return {
+        "execution_attempted": False,
+        "execution_attempt_ids": [],
+        "close_execution_attempt_ids": [],
+        "open_attempt_count": 0,
+        "open_filled_attempt_count": 0,
+        "open_expired_attempt_count": 0,
+        "open_failed_attempt_count": 0,
+        "open_status_counts": {},
+        "open_fill_minutes_total": 0.0,
+        "open_fill_minutes_count": 0,
+        "average_open_fill_minutes": None,
+        "requested_after_force_close_count": 0,
+        "opened_after_force_close_count": 0,
+        "request_to_force_close_total": 0.0,
+        "request_to_force_close_count": 0,
+        "average_minutes_to_force_close_at_request": None,
+        "fill_to_force_close_total": 0.0,
+        "fill_to_force_close_count": 0,
+        "average_minutes_to_force_close_at_fill": None,
+        "entry_credit_capture_total": 0.0,
+        "entry_credit_capture_count": 0,
+        "average_entry_credit_capture_pct": None,
+        "entry_limit_retention_total": 0.0,
+        "entry_limit_retention_count": 0,
+        "average_entry_limit_retention_pct": None,
+        "close_attempt_count": 0,
+        "close_filled_attempt_count": 0,
+        "close_status_counts": {},
+        "close_fill_minutes_total": 0.0,
+        "close_fill_minutes_count": 0,
+        "average_close_fill_minutes": None,
+        "force_close_exit_count": 0,
+    }
+
+
 def _build_position_matches(
     *,
     opportunities: list[Opportunity],
     storage: Any,
     session_id: str | None,
+    positions: list[Mapping[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
     if session_id is None or not storage.execution.positions_schema_ready():
         return {}
 
-    positions = storage.execution.list_session_positions(session_id=session_id)
+    resolved_positions = (
+        list(positions)
+        if positions is not None
+        else list(storage.execution.list_session_positions(session_id=session_id))
+    )
     positions_by_identity: dict[
         tuple[str, str, str, str, str], list[Mapping[str, Any]]
     ] = defaultdict(list)
-    for position in positions:
+    for position in resolved_positions:
         positions_by_identity[_position_identity(position)].append(position)
 
     matches: dict[str, dict[str, Any]] = {}
@@ -1444,6 +1543,245 @@ def _build_position_matches(
     return matches
 
 
+def _build_execution_matches(
+    *,
+    opportunities: list[Opportunity],
+    storage: Any,
+    session_id: str | None,
+    positions: list[Mapping[str, Any]] | None = None,
+    attempts: list[Mapping[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
+    if session_id is None or not storage.execution.schema_ready():
+        return {}
+
+    resolved_positions = (
+        list(positions)
+        if positions is not None
+        else list(storage.execution.list_session_positions(session_id=session_id))
+    )
+    resolved_attempts = (
+        [dict(item) for item in attempts]
+        if attempts is not None
+        else list_session_execution_attempts(
+            db_target="",
+            session_id=session_id,
+            limit=500,
+            storage=storage,
+        )
+    )
+
+    opportunity_by_candidate_id = {
+        int(item.candidate_id): item
+        for item in opportunities
+        if int(item.candidate_id) > 0
+    }
+    opportunity_by_id = {item.opportunity_id: item for item in opportunities}
+    opportunity_by_identity = {
+        _opportunity_identity(item): item for item in opportunities
+    }
+    position_by_id = {
+        str(row.get("session_position_id")): row
+        for row in resolved_positions
+        if row.get("session_position_id") is not None
+    }
+    position_to_opportunity_id: dict[str, str] = {}
+    for row in resolved_positions:
+        opportunity: Opportunity | None = None
+        candidate_id = row.get("candidate_id")
+        if candidate_id is not None:
+            try:
+                opportunity = opportunity_by_candidate_id.get(int(candidate_id))
+            except (TypeError, ValueError):
+                opportunity = None
+        if opportunity is None:
+            opportunity = opportunity_by_identity.get(_position_identity(row))
+        if opportunity is None or row.get("session_position_id") is None:
+            continue
+        position_to_opportunity_id[str(row["session_position_id"])] = (
+            opportunity.opportunity_id
+        )
+
+    matches = {item.opportunity_id: _empty_execution_match() for item in opportunities}
+
+    for raw_attempt in resolved_attempts:
+        attempt = dict(raw_attempt)
+        trade_intent = _attempt_trade_intent(attempt)
+        opportunity_id: str | None = None
+        if trade_intent == "open":
+            candidate_id = attempt.get("candidate_id")
+            if candidate_id is not None:
+                try:
+                    matched_opportunity = opportunity_by_candidate_id.get(
+                        int(candidate_id)
+                    )
+                except (TypeError, ValueError):
+                    matched_opportunity = None
+            else:
+                matched_opportunity = None
+            if matched_opportunity is None:
+                matched_opportunity = opportunity_by_identity.get(
+                    _position_identity(attempt)
+                )
+            if matched_opportunity is not None:
+                opportunity_id = matched_opportunity.opportunity_id
+        elif trade_intent == "close":
+            request = attempt.get("request")
+            request_session_position_id = (
+                _as_text(request.get("session_position_id"))
+                if isinstance(request, Mapping)
+                else None
+            )
+            session_position_id = (
+                _as_text(attempt.get("session_position_id"))
+                or request_session_position_id
+            )
+            if session_position_id is not None:
+                opportunity_id = position_to_opportunity_id.get(session_position_id)
+
+        if opportunity_id is None:
+            continue
+
+        match = matches[opportunity_id]
+        match["execution_attempted"] = True
+        status = (_as_text(attempt.get("status")) or "unknown").lower()
+
+        if trade_intent == "open":
+            match["execution_attempt_ids"].append(str(attempt["execution_attempt_id"]))
+            match["open_attempt_count"] += 1
+            open_status_counts = match["open_status_counts"]
+            open_status_counts[status] = int(open_status_counts.get(status) or 0) + 1
+            if status == "filled":
+                match["open_filled_attempt_count"] += 1
+            elif status == "expired":
+                match["open_expired_attempt_count"] += 1
+            elif status in {"canceled", "failed", "rejected"}:
+                match["open_failed_attempt_count"] += 1
+
+            fill_minutes = _minutes_between(
+                attempt.get("requested_at"),
+                _attempt_fill_timestamp(attempt),
+            )
+            if fill_minutes is not None and status == "filled":
+                match["open_fill_minutes_total"] += float(fill_minutes)
+                match["open_fill_minutes_count"] += 1
+
+            force_close_at = _attempt_force_close_at(attempt)
+            requested_after_force_close = _timestamp_is_after(
+                attempt.get("requested_at"),
+                force_close_at,
+            )
+            if requested_after_force_close:
+                match["requested_after_force_close_count"] += 1
+            request_to_force_close_minutes = _minutes_between(
+                attempt.get("requested_at"),
+                force_close_at,
+            )
+            if request_to_force_close_minutes is not None:
+                match["request_to_force_close_total"] += float(
+                    request_to_force_close_minutes
+                )
+                match["request_to_force_close_count"] += 1
+
+            fill_time = _attempt_fill_timestamp(attempt)
+            opened_after_force_close = _timestamp_is_after(fill_time, force_close_at)
+            if opened_after_force_close and status == "filled":
+                match["opened_after_force_close_count"] += 1
+            fill_to_force_close_minutes = _minutes_between(fill_time, force_close_at)
+            if fill_to_force_close_minutes is not None and status == "filled":
+                match["fill_to_force_close_total"] += float(fill_to_force_close_minutes)
+                match["fill_to_force_close_count"] += 1
+
+            session_position_id = _as_text(attempt.get("session_position_id"))
+            position = (
+                None
+                if session_position_id is None
+                else position_by_id.get(session_position_id)
+            )
+            entry_credit = None
+            if isinstance(position, Mapping):
+                entry_credit = _as_float(position.get("entry_credit"))
+            if entry_credit is None:
+                entry_credit = _as_float(attempt.get("limit_price"))
+            opportunity = opportunity_by_id.get(opportunity_id)
+            midpoint_credit = None
+            if opportunity is not None:
+                midpoint_credit = _as_float(opportunity.evidence.get("midpoint_credit"))
+            if (
+                entry_credit is not None
+                and midpoint_credit is not None
+                and midpoint_credit > 0.0
+            ):
+                match["entry_credit_capture_total"] += entry_credit / midpoint_credit
+                match["entry_credit_capture_count"] += 1
+            limit_price = _as_float(attempt.get("limit_price"))
+            if entry_credit is not None and limit_price not in (None, 0.0):
+                match["entry_limit_retention_total"] += entry_credit / limit_price
+                match["entry_limit_retention_count"] += 1
+
+        elif trade_intent == "close":
+            match["close_execution_attempt_ids"].append(
+                str(attempt["execution_attempt_id"])
+            )
+            match["close_attempt_count"] += 1
+            close_status_counts = match["close_status_counts"]
+            close_status_counts[status] = int(close_status_counts.get(status) or 0) + 1
+            if status == "filled":
+                match["close_filled_attempt_count"] += 1
+            close_fill_minutes = _minutes_between(
+                attempt.get("requested_at"),
+                _attempt_fill_timestamp(attempt),
+            )
+            if close_fill_minutes is not None and status == "filled":
+                match["close_fill_minutes_total"] += float(close_fill_minutes)
+                match["close_fill_minutes_count"] += 1
+            if _attempt_source_reason(attempt) == "force_close":
+                match["force_close_exit_count"] += 1
+
+    for match in matches.values():
+        open_fill_count = int(match["open_fill_minutes_count"] or 0)
+        if open_fill_count > 0:
+            match["average_open_fill_minutes"] = round(
+                float(match["open_fill_minutes_total"]) / open_fill_count,
+                4,
+            )
+        request_force_close_count = int(match["request_to_force_close_count"] or 0)
+        if request_force_close_count > 0:
+            match["average_minutes_to_force_close_at_request"] = round(
+                float(match["request_to_force_close_total"])
+                / request_force_close_count,
+                4,
+            )
+        fill_force_close_count = int(match["fill_to_force_close_count"] or 0)
+        if fill_force_close_count > 0:
+            match["average_minutes_to_force_close_at_fill"] = round(
+                float(match["fill_to_force_close_total"]) / fill_force_close_count,
+                4,
+            )
+        capture_count = int(match["entry_credit_capture_count"] or 0)
+        if capture_count > 0:
+            match["average_entry_credit_capture_pct"] = round(
+                float(match["entry_credit_capture_total"]) / capture_count,
+                4,
+            )
+        retention_count = int(match["entry_limit_retention_count"] or 0)
+        if retention_count > 0:
+            match["average_entry_limit_retention_pct"] = round(
+                float(match["entry_limit_retention_total"]) / retention_count,
+                4,
+            )
+        close_fill_count = int(match["close_fill_minutes_count"] or 0)
+        if close_fill_count > 0:
+            match["average_close_fill_minutes"] = round(
+                float(match["close_fill_minutes_total"]) / close_fill_count,
+                4,
+            )
+        match["open_status_counts"] = dict(sorted(match["open_status_counts"].items()))
+        match["close_status_counts"] = dict(
+            sorted(match["close_status_counts"].items())
+        )
+    return matches
+
+
 def _build_outcome_matches(
     *,
     opportunities: list[Opportunity],
@@ -1454,10 +1792,30 @@ def _build_outcome_matches(
     summary = analysis_run.get("summary") if isinstance(analysis_run, Mapping) else None
     outcomes = summary.get("outcomes") if isinstance(summary, Mapping) else None
     ideas = list(outcomes.get("ideas") or []) if isinstance(outcomes, Mapping) else []
+    positions: list[Mapping[str, Any]] | None = None
+    attempts: list[Mapping[str, Any]] | None = None
+    if session_id is not None and storage.execution.schema_ready():
+        positions = list(
+            storage.execution.list_session_positions(session_id=session_id)
+        )
+        attempts = list_session_execution_attempts(
+            db_target="",
+            session_id=session_id,
+            limit=500,
+            storage=storage,
+        )
     position_matches = _build_position_matches(
         opportunities=opportunities,
         storage=storage,
         session_id=session_id,
+        positions=positions,
+    )
+    execution_matches = _build_execution_matches(
+        opportunities=opportunities,
+        storage=storage,
+        session_id=session_id,
+        positions=positions,
+        attempts=attempts,
     )
 
     lookup: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
@@ -1474,6 +1832,7 @@ def _build_outcome_matches(
     for opportunity in opportunities:
         idea = lookup.get(_opportunity_identity(opportunity))
         position_match = position_matches.get(opportunity.opportunity_id) or {}
+        execution_match = execution_matches.get(opportunity.opportunity_id) or {}
         estimated_close_pnl = (
             None if idea is None else _as_float(idea.get("estimated_close_pnl"))
         )
@@ -1481,6 +1840,7 @@ def _build_outcome_matches(
             None if idea is None else _as_float(idea.get("estimated_expiry_pnl"))
         )
         estimated_pnl = None if idea is None else resolved_estimated_pnl(idea)
+        actual_net_pnl = _as_float(position_match.get("actual_net_pnl"))
         matches[opportunity.opportunity_id] = {
             "matched": idea is not None,
             "estimated_close_pnl": None
@@ -1510,7 +1870,11 @@ def _build_outcome_matches(
             if idea is None
             else idea.get("opening_range_regime"),
             "classification": None if idea is None else idea.get("classification"),
+            "actual_minus_estimated_close_pnl": None
+            if actual_net_pnl is None or estimated_close_pnl is None
+            else round(actual_net_pnl - float(estimated_close_pnl), 4),
             **position_match,
+            **execution_match,
         }
     return matches
 
@@ -1546,6 +1910,47 @@ def _summarize_outcome_rows(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
         for row in actual_rows
         if row.get("actual_closed_rate") is not None
     ]
+    execution_rows = [
+        row
+        for row in rows
+        if bool(row.get("execution_attempted"))
+        or int(row.get("open_attempt_count") or 0) > 0
+        or int(row.get("close_attempt_count") or 0) > 0
+    ]
+    open_attempt_total = sum(int(row.get("open_attempt_count") or 0) for row in rows)
+    open_filled_total = sum(
+        int(row.get("open_filled_attempt_count") or 0) for row in rows
+    )
+    open_expired_total = sum(
+        int(row.get("open_expired_attempt_count") or 0) for row in rows
+    )
+    open_failed_total = sum(
+        int(row.get("open_failed_attempt_count") or 0) for row in rows
+    )
+    late_open_request_total = sum(
+        int(row.get("requested_after_force_close_count") or 0) for row in rows
+    )
+    late_open_fill_total = sum(
+        int(row.get("opened_after_force_close_count") or 0) for row in rows
+    )
+    close_attempt_total = sum(int(row.get("close_attempt_count") or 0) for row in rows)
+    close_filled_total = sum(
+        int(row.get("close_filled_attempt_count") or 0) for row in rows
+    )
+    force_close_exit_total = sum(
+        int(row.get("force_close_exit_count") or 0) for row in rows
+    )
+    actual_minus_close_rows = [
+        row for row in rows if row.get("actual_minus_estimated_close_pnl") is not None
+    ]
+
+    def _weighted_average(total_field: str, count_field: str) -> float | None:
+        weighted_count = sum(int(row.get(count_field) or 0) for row in rows)
+        if weighted_count <= 0:
+            return None
+        weighted_total = sum(float(row.get(total_field) or 0.0) for row in rows)
+        return round(weighted_total / weighted_count, 4)
+
     return {
         "average_estimated_pnl": None if not pnl_values else round(mean(pnl_values), 4),
         "estimated_pnl_count": len(modeled_final_rows),
@@ -1631,6 +2036,74 @@ def _summarize_outcome_rows(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
         "actual_closed_rate": None
         if not actual_closed_rates
         else round(mean(actual_closed_rates), 4),
+        "execution_attempted_count": len(execution_rows),
+        "execution_attempted_rate": None
+        if not rows
+        else round(len(execution_rows) / len(rows), 4),
+        "open_attempt_count": open_attempt_total,
+        "open_filled_attempt_count": open_filled_total,
+        "open_expired_attempt_count": open_expired_total,
+        "open_failed_attempt_count": open_failed_total,
+        "open_fill_rate": None
+        if open_attempt_total <= 0
+        else round(open_filled_total / open_attempt_total, 4),
+        "open_expired_rate": None
+        if open_attempt_total <= 0
+        else round(open_expired_total / open_attempt_total, 4),
+        "open_failed_rate": None
+        if open_attempt_total <= 0
+        else round(open_failed_total / open_attempt_total, 4),
+        "late_open_request_count": late_open_request_total,
+        "late_open_request_rate": None
+        if open_attempt_total <= 0
+        else round(late_open_request_total / open_attempt_total, 4),
+        "late_open_fill_count": late_open_fill_total,
+        "late_open_fill_rate": None
+        if open_filled_total <= 0
+        else round(late_open_fill_total / open_filled_total, 4),
+        "close_attempt_count": close_attempt_total,
+        "close_filled_attempt_count": close_filled_total,
+        "close_fill_rate": None
+        if close_attempt_total <= 0
+        else round(close_filled_total / close_attempt_total, 4),
+        "force_close_exit_count": force_close_exit_total,
+        "force_close_exit_rate": None
+        if close_attempt_total <= 0
+        else round(force_close_exit_total / close_attempt_total, 4),
+        "average_open_fill_minutes": _weighted_average(
+            "open_fill_minutes_total",
+            "open_fill_minutes_count",
+        ),
+        "average_close_fill_minutes": _weighted_average(
+            "close_fill_minutes_total",
+            "close_fill_minutes_count",
+        ),
+        "average_minutes_to_force_close_at_request": _weighted_average(
+            "request_to_force_close_total",
+            "request_to_force_close_count",
+        ),
+        "average_minutes_to_force_close_at_fill": _weighted_average(
+            "fill_to_force_close_total",
+            "fill_to_force_close_count",
+        ),
+        "average_entry_credit_capture_pct": _weighted_average(
+            "entry_credit_capture_total",
+            "entry_credit_capture_count",
+        ),
+        "average_entry_limit_retention_pct": _weighted_average(
+            "entry_limit_retention_total",
+            "entry_limit_retention_count",
+        ),
+        "average_actual_minus_estimated_close_pnl": None
+        if not actual_minus_close_rows
+        else round(
+            mean(
+                float(row["actual_minus_estimated_close_pnl"])
+                for row in actual_minus_close_rows
+            ),
+            4,
+        ),
+        "actual_minus_estimated_close_count": len(actual_minus_close_rows),
     }
 
 
@@ -1735,6 +2208,63 @@ def _flatten_opportunity_rows(
                 "actual_unrealized_pnl": outcome.get("actual_unrealized_pnl"),
                 "actual_net_pnl": outcome.get("actual_net_pnl"),
                 "actual_positive_outcome": outcome.get("actual_positive_outcome"),
+                "actual_minus_estimated_close_pnl": outcome.get(
+                    "actual_minus_estimated_close_pnl"
+                ),
+                "execution_attempted": outcome.get("execution_attempted"),
+                "execution_attempt_ids": outcome.get("execution_attempt_ids"),
+                "close_execution_attempt_ids": outcome.get(
+                    "close_execution_attempt_ids"
+                ),
+                "open_attempt_count": outcome.get("open_attempt_count"),
+                "open_filled_attempt_count": outcome.get("open_filled_attempt_count"),
+                "open_expired_attempt_count": outcome.get("open_expired_attempt_count"),
+                "open_failed_attempt_count": outcome.get("open_failed_attempt_count"),
+                "open_status_counts": outcome.get("open_status_counts"),
+                "average_open_fill_minutes": outcome.get("average_open_fill_minutes"),
+                "requested_after_force_close_count": outcome.get(
+                    "requested_after_force_close_count"
+                ),
+                "opened_after_force_close_count": outcome.get(
+                    "opened_after_force_close_count"
+                ),
+                "average_minutes_to_force_close_at_request": outcome.get(
+                    "average_minutes_to_force_close_at_request"
+                ),
+                "average_minutes_to_force_close_at_fill": outcome.get(
+                    "average_minutes_to_force_close_at_fill"
+                ),
+                "entry_credit_capture_total": outcome.get("entry_credit_capture_total"),
+                "entry_credit_capture_count": outcome.get("entry_credit_capture_count"),
+                "average_entry_credit_capture_pct": outcome.get(
+                    "average_entry_credit_capture_pct"
+                ),
+                "entry_limit_retention_total": outcome.get(
+                    "entry_limit_retention_total"
+                ),
+                "entry_limit_retention_count": outcome.get(
+                    "entry_limit_retention_count"
+                ),
+                "average_entry_limit_retention_pct": outcome.get(
+                    "average_entry_limit_retention_pct"
+                ),
+                "close_attempt_count": outcome.get("close_attempt_count"),
+                "close_filled_attempt_count": outcome.get("close_filled_attempt_count"),
+                "close_status_counts": outcome.get("close_status_counts"),
+                "average_close_fill_minutes": outcome.get("average_close_fill_minutes"),
+                "force_close_exit_count": outcome.get("force_close_exit_count"),
+                "open_fill_minutes_total": outcome.get("open_fill_minutes_total"),
+                "open_fill_minutes_count": outcome.get("open_fill_minutes_count"),
+                "request_to_force_close_total": outcome.get(
+                    "request_to_force_close_total"
+                ),
+                "request_to_force_close_count": outcome.get(
+                    "request_to_force_close_count"
+                ),
+                "fill_to_force_close_total": outcome.get("fill_to_force_close_total"),
+                "fill_to_force_close_count": outcome.get("fill_to_force_close_count"),
+                "close_fill_minutes_total": outcome.get("close_fill_minutes_total"),
+                "close_fill_minutes_count": outcome.get("close_fill_minutes_count"),
                 "is_legacy_board": opportunity.legacy_bucket == "board",
                 "is_legacy_watchlist": opportunity.legacy_bucket == "watchlist",
                 "is_rank_only_top": opportunity.opportunity_id in rank_only_ids,
@@ -1883,6 +2413,30 @@ def _build_scorecard(
         ),
         "allocator_minus_rank_only_avg_actual_net_pnl": metric_delta(
             allocator_field="average_actual_net_pnl",
+            baseline=scorecard["rank_only_top"],
+        ),
+        "allocator_minus_legacy_board_avg_actual_minus_estimated_close_pnl": metric_delta(
+            allocator_field="average_actual_minus_estimated_close_pnl",
+            baseline=scorecard["legacy_board"],
+        ),
+        "allocator_minus_rank_only_avg_actual_minus_estimated_close_pnl": metric_delta(
+            allocator_field="average_actual_minus_estimated_close_pnl",
+            baseline=scorecard["rank_only_top"],
+        ),
+        "allocator_minus_legacy_board_late_open_fill_rate": metric_delta(
+            allocator_field="late_open_fill_rate",
+            baseline=scorecard["legacy_board"],
+        ),
+        "allocator_minus_rank_only_late_open_fill_rate": metric_delta(
+            allocator_field="late_open_fill_rate",
+            baseline=scorecard["rank_only_top"],
+        ),
+        "allocator_minus_legacy_board_force_close_exit_rate": metric_delta(
+            allocator_field="force_close_exit_rate",
+            baseline=scorecard["legacy_board"],
+        ),
+        "allocator_minus_rank_only_force_close_exit_rate": metric_delta(
+            allocator_field="force_close_exit_rate",
             baseline=scorecard["rank_only_top"],
         ),
         "watchlist_promotion_hit_rate": scorecard["promoted_from_watchlist"][
@@ -2337,6 +2891,33 @@ def build_opportunity_replay(
         warnings.append(
             "Actual traded-position coverage for allocator-selected opportunities is sparse, so realized PnL comparisons are lower-confidence than modeled replay comparisons."
         )
+    allocator_late_open_fill_rate = _as_float(
+        allocator_metrics.get("late_open_fill_rate")
+    )
+    if (
+        allocator_late_open_fill_rate is not None
+        and allocator_late_open_fill_rate > 0.0
+    ):
+        warnings.append(
+            "Allocator-selected opportunities include filled opens after the configured force-close deadline, which points to execution-path drift rather than pure selection quality."
+        )
+    allocator_force_close_exit_rate = _as_float(
+        allocator_metrics.get("force_close_exit_rate")
+    )
+    if (
+        allocator_force_close_exit_rate is not None
+        and allocator_force_close_exit_rate >= 0.5
+    ):
+        warnings.append(
+            "Allocator-selected opportunities are being closed mostly by force-close exits, so actual PnL is sensitive to late-day execution quality."
+        )
+    allocator_actual_minus_close = _as_float(
+        allocator_metrics.get("average_actual_minus_estimated_close_pnl")
+    )
+    if allocator_actual_minus_close is not None and allocator_actual_minus_close < 0.0:
+        warnings.append(
+            "Allocator-selected actual PnL is trailing modeled close-state PnL, which suggests execution drag or exit handling slippage."
+        )
     warnings.extend(recovery_warnings)
 
     replay = DecisionReplay(
@@ -2569,6 +3150,28 @@ def build_recent_opportunity_replay_batch(
             - float(rank_only_top_metrics["average_actual_net_pnl"]),
             4,
         ),
+        "allocator_minus_legacy_board_avg_actual_minus_estimated_close_pnl": None
+        if allocator_selected_metrics["average_actual_minus_estimated_close_pnl"]
+        is None
+        or legacy_board_metrics["average_actual_minus_estimated_close_pnl"] is None
+        else round(
+            float(
+                allocator_selected_metrics["average_actual_minus_estimated_close_pnl"]
+            )
+            - float(legacy_board_metrics["average_actual_minus_estimated_close_pnl"]),
+            4,
+        ),
+        "allocator_minus_rank_only_avg_actual_minus_estimated_close_pnl": None
+        if allocator_selected_metrics["average_actual_minus_estimated_close_pnl"]
+        is None
+        or rank_only_top_metrics["average_actual_minus_estimated_close_pnl"] is None
+        else round(
+            float(
+                allocator_selected_metrics["average_actual_minus_estimated_close_pnl"]
+            )
+            - float(rank_only_top_metrics["average_actual_minus_estimated_close_pnl"]),
+            4,
+        ),
         "watchlist_promotion_hit_rate": promoted_from_watchlist_metrics[
             "positive_rate"
         ],
@@ -2602,6 +3205,36 @@ def build_recent_opportunity_replay_batch(
     if allocator_actual_coverage is not None and float(allocator_actual_coverage) < 0.5:
         warnings.append(
             "Actual traded-position coverage for allocator-selected opportunities is sparse, so realized PnL comparisons are lower-confidence than modeled replay comparisons."
+        )
+    allocator_late_open_fill_rate = allocator_selected_metrics.get(
+        "late_open_fill_rate"
+    )
+    if (
+        allocator_late_open_fill_rate is not None
+        and float(allocator_late_open_fill_rate) > 0.0
+    ):
+        warnings.append(
+            "Some allocator-selected opportunities were opened after their configured force-close deadline, which points to execution-path drift in the live system."
+        )
+    allocator_force_close_exit_rate = allocator_selected_metrics.get(
+        "force_close_exit_rate"
+    )
+    if (
+        allocator_force_close_exit_rate is not None
+        and float(allocator_force_close_exit_rate) >= 0.5
+    ):
+        warnings.append(
+            "Allocator-selected actual trades are dominated by force-close exits, so live execution timing remains a primary risk."
+        )
+    allocator_actual_minus_close = allocator_selected_metrics.get(
+        "average_actual_minus_estimated_close_pnl"
+    )
+    if (
+        allocator_actual_minus_close is not None
+        and float(allocator_actual_minus_close) < 0.0
+    ):
+        warnings.append(
+            "Allocator-selected actual PnL is trailing modeled close-state PnL on the replay sample, which suggests execution drag or exit slippage."
         )
     return {
         "target": {

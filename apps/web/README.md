@@ -18,7 +18,7 @@ Operator dashboard for the `spreads` backend. The app is built with:
 
 ## Local Run
 
-From [apps/web](/Users/adeb/Projects/spreads/apps/web):
+From [apps/web](./):
 
 ```bash
 npm install

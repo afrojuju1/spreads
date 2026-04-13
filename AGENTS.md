@@ -35,6 +35,8 @@
   - `uv run spreads replay`
   - `uv run spreads replay --label <label> --date <YYYY-MM-DD>`
   - `uv run spreads replay recent --limit <N>`
+- Treat `uv run spreads replay` as the canonical decision-evaluation path.
+- Treat `uv run spreads-analyze` as a legacy post-close report surface, not the canonical replay or policy-tuning workflow.
 - Do not assume `uv run spreads doctor` exists; it is intentionally deferred.
 - For runtime verification of the API, workers, scheduler, or web app, prefer the existing `docker compose` services when they are already running instead of starting duplicate local processes.
 - Use `docker compose ps`, `docker compose logs`, and `docker compose restart` for stack-level checks before falling back to ad hoc local `uvicorn`, worker, or scheduler runs.
@@ -54,6 +56,8 @@
 ## Planning Docs
 
 - If a planning document is being used as an active checkpoint for implementation work, keep its completion status current when a milestone meaningfully changes.
+- For selection-architecture work, start with `docs/planning/2026-04-11_fresh_spread_system_design.md` and `docs/planning/2026-04-11_spread_selection_refactor_plan.md`.
+- Treat older planning docs as historical context unless they are explicitly called out as the active source of truth.
 
 ## Web App
 

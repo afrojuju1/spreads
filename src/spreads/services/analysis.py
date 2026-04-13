@@ -11,18 +11,17 @@ from spreads.common import env_or_die, load_local_env
 from spreads.db.decorators import with_storage
 from spreads.integrations.alpaca.client import AlpacaClient, infer_trading_base_url
 from spreads.runtime.config import default_database_url
-from spreads.services.replay import summarize_replay
-from spreads.services.scanner import NEW_YORK
+from spreads.services.analysis_helpers import (
+    board_session_phase,
+    candidate_identity,
+    resolved_estimated_pnl,
+    score_bucket_label,
+)
+from spreads.services.scanner import NEW_YORK, summarize_replay
 from spreads.storage.collector_repository import CollectorRepository
 from spreads.storage.run_history_repository import RunHistoryRepository
 
 MAX_EVENTS = 5000
-SCORE_BUCKETS = (
-    (85.0, "85+"),
-    (75.0, "75-84"),
-    (65.0, "65-74"),
-    (55.0, "55-64"),
-)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -220,43 +219,6 @@ def build_replay_client() -> AlpacaClient:
         trading_base_url=infer_trading_base_url(key_id, None),
         data_base_url="https://data.alpaca.markets",
     )
-
-
-def candidate_identity(candidate: Mapping[str, Any]) -> tuple[str, str, str, str, str]:
-    return (
-        str(candidate["underlying_symbol"]),
-        str(candidate["strategy"]),
-        str(candidate["expiration_date"]),
-        str(candidate["short_symbol"]),
-        str(candidate["long_symbol"]),
-    )
-
-
-def score_bucket_label(score: float | None) -> str:
-    if score is None:
-        return "unknown"
-    for threshold, label in SCORE_BUCKETS:
-        if score >= threshold:
-            return label
-    return "<55"
-
-
-def resolved_estimated_pnl(item: Mapping[str, Any]) -> float | None:
-    expiry_value = item.get("estimated_expiry_pnl")
-    if expiry_value is not None:
-        return float(expiry_value)
-    close_value = item.get("estimated_close_pnl")
-    if close_value is not None:
-        return float(close_value)
-    return None
-
-
-def board_session_phase(candidate: Mapping[str, Any]) -> str:
-    notes = candidate.get("board_notes") or []
-    for note in notes:
-        if isinstance(note, str) and note.startswith("session-"):
-            return note.removeprefix("session-")
-    return "unknown"
 
 
 def classify_vwap_regime(setup: Mapping[str, Any] | None, strategy: str) -> str:

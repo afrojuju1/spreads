@@ -35,6 +35,8 @@
   - `uv run spreads replay`
   - `uv run spreads replay --label <label> --date <YYYY-MM-DD>`
   - `uv run spreads replay recent --limit <N>`
+- Treat `uv run spreads replay` as the canonical decision-evaluation path.
+- Treat `uv run spreads-analyze` / `services.analysis.py` as legacy post-close reporting, not the canonical decision-replay path.
 - `uv run spreads doctor` is not a current command; do not rely on it in investigations or automations.
 - For closed-session investigations, check post-market analysis before tuning strategy thresholds from raw session counts alone.
 

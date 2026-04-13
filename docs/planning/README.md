@@ -12,6 +12,7 @@ Implementation and evaluation companion:
 
 - use `uv run spreads replay` for single-session offline decision replays
 - use `uv run spreads replay recent --limit <N>` for batch policy comparison across recent sessions
+- treat `uv run spreads-analyze` as the legacy post-close report surface, not the canonical replay/evaluation path
 
 Detailed design specifications:
 
@@ -25,6 +26,8 @@ Detailed design specifications:
 - [Opportunity Schema](./2026-04-11_opportunity_schema.md)
 
 Legacy or earlier architecture context:
+
+These are historical context unless a task explicitly names one of them as the active source of truth.
 
 - [0DTE System Architecture](./0dte_system_architecture.md)
 - [Trading Engine Architecture](./trading_engine_architecture.md)

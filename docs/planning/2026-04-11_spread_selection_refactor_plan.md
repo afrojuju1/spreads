@@ -30,7 +30,7 @@ This document is not a proposal for a full strategy rewrite.
 
 The current system is stronger at discovering spread candidates than it is at promoting the right ones.
 
-The scanner in [scanner.py](/Users/adeb/Projects/spreads/src/spreads/services/scanner.py) already applies a meaningful set of structural filters:
+The scanner in [scanner.py](../../src/spreads/services/scanner.py) already applies a meaningful set of structural filters:
 
 - DTE profile windows
 - delta bands and delta targets
@@ -48,11 +48,11 @@ That is not the main failure.
 
 The bigger issue is that one static `quality_score` is reused too far downstream:
 
-- candidate ranking in [scanner.py](/Users/adeb/Projects/spreads/src/spreads/services/scanner.py#L2484)
-- board/watchlist promotion in [live_collector.py](/Users/adeb/Projects/spreads/src/spreads/jobs/live_collector.py#L354)
-- alert thresholds in [alerts/rules.py](/Users/adeb/Projects/spreads/src/spreads/alerts/rules.py)
-- signal confidence in [signal_state.py](/Users/adeb/Projects/spreads/src/spreads/services/signal_state.py)
-- auto execution via board position in [execution.py](/Users/adeb/Projects/spreads/src/spreads/services/execution.py#L1769)
+- candidate ranking in [scanner.py](../../src/spreads/services/scanner.py#L2484)
+- board/watchlist promotion in [live_collector.py](../../src/spreads/jobs/live_collector.py#L354)
+- alert thresholds in [alerts/rules.py](../../src/spreads/alerts/rules.py)
+- signal confidence in [signal_state.py](../../src/spreads/services/signal_state.py)
+- auto execution via board position in [execution.py](../../src/spreads/services/execution.py#L1769)
 
 That creates a structural problem:
 
@@ -114,20 +114,20 @@ Mermaid source:
 
 | Surface | Current owner | Current behavior | Main issue |
 |---|---|---|---|
-| Candidate construction | [scanner.py](/Users/adeb/Projects/spreads/src/spreads/services/scanner.py#L2292) | Builds candidate spreads from contract metadata, snapshots, and expected move | Reasonably solid |
-| Candidate scoring | [scanner.py](/Users/adeb/Projects/spreads/src/spreads/services/scanner.py#L2484) | Produces one static `quality_score` | Score is overloaded |
-| Combined call/put selection | [scanner.py](/Users/adeb/Projects/spreads/src/spreads/services/scanner.py#L3812) | Concatenates strategy results and sorts by score | No explicit side arbitration |
-| Board/watchlist promotion | [live_collector.py](/Users/adeb/Projects/spreads/src/spreads/jobs/live_collector.py#L354) | Uses floors, score gaps, and hysteresis | Static promotion policy |
-| Alerting | [alerts/rules.py](/Users/adeb/Projects/spreads/src/spreads/alerts/rules.py) | Separate score thresholds and promotion rules | Duplicates selection policy |
-| Signal confidence | [signal_state.py](/Users/adeb/Projects/spreads/src/spreads/services/signal_state.py#L85) | Normalizes score between watchlist floor and board-strong score | Confidence is derived from score, not realized lift |
-| Auto execution | [execution.py](/Users/adeb/Projects/spreads/src/spreads/services/execution.py#L1779) | Chooses board `position == 1` | No execution-side re-ranking |
-| Closed-session feedback | [post_market_analysis.py](/Users/adeb/Projects/spreads/src/spreads/services/post_market_analysis.py#L63) | Good diagnostics and recommendations | Not yet feeding selection policy |
+| Candidate construction | [scanner.py](../../src/spreads/services/scanner.py#L2292) | Builds candidate spreads from contract metadata, snapshots, and expected move | Reasonably solid |
+| Candidate scoring | [scanner.py](../../src/spreads/services/scanner.py#L2484) | Produces one static `quality_score` | Score is overloaded |
+| Combined call/put selection | [scanner.py](../../src/spreads/services/scanner.py#L3812) | Concatenates strategy results and sorts by score | No explicit side arbitration |
+| Board/watchlist promotion | [live_collector.py](../../src/spreads/jobs/live_collector.py#L354) | Uses floors, score gaps, and hysteresis | Static promotion policy |
+| Alerting | [alerts/rules.py](../../src/spreads/alerts/rules.py) | Separate score thresholds and promotion rules | Duplicates selection policy |
+| Signal confidence | [signal_state.py](../../src/spreads/services/signal_state.py#L85) | Normalizes score between watchlist floor and board-strong score | Confidence is derived from score, not realized lift |
+| Auto execution | [execution.py](../../src/spreads/services/execution.py#L1779) | Chooses board `position == 1` | No execution-side re-ranking |
+| Closed-session feedback | [post_market_analysis.py](../../src/spreads/services/post_market_analysis.py#L63) | Good diagnostics and recommendations | Not yet feeding selection policy |
 
 ## What The Code Is Doing Today
 
 ### 1. Construction Is Profile-Aware
 
-Profiles in [scanner.py](/Users/adeb/Projects/spreads/src/spreads/services/scanner.py#L737) already encode materially different regimes:
+Profiles in [scanner.py](../../src/spreads/services/scanner.py#L737) already encode materially different regimes:
 
 - `0dte`
 - `micro`
@@ -150,7 +150,7 @@ This is the right design direction. The system is not using one flat spread temp
 
 ### 2. Candidate Ranking Is Static
 
-[score_candidate()](/Users/adeb/Projects/spreads/src/spreads/services/scanner.py#L2484) weights:
+[score_candidate()](../../src/spreads/services/scanner.py#L2484) weights:
 
 - delta fit
 - short strike versus expected move
@@ -171,7 +171,7 @@ This is a decent discovery score. It is not yet a good promotion score or execut
 
 ### 3. Combined Mode Merges Too Naively
 
-[merge_strategy_candidates()](/Users/adeb/Projects/spreads/src/spreads/services/scanner.py#L3812) simply merges call and put candidates and sorts them by raw score.
+[merge_strategy_candidates()](../../src/spreads/services/scanner.py#L3812) simply merges call and put candidates and sorts them by raw score.
 
 That means combined mode does not answer:
 
@@ -181,7 +181,7 @@ That means combined mode does not answer:
 
 ### 4. Board Promotion Uses Static Floors And Hysteresis
 
-[select_board_candidates()](/Users/adeb/Projects/spreads/src/spreads/jobs/live_collector.py#L354) currently depends on:
+[select_board_candidates()](../../src/spreads/jobs/live_collector.py#L354) currently depends on:
 
 - `BOARD_SCORE_FLOOR = 65.0`
 - `BOARD_STRONG_SCORE = 82.0`
@@ -195,7 +195,7 @@ This creates stability, but it does not create calibration.
 
 ### 5. Execution Trusts Board Order Too Much
 
-[submit_auto_session_execution()](/Users/adeb/Projects/spreads/src/spreads/services/execution.py#L1714) selects the board candidate with the best stored board position.
+[submit_auto_session_execution()](../../src/spreads/services/execution.py#L1714) selects the board candidate with the best stored board position.
 
 That means:
 
@@ -292,7 +292,7 @@ That would likely reduce idea count without fixing promotion quality.
 
 ### 2. The Current Setup Score Is Symbol-Level, Not Spread-Level
 
-[analyze_underlying_setup()](/Users/adeb/Projects/spreads/src/spreads/services/scanner.py#L1894) produces direction-aware setup context for the underlying and strategy.
+[analyze_underlying_setup()](../../src/spreads/services/scanner.py#L1894) produces direction-aware setup context for the underlying and strategy.
 
 That is useful, but every candidate on the same symbol and side inherits that same setup snapshot.
 
@@ -315,7 +315,7 @@ Alpaca documents that options contract metadata includes:
 - `open_interest`
 - `open_interest_date`
 
-The current scanner reads `open_interest`, but does not preserve `open_interest_date` in [OptionContract](/Users/adeb/Projects/spreads/src/spreads/services/scanner.py#L500).
+The current scanner reads `open_interest`, but does not preserve `open_interest_date` in [OptionContract](../../src/spreads/services/scanner.py#L500).
 
 That matters because open interest is not an intraday-updating quality signal. It is useful as a coarse liquidity floor, but it should not be over-weighted as if it were live.
 
@@ -328,7 +328,7 @@ The option chain snapshot endpoint exposes:
 - Greeks
 - implied volatility
 
-The repo already parses quote, trade, Greeks, and daily volume in [OptionSnapshot](/Users/adeb/Projects/spreads/src/spreads/services/scanner.py#L1291).
+The repo already parses quote, trade, Greeks, and daily volume in [OptionSnapshot](../../src/spreads/services/scanner.py#L1291).
 
 What is still missing from selection policy is stronger use of:
 
@@ -452,7 +452,7 @@ Goal:
 Changes:
 
 - create `src/spreads/services/spread_selection.py`
-- move board/watchlist selection logic out of [live_collector.py](/Users/adeb/Projects/spreads/src/spreads/jobs/live_collector.py) into this service
+- move board/watchlist selection logic out of [live_collector.py](../../src/spreads/jobs/live_collector.py) into this service
 - have the service return one ordered candidate list with explicit fields such as:
   - `rank`
   - `state`
@@ -461,7 +461,7 @@ Changes:
   - `promotion_score`
   - `execution_score`
 - move threshold constants used for promotion into one canonical profile-aware policy surface
-- keep [scanner.py](/Users/adeb/Projects/spreads/src/spreads/services/scanner.py) responsible only for:
+- keep [scanner.py](../../src/spreads/services/scanner.py) responsible only for:
   - candidate construction
   - candidate enrichment
   - base discovery ranking
@@ -642,7 +642,7 @@ Goal:
 
 Changes:
 
-- in [execution.py](/Users/adeb/Projects/spreads/src/spreads/services/execution.py#L1769), replace `position == 1` selection with execution-side ranking across current promotable candidates
+- in [execution.py](../../src/spreads/services/execution.py#L1769), replace `position == 1` selection with execution-side ranking across current promotable candidates
 - include:
   - reactive quote quality
   - quote freshness
@@ -719,12 +719,12 @@ The evidence does not support those as the highest-leverage first moves.
 
 Internal:
 
-- [scanner.py](/Users/adeb/Projects/spreads/src/spreads/services/scanner.py)
-- [live_collector.py](/Users/adeb/Projects/spreads/src/spreads/jobs/live_collector.py)
-- [execution.py](/Users/adeb/Projects/spreads/src/spreads/services/execution.py)
-- [post_market_analysis.py](/Users/adeb/Projects/spreads/src/spreads/services/post_market_analysis.py)
-- [signal_state.py](/Users/adeb/Projects/spreads/src/spreads/services/signal_state.py)
-- [alerts/rules.py](/Users/adeb/Projects/spreads/src/spreads/alerts/rules.py)
+- [scanner.py](../../src/spreads/services/scanner.py)
+- [live_collector.py](../../src/spreads/jobs/live_collector.py)
+- [execution.py](../../src/spreads/services/execution.py)
+- [post_market_analysis.py](../../src/spreads/services/post_market_analysis.py)
+- [signal_state.py](../../src/spreads/services/signal_state.py)
+- [alerts/rules.py](../../src/spreads/alerts/rules.py)
 - [Options Scanner Research Log](../research/options_scanner_research_log.md)
 - [Alpaca Capabilities Statement](../research/alpaca_capabilities_statement.md)
 

@@ -20,6 +20,9 @@ from spreads.jobs.registry import (
 from spreads.runtime.config import default_redis_url
 from spreads.runtime.redis import build_redis_settings
 from spreads.services.alpaca import create_alpaca_client_from_env
+from spreads.services.candidate_policy import (
+    candidate_has_intraday_setup_context,
+)
 from spreads.services.control_plane import (
     OPEN_ACTIVITY_AUTO,
     OPEN_ACTIVITY_MANUAL,
@@ -203,19 +206,6 @@ def _policy_ref(
     return payload
 
 
-def _candidate_has_intraday_setup_context(candidate: dict[str, Any]) -> bool:
-    if bool(candidate.get("setup_has_intraday_context")):
-        return True
-    score = candidate.get("setup_intraday_score")
-    if score not in (None, ""):
-        return True
-    minutes = candidate.get("setup_intraday_minutes")
-    try:
-        return int(float(minutes)) > 0
-    except (TypeError, ValueError):
-        return False
-
-
 def _candidate_with_payload(candidate: dict[str, Any]) -> dict[str, Any]:
     payload = candidate.get("candidate")
     if isinstance(payload, dict):
@@ -238,7 +228,7 @@ def _validate_auto_execution_candidate(
             "setup_not_favorable",
             "Automatic 0DTE execution is limited to favorable technical setups.",
         )
-    if not _candidate_has_intraday_setup_context(candidate):
+    if not candidate_has_intraday_setup_context(candidate):
         return (
             "awaiting_intraday_setup",
             "Automatic 0DTE execution requires persisted intraday setup context on the selected candidate.",

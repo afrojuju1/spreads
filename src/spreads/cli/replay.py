@@ -147,6 +147,36 @@ def _render_replay_text(payload: Mapping[str, Any]) -> str:
             f"| watchlist hit rate {deltas.get('watchlist_promotion_hit_rate')} "
             f"| rejected board miss rate {deltas.get('rejected_board_miss_rate')}"
         )
+        lines.append(
+            "- "
+            f"open fill rate | legacy board {legacy_metrics.get('open_fill_rate')} "
+            f"| rank-only {rank_only_metrics.get('open_fill_rate')} "
+            f"| allocator {allocator_metrics.get('open_fill_rate')}"
+        )
+        lines.append(
+            "- "
+            f"late open fill rate | legacy board {legacy_metrics.get('late_open_fill_rate')} "
+            f"| rank-only {rank_only_metrics.get('late_open_fill_rate')} "
+            f"| allocator {allocator_metrics.get('late_open_fill_rate')}"
+        )
+        lines.append(
+            "- "
+            f"force-close exit rate | legacy board {legacy_metrics.get('force_close_exit_rate')} "
+            f"| rank-only {rank_only_metrics.get('force_close_exit_rate')} "
+            f"| allocator {allocator_metrics.get('force_close_exit_rate')}"
+        )
+        lines.append(
+            "- "
+            f"entry credit capture | legacy board {legacy_metrics.get('average_entry_credit_capture_pct')} "
+            f"| rank-only {rank_only_metrics.get('average_entry_credit_capture_pct')} "
+            f"| allocator {allocator_metrics.get('average_entry_credit_capture_pct')}"
+        )
+        lines.append(
+            "- "
+            f"actual minus modeled close | legacy board {legacy_metrics.get('average_actual_minus_estimated_close_pnl')} "
+            f"| rank-only {rank_only_metrics.get('average_actual_minus_estimated_close_pnl')} "
+            f"| allocator {allocator_metrics.get('average_actual_minus_estimated_close_pnl')}"
+        )
     warnings = payload.get("warnings") or []
     if warnings:
         lines.append("")
@@ -172,9 +202,12 @@ def _render_replay_batch_text(payload: Mapping[str, Any]) -> str:
         f"Pooled modeled final pnl | legacy board {(aggregate.get('legacy_board_metrics') or {}).get('average_estimated_pnl')} | rank-only {(aggregate.get('rank_only_top_metrics') or {}).get('average_estimated_pnl')} | allocator {(aggregate.get('allocator_selected_metrics') or {}).get('average_estimated_pnl')}",
         f"Pooled modeled close pnl | legacy board {(aggregate.get('legacy_board_metrics') or {}).get('average_estimated_close_pnl')} | rank-only {(aggregate.get('rank_only_top_metrics') or {}).get('average_estimated_close_pnl')} | allocator {(aggregate.get('allocator_selected_metrics') or {}).get('average_estimated_close_pnl')}",
         f"Pooled actual net pnl | legacy board {(aggregate.get('legacy_board_metrics') or {}).get('average_actual_net_pnl')} | rank-only {(aggregate.get('rank_only_top_metrics') or {}).get('average_actual_net_pnl')} | allocator {(aggregate.get('allocator_selected_metrics') or {}).get('average_actual_net_pnl')}",
+        f"Pooled actual minus modeled close | legacy board {(aggregate.get('legacy_board_metrics') or {}).get('average_actual_minus_estimated_close_pnl')} | rank-only {(aggregate.get('rank_only_top_metrics') or {}).get('average_actual_minus_estimated_close_pnl')} | allocator {(aggregate.get('allocator_selected_metrics') or {}).get('average_actual_minus_estimated_close_pnl')}",
         f"Still-open rate | legacy board {(aggregate.get('legacy_board_metrics') or {}).get('still_open_rate')} | rank-only {(aggregate.get('rank_only_top_metrics') or {}).get('still_open_rate')} | allocator {(aggregate.get('allocator_selected_metrics') or {}).get('still_open_rate')}",
         f"Pooled deltas | final {aggregate.get('allocator_minus_legacy_board_avg_estimated_pnl')} | close {aggregate.get('allocator_minus_legacy_board_avg_estimated_close_pnl')} | actual {aggregate.get('allocator_minus_legacy_board_avg_actual_net_pnl')}",
         f"Allocator actual coverage {(aggregate.get('allocator_selected_metrics') or {}).get('actual_coverage_rate')} | allocator actual closed_rate {(aggregate.get('allocator_selected_metrics') or {}).get('actual_closed_rate')}",
+        f"Execution quality | open fill {(aggregate.get('allocator_selected_metrics') or {}).get('open_fill_rate')} | late open fill {(aggregate.get('allocator_selected_metrics') or {}).get('late_open_fill_rate')} | force-close exits {(aggregate.get('allocator_selected_metrics') or {}).get('force_close_exit_rate')}",
+        f"Entry capture | legacy board {(aggregate.get('legacy_board_metrics') or {}).get('average_entry_credit_capture_pct')} | rank-only {(aggregate.get('rank_only_top_metrics') or {}).get('average_entry_credit_capture_pct')} | allocator {(aggregate.get('allocator_selected_metrics') or {}).get('average_entry_credit_capture_pct')}",
         f"Hit rates | watchlist promotions {aggregate.get('watchlist_promotion_hit_rate')} | rejected board miss rate {aggregate.get('rejected_board_miss_rate')}",
         f"Verdicts: {aggregate.get('verdict_counts')}",
         "",
@@ -193,6 +226,8 @@ def _render_replay_batch_text(payload: Mapping[str, Any]) -> str:
             f"{session.get('label')} {session.get('session_date')} "
             f"| verdict {summary.get('analysis_verdict') or 'n/a'} "
             f"| allocated {summary.get('allocated_count')} "
+            f"| late_open_fill_rate {(item.get('scorecard') or {}).get('allocator_selected', {}).get('late_open_fill_rate')} "
+            f"| force_close_exit_rate {(item.get('scorecard') or {}).get('allocator_selected', {}).get('force_close_exit_rate')} "
             f"| promoted_watchlist {[row.get('candidate_id') for row in promoted]} "
             f"| rejected_board {[row.get('candidate_id') for row in rejected]}"
         )

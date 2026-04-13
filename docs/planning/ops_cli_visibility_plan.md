@@ -155,9 +155,9 @@ The direction is to move the repo onto one canonical CLI:
 - `spreads trading`
 - `spreads sessions`
 - `spreads sessions <session-id>`
-- `spreads scan`
-- `spreads collect`
-- `spreads analyze`
+- planned later: `spreads scan`
+- planned later: `spreads collect`
+- planned later: `spreads analyze`
 
 Do not plan around a long-term split between `spreads` and legacy one-off binaries.
 
@@ -812,9 +812,9 @@ Migration policy:
 
 Compatibility mapping:
 
-- `spreads-scan` -> `spreads scan`
-- `spreads-collect` -> `spreads collect`
-- `spreads-analyze` -> `spreads analyze`
+- `spreads-scan` -> planned `spreads scan`
+- `spreads-collect` -> planned `spreads collect`
+- `spreads-analyze` -> planned `spreads analyze`
 
 The long-term goal is one root command, not permanent dual entrypoints.
 

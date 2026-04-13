@@ -8,8 +8,8 @@ Last updated: April 10, 2026
 
 Current live capture uses two separate API-process brokers:
 
-- [option_quote_capture.py](/Users/adeb/Projects/spreads/src/spreads/services/option_quote_capture.py)
-- [option_trade_capture.py](/Users/adeb/Projects/spreads/src/spreads/services/option_trade_capture.py)
+- [option_quote_capture.py](../../src/spreads/services/option_quote_capture.py)
+- [option_trade_capture.py](../../src/spreads/services/option_trade_capture.py)
 
 That design works functionally, but it is structurally wrong for Alpaca's option stream constraints.
 
@@ -282,12 +282,12 @@ Exit condition:
 Expected module layout:
 
 - new shared broker module:
-  - `/Users/adeb/Projects/spreads/src/spreads/services/option_stream_broker.py`
+  - `../../src/spreads/services/option_stream_broker.py`
 - existing adapters remain:
-  - `/Users/adeb/Projects/spreads/src/spreads/services/option_quote_capture.py`
-  - `/Users/adeb/Projects/spreads/src/spreads/services/option_trade_capture.py`
+  - `../../src/spreads/services/option_quote_capture.py`
+  - `../../src/spreads/services/option_trade_capture.py`
 - API wiring remains in:
-  - `/Users/adeb/Projects/spreads/apps/api/main.py`
+  - `../../apps/api/main.py`
 
 ## Why This Is The Right v1
 
@@ -307,11 +307,11 @@ Expected module layout:
 
 Implemented on April 10, 2026:
 
-- new shared broker in [option_stream_broker.py](/Users/adeb/Projects/spreads/src/spreads/services/option_stream_broker.py)
-- thin quote and trade adapters now reuse that broker in [option_quote_capture.py](/Users/adeb/Projects/spreads/src/spreads/services/option_quote_capture.py) and [option_trade_capture.py](/Users/adeb/Projects/spreads/src/spreads/services/option_trade_capture.py)
-- combined internal endpoint and broker-backed adapter in [option_market_data_capture.py](/Users/adeb/Projects/spreads/src/spreads/services/option_market_data_capture.py) and [main.py](/Users/adeb/Projects/spreads/apps/api/main.py)
-- live collector cut over to one internal combined capture request in [live_collector.py](/Users/adeb/Projects/spreads/src/spreads/jobs/live_collector.py)
-- broker health metrics and internal visibility endpoint in [option_stream_broker.py](/Users/adeb/Projects/spreads/src/spreads/services/option_stream_broker.py) and [main.py](/Users/adeb/Projects/spreads/apps/api/main.py)
+- new shared broker in [option_stream_broker.py](../../src/spreads/services/option_stream_broker.py)
+- thin quote and trade adapters now reuse that broker in [option_quote_capture.py](../../src/spreads/services/option_quote_capture.py) and [option_trade_capture.py](../../src/spreads/services/option_trade_capture.py)
+- combined internal endpoint and broker-backed adapter in [option_market_data_capture.py](../../src/spreads/services/option_market_data_capture.py) and [main.py](../../apps/api/main.py)
+- live collector cut over to one internal combined capture request in [live_collector.py](../../src/spreads/jobs/live_collector.py)
+- broker health metrics and internal visibility endpoint in [option_stream_broker.py](../../src/spreads/services/option_stream_broker.py) and [main.py](../../apps/api/main.py)
 
 Verified runtime behavior after cutover:
 
