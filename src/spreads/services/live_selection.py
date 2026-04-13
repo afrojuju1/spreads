@@ -7,15 +7,42 @@ from spreads.services.candidate_policy import (
     candidate_requires_favorable_setup,
 )
 
-PROMOTABLE_SCORE_FLOOR = 65.0
-PROMOTABLE_STRONG_SCORE = 82.0
-PROMOTABLE_WINNER_GAP = 6.0
-PROMOTABLE_SIDE_SWITCH_MARGIN = 10.0
-PROMOTABLE_REPLACEMENT_MARGIN = 5.0
-PROMOTABLE_CONFIRMATION_CYCLES = 2
-PROMOTABLE_HOLD_TOLERANCE = 3.0
-MONITOR_SCORE_FLOOR = 55.0
-MONITOR_PER_SYMBOL = 2
+DEFAULT_SELECTION_THRESHOLDS = {
+    "promotable_score_floor": 65.0,
+    "promotable_strong_score": 82.0,
+    "promotable_winner_gap": 6.0,
+    "promotable_side_switch_margin": 10.0,
+    "promotable_replacement_margin": 5.0,
+    "promotable_confirmation_cycles": 2,
+    "promotable_hold_tolerance": 3.0,
+    "monitor_score_floor": 55.0,
+    "monitor_per_symbol": 2,
+    "min_promotable_midpoint_credit": None,
+    "min_monitor_midpoint_credit": None,
+}
+
+PROFILE_SELECTION_THRESHOLDS = {
+    "0dte": {
+        "promotable_score_floor": 72.0,
+        "promotable_strong_score": 86.0,
+        "monitor_score_floor": 60.0,
+        "min_promotable_midpoint_credit": 0.50,
+        "min_monitor_midpoint_credit": 0.35,
+    },
+    "core": {
+        "promotable_winner_gap": 8.0,
+        "promotable_replacement_margin": 7.0,
+        "promotable_side_switch_margin": 14.0,
+        "promotable_confirmation_cycles": 3,
+    },
+}
+
+
+def _selection_thresholds(profile: str | None) -> dict[str, Any]:
+    normalized = str(profile or "").strip().lower()
+    thresholds = dict(DEFAULT_SELECTION_THRESHOLDS)
+    thresholds.update(PROFILE_SELECTION_THRESHOLDS.get(normalized, {}))
+    return thresholds
 
 
 def candidate_identity(candidate: dict[str, Any]) -> str:
@@ -37,6 +64,15 @@ def promotable_candidate_is_eligible(candidate: dict[str, Any]) -> bool:
     return str(candidate.get("setup_status") or "").lower() == "favorable" and (
         candidate_has_intraday_setup_context(candidate)
     )
+
+
+def _meets_midpoint_credit_floor(
+    candidate: dict[str, Any],
+    minimum_credit: float | None,
+) -> bool:
+    if minimum_credit is None:
+        return True
+    return float(candidate.get("midpoint_credit") or 0.0) >= float(minimum_credit)
 
 
 def read_previous_selection(
@@ -72,6 +108,7 @@ def _evaluate_pending_candidate(
     *,
     winner: dict[str, Any],
     previous_memory: dict[str, Any],
+    confirmation_cycles: int,
 ) -> tuple[bool, dict[str, Any]]:
     winner_id = candidate_identity(winner)
     pending_id = previous_memory.get("pending_identity")
@@ -85,7 +122,7 @@ def _evaluate_pending_candidate(
         "pending_strategy": winner["strategy"],
         "pending_count": pending_count,
     }
-    return pending_count >= PROMOTABLE_CONFIRMATION_CYCLES, next_memory
+    return pending_count >= max(int(confirmation_cycles), 1), next_memory
 
 
 def _sort_candidates(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -110,6 +147,7 @@ def _select_promotable_candidates(
     previous_promotable: dict[str, dict[str, Any]],
     previous_memory: dict[str, dict[str, Any]],
     top: int,
+    thresholds: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     selected: list[dict[str, Any]] = []
     next_memory: dict[str, dict[str, Any]] = {}
@@ -119,8 +157,13 @@ def _select_promotable_candidates(
         viable = [
             candidate
             for candidate in options
-            if float(candidate.get("quality_score") or 0.0) >= PROMOTABLE_SCORE_FLOOR
+            if float(candidate.get("quality_score") or 0.0)
+            >= float(thresholds["promotable_score_floor"])
             and promotable_candidate_is_eligible(candidate)
+            and _meets_midpoint_credit_floor(
+                candidate,
+                thresholds.get("min_promotable_midpoint_credit"),
+            )
         ]
         winner = viable[0] if viable else None
         runner_up = viable[1] if len(viable) > 1 else None
@@ -138,10 +181,12 @@ def _select_promotable_candidates(
         if previous is None:
             if winner is not None:
                 if (
-                    float(winner["quality_score"]) >= PROMOTABLE_STRONG_SCORE
+                    float(winner["quality_score"])
+                    >= float(thresholds["promotable_strong_score"])
                     or runner_up is None
                     or (
-                        winner_gap is not None and winner_gap >= PROMOTABLE_WINNER_GAP
+                        winner_gap is not None
+                        and winner_gap >= float(thresholds["promotable_winner_gap"])
                     )
                 ):
                     accepted = winner
@@ -149,6 +194,9 @@ def _select_promotable_candidates(
                     confirmed, memory_update = _evaluate_pending_candidate(
                         winner=winner,
                         previous_memory=symbol_memory,
+                        confirmation_cycles=int(
+                            thresholds["promotable_confirmation_cycles"]
+                        ),
                     )
                     if confirmed:
                         accepted = winner
@@ -187,7 +235,8 @@ def _select_promotable_candidates(
         if (
             current_anchor is not None
             and float(current_anchor["quality_score"])
-            >= PROMOTABLE_SCORE_FLOOR - PROMOTABLE_HOLD_TOLERANCE
+            >= float(thresholds["promotable_score_floor"])
+            - float(thresholds["promotable_hold_tolerance"])
         ):
             accepted = current_anchor
         elif winner is not None:
@@ -197,6 +246,9 @@ def _select_promotable_candidates(
                 confirmed, memory_update = _evaluate_pending_candidate(
                     winner=winner,
                     previous_memory=symbol_memory,
+                    confirmation_cycles=int(
+                        thresholds["promotable_confirmation_cycles"]
+                    ),
                 )
                 if confirmed:
                     accepted = winner
@@ -211,21 +263,32 @@ def _select_promotable_candidates(
                     accepted["quality_score"]
                 )
                 if same_side:
-                    if score_gap >= PROMOTABLE_REPLACEMENT_MARGIN:
+                    if score_gap >= float(
+                        thresholds["promotable_replacement_margin"]
+                    ):
                         confirmed, memory_update = _evaluate_pending_candidate(
                             winner=winner,
                             previous_memory=symbol_memory,
+                            confirmation_cycles=int(
+                                thresholds["promotable_confirmation_cycles"]
+                            ),
                         )
                         if confirmed:
                             accepted = winner
                             memory_update = {}
                 else:
-                    if score_gap >= PROMOTABLE_SIDE_SWITCH_MARGIN and (
-                        winner_gap is None or winner_gap >= PROMOTABLE_WINNER_GAP
+                    if score_gap >= float(
+                        thresholds["promotable_side_switch_margin"]
+                    ) and (
+                        winner_gap is None
+                        or winner_gap >= float(thresholds["promotable_winner_gap"])
                     ):
                         confirmed, memory_update = _evaluate_pending_candidate(
                             winner=winner,
                             previous_memory=symbol_memory,
+                            confirmation_cycles=int(
+                                thresholds["promotable_confirmation_cycles"]
+                            ),
                         )
                         if confirmed:
                             accepted = winner
@@ -233,7 +296,7 @@ def _select_promotable_candidates(
 
         if accepted is not None:
             accepted_score = float(accepted.get("quality_score") or 0.0)
-            if accepted_score >= PROMOTABLE_SCORE_FLOOR:
+            if accepted_score >= float(thresholds["promotable_score_floor"]):
                 memory_update.update(
                     {
                         "accepted_identity": candidate_identity(accepted),
@@ -259,6 +322,7 @@ def _select_monitor_candidates(
     symbol_candidates: dict[str, list[dict[str, Any]]],
     promotable_candidates: list[dict[str, Any]],
     top: int,
+    thresholds: dict[str, Any],
 ) -> list[dict[str, Any]]:
     accepted_ids = {
         candidate_identity(candidate) for candidate in promotable_candidates
@@ -270,11 +334,18 @@ def _select_monitor_candidates(
         for candidate in _sort_candidates(list(symbol_candidates.get(symbol) or [])):
             if candidate_identity(candidate) in accepted_ids:
                 continue
-            if float(candidate.get("quality_score") or 0.0) < MONITOR_SCORE_FLOOR:
+            if float(candidate.get("quality_score") or 0.0) < float(
+                thresholds["monitor_score_floor"]
+            ):
+                continue
+            if not _meets_midpoint_credit_floor(
+                candidate,
+                thresholds.get("min_monitor_midpoint_credit"),
+            ):
                 continue
             monitor.append(candidate)
             kept += 1
-            if kept >= MONITOR_PER_SYMBOL:
+            if kept >= int(thresholds["monitor_per_symbol"]):
                 break
 
     return _sort_candidates(monitor)[:top]
@@ -406,18 +477,22 @@ def select_live_opportunities(
     previous_selection_memory: dict[str, dict[str, Any]],
     top_promotable: int,
     top_monitor: int,
+    profile: str | None = None,
     recovered_candidates: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    thresholds = _selection_thresholds(profile)
     promotable_candidates, selection_memory = _select_promotable_candidates(
         symbol_candidates=symbol_candidates,
         previous_promotable=previous_promotable,
         previous_memory=previous_selection_memory,
         top=top_promotable,
+        thresholds=thresholds,
     )
     monitor_candidates = _select_monitor_candidates(
         symbol_candidates=symbol_candidates,
         promotable_candidates=promotable_candidates,
         top=top_monitor,
+        thresholds=thresholds,
     )
 
     opportunities: list[dict[str, Any]] = []

@@ -203,6 +203,13 @@ def _sorted_by_activity(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _collector_status(run: Mapping[str, Any] | None) -> str:
     if run is None:
         return "unknown"
+    live_action_gate = (
+        run.get("live_action_gate")
+        if isinstance(run.get("live_action_gate"), Mapping)
+        else {}
+    )
+    if str(live_action_gate.get("status") or "") == "blocked":
+        return "blocked"
     if str(run.get("status") or "") != "succeeded":
         return "degraded"
     if str(run.get("capture_status") or "") == "healthy":
@@ -478,6 +485,17 @@ def _job_run_operator_status(
         return "healthy", None
     if status == "succeeded":
         if str(run.get("job_type") or "") == "live_collector":
+            live_action_gate = (
+                run.get("live_action_gate")
+                if isinstance(run.get("live_action_gate"), Mapping)
+                else {}
+            )
+            if str(live_action_gate.get("status") or "") == "blocked":
+                return (
+                    "blocked",
+                    _as_text(live_action_gate.get("message"))
+                    or "Live collector actions are blocked.",
+                )
             capture_status = str(run.get("capture_status") or "").strip().lower()
             if capture_status and capture_status != "healthy":
                 return (
@@ -511,6 +529,11 @@ def _summarize_job_run(
     result = (
         enriched.get("result") if isinstance(enriched.get("result"), Mapping) else {}
     )
+    live_action_gate = (
+        enriched.get("live_action_gate")
+        if isinstance(enriched.get("live_action_gate"), Mapping)
+        else {}
+    )
     return {
         "job_run_id": enriched.get("job_run_id"),
         "job_key": enriched.get("job_key"),
@@ -534,6 +557,7 @@ def _summarize_job_run(
         "singleton_scope": payload.get("singleton_scope"),
         "result_status": result.get("status"),
         "result_reason": result.get("reason"),
+        "live_action_gate": dict(live_action_gate),
         "websocket_quote_events_saved": _coerce_int(
             quote_capture.get("websocket_quote_events_saved")
         )
@@ -767,6 +791,9 @@ def build_system_status(
                     "capture_status": None
                     if run is None
                     else run.get("capture_status"),
+                    "live_action_gate": None
+                    if run is None
+                    else dict(run.get("live_action_gate") or {}),
                     "last_slot_at": None
                     if run is None
                     else run.get("slot_at") or run.get("scheduled_for"),
@@ -1270,6 +1297,11 @@ def build_sessions_view(
             if isinstance(session.get("latest_slot"), Mapping)
             else {}
         )
+        live_action_gate = (
+            session.get("live_action_gate")
+            if isinstance(session.get("live_action_gate"), Mapping)
+            else {}
+        )
         capture_status = _as_text(latest_slot.get("capture_status"))
         if capture_status not in {None, "healthy"}:
             statuses.append("degraded")
@@ -1278,6 +1310,16 @@ def build_sessions_view(
                     severity="medium",
                     code="capture_degraded",
                     message="The latest collector slot capture status is degraded.",
+                )
+            )
+        if str(live_action_gate.get("status") or "") == "blocked":
+            statuses.append("blocked")
+            attention.append(
+                _attention(
+                    severity="high",
+                    code=str(live_action_gate.get("reason_code") or "live_action_blocked"),
+                    message=_as_text(live_action_gate.get("message"))
+                    or "Live session actions are blocked.",
                 )
             )
 
@@ -1363,6 +1405,7 @@ def build_sessions_view(
                 "label": session.get("label"),
                 "session_date": session.get("session_date"),
                 "latest_capture_status": capture_status,
+                "live_action_gate_status": live_action_gate.get("status"),
                 "risk_status": session.get("risk_status"),
                 "reconciliation_status": session.get("reconciliation_status"),
                 "control_mode": control.get("mode"),
@@ -1377,6 +1420,7 @@ def build_sessions_view(
                 "view": "detail",
                 "current_cycle_id": current_cycle.get("cycle_id"),
                 "current_cycle_generated_at": current_cycle.get("generated_at"),
+                "live_action_gate": dict(live_action_gate),
                 "promotable_count": int(
                     dict(current_cycle.get("selection_counts") or {}).get("promotable")
                     or 0
@@ -1417,7 +1461,14 @@ def build_sessions_view(
             )
         )
         operator_status = "healthy"
-        if str(row.get("status") or "") == "failed":
+        live_action_gate = (
+            row.get("live_action_gate")
+            if isinstance(row.get("live_action_gate"), Mapping)
+            else {}
+        )
+        if str(live_action_gate.get("status") or "") == "blocked":
+            operator_status = "blocked"
+        elif str(row.get("status") or "") == "failed":
             operator_status = "blocked"
         elif str(row.get("status") or "") in {"degraded"} or str(
             row.get("latest_capture_status") or ""
@@ -1434,14 +1485,24 @@ def build_sessions_view(
             "promotable_monitor_pnl_spread": post_market[
                 "promotable_monitor_pnl_spread"
             ],
+            "live_action_gate": dict(live_action_gate),
         }
         enriched_rows.append(enriched)
         if operator_status in {"blocked", "degraded"}:
+            status_reason = (
+                _as_text(live_action_gate.get("message"))
+                if operator_status == "blocked"
+                and str(live_action_gate.get("status") or "") == "blocked"
+                else None
+            )
             attention.append(
                 _attention(
                     severity="high" if operator_status == "blocked" else "medium",
                     code="session_attention_required",
-                    message=f"{row['session_id']} ({row['label']}) is {operator_status}.",
+                    message=(
+                        status_reason
+                        or f"{row['session_id']} ({row['label']}) is {operator_status}."
+                    ),
                 )
             )
 

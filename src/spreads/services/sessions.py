@@ -116,6 +116,17 @@ def _session_risk_policy(latest_run: Mapping[str, Any] | None) -> dict[str, Any]
     return normalize_risk_policy(raw_policy if isinstance(raw_policy, dict) else None)
 
 
+def _session_live_action_gate(
+    latest_run: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    if latest_run is None:
+        return None
+    gate = latest_run.get("live_action_gate")
+    if not isinstance(gate, Mapping):
+        return None
+    return dict(gate)
+
+
 def _cycle_opportunity_payloads(
     collector_store: Any,
     cycle_id: str,
@@ -349,6 +360,7 @@ def list_existing_sessions(
                 "promotable_count": int(cycle_counts.get("promotable") or 0),
                 "monitor_count": int(cycle_counts.get("monitor") or 0),
                 "alert_count": int(alert_counts.get((str(row["session_date"]), str(row["label"]))) or 0),
+                "live_action_gate": _session_live_action_gate(latest_run),
                 "updated_at": updated_at,
             }
         )
@@ -484,6 +496,7 @@ def get_session_detail(
     )
     reconciliation_snapshot = _reconciliation_snapshot(portfolio)
     control_snapshot = get_control_state_snapshot(storage=storage)
+    live_action_gate = _session_live_action_gate(latest_run)
 
     return {
         "session_id": session_id,
@@ -496,6 +509,7 @@ def get_session_detail(
         "reconciliation_status": reconciliation_snapshot["status"],
         "reconciliation_note": reconciliation_snapshot.get("note"),
         "latest_slot": latest_run,
+        "live_action_gate": live_action_gate,
         "current_cycle": current_cycle,
         "opportunities": opportunities,
         "selection_counts": selection_counts,

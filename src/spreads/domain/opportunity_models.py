@@ -107,7 +107,7 @@ class Opportunity:
     capital_usage: float | None = None
     execution_complexity: float | None = None
     product_class: str | None = None
-    legacy_bucket: str | None = None
+    legacy_selection_state: str | None = None
     evidence: dict[str, Any] = field(default_factory=dict)
     legs: list[OpportunityLeg] = field(default_factory=list)
 

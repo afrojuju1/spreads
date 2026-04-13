@@ -67,7 +67,7 @@ def _render_replay_text(payload: Mapping[str, Any]) -> str:
             f"| promo {row.get('promotion_score')} "
             f"| alloc {allocation.get('allocation_state', 'n/a')} "
             f"| alloc_score {allocation.get('allocation_score', 'n/a')} "
-            f"| legacy {row.get('legacy_bucket')} "
+            f"| legacy {row.get('legacy_selection_state')} "
             f"| reason {allocation.get('allocation_reason', row.get('state_reason'))}"
         )
     if comparison:
@@ -75,8 +75,8 @@ def _render_replay_text(payload: Mapping[str, Any]) -> str:
         lines.append("Comparison:")
         lines.append(
             "- "
-            f"legacy board ids {comparison.get('legacy_board', {}).get('candidate_ids', [])} "
-            f"| symbols {comparison.get('legacy_board', {}).get('symbols', [])}"
+            f"legacy promotable baseline ids {comparison.get('legacy_promotable_baseline', {}).get('candidate_ids', [])} "
+            f"| symbols {comparison.get('legacy_promotable_baseline', {}).get('symbols', [])}"
         )
         lines.append(
             "- "
@@ -88,16 +88,16 @@ def _render_replay_text(payload: Mapping[str, Any]) -> str:
             f"allocator ids {comparison.get('provisional_allocator', {}).get('candidate_ids', [])} "
             f"| symbols {comparison.get('provisional_allocator', {}).get('symbols', [])}"
         )
-        promoted_from_watchlist = comparison.get("promoted_from_watchlist") or []
-        if promoted_from_watchlist:
+        promoted_from_legacy_monitor = comparison.get("promoted_from_legacy_monitor") or []
+        if promoted_from_legacy_monitor:
             lines.append(
                 "- "
-                f"promoted from watchlist {[item.get('candidate_id') for item in promoted_from_watchlist]}"
+                f"promoted from legacy monitor {[item.get('candidate_id') for item in promoted_from_legacy_monitor]}"
             )
-        rejected_legacy_board = comparison.get("rejected_legacy_board") or []
-        if rejected_legacy_board:
-            lines.append("- rejected legacy board:")
-            for item in rejected_legacy_board[:4]:
+        rejected_legacy_promotable = comparison.get("rejected_legacy_promotable") or []
+        if rejected_legacy_promotable:
+            lines.append("- rejected legacy promotable baseline:")
+            for item in rejected_legacy_promotable[:4]:
                 lines.append(
                     "  "
                     f"{item.get('candidate_id')} {item.get('symbol')} {item.get('strategy_family')} "
@@ -105,34 +105,34 @@ def _render_replay_text(payload: Mapping[str, Any]) -> str:
                 )
     if scorecard:
         allocator_metrics = scorecard.get("allocator_selected") or {}
-        legacy_metrics = scorecard.get("legacy_board") or {}
+        legacy_metrics = scorecard.get("legacy_promotable_baseline") or {}
         rank_only_metrics = scorecard.get("rank_only_top") or {}
         deltas = scorecard.get("deltas") or {}
         lines.append("")
         lines.append("Scorecard:")
         lines.append(
             "- "
-            f"modeled final avg pnl | legacy board {legacy_metrics.get('average_estimated_pnl')} "
+            f"modeled final avg pnl | legacy promotable baseline {legacy_metrics.get('average_estimated_pnl')} "
             f"| rank-only {rank_only_metrics.get('average_estimated_pnl')} "
             f"| allocator {allocator_metrics.get('average_estimated_pnl')}"
         )
         lines.append(
             "- "
-            f"modeled close avg pnl | legacy board {legacy_metrics.get('average_estimated_close_pnl')} "
+            f"modeled close avg pnl | legacy promotable baseline {legacy_metrics.get('average_estimated_close_pnl')} "
             f"| rank-only {rank_only_metrics.get('average_estimated_close_pnl')} "
             f"| allocator {allocator_metrics.get('average_estimated_close_pnl')}"
         )
         lines.append(
             "- "
-            f"actual net avg pnl | legacy board {legacy_metrics.get('average_actual_net_pnl')} "
+            f"actual net avg pnl | legacy promotable baseline {legacy_metrics.get('average_actual_net_pnl')} "
             f"| rank-only {rank_only_metrics.get('average_actual_net_pnl')} "
             f"| allocator {allocator_metrics.get('average_actual_net_pnl')}"
         )
         lines.append(
             "- "
-            f"allocator final minus legacy board {deltas.get('allocator_minus_legacy_board_avg_estimated_pnl')} "
-            f"| allocator close minus legacy board {deltas.get('allocator_minus_legacy_board_avg_estimated_close_pnl')} "
-            f"| allocator actual minus legacy board {deltas.get('allocator_minus_legacy_board_avg_actual_net_pnl')}"
+            f"allocator final minus legacy promotable baseline {deltas.get('allocator_minus_legacy_promotable_baseline_avg_estimated_pnl')} "
+            f"| allocator close minus legacy promotable baseline {deltas.get('allocator_minus_legacy_promotable_baseline_avg_estimated_close_pnl')} "
+            f"| allocator actual minus legacy promotable baseline {deltas.get('allocator_minus_legacy_promotable_baseline_avg_actual_net_pnl')}"
         )
         lines.append(
             "- "
@@ -144,36 +144,36 @@ def _render_replay_text(payload: Mapping[str, Any]) -> str:
             "- "
             f"allocator actual coverage {allocator_metrics.get('actual_coverage_rate')} "
             f"| allocator actual closed_rate {allocator_metrics.get('actual_closed_rate')} "
-            f"| watchlist hit rate {deltas.get('watchlist_promotion_hit_rate')} "
-            f"| rejected board miss rate {deltas.get('rejected_board_miss_rate')}"
+            f"| legacy monitor hit rate {deltas.get('legacy_monitor_promotion_hit_rate')} "
+            f"| rejected legacy promotable miss rate {deltas.get('rejected_legacy_promotable_miss_rate')}"
         )
         lines.append(
             "- "
-            f"open fill rate | legacy board {legacy_metrics.get('open_fill_rate')} "
+            f"open fill rate | legacy promotable baseline {legacy_metrics.get('open_fill_rate')} "
             f"| rank-only {rank_only_metrics.get('open_fill_rate')} "
             f"| allocator {allocator_metrics.get('open_fill_rate')}"
         )
         lines.append(
             "- "
-            f"late open fill rate | legacy board {legacy_metrics.get('late_open_fill_rate')} "
+            f"late open fill rate | legacy promotable baseline {legacy_metrics.get('late_open_fill_rate')} "
             f"| rank-only {rank_only_metrics.get('late_open_fill_rate')} "
             f"| allocator {allocator_metrics.get('late_open_fill_rate')}"
         )
         lines.append(
             "- "
-            f"force-close exit rate | legacy board {legacy_metrics.get('force_close_exit_rate')} "
+            f"force-close exit rate | legacy promotable baseline {legacy_metrics.get('force_close_exit_rate')} "
             f"| rank-only {rank_only_metrics.get('force_close_exit_rate')} "
             f"| allocator {allocator_metrics.get('force_close_exit_rate')}"
         )
         lines.append(
             "- "
-            f"entry credit capture | legacy board {legacy_metrics.get('average_entry_credit_capture_pct')} "
+            f"entry credit capture | legacy promotable baseline {legacy_metrics.get('average_entry_credit_capture_pct')} "
             f"| rank-only {rank_only_metrics.get('average_entry_credit_capture_pct')} "
             f"| allocator {allocator_metrics.get('average_entry_credit_capture_pct')}"
         )
         lines.append(
             "- "
-            f"actual minus modeled close | legacy board {legacy_metrics.get('average_actual_minus_estimated_close_pnl')} "
+            f"actual minus modeled close | legacy promotable baseline {legacy_metrics.get('average_actual_minus_estimated_close_pnl')} "
             f"| rank-only {rank_only_metrics.get('average_actual_minus_estimated_close_pnl')} "
             f"| allocator {allocator_metrics.get('average_actual_minus_estimated_close_pnl')}"
         )
@@ -196,19 +196,19 @@ def _render_replay_batch_text(payload: Mapping[str, Any]) -> str:
         f"Recent sessions: {aggregate.get('session_count')} of requested {aggregate.get('requested_recent')} | label filter {target.get('label') or 'all'}",
         f"Skipped sessions: {aggregate.get('skipped_session_count')}",
         f"Allocator selections: {(aggregate.get('allocator_selected_metrics') or {}).get('count')} opportunities across {aggregate.get('sessions_with_allocator_selections')} sessions",
-        f"Watchlist promotions: {aggregate.get('promoted_from_watchlist_total')} across {aggregate.get('sessions_with_watchlist_promotions')} sessions",
-        f"Rejected legacy board candidates: {aggregate.get('rejected_legacy_board_total')} across {aggregate.get('sessions_with_rejected_legacy_board')} sessions",
-        f"Average overlap | allocator vs legacy board {aggregate.get('average_allocator_vs_legacy_board_overlap')} | allocator vs rank-only {aggregate.get('average_allocator_vs_rank_only_overlap')}",
-        f"Pooled modeled final pnl | legacy board {(aggregate.get('legacy_board_metrics') or {}).get('average_estimated_pnl')} | rank-only {(aggregate.get('rank_only_top_metrics') or {}).get('average_estimated_pnl')} | allocator {(aggregate.get('allocator_selected_metrics') or {}).get('average_estimated_pnl')}",
-        f"Pooled modeled close pnl | legacy board {(aggregate.get('legacy_board_metrics') or {}).get('average_estimated_close_pnl')} | rank-only {(aggregate.get('rank_only_top_metrics') or {}).get('average_estimated_close_pnl')} | allocator {(aggregate.get('allocator_selected_metrics') or {}).get('average_estimated_close_pnl')}",
-        f"Pooled actual net pnl | legacy board {(aggregate.get('legacy_board_metrics') or {}).get('average_actual_net_pnl')} | rank-only {(aggregate.get('rank_only_top_metrics') or {}).get('average_actual_net_pnl')} | allocator {(aggregate.get('allocator_selected_metrics') or {}).get('average_actual_net_pnl')}",
-        f"Pooled actual minus modeled close | legacy board {(aggregate.get('legacy_board_metrics') or {}).get('average_actual_minus_estimated_close_pnl')} | rank-only {(aggregate.get('rank_only_top_metrics') or {}).get('average_actual_minus_estimated_close_pnl')} | allocator {(aggregate.get('allocator_selected_metrics') or {}).get('average_actual_minus_estimated_close_pnl')}",
-        f"Still-open rate | legacy board {(aggregate.get('legacy_board_metrics') or {}).get('still_open_rate')} | rank-only {(aggregate.get('rank_only_top_metrics') or {}).get('still_open_rate')} | allocator {(aggregate.get('allocator_selected_metrics') or {}).get('still_open_rate')}",
-        f"Pooled deltas | final {aggregate.get('allocator_minus_legacy_board_avg_estimated_pnl')} | close {aggregate.get('allocator_minus_legacy_board_avg_estimated_close_pnl')} | actual {aggregate.get('allocator_minus_legacy_board_avg_actual_net_pnl')}",
+        f"Legacy monitor promotions: {aggregate.get('promoted_from_legacy_monitor_total')} across {aggregate.get('sessions_with_legacy_monitor_promotions')} sessions",
+        f"Rejected legacy promotable candidates: {aggregate.get('rejected_legacy_promotable_total')} across {aggregate.get('sessions_with_rejected_legacy_promotable')} sessions",
+        f"Average overlap | allocator vs legacy promotable baseline {aggregate.get('average_allocator_vs_legacy_promotable_baseline_overlap')} | allocator vs rank-only {aggregate.get('average_allocator_vs_rank_only_overlap')}",
+        f"Pooled modeled final pnl | legacy promotable baseline {(aggregate.get('legacy_promotable_baseline_metrics') or {}).get('average_estimated_pnl')} | rank-only {(aggregate.get('rank_only_top_metrics') or {}).get('average_estimated_pnl')} | allocator {(aggregate.get('allocator_selected_metrics') or {}).get('average_estimated_pnl')}",
+        f"Pooled modeled close pnl | legacy promotable baseline {(aggregate.get('legacy_promotable_baseline_metrics') or {}).get('average_estimated_close_pnl')} | rank-only {(aggregate.get('rank_only_top_metrics') or {}).get('average_estimated_close_pnl')} | allocator {(aggregate.get('allocator_selected_metrics') or {}).get('average_estimated_close_pnl')}",
+        f"Pooled actual net pnl | legacy promotable baseline {(aggregate.get('legacy_promotable_baseline_metrics') or {}).get('average_actual_net_pnl')} | rank-only {(aggregate.get('rank_only_top_metrics') or {}).get('average_actual_net_pnl')} | allocator {(aggregate.get('allocator_selected_metrics') or {}).get('average_actual_net_pnl')}",
+        f"Pooled actual minus modeled close | legacy promotable baseline {(aggregate.get('legacy_promotable_baseline_metrics') or {}).get('average_actual_minus_estimated_close_pnl')} | rank-only {(aggregate.get('rank_only_top_metrics') or {}).get('average_actual_minus_estimated_close_pnl')} | allocator {(aggregate.get('allocator_selected_metrics') or {}).get('average_actual_minus_estimated_close_pnl')}",
+        f"Still-open rate | legacy promotable baseline {(aggregate.get('legacy_promotable_baseline_metrics') or {}).get('still_open_rate')} | rank-only {(aggregate.get('rank_only_top_metrics') or {}).get('still_open_rate')} | allocator {(aggregate.get('allocator_selected_metrics') or {}).get('still_open_rate')}",
+        f"Pooled deltas | final {aggregate.get('allocator_minus_legacy_promotable_baseline_avg_estimated_pnl')} | close {aggregate.get('allocator_minus_legacy_promotable_baseline_avg_estimated_close_pnl')} | actual {aggregate.get('allocator_minus_legacy_promotable_baseline_avg_actual_net_pnl')}",
         f"Allocator actual coverage {(aggregate.get('allocator_selected_metrics') or {}).get('actual_coverage_rate')} | allocator actual closed_rate {(aggregate.get('allocator_selected_metrics') or {}).get('actual_closed_rate')}",
         f"Execution quality | open fill {(aggregate.get('allocator_selected_metrics') or {}).get('open_fill_rate')} | late open fill {(aggregate.get('allocator_selected_metrics') or {}).get('late_open_fill_rate')} | force-close exits {(aggregate.get('allocator_selected_metrics') or {}).get('force_close_exit_rate')}",
-        f"Entry capture | legacy board {(aggregate.get('legacy_board_metrics') or {}).get('average_entry_credit_capture_pct')} | rank-only {(aggregate.get('rank_only_top_metrics') or {}).get('average_entry_credit_capture_pct')} | allocator {(aggregate.get('allocator_selected_metrics') or {}).get('average_entry_credit_capture_pct')}",
-        f"Hit rates | watchlist promotions {aggregate.get('watchlist_promotion_hit_rate')} | rejected board miss rate {aggregate.get('rejected_board_miss_rate')}",
+        f"Entry capture | legacy promotable baseline {(aggregate.get('legacy_promotable_baseline_metrics') or {}).get('average_entry_credit_capture_pct')} | rank-only {(aggregate.get('rank_only_top_metrics') or {}).get('average_entry_credit_capture_pct')} | allocator {(aggregate.get('allocator_selected_metrics') or {}).get('average_entry_credit_capture_pct')}",
+        f"Hit rates | legacy monitor promotions {aggregate.get('legacy_monitor_promotion_hit_rate')} | rejected legacy promotable miss rate {aggregate.get('rejected_legacy_promotable_miss_rate')}",
         f"Verdicts: {aggregate.get('verdict_counts')}",
         "",
         "Sessions:",
@@ -219,8 +219,8 @@ def _render_replay_batch_text(payload: Mapping[str, Any]) -> str:
         session = item.get("session") or {}
         summary = item.get("summary") or {}
         comparison = item.get("comparison") or {}
-        promoted = comparison.get("promoted_from_watchlist") or []
-        rejected = comparison.get("rejected_legacy_board") or []
+        promoted = comparison.get("promoted_from_legacy_monitor") or []
+        rejected = comparison.get("rejected_legacy_promotable") or []
         lines.append(
             "- "
             f"{session.get('label')} {session.get('session_date')} "
@@ -228,8 +228,8 @@ def _render_replay_batch_text(payload: Mapping[str, Any]) -> str:
             f"| allocated {summary.get('allocated_count')} "
             f"| late_open_fill_rate {(item.get('scorecard') or {}).get('allocator_selected', {}).get('late_open_fill_rate')} "
             f"| force_close_exit_rate {(item.get('scorecard') or {}).get('allocator_selected', {}).get('force_close_exit_rate')} "
-            f"| promoted_watchlist {[row.get('candidate_id') for row in promoted]} "
-            f"| rejected_board {[row.get('candidate_id') for row in rejected]}"
+            f"| promoted_legacy_monitor {[row.get('candidate_id') for row in promoted]} "
+            f"| rejected_legacy_promotable {[row.get('candidate_id') for row in rejected]}"
         )
     if skipped_sessions:
         lines.append("")

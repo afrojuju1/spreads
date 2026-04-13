@@ -83,6 +83,32 @@ def _as_float(value: Any) -> float | None:
         return None
 
 
+def _normalize_legacy_selection_state(value: Any) -> str | None:
+    normalized = _as_text(value)
+    if normalized == "board":
+        return "promotable"
+    if normalized == "watchlist":
+        return "monitor"
+    return normalized
+
+
+def _legacy_selection_state_from_row(row: Mapping[str, Any]) -> str | None:
+    return _normalize_legacy_selection_state(
+        row.get("legacy_selection_state", row.get("bucket"))
+    )
+
+
+def _group_value_from_row(
+    *,
+    dimension: str,
+    row: Mapping[str, Any],
+) -> str | None:
+    group_value = _as_text(row.get("group_value")) or _as_text(row.get("bucket"))
+    if dimension == "classification":
+        return _normalize_legacy_selection_state(group_value)
+    return group_value
+
+
 def _normalize_score(value: Any, *, default: float = 0.0) -> float:
     parsed = _as_float(value)
     if parsed is None:
@@ -451,29 +477,49 @@ def _build_historical_dimension_lookup(
             for row in rows:
                 if not isinstance(row, Mapping):
                     continue
-                bucket = _as_text(row.get("bucket"))
-                if bucket is None:
+                group_value = _group_value_from_row(
+                    dimension=dimension_key,
+                    row=row,
+                )
+                if group_value is None:
                     continue
                 count = max(int(_as_float(row.get("count")) or 0), 0)
                 average_estimated_pnl = (
                     _as_float(row.get("average_estimated_pnl")) or 0.0
                 )
-                board_count = max(int(_as_float(row.get("board_count")) or 0), 0)
-                watchlist_count = max(
-                    int(_as_float(row.get("watchlist_count")) or 0), 0
+                legacy_promotable_baseline_count = max(
+                    int(
+                        _as_float(
+                            row.get(
+                                "legacy_promotable_baseline_count",
+                                row.get("board_count"),
+                            )
+                        )
+                        or 0
+                    ),
+                    0,
+                )
+                legacy_monitor_count = max(
+                    int(
+                        _as_float(
+                            row.get("legacy_monitor_count", row.get("watchlist_count"))
+                        )
+                        or 0
+                    ),
+                    0,
                 )
                 bucket_totals = totals[dimension_key].setdefault(
-                    bucket,
+                    group_value,
                     {
                         "count": 0.0,
-                        "board_count": 0.0,
-                        "watchlist_count": 0.0,
+                        "legacy_promotable_baseline_count": 0.0,
+                        "legacy_monitor_count": 0.0,
                         "estimated_pnl_total": 0.0,
                     },
                 )
                 bucket_totals["count"] += float(count)
-                bucket_totals["board_count"] += float(board_count)
-                bucket_totals["watchlist_count"] += float(watchlist_count)
+                bucket_totals["legacy_promotable_baseline_count"] += float(legacy_promotable_baseline_count)
+                bucket_totals["legacy_monitor_count"] += float(legacy_monitor_count)
                 bucket_totals["estimated_pnl_total"] += average_estimated_pnl * float(
                     count
                 )
@@ -481,15 +527,17 @@ def _build_historical_dimension_lookup(
     lookup: dict[str, dict[str, dict[str, Any]]] = {}
     for dimension, bucket_totals in totals.items():
         dimension_lookup: dict[str, dict[str, Any]] = {}
-        for bucket, totals_row in bucket_totals.items():
+        for group_value, totals_row in bucket_totals.items():
             count = int(totals_row["count"])
             if count <= 0:
                 continue
-            dimension_lookup[bucket] = {
-                "bucket": bucket,
+            dimension_lookup[group_value] = {
+                "group_value": group_value,
                 "count": count,
-                "board_count": int(totals_row["board_count"]),
-                "watchlist_count": int(totals_row["watchlist_count"]),
+                "legacy_promotable_baseline_count": int(
+                    totals_row["legacy_promotable_baseline_count"]
+                ),
+                "legacy_monitor_count": int(totals_row["legacy_monitor_count"]),
                 "average_estimated_pnl": round(
                     totals_row["estimated_pnl_total"] / float(count),
                     4,
@@ -509,22 +557,22 @@ def _dimension_adjustment(
     *,
     dimension_lookup: dict[str, dict[str, dict[str, Any]]],
     dimension: str,
-    bucket: str | None,
+    group_value: str | None,
     weight: float,
 ) -> tuple[float, dict[str, Any] | None]:
-    if bucket is None:
+    if group_value is None:
         return 0.0, None
-    row = dimension_lookup.get(dimension, {}).get(bucket)
+    row = dimension_lookup.get(dimension, {}).get(group_value)
     if row is None:
         return 0.0, None
     average_estimated_pnl = _as_float(row.get("average_estimated_pnl")) or 0.0
     return _clamp(average_estimated_pnl, -5.0, 5.0) * weight, {
         "dimension": dimension,
-        "bucket": bucket,
+        "group_value": group_value,
         "average_estimated_pnl": average_estimated_pnl,
         "count": row.get("count"),
-        "board_count": row.get("board_count"),
-        "watchlist_count": row.get("watchlist_count"),
+        "legacy_promotable_baseline_count": row.get("legacy_promotable_baseline_count"),
+        "legacy_monitor_count": row.get("legacy_monitor_count"),
     }
 
 
@@ -996,19 +1044,19 @@ def _build_opportunities(
             if weight <= 0.0:
                 continue
             if dimension == "classification":
-                bucket = _as_text(row.get("bucket"))
+                group_value = _legacy_selection_state_from_row(row)
             elif dimension == "strategy":
-                bucket = _as_text(candidate.get("strategy")) or _as_text(
+                group_value = _as_text(candidate.get("strategy")) or _as_text(
                     row.get("strategy")
                 )
             elif dimension == "symbol":
-                bucket = symbol
+                group_value = symbol
             else:
-                bucket = _as_text(candidate.get("setup_status"))
+                group_value = _as_text(candidate.get("setup_status"))
             delta, evidence = _dimension_adjustment(
                 dimension_lookup=dimension_lookup,
                 dimension=dimension,
-                bucket=bucket,
+                group_value=group_value,
                 weight=weight,
             )
             calibration_delta += delta
@@ -1109,9 +1157,9 @@ def _build_opportunities(
             capital_usage=_as_float(candidate.get("max_loss")),
             execution_complexity=_execution_complexity(family),
             product_class=_product_class(symbol),
-            legacy_bucket=_as_text(row.get("bucket")),
+            legacy_selection_state=_legacy_selection_state_from_row(row),
             evidence={
-                "legacy_bucket": row.get("bucket"),
+                "legacy_selection_state": _legacy_selection_state_from_row(row),
                 "legacy_position": row.get("position"),
                 "quality_score": _as_float(candidate.get("quality_score")),
                 "setup_score_delta": round(setup_delta, 3),
@@ -1271,7 +1319,7 @@ def _build_allocation_decisions(
                 evidence={
                     "rank": opportunity.rank,
                     "promotion_score": opportunity.promotion_score,
-                    "legacy_bucket": opportunity.legacy_bucket,
+                    "legacy_selection_state": opportunity.legacy_selection_state,
                     "product_class": opportunity.product_class,
                 },
             )
@@ -1354,7 +1402,7 @@ def _build_execution_intents(
                 validation_state="provisional_offline",
                 evidence={
                     "allocation_score": decision.allocation_score,
-                    "legacy_bucket": opportunity.legacy_bucket,
+                    "legacy_selection_state": opportunity.legacy_selection_state,
                     "rank": opportunity.rank,
                     "legs": [leg.to_payload() for leg in opportunity.legs],
                 },
@@ -2146,14 +2194,14 @@ def _flatten_opportunity_rows(
         for item in (comparison.get("provisional_allocator", {}) or {}).get("items", [])
         if isinstance(item, Mapping)
     }
-    promoted_watchlist_ids = {
+    promoted_legacy_monitor_ids = {
         str(item.get("opportunity_id"))
-        for item in (comparison.get("promoted_from_watchlist") or [])
+        for item in (comparison.get("promoted_from_legacy_monitor") or [])
         if isinstance(item, Mapping)
     }
-    rejected_board_ids = {
+    rejected_legacy_promotable_ids = {
         str(item.get("opportunity_id"))
-        for item in (comparison.get("rejected_legacy_board") or [])
+        for item in (comparison.get("rejected_legacy_promotable") or [])
         if isinstance(item, Mapping)
     }
 
@@ -2174,7 +2222,7 @@ def _flatten_opportunity_rows(
                 "expiration_date": opportunity.expiration_date,
                 "short_symbol": opportunity.short_symbol,
                 "long_symbol": opportunity.long_symbol,
-                "legacy_bucket": opportunity.legacy_bucket,
+                "legacy_selection_state": opportunity.legacy_selection_state,
                 "rank": opportunity.rank,
                 "state": opportunity.state,
                 "promotion_score": opportunity.promotion_score,
@@ -2265,14 +2313,16 @@ def _flatten_opportunity_rows(
                 "fill_to_force_close_count": outcome.get("fill_to_force_close_count"),
                 "close_fill_minutes_total": outcome.get("close_fill_minutes_total"),
                 "close_fill_minutes_count": outcome.get("close_fill_minutes_count"),
-                "is_legacy_board": opportunity.legacy_bucket == "board",
-                "is_legacy_watchlist": opportunity.legacy_bucket == "watchlist",
+                "is_legacy_promotable_baseline": opportunity.legacy_selection_state
+                == "promotable",
+                "is_legacy_monitor_baseline": opportunity.legacy_selection_state
+                == "monitor",
                 "is_rank_only_top": opportunity.opportunity_id in rank_only_ids,
                 "is_allocator_selected": opportunity.opportunity_id in allocator_ids,
-                "is_promoted_from_watchlist": opportunity.opportunity_id
-                in promoted_watchlist_ids,
-                "is_rejected_legacy_board": opportunity.opportunity_id
-                in rejected_board_ids,
+                "is_promoted_from_legacy_monitor": opportunity.opportunity_id
+                in promoted_legacy_monitor_ids,
+                "is_rejected_legacy_promotable": opportunity.opportunity_id
+                in rejected_legacy_promotable_ids,
             }
         )
     return rows
@@ -2288,36 +2338,42 @@ def _aggregate_dimension_rows(
         grouped[str(row.get(field) or "unknown")].append(row)
 
     result: list[dict[str, Any]] = []
-    for bucket, bucket_rows in grouped.items():
-        matched = [row for row in bucket_rows if row.get("matched_outcome")]
-        metrics = _summarize_outcome_rows(bucket_rows)
+    for group_value, group_rows in grouped.items():
+        matched = [row for row in group_rows if row.get("matched_outcome")]
+        metrics = _summarize_outcome_rows(group_rows)
         result.append(
             {
-                "bucket": bucket,
-                "count": len(bucket_rows),
+                "group_value": group_value,
+                "count": len(group_rows),
                 "matched_count": len(matched),
                 "coverage_rate": None
-                if not bucket_rows
-                else round(len(matched) / len(bucket_rows), 4),
+                if not group_rows
+                else round(len(matched) / len(group_rows), 4),
                 "allocator_selected_count": sum(
-                    1 for row in bucket_rows if row.get("is_allocator_selected")
+                    1 for row in group_rows if row.get("is_allocator_selected")
                 ),
-                "legacy_board_count": sum(
-                    1 for row in bucket_rows if row.get("is_legacy_board")
+                "legacy_promotable_baseline_count": sum(
+                    1
+                    for row in group_rows
+                    if row.get("is_legacy_promotable_baseline")
                 ),
                 "rank_only_top_count": sum(
-                    1 for row in bucket_rows if row.get("is_rank_only_top")
+                    1 for row in group_rows if row.get("is_rank_only_top")
                 ),
-                "promoted_from_watchlist_count": sum(
-                    1 for row in bucket_rows if row.get("is_promoted_from_watchlist")
+                "promoted_from_legacy_monitor_count": sum(
+                    1
+                    for row in group_rows
+                    if row.get("is_promoted_from_legacy_monitor")
                 ),
-                "rejected_legacy_board_count": sum(
-                    1 for row in bucket_rows if row.get("is_rejected_legacy_board")
+                "rejected_legacy_promotable_count": sum(
+                    1
+                    for row in group_rows
+                    if row.get("is_rejected_legacy_promotable")
                 ),
                 **metrics,
             }
         )
-    result.sort(key=lambda row: (-int(row["count"]), row["bucket"]))
+    result.sort(key=lambda row: (-int(row["count"]), row["group_value"]))
     return result
 
 
@@ -2343,20 +2399,22 @@ def _build_scorecard(
         if allocation_by_id.get(item.opportunity_id) is not None
         and allocation_by_id[item.opportunity_id].allocation_state == "allocated"
     ]
-    legacy_board = [item for item in opportunities if item.legacy_bucket == "board"]
-    promoted_from_watchlist = [
-        item for item in allocator_selected if item.legacy_bucket == "watchlist"
+    legacy_promotable_baseline = [
+        item for item in opportunities if item.legacy_selection_state == "promotable"
     ]
-    rejected_legacy_board = [
+    promoted_from_legacy_monitor = [
+        item for item in allocator_selected if item.legacy_selection_state == "monitor"
+    ]
+    rejected_legacy_promotable = [
         item
-        for item in legacy_board
+        for item in legacy_promotable_baseline
         if allocation_by_id.get(item.opportunity_id) is None
         or allocation_by_id[item.opportunity_id].allocation_state != "allocated"
     ]
 
     scorecard = {
-        "legacy_board": _slice_metrics(
-            items=legacy_board,
+        "legacy_promotable_baseline": _slice_metrics(
+            items=legacy_promotable_baseline,
             outcome_matches=outcome_matches,
         ),
         "rank_only_top": _slice_metrics(
@@ -2367,12 +2425,12 @@ def _build_scorecard(
             items=allocator_selected,
             outcome_matches=outcome_matches,
         ),
-        "promoted_from_watchlist": _slice_metrics(
-            items=promoted_from_watchlist,
+        "promoted_from_legacy_monitor": _slice_metrics(
+            items=promoted_from_legacy_monitor,
             outcome_matches=outcome_matches,
         ),
-        "rejected_legacy_board": _slice_metrics(
-            items=rejected_legacy_board,
+        "rejected_legacy_promotable": _slice_metrics(
+            items=rejected_legacy_promotable,
             outcome_matches=outcome_matches,
         ),
     }
@@ -2391,58 +2449,60 @@ def _build_scorecard(
         return round(allocator_value - baseline_value, 4)
 
     scorecard["deltas"] = {
-        "allocator_minus_legacy_board_avg_estimated_pnl": metric_delta(
+        "allocator_minus_legacy_promotable_baseline_avg_estimated_pnl": metric_delta(
             allocator_field="average_estimated_pnl",
-            baseline=scorecard["legacy_board"],
+            baseline=scorecard["legacy_promotable_baseline"],
         ),
         "allocator_minus_rank_only_avg_estimated_pnl": metric_delta(
             allocator_field="average_estimated_pnl",
             baseline=scorecard["rank_only_top"],
         ),
-        "allocator_minus_legacy_board_avg_estimated_close_pnl": metric_delta(
+        "allocator_minus_legacy_promotable_baseline_avg_estimated_close_pnl": metric_delta(
             allocator_field="average_estimated_close_pnl",
-            baseline=scorecard["legacy_board"],
+            baseline=scorecard["legacy_promotable_baseline"],
         ),
         "allocator_minus_rank_only_avg_estimated_close_pnl": metric_delta(
             allocator_field="average_estimated_close_pnl",
             baseline=scorecard["rank_only_top"],
         ),
-        "allocator_minus_legacy_board_avg_actual_net_pnl": metric_delta(
+        "allocator_minus_legacy_promotable_baseline_avg_actual_net_pnl": metric_delta(
             allocator_field="average_actual_net_pnl",
-            baseline=scorecard["legacy_board"],
+            baseline=scorecard["legacy_promotable_baseline"],
         ),
         "allocator_minus_rank_only_avg_actual_net_pnl": metric_delta(
             allocator_field="average_actual_net_pnl",
             baseline=scorecard["rank_only_top"],
         ),
-        "allocator_minus_legacy_board_avg_actual_minus_estimated_close_pnl": metric_delta(
+        "allocator_minus_legacy_promotable_baseline_avg_actual_minus_estimated_close_pnl": metric_delta(
             allocator_field="average_actual_minus_estimated_close_pnl",
-            baseline=scorecard["legacy_board"],
+            baseline=scorecard["legacy_promotable_baseline"],
         ),
         "allocator_minus_rank_only_avg_actual_minus_estimated_close_pnl": metric_delta(
             allocator_field="average_actual_minus_estimated_close_pnl",
             baseline=scorecard["rank_only_top"],
         ),
-        "allocator_minus_legacy_board_late_open_fill_rate": metric_delta(
+        "allocator_minus_legacy_promotable_baseline_late_open_fill_rate": metric_delta(
             allocator_field="late_open_fill_rate",
-            baseline=scorecard["legacy_board"],
+            baseline=scorecard["legacy_promotable_baseline"],
         ),
         "allocator_minus_rank_only_late_open_fill_rate": metric_delta(
             allocator_field="late_open_fill_rate",
             baseline=scorecard["rank_only_top"],
         ),
-        "allocator_minus_legacy_board_force_close_exit_rate": metric_delta(
+        "allocator_minus_legacy_promotable_baseline_force_close_exit_rate": metric_delta(
             allocator_field="force_close_exit_rate",
-            baseline=scorecard["legacy_board"],
+            baseline=scorecard["legacy_promotable_baseline"],
         ),
         "allocator_minus_rank_only_force_close_exit_rate": metric_delta(
             allocator_field="force_close_exit_rate",
             baseline=scorecard["rank_only_top"],
         ),
-        "watchlist_promotion_hit_rate": scorecard["promoted_from_watchlist"][
+        "legacy_monitor_promotion_hit_rate": scorecard["promoted_from_legacy_monitor"][
             "positive_rate"
         ],
-        "rejected_board_miss_rate": scorecard["rejected_legacy_board"]["positive_rate"],
+        "rejected_legacy_promotable_miss_rate": scorecard[
+            "rejected_legacy_promotable"
+        ]["positive_rate"],
     }
     return scorecard
 
@@ -2459,7 +2519,7 @@ def _comparison_item(
         "strategy_family": opportunity.strategy_family,
         "rank": opportunity.rank,
         "promotion_score": opportunity.promotion_score,
-        "legacy_bucket": opportunity.legacy_bucket,
+        "legacy_selection_state": opportunity.legacy_selection_state,
         "allocation_state": None if allocation is None else allocation.allocation_state,
         "allocation_reason": None
         if allocation is None
@@ -2482,9 +2542,11 @@ def _build_comparison(
     allocation_by_opportunity_id = {
         item.opportunity_id: item for item in allocation_decisions
     }
-    legacy_board = [item for item in opportunities if item.legacy_bucket == "board"]
-    legacy_watchlist = [
-        item for item in opportunities if item.legacy_bucket == "watchlist"
+    legacy_promotable_baseline = [
+        item for item in opportunities if item.legacy_selection_state == "promotable"
+    ]
+    legacy_monitor_baseline = [
+        item for item in opportunities if item.legacy_selection_state == "monitor"
     ]
     allocated = [
         item
@@ -2493,7 +2555,7 @@ def _build_comparison(
         and allocation_by_opportunity_id[item.opportunity_id].allocation_state
         == "allocated"
     ]
-    comparison_size = max(len(legacy_board), len(allocated))
+    comparison_size = max(len(legacy_promotable_baseline), len(allocated))
     promotable_rank_only = [
         item for item in opportunities if item.state == "promotable"
     ]
@@ -2504,28 +2566,28 @@ def _build_comparison(
     )
 
     allocated_ids = {item.opportunity_id for item in allocated}
-    legacy_board_ids = {item.opportunity_id for item in legacy_board}
+    legacy_promotable_baseline_ids = {item.opportunity_id for item in legacy_promotable_baseline}
     rank_only_ids = {item.opportunity_id for item in rank_only_top}
 
     return {
         "comparison_size": comparison_size,
-        "legacy_board": {
-            "count": len(legacy_board),
-            "symbols": sorted({item.symbol for item in legacy_board}),
-            "candidate_ids": [item.candidate_id for item in legacy_board],
+        "legacy_promotable_baseline": {
+            "count": len(legacy_promotable_baseline),
+            "symbols": sorted({item.symbol for item in legacy_promotable_baseline}),
+            "candidate_ids": [item.candidate_id for item in legacy_promotable_baseline],
             "items": [
                 _comparison_item(
                     item,
                     allocation_by_opportunity_id.get(item.opportunity_id),
                     outcome_matches.get(item.opportunity_id),
                 )
-                for item in legacy_board
+                for item in legacy_promotable_baseline
             ],
         },
-        "legacy_watchlist": {
-            "count": len(legacy_watchlist),
-            "symbols": sorted({item.symbol for item in legacy_watchlist}),
-            "candidate_ids": [item.candidate_id for item in legacy_watchlist],
+        "legacy_monitor_baseline": {
+            "count": len(legacy_monitor_baseline),
+            "symbols": sorted({item.symbol for item in legacy_monitor_baseline}),
+            "candidate_ids": [item.candidate_id for item in legacy_monitor_baseline],
         },
         "rank_only_top": {
             "count": len(rank_only_top),
@@ -2553,22 +2615,22 @@ def _build_comparison(
                 for item in allocated
             ],
         },
-        "promoted_from_watchlist": [
+        "promoted_from_legacy_monitor": [
             _comparison_item(
                 item,
                 allocation_by_opportunity_id.get(item.opportunity_id),
                 outcome_matches.get(item.opportunity_id),
             )
             for item in allocated
-            if item.legacy_bucket == "watchlist"
+            if item.legacy_selection_state == "monitor"
         ],
-        "rejected_legacy_board": [
+        "rejected_legacy_promotable": [
             _comparison_item(
                 item,
                 allocation_by_opportunity_id.get(item.opportunity_id),
                 outcome_matches.get(item.opportunity_id),
             )
-            for item in legacy_board
+            for item in legacy_promotable_baseline
             if item.opportunity_id not in allocated_ids
         ],
         "rank_only_rejected_by_allocator": [
@@ -2590,7 +2652,7 @@ def _build_comparison(
             if item.opportunity_id not in rank_only_ids
         ],
         "overlap": {
-            "allocator_vs_legacy_board_count": len(allocated_ids & legacy_board_ids),
+            "allocator_vs_legacy_promotable_baseline_count": len(allocated_ids & legacy_promotable_baseline_ids),
             "allocator_vs_rank_only_count": len(allocated_ids & rank_only_ids),
         },
     }
@@ -2607,8 +2669,12 @@ def _build_summary(
     allocation_by_opportunity_id = {
         item.opportunity_id: item for item in allocation_decisions
     }
-    legacy_board_symbols = sorted(
-        {item.symbol for item in opportunities if item.legacy_bucket == "board"}
+    legacy_promotable_baseline_symbols = sorted(
+        {
+            item.symbol
+            for item in opportunities
+            if item.legacy_selection_state == "promotable"
+        }
     )
     allocated_symbols = sorted(
         {
@@ -2624,11 +2690,12 @@ def _build_summary(
         for decision in allocation_decisions
         if decision.allocation_state == "allocated"
     ]
-    newly_promoted_watchlist = sorted(
+    newly_promoted_legacy_monitor = sorted(
         {
             item.symbol
             for item in opportunities
-            if item.legacy_bucket == "watchlist" and item.state == "promotable"
+            if item.legacy_selection_state == "monitor"
+            and item.state == "promotable"
         }
     )
     summary = {
@@ -2644,8 +2711,8 @@ def _build_summary(
         "allocated_count": len(allocated_opportunity_ids),
         "allocated_opportunity_ids": allocated_opportunity_ids,
         "allocated_symbols": allocated_symbols,
-        "legacy_board_symbols": legacy_board_symbols,
-        "newly_promoted_watchlist_symbols": newly_promoted_watchlist,
+        "legacy_promotable_baseline_symbols": legacy_promotable_baseline_symbols,
+        "newly_promoted_legacy_monitor_symbols": newly_promoted_legacy_monitor,
         "analysis_verdict": None,
         "historical_calibration_session_count": int(
             calibration_meta.get("source_session_count") or 0
@@ -2662,25 +2729,25 @@ def _build_summary(
         )
     else:
         classification_lookup = calibration_lookup.get("classification", {})
-        board_row = classification_lookup.get("board")
-        watchlist_row = classification_lookup.get("watchlist")
-        board_pnl = (
+        promotable_row = classification_lookup.get("promotable")
+        monitor_row = classification_lookup.get("monitor")
+        promotable_pnl = (
             None
-            if board_row is None
-            else _as_float(board_row.get("average_estimated_pnl"))
+            if promotable_row is None
+            else _as_float(promotable_row.get("average_estimated_pnl"))
         )
-        watchlist_pnl = (
+        monitor_pnl = (
             None
-            if watchlist_row is None
-            else _as_float(watchlist_row.get("average_estimated_pnl"))
+            if monitor_row is None
+            else _as_float(monitor_row.get("average_estimated_pnl"))
         )
         if (
-            board_pnl is not None
-            and watchlist_pnl is not None
-            and watchlist_pnl > board_pnl
+            promotable_pnl is not None
+            and monitor_pnl is not None
+            and monitor_pnl > promotable_pnl
         ):
             warnings.append(
-                "Prior-session calibration for this label favors watchlist ideas over legacy board ideas, so watchlist candidates may surface as promotable."
+                "Prior-session calibration for this label favors legacy monitor ideas over the legacy promotable baseline, so monitor candidates may surface as promotable."
             )
     return summary, warnings
 
@@ -2696,7 +2763,7 @@ def _wrap_recovered_candidate_rows(
             {
                 "candidate_id": -index,
                 "cycle_id": cycle_id,
-                "bucket": "recovered",
+                "legacy_selection_state": "recovered",
                 "position": index,
                 "run_id": payload.get("run_id"),
                 "underlying_symbol": payload.get("underlying_symbol"),
@@ -2876,7 +2943,7 @@ def build_opportunity_replay(
     allocator_metrics = scorecard.get("allocator_selected") or {}
     if int(allocator_metrics.get("count") or 0) == 0:
         warnings.append(
-            "No opportunities cleared the provisional allocator for this session, so allocator-vs-board comparisons are based on zero selected opportunities."
+            "No opportunities cleared the provisional allocator for this session, so allocator-vs-legacy-promotable-baseline comparisons are based on zero selected opportunities."
         )
     allocator_still_open_rate = allocator_metrics.get("still_open_rate")
     if (
@@ -2975,9 +3042,9 @@ def build_recent_opportunity_replay_batch(
 
     sessions: list[dict[str, Any]] = []
     verdict_counts: dict[str, int] = defaultdict(int)
-    promoted_from_watchlist_total = 0
-    rejected_legacy_board_total = 0
-    allocator_vs_legacy_board_total = 0
+    promoted_from_legacy_monitor_total = 0
+    rejected_legacy_promotable_total = 0
+    allocator_vs_legacy_promotable_baseline_total = 0
     allocator_vs_rank_only_total = 0
     skipped_sessions: list[dict[str, Any]] = []
     all_rows: list[dict[str, Any]] = []
@@ -3004,13 +3071,15 @@ def build_recent_opportunity_replay_batch(
         scorecard = dict(payload.get("scorecard") or {})
         verdict = _as_text(summary.get("analysis_verdict")) or "unknown"
         verdict_counts[verdict] += 1
-        promoted_from_watchlist = list(comparison.get("promoted_from_watchlist") or [])
-        rejected_legacy_board = list(comparison.get("rejected_legacy_board") or [])
+        promoted_from_legacy_monitor = list(comparison.get("promoted_from_legacy_monitor") or [])
+        rejected_legacy_promotable = list(
+            comparison.get("rejected_legacy_promotable") or []
+        )
         overlap = dict(comparison.get("overlap") or {})
-        promoted_from_watchlist_total += len(promoted_from_watchlist)
-        rejected_legacy_board_total += len(rejected_legacy_board)
-        allocator_vs_legacy_board_total += int(
-            overlap.get("allocator_vs_legacy_board_count") or 0
+        promoted_from_legacy_monitor_total += len(promoted_from_legacy_monitor)
+        rejected_legacy_promotable_total += len(rejected_legacy_promotable)
+        allocator_vs_legacy_promotable_baseline_total += int(
+            overlap.get("allocator_vs_legacy_promotable_baseline_count") or 0
         )
         allocator_vs_rank_only_total += int(
             overlap.get("allocator_vs_rank_only_count") or 0
@@ -3025,8 +3094,8 @@ def build_recent_opportunity_replay_batch(
                 "scorecard": scorecard,
                 "comparison": {
                     "comparison_size": comparison.get("comparison_size"),
-                    "legacy_board_candidate_ids": (
-                        comparison.get("legacy_board") or {}
+                    "legacy_promotable_baseline_candidate_ids": (
+                        comparison.get("legacy_promotable_baseline") or {}
                     ).get("candidate_ids", []),
                     "rank_only_candidate_ids": (
                         comparison.get("rank_only_top") or {}
@@ -3034,8 +3103,8 @@ def build_recent_opportunity_replay_batch(
                     "allocator_candidate_ids": (
                         comparison.get("provisional_allocator") or {}
                     ).get("candidate_ids", []),
-                    "promoted_from_watchlist": promoted_from_watchlist,
-                    "rejected_legacy_board": rejected_legacy_board,
+                    "promoted_from_legacy_monitor": promoted_from_legacy_monitor,
+                    "rejected_legacy_promotable": rejected_legacy_promotable,
                     "overlap": overlap,
                 },
                 "warnings": list(payload.get("warnings") or []),
@@ -3064,11 +3133,13 @@ def build_recent_opportunity_replay_batch(
             **metrics,
         }
 
-    legacy_board_metrics = pooled_metrics("is_legacy_board")
+    legacy_promotable_baseline_metrics = pooled_metrics("is_legacy_promotable_baseline")
     rank_only_top_metrics = pooled_metrics("is_rank_only_top")
     allocator_selected_metrics = pooled_metrics("is_allocator_selected")
-    promoted_from_watchlist_metrics = pooled_metrics("is_promoted_from_watchlist")
-    rejected_legacy_board_metrics = pooled_metrics("is_rejected_legacy_board")
+    promoted_from_legacy_monitor_metrics = pooled_metrics("is_promoted_from_legacy_monitor")
+    rejected_legacy_promotable_metrics = pooled_metrics(
+        "is_rejected_legacy_promotable"
+    )
     sessions_with_allocator_selections = sum(
         1
         for item in sessions
@@ -3081,33 +3152,33 @@ def build_recent_opportunity_replay_batch(
         "verdict_counts": dict(sorted(verdict_counts.items())),
         "skipped_session_count": len(skipped_sessions),
         "sessions_with_allocator_selections": sessions_with_allocator_selections,
-        "sessions_with_watchlist_promotions": sum(
-            1 for item in sessions if item["comparison"]["promoted_from_watchlist"]
+        "sessions_with_legacy_monitor_promotions": sum(
+            1 for item in sessions if item["comparison"]["promoted_from_legacy_monitor"]
         ),
-        "sessions_with_rejected_legacy_board": sum(
-            1 for item in sessions if item["comparison"]["rejected_legacy_board"]
+        "sessions_with_rejected_legacy_promotable": sum(
+            1 for item in sessions if item["comparison"]["rejected_legacy_promotable"]
         ),
-        "promoted_from_watchlist_total": promoted_from_watchlist_total,
-        "rejected_legacy_board_total": rejected_legacy_board_total,
-        "average_allocator_vs_legacy_board_overlap": round(
-            allocator_vs_legacy_board_total / session_count,
+        "promoted_from_legacy_monitor_total": promoted_from_legacy_monitor_total,
+        "rejected_legacy_promotable_total": rejected_legacy_promotable_total,
+        "average_allocator_vs_legacy_promotable_baseline_overlap": round(
+            allocator_vs_legacy_promotable_baseline_total / session_count,
             3,
         ),
         "average_allocator_vs_rank_only_overlap": round(
             allocator_vs_rank_only_total / session_count,
             3,
         ),
-        "legacy_board_metrics": legacy_board_metrics,
+        "legacy_promotable_baseline_metrics": legacy_promotable_baseline_metrics,
         "rank_only_top_metrics": rank_only_top_metrics,
         "allocator_selected_metrics": allocator_selected_metrics,
-        "promoted_from_watchlist_metrics": promoted_from_watchlist_metrics,
-        "rejected_legacy_board_metrics": rejected_legacy_board_metrics,
-        "allocator_minus_legacy_board_avg_estimated_pnl": None
+        "promoted_from_legacy_monitor_metrics": promoted_from_legacy_monitor_metrics,
+        "rejected_legacy_promotable_metrics": rejected_legacy_promotable_metrics,
+        "allocator_minus_legacy_promotable_baseline_avg_estimated_pnl": None
         if allocator_selected_metrics["average_estimated_pnl"] is None
-        or legacy_board_metrics["average_estimated_pnl"] is None
+        or legacy_promotable_baseline_metrics["average_estimated_pnl"] is None
         else round(
             float(allocator_selected_metrics["average_estimated_pnl"])
-            - float(legacy_board_metrics["average_estimated_pnl"]),
+            - float(legacy_promotable_baseline_metrics["average_estimated_pnl"]),
             4,
         ),
         "allocator_minus_rank_only_avg_estimated_pnl": None
@@ -3118,12 +3189,12 @@ def build_recent_opportunity_replay_batch(
             - float(rank_only_top_metrics["average_estimated_pnl"]),
             4,
         ),
-        "allocator_minus_legacy_board_avg_estimated_close_pnl": None
+        "allocator_minus_legacy_promotable_baseline_avg_estimated_close_pnl": None
         if allocator_selected_metrics["average_estimated_close_pnl"] is None
-        or legacy_board_metrics["average_estimated_close_pnl"] is None
+        or legacy_promotable_baseline_metrics["average_estimated_close_pnl"] is None
         else round(
             float(allocator_selected_metrics["average_estimated_close_pnl"])
-            - float(legacy_board_metrics["average_estimated_close_pnl"]),
+            - float(legacy_promotable_baseline_metrics["average_estimated_close_pnl"]),
             4,
         ),
         "allocator_minus_rank_only_avg_estimated_close_pnl": None
@@ -3134,12 +3205,12 @@ def build_recent_opportunity_replay_batch(
             - float(rank_only_top_metrics["average_estimated_close_pnl"]),
             4,
         ),
-        "allocator_minus_legacy_board_avg_actual_net_pnl": None
+        "allocator_minus_legacy_promotable_baseline_avg_actual_net_pnl": None
         if allocator_selected_metrics["average_actual_net_pnl"] is None
-        or legacy_board_metrics["average_actual_net_pnl"] is None
+        or legacy_promotable_baseline_metrics["average_actual_net_pnl"] is None
         else round(
             float(allocator_selected_metrics["average_actual_net_pnl"])
-            - float(legacy_board_metrics["average_actual_net_pnl"]),
+            - float(legacy_promotable_baseline_metrics["average_actual_net_pnl"]),
             4,
         ),
         "allocator_minus_rank_only_avg_actual_net_pnl": None
@@ -3150,15 +3221,15 @@ def build_recent_opportunity_replay_batch(
             - float(rank_only_top_metrics["average_actual_net_pnl"]),
             4,
         ),
-        "allocator_minus_legacy_board_avg_actual_minus_estimated_close_pnl": None
+        "allocator_minus_legacy_promotable_baseline_avg_actual_minus_estimated_close_pnl": None
         if allocator_selected_metrics["average_actual_minus_estimated_close_pnl"]
         is None
-        or legacy_board_metrics["average_actual_minus_estimated_close_pnl"] is None
+        or legacy_promotable_baseline_metrics["average_actual_minus_estimated_close_pnl"] is None
         else round(
             float(
                 allocator_selected_metrics["average_actual_minus_estimated_close_pnl"]
             )
-            - float(legacy_board_metrics["average_actual_minus_estimated_close_pnl"]),
+            - float(legacy_promotable_baseline_metrics["average_actual_minus_estimated_close_pnl"]),
             4,
         ),
         "allocator_minus_rank_only_avg_actual_minus_estimated_close_pnl": None
@@ -3172,10 +3243,12 @@ def build_recent_opportunity_replay_batch(
             - float(rank_only_top_metrics["average_actual_minus_estimated_close_pnl"]),
             4,
         ),
-        "watchlist_promotion_hit_rate": promoted_from_watchlist_metrics[
+        "legacy_monitor_promotion_hit_rate": promoted_from_legacy_monitor_metrics[
             "positive_rate"
         ],
-        "rejected_board_miss_rate": rejected_legacy_board_metrics["positive_rate"],
+        "rejected_legacy_promotable_miss_rate": rejected_legacy_promotable_metrics[
+            "positive_rate"
+        ],
         "by_label": _aggregate_dimension_rows(all_rows, field="label"),
         "by_family": _aggregate_dimension_rows(all_rows, field="strategy_family"),
         "by_symbol": _aggregate_dimension_rows(all_rows, field="symbol"),

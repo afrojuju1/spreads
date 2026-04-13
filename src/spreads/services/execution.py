@@ -82,6 +82,11 @@ OPEN_STATUSES = {
 DEFAULT_ENTRY_PRICING_MODE = "adaptive_credit"
 DEFAULT_MIN_CREDIT_RETENTION_PCT = 0.95
 DEFAULT_MAX_CREDIT_CONCESSION = 0.02
+ATTEMPT_CONTEXT_BUCKET_MIRROR = {
+    "open_promotable": "promotable",
+    "open_monitor": "monitor",
+    "position_close": "position_close",
+}
 
 
 def _utc_now() -> str:
@@ -113,6 +118,22 @@ def _as_text(value: Any) -> str | None:
         return None
     rendered = str(value).strip()
     return rendered or None
+
+
+def _normalize_attempt_context(value: Any) -> str | None:
+    normalized = _as_text(value)
+    if normalized == "promotable":
+        return "open_promotable"
+    if normalized == "monitor":
+        return "open_monitor"
+    return normalized
+
+
+def _deprecated_bucket(value: Any) -> str | None:
+    normalized = _as_text(value)
+    if normalized is None:
+        return None
+    return ATTEMPT_CONTEXT_BUCKET_MIRROR.get(normalized, normalized)
 
 
 def _validate_open_timing_window(
@@ -649,16 +670,29 @@ def _attach_attempt_details(
             dict(fill)
         )
 
-    return [
-        {
-            **attempt,
-            "order_intent_id": str(attempt["execution_attempt_id"]),
-            "order_intent_key": _order_intent_key(str(attempt["execution_attempt_id"])),
-            "orders": orders_by_attempt.get(str(attempt["execution_attempt_id"]), []),
-            "fills": fills_by_attempt.get(str(attempt["execution_attempt_id"]), []),
-        }
-        for attempt in attempts
-    ]
+    payloads: list[dict[str, Any]] = []
+    for attempt in attempts:
+        attempt_context = _normalize_attempt_context(
+            attempt.get("attempt_context", attempt.get("bucket"))
+        )
+        payloads.append(
+            {
+                **attempt,
+                "attempt_context": attempt_context,
+                "bucket": _deprecated_bucket(attempt_context),
+                "order_intent_id": str(attempt["execution_attempt_id"]),
+                "order_intent_key": _order_intent_key(
+                    str(attempt["execution_attempt_id"])
+                ),
+                "orders": orders_by_attempt.get(
+                    str(attempt["execution_attempt_id"]), []
+                ),
+                "fills": fills_by_attempt.get(
+                    str(attempt["execution_attempt_id"]), []
+                ),
+            }
+        )
+    return payloads
 
 
 @with_storage()
@@ -1497,7 +1531,9 @@ def submit_live_session_execution(
             if risk_decision is None
             else str(risk_decision["risk_decision_id"]),
             candidate_id=_coerce_int(candidate.get("candidate_id")),
-            bucket=_as_text(candidate.get("selection_state")),
+            attempt_context=_normalize_attempt_context(
+                candidate.get("selection_state")
+            ),
             candidate_generated_at=_as_text(candidate.get("generated_at")),
             run_id=_as_text(candidate.get("run_id")),
             job_run_id=_as_text(cycle.get("job_run_id")),
@@ -1675,7 +1711,7 @@ def submit_session_position_close(
             opportunity_id=None,
             risk_decision_id=None,
             candidate_id=_coerce_int(position.get("candidate_id")),
-            bucket="position_close",
+            attempt_context="position_close",
             candidate_generated_at=None,
             run_id=None,
             job_run_id=None,

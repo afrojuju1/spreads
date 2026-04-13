@@ -20,6 +20,7 @@ from spreads.services.live_selection import (
     select_live_opportunities,
 )
 from spreads.services.live_collector_health import (
+    build_live_action_gate,
     build_quote_capture_summary,
     build_trade_capture_summary,
 )
@@ -692,6 +693,7 @@ def _run_collection_cycle(
         previous_selection_memory=previous_selection_memory,
         top_promotable=args.top,
         top_monitor=WATCHLIST_TOP,
+        profile=args.profile,
     )
     promotable_payloads = list(selection["promotable_candidates"])
     monitor_payloads = list(selection["monitor_candidates"])
@@ -713,6 +715,7 @@ def _run_collection_cycle(
             previous_selection_memory=previous_selection_memory,
             top_promotable=args.top,
             top_monitor=WATCHLIST_TOP,
+            profile=args.profile,
             recovered_candidates=recovered_payloads,
         )
         promotable_payloads = list(selection["promotable_candidates"])
@@ -978,6 +981,10 @@ def _run_collection_cycle(
         *websocket_quote_records,
         *recovery_quote_records,
     ]
+    live_action_gate = build_live_action_gate(
+        profile=args.profile,
+        quote_capture=quote_capture,
+    )
     uoa_summary = build_uoa_trade_summary(
         as_of=generated_at,
         expected_trade_symbols=expected_trade_symbols,
@@ -1037,7 +1044,10 @@ def _run_collection_cycle(
     if heartbeat is not None:
         heartbeat()
     auto_execution: dict[str, Any] | None = None
-    if tick_context is not None:
+    if (
+        tick_context is not None
+        and bool(live_action_gate.get("allow_auto_execution"))
+    ):
         try:
             auto_execution = submit_auto_session_execution(
                 db_target=args.history_db,
@@ -1058,27 +1068,36 @@ def _run_collection_cycle(
             print(f"Automatic execution unavailable: {exc}")
         if heartbeat is not None:
             heartbeat()
+    elif tick_context is not None:
+        auto_execution = {
+            "action": "auto_submit",
+            "changed": False,
+            "reason": live_action_gate.get("reason_code"),
+            "message": live_action_gate.get("message"),
+            "gate": dict(live_action_gate),
+        }
     alerts: list[dict[str, Any]] = []
-    try:
-        alerts = dispatch_cycle_alerts(
-            collector_store=collector_store,
-            alert_store=alert_store,
-            job_store=job_store,
-            cycle_id=cycle_id,
-            label=label,
-            generated_at=generated_at,
-            strategy_mode=args.strategy,
-            profile=args.profile,
-            promotable_candidates=promotable_payloads,
-            events=events,
-            uoa_decisions=uoa_decisions,
-            session_id=None if tick_context is None else tick_context.session_id,
-            planner_job_run_id=None
-            if tick_context is None
-            else tick_context.job_run_id,
-        )
-    except Exception as exc:
-        print(f"Alert dispatch unavailable: {exc}")
+    if bool(live_action_gate.get("allow_alerts")):
+        try:
+            alerts = dispatch_cycle_alerts(
+                collector_store=collector_store,
+                alert_store=alert_store,
+                job_store=job_store,
+                cycle_id=cycle_id,
+                label=label,
+                generated_at=generated_at,
+                strategy_mode=args.strategy,
+                profile=args.profile,
+                promotable_candidates=promotable_payloads,
+                events=events,
+                uoa_decisions=uoa_decisions,
+                session_id=None if tick_context is None else tick_context.session_id,
+                planner_job_run_id=None
+                if tick_context is None
+                else tick_context.job_run_id,
+            )
+        except Exception as exc:
+            print(f"Alert dispatch unavailable: {exc}")
     if emit_output:
         print_cycle_summary(
             generated_at=generated_at,
@@ -1098,6 +1117,7 @@ def _run_collection_cycle(
         "cycle_id": cycle_id,
         "generated_at": generated_at,
         "label": label,
+        "profile": args.profile,
         "alerts_sent": len(alerts),
         "quote_events_saved": quote_event_count,
         "baseline_quote_events_saved": baseline_quote_event_count,
@@ -1117,6 +1137,7 @@ def _run_collection_cycle(
         "opportunities_expired": int(signal_sync["opportunities_expired"]),
         "quote_capture": quote_capture,
         "trade_capture": trade_capture,
+        "live_action_gate": live_action_gate,
         "uoa_summary": uoa_summary,
         "uoa_quote_summary": uoa_quote_summary,
         "uoa_decisions": uoa_decisions,

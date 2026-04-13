@@ -45,7 +45,7 @@ class ExecutionAttemptModel(Base):
         ForeignKey("collector_cycle_candidates.candidate_id", ondelete="SET NULL"),
         nullable=True,
     )
-    bucket: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempt_context: Mapped[str | None] = mapped_column(Text, nullable=True)
     candidate_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     run_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     job_run_id: Mapped[str | None] = mapped_column(

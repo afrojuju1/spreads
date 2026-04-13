@@ -42,6 +42,17 @@ def normalize_expected_trade_symbols(value: Any) -> list[str]:
     return normalize_expected_symbols(value)
 
 
+def _resolve_profile(profile: Any, *, label: Any = None) -> str | None:
+    normalized = str(profile or "").strip().lower()
+    if normalized in {"0dte", "weekly", "core", "micro", "swing"}:
+        return normalized
+    label_text = str(label or "").strip().lower()
+    for candidate in ("0dte", "weekly", "core", "micro", "swing"):
+        if candidate in label_text:
+            return candidate
+    return normalized or None
+
+
 def build_quote_capture_summary(
     *,
     expected_quote_symbols: Sequence[str] | None,
@@ -104,6 +115,46 @@ def build_trade_capture_summary(
     }
 
 
+def build_live_action_gate(
+    *,
+    profile: str | None,
+    label: str | None = None,
+    quote_capture: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    normalized_profile = _resolve_profile(profile, label=label) or ""
+    capture = quote_capture if isinstance(quote_capture, Mapping) else {}
+    capture_status = str(capture.get("capture_status") or "").strip().lower()
+
+    if normalized_profile == "0dte" and capture_status in {
+        "empty",
+        "baseline_only",
+        "recovery_only",
+    }:
+        reason_code = {
+            "empty": "quote_capture_empty",
+            "baseline_only": "quote_capture_baseline_only",
+            "recovery_only": "quote_capture_recovery_only",
+        }[capture_status]
+        return {
+            "status": "blocked",
+            "reason_code": reason_code,
+            "message": (
+                "0DTE live actions are blocked because quote capture did not finish healthy "
+                f"({capture_status})."
+            ),
+            "allow_alerts": False,
+            "allow_auto_execution": False,
+        }
+
+    return {
+        "status": "pass",
+        "reason_code": None,
+        "message": "Live actions are allowed.",
+        "allow_alerts": True,
+        "allow_auto_execution": True,
+    }
+
+
 def enrich_live_collector_result(result: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if result is None:
         return None
@@ -122,6 +173,14 @@ def enrich_live_collector_result(result: Mapping[str, Any] | None) -> dict[str, 
     )
     enriched["quote_capture"] = quote_capture
     enriched["trade_capture"] = trade_capture
+    enriched["live_action_gate"] = dict(
+        enriched.get("live_action_gate")
+        or build_live_action_gate(
+            profile=str(enriched.get("profile") or ""),
+            label=str(enriched.get("label") or ""),
+            quote_capture=quote_capture,
+        )
+    )
     return enriched
 
 
@@ -141,4 +200,18 @@ def enrich_live_collector_job_run_payload(payload: Mapping[str, Any]) -> dict[st
     enriched["uoa_quote_summary"] = result.get("uoa_quote_summary") or {}
     enriched["uoa_decisions"] = result.get("uoa_decisions") or {}
     enriched["capture_status"] = result["quote_capture"]["capture_status"]
+    run_payload = enriched.get("payload") if isinstance(enriched.get("payload"), Mapping) else {}
+    enriched["live_action_gate"] = dict(
+        result.get("live_action_gate")
+        or build_live_action_gate(
+            profile=str(run_payload.get("profile") or result.get("profile") or ""),
+            label=str(
+                run_payload.get("label")
+                or result.get("label")
+                or enriched.get("label")
+                or ""
+            ),
+            quote_capture=result.get("quote_capture"),
+        )
+    )
     return enriched
