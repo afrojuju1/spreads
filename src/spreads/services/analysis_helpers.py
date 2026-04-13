@@ -40,8 +40,8 @@ def resolved_estimated_pnl(item: Mapping[str, Any]) -> float | None:
     return None
 
 
-def board_session_phase(candidate: Mapping[str, Any]) -> str:
-    notes = candidate.get("board_notes") or []
+def candidate_session_phase(candidate: Mapping[str, Any]) -> str:
+    notes = candidate.get("selection_notes") or candidate.get("board_notes") or []
     for note in notes:
         if isinstance(note, str) and note.startswith("session-"):
             return note.removeprefix("session-")
@@ -49,7 +49,7 @@ def board_session_phase(candidate: Mapping[str, Any]) -> str:
 
 
 __all__ = [
-    "board_session_phase",
+    "candidate_session_phase",
     "candidate_identity",
     "resolved_estimated_pnl",
     "score_bucket_label",

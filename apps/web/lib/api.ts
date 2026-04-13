@@ -36,8 +36,11 @@ const liveCandidateSchema = z
     label: z.string(),
     session_date: z.string(),
     generated_at: z.string(),
-    bucket: z.enum(["board", "watchlist"]),
-    position: z.number(),
+    selection_state: z.enum(["promotable", "monitor"]),
+    selection_rank: z.number(),
+    state_reason: z.string(),
+    origin: z.string(),
+    eligibility: z.string(),
     run_id: z.string(),
     underlying_symbol: z.string(),
     strategy: z.string(),
@@ -61,9 +64,14 @@ const liveResponseSchema = z.object({
   greeks_source: z.string(),
   symbols: z.array(z.string()),
   failures: z.array(z.string()),
-  selection_state: z.record(z.string(), z.unknown()).default({}),
-  board_candidates: z.array(liveCandidateSchema),
-  watchlist_candidates: z.array(liveCandidateSchema),
+  selection_memory: z.record(z.string(), z.unknown()).default({}),
+  selection_counts: z
+    .object({
+      promotable: z.number(),
+      monitor: z.number(),
+    })
+    .default({ promotable: 0, monitor: 0 }),
+  opportunities: z.array(liveCandidateSchema),
 });
 
 const liveEventSchema = z
@@ -391,8 +399,8 @@ const sessionListItemSchema = z
     websocket_quote_events_saved: z.number(),
     baseline_quote_events_saved: z.number(),
     recovery_quote_events_saved: z.number(),
-    board_count: z.number(),
-    watchlist_count: z.number(),
+    promotable_count: z.number(),
+    monitor_count: z.number(),
     alert_count: z.number(),
     updated_at: z.string().nullable().optional(),
   })
@@ -605,8 +613,13 @@ const sessionDetailSchema = z
     reconciliation_note: z.string().nullable().optional(),
     latest_slot: jobRunSchema.nullable().optional(),
     current_cycle: liveResponseSchema.nullable().optional(),
-    board_candidates: z.array(liveCandidateSchema),
-    watchlist_candidates: z.array(liveCandidateSchema),
+    opportunities: z.array(liveCandidateSchema),
+    selection_counts: z
+      .object({
+        promotable: z.number(),
+        monitor: z.number(),
+      })
+      .default({ promotable: 0, monitor: 0 }),
     slot_runs: z.array(jobRunSchema),
     alerts: z.array(alertSchema),
     events: z.array(liveEventSchema),
@@ -764,13 +777,13 @@ const generatorJobActionResponseSchema = z
     changed: z.boolean(),
     message: z.string(),
     live_label: z.string().nullable().optional(),
-    bucket: z.enum(["board", "watchlist"]).nullable().optional(),
+    target_state: z.enum(["promotable", "monitor"]).nullable().optional(),
     cycle_id: z.string().nullable().optional(),
     event_type: z.string().nullable().optional(),
     symbol: z.string().nullable().optional(),
     generated_at: z.string().nullable().optional(),
-    board_count: z.number().optional(),
-    watchlist_count: z.number().optional(),
+    promotable_count: z.number().optional(),
+    monitor_count: z.number().optional(),
     alert: alertSchema.nullable().optional(),
   })
   .passthrough();
@@ -835,7 +848,7 @@ export type GeneratorCandidateActionRequest = {
   short_symbol: string;
   long_symbol: string;
   live_label?: string;
-  bucket?: "board" | "watchlist";
+  target_state?: "promotable" | "monitor";
 };
 export type SessionExecutionRequest = {
   candidate_id: number;

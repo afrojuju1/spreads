@@ -615,11 +615,11 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
             "min_credit_retention_pct": min_credit_retention_pct,
             "max_credit_concession": max_credit_concession,
         }
-    if mode != "top_board":
+    if mode != "top_promotable":
         raise ValueError(f"Unsupported execution policy mode: {mode}")
     return {
         "enabled": True,
-        "mode": "top_board",
+        "mode": "top_promotable",
         "quantity": max(quantity, 1),
         "pricing_mode": pricing_mode,
         "min_credit_retention_pct": min_credit_retention_pct,
@@ -1327,7 +1327,7 @@ def submit_live_session_execution(
                 "opportunity_id": str(opportunity["opportunity_id"]),
                 "signal_state_ref": opportunity.get("signal_state_ref"),
                 "lifecycle_state": opportunity.get("lifecycle_state"),
-                "classification": opportunity.get("classification"),
+                "selection_state": opportunity.get("selection_state"),
             }
         )
 
@@ -1497,7 +1497,7 @@ def submit_live_session_execution(
             if risk_decision is None
             else str(risk_decision["risk_decision_id"]),
             candidate_id=_coerce_int(candidate.get("candidate_id")),
-            bucket=_as_text(candidate.get("bucket")),
+            bucket=_as_text(candidate.get("selection_state")),
             candidate_generated_at=_as_text(candidate.get("generated_at")),
             run_id=_as_text(candidate.get("run_id")),
             job_run_id=_as_text(cycle.get("job_run_id")),
@@ -1992,18 +1992,22 @@ def submit_auto_session_execution(
     execution_store = storage.execution
     _require_execution_schema(execution_store)
     _require_position_schema(execution_store)
-    board_candidates = collector_store.list_cycle_candidates(cycle_id, bucket="board")
-    if not board_candidates:
+    promotable_candidates = collector_store.list_cycle_candidates(
+        cycle_id,
+        selection_state="promotable",
+        eligibility="live",
+    )
+    if not promotable_candidates:
         return {
             "action": "auto_submit",
             "changed": False,
-            "reason": "no_board_candidate",
-            "message": "Automatic execution skipped because the cycle does not have a board candidate.",
+            "reason": "no_promotable_opportunity",
+            "message": "Automatic execution skipped because the cycle does not have a promotable opportunity.",
             "policy": normalized_policy,
         }
 
     top_candidate = min(
-        board_candidates, key=lambda candidate: int(candidate["position"])
+        promotable_candidates, key=lambda candidate: int(candidate["selection_rank"])
     )
     selected_candidate = _candidate_with_payload(top_candidate)
     blocked_reason, blocked_message = _validate_auto_execution_candidate(

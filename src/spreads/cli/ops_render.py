@@ -343,23 +343,23 @@ def _render_sessions_list(console: Console, payload: dict[str, Any]) -> None:
     table.add_column("Label")
     table.add_column("Status")
     table.add_column("Capture")
-    table.add_column("Board/WL", justify="right")
+    table.add_column("Prom/Mon", justify="right")
     table.add_column("Alerts", justify="right")
     table.add_column("Verdict")
     table.add_column("Spread", justify="right")
     table.add_column("Updated")
     for row in rows:
-        board_count = row.get("board_count")
-        watchlist_count = row.get("watchlist_count")
+        promotable_count = row.get("promotable_count")
+        monitor_count = row.get("monitor_count")
         table.add_row(
             str(row.get("session_id") or "-"),
             str(row.get("label") or "-"),
             str(row.get("operator_status") or row.get("status") or "-"),
             str(row.get("latest_capture_status") or "-"),
-            f"{_render_value(board_count)}/{_render_value(watchlist_count)}",
+            f"{_render_value(promotable_count)}/{_render_value(monitor_count)}",
             _render_value(row.get("alert_count")),
             str(row.get("post_market_verdict") or "-"),
-            _render_money(row.get("board_watchlist_pnl_spread")),
+            _render_money(row.get("promotable_monitor_pnl_spread")),
             str(row.get("updated_at") or "-"),
         )
     console.print(table)
@@ -388,7 +388,8 @@ def _render_session_detail(console: Console, payload: dict[str, Any]) -> None:
     )
     overview.add_row("Verdict", _render_value(summary.get("post_market_verdict")))
     overview.add_row(
-        "Board vs WL", _render_money(summary.get("board_watchlist_pnl_spread"))
+        "Prom vs Mon",
+        _render_money(summary.get("promotable_monitor_pnl_spread")),
     )
     console.print(
         Panel(
@@ -435,14 +436,14 @@ def _render_session_detail(console: Console, payload: dict[str, Any]) -> None:
     if top_ideas:
         table = Table(title="Top Modeled Ideas", header_style="bold")
         table.add_column("Underlying")
-        table.add_column("Class")
+        table.add_column("Selection")
         table.add_column("Strategy")
         table.add_column("Modeled PnL", justify="right")
         table.add_column("Outcome")
         for row in top_ideas:
             table.add_row(
                 str(row.get("underlying_symbol") or "-"),
-                str(row.get("classification") or "-"),
+                str(row.get("selection_state") or "-"),
                 str(row.get("strategy") or "-"),
                 _render_money(row.get("modeled_pnl")),
                 str(row.get("replay_verdict") or "-"),
@@ -453,14 +454,14 @@ def _render_session_detail(console: Console, payload: dict[str, Any]) -> None:
     if bottom_ideas:
         table = Table(title="Bottom Modeled Ideas", header_style="bold")
         table.add_column("Underlying")
-        table.add_column("Class")
+        table.add_column("Selection")
         table.add_column("Strategy")
         table.add_column("Modeled PnL", justify="right")
         table.add_column("Outcome")
         for row in bottom_ideas:
             table.add_row(
                 str(row.get("underlying_symbol") or "-"),
-                str(row.get("classification") or "-"),
+                str(row.get("selection_state") or "-"),
                 str(row.get("strategy") or "-"),
                 _render_money(row.get("modeled_pnl")),
                 str(row.get("replay_verdict") or "-"),
@@ -673,8 +674,8 @@ def _render_uoa_detail(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row(
         "Decisions",
         (
-            f"watchlist {_render_value(summary.get('watchlist_count'))} | "
-            f"board {_render_value(summary.get('board_count'))} | "
+            f"monitor {_render_value(summary.get('monitor_count'))} | "
+            f"promotable {_render_value(summary.get('promotable_count'))} | "
             f"high {_render_value(summary.get('high_count'))}"
         ),
     )
@@ -739,7 +740,7 @@ def _render_uoa_detail(console: Console, payload: dict[str, Any]) -> None:
             table.add_row(str(row.get("name") or "-"), _render_value(row.get("count")))
         console.print(table)
 
-    decision_rows = list(details.get("top_watchlist_roots") or [])
+    decision_rows = list(details.get("top_monitor_roots") or [])
     if decision_rows:
         table = Table(title="Decision Roots", header_style="bold")
         table.add_column("Symbol")
@@ -812,13 +813,13 @@ def _render_uoa_detail(console: Console, payload: dict[str, Any]) -> None:
         console.print(table)
 
     for title, rows in (
-        ("Board Candidates", list(details.get("board_candidates") or [])),
-        ("Watchlist Candidates", list(details.get("watchlist_candidates") or [])),
+        ("Promotable Opportunities", list(details.get("promotable_candidates") or [])),
+        ("Monitor Opportunities", list(details.get("monitor_candidates") or [])),
     ):
         if not rows:
             continue
         table = Table(title=title, header_style="bold")
-        table.add_column("Pos", justify="right")
+        table.add_column("Rank", justify="right")
         table.add_column("Symbol")
         table.add_column("Strategy")
         table.add_column("Credit", justify="right")
@@ -828,7 +829,7 @@ def _render_uoa_detail(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Setup")
         for row in rows:
             table.add_row(
-                _render_value(row.get("position")),
+                _render_value(row.get("selection_rank")),
                 str(row.get("underlying_symbol") or "-"),
                 str(row.get("strategy") or "-"),
                 _render_money(row.get("midpoint_credit")),
@@ -917,8 +918,8 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
         table.add_row(
             "Candidates",
             (
-                f"board {_render_value(current_cycle.get('board_candidate_count'))} | "
-                f"watchlist {_render_value(current_cycle.get('watchlist_candidate_count'))}"
+                f"promotable {_render_value(current_cycle.get('promotable_count'))} | "
+                f"monitor {_render_value(current_cycle.get('monitor_count'))}"
             ),
         )
         console.print(table)
@@ -960,8 +961,8 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
         "Verdict", _render_value(post_market.get("overall_verdict"))
     )
     post_market_table.add_row(
-        "Board vs WL",
-        _render_money(post_market.get("board_watchlist_pnl_spread")),
+        "Prom vs Mon",
+        _render_money(post_market.get("promotable_monitor_pnl_spread")),
     )
     post_market_table.add_row("Recommendations", _render_value(len(recommendations)))
     console.print(post_market_table)
@@ -1021,15 +1022,17 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
     if selected_opportunities:
         table = Table(title="Selected Opportunities", header_style="bold")
         table.add_column("Underlying")
-        table.add_column("Class")
+        table.add_column("Selection")
         table.add_column("State")
+        table.add_column("Rank", justify="right")
         table.add_column("Confidence", justify="right")
         table.add_column("Reasons")
         for row in selected_opportunities:
             table.add_row(
                 str(row.get("underlying_symbol") or "-"),
-                str(row.get("classification") or "-"),
+                str(row.get("selection_state") or "-"),
                 str(row.get("lifecycle_state") or "-"),
+                _render_value(row.get("selection_rank")),
                 _render_value(row.get("confidence")),
                 _truncate(", ".join(row.get("reason_codes") or []), length=56),
             )

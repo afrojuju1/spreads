@@ -26,7 +26,7 @@ def _state_snapshot(payload: dict[str, Any]) -> tuple[Any, ...]:
         dict(payload.get("evidence") or {}),
         payload.get("active_cycle_id"),
         payload.get("active_candidate_id"),
-        payload.get("active_bucket"),
+        payload.get("active_selection_state"),
         payload.get("opportunity_id"),
         str(payload["session_date"]),
         payload["market_session"],
@@ -49,7 +49,7 @@ def _state_model_snapshot(row: SignalStateModel) -> tuple[Any, ...]:
         dict(row.evidence_json or {}),
         row.active_cycle_id,
         row.active_candidate_id,
-        row.active_bucket,
+        row.active_selection_state,
         row.opportunity_id,
         str(row.session_date),
         row.market_session,
@@ -67,7 +67,11 @@ def _opportunity_snapshot(payload: dict[str, Any]) -> tuple[Any, ...]:
         payload["entity_key"],
         payload["underlying_symbol"],
         payload.get("side"),
-        payload["classification"],
+        payload["selection_state"],
+        payload.get("selection_rank"),
+        payload.get("state_reason"),
+        payload.get("origin"),
+        payload.get("eligibility"),
         payload.get("confidence"),
         payload.get("signal_state_ref"),
         payload["lifecycle_state"],
@@ -78,7 +82,7 @@ def _opportunity_snapshot(payload: dict[str, Any]) -> tuple[Any, ...]:
         dict(payload.get("risk_hints") or {}),
         payload.get("source_cycle_id"),
         payload.get("source_candidate_id"),
-        payload.get("source_bucket"),
+        payload.get("source_selection_state"),
         payload.get("candidate_identity"),
         dict(payload.get("candidate") or {}),
         payload.get("consumed_by_execution_attempt_id"),
@@ -95,7 +99,11 @@ def _opportunity_model_snapshot(row: OpportunityModel) -> tuple[Any, ...]:
         row.entity_key,
         row.underlying_symbol,
         row.side,
-        row.classification,
+        row.selection_state,
+        row.selection_rank,
+        row.state_reason,
+        row.origin,
+        row.eligibility,
         row.confidence,
         row.signal_state_ref,
         row.lifecycle_state,
@@ -106,7 +114,7 @@ def _opportunity_model_snapshot(row: OpportunityModel) -> tuple[Any, ...]:
         dict(row.risk_hints_json or {}),
         row.source_cycle_id,
         row.source_candidate_id,
-        row.source_bucket,
+        row.source_selection_state,
         row.candidate_identity,
         dict(row.candidate_json or {}),
         row.consumed_by_execution_attempt_id,
@@ -145,7 +153,7 @@ class SignalRepository(RepositoryBase):
         evidence: dict[str, Any],
         active_cycle_id: str | None,
         active_candidate_id: int | None,
-        active_bucket: str | None,
+        active_selection_state: str | None,
         opportunity_id: str | None,
         session_date: str | date,
         market_session: str,
@@ -180,7 +188,7 @@ class SignalRepository(RepositoryBase):
                     evidence_json=dict(evidence),
                     active_cycle_id=active_cycle_id,
                     active_candidate_id=active_candidate_id,
-                    active_bucket=active_bucket,
+                    active_selection_state=active_selection_state,
                     opportunity_id=opportunity_id,
                     session_date=session_date_value,
                     market_session=market_session,
@@ -203,7 +211,7 @@ class SignalRepository(RepositoryBase):
                         "evidence": evidence,
                         "active_cycle_id": active_cycle_id,
                         "active_candidate_id": active_candidate_id,
-                        "active_bucket": active_bucket,
+                        "active_selection_state": active_selection_state,
                         "opportunity_id": opportunity_id,
                         "session_date": session_date_value,
                         "market_session": market_session,
@@ -223,7 +231,7 @@ class SignalRepository(RepositoryBase):
                 row.evidence_json = dict(evidence)
                 row.active_cycle_id = active_cycle_id
                 row.active_candidate_id = active_candidate_id
-                row.active_bucket = active_bucket
+                row.active_selection_state = active_selection_state
                 row.opportunity_id = opportunity_id
                 row.session_date = session_date_value
                 row.market_session = market_session
@@ -249,7 +257,7 @@ class SignalRepository(RepositoryBase):
                     evidence_json=dict(evidence),
                     active_cycle_id=active_cycle_id,
                     active_candidate_id=active_candidate_id,
-                    active_bucket=active_bucket,
+                    active_selection_state=active_selection_state,
                     opportunity_id=opportunity_id,
                     session_date=session_date_value,
                     market_session=market_session,
@@ -339,7 +347,11 @@ class SignalRepository(RepositoryBase):
         entity_key: str,
         underlying_symbol: str,
         side: str | None,
-        classification: str,
+        selection_state: str,
+        selection_rank: int | None,
+        state_reason: str,
+        origin: str,
+        eligibility: str,
         confidence: float | None,
         signal_state_ref: str | None,
         lifecycle_state: str,
@@ -352,7 +364,7 @@ class SignalRepository(RepositoryBase):
         risk_hints: dict[str, Any],
         source_cycle_id: str | None,
         source_candidate_id: int | None,
-        source_bucket: str | None,
+        source_selection_state: str | None,
         candidate_identity: str | None,
         candidate: dict[str, Any],
         consumed_by_execution_attempt_id: str | None = None,
@@ -377,7 +389,11 @@ class SignalRepository(RepositoryBase):
                     entity_key=entity_key,
                     underlying_symbol=underlying_symbol,
                     side=side,
-                    classification=classification,
+                    selection_state=selection_state,
+                    selection_rank=selection_rank,
+                    state_reason=state_reason,
+                    origin=origin,
+                    eligibility=eligibility,
                     confidence=confidence,
                     signal_state_ref=signal_state_ref,
                     lifecycle_state=lifecycle_state,
@@ -390,7 +406,7 @@ class SignalRepository(RepositoryBase):
                     risk_hints_json=dict(risk_hints),
                     source_cycle_id=source_cycle_id,
                     source_candidate_id=source_candidate_id,
-                    source_bucket=source_bucket,
+                    source_selection_state=source_selection_state,
                     candidate_identity=candidate_identity,
                     candidate_json=dict(candidate),
                     consumed_by_execution_attempt_id=consumed_by_execution_attempt_id,
@@ -407,7 +423,11 @@ class SignalRepository(RepositoryBase):
                         "entity_key": entity_key,
                         "underlying_symbol": underlying_symbol,
                         "side": side,
-                        "classification": classification,
+                        "selection_state": selection_state,
+                        "selection_rank": selection_rank,
+                        "state_reason": state_reason,
+                        "origin": origin,
+                        "eligibility": eligibility,
                         "confidence": confidence,
                         "signal_state_ref": signal_state_ref,
                         "lifecycle_state": lifecycle_state,
@@ -418,7 +438,7 @@ class SignalRepository(RepositoryBase):
                         "risk_hints": risk_hints,
                         "source_cycle_id": source_cycle_id,
                         "source_candidate_id": source_candidate_id,
-                        "source_bucket": source_bucket,
+                        "source_selection_state": source_selection_state,
                         "candidate_identity": candidate_identity,
                         "candidate": candidate,
                         "consumed_by_execution_attempt_id": consumed_by_execution_attempt_id,
@@ -432,7 +452,11 @@ class SignalRepository(RepositoryBase):
                 row.entity_key = entity_key
                 row.underlying_symbol = underlying_symbol
                 row.side = side
-                row.classification = classification
+                row.selection_state = selection_state
+                row.selection_rank = selection_rank
+                row.state_reason = state_reason
+                row.origin = origin
+                row.eligibility = eligibility
                 row.confidence = confidence
                 row.signal_state_ref = signal_state_ref
                 row.lifecycle_state = lifecycle_state
@@ -444,7 +468,7 @@ class SignalRepository(RepositoryBase):
                 row.risk_hints_json = dict(risk_hints)
                 row.source_cycle_id = source_cycle_id
                 row.source_candidate_id = source_candidate_id
-                row.source_bucket = source_bucket
+                row.source_selection_state = source_selection_state
                 row.candidate_identity = candidate_identity
                 row.candidate_json = dict(candidate)
                 row.consumed_by_execution_attempt_id = consumed_by_execution_attempt_id

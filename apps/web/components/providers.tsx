@@ -121,13 +121,13 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
     case "live.cycle.updated": {
       const label = readText(payload.live_label) ?? readText(payload.label) ?? "live";
       const symbol = readText(payload.symbol) ?? "candidate";
-      const bucket = readText(payload.bucket);
+      const targetState = readText(payload.target_state);
       const sessionId = readText(payload.session_id);
       const title =
-        bucket === "board"
-          ? `Live board updated for ${label}`
-          : bucket === "watchlist"
-            ? `Watchlist updated for ${label}`
+        targetState === "promotable"
+          ? `Promotable updated for ${label}`
+          : targetState === "monitor"
+            ? `Monitor updated for ${label}`
             : `Live workflow updated for ${label}`;
       return {
         id: `${event.topic}:${event.entity_id}`,

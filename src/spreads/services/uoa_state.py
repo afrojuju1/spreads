@@ -5,6 +5,7 @@ from typing import Any
 
 from spreads.db.decorators import with_storage
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
+from spreads.services.selection_terms import normalize_uoa_decision_state
 
 
 def _cycle_id_from_run_payload(run_payload: Mapping[str, Any]) -> str | None:
@@ -30,6 +31,62 @@ def _collector_cycle_payload(
     return None if cycle is None else dict(cycle)
 
 
+def _normalize_uoa_root(row: Mapping[str, Any]) -> dict[str, Any]:
+    payload = dict(row)
+    decision_state = normalize_uoa_decision_state(payload.get("decision_state"))
+    if decision_state is not None:
+        payload["decision_state"] = decision_state
+    return payload
+
+
+def _normalize_uoa_decisions_payload(payload: Any) -> dict[str, Any]:
+    source = {} if not isinstance(payload, Mapping) else dict(payload)
+    overview = (
+        {}
+        if not isinstance(source.get("overview"), Mapping)
+        else dict(source.get("overview"))
+    )
+    normalized_overview = {
+        **overview,
+        "monitor_count": overview.get("monitor_count", overview.get("watchlist_count")),
+        "promotable_count": overview.get(
+            "promotable_count", overview.get("board_count")
+        ),
+    }
+    roots = [
+        _normalize_uoa_root(item)
+        for item in list(source.get("roots") or [])
+        if isinstance(item, Mapping)
+    ]
+    top_monitor_roots = [
+        _normalize_uoa_root(item)
+        for item in list(
+            source.get("top_monitor_roots", source.get("top_watchlist_roots")) or []
+        )
+        if isinstance(item, Mapping)
+    ]
+    top_promotable_roots = [
+        _normalize_uoa_root(item)
+        for item in list(
+            source.get("top_promotable_roots", source.get("top_board_roots")) or []
+        )
+        if isinstance(item, Mapping)
+    ]
+    top_high_roots = [
+        _normalize_uoa_root(item)
+        for item in list(source.get("top_high_roots") or [])
+        if isinstance(item, Mapping)
+    ]
+    return {
+        **source,
+        "overview": normalized_overview,
+        "roots": roots,
+        "top_monitor_roots": top_monitor_roots,
+        "top_promotable_roots": top_promotable_roots,
+        "top_high_roots": top_high_roots,
+    }
+
+
 def _build_uoa_state_payload(
     *,
     run_record: Mapping[str, Any],
@@ -42,10 +99,17 @@ def _build_uoa_state_payload(
     if cycle_id is None:
         raise ValueError("Live collector run is missing cycle_id")
     cycle = _collector_cycle_payload(collector_store, cycle_id=cycle_id)
-    board_candidates = collector_store.list_cycle_candidates(cycle_id, bucket="board")
-    watchlist_candidates = collector_store.list_cycle_candidates(
-        cycle_id, bucket="watchlist"
-    )
+    opportunities = collector_store.list_cycle_candidates(cycle_id)
+    selection_counts = {
+        "promotable": 0,
+        "monitor": 0,
+    }
+    for row in opportunities:
+        if str(row.get("eligibility") or "live") != "live":
+            continue
+        selection_state = str(row.get("selection_state") or "")
+        if selection_state in selection_counts:
+            selection_counts[selection_state] += 1
     cycle_events = collector_store.list_cycle_events(cycle_id)
     return {
         "job_run": {
@@ -65,9 +129,11 @@ def _build_uoa_state_payload(
         "trade_capture": dict(run_payload.get("trade_capture") or {}),
         "uoa_summary": dict(run_payload.get("uoa_summary") or {}),
         "uoa_quote_summary": dict(run_payload.get("uoa_quote_summary") or {}),
-        "uoa_decisions": dict(run_payload.get("uoa_decisions") or {}),
-        "board_candidates": [dict(item) for item in board_candidates],
-        "watchlist_candidates": [dict(item) for item in watchlist_candidates],
+        "uoa_decisions": _normalize_uoa_decisions_payload(
+            run_payload.get("uoa_decisions")
+        ),
+        "opportunities": [dict(item) for item in opportunities],
+        "selection_counts": selection_counts,
         "cycle_events": [dict(item) for item in cycle_events],
     }
 

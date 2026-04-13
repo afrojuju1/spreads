@@ -58,9 +58,9 @@ def update_score_anchors(
     generated_at: str,
     cycle_id: str,
     planner_job_run_id: str | None,
-    board_candidates: list[dict[str, Any]],
+    promotable_candidates: list[dict[str, Any]],
 ) -> None:
-    for candidate in board_candidates:
+    for candidate in promotable_candidates:
         quality_score = candidate.get("quality_score")
         if quality_score is None:
             continue
@@ -87,7 +87,7 @@ def dispatch_cycle_alerts(
     generated_at: str,
     strategy_mode: str,
     profile: str,
-    board_candidates: list[dict[str, Any]],
+    promotable_candidates: list[dict[str, Any]],
     events: list[dict[str, Any]],
     uoa_decisions: dict[str, Any] | None = None,
     session_id: str | None = None,
@@ -111,7 +111,7 @@ def dispatch_cycle_alerts(
         *build_score_breakout_decisions(
             label=label,
             session_date=session_date,
-            board_candidates=board_candidates,
+            promotable_candidates=promotable_candidates,
             get_alert_state=get_state,
         ),
         *build_uoa_alert_decisions(
@@ -155,6 +155,6 @@ def dispatch_cycle_alerts(
         generated_at=generated_at,
         cycle_id=cycle_id,
         planner_job_run_id=planner_job_run_id,
-        board_candidates=board_candidates,
+        promotable_candidates=promotable_candidates,
     )
     return planned

@@ -5,16 +5,17 @@ from math import log1p
 from typing import Any
 
 from spreads.common import clamp
+from spreads.services.selection_terms import (
+    UOA_HIGH_DECISION_STATE,
+    UOA_MONITOR_DECISION_STATE,
+    UOA_PROMOTABLE_DECISION_STATE,
+    uoa_decision_counts,
+    uoa_decision_state_rank,
+)
 
-WATCHLIST_DECISION_FLOOR = 60.0
-BOARD_DECISION_FLOOR = 75.0
+MONITOR_DECISION_FLOOR = 60.0
+PROMOTABLE_DECISION_FLOOR = 75.0
 HIGH_DECISION_FLOOR = 80.0
-DECISION_STATE_RANK = {
-    "none": 0,
-    "watchlist": 1,
-    "board": 2,
-    "high": 3,
-}
 
 
 def _score_log_scale(value: float, *, ceiling: float) -> float:
@@ -48,18 +49,18 @@ def _ratio_component(ratio: float | None, *, max_points: float, full_scale_ratio
 
 def _decision_state(score: float) -> str:
     if score >= HIGH_DECISION_FLOOR:
-        return "high"
-    if score >= BOARD_DECISION_FLOOR:
-        return "board"
-    if score >= WATCHLIST_DECISION_FLOOR:
-        return "watchlist"
+        return UOA_HIGH_DECISION_STATE
+    if score >= PROMOTABLE_DECISION_FLOOR:
+        return UOA_PROMOTABLE_DECISION_STATE
+    if score >= MONITOR_DECISION_FLOOR:
+        return UOA_MONITOR_DECISION_STATE
     return "none"
 
 
 def _apply_state_cap(state: str, cap_state: str | None) -> tuple[str, str | None]:
     if cap_state is None:
         return state, None
-    if DECISION_STATE_RANK.get(state, 0) <= DECISION_STATE_RANK.get(cap_state, 0):
+    if uoa_decision_state_rank(state) <= uoa_decision_state_rank(cap_state):
         return state, None
     return cap_state, cap_state
 
@@ -101,11 +102,11 @@ def _quote_state_cap(summary: Mapping[str, Any] | None) -> tuple[str | None, lis
     liquid_contract_count = int(summary.get("liquid_contract_count") or 0)
     average_quality_score = float(summary.get("average_quality_score") or 0.0)
     if fresh_contract_count <= 0:
-        return "watchlist", ["quote_context_stale"]
+        return UOA_MONITOR_DECISION_STATE, ["quote_context_stale"]
     if liquid_contract_count <= 0:
-        return "watchlist", ["quote_liquidity_unconfirmed"]
+        return UOA_MONITOR_DECISION_STATE, ["quote_liquidity_unconfirmed"]
     if quality_state == "weak" or average_quality_score < 0.45:
-        return "watchlist", ["quote_quality_weak"]
+        return UOA_MONITOR_DECISION_STATE, ["quote_quality_weak"]
     if quality_state == "strong":
         return None, ["quote_quality_strong"]
     if quality_state == "acceptable":
@@ -430,12 +431,13 @@ def build_uoa_root_decisions(
             str(item["underlying_symbol"]),
         )
     )
+    counts = uoa_decision_counts(decisions)
     overview = {
         "decision_status": "empty" if not decisions else "active",
         "root_count": len(decisions),
-        "watchlist_count": sum(1 for item in decisions if item["decision_state"] == "watchlist"),
-        "board_count": sum(1 for item in decisions if item["decision_state"] == "board"),
-        "high_count": sum(1 for item in decisions if item["decision_state"] == "high"),
+        "monitor_count": counts[UOA_MONITOR_DECISION_STATE],
+        "promotable_count": counts[UOA_PROMOTABLE_DECISION_STATE],
+        "high_count": counts[UOA_HIGH_DECISION_STATE],
         "top_decision_state": None if not decisions else decisions[0]["decision_state"],
         "top_decision_symbol": None if not decisions else decisions[0]["underlying_symbol"],
         "top_decision_score": None if not decisions else decisions[0]["decision_score"],
@@ -443,7 +445,25 @@ def build_uoa_root_decisions(
     return {
         "overview": overview,
         "roots": decisions,
-        "top_watchlist_roots": [dict(item) for item in decisions if item["decision_state"] in {"watchlist", "board", "high"}][:5],
-        "top_board_roots": [dict(item) for item in decisions if item["decision_state"] in {"board", "high"}][:5],
-        "top_high_roots": [dict(item) for item in decisions if item["decision_state"] == "high"][:5],
+        "top_monitor_roots": [
+            dict(item)
+            for item in decisions
+            if item["decision_state"]
+            in {
+                UOA_MONITOR_DECISION_STATE,
+                UOA_PROMOTABLE_DECISION_STATE,
+                UOA_HIGH_DECISION_STATE,
+            }
+        ][:5],
+        "top_promotable_roots": [
+            dict(item)
+            for item in decisions
+            if item["decision_state"]
+            in {UOA_PROMOTABLE_DECISION_STATE, UOA_HIGH_DECISION_STATE}
+        ][:5],
+        "top_high_roots": [
+            dict(item)
+            for item in decisions
+            if item["decision_state"] == UOA_HIGH_DECISION_STATE
+        ][:5],
     }

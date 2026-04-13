@@ -14,11 +14,11 @@ from spreads.integrations.alpaca.client import AlpacaClient, infer_trading_base_
 from spreads.integrations.calendar_events import build_calendar_event_resolver
 from spreads.integrations.greeks import build_local_greeks_provider
 from spreads.runtime.config import default_database_url
-from spreads.services.candidate_policy import (
-    candidate_has_intraday_setup_context,
-    candidate_requires_favorable_setup,
-)
 from spreads.services.execution import submit_auto_session_execution
+from spreads.services.live_selection import (
+    read_previous_selection,
+    select_live_opportunities,
+)
 from spreads.services.live_collector_health import (
     build_quote_capture_summary,
     build_trade_capture_summary,
@@ -60,16 +60,7 @@ from spreads.storage.event_repository import EventRepository
 from spreads.storage.run_history_repository import RunHistoryRepository
 from spreads.storage.signal_repository import SignalRepository
 
-BOARD_SCORE_FLOOR = 65.0
-BOARD_STRONG_SCORE = 82.0
-BOARD_WINNER_GAP = 6.0
-BOARD_SIDE_SWITCH_MARGIN = 10.0
-BOARD_REPLACEMENT_MARGIN = 5.0
-BOARD_CONFIRMATION_CYCLES = 2
-BOARD_HOLD_TOLERANCE = 3.0
-WATCHLIST_SCORE_FLOOR = 55.0
 WATCHLIST_PER_STRATEGY = 3
-WATCHLIST_PER_SYMBOL = 2
 WATCHLIST_TOP = 12
 WATCHLIST_QUOTE_CAPTURE_TOP = 6
 
@@ -83,7 +74,7 @@ class LiveTickContext:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Poll the options scanner intraday and persist live idea cycles, board/watchlist state, and quote events to Postgres."
+        description="Poll the options scanner intraday and persist live opportunity cycles, selection state, and quote events to Postgres."
     )
     parser.add_argument(
         "--universe",
@@ -116,13 +107,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--top",
         type=int,
         default=10,
-        help="Maximum board entries to keep per cycle. Default: 10",
+        help="Maximum promotable opportunities to keep per cycle. Default: 10",
     )
     parser.add_argument(
         "--per-symbol-top",
         type=int,
         default=1,
-        help="Maximum spreads to keep per symbol before board ranking. Default: 1",
+        help="Maximum spreads to keep per symbol before live ranking. Default: 1",
     )
     parser.add_argument(
         "--interval-seconds",
@@ -180,14 +171,6 @@ def build_collection_args(
     for key, value in (overrides or {}).items():
         setattr(args, key, value)
     return args
-
-
-def _board_candidate_is_eligible(candidate: dict[str, Any]) -> bool:
-    if not candidate_requires_favorable_setup(candidate):
-        return True
-    return str(
-        candidate.get("setup_status") or ""
-    ).lower() == "favorable" and candidate_has_intraday_setup_context(candidate)
 
 
 def collection_window_is_open(
@@ -249,7 +232,7 @@ def run_universe_cycle(
     )
     scan_results: list[SymbolScanResult] = []
     failures: list[UniverseScanFailure] = []
-    board_candidates: list[SpreadCandidate] = []
+    selected_candidates: list[SpreadCandidate] = []
 
     for symbol in symbols:
         strategy_results, symbol_failures = scan_symbol_across_strategies(
@@ -264,15 +247,15 @@ def run_universe_cycle(
         if not strategy_results:
             continue
         scan_results.extend(strategy_results)
-        symbol_board_candidates = merge_strategy_candidates(
+        symbol_selected_candidates = merge_strategy_candidates(
             strategy_results,
             per_strategy_top=scanner_args.per_symbol_top,
         )[: scanner_args.per_symbol_top]
-        board_candidates.extend(symbol_board_candidates)
+        selected_candidates.extend(symbol_selected_candidates)
 
-    board_candidates = sort_candidates_for_display(board_candidates)
-    board_candidates = board_candidates[: scanner_args.top]
-    return symbols, universe_label, scan_results, failures, board_candidates
+    selected_candidates = sort_candidates_for_display(selected_candidates)
+    selected_candidates = selected_candidates[: scanner_args.top]
+    return symbols, universe_label, scan_results, failures, selected_candidates
 
 
 def build_cycle_id(label: str) -> str:
@@ -286,37 +269,6 @@ def serialize_candidate(
     payload = asdict(candidate)
     payload["run_id"] = run_id
     return payload
-
-
-def read_previous_cycle_state(
-    collector_store: CollectorRepository,
-    label: str,
-) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    latest_cycle = collector_store.get_latest_cycle(label)
-    if latest_cycle is None:
-        return {}, {}
-
-    board = collector_store.list_cycle_candidates(
-        latest_cycle["cycle_id"], bucket="board"
-    )
-    previous: dict[str, dict[str, Any]] = {}
-    for candidate in board:
-        payload = dict(candidate["candidate"])
-        symbol = payload.get("underlying_symbol")
-        if symbol:
-            previous[str(symbol)] = payload
-
-    raw_state = latest_cycle["selection_state"] or {}
-    selection_state = {
-        str(symbol): state
-        for symbol, state in raw_state.items()
-        if isinstance(symbol, str) and isinstance(state, dict)
-    }
-    return previous, selection_state
-
-
-def candidate_identity(candidate: dict[str, Any]) -> str:
-    return f"{candidate['strategy']}|{candidate['short_symbol']}|{candidate['long_symbol']}"
 
 
 def build_symbol_strategy_candidates(
@@ -340,332 +292,6 @@ def build_symbol_strategy_candidates(
             key=lambda candidate: candidate["quality_score"], reverse=True
         )
     return grouped
-
-
-def evaluate_pending_candidate(
-    *,
-    symbol: str,
-    winner: dict[str, Any],
-    previous_state: dict[str, Any],
-) -> tuple[bool, dict[str, Any]]:
-    winner_id = candidate_identity(winner)
-    pending_id = previous_state.get("pending_identity")
-    pending_count = int(previous_state.get("pending_count", 0))
-    if pending_id == winner_id:
-        pending_count += 1
-    else:
-        pending_count = 1
-    state = {
-        "pending_identity": winner_id,
-        "pending_strategy": winner["strategy"],
-        "pending_count": pending_count,
-    }
-    return pending_count >= BOARD_CONFIRMATION_CYCLES, state
-
-
-def select_board_candidates(
-    *,
-    symbol_candidates: dict[str, list[dict[str, Any]]],
-    previous_board: dict[str, dict[str, Any]],
-    previous_state: dict[str, dict[str, Any]],
-    top: int,
-) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
-    selected: list[dict[str, Any]] = []
-    next_state: dict[str, dict[str, Any]] = {}
-
-    for symbol in sorted(symbol_candidates):
-        options = sorted(
-            symbol_candidates.get(symbol, []),
-            key=lambda candidate: candidate["quality_score"],
-            reverse=True,
-        )
-        viable = [
-            candidate
-            for candidate in options
-            if candidate["quality_score"] >= BOARD_SCORE_FLOOR
-            and _board_candidate_is_eligible(candidate)
-        ]
-        winner = viable[0] if viable else None
-        runner_up = viable[1] if len(viable) > 1 else None
-        winner_gap = None
-        if winner is not None and runner_up is not None:
-            winner_gap = winner["quality_score"] - runner_up["quality_score"]
-
-        previous = previous_board.get(symbol)
-        state = previous_state.get(symbol, {})
-
-        accepted: dict[str, Any] | None = None
-        state_update: dict[str, Any] = {}
-
-        if previous is None:
-            if winner is not None:
-                if (
-                    winner["quality_score"] >= BOARD_STRONG_SCORE
-                    or runner_up is None
-                    or (winner_gap is not None and winner_gap >= BOARD_WINNER_GAP)
-                ):
-                    accepted = winner
-                else:
-                    confirmed, state_update = evaluate_pending_candidate(
-                        symbol=symbol,
-                        winner=winner,
-                        previous_state=state,
-                    )
-                    if confirmed:
-                        accepted = winner
-                        state_update = {}
-            if accepted is not None:
-                state_update.update(
-                    {
-                        "accepted_identity": candidate_identity(accepted),
-                        "accepted_strategy": accepted["strategy"],
-                        "accepted_score": accepted["quality_score"],
-                    }
-                )
-                selected.append(accepted)
-            next_state[symbol] = state_update
-            continue
-
-        previous_id = candidate_identity(previous)
-        previous_match = next(
-            (
-                candidate
-                for candidate in options
-                if candidate_identity(candidate) == previous_id
-            ),
-            None,
-        )
-        previous_same_side = next(
-            (
-                candidate
-                for candidate in options
-                if candidate["strategy"] == previous["strategy"]
-            ),
-            None,
-        )
-        current_anchor = previous_match or previous_same_side
-        if current_anchor is not None and not _board_candidate_is_eligible(
-            current_anchor
-        ):
-            current_anchor = None
-
-        if (
-            current_anchor is not None
-            and current_anchor["quality_score"]
-            >= BOARD_SCORE_FLOOR - BOARD_HOLD_TOLERANCE
-        ):
-            accepted = current_anchor
-        elif winner is not None:
-            if winner["strategy"] == previous["strategy"]:
-                accepted = winner
-            else:
-                confirmed, state_update = evaluate_pending_candidate(
-                    symbol=symbol,
-                    winner=winner,
-                    previous_state=state,
-                )
-                if confirmed:
-                    accepted = winner
-                    state_update = {}
-        else:
-            accepted = None
-
-        if winner is not None and accepted is not None:
-            accepted_id = candidate_identity(accepted)
-            winner_id = candidate_identity(winner)
-            if winner_id != accepted_id:
-                same_side = winner["strategy"] == accepted["strategy"]
-                score_gap = winner["quality_score"] - accepted["quality_score"]
-                if same_side:
-                    if score_gap >= BOARD_REPLACEMENT_MARGIN:
-                        confirmed, state_update = evaluate_pending_candidate(
-                            symbol=symbol,
-                            winner=winner,
-                            previous_state=state,
-                        )
-                        if confirmed:
-                            accepted = winner
-                            state_update = {}
-                    else:
-                        accepted = accepted
-                else:
-                    if score_gap >= BOARD_SIDE_SWITCH_MARGIN and (
-                        winner_gap is None or winner_gap >= BOARD_WINNER_GAP
-                    ):
-                        confirmed, state_update = evaluate_pending_candidate(
-                            symbol=symbol,
-                            winner=winner,
-                            previous_state=state,
-                        )
-                        if confirmed:
-                            accepted = winner
-                            state_update = {}
-                    else:
-                        accepted = accepted
-
-        if accepted is not None:
-            accepted_score = accepted["quality_score"]
-            if accepted_score < BOARD_SCORE_FLOOR:
-                accepted = None
-            else:
-                state_update.update(
-                    {
-                        "accepted_identity": candidate_identity(accepted),
-                        "accepted_strategy": accepted["strategy"],
-                        "accepted_score": accepted_score,
-                    }
-                )
-                if (
-                    state_update.get("pending_identity")
-                    == state_update["accepted_identity"]
-                ):
-                    state_update.pop("pending_identity", None)
-                    state_update.pop("pending_strategy", None)
-                    state_update.pop("pending_count", None)
-                selected.append(accepted)
-
-        next_state[symbol] = state_update
-
-    selected.sort(
-        key=lambda candidate: (
-            candidate["quality_score"],
-            candidate["return_on_risk"],
-            candidate["midpoint_credit"],
-            min(candidate["short_open_interest"], candidate["long_open_interest"]),
-        ),
-        reverse=True,
-    )
-    return selected[:top], next_state
-
-
-def select_watchlist_candidates(
-    *,
-    symbol_candidates: dict[str, list[dict[str, Any]]],
-    board_candidates: list[dict[str, Any]],
-    top: int,
-) -> list[dict[str, Any]]:
-    accepted_ids = {candidate_identity(candidate) for candidate in board_candidates}
-    watchlist: list[dict[str, Any]] = []
-
-    for symbol in sorted(symbol_candidates):
-        kept = 0
-        for candidate in sorted(
-            symbol_candidates.get(symbol, []),
-            key=lambda item: item["quality_score"],
-            reverse=True,
-        ):
-            if candidate_identity(candidate) in accepted_ids:
-                continue
-            if candidate["quality_score"] < WATCHLIST_SCORE_FLOOR:
-                continue
-            watchlist.append(candidate)
-            kept += 1
-            if kept >= WATCHLIST_PER_SYMBOL:
-                break
-
-    watchlist.sort(
-        key=lambda candidate: (
-            candidate["quality_score"],
-            candidate["return_on_risk"],
-            candidate["midpoint_credit"],
-            min(candidate["short_open_interest"], candidate["long_open_interest"]),
-        ),
-        reverse=True,
-    )
-    return watchlist[:top]
-
-
-def summarize_candidate(candidate: dict[str, Any]) -> str:
-    return (
-        f"{candidate['strategy']} {candidate['short_strike']:.2f}/{candidate['long_strike']:.2f} "
-        f"score {candidate['quality_score']:.1f}"
-    )
-
-
-def build_events(
-    *,
-    label: str,
-    cycle_id: str,
-    generated_at: str,
-    previous: dict[str, dict[str, Any]],
-    current: dict[str, dict[str, Any]],
-    score_delta_threshold: float = 5.0,
-) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    all_symbols = sorted(set(previous) | set(current))
-    for symbol in all_symbols:
-        prev = previous.get(symbol)
-        curr = current.get(symbol)
-        if prev is None and curr is not None:
-            message = f"{symbol} new idea: {summarize_candidate(curr)}"
-            events.append(
-                {
-                    "generated_at": generated_at,
-                    "cycle_id": cycle_id,
-                    "label": label,
-                    "symbol": symbol,
-                    "event_type": "new",
-                    "message": message,
-                    "previous": None,
-                    "current": curr,
-                }
-            )
-            continue
-        if prev is not None and curr is None:
-            message = f"{symbol} dropped from board: {summarize_candidate(prev)}"
-            events.append(
-                {
-                    "generated_at": generated_at,
-                    "cycle_id": cycle_id,
-                    "label": label,
-                    "symbol": symbol,
-                    "event_type": "dropped",
-                    "message": message,
-                    "previous": prev,
-                    "current": None,
-                }
-            )
-            continue
-        if prev is None or curr is None:
-            continue
-
-        previous_identity = (
-            prev["strategy"],
-            prev["short_symbol"],
-            prev["long_symbol"],
-        )
-        current_identity = (curr["strategy"], curr["short_symbol"], curr["long_symbol"])
-        if prev["strategy"] != curr["strategy"]:
-            message = f"{symbol} side flipped: {summarize_candidate(prev)} -> {summarize_candidate(curr)}"
-            event_type = "side_flip"
-        elif previous_identity != current_identity:
-            message = f"{symbol} idea replaced: {summarize_candidate(prev)} -> {summarize_candidate(curr)}"
-            event_type = "replaced"
-        else:
-            score_change = curr["quality_score"] - prev["quality_score"]
-            if abs(score_change) < score_delta_threshold:
-                continue
-            direction = "up" if score_change > 0 else "down"
-            message = (
-                f"{symbol} score {direction}: "
-                f"{prev['quality_score']:.1f} -> {curr['quality_score']:.1f} "
-                f"for {summarize_candidate(curr)}"
-            )
-            event_type = f"score_{direction}"
-
-        events.append(
-            {
-                "generated_at": generated_at,
-                "cycle_id": cycle_id,
-                "label": label,
-                "symbol": symbol,
-                "event_type": event_type,
-                "message": message,
-                "previous": prev,
-                "current": curr,
-            }
-        )
-    return events
 
 
 def collect_latest_quote_records(
@@ -728,8 +354,8 @@ def print_cycle_summary(
     *,
     generated_at: str,
     label: str,
-    board_candidates: list[dict[str, Any]],
-    watchlist_candidates: list[dict[str, Any]],
+    promotable_candidates: list[dict[str, Any]],
+    monitor_candidates: list[dict[str, Any]],
     events: list[dict[str, Any]],
     alerts: list[dict[str, Any]],
     failures: list[UniverseScanFailure],
@@ -740,8 +366,8 @@ def print_cycle_summary(
     auto_execution: dict[str, Any] | None,
 ) -> None:
     print(f"[{generated_at}] {label}")
-    print(f"Board entries: {len(board_candidates)}")
-    print(f"Watchlist entries: {len(watchlist_candidates)}")
+    print(f"Promotable opportunities: {len(promotable_candidates)}")
+    print(f"Monitor opportunities: {len(monitor_candidates)}")
     print(f"Events: {len(events)}")
     print(f"Alerts: {len(alerts)}")
     print(f"Quote events saved: {quote_event_count}")
@@ -758,17 +384,17 @@ def print_cycle_summary(
     if int(uoa_decision_overview.get("root_count") or 0) > 0:
         print(
             "UOA decisions: "
-            f"{int(uoa_decision_overview.get('watchlist_count') or 0)} watchlist / "
-            f"{int(uoa_decision_overview.get('board_count') or 0)} board / "
+            f"{int(uoa_decision_overview.get('monitor_count') or 0)} monitor / "
+            f"{int(uoa_decision_overview.get('promotable_count') or 0)} promotable / "
             f"{int(uoa_decision_overview.get('high_count') or 0)} high"
         )
     if auto_execution is not None:
         print(f"Auto execution: {auto_execution.get('message')}")
     if failures:
         print(f"Failures: {len(failures)}")
-    if board_candidates:
-        print("Board:")
-        for index, candidate in enumerate(board_candidates, start=1):
+    if promotable_candidates:
+        print("Promotable:")
+        for index, candidate in enumerate(promotable_candidates, start=1):
             print(
                 f"- {index}. {candidate['underlying_symbol']} "
                 f"[{candidate['strategy']}] "
@@ -976,11 +602,11 @@ def _record_uoa_decision_event(
         "label": label,
         "profile": profile,
         "overview": overview,
-        "top_watchlist_roots": [
-            dict(item) for item in (decisions.get("top_watchlist_roots") or [])[:3]
+        "top_monitor_roots": [
+            dict(item) for item in (decisions.get("top_monitor_roots") or [])[:3]
         ],
-        "top_board_roots": [
-            dict(item) for item in (decisions.get("top_board_roots") or [])[:3]
+        "top_promotable_roots": [
+            dict(item) for item in (decisions.get("top_promotable_roots") or [])[:3]
         ],
         "top_high_roots": [
             dict(item) for item in (decisions.get("top_high_roots") or [])[:3]
@@ -1053,22 +679,23 @@ def _run_collection_cycle(
         run_ids,
         max_per_strategy=WATCHLIST_PER_STRATEGY,
     )
-    previous_map, previous_selection_state = read_previous_cycle_state(
+    previous_promotable, previous_selection_memory = read_previous_selection(
         collector_store, label
     )
-    board_payloads, selection_state = select_board_candidates(
-        symbol_candidates=symbol_strategy_candidates,
-        previous_board=previous_map,
-        previous_state=previous_selection_state,
-        top=args.top,
-    )
-    watchlist_payloads = select_watchlist_candidates(
-        symbol_candidates=symbol_strategy_candidates,
-        board_candidates=board_payloads,
-        top=WATCHLIST_TOP,
-    )
     recovered_payloads: list[dict[str, Any]] = []
-    if args.profile == "0dte" and not board_payloads and not watchlist_payloads:
+    selection = select_live_opportunities(
+        label=label,
+        cycle_id=cycle_id,
+        generated_at=generated_at,
+        symbol_candidates=symbol_strategy_candidates,
+        previous_promotable=previous_promotable,
+        previous_selection_memory=previous_selection_memory,
+        top_promotable=args.top,
+        top_monitor=WATCHLIST_TOP,
+    )
+    promotable_payloads = list(selection["promotable_candidates"])
+    monitor_payloads = list(selection["monitor_candidates"])
+    if args.profile == "0dte" and not promotable_payloads and not monitor_payloads:
         recovered_payloads = recover_session_candidates_from_history(
             history_store=history_store,
             session_date=session_date,
@@ -1077,14 +704,22 @@ def _run_collection_cycle(
             top=WATCHLIST_TOP,
             max_per_strategy=WATCHLIST_PER_STRATEGY,
         )
-    current_map = {payload["underlying_symbol"]: payload for payload in board_payloads}
-    events = build_events(
-        label=label,
-        cycle_id=cycle_id,
-        generated_at=generated_at,
-        previous=previous_map,
-        current=current_map,
-    )
+        selection = select_live_opportunities(
+            label=label,
+            cycle_id=cycle_id,
+            generated_at=generated_at,
+            symbol_candidates=symbol_strategy_candidates,
+            previous_promotable=previous_promotable,
+            previous_selection_memory=previous_selection_memory,
+            top_promotable=args.top,
+            top_monitor=WATCHLIST_TOP,
+            recovered_candidates=recovered_payloads,
+        )
+        promotable_payloads = list(selection["promotable_candidates"])
+        monitor_payloads = list(selection["monitor_candidates"])
+    opportunities = list(selection["opportunities"])
+    selection_memory = dict(selection["selection_memory"])
+    events = list(selection["events"])
     collector_store.save_cycle(
         cycle_id=cycle_id,
         label=label,
@@ -1097,10 +732,8 @@ def _run_collection_cycle(
         greeks_source=args.greeks_source,
         symbols=symbols,
         failures=[asdict(failure) for failure in failures],
-        selection_state=selection_state,
-        board_candidates=board_payloads,
-        watchlist_candidates=watchlist_payloads,
-        recovered_candidates=recovered_payloads,
+        selection_memory=selection_memory,
+        opportunities=opportunities,
         events=events,
     )
     signal_sync = {
@@ -1120,9 +753,9 @@ def _run_collection_cycle(
             profile=args.profile,
             symbols=symbols,
             symbol_candidates=symbol_strategy_candidates,
-            selection_state=selection_state,
+            selection_memory=selection_memory,
             failures=[asdict(failure) for failure in failures],
-            persisted_candidates=collector_store.list_cycle_candidates(cycle_id),
+            persisted_opportunities=collector_store.list_cycle_candidates(cycle_id),
         )
     except Exception as exc:
         print(f"Signal-state sync unavailable: {exc}")
@@ -1140,7 +773,7 @@ def _run_collection_cycle(
     websocket_trade_records: list[dict[str, Any]] = []
     websocket_quote_error: str | None = None
     websocket_trade_error: str | None = None
-    quote_candidates = board_payloads + watchlist_payloads[:WATCHLIST_QUOTE_CAPTURE_TOP]
+    quote_candidates = promotable_payloads + monitor_payloads[:WATCHLIST_QUOTE_CAPTURE_TOP]
     contract_metadata_by_symbol = build_quote_symbol_metadata(quote_candidates)
     expected_quote_symbols = list(contract_metadata_by_symbol.keys())
     expected_trade_symbols = list(build_trade_symbol_metadata(quote_candidates).keys())
@@ -1436,7 +1069,7 @@ def _run_collection_cycle(
             generated_at=generated_at,
             strategy_mode=args.strategy,
             profile=args.profile,
-            board_candidates=board_payloads,
+            promotable_candidates=promotable_payloads,
             events=events,
             uoa_decisions=uoa_decisions,
             session_id=None if tick_context is None else tick_context.session_id,
@@ -1450,8 +1083,8 @@ def _run_collection_cycle(
         print_cycle_summary(
             generated_at=generated_at,
             label=label,
-            board_candidates=board_payloads,
-            watchlist_candidates=watchlist_payloads,
+            promotable_candidates=promotable_payloads,
+            monitor_candidates=monitor_payloads,
             events=events,
             alerts=alerts,
             failures=failures,
@@ -1476,8 +1109,8 @@ def _run_collection_cycle(
         "websocket_trade_events_saved": websocket_trade_event_count,
         "expected_trade_symbols": expected_trade_symbols,
         "websocket_trade_error": websocket_trade_error,
-        "board_candidate_count": len(board_payloads),
-        "watchlist_candidate_count": len(watchlist_payloads),
+        "promotable_opportunity_count": len(promotable_payloads),
+        "monitor_opportunity_count": len(monitor_payloads),
         "signal_states_upserted": int(signal_sync["signal_states_upserted"]),
         "signal_transitions_recorded": int(signal_sync["signal_transitions_recorded"]),
         "opportunities_upserted": int(signal_sync["opportunities_upserted"]),
@@ -1606,8 +1239,8 @@ def run_collection_tick(
         "trade_events_saved": cycle_result["trade_events_saved"],
         "websocket_trade_events_saved": cycle_result["websocket_trade_events_saved"],
         "expected_trade_symbols": list(cycle_result["expected_trade_symbols"]),
-        "board_candidate_count": cycle_result["board_candidate_count"],
-        "watchlist_candidate_count": cycle_result["watchlist_candidate_count"],
+        "promotable_opportunity_count": cycle_result["promotable_opportunity_count"],
+        "monitor_opportunity_count": cycle_result["monitor_opportunity_count"],
         "signal_states_upserted": cycle_result["signal_states_upserted"],
         "signal_transitions_recorded": cycle_result["signal_transitions_recorded"],
         "opportunities_upserted": cycle_result["opportunities_upserted"],

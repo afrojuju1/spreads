@@ -743,7 +743,7 @@ export function CandidateOperatorActions({
     mutationFn: (payload: {
       action: "create_alert" | "promote_live";
       live_label?: string;
-      bucket?: "board" | "watchlist";
+      target_state?: "promotable" | "monitor";
       strategy: string;
       short_symbol: string;
       long_symbol: string;
@@ -765,12 +765,15 @@ export function CandidateOperatorActions({
     return null;
   }
 
-  const runAction = (action: "create_alert" | "promote_live", bucket?: "board" | "watchlist") => {
-    const actionKey = bucket ? `${action}:${bucket}` : action;
+  const runAction = (
+    action: "create_alert" | "promote_live",
+    targetState?: "promotable" | "monitor",
+  ) => {
+    const actionKey = targetState ? `${action}:${targetState}` : action;
     setPendingAction(actionKey);
     actionMutation.mutate({
       action,
-      bucket,
+      target_state: targetState,
       live_label: resolvedLiveLabel || undefined,
       strategy: selectedCandidate.strategy,
       short_symbol: selectedCandidate.short_symbol,
@@ -824,20 +827,20 @@ export function CandidateOperatorActions({
           variant="outline"
           size="sm"
           disabled={actionMutation.isPending || noLiveWorkflow}
-          onClick={() => runAction("promote_live", "watchlist")}
+          onClick={() => runAction("promote_live", "monitor")}
         >
-          {pendingAction === "promote_live:watchlist" ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
-          Add to watchlist
+          {pendingAction === "promote_live:monitor" ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
+          Mark monitor
         </Button>
         <Button
           type="button"
           variant="secondary"
           size="sm"
           disabled={actionMutation.isPending || noLiveWorkflow}
-          onClick={() => runAction("promote_live", "board")}
+          onClick={() => runAction("promote_live", "promotable")}
         >
-          {pendingAction === "promote_live:board" ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
-          Promote to board
+          {pendingAction === "promote_live:promotable" ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
+          Mark promotable
         </Button>
       </div>
       {noLiveWorkflow ? (

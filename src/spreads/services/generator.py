@@ -179,7 +179,7 @@ def summarize_candidate(candidate: SpreadCandidate) -> dict[str, Any]:
     payload = asdict(candidate)
     payload["setup_reasons"] = list(candidate.setup_reasons)
     payload["calendar_reasons"] = list(candidate.calendar_reasons)
-    payload["board_notes"] = list(candidate.board_notes)
+    payload["selection_notes"] = list(candidate.selection_notes)
     payload["data_reasons"] = list(candidate.data_reasons)
     payload["calendar_sources"] = list(candidate.calendar_sources)
     return payload

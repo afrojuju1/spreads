@@ -88,7 +88,7 @@ def _compact_single_analysis_result(
         "label": result["label"],
         "cycle_count": summary["cycle_count"],
         "idea_count": outcomes["idea_count"],
-        "counts_by_bucket": outcomes["counts_by_bucket"],
+        "counts_by_selection_state": outcomes["counts_by_selection_state"],
         "run_count": summary["run_overview"]["run_count"],
         "quote_event_count": summary["quote_overview"]["quote_event_count"],
         "event_count": summary["event_overview"]["event_count"],
@@ -121,7 +121,7 @@ def compact_analysis_result(
 
 def _compact_single_post_market_result(result: dict[str, Any]) -> dict[str, Any]:
     diagnostics = result["diagnostics"]
-    bucket_performance = diagnostics["bucket_performance"]
+    selection_state_performance = diagnostics["selection_state_performance"]
     return {
         "analysis_run_id": result["analysis_run_id"],
         "session_date": result["session_date"],
@@ -131,8 +131,8 @@ def _compact_single_post_market_result(result: dict[str, Any]) -> dict[str, Any]
         "strength_count": len(diagnostics["strengths"]),
         "problem_count": len(diagnostics["problems"]),
         "recommendation_count": len(result["recommendations"]),
-        "board_count": bucket_performance["board"]["count"],
-        "watchlist_count": bucket_performance["watchlist"]["count"],
+        "promotable_count": selection_state_performance["promotable"]["count"],
+        "monitor_count": selection_state_performance["monitor"]["count"],
     }
 
 
@@ -381,8 +381,10 @@ def _build_live_collector_log_payload(
         "cycle_id": None if not cycle_ids else cycle_ids[0],
         "worker_name": run_payload.get("worker_name"),
         "duration_seconds": _run_duration_seconds(run_payload),
-        "board_candidate_count": int(result.get("board_candidate_count") or 0),
-        "watchlist_candidate_count": int(result.get("watchlist_candidate_count") or 0),
+        "promotable_opportunity_count": int(
+            result.get("promotable_opportunity_count") or 0
+        ),
+        "monitor_opportunity_count": int(result.get("monitor_opportunity_count") or 0),
         "quote_capture": quote_capture,
         "trade_capture": trade_capture,
         "uoa_overview": dict(uoa_summary.get("overview") or {}),
@@ -390,7 +392,9 @@ def _build_live_collector_log_payload(
         "uoa_top_roots": [dict(item) for item in (uoa_summary.get("top_roots") or [])[:3]],
         "uoa_top_contracts": [dict(item) for item in (uoa_summary.get("top_contracts") or [])[:3]],
         "uoa_decision_overview": dict(uoa_decisions.get("overview") or {}),
-        "uoa_board_roots": [dict(item) for item in (uoa_decisions.get("top_board_roots") or [])[:3]],
+        "uoa_promotable_roots": [
+            dict(item) for item in (uoa_decisions.get("top_promotable_roots") or [])[:3]
+        ],
         "uoa_high_roots": [dict(item) for item in (uoa_decisions.get("top_high_roots") or [])[:3]],
         "consecutive_websocket_zero_slots": consecutive_websocket_zero_slots,
         "slot_lag_slots": slot_lag_slots,

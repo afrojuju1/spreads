@@ -21,7 +21,7 @@ from spreads.storage.factory import build_job_repository
 
 DEFAULT_AUTO_EXECUTION_POLICY = {
     "enabled": True,
-    "mode": "top_board",
+    "mode": "top_promotable",
     "quantity": 1,
     "pricing_mode": "adaptive_credit",
     "min_credit_retention_pct": 0.95,

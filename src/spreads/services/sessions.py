@@ -116,6 +116,27 @@ def _session_risk_policy(latest_run: Mapping[str, Any] | None) -> dict[str, Any]
     return normalize_risk_policy(raw_policy if isinstance(raw_policy, dict) else None)
 
 
+def _cycle_opportunity_payloads(
+    collector_store: Any,
+    cycle_id: str,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    opportunities = [
+        dict(candidate)
+        for candidate in collector_store.list_cycle_candidates(cycle_id)
+    ]
+    live_counts = {
+        "promotable": 0,
+        "monitor": 0,
+    }
+    for row in opportunities:
+        if str(row.get("eligibility") or "live") != "live":
+            continue
+        selection_state = str(row.get("selection_state") or "")
+        if selection_state in live_counts:
+            live_counts[selection_state] += 1
+    return opportunities, live_counts
+
+
 def _reconciliation_snapshot(portfolio: Mapping[str, Any]) -> dict[str, Any]:
     positions = portfolio.get("positions")
     if not isinstance(positions, list) or not positions:
@@ -325,8 +346,8 @@ def list_existing_sessions(
                 "recovery_quote_events_saved": 0
                 if latest_run is None
                 else int((latest_run.get("quote_capture") or {}).get("recovery_quote_events_saved") or 0),
-                "board_count": int(cycle_counts.get("board") or 0),
-                "watchlist_count": int(cycle_counts.get("watchlist") or 0),
+                "promotable_count": int(cycle_counts.get("promotable") or 0),
+                "monitor_count": int(cycle_counts.get("monitor") or 0),
                 "alert_count": int(alert_counts.get((str(row["session_date"]), str(row["label"]))) or 0),
                 "updated_at": updated_at,
             }
@@ -377,21 +398,16 @@ def get_session_detail(
     if latest_run is None and latest_cycle is None:
         raise ValueError(f"Unknown session_id: {session_id}")
     current_cycle = None
-    board_candidates: list[dict[str, Any]] = []
-    watchlist_candidates: list[dict[str, Any]] = []
+    opportunities: list[dict[str, Any]] = []
+    selection_counts = {"promotable": 0, "monitor": 0}
     if latest_cycle is not None:
-        board_candidates = [
-            dict(candidate)
-            for candidate in collector_store.list_cycle_candidates(latest_cycle["cycle_id"], bucket="board")
-        ]
-        watchlist_candidates = [
-            dict(candidate)
-            for candidate in collector_store.list_cycle_candidates(latest_cycle["cycle_id"], bucket="watchlist")
-        ]
+        opportunities, selection_counts = _cycle_opportunity_payloads(
+            collector_store, str(latest_cycle["cycle_id"])
+        )
         current_cycle = {
             **latest_cycle,
-            "board_candidates": board_candidates,
-            "watchlist_candidates": watchlist_candidates,
+            "opportunities": opportunities,
+            "selection_counts": selection_counts,
         }
 
     alerts = [
@@ -481,8 +497,8 @@ def get_session_detail(
         "reconciliation_note": reconciliation_snapshot.get("note"),
         "latest_slot": latest_run,
         "current_cycle": current_cycle,
-        "board_candidates": board_candidates,
-        "watchlist_candidates": watchlist_candidates,
+        "opportunities": opportunities,
+        "selection_counts": selection_counts,
         "slot_runs": slot_runs,
         "alerts": alerts,
         "events": events,

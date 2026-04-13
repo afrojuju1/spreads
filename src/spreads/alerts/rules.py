@@ -9,8 +9,8 @@ from spreads.storage.records import CollectorCycleCandidateRecord
 
 ALERT_SCORE_FLOOR = 72.0
 STRICT_PROFILE_ALERT_SCORE_FLOOR = 75.0
-WATCHLIST_PROMOTION_MIN_SCORE = 75.0
-WATCHLIST_PROMOTION_DISABLED_PROFILES = frozenset({"weekly", "swing", "core"})
+MONITOR_PROMOTION_MIN_SCORE = 75.0
+MONITOR_PROMOTION_DISABLED_PROFILES = frozenset({"weekly", "swing", "core"})
 STRICTER_SPREAD_PROFILES = frozenset({"weekly", "swing", "core"})
 SCORE_BREAKOUT_THRESHOLDS = (88.0, 80.0)
 STRICT_SCORE_BREAKOUT_THRESHOLDS = (90.0, 82.0)
@@ -55,8 +55,8 @@ def score_anchor_key(label: str, session_date: str, candidate: dict[str, Any]) -
 
 
 def event_dedupe_key(label: str, session_date: str, symbol: str, alert_type: str, candidate: dict[str, Any]) -> str:
-    if alert_type == "new_board_idea":
-        return f"{label}|{session_date}|{symbol}|new_board_idea"
+    if alert_type == "new_promotable_idea":
+        return f"{label}|{session_date}|{symbol}|new_promotable_idea"
     return f"{label}|{session_date}|{symbol}|{alert_type}|{idea_fragment(candidate)}"
 
 
@@ -135,29 +135,29 @@ def build_history_indexes(
     current_generated_at: str,
 ) -> tuple[set[tuple[str, str, str, str]], set[tuple[str, str, str, str]], set[str]]:
     rows = collector_store.list_session_candidates(label=label, session_date=session_date)
-    prior_board_identities: set[tuple[str, str, str, str]] = set()
-    prior_watchlist_identities: set[tuple[str, str, str, str]] = set()
-    prior_board_symbols: set[str] = set()
+    prior_promotable_identities: set[tuple[str, str, str, str]] = set()
+    prior_monitor_identities: set[tuple[str, str, str, str]] = set()
+    prior_promotable_symbols: set[str] = set()
 
     for row in rows:
         if not is_before_current_cycle(row, current_cycle_id=current_cycle_id, current_generated_at=current_generated_at):
             continue
         identity = candidate_identity(row)
-        if row["bucket"] == "board":
-            prior_board_identities.add(identity)
-            prior_board_symbols.add(str(row["underlying_symbol"]))
-        elif row["bucket"] == "watchlist":
-            prior_watchlist_identities.add(identity)
+        if row["selection_state"] == "promotable":
+            prior_promotable_identities.add(identity)
+            prior_promotable_symbols.add(str(row["underlying_symbol"]))
+        elif row["selection_state"] == "monitor":
+            prior_monitor_identities.add(identity)
 
-    return prior_board_identities, prior_watchlist_identities, prior_board_symbols
+    return prior_promotable_identities, prior_monitor_identities, prior_promotable_symbols
 
 
 def resolve_event_alert_type(
     event: dict[str, Any],
     *,
-    prior_board_identities: set[tuple[str, str, str, str]],
-    prior_watchlist_identities: set[tuple[str, str, str, str]],
-    prior_board_symbols: set[str],
+    prior_promotable_identities: set[tuple[str, str, str, str]],
+    prior_monitor_identities: set[tuple[str, str, str, str]],
+    prior_promotable_symbols: set[str],
 ) -> str | None:
     event_type = str(event["event_type"])
     current = event.get("current")
@@ -166,29 +166,29 @@ def resolve_event_alert_type(
     identity = candidate_identity(current)
     symbol = str(current["underlying_symbol"])
 
-    if event_type == "new":
-        if identity in prior_watchlist_identities and identity not in prior_board_identities:
-            return "watchlist_promoted"
-        if symbol not in prior_board_symbols:
-            return "new_board_idea"
+    if event_type == "new_promotable":
+        if identity in prior_monitor_identities and identity not in prior_promotable_identities:
+            return "monitor_promoted"
+        if symbol not in prior_promotable_symbols:
+            return "new_promotable_idea"
         return None
-    if event_type == "side_flip":
+    if event_type == "promotable_side_flip":
         return "side_flip"
-    if event_type == "replaced":
-        return "board_replaced"
+    if event_type == "promotable_replaced":
+        return "promotable_replaced"
     return None
 
 
 def should_send_event_alert(*, label: str, alert_type: str, event: dict[str, Any], candidate: dict[str, Any]) -> bool:
     profile = candidate_profile(label, candidate)
     score = float(candidate["quality_score"])
-    if alert_type in {"watchlist_promoted", "side_flip"}:
-        if alert_type == "watchlist_promoted":
-            if profile in WATCHLIST_PROMOTION_DISABLED_PROFILES:
+    if alert_type in {"monitor_promoted", "side_flip"}:
+        if alert_type == "monitor_promoted":
+            if profile in MONITOR_PROMOTION_DISABLED_PROFILES:
                 return False
-            return score >= WATCHLIST_PROMOTION_MIN_SCORE
+            return score >= MONITOR_PROMOTION_MIN_SCORE
         return True
-    if alert_type == "board_replaced":
+    if alert_type == "promotable_replaced":
         previous = event.get("previous")
         if isinstance(previous, dict) and str(previous.get("strategy") or "") == str(candidate.get("strategy") or ""):
             previous_score = float(previous.get("quality_score") or 0.0)
@@ -207,7 +207,7 @@ def build_event_alert_decisions(
     collector_store: CollectorRepository,
     get_alert_state: callable,
 ) -> list[AlertDecision]:
-    prior_board_identities, prior_watchlist_identities, prior_board_symbols = build_history_indexes(
+    prior_promotable_identities, prior_monitor_identities, prior_promotable_symbols = build_history_indexes(
         collector_store,
         label=label,
         session_date=session_date,
@@ -221,9 +221,9 @@ def build_event_alert_decisions(
             continue
         alert_type = resolve_event_alert_type(
             event,
-            prior_board_identities=prior_board_identities,
-            prior_watchlist_identities=prior_watchlist_identities,
-            prior_board_symbols=prior_board_symbols,
+            prior_promotable_identities=prior_promotable_identities,
+            prior_monitor_identities=prior_monitor_identities,
+            prior_promotable_symbols=prior_promotable_symbols,
         )
         if alert_type is None or not should_send_event_alert(
             label=label,
@@ -261,11 +261,11 @@ def build_score_breakout_decisions(
     *,
     label: str,
     session_date: str,
-    board_candidates: list[dict[str, Any]],
+    promotable_candidates: list[dict[str, Any]],
     get_alert_state: callable,
 ) -> list[AlertDecision]:
     decisions: list[AlertDecision] = []
-    for candidate in board_candidates:
+    for candidate in promotable_candidates:
         profile = candidate_profile(label, candidate)
         score = float(candidate["quality_score"])
         if score < alert_score_floor_for_profile(profile):

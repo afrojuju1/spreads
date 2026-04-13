@@ -61,10 +61,8 @@ class CollectorRepository(RepositoryBase):
         greeks_source: str,
         symbols: list[str],
         failures: list[dict[str, Any]],
-        selection_state: dict[str, Any],
-        board_candidates: list[dict[str, Any]],
-        watchlist_candidates: list[dict[str, Any]],
-        recovered_candidates: list[dict[str, Any]] | None = None,
+        selection_memory: dict[str, Any],
+        opportunities: list[dict[str, Any]],
         events: list[dict[str, Any]],
     ) -> None:
         generated_at_dt = parse_datetime(generated_at)
@@ -73,19 +71,38 @@ class CollectorRepository(RepositoryBase):
         session_date = generated_at_dt.astimezone(NEW_YORK).date()
 
         def build_candidate_models(
-            bucket: str,
             payloads: list[dict[str, Any]],
         ) -> list[CollectorCycleCandidateModel]:
             models: list[CollectorCycleCandidateModel] = []
-            for position, payload in enumerate(payloads, start=1):
+            for payload in payloads:
                 run_id = payload.get("run_id")
                 if not run_id:
-                    raise ValueError(f"Persisted {bucket} candidate is missing run_id")
+                    raise ValueError("Persisted opportunity is missing run_id")
+                candidate_payload = payload.get("candidate")
+                if isinstance(candidate_payload, dict):
+                    stored_candidate = dict(candidate_payload)
+                else:
+                    stored_candidate = {
+                        key: value
+                        for key, value in payload.items()
+                        if key
+                        not in {
+                            "selection_state",
+                            "selection_rank",
+                            "state_reason",
+                            "origin",
+                            "eligibility",
+                            "candidate",
+                        }
+                    }
                 models.append(
                     CollectorCycleCandidateModel(
                         cycle_id=cycle_id,
-                        bucket=bucket,
-                        position=position,
+                        selection_state=str(payload["selection_state"]),
+                        selection_rank=int(payload["selection_rank"]),
+                        state_reason=str(payload["state_reason"]),
+                        origin=str(payload["origin"]),
+                        eligibility=str(payload["eligibility"]),
                         run_id=str(run_id),
                         underlying_symbol=str(payload["underlying_symbol"]),
                         strategy=str(payload["strategy"]),
@@ -94,7 +111,7 @@ class CollectorRepository(RepositoryBase):
                         long_symbol=str(payload["long_symbol"]),
                         quality_score=float(payload["quality_score"]),
                         midpoint_credit=float(payload["midpoint_credit"]),
-                        candidate_json=payload,
+                        candidate_json=stored_candidate,
                     )
                 )
             return models
@@ -112,12 +129,8 @@ class CollectorRepository(RepositoryBase):
             greeks_source=greeks_source,
             symbols_json=symbols,
             failures_json=failures,
-            selection_state_json=selection_state,
-            candidates=[
-                *build_candidate_models("board", board_candidates),
-                *build_candidate_models("watchlist", watchlist_candidates),
-                *build_candidate_models("recovered", list(recovered_candidates or [])),
-            ],
+            selection_memory_json=selection_memory,
+            candidates=build_candidate_models(opportunities),
             events=[
                 CollectorCycleEventModel(
                     cycle_id=cycle_id,
@@ -278,20 +291,21 @@ class CollectorRepository(RepositoryBase):
         statement = (
             select(
                 CollectorCycleCandidateModel.cycle_id,
-                CollectorCycleCandidateModel.bucket,
+                CollectorCycleCandidateModel.selection_state,
                 func.count().label("candidate_count"),
             )
             .where(CollectorCycleCandidateModel.cycle_id.in_(cycle_ids))
+            .where(CollectorCycleCandidateModel.eligibility == "live")
             .group_by(
                 CollectorCycleCandidateModel.cycle_id,
-                CollectorCycleCandidateModel.bucket,
+                CollectorCycleCandidateModel.selection_state,
             )
         )
         with self.session_factory() as session:
             rows = session.execute(statement).all()
         counts: dict[str, dict[str, int]] = {}
-        for cycle_id, bucket, candidate_count in rows:
-            counts.setdefault(str(cycle_id), {})[str(bucket)] = int(
+        for cycle_id, selection_state, candidate_count in rows:
+            counts.setdefault(str(cycle_id), {})[str(selection_state)] = int(
                 candidate_count or 0
             )
         return counts
@@ -299,7 +313,9 @@ class CollectorRepository(RepositoryBase):
     def list_cycle_candidates(
         self,
         cycle_id: str,
-        bucket: str | None = None,
+        selection_state: str | None = None,
+        *,
+        eligibility: str | None = None,
     ) -> list[CollectorCycleCandidateRecord]:
         statement = (
             select(CollectorCycleCandidateModel, CollectorCycleModel)
@@ -309,11 +325,17 @@ class CollectorRepository(RepositoryBase):
             )
             .where(CollectorCycleCandidateModel.cycle_id == cycle_id)
         )
-        if bucket:
-            statement = statement.where(CollectorCycleCandidateModel.bucket == bucket)
+        if selection_state:
+            statement = statement.where(
+                CollectorCycleCandidateModel.selection_state == selection_state
+            )
+        if eligibility:
+            statement = statement.where(
+                CollectorCycleCandidateModel.eligibility == eligibility
+            )
         statement = statement.order_by(
-            CollectorCycleCandidateModel.bucket.asc(),
-            CollectorCycleCandidateModel.position.asc(),
+            CollectorCycleCandidateModel.selection_rank.asc(),
+            CollectorCycleCandidateModel.candidate_id.asc(),
         )
         with self.session_factory() as session:
             rows = session.execute(statement).all()
@@ -354,7 +376,8 @@ class CollectorRepository(RepositoryBase):
         *,
         label: str,
         session_date: str,
-        bucket: str | None = None,
+        selection_state: str | None = None,
+        eligibility: str | None = None,
     ) -> list[CollectorCycleCandidateRecord]:
         session_date_value = date.fromisoformat(session_date)
         statement = (
@@ -370,11 +393,18 @@ class CollectorRepository(RepositoryBase):
                 )
             )
         )
-        if bucket:
-            statement = statement.where(CollectorCycleCandidateModel.bucket == bucket)
+        if selection_state:
+            statement = statement.where(
+                CollectorCycleCandidateModel.selection_state == selection_state
+            )
+        if eligibility:
+            statement = statement.where(
+                CollectorCycleCandidateModel.eligibility == eligibility
+            )
         statement = statement.order_by(
             CollectorCycleModel.generated_at.asc(),
-            CollectorCycleCandidateModel.position.asc(),
+            CollectorCycleCandidateModel.selection_rank.asc(),
+            CollectorCycleCandidateModel.candidate_id.asc(),
         )
         with self.session_factory() as session:
             rows = session.execute(statement).all()

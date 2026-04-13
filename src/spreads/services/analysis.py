@@ -12,10 +12,17 @@ from spreads.db.decorators import with_storage
 from spreads.integrations.alpaca.client import AlpacaClient, infer_trading_base_url
 from spreads.runtime.config import default_database_url
 from spreads.services.analysis_helpers import (
-    board_session_phase,
+    candidate_session_phase,
     candidate_identity,
     resolved_estimated_pnl,
     score_bucket_label,
+)
+from spreads.services.selection_terms import (
+    MONITOR_SELECTION_STATE,
+    PROMOTABLE_SELECTION_STATE,
+    normalize_selection_state,
+    selection_state_counts,
+    selection_state_rank,
 )
 from spreads.services.scanner import NEW_YORK, summarize_replay
 from spreads.storage.collector_repository import CollectorRepository
@@ -315,8 +322,16 @@ def aggregate_signal_dimension(
             {
                 "bucket": key,
                 "count": len(group),
-                "board_count": sum(1 for item in group if item["classification"] == "board"),
-                "watchlist_count": sum(1 for item in group if item["classification"] == "watchlist"),
+                "promotable_count": sum(
+                    1
+                    for item in group
+                    if item["selection_state"] == PROMOTABLE_SELECTION_STATE
+                ),
+                "monitor_count": sum(
+                    1
+                    for item in group
+                    if item["selection_state"] == MONITOR_SELECTION_STATE
+                ),
                 "win_count": wins,
                 "loss_count": losses,
                 "still_open_count": sum(1 for item in group if item["outcome_bucket"] == "still_open"),
@@ -342,7 +357,7 @@ def aggregate_signal_dimension(
 def build_signal_tuning(outcomes: Mapping[str, Any]) -> dict[str, Any]:
     ideas = list(outcomes["ideas"])
     dimensions = {
-        "classification": aggregate_signal_dimension(ideas, field="classification"),
+        "selection_state": aggregate_signal_dimension(ideas, field="selection_state"),
         "symbol": aggregate_signal_dimension(ideas, field="underlying_symbol"),
         "strategy": aggregate_signal_dimension(ideas, field="strategy"),
         "score_bucket": aggregate_signal_dimension(ideas, field="score_bucket"),
@@ -432,6 +447,11 @@ def build_session_outcomes(
 
     grouped: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
     for row in session_candidates:
+        selection_state = normalize_selection_state(
+            row.get("selection_state", row.get("bucket"))
+        )
+        if selection_state is None:
+            continue
         key = candidate_identity(row)
         state = grouped.setdefault(
             key,
@@ -445,8 +465,8 @@ def build_session_outcomes(
                 },
                 "first_seen": row["generated_at"],
                 "latest_seen": row["generated_at"],
-                "first_board": None,
-                "first_watchlist": None,
+                "first_promotable": None,
+                "first_monitor": None,
                 "latest": row,
                 "occurrence_count": 0,
             },
@@ -454,10 +474,16 @@ def build_session_outcomes(
         state["occurrence_count"] += 1
         state["latest_seen"] = row["generated_at"]
         state["latest"] = row
-        if row["bucket"] == "board" and state["first_board"] is None:
-            state["first_board"] = row
-        if row["bucket"] == "watchlist" and state["first_watchlist"] is None:
-            state["first_watchlist"] = row
+        if (
+            selection_state == PROMOTABLE_SELECTION_STATE
+            and state["first_promotable"] is None
+        ):
+            state["first_promotable"] = row
+        if (
+            selection_state == MONITOR_SELECTION_STATE
+            and state["first_monitor"] is None
+        ):
+            state["first_monitor"] = row
 
     try:
         client = build_replay_client()
@@ -638,9 +664,13 @@ def build_session_outcomes(
 
     ideas: list[dict[str, Any]] = []
     for state in grouped.values():
-        entry = state["first_board"] or state["first_watchlist"]
+        entry = state["first_promotable"] or state["first_monitor"]
         latest = state["latest"]
-        classification = "board" if state["first_board"] is not None else "watchlist"
+        selection_state = (
+            PROMOTABLE_SELECTION_STATE
+            if state["first_promotable"] is not None
+            else MONITOR_SELECTION_STATE
+        )
         outcome = replay_outcome(entry)
         entry_run_payload, _ = load_run_bundle(str(entry["run_id"]))
         entry_setup = None if entry_run_payload is None else (entry_run_payload.get("setup") or {})
@@ -656,14 +686,22 @@ def build_session_outcomes(
         ideas.append(
             {
                 **state["identity"],
-                "classification": classification,
+                "selection_state": selection_state,
                 "first_seen": state["first_seen"],
                 "entry_seen": entry["generated_at"],
                 "latest_seen": latest["generated_at"],
                 "entry_run_id": entry["run_id"],
                 "entry_cycle_id": entry["cycle_id"],
-                "first_board_seen": None if state["first_board"] is None else state["first_board"]["generated_at"],
-                "first_watchlist_seen": None if state["first_watchlist"] is None else state["first_watchlist"]["generated_at"],
+                "first_promotable_seen": (
+                    None
+                    if state["first_promotable"] is None
+                    else state["first_promotable"]["generated_at"]
+                ),
+                "first_monitor_seen": (
+                    None
+                    if state["first_monitor"] is None
+                    else state["first_monitor"]["generated_at"]
+                ),
                 "latest_score": latest["quality_score"],
                 "score_bucket": score_bucket_label(float(latest["quality_score"])),
                 "occurrence_count": state["occurrence_count"],
@@ -681,7 +719,7 @@ def build_session_outcomes(
                 "setup_status": setup_status,
                 "calendar_status": calendar_status,
                 "greeks_source": greeks_source,
-                "session_phase": board_session_phase(entry_candidate),
+                "session_phase": candidate_session_phase(entry_candidate),
                 "vwap_regime": classify_vwap_regime(entry_setup, str(entry["strategy"])),
                 "trend_regime": classify_trend_regime(entry_setup, str(entry["strategy"])),
                 "opening_range_regime": classify_opening_range_regime(entry_setup, str(entry["strategy"])),
@@ -691,25 +729,31 @@ def build_session_outcomes(
 
     ideas.sort(
         key=lambda item: (
-            0 if item["classification"] == "board" else 1,
+            selection_state_rank(item.get("selection_state")),
             -float(item["latest_score"]),
             item["first_seen"],
         )
     )
 
-    counts_by_bucket = Counter(item["classification"] for item in ideas)
-    outcome_counts_by_bucket: dict[str, dict[str, int]] = {}
-    average_estimated_pnl_by_bucket: dict[str, float | None] = {}
-    for bucket in ("board", "watchlist"):
-        bucket_items = [item for item in ideas if item["classification"] == bucket]
-        outcome_counts_by_bucket[bucket] = dict(Counter(item["outcome_bucket"] for item in bucket_items))
+    counts_by_selection_state = selection_state_counts(ideas)
+    outcome_counts_by_selection_state: dict[str, dict[str, int]] = {}
+    average_estimated_pnl_by_selection_state: dict[str, float | None] = {}
+    for selection_state in (PROMOTABLE_SELECTION_STATE, MONITOR_SELECTION_STATE):
+        state_items = [
+            item for item in ideas if item["selection_state"] == selection_state
+        ]
+        outcome_counts_by_selection_state[selection_state] = dict(
+            Counter(item["outcome_bucket"] for item in state_items)
+        )
         pnl_values = [
             item["estimated_expiry_pnl"] if item["estimated_expiry_pnl"] is not None else item["estimated_close_pnl"]
-            for item in bucket_items
+            for item in state_items
             if (item["estimated_expiry_pnl"] if item["estimated_expiry_pnl"] is not None else item["estimated_close_pnl"])
             is not None
         ]
-        average_estimated_pnl_by_bucket[bucket] = None if not pnl_values else mean(float(value) for value in pnl_values)
+        average_estimated_pnl_by_selection_state[selection_state] = (
+            None if not pnl_values else mean(float(value) for value in pnl_values)
+        )
 
     def aggregate_by(field: str) -> dict[str, dict[str, Any]]:
         grouped_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -719,8 +763,16 @@ def build_session_outcomes(
         for key, rows in grouped_rows.items():
             output[key] = {
                 "count": len(rows),
-                "board_count": sum(1 for row in rows if row["classification"] == "board"),
-                "watchlist_count": sum(1 for row in rows if row["classification"] == "watchlist"),
+                "promotable_count": sum(
+                    1
+                    for row in rows
+                    if row["selection_state"] == PROMOTABLE_SELECTION_STATE
+                ),
+                "monitor_count": sum(
+                    1
+                    for row in rows
+                    if row["selection_state"] == MONITOR_SELECTION_STATE
+                ),
                 "outcomes": dict(Counter(row["outcome_bucket"] for row in rows)),
                 "average_latest_score": mean(float(row["latest_score"]) for row in rows),
             }
@@ -730,9 +782,9 @@ def build_session_outcomes(
         "session_date": session_date,
         "label": label,
         "idea_count": len(ideas),
-        "counts_by_bucket": dict(counts_by_bucket),
-        "outcome_counts_by_bucket": outcome_counts_by_bucket,
-        "average_estimated_pnl_by_bucket": average_estimated_pnl_by_bucket,
+        "counts_by_selection_state": counts_by_selection_state,
+        "outcome_counts_by_selection_state": outcome_counts_by_selection_state,
+        "average_estimated_pnl_by_selection_state": average_estimated_pnl_by_selection_state,
         "by_symbol": aggregate_by("underlying_symbol"),
         "by_strategy": aggregate_by("strategy"),
         "by_score_bucket": aggregate_by("score_bucket"),
@@ -761,12 +813,18 @@ def build_session_summary(
         latest_cycle = cycles[0] if cycles else None
         latest_cycle_payload = None
         if latest_cycle is not None:
-            board = collector_store.list_cycle_candidates(latest_cycle["cycle_id"], bucket="board")
-            watchlist = collector_store.list_cycle_candidates(latest_cycle["cycle_id"], bucket="watchlist")
+            opportunities = collector_store.list_cycle_candidates(latest_cycle["cycle_id"])
+            selection_counts = {"promotable": 0, "monitor": 0}
+            for row in opportunities:
+                if str(row.get("eligibility") or "live") != "live":
+                    continue
+                selection_state = str(row.get("selection_state") or "")
+                if selection_state in selection_counts:
+                    selection_counts[selection_state] += 1
             latest_cycle_payload = {
                 **latest_cycle,
-                "board_candidates": list(board),
-                "watchlist_candidates": list(watchlist),
+                "opportunities": list(opportunities),
+                "selection_counts": selection_counts,
             }
         outcomes = build_session_outcomes(
             history_store=history_store,
@@ -886,18 +944,21 @@ def render_leg_summaries(leg_summaries: list[dict[str, Any]]) -> list[str]:
 def render_outcome_summaries(outcomes: Mapping[str, Any]) -> list[str]:
     ideas = list(outcomes["ideas"])
     if not ideas:
-        return ["No persisted board or watchlist ideas were available for this session."]
+        return ["No persisted promotable or monitor ideas were available for this session."]
 
     lines = [
         f"- Idea count: {outcomes['idea_count']}",
-        "- Classification counts: "
+        "- Selection-state counts: "
         + ", ".join(
-            f"{bucket}={count}" for bucket, count in sorted(outcomes["counts_by_bucket"].items())
+            f"{state}={count}"
+            for state, count in sorted(outcomes["counts_by_selection_state"].items())
         ),
         "- Average estimated PnL: "
         + ", ".join(
-            f"{bucket}={value:.0f}" if value is not None else f"{bucket}=n/a"
-            for bucket, value in sorted(outcomes["average_estimated_pnl_by_bucket"].items())
+            f"{state}={value:.0f}" if value is not None else f"{state}=n/a"
+            for state, value in sorted(
+                outcomes["average_estimated_pnl_by_selection_state"].items()
+            )
         ),
         "",
     ]
@@ -906,11 +967,14 @@ def render_outcome_summaries(outcomes: Mapping[str, Any]) -> list[str]:
             f"### {idea['underlying_symbol']} {idea['strategy']} {idea['short_symbol']} / {idea['long_symbol']}"
         )
         timing_line = f"- First seen: {idea['first_seen']} | entry seen: {idea['entry_seen']}"
-        if idea["classification"] == "board" and idea["first_watchlist_seen"] is not None:
-            timing_line += f" | first watchlist: {idea['first_watchlist_seen']}"
+        if (
+            idea["selection_state"] == PROMOTABLE_SELECTION_STATE
+            and idea["first_monitor_seen"] is not None
+        ):
+            timing_line += f" | first monitor: {idea['first_monitor_seen']}"
         lines.append(timing_line)
         lines.append(
-            f"- Classification: {idea['classification']} | latest score: {idea['latest_score']:.1f} ({idea['score_bucket']})"
+            f"- Selection state: {idea['selection_state']} | latest score: {idea['latest_score']:.1f} ({idea['score_bucket']})"
         )
         lines.append(
             f"- Outcome: {idea['replay_verdict']} | bucket: {idea['outcome_bucket']} | still in play: {'yes' if idea['still_in_play'] else 'no'}"
@@ -935,7 +999,7 @@ def render_signal_tuning(tuning: Mapping[str, Any]) -> list[str]:
     provisional_strongest = tuning["provisional_strongest_signals"]
     provisional_weakest = tuning["provisional_weakest_signals"]
     if strongest:
-        lines.append("- Strongest resolved buckets:")
+        lines.append("- Strongest resolved segments:")
         for row in strongest:
             win_rate = "n/a" if row["win_rate"] is None else f"{row['win_rate'] * 100:.0f}%"
             avg_pnl = "n/a" if row["average_estimated_pnl"] is None else f"{row['average_estimated_pnl']:.0f}"
@@ -944,7 +1008,7 @@ def render_signal_tuning(tuning: Mapping[str, Any]) -> list[str]:
             )
         lines.append("")
     if weakest:
-        lines.append("- Weakest resolved buckets:")
+        lines.append("- Weakest resolved segments:")
         for row in weakest:
             win_rate = "n/a" if row["win_rate"] is None else f"{row['win_rate'] * 100:.0f}%"
             avg_pnl = "n/a" if row["average_estimated_pnl"] is None else f"{row['average_estimated_pnl']:.0f}"
@@ -953,7 +1017,7 @@ def render_signal_tuning(tuning: Mapping[str, Any]) -> list[str]:
             )
         lines.append("")
     if provisional_strongest:
-        lines.append("- Strongest provisional buckets (open-trade PnL only):")
+        lines.append("- Strongest provisional segments (open-trade PnL only):")
         for row in provisional_strongest:
             avg_pnl = "n/a" if row["average_estimated_pnl"] is None else f"{row['average_estimated_pnl']:.0f}"
             lines.append(
@@ -961,7 +1025,7 @@ def render_signal_tuning(tuning: Mapping[str, Any]) -> list[str]:
             )
         lines.append("")
     if provisional_weakest:
-        lines.append("- Weakest provisional buckets (open-trade PnL only):")
+        lines.append("- Weakest provisional segments (open-trade PnL only):")
         for row in provisional_weakest:
             avg_pnl = "n/a" if row["average_estimated_pnl"] is None else f"{row['average_estimated_pnl']:.0f}"
             lines.append(
@@ -1015,7 +1079,9 @@ def render_session_summary_markdown(summary: Mapping[str, Any]) -> str:
         lines.extend(
             [
                 f"- Latest cycle: {latest_cycle['generated_at']}",
-                f"- Latest board/watchlist sizes: {len(latest_cycle['board_candidates'])}/{len(latest_cycle['watchlist_candidates'])}",
+                f"- Latest promotable/monitor sizes: "
+                f"{int(dict(latest_cycle.get('selection_counts') or {}).get('promotable') or 0)}/"
+                f"{int(dict(latest_cycle.get('selection_counts') or {}).get('monitor') or 0)}",
             ]
         )
     lines.extend(
@@ -1028,7 +1094,7 @@ def render_session_summary_markdown(summary: Mapping[str, Any]) -> str:
             "## Symbol Breakdown",
             "",
             *render_symbol_summaries(summary["symbol_breakdown"]),
-            "## Accepted Vs Watchlist Outcomes",
+            "## Promotable Vs Monitor Outcomes",
             "",
             *render_outcome_summaries(summary["outcomes"]),
             "## Signal Tuning",

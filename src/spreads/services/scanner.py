@@ -74,12 +74,12 @@ UNIVERSE_PRESETS: dict[str, tuple[str, ...]] = {
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Find credit spread candidates for one symbol or a ranked universe board using Alpaca."
+        description="Find credit spread candidates for one symbol or a ranked multi-symbol universe using Alpaca."
     )
     parser.add_argument("--symbol", help="Scan a single underlying.")
     parser.add_argument(
         "--symbols",
-        help="Comma-separated list of underlyings to scan as a universe board.",
+        help="Comma-separated list of underlyings to scan as a ranked universe.",
     )
     parser.add_argument(
         "--symbols-file",
@@ -671,7 +671,7 @@ class SpreadCandidate:
     setup_has_intraday_context: bool = False
     data_status: str = "clean"
     data_reasons: tuple[str, ...] = ()
-    board_notes: tuple[str, ...] = ()
+    selection_notes: tuple[str, ...] = ()
     short_bid_size: int = 0
     short_ask_size: int = 0
     long_bid_size: int = 0
@@ -2009,7 +2009,9 @@ def attach_data_quality(
     return enriched
 
 
-def build_board_notes(candidate: SpreadCandidate, args: argparse.Namespace) -> tuple[str, ...]:
+def build_selection_notes(
+    candidate: SpreadCandidate, args: argparse.Namespace
+) -> tuple[str, ...]:
     notes: list[str] = []
     delta_target = args.short_delta_target
     if args.profile == "0dte":
@@ -2046,8 +2048,13 @@ def build_board_notes(candidate: SpreadCandidate, args: argparse.Namespace) -> t
     return tuple(notes[:4])
 
 
-def attach_board_notes(candidates: list[SpreadCandidate], args: argparse.Namespace) -> list[SpreadCandidate]:
-    return [replace(candidate, board_notes=build_board_notes(candidate, args)) for candidate in candidates]
+def attach_selection_notes(
+    candidates: list[SpreadCandidate], args: argparse.Namespace
+) -> list[SpreadCandidate]:
+    return [
+        replace(candidate, selection_notes=build_selection_notes(candidate, args))
+        for candidate in candidates
+    ]
 
 
 def deduplicate_candidates(candidates: list[SpreadCandidate], expand_duplicates: bool) -> list[SpreadCandidate]:
@@ -2753,7 +2760,7 @@ def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
         "setup_reasons",
         "data_status",
         "data_reasons",
-        "board_notes",
+        "selection_notes",
         "order_payload",
     ]
     with open(path, "w", newline="", encoding="utf-8") as handle:
@@ -2765,7 +2772,7 @@ def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
             row["calendar_sources"] = ", ".join(candidate.calendar_sources)
             row["setup_reasons"] = "; ".join(candidate.setup_reasons)
             row["data_reasons"] = "; ".join(candidate.data_reasons)
-            row["board_notes"] = ", ".join(candidate.board_notes)
+            row["selection_notes"] = ", ".join(candidate.selection_notes)
             row["order_payload"] = json.dumps(candidate.order_payload, separators=(",", ":"))
             writer.writerow(row)
 
@@ -2802,7 +2809,9 @@ def write_json(
         json.dump(payload, handle, indent=2)
 
 
-def build_universe_board_rows(candidates: list[SpreadCandidate], *, include_strategy: bool = False) -> list[list[str]]:
+def build_ranked_candidate_rows(
+    candidates: list[SpreadCandidate], *, include_strategy: bool = False
+) -> list[list[str]]:
     rows: list[list[str]] = []
     for candidate in candidates:
         row = [candidate.underlying_symbol]
@@ -2823,53 +2832,65 @@ def build_universe_board_rows(candidates: list[SpreadCandidate], *, include_stra
                 candidate.calendar_status,
                 candidate.data_status,
                 candidate.setup_status,
-                ",".join(candidate.board_notes),
+                ",".join(candidate.selection_notes),
             ]
         )
         rows.append(row)
     return rows
 
 
-def print_universe_board(
+def print_ranked_candidates(
     *,
     label: str,
     strategy: str,
     profile: str,
     greeks_source: str,
     symbols: list[str],
-    board_candidates: list[SpreadCandidate],
+    ranked_candidates: list[SpreadCandidate],
     failures: list[UniverseScanFailure],
 ) -> None:
     print(f"Universe: {label}")
     print(f"Strategy: {strategy}")
     print(f"Greeks: {greeks_source}")
-    if profile == "0dte" or (board_candidates and any(candidate.profile == "0dte" for candidate in board_candidates)):
+    if profile == "0dte" or (
+        ranked_candidates
+        and any(candidate.profile == "0dte" for candidate in ranked_candidates)
+    ):
         print(f"0DTE session: {format_session_bucket(zero_dte_session_bucket())}")
     print(f"Symbols requested: {len(symbols)}")
-    print(f"Board entries: {len(board_candidates)}")
+    print(f"Top candidates: {len(ranked_candidates)}")
     if failures:
         print(f"Failures: {len(failures)}")
     print()
 
-    if board_candidates:
-        include_strategy = strategy == "combined" or len({candidate.strategy for candidate in board_candidates}) > 1
+    if ranked_candidates:
+        include_strategy = strategy == "combined" or len(
+            {candidate.strategy for candidate in ranked_candidates}
+        ) > 1
         headers = ["Symbol", "Expiry", "DTE", "Spot", "Short", "Long", "MidCr", "Score", "Δ", "BE%", "S-EM", "Cal", "DQ", "Setup", "Why"]
         if include_strategy:
             headers = ["Symbol", "Side", *headers[1:]]
-        print(format_table(headers, build_universe_board_rows(board_candidates, include_strategy=include_strategy)))
+        print(
+            format_table(
+                headers,
+                build_ranked_candidate_rows(
+                    ranked_candidates, include_strategy=include_strategy
+                ),
+            )
+        )
         print()
     else:
         print("No universe candidates matched the current filters.")
         print()
 
-    for index, candidate in enumerate(board_candidates, start=1):
+    for index, candidate in enumerate(ranked_candidates, start=1):
         print(
             f"{index}. {candidate.underlying_symbol} [{strategy_display_label(candidate.strategy)}] "
             f"{candidate.short_symbol} -> {candidate.long_symbol} | "
             f"score {candidate.quality_score:.1f} | breakeven {candidate.breakeven:.2f}"
         )
-        if candidate.board_notes:
-            print(f"   why: {', '.join(candidate.board_notes)}")
+        if candidate.selection_notes:
+            print(f"   why: {', '.join(candidate.selection_notes)}")
         if candidate.calendar_reasons:
             print(f"   calendar: {'; '.join(candidate.calendar_reasons)}")
         if candidate.data_reasons:
@@ -3741,7 +3762,7 @@ def scan_symbol_live(
         underlying_type=underlying_type,
         args=symbol_args,
     )
-    all_candidates = attach_board_notes(all_candidates, symbol_args)
+    all_candidates = attach_selection_notes(all_candidates, symbol_args)
     all_candidates = rank_candidates(all_candidates, symbol_args)
     all_candidates = deduplicate_candidates(all_candidates, symbol_args.expand_duplicates)
 
@@ -4014,7 +4035,7 @@ def main() -> int:
     else:
         scan_results: list[SymbolScanResult] = []
         failures: list[UniverseScanFailure] = []
-        board_candidates: list[SpreadCandidate] = []
+        ranked_candidates: list[SpreadCandidate] = []
 
         for symbol in symbols:
             strategy_results, symbol_failures = scan_symbol_across_strategies(
@@ -4029,25 +4050,25 @@ def main() -> int:
             if not strategy_results:
                 continue
             scan_results.extend(strategy_results)
-            symbol_board_candidates = merge_strategy_candidates(
+            symbol_ranked_candidates = merge_strategy_candidates(
                 strategy_results,
                 per_strategy_top=args.per_symbol_top,
             )[: args.per_symbol_top]
-            board_candidates.extend(symbol_board_candidates)
+            ranked_candidates.extend(symbol_ranked_candidates)
 
-        board_candidates = sort_candidates_for_display(board_candidates)
-        board_candidates = board_candidates[: args.top]
+        ranked_candidates = sort_candidates_for_display(ranked_candidates)
+        ranked_candidates = ranked_candidates[: args.top]
         output_path = args.output or default_universe_output_path(universe_label, args.strategy, args.output_format)
 
         if args.output_format == "csv":
-            write_universe_csv(output_path, board_candidates)
+            write_universe_csv(output_path, ranked_candidates)
         else:
             write_universe_json(
                 output_path,
                 label=universe_label,
                 strategy=args.strategy,
                 symbols=symbols,
-                candidates=board_candidates,
+                candidates=ranked_candidates,
                 failures=failures,
             )
         latest_copy = write_latest_copy(
@@ -4063,28 +4084,32 @@ def main() -> int:
                         "label": universe_label,
                         "strategy": args.strategy,
                         "symbols": symbols,
-                        "candidate_count": len(board_candidates),
+                        "candidate_count": len(ranked_candidates),
                         "failures": [asdict(failure) for failure in failures],
-                        "candidates": [asdict(candidate) for candidate in board_candidates],
+                        "candidates": [asdict(candidate) for candidate in ranked_candidates],
                         "output_file": output_path,
                     },
                     indent=2,
                 )
             )
         else:
-            print_universe_board(
+            print_ranked_candidates(
                 label=universe_label,
                 strategy=args.strategy,
                 profile=args.profile,
                 greeks_source=args.greeks_source,
                 symbols=symbols,
-                board_candidates=board_candidates,
+                ranked_candidates=ranked_candidates,
                 failures=failures,
             )
-            maybe_stream_live_quotes(args=args, client=client, candidates=board_candidates)
+            maybe_stream_live_quotes(
+                args=args, client=client, candidates=ranked_candidates
+            )
             if scan_results:
                 print(f"Stored per-symbol runs: {len(scan_results)}")
-            print(f"Saved {len(board_candidates)} board entries to {output_path}")
+            print(
+                f"Saved {len(ranked_candidates)} ranked candidates to {output_path}"
+            )
             print(f"Latest copy: {latest_copy}")
 
     history_store.close()

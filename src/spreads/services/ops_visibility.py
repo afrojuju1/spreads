@@ -22,6 +22,12 @@ from spreads.services.control_plane import (
 from spreads.services.execution import OPEN_STATUSES
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
 from spreads.services.risk_manager import assess_position_risk
+from spreads.services.selection_terms import (
+    MONITOR_SELECTION_STATE,
+    PROMOTABLE_SELECTION_STATE,
+    normalize_selection_state,
+    promotable_monitor_pnl_spread,
+)
 from spreads.services.sessions import (
     DEFAULT_ANALYSIS_PROFIT_TARGET,
     DEFAULT_ANALYSIS_STOP_MULTIPLE,
@@ -257,27 +263,28 @@ def _alert_delivery_payload(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _board_watchlist_pnl_spread(summary: Mapping[str, Any] | None) -> float | None:
+def _promotable_monitor_pnl_spread(summary: Mapping[str, Any] | None) -> float | None:
     if not isinstance(summary, Mapping):
         return None
     outcomes = summary.get("outcomes")
     if not isinstance(outcomes, Mapping):
         return None
-    averages = outcomes.get("average_estimated_pnl_by_bucket")
-    if not isinstance(averages, Mapping):
-        return None
-    board = _coerce_float(averages.get("board"))
-    watchlist = _coerce_float(averages.get("watchlist"))
-    if board is None or watchlist is None:
-        return None
-    return round(board - watchlist, 2)
+    averages = outcomes.get(
+        "average_estimated_pnl_by_selection_state",
+        outcomes.get("average_estimated_pnl_by_bucket"),
+    )
+    return (
+        None
+        if not isinstance(averages, Mapping)
+        else promotable_monitor_pnl_spread(averages)
+    )
 
 
 def _post_market_view(run: Mapping[str, Any] | None) -> dict[str, Any]:
     if run is None:
         return {
             "overall_verdict": None,
-            "board_watchlist_pnl_spread": None,
+            "promotable_monitor_pnl_spread": None,
             "recommendations": [],
             "completed_at": None,
         }
@@ -287,7 +294,7 @@ def _post_market_view(run: Mapping[str, Any] | None) -> dict[str, Any]:
     summary = run.get("summary") if isinstance(run.get("summary"), Mapping) else {}
     return {
         "overall_verdict": _as_text(diagnostics.get("overall_verdict")),
-        "board_watchlist_pnl_spread": _board_watchlist_pnl_spread(summary),
+        "promotable_monitor_pnl_spread": _promotable_monitor_pnl_spread(summary),
         "recommendations": list(run.get("recommendations") or []),
         "completed_at": _as_text(run.get("completed_at")),
     }
@@ -311,7 +318,9 @@ def _rank_modeled_ideas(
         ranked.append(
             {
                 "underlying_symbol": idea.get("underlying_symbol"),
-                "classification": idea.get("classification"),
+                "selection_state": normalize_selection_state(
+                    idea.get("selection_state", idea.get("classification"))
+                ),
                 "strategy": idea.get("strategy"),
                 "short_symbol": idea.get("short_symbol"),
                 "long_symbol": idea.get("long_symbol"),
@@ -1223,7 +1232,7 @@ def build_sessions_view(
             else {}
         )
         verdict = _as_text(diagnostics.get("overall_verdict"))
-        board_watchlist_pnl_spread = _board_watchlist_pnl_spread(
+        promotable_monitor_pnl_spread_value = _promotable_monitor_pnl_spread(
             analysis if isinstance(analysis, Mapping) else None
         )
         ideas = (
@@ -1361,16 +1370,20 @@ def build_sessions_view(
                 "execution_count": len(list(session.get("executions") or [])),
                 "open_position_count": portfolio_summary.get("open_position_count"),
                 "post_market_verdict": verdict,
-                "board_watchlist_pnl_spread": board_watchlist_pnl_spread,
+                "promotable_monitor_pnl_spread": promotable_monitor_pnl_spread_value,
             },
             "attention": attention,
             "details": {
                 "view": "detail",
                 "current_cycle_id": current_cycle.get("cycle_id"),
                 "current_cycle_generated_at": current_cycle.get("generated_at"),
-                "board_count": len(list(current_cycle.get("board_candidates") or [])),
-                "watchlist_count": len(
-                    list(current_cycle.get("watchlist_candidates") or [])
+                "promotable_count": int(
+                    dict(current_cycle.get("selection_counts") or {}).get("promotable")
+                    or 0
+                ),
+                "monitor_count": int(
+                    dict(current_cycle.get("selection_counts") or {}).get("monitor")
+                    or 0
                 ),
                 "slot_runs": slot_runs,
                 "alerts": alerts,
@@ -1380,7 +1393,7 @@ def build_sessions_view(
                 "top_modeled_ideas": top_modeled_ideas,
                 "bottom_modeled_ideas": bottom_modeled_ideas,
                 "post_market_verdict": verdict,
-                "board_watchlist_pnl_spread": board_watchlist_pnl_spread,
+                "promotable_monitor_pnl_spread": promotable_monitor_pnl_spread_value,
             },
         }
 
@@ -1418,7 +1431,9 @@ def build_sessions_view(
             **row,
             "operator_status": operator_status,
             "post_market_verdict": post_market["overall_verdict"],
-            "board_watchlist_pnl_spread": post_market["board_watchlist_pnl_spread"],
+            "promotable_monitor_pnl_spread": post_market[
+                "promotable_monitor_pnl_spread"
+            ],
         }
         enriched_rows.append(enriched)
         if operator_status in {"blocked", "degraded"}:
@@ -2247,8 +2262,8 @@ def _summarize_uoa_candidate(candidate: Mapping[str, Any]) -> dict[str, Any]:
     )
     return {
         "candidate_id": candidate.get("candidate_id"),
-        "bucket": candidate.get("bucket"),
-        "position": _coerce_int(candidate.get("position")),
+        "selection_state": candidate.get("selection_state"),
+        "selection_rank": _coerce_int(candidate.get("selection_rank")),
         "underlying_symbol": candidate.get("underlying_symbol"),
         "strategy": candidate.get("strategy") or payload.get("strategy"),
         "short_symbol": candidate.get("short_symbol") or payload.get("short_symbol"),
@@ -2415,15 +2430,18 @@ def _build_uoa_payload(
         if isinstance(uoa_decisions.get("overview"), Mapping)
         else {}
     )
-    board_candidates = [
+    opportunities = list(state.get("opportunities") or [])
+    promotable_candidates = [
         _summarize_uoa_candidate(row)
-        for row in list(state.get("board_candidates") or [])[:UOA_CANDIDATE_LIMIT]
+        for row in opportunities[:UOA_CANDIDATE_LIMIT]
         if isinstance(row, Mapping)
+        and str(row.get("selection_state") or "") == "promotable"
     ]
-    watchlist_candidates = [
+    monitor_candidates = [
         _summarize_uoa_candidate(row)
-        for row in list(state.get("watchlist_candidates") or [])[:UOA_CANDIDATE_LIMIT]
+        for row in opportunities[:UOA_CANDIDATE_LIMIT]
         if isinstance(row, Mapping)
+        and str(row.get("selection_state") or "") == "monitor"
     ]
     cycle_events = [
         _summarize_uoa_event(row)
@@ -2440,14 +2458,14 @@ def _build_uoa_payload(
         for row in list(uoa_summary.get("top_contracts") or [])[:UOA_CONTRACT_LIMIT]
         if isinstance(row, Mapping)
     ]
-    top_watchlist_roots = [
+    top_monitor_roots = [
         _summarize_uoa_root(row)
-        for row in list(uoa_decisions.get("top_watchlist_roots") or [])[:UOA_ROOT_LIMIT]
+        for row in list(uoa_decisions.get("top_monitor_roots") or [])[:UOA_ROOT_LIMIT]
         if isinstance(row, Mapping)
     ]
-    top_board_roots = [
+    top_promotable_roots = [
         _summarize_uoa_root(row)
-        for row in list(uoa_decisions.get("top_board_roots") or [])[:UOA_ROOT_LIMIT]
+        for row in list(uoa_decisions.get("top_promotable_roots") or [])[:UOA_ROOT_LIMIT]
         if isinstance(row, Mapping)
     ]
     top_high_roots = [
@@ -2539,15 +2557,23 @@ def _build_uoa_payload(
             "scoreable_trade_count": scoreable_trade_count,
             "excluded_trade_count": excluded_trade_count,
             "root_count": uoa_decision_overview.get("root_count"),
-            "watchlist_count": uoa_decision_overview.get("watchlist_count"),
-            "board_count": uoa_decision_overview.get("board_count"),
+            "monitor_count": uoa_decision_overview.get("monitor_count"),
+            "promotable_count": uoa_decision_overview.get("promotable_count"),
             "high_count": uoa_decision_overview.get("high_count"),
             "top_decision_symbol": uoa_decision_overview.get("top_decision_symbol"),
             "top_decision_state": uoa_decision_overview.get("top_decision_state"),
             "top_decision_score": uoa_decision_overview.get("top_decision_score"),
-            "board_candidate_count": len(list(state.get("board_candidates") or [])),
-            "watchlist_candidate_count": len(
-                list(state.get("watchlist_candidates") or [])
+            "selected_promotable_count": int(
+                dict(state.get("selection_counts") or {}).get(
+                    PROMOTABLE_SELECTION_STATE
+                )
+                or 0
+            ),
+            "selected_monitor_count": int(
+                dict(state.get("selection_counts") or {}).get(
+                    MONITOR_SELECTION_STATE
+                )
+                or 0
             ),
             "event_count": len(list(state.get("cycle_events") or [])),
         },
@@ -2563,13 +2589,14 @@ def _build_uoa_payload(
             "uoa_decision_overview": dict(uoa_decision_overview),
             "top_roots": top_roots,
             "top_contracts": top_contracts,
-            "top_watchlist_roots": top_watchlist_roots,
-            "top_board_roots": top_board_roots,
+            "top_monitor_roots": top_monitor_roots,
+            "top_promotable_roots": top_promotable_roots,
             "top_high_roots": top_high_roots,
-            "board_candidates": board_candidates,
-            "watchlist_candidates": watchlist_candidates,
+            "promotable_candidates": promotable_candidates,
+            "monitor_candidates": monitor_candidates,
             "cycle_events": cycle_events,
-            "selection_state": dict(cycle.get("selection_state") or {}),
+            "selection_memory": dict(cycle.get("selection_memory") or {}),
+            "selection_counts": dict(state.get("selection_counts") or {}),
             "top_exclusion_reasons": top_exclusion_reasons,
             "top_conditions": top_conditions,
         },

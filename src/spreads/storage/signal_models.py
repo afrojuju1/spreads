@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, Date, DateTime, Float, ForeignKey, Index, Text
+from sqlalchemy import BigInteger, Date, DateTime, Float, ForeignKey, Index, Integer, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -32,7 +32,7 @@ class SignalStateModel(Base):
     evidence_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     active_cycle_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     active_candidate_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    active_bucket: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active_selection_state: Mapped[str | None] = mapped_column(Text, nullable=True)
     opportunity_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     session_date: Mapped[date] = mapped_column(Date, nullable=False)
     market_session: Mapped[str] = mapped_column(Text, nullable=False)
@@ -86,7 +86,7 @@ class SignalStateTransitionModel(Base):
     evidence_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     active_cycle_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     active_candidate_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    active_bucket: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active_selection_state: Mapped[str | None] = mapped_column(Text, nullable=True)
     opportunity_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     session_date: Mapped[date] = mapped_column(Date, nullable=False)
     market_session: Mapped[str] = mapped_column(Text, nullable=False)
@@ -113,7 +113,11 @@ class OpportunityModel(Base):
     entity_key: Mapped[str] = mapped_column(Text, nullable=False)
     underlying_symbol: Mapped[str] = mapped_column(Text, nullable=False)
     side: Mapped[str | None] = mapped_column(Text, nullable=True)
-    classification: Mapped[str] = mapped_column(Text, nullable=False)
+    selection_state: Mapped[str] = mapped_column(Text, nullable=False)
+    selection_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    state_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    origin: Mapped[str] = mapped_column(Text, nullable=False)
+    eligibility: Mapped[str] = mapped_column(Text, nullable=False)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     signal_state_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
     lifecycle_state: Mapped[str] = mapped_column(Text, nullable=False)
@@ -126,7 +130,7 @@ class OpportunityModel(Base):
     risk_hints_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     source_cycle_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_candidate_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    source_bucket: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_selection_state: Mapped[str | None] = mapped_column(Text, nullable=True)
     candidate_identity: Mapped[str | None] = mapped_column(Text, nullable=True)
     candidate_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     consumed_by_execution_attempt_id: Mapped[str | None] = mapped_column(Text, nullable=True)

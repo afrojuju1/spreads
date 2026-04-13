@@ -140,7 +140,7 @@ class GeneratorCandidateActionRequest(BaseModel):
     short_symbol: str = Field(..., min_length=1)
     long_symbol: str = Field(..., min_length=1)
     live_label: str | None = Field(default=None, min_length=1)
-    bucket: Literal["board", "watchlist"] | None = None
+    target_state: Literal["promotable", "monitor"] | None = None
 
 
 class OptionQuoteCaptureRequest(BaseModel):
@@ -338,17 +338,15 @@ async def _enqueue_post_close_analysis_replay(
         job_store.close()
 
 
-def _cycle_candidates_payload(
+def _cycle_opportunities_payload(
     session: Session,
     *,
     cycle: dict[str, Any],
-    bucket: str,
 ) -> list[dict[str, Any]]:
     statement = (
         select(CollectorCycleCandidateModel)
         .where(CollectorCycleCandidateModel.cycle_id == str(cycle["cycle_id"]))
-        .where(CollectorCycleCandidateModel.bucket == bucket)
-        .order_by(CollectorCycleCandidateModel.position.asc())
+        .order_by(CollectorCycleCandidateModel.selection_rank.asc())
     )
     return [
         to_storage_row(
@@ -411,8 +409,20 @@ def _get_live_snapshot_payload(
     if cycle is None:
         return None
     cycle_payload = dict(cycle)
-    cycle_payload["board_candidates"] = _cycle_candidates_payload(session, cycle=cycle_payload, bucket="board")
-    cycle_payload["watchlist_candidates"] = _cycle_candidates_payload(session, cycle=cycle_payload, bucket="watchlist")
+    cycle_payload["opportunities"] = _cycle_opportunities_payload(
+        session, cycle=cycle_payload
+    )
+    selection_counts = {
+        "promotable": 0,
+        "monitor": 0,
+    }
+    for row in cycle_payload["opportunities"]:
+        if str(row.get("eligibility") or "live") != "live":
+            continue
+        selection_state = str(row.get("selection_state") or "")
+        if selection_state in selection_counts:
+            selection_counts[selection_state] += 1
+    cycle_payload["selection_counts"] = selection_counts
     cycle_payload["failures"] = list(cycle_payload.get("failures") or [])
     return cycle_payload
 
@@ -1226,12 +1236,12 @@ def apply_generator_job_action(
             )
         if not payload.live_label:
             raise HTTPException(status_code=400, detail="live_label is required to update live workflow")
-        if payload.bucket is None:
-            raise HTTPException(status_code=400, detail="bucket is required to update live workflow")
+        if payload.target_state is None:
+            raise HTTPException(status_code=400, detail="target_state is required to update live workflow")
         return apply_generator_live_action(
             job=job_payload,
             live_label=payload.live_label,
-            bucket=payload.bucket,
+            target_state=payload.target_state,
             strategy=payload.strategy,
             short_symbol=payload.short_symbol,
             long_symbol=payload.long_symbol,

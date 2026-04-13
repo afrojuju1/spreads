@@ -33,12 +33,12 @@ class CollectorCycleModel(Base):
     greeks_source: Mapped[str] = mapped_column(Text, nullable=False)
     symbols_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     failures_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
-    selection_state_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    selection_memory_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
     candidates: Mapped[list["CollectorCycleCandidateModel"]] = relationship(
         back_populates="cycle",
         cascade="all, delete-orphan",
-        order_by="CollectorCycleCandidateModel.position",
+        order_by="CollectorCycleCandidateModel.selection_rank",
     )
     events: Mapped[list["CollectorCycleEventModel"]] = relationship(
         back_populates="cycle",
@@ -50,7 +50,12 @@ class CollectorCycleModel(Base):
 class CollectorCycleCandidateModel(Base):
     __tablename__ = "collector_cycle_candidates"
     __table_args__ = (
-        Index("idx_collector_cycle_candidates_cycle_bucket_position", "cycle_id", "bucket", "position"),
+        Index(
+            "idx_collector_cycle_candidates_cycle_bucket_position",
+            "cycle_id",
+            "selection_state",
+            "selection_rank",
+        ),
         Index("idx_collector_cycle_candidates_run_id", "run_id"),
         Index(
             "idx_collector_cycle_candidates_identity",
@@ -68,8 +73,11 @@ class CollectorCycleCandidateModel(Base):
         ForeignKey("collector_cycles.cycle_id", ondelete="CASCADE"),
         nullable=False,
     )
-    bucket: Mapped[str] = mapped_column(Text, nullable=False)
-    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    selection_state: Mapped[str] = mapped_column(Text, nullable=False)
+    selection_rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    state_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    origin: Mapped[str] = mapped_column(Text, nullable=False)
+    eligibility: Mapped[str] = mapped_column(Text, nullable=False)
     run_id: Mapped[str] = mapped_column(Text, nullable=False)
     underlying_symbol: Mapped[str] = mapped_column(Text, nullable=False)
     strategy: Mapped[str] = mapped_column(Text, nullable=False)

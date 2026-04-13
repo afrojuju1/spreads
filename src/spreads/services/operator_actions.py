@@ -54,9 +54,16 @@ def _candidate_sort_key(candidate: dict[str, Any]) -> tuple[float, float, float,
     )
 
 
-def _build_manual_cycle_id(label: str, bucket: str) -> str:
+def _build_manual_cycle_id(label: str, target_state: str) -> str:
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-    return f"{timestamp}_{label}_manual_{bucket}_{uuid4().hex[:8]}".lower()
+    return f"{timestamp}_{label}_manual_{target_state}_{uuid4().hex[:8]}".lower()
+
+
+def _canonical_opportunity_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    payload = dict(row)
+    candidate = payload.get("candidate")
+    payload["candidate"] = dict(candidate) if isinstance(candidate, Mapping) else {}
+    return payload
 
 
 def _get_generator_result(job: Mapping[str, Any]) -> dict[str, Any]:
@@ -183,15 +190,15 @@ def apply_generator_live_action(
     *,
     job: Mapping[str, Any],
     live_label: str,
-    bucket: str,
+    target_state: str,
     strategy: str,
     short_symbol: str,
     long_symbol: str,
     db_target: str,
     storage: Any | None = None,
 ) -> dict[str, Any]:
-    if bucket not in {"board", "watchlist"}:
-        raise ValueError("Live action bucket must be 'board' or 'watchlist'")
+    if target_state not in {"promotable", "monitor"}:
+        raise ValueError("Live action target_state must be 'promotable' or 'monitor'")
 
     candidate, _ = _find_job_candidate(
         job,
@@ -204,74 +211,63 @@ def apply_generator_live_action(
     if latest_cycle is None:
         raise ValueError(f"No live cycle is available for '{live_label}'")
 
-    board_candidates = [
-        dict(row["candidate"])
-        for row in collector_store.list_cycle_candidates(latest_cycle["cycle_id"], bucket="board")
-    ]
-    watchlist_candidates = [
-        dict(row["candidate"])
-        for row in collector_store.list_cycle_candidates(latest_cycle["cycle_id"], bucket="watchlist")
+    live_opportunities = [
+        _canonical_opportunity_row(row)
+        for row in collector_store.list_cycle_candidates(latest_cycle["cycle_id"])
     ]
     target_identity = _candidate_identity(candidate)
-    board_match = next((row for row in board_candidates if _candidate_identity(row) == target_identity), None)
-    watchlist_match = next((row for row in watchlist_candidates if _candidate_identity(row) == target_identity), None)
+    current_match = next(
+        (
+            row
+            for row in live_opportunities
+            if _candidate_identity(dict(row.get("candidate") or {})) == target_identity
+            and str(row.get("eligibility") or "live") == "live"
+        ),
+        None,
+    )
 
-    if bucket == "board" and board_match is not None:
+    if current_match is not None and str(current_match.get("selection_state")) == target_state:
         return {
             "action": "promote_live",
             "changed": False,
-            "message": f"{candidate['underlying_symbol']} is already on the live board for {latest_cycle['label']}.",
+            "message": (
+                f"{candidate['underlying_symbol']} is already marked {target_state} "
+                f"for {latest_cycle['label']}."
+            ),
             "live_label": latest_cycle["label"],
-            "bucket": "board",
-            "cycle_id": latest_cycle["cycle_id"],
-        }
-    if bucket == "watchlist" and board_match is not None:
-        return {
-            "action": "promote_live",
-            "changed": False,
-            "message": f"{candidate['underlying_symbol']} is already on the live board for {latest_cycle['label']}.",
-            "live_label": latest_cycle["label"],
-            "bucket": "board",
-            "cycle_id": latest_cycle["cycle_id"],
-        }
-    if bucket == "watchlist" and watchlist_match is not None:
-        return {
-            "action": "promote_live",
-            "changed": False,
-            "message": f"{candidate['underlying_symbol']} is already on the live watchlist for {latest_cycle['label']}.",
-            "live_label": latest_cycle["label"],
-            "bucket": "watchlist",
+            "target_state": target_state,
             "cycle_id": latest_cycle["cycle_id"],
         }
 
     symbol = str(candidate["underlying_symbol"])
     generated_at = _utc_now()
-    cycle_id = _build_manual_cycle_id(latest_cycle["label"], bucket)
+    cycle_id = _build_manual_cycle_id(latest_cycle["label"], target_state)
+    selection_memory = dict(latest_cycle.get("selection_memory") or {})
     previous_candidate: dict[str, Any] | None = None
-    selection_state = dict(latest_cycle["selection_state"] or {})
+    retained: list[dict[str, Any]] = []
+    for row in live_opportunities:
+        if str(row.get("eligibility") or "live") != "live":
+            retained.append(row)
+            continue
+        row_candidate = dict(row.get("candidate") or {})
+        row_identity = _candidate_identity(row_candidate)
+        row_symbol = str(row_candidate.get("underlying_symbol") or "")
+        if target_state == "promotable":
+            if row_symbol == symbol:
+                if previous_candidate is None:
+                    previous_candidate = row_candidate
+                continue
+        elif row_identity == target_identity:
+            if previous_candidate is None:
+                previous_candidate = row_candidate
+            continue
+        retained.append(row)
 
-    if bucket == "board":
-        previous_candidate = next(
-            (row for row in board_candidates if str(row.get("underlying_symbol")) == symbol),
-            None,
+    if target_state == "promotable":
+        current_symbol_state = selection_memory.get(symbol)
+        next_symbol_state = (
+            dict(current_symbol_state) if isinstance(current_symbol_state, dict) else {}
         )
-        if previous_candidate is None:
-            previous_candidate = next(
-                (row for row in watchlist_candidates if str(row.get("underlying_symbol")) == symbol),
-                None,
-            )
-        board_candidates = [
-            row
-            for row in board_candidates
-            if str(row.get("underlying_symbol")) != symbol and _candidate_identity(row) != target_identity
-        ]
-        watchlist_candidates = [
-            row for row in watchlist_candidates if str(row.get("underlying_symbol")) != symbol
-        ]
-        board_candidates.append(candidate)
-        board_candidates.sort(key=_candidate_sort_key, reverse=True)
-        current_symbol_state = selection_state.get(symbol)
-        next_symbol_state = dict(current_symbol_state) if isinstance(current_symbol_state, dict) else {}
         next_symbol_state.update(
             {
                 "accepted_identity": f"{candidate['strategy']}|{candidate['short_symbol']}|{candidate['long_symbol']}",
@@ -282,28 +278,58 @@ def apply_generator_live_action(
         next_symbol_state.pop("pending_identity", None)
         next_symbol_state.pop("pending_strategy", None)
         next_symbol_state.pop("pending_count", None)
-        selection_state[symbol] = next_symbol_state
+        selection_memory[symbol] = next_symbol_state
+    new_row = {
+        **candidate,
+        "candidate": dict(candidate),
+        "selection_state": target_state,
+        "selection_rank": 0,
+        "state_reason": f"manual_{target_state}",
+        "origin": "manual_override",
+        "eligibility": "live",
+    }
+    retained.append(new_row)
 
-        if watchlist_match is not None:
-            event_type = "manual_watchlist_promoted"
-            message = f"{symbol} manually promoted from watchlist to board: {_candidate_summary(candidate)}"
+    promotable_rows = [
+        row for row in retained if str(row.get("selection_state")) == "promotable"
+    ]
+    monitor_rows = [
+        row for row in retained if str(row.get("selection_state")) == "monitor"
+    ]
+    analysis_only_rows = [
+        row for row in retained if str(row.get("eligibility") or "live") != "live"
+    ]
+    promotable_rows.sort(
+        key=lambda row: _candidate_sort_key(dict(row.get("candidate") or row)),
+        reverse=True,
+    )
+    monitor_rows.sort(
+        key=lambda row: _candidate_sort_key(dict(row.get("candidate") or row)),
+        reverse=True,
+    )
+    opportunities: list[dict[str, Any]] = []
+    next_rank = 1
+    for row in [*promotable_rows, *monitor_rows, *analysis_only_rows]:
+        row["selection_rank"] = next_rank
+        opportunities.append(row)
+        next_rank += 1
+
+    if target_state == "promotable":
+        if current_match is not None and str(current_match.get("selection_state")) == "monitor":
+            event_type = "manual_promotable_promoted"
+            message = f"{symbol} manually promoted to promotable: {_candidate_summary(candidate)}"
         elif previous_candidate is not None:
-            event_type = "manual_board_replaced"
+            event_type = "manual_promotable_replaced"
             message = (
-                f"{symbol} manually replaced on board: "
+                f"{symbol} manually replaced as promotable: "
                 f"{_candidate_summary(previous_candidate)} -> {_candidate_summary(candidate)}"
             )
         else:
-            event_type = "manual_board_added"
-            message = f"{symbol} manually added to board: {_candidate_summary(candidate)}"
+            event_type = "manual_promotable_added"
+            message = f"{symbol} manually marked promotable: {_candidate_summary(candidate)}"
     else:
-        watchlist_candidates = [
-            row for row in watchlist_candidates if _candidate_identity(row) != target_identity
-        ]
-        watchlist_candidates.append(candidate)
-        watchlist_candidates.sort(key=_candidate_sort_key, reverse=True)
-        event_type = "manual_watchlist_added"
-        message = f"{symbol} manually added to watchlist: {_candidate_summary(candidate)}"
+        event_type = "manual_monitor_added"
+        message = f"{symbol} manually marked monitor: {_candidate_summary(candidate)}"
 
     symbols = list(latest_cycle["symbols"])
     if symbol not in symbols:
@@ -332,9 +358,8 @@ def apply_generator_live_action(
         greeks_source=latest_cycle["greeks_source"],
         symbols=symbols,
         failures=list(latest_cycle["failures"]),
-        selection_state=selection_state,
-        board_candidates=board_candidates,
-        watchlist_candidates=watchlist_candidates,
+        selection_memory=selection_memory,
+        opportunities=opportunities,
         events=[event_payload],
     )
     response = {
@@ -344,13 +369,13 @@ def apply_generator_live_action(
         "live_label": latest_cycle["label"],
         "session_date": latest_cycle["session_date"],
         "session_id": latest_cycle.get("session_id"),
-        "bucket": bucket,
+        "target_state": target_state,
         "cycle_id": cycle_id,
         "event_type": event_type,
         "symbol": symbol,
         "generated_at": generated_at,
-        "board_count": len(board_candidates),
-        "watchlist_count": len(watchlist_candidates),
+        "promotable_count": len(promotable_rows),
+        "monitor_count": len(monitor_rows),
     }
     try:
         publish_global_event_sync(

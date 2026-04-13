@@ -9,6 +9,7 @@ from spreads.services.sessions import (
     DEFAULT_ANALYSIS_STOP_MULTIPLE,
     get_session_detail,
 )
+from spreads.services.selection_terms import promotable_monitor_pnl_spread
 from spreads.storage.serializers import parse_datetime
 
 DEFAULT_TIMELINE_LIMIT = 500
@@ -30,6 +31,14 @@ def _coerce_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _confidence_from_quality_score(value: Any) -> float | None:
+    score = _coerce_float(value)
+    if score is None:
+        return None
+    normalized = (score - 55.0) / 27.0
+    return round(max(0.0, min(normalized, 1.0)), 4)
 
 
 def _timeline_sort_key(item: Mapping[str, Any]) -> tuple[Any, str, str, str]:
@@ -55,7 +64,7 @@ def _detail_subset(payload: Mapping[str, Any]) -> dict[str, Any]:
         "from_state",
         "to_state",
         "lifecycle_state",
-        "classification",
+        "selection_state",
         "trade_intent",
         "status",
         "decision_kind",
@@ -166,12 +175,16 @@ def _event_summary(event: Mapping[str, Any]) -> str:
             else {}
         )
         cycle_id = _as_text(payload.get("cycle_id")) or entity_key or "unknown_cycle"
-        watchlist_count = int(overview.get("watchlist_count") or 0)
-        board_count = int(overview.get("board_count") or 0)
+        monitor_count = int(
+            overview.get("monitor_count", overview.get("watchlist_count")) or 0
+        )
+        promotable_count = int(
+            overview.get("promotable_count", overview.get("board_count")) or 0
+        )
         high_count = int(overview.get("high_count") or 0)
         return (
             f"UOA decisions updated for cycle {cycle_id}: "
-            f"{watchlist_count} watchlist / {board_count} board / {high_count} high."
+            f"{monitor_count} monitor / {promotable_count} promotable / {high_count} high."
         )
     return _as_text(payload.get("message")) or topic or "event recorded"
 
@@ -331,8 +344,8 @@ def _current_cycle_summary(
 ) -> dict[str, Any] | None:
     if current_cycle is None:
         return None
-    board_candidates = list(current_cycle.get("board_candidates") or [])
-    watchlist_candidates = list(current_cycle.get("watchlist_candidates") or [])
+    opportunities = list(current_cycle.get("opportunities") or [])
+    selection_counts = dict(current_cycle.get("selection_counts") or {})
     return {
         "cycle_id": _as_text(current_cycle.get("cycle_id")),
         "generated_at": _as_text(current_cycle.get("generated_at")),
@@ -340,9 +353,10 @@ def _current_cycle_summary(
         "strategy": _as_text(current_cycle.get("strategy")),
         "profile": _as_text(current_cycle.get("profile")),
         "universe_label": _as_text(current_cycle.get("universe_label")),
-        "selection_state": dict(current_cycle.get("selection_state") or {}),
-        "board_candidate_count": len(board_candidates),
-        "watchlist_candidate_count": len(watchlist_candidates),
+        "selection_memory": dict(current_cycle.get("selection_memory") or {}),
+        "promotable_count": int(selection_counts.get("promotable") or 0),
+        "monitor_count": int(selection_counts.get("monitor") or 0),
+        "opportunity_count": len(opportunities),
     }
 
 
@@ -350,7 +364,8 @@ def _summarize_opportunity(opportunity: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "opportunity_id": str(opportunity.get("opportunity_id") or ""),
         "underlying_symbol": _as_text(opportunity.get("underlying_symbol")),
-        "classification": _as_text(opportunity.get("classification")),
+        "selection_state": _as_text(opportunity.get("selection_state")),
+        "selection_rank": opportunity.get("selection_rank"),
         "lifecycle_state": _as_text(opportunity.get("lifecycle_state")),
         "confidence": opportunity.get("confidence"),
         "reason_codes": list(opportunity.get("reason_codes") or []),
@@ -360,6 +375,74 @@ def _summarize_opportunity(opportunity: Mapping[str, Any]) -> dict[str, Any]:
         ),
         "updated_at": _as_text(opportunity.get("updated_at")),
     }
+
+
+def _selected_opportunities_for_explanation(
+    *,
+    current_cycle: Mapping[str, Any] | None,
+    opportunities: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if isinstance(current_cycle, Mapping):
+        current_rows = [
+            dict(row)
+            for row in list(current_cycle.get("opportunities") or [])
+            if isinstance(row, Mapping)
+        ]
+        if current_rows:
+            ledger_by_candidate_id = {
+                int(row["source_candidate_id"]): row
+                for row in opportunities
+                if row.get("source_candidate_id") not in (None, "")
+            }
+            merged_rows = []
+            for row in current_rows:
+                candidate_id = row.get("candidate_id")
+                ledger_row = (
+                    {}
+                    if candidate_id in (None, "")
+                    else dict(ledger_by_candidate_id.get(int(candidate_id)) or {})
+                )
+                merged_row = {
+                    **ledger_row,
+                    **row,
+                }
+                if merged_row.get("lifecycle_state") in (None, ""):
+                    merged_row["lifecycle_state"] = (
+                        "ready"
+                        if str(merged_row.get("selection_state") or "") == "promotable"
+                        else "candidate"
+                    )
+                if merged_row.get("confidence") in (None, ""):
+                    merged_row["confidence"] = _confidence_from_quality_score(
+                        merged_row.get("quality_score")
+                    )
+                if not merged_row.get("reason_codes") and merged_row.get("state_reason"):
+                    merged_row["reason_codes"] = [str(merged_row["state_reason"])]
+                merged_rows.append(
+                    merged_row
+                )
+            selection_priority = {
+                "promotable": 0,
+                "monitor": 1,
+            }
+            return sorted(
+                merged_rows,
+                key=lambda row: (
+                    selection_priority.get(str(row.get("selection_state") or ""), 2),
+                    0 if str(row.get("eligibility") or "live") == "live" else 1,
+                    int(row.get("selection_rank") or 10_000),
+                    str(row.get("underlying_symbol") or ""),
+                ),
+            )
+
+    return sorted(
+        opportunities,
+        key=lambda row: (
+            0 if _as_text(row.get("consumed_by_execution_attempt_id")) else 1,
+            0 if str(row.get("lifecycle_state") or "") == "ready" else 1,
+            parse_datetime(_as_text(row.get("updated_at")) or "1970-01-01T00:00:00Z"),
+        ),
+    )[:5]
 
 
 def _summarize_risk_decision(decision: Mapping[str, Any]) -> dict[str, Any]:
@@ -451,27 +534,28 @@ def _summarize_alert(alert: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _board_watchlist_pnl_spread(summary: Mapping[str, Any] | None) -> float | None:
+def _promotable_monitor_pnl_spread(summary: Mapping[str, Any] | None) -> float | None:
     if not isinstance(summary, Mapping):
         return None
     outcomes = summary.get("outcomes")
     if not isinstance(outcomes, Mapping):
         return None
-    averages = outcomes.get("average_estimated_pnl_by_bucket")
-    if not isinstance(averages, Mapping):
-        return None
-    board = _coerce_float(averages.get("board"))
-    watchlist = _coerce_float(averages.get("watchlist"))
-    if board is None or watchlist is None:
-        return None
-    return round(board - watchlist, 2)
+    averages = outcomes.get(
+        "average_estimated_pnl_by_selection_state",
+        outcomes.get("average_estimated_pnl_by_bucket"),
+    )
+    return (
+        None
+        if not isinstance(averages, Mapping)
+        else promotable_monitor_pnl_spread(averages)
+    )
 
 
 def _summarize_post_market(analysis: Mapping[str, Any] | None) -> dict[str, Any]:
     if not isinstance(analysis, Mapping):
         return {
             "overall_verdict": None,
-            "board_watchlist_pnl_spread": None,
+            "promotable_monitor_pnl_spread": None,
             "recommendations": [],
         }
     diagnostics = (
@@ -481,7 +565,7 @@ def _summarize_post_market(analysis: Mapping[str, Any] | None) -> dict[str, Any]
     )
     return {
         "overall_verdict": _as_text(diagnostics.get("overall_verdict")),
-        "board_watchlist_pnl_spread": _board_watchlist_pnl_spread(analysis),
+        "promotable_monitor_pnl_spread": _promotable_monitor_pnl_spread(analysis),
         "recommendations": list(analysis.get("recommendations") or []),
     }
 
@@ -565,13 +649,9 @@ def build_audit_replay(
         for item in timeline_items
         if str(item.get("topic") or "").startswith("control.")
     ]
-    prioritized_opportunities = sorted(
-        opportunities,
-        key=lambda row: (
-            0 if _as_text(row.get("consumed_by_execution_attempt_id")) else 1,
-            0 if str(row.get("lifecycle_state") or "") == "ready" else 1,
-            parse_datetime(_as_text(row.get("updated_at")) or "1970-01-01T00:00:00Z"),
-        ),
+    prioritized_opportunities = _selected_opportunities_for_explanation(
+        current_cycle=session.get("current_cycle"),
+        opportunities=opportunities,
     )
 
     state_summary = {
@@ -644,7 +724,7 @@ def build_audit_replay(
         "post_market": _summarize_post_market(analysis),
         "explanations": {
             "selected_opportunities": [
-                _summarize_opportunity(row) for row in prioritized_opportunities[:5]
+                _summarize_opportunity(row) for row in prioritized_opportunities[:10]
             ],
             "risk_decisions": [
                 _summarize_risk_decision(dict(row))

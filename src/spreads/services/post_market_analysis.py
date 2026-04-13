@@ -10,6 +10,11 @@ from spreads.services.analysis import (
     resolve_date,
 )
 from spreads.runtime.config import default_database_url
+from spreads.services.selection_terms import (
+    MONITOR_SELECTION_STATE,
+    PROMOTABLE_SELECTION_STATE,
+    promotable_monitor_pnl_spread,
+)
 from spreads.storage.factory import build_post_market_repository
 
 
@@ -33,13 +38,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _bucket_pnl(outcomes: Mapping[str, Any], bucket: str) -> float | None:
-    value = outcomes["average_estimated_pnl_by_bucket"].get(bucket)
+def _selection_state_pnl(outcomes: Mapping[str, Any], selection_state: str) -> float | None:
+    value = outcomes["average_estimated_pnl_by_selection_state"].get(selection_state)
     return None if value is None else float(value)
 
 
-def _bucket_outcomes(outcomes: Mapping[str, Any], bucket: str) -> dict[str, int]:
-    return dict(outcomes["outcome_counts_by_bucket"].get(bucket) or {})
+def _selection_state_outcomes(
+    outcomes: Mapping[str, Any], selection_state: str
+) -> dict[str, int]:
+    return dict(outcomes["outcome_counts_by_selection_state"].get(selection_state) or {})
 
 
 def _outcome_totals(items: Mapping[str, int]) -> tuple[int, int, int]:
@@ -66,12 +73,20 @@ def build_post_market_diagnostics(summary: Mapping[str, Any]) -> dict[str, Any]:
     event_overview = summary["event_overview"]
     quote_overview = summary["quote_overview"]
 
-    board_count = int(outcomes["counts_by_bucket"].get("board", 0))
-    watchlist_count = int(outcomes["counts_by_bucket"].get("watchlist", 0))
-    board_avg_pnl = _bucket_pnl(outcomes, "board")
-    watchlist_avg_pnl = _bucket_pnl(outcomes, "watchlist")
-    board_wins, board_losses, board_open = _outcome_totals(_bucket_outcomes(outcomes, "board"))
-    watchlist_wins, watchlist_losses, watchlist_open = _outcome_totals(_bucket_outcomes(outcomes, "watchlist"))
+    promotable_count = int(
+        outcomes["counts_by_selection_state"].get(PROMOTABLE_SELECTION_STATE, 0)
+    )
+    monitor_count = int(
+        outcomes["counts_by_selection_state"].get(MONITOR_SELECTION_STATE, 0)
+    )
+    promotable_avg_pnl = _selection_state_pnl(outcomes, PROMOTABLE_SELECTION_STATE)
+    monitor_avg_pnl = _selection_state_pnl(outcomes, MONITOR_SELECTION_STATE)
+    promotable_wins, promotable_losses, promotable_open = _outcome_totals(
+        _selection_state_outcomes(outcomes, PROMOTABLE_SELECTION_STATE)
+    )
+    monitor_wins, monitor_losses, monitor_open = _outcome_totals(
+        _selection_state_outcomes(outcomes, MONITOR_SELECTION_STATE)
+    )
 
     side_flip_count = int(event_overview["by_type"].get("side_flip", 0))
     replacement_count = int(event_overview["by_type"].get("replaced", 0))
@@ -93,7 +108,7 @@ def build_post_market_diagnostics(summary: Mapping[str, Any]) -> dict[str, Any]:
     if strongest:
         strengths.append(
             {
-                "title": "Best resolved signal bucket",
+                "title": "Best resolved signal segment",
                 "details": _signal_line(strongest[0]),
                 "evidence": strongest[0],
             }
@@ -101,23 +116,23 @@ def build_post_market_diagnostics(summary: Mapping[str, Any]) -> dict[str, Any]:
     elif provisional_strongest:
         strengths.append(
             {
-                "title": "Best provisional signal bucket",
+                "title": "Best provisional signal segment",
                 "details": _signal_line(provisional_strongest[0]),
                 "evidence": provisional_strongest[0],
             }
         )
 
-    if board_avg_pnl is not None and board_avg_pnl > 0:
+    if promotable_avg_pnl is not None and promotable_avg_pnl > 0:
         strengths.append(
             {
-                "title": "Accepted board ideas finished positive on average",
-                "details": f"Board ideas averaged {board_avg_pnl:.0f} estimated PnL.",
+                "title": "Promotable ideas finished positive on average",
+                "details": f"Promotable ideas averaged {promotable_avg_pnl:.0f} estimated PnL.",
                 "evidence": {
-                    "board_average_estimated_pnl": board_avg_pnl,
-                    "board_count": board_count,
-                    "board_wins": board_wins,
-                    "board_losses": board_losses,
-                    "board_open": board_open,
+                    "promotable_average_estimated_pnl": promotable_avg_pnl,
+                    "promotable_count": promotable_count,
+                    "promotable_wins": promotable_wins,
+                    "promotable_losses": promotable_losses,
+                    "promotable_open": promotable_open,
                 },
             }
         )
@@ -138,7 +153,7 @@ def build_post_market_diagnostics(summary: Mapping[str, Any]) -> dict[str, Any]:
     if side_flip_count <= 1 and replacement_count <= max(2, cycle_count // 4):
         strengths.append(
             {
-                "title": "Board state stayed stable",
+                "title": "Promotable set stayed stable",
                 "details": f"Only {side_flip_count} side flips and {replacement_count} replacements across {cycle_count} cycles.",
                 "evidence": {
                     "side_flip_count": side_flip_count,
@@ -151,52 +166,52 @@ def build_post_market_diagnostics(summary: Mapping[str, Any]) -> dict[str, Any]:
     if weakest:
         problems.append(
             {
-                "title": "Weakest resolved signal bucket",
+                "title": "Weakest resolved signal segment",
                 "details": _signal_line(weakest[0]),
                 "evidence": weakest[0],
             }
         )
 
-    if board_count == 0:
+    if promotable_count == 0:
         problems.append(
             {
-                "title": "No accepted board ideas",
-                "details": f"The label produced {watchlist_count} watchlist ideas but no accepted board ideas.",
+                "title": "No promotable ideas",
+                "details": f"The label produced {monitor_count} monitor ideas but no promotable ideas.",
                 "evidence": {
-                    "board_count": board_count,
-                    "watchlist_count": watchlist_count,
+                    "promotable_count": promotable_count,
+                    "monitor_count": monitor_count,
                 },
             }
         )
-    elif board_avg_pnl is not None and board_avg_pnl < 0:
+    elif promotable_avg_pnl is not None and promotable_avg_pnl < 0:
         problems.append(
             {
-                "title": "Accepted board ideas underperformed",
-                "details": f"Board ideas averaged {board_avg_pnl:.0f} estimated PnL.",
+                "title": "Promotable ideas underperformed",
+                "details": f"Promotable ideas averaged {promotable_avg_pnl:.0f} estimated PnL.",
                 "evidence": {
-                    "board_average_estimated_pnl": board_avg_pnl,
-                    "board_wins": board_wins,
-                    "board_losses": board_losses,
-                    "board_open": board_open,
+                    "promotable_average_estimated_pnl": promotable_avg_pnl,
+                    "promotable_wins": promotable_wins,
+                    "promotable_losses": promotable_losses,
+                    "promotable_open": promotable_open,
                 },
             }
         )
 
     if (
-        board_avg_pnl is not None
-        and watchlist_avg_pnl is not None
-        and watchlist_avg_pnl > board_avg_pnl + 5
+        promotable_avg_pnl is not None
+        and monitor_avg_pnl is not None
+        and monitor_avg_pnl > promotable_avg_pnl + 5
     ):
         problems.append(
             {
-                "title": "Watchlist outperformed the accepted board",
-                "details": f"Watchlist ideas averaged {watchlist_avg_pnl:.0f} vs board {board_avg_pnl:.0f}.",
+                "title": "Monitor ideas outperformed the promotable set",
+                "details": f"Monitor ideas averaged {monitor_avg_pnl:.0f} vs promotable {promotable_avg_pnl:.0f}.",
                 "evidence": {
-                    "board_average_estimated_pnl": board_avg_pnl,
-                    "watchlist_average_estimated_pnl": watchlist_avg_pnl,
-                    "watchlist_wins": watchlist_wins,
-                    "watchlist_losses": watchlist_losses,
-                    "watchlist_open": watchlist_open,
+                    "promotable_average_estimated_pnl": promotable_avg_pnl,
+                    "monitor_average_estimated_pnl": monitor_avg_pnl,
+                    "monitor_wins": monitor_wins,
+                    "monitor_losses": monitor_losses,
+                    "monitor_open": monitor_open,
                 },
             }
         )
@@ -229,18 +244,23 @@ def build_post_market_diagnostics(summary: Mapping[str, Any]) -> dict[str, Any]:
         )
 
     label = str(summary["label"])
-    if board_count > 0 and board_avg_pnl is not None and board_avg_pnl < 0 and "0dte" in label:
+    if (
+        promotable_count > 0
+        and promotable_avg_pnl is not None
+        and promotable_avg_pnl < 0
+        and "0dte" in label
+    ):
         recommendations.append(
             {
-                "code": "raise_0dte_quality_floor",
+                "code": "raise_0dte_promotable_floor",
                 "priority": "high",
                 "confidence": "medium",
-                "title": "Raise the 0DTE board quality floor",
-                "action": "Raise the accepted-board score floor and minimum credit requirements for this 0DTE label.",
-                "reason": "Board ideas were accepted but finished negative on average.",
+                "title": "Raise the 0DTE promotable quality floor",
+                "action": "Raise the promotable score floor and minimum credit requirements for this 0DTE label.",
+                "reason": "Promotable ideas were accepted but finished negative on average.",
                 "evidence": {
-                    "board_average_estimated_pnl": board_avg_pnl,
-                    "board_count": board_count,
+                    "promotable_average_estimated_pnl": promotable_avg_pnl,
+                    "promotable_count": promotable_count,
                     "label": label,
                 },
             }
@@ -252,9 +272,9 @@ def build_post_market_diagnostics(summary: Mapping[str, Any]) -> dict[str, Any]:
                 "code": "increase_hysteresis",
                 "priority": "high",
                 "confidence": "medium",
-                "title": "Increase board-switch hysteresis",
+                "title": "Increase promotable-switch hysteresis",
                 "action": "Tighten side-switch and same-side replacement thresholds for this label.",
-                "reason": "Collector churn was elevated enough to risk noisy board changes.",
+                "reason": "Collector churn was elevated enough to risk noisy promotable-set changes.",
                 "evidence": {
                     "side_flip_count": side_flip_count,
                     "replacement_count": replacement_count,
@@ -265,41 +285,46 @@ def build_post_market_diagnostics(summary: Mapping[str, Any]) -> dict[str, Any]:
         )
 
     if (
-        board_count > 0
-        and board_avg_pnl is not None
-        and watchlist_avg_pnl is not None
-        and watchlist_avg_pnl > board_avg_pnl + 5
+        promotable_count > 0
+        and promotable_avg_pnl is not None
+        and monitor_avg_pnl is not None
+        and monitor_avg_pnl > promotable_avg_pnl + 5
     ):
         recommendations.append(
             {
-                "code": "tighten_watchlist_promotion",
+                "code": "tighten_monitor_promotion",
                 "priority": "high",
                 "confidence": "medium",
-                "title": "Tighten watchlist-to-board promotion",
-                "action": "Require a larger score gap or stronger directional alignment before promoting watchlist ideas to the board.",
-                "reason": "Watchlist ideas outperformed accepted board ideas in the same session.",
+                "title": "Tighten monitor-to-promotable promotion",
+                "action": "Require a larger score gap or stronger directional alignment before promoting monitor ideas into the promotable set.",
+                "reason": "Monitor ideas outperformed promotable ideas in the same session.",
                 "evidence": {
-                    "board_average_estimated_pnl": board_avg_pnl,
-                    "watchlist_average_estimated_pnl": watchlist_avg_pnl,
-                    "board_count": board_count,
-                    "watchlist_count": watchlist_count,
+                    "promotable_average_estimated_pnl": promotable_avg_pnl,
+                    "monitor_average_estimated_pnl": monitor_avg_pnl,
+                    "promotable_count": promotable_count,
+                    "monitor_count": monitor_count,
                 },
             }
         )
 
-    if board_count <= 1 and watchlist_count >= 5 and watchlist_avg_pnl is not None and watchlist_avg_pnl > 0:
+    if (
+        promotable_count <= 1
+        and monitor_count >= 5
+        and monitor_avg_pnl is not None
+        and monitor_avg_pnl > 0
+    ):
         recommendations.append(
             {
                 "code": "widen_discovery",
                 "priority": "medium",
                 "confidence": "low",
                 "title": "Widen discovery slightly",
-                "action": "Relax discovery thresholds modestly while keeping accepted-board thresholds strict.",
-                "reason": "The session found a positive watchlist but surfaced too few accepted ideas.",
+                "action": "Relax discovery thresholds modestly while keeping promotable thresholds strict.",
+                "reason": "The session found a positive monitor set but surfaced too few promotable ideas.",
                 "evidence": {
-                    "board_count": board_count,
-                    "watchlist_count": watchlist_count,
-                    "watchlist_average_estimated_pnl": watchlist_avg_pnl,
+                    "promotable_count": promotable_count,
+                    "monitor_count": monitor_count,
+                    "monitor_average_estimated_pnl": monitor_avg_pnl,
                 },
             }
         )
@@ -325,11 +350,20 @@ def build_post_market_diagnostics(summary: Mapping[str, Any]) -> dict[str, Any]:
     recommendations.sort(key=lambda row: (recommendation_priority.get(str(row["priority"]), 9), str(row["code"])))
 
     verdict = "mixed"
-    if board_count == 0 and watchlist_count == 0:
+    if promotable_count == 0 and monitor_count == 0:
         verdict = "quiet"
-    elif board_count > 0 and board_avg_pnl is not None and board_avg_pnl > 0 and side_flip_count <= 1:
+    elif (
+        promotable_count > 0
+        and promotable_avg_pnl is not None
+        and promotable_avg_pnl > 0
+        and side_flip_count <= 1
+    ):
         verdict = "strong"
-    elif board_avg_pnl is not None and board_avg_pnl < 0 and (board_losses > board_wins or board_wins == 0):
+    elif (
+        promotable_avg_pnl is not None
+        and promotable_avg_pnl < 0
+        and (promotable_losses > promotable_wins or promotable_wins == 0)
+    ):
         verdict = "weak"
 
     return {
@@ -350,20 +384,23 @@ def build_post_market_diagnostics(summary: Mapping[str, Any]) -> dict[str, Any]:
             "average_quote_events_per_leg": round(avg_quote_events_per_leg, 2),
             "candidate_run_count": int(summary["run_overview"]["candidate_run_count"]),
         },
-        "bucket_performance": {
-            "board": {
-                "count": board_count,
-                "average_estimated_pnl": board_avg_pnl,
-                "wins": board_wins,
-                "losses": board_losses,
-                "still_open": board_open,
+        "promotable_monitor_pnl_spread": promotable_monitor_pnl_spread(
+            outcomes.get("average_estimated_pnl_by_selection_state")
+        ),
+        "selection_state_performance": {
+            PROMOTABLE_SELECTION_STATE: {
+                "count": promotable_count,
+                "average_estimated_pnl": promotable_avg_pnl,
+                "wins": promotable_wins,
+                "losses": promotable_losses,
+                "still_open": promotable_open,
             },
-            "watchlist": {
-                "count": watchlist_count,
-                "average_estimated_pnl": watchlist_avg_pnl,
-                "wins": watchlist_wins,
-                "losses": watchlist_losses,
-                "still_open": watchlist_open,
+            MONITOR_SELECTION_STATE: {
+                "count": monitor_count,
+                "average_estimated_pnl": monitor_avg_pnl,
+                "wins": monitor_wins,
+                "losses": monitor_losses,
+                "still_open": monitor_open,
             },
         },
     }

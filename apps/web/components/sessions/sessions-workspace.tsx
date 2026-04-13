@@ -1319,8 +1319,15 @@ export function SessionsWorkspace() {
 
   const session = sessionDetailQuery.data ?? null;
   const latestSlotCapture = session?.latest_slot ? quoteCapture(session.latest_slot) : {};
-  const boardRows = buildCandidateRows(session?.board_candidates ?? []);
-  const watchlistRows = buildCandidateRows(session?.watchlist_candidates ?? []);
+  const liveOpportunities = (session?.opportunities ?? []).filter(
+    (row) => readString(row.eligibility, "live") === "live",
+  );
+  const boardRows = buildCandidateRows(
+    liveOpportunities.filter((row) => row.selection_state === "promotable"),
+  );
+  const watchlistRows = buildCandidateRows(
+    liveOpportunities.filter((row) => row.selection_state === "monitor"),
+  );
   const slotRows = buildSlotRows(session?.slot_runs ?? []);
   const alertRows = buildAlertRows(session?.alerts ?? []);
   const eventRows = buildEventRows(session?.events ?? []);
@@ -1475,14 +1482,14 @@ export function SessionsWorkspace() {
                   note={selectedSession?.latest_slot_status ?? "No slot"}
                 />
                 <MetricTile
-                  label="Board"
-                  value={String(selectedSession?.board_count ?? 0)}
-                  note="Current board candidates"
+                  label="Promotable"
+                  value={String(selectedSession?.promotable_count ?? 0)}
+                  note="Current promotable opportunities"
                 />
                 <MetricTile
-                  label="Watchlist"
-                  value={String(selectedSession?.watchlist_count ?? 0)}
-                  note="Current watchlist candidates"
+                  label="Monitor"
+                  value={String(selectedSession?.monitor_count ?? 0)}
+                  note="Current monitor opportunities"
                 />
                 <MetricTile
                   label="Alerts"
@@ -1562,7 +1569,7 @@ export function SessionsWorkspace() {
                 closeMessage={closePositionMutation.data?.message ?? null}
               />
 
-              <SectionSurface title="Board" description="Current board candidates from the latest successful cycle.">
+              <SectionSurface title="Promotable" description="Current promotable opportunities from the latest successful cycle.">
                 <div className="flex flex-col gap-4">
                   <DataTable
                     columns={CANDIDATE_COLUMNS}
@@ -1570,14 +1577,14 @@ export function SessionsWorkspace() {
                     getRowId={(row) => row.id}
                     selectedId={selectedBoardCandidate ? String(selectedBoardCandidate.candidate_id) : undefined}
                     onSelect={(row) => setSelectedBoardId(row.id)}
-                    emptyMessage="No board candidates were persisted for this session."
+                    emptyMessage="No promotable opportunities were persisted for this session."
                   />
                   {selectedBoardCandidate ? (
                     <div className="rounded-2xl border border-border/70 bg-background/70 px-4 py-4">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                         <div className="min-w-0">
                           <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                            Selected live candidate
+                            Selected promotable opportunity
                           </div>
                           <div className="mt-2 text-lg font-medium">
                             {selectedBoardCandidate.underlying_symbol} · {selectedBoardCandidate.strategy.replaceAll("_", " ")}
@@ -1663,12 +1670,12 @@ export function SessionsWorkspace() {
                 ) : null}
               </SectionSurface>
 
-              <SectionSurface title="Watchlist" description="Current watchlist candidates from the latest successful cycle.">
+              <SectionSurface title="Monitor" description="Current monitor opportunities from the latest successful cycle.">
                 <DataTable
                   columns={CANDIDATE_COLUMNS}
                   data={watchlistRows}
                   getRowId={(row) => row.id}
-                  emptyMessage="No watchlist candidates were persisted for this session."
+                  emptyMessage="No monitor opportunities were persisted for this session."
                 />
               </SectionSurface>
 

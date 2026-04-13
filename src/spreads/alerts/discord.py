@@ -141,9 +141,11 @@ def _build_spread_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
     expected_move_line = _spread_expected_move_line(candidate)
     if expected_move_line is not None:
         fields.append({"name": "Expected Move", "value": expected_move_line, "inline": False})
-    board_notes = candidate.get("board_notes") or []
-    if board_notes:
-        fields.append({"name": "Why Now", "value": ", ".join(str(note) for note in board_notes[:3]), "inline": False})
+    selection_notes = (
+        candidate.get("selection_notes") or candidate.get("board_notes") or []
+    )
+    if selection_notes:
+        fields.append({"name": "Why Now", "value": ", ".join(str(note) for note in selection_notes[:3]), "inline": False})
     fields.append({"name": "Event", "value": alert["alert_type"].replace("_", " "), "inline": True})
 
     embed = {
