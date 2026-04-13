@@ -27,7 +27,10 @@ from spreads.services.control_plane import (
     get_active_policy_rollout_map,
     publish_control_gate_event,
 )
-from spreads.services.exit_manager import normalize_exit_policy, resolve_exit_policy_snapshot
+from spreads.services.exit_manager import (
+    normalize_exit_policy,
+    resolve_exit_policy_snapshot,
+)
 from spreads.services.live_pipelines import build_live_session_id
 from spreads.services.risk_manager import (
     evaluate_open_execution,
@@ -43,9 +46,12 @@ from spreads.services.session_positions import (
     sync_session_position_from_attempt,
 )
 from spreads.storage.factory import build_job_repository
+from spreads.storage.serializers import parse_datetime
 
 BROKER_NAME = "alpaca"
-EXECUTION_SCHEMA_MESSAGE = "Execution tables are not available yet. Run the latest Alembic migrations."
+EXECUTION_SCHEMA_MESSAGE = (
+    "Execution tables are not available yet. Run the latest Alembic migrations."
+)
 PENDING_SUBMISSION_STATUS = "pending_submission"
 TERMINAL_STATUSES = {
     "canceled",
@@ -104,6 +110,44 @@ def _as_text(value: Any) -> str | None:
         return None
     rendered = str(value).strip()
     return rendered or None
+
+
+def _validate_open_timing_window(
+    *,
+    exit_policy: dict[str, Any] | None,
+    current_time: datetime,
+) -> dict[str, Any]:
+    normalized_policy = normalize_exit_policy(exit_policy)
+    force_close_at_text = _as_text(normalized_policy.get("force_close_at"))
+    force_close_at = (
+        None if force_close_at_text is None else parse_datetime(force_close_at_text)
+    )
+    if force_close_at is None:
+        return {
+            "allowed": True,
+            "reason": None,
+            "message": None,
+            "force_close_at": force_close_at_text,
+        }
+    if current_time >= force_close_at:
+        return {
+            "allowed": False,
+            "reason": "force_close_window_started",
+            "message": (
+                "Open execution is blocked because the exit force-close window has already started."
+            ),
+            "force_close_at": force_close_at.isoformat(timespec="seconds").replace(
+                "+00:00", "Z"
+            ),
+        }
+    return {
+        "allowed": True,
+        "reason": None,
+        "message": None,
+        "force_close_at": force_close_at.isoformat(timespec="seconds").replace(
+            "+00:00", "Z"
+        ),
+    }
 
 
 def _execution_attempt_id() -> str:
@@ -182,7 +226,9 @@ def _candidate_with_payload(candidate: dict[str, Any]) -> dict[str, Any]:
     return dict(candidate)
 
 
-def _validate_auto_execution_candidate(candidate: dict[str, Any]) -> tuple[str | None, str | None]:
+def _validate_auto_execution_candidate(
+    candidate: dict[str, Any],
+) -> tuple[str | None, str | None]:
     profile = _as_text(candidate.get("profile"))
     if profile != "0dte":
         return None, None
@@ -200,7 +246,9 @@ def _validate_auto_execution_candidate(candidate: dict[str, Any]) -> tuple[str |
     return None, None
 
 
-def _clamp_fraction(value: float, *, minimum: float = 0.0, maximum: float = 1.0) -> float:
+def _clamp_fraction(
+    value: float, *, minimum: float = 0.0, maximum: float = 1.0
+) -> float:
     return max(minimum, min(maximum, float(value)))
 
 
@@ -211,7 +259,9 @@ def _normalize_credit_limit(value: Any) -> float | None:
     return abs(numeric)
 
 
-def _resolve_candidate_credit_prices(candidate_payload: dict[str, Any]) -> tuple[float | None, float | None]:
+def _resolve_candidate_credit_prices(
+    candidate_payload: dict[str, Any],
+) -> tuple[float | None, float | None]:
     midpoint_credit = _normalize_credit_limit(candidate_payload.get("midpoint_credit"))
     natural_credit = _normalize_credit_limit(candidate_payload.get("natural_credit"))
     return midpoint_credit, natural_credit
@@ -224,7 +274,9 @@ def _quote_record_sort_key(record: dict[str, Any]) -> tuple[str, str]:
     )
 
 
-def _latest_quote_records_by_symbol(quote_records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def _latest_quote_records_by_symbol(
+    quote_records: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
     latest: dict[str, tuple[tuple[str, str], dict[str, Any]]] = {}
     for record in quote_records:
         symbol = _as_text(record.get("option_symbol"))
@@ -255,12 +307,21 @@ def _resolve_reactive_quote_snapshot(
     long_midpoint = _coerce_float(long_quote.get("midpoint"))
     short_bid = _coerce_float(short_quote.get("bid"))
     long_ask = _coerce_float(long_quote.get("ask"))
-    if short_midpoint is None or long_midpoint is None or short_bid is None or long_ask is None:
+    if (
+        short_midpoint is None
+        or long_midpoint is None
+        or short_bid is None
+        or long_ask is None
+    ):
         return None
 
     captured_at = max(
-        _as_text(short_quote.get("quote_timestamp")) or _as_text(short_quote.get("captured_at")) or "",
-        _as_text(long_quote.get("quote_timestamp")) or _as_text(long_quote.get("captured_at")) or "",
+        _as_text(short_quote.get("quote_timestamp"))
+        or _as_text(short_quote.get("captured_at"))
+        or "",
+        _as_text(long_quote.get("quote_timestamp"))
+        or _as_text(long_quote.get("captured_at"))
+        or "",
     )
     return {
         "captured_at": captured_at or None,
@@ -298,7 +359,12 @@ def _resolve_reactive_auto_execution(
 
     live_midpoint_credit = _normalize_credit_limit(live_snapshot.get("midpoint_credit"))
     live_natural_credit = _normalize_credit_limit(live_snapshot.get("natural_credit"))
-    if live_midpoint_credit is None or live_natural_credit is None or live_midpoint_credit <= 0 or live_natural_credit <= 0:
+    if (
+        live_midpoint_credit is None
+        or live_natural_credit is None
+        or live_midpoint_credit <= 0
+        or live_natural_credit <= 0
+    ):
         return {
             "ok": False,
             "reason": "live_quotes_not_executable",
@@ -308,7 +374,11 @@ def _resolve_reactive_auto_execution(
 
     scanned_midpoint_credit = _normalize_credit_limit(candidate.get("midpoint_credit"))
     if scanned_midpoint_credit is not None:
-        credit_floor = round(scanned_midpoint_credit * float(execution_policy["min_credit_retention_pct"]), 4)
+        credit_floor = round(
+            scanned_midpoint_credit
+            * float(execution_policy["min_credit_retention_pct"]),
+            4,
+        )
         if live_midpoint_credit < credit_floor:
             return {
                 "ok": False,
@@ -326,7 +396,9 @@ def _resolve_reactive_auto_execution(
         **candidate,
         "midpoint_credit": live_midpoint_credit,
         "natural_credit": live_natural_credit,
-        "fill_ratio": 0.0 if live_midpoint_credit <= 0 else round(live_natural_credit / live_midpoint_credit, 4),
+        "fill_ratio": 0.0
+        if live_midpoint_credit <= 0
+        else round(live_natural_credit / live_midpoint_credit, 4),
     }
     limit_price = _resolve_open_limit_price(
         candidate_payload=pricing_candidate,
@@ -354,31 +426,43 @@ def _resolve_open_limit_price(
     if explicit_credit is not None:
         return round(max(explicit_credit, 0.01), 2)
 
-    midpoint_credit, natural_credit = _resolve_candidate_credit_prices(candidate_payload)
+    midpoint_credit, natural_credit = _resolve_candidate_credit_prices(
+        candidate_payload
+    )
     if midpoint_credit is None:
         order_payload = dict(candidate_payload.get("order_payload") or {})
         midpoint_credit = _normalize_credit_limit(order_payload.get("limit_price"))
     if midpoint_credit is None or midpoint_credit <= 0:
         raise ValueError("Execution limit price must be positive")
 
-    pricing_mode = str(execution_policy.get("pricing_mode") or DEFAULT_ENTRY_PRICING_MODE)
+    pricing_mode = str(
+        execution_policy.get("pricing_mode") or DEFAULT_ENTRY_PRICING_MODE
+    )
     if pricing_mode == "midpoint" or natural_credit is None or natural_credit <= 0:
         return round(max(midpoint_credit, 0.01), 2)
 
-    fill_ratio = _clamp_fraction(_coerce_float(candidate_payload.get("fill_ratio")) or 0.0, maximum=1.0)
+    fill_ratio = _clamp_fraction(
+        _coerce_float(candidate_payload.get("fill_ratio")) or 0.0, maximum=1.0
+    )
     min_credit_retention_pct = _clamp_fraction(
-        _coerce_float(execution_policy.get("min_credit_retention_pct")) or DEFAULT_MIN_CREDIT_RETENTION_PCT,
+        _coerce_float(execution_policy.get("min_credit_retention_pct"))
+        or DEFAULT_MIN_CREDIT_RETENTION_PCT,
         minimum=0.5,
         maximum=1.0,
     )
     max_credit_concession = max(
-        _coerce_float(execution_policy.get("max_credit_concession")) or DEFAULT_MAX_CREDIT_CONCESSION,
+        _coerce_float(execution_policy.get("max_credit_concession"))
+        or DEFAULT_MAX_CREDIT_CONCESSION,
         0.0,
     )
     credit_floor = max(natural_credit, midpoint_credit * min_credit_retention_pct, 0.01)
     max_concession_to_floor = max(midpoint_credit - credit_floor, 0.0)
-    fill_ratio_concession = max(midpoint_credit - natural_credit, 0.0) * max(1.0 - fill_ratio, 0.0)
-    concession = min(fill_ratio_concession, max_credit_concession, max_concession_to_floor)
+    fill_ratio_concession = max(midpoint_credit - natural_credit, 0.0) * max(
+        1.0 - fill_ratio, 0.0
+    )
+    concession = min(
+        fill_ratio_concession, max_credit_concession, max_concession_to_floor
+    )
     return round(max(midpoint_credit - concession, credit_floor, 0.01), 2)
 
 
@@ -401,6 +485,15 @@ def _classify_auto_execution_block(exc: Exception) -> dict[str, Any] | None:
             "reason": "stale_quote",
             "message": message,
             "block_category": "quote_freshness",
+        }
+    if (
+        message
+        == "Open execution is blocked because the exit force-close window has already started."
+    ):
+        return {
+            "reason": "force_close_window_started",
+            "message": message,
+            "block_category": "timing_window",
         }
     if message == "Execution is blocked by SPREADS_EXECUTION_KILL_SWITCH.":
         return {
@@ -499,12 +592,16 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
         enabled = bool(raw_policy.get("enabled"))
         mode = _as_text(raw_policy.get("mode")) or "disabled"
         quantity = _coerce_int(raw_policy.get("quantity")) or 1
-        pricing_mode = _as_text(raw_policy.get("pricing_mode")) or DEFAULT_ENTRY_PRICING_MODE
+        pricing_mode = (
+            _as_text(raw_policy.get("pricing_mode")) or DEFAULT_ENTRY_PRICING_MODE
+        )
         min_credit_retention_pct = (
-            _coerce_float(raw_policy.get("min_credit_retention_pct")) or DEFAULT_MIN_CREDIT_RETENTION_PCT
+            _coerce_float(raw_policy.get("min_credit_retention_pct"))
+            or DEFAULT_MIN_CREDIT_RETENTION_PCT
         )
         max_credit_concession = (
-            _coerce_float(raw_policy.get("max_credit_concession")) or DEFAULT_MAX_CREDIT_CONCESSION
+            _coerce_float(raw_policy.get("max_credit_concession"))
+            or DEFAULT_MAX_CREDIT_CONCESSION
         )
     else:
         enabled = False
@@ -515,7 +612,9 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
         max_credit_concession = DEFAULT_MAX_CREDIT_CONCESSION
     if pricing_mode not in {"midpoint", "adaptive_credit"}:
         raise ValueError(f"Unsupported execution pricing mode: {pricing_mode}")
-    min_credit_retention_pct = _clamp_fraction(min_credit_retention_pct, minimum=0.5, maximum=1.0)
+    min_credit_retention_pct = _clamp_fraction(
+        min_credit_retention_pct, minimum=0.5, maximum=1.0
+    )
     max_credit_concession = max(float(max_credit_concession), 0.0)
     if not enabled:
         return {
@@ -552,9 +651,13 @@ def _attach_attempt_details(
     fills_by_attempt: dict[str, list[dict[str, Any]]] = {}
 
     for order in orders:
-        orders_by_attempt.setdefault(str(order["execution_attempt_id"]), []).append(dict(order))
+        orders_by_attempt.setdefault(str(order["execution_attempt_id"]), []).append(
+            dict(order)
+        )
     for fill in fills:
-        fills_by_attempt.setdefault(str(fill["execution_attempt_id"]), []).append(dict(fill))
+        fills_by_attempt.setdefault(str(fill["execution_attempt_id"]), []).append(
+            dict(fill)
+        )
 
     return [
         {
@@ -577,18 +680,28 @@ def list_session_execution_attempts(
     execution_store: Any | None = None,
     storage: Any | None = None,
 ) -> list[dict[str, Any]]:
-    resolved_execution_store = execution_store if execution_store is not None else storage.execution
+    resolved_execution_store = (
+        execution_store if execution_store is not None else storage.execution
+    )
     if not resolved_execution_store.schema_ready():
         return []
-    attempts = list(resolved_execution_store.list_attempts(session_id=session_id, limit=limit))
-    return _attach_attempt_details(execution_store=resolved_execution_store, attempts=attempts)
+    attempts = list(
+        resolved_execution_store.list_attempts(session_id=session_id, limit=limit)
+    )
+    return _attach_attempt_details(
+        execution_store=resolved_execution_store, attempts=attempts
+    )
 
 
-def _get_attempt_payload(execution_store: Any, execution_attempt_id: str) -> dict[str, Any]:
+def _get_attempt_payload(
+    execution_store: Any, execution_attempt_id: str
+) -> dict[str, Any]:
     attempt = execution_store.get_attempt(execution_attempt_id)
     if attempt is None:
         raise ValueError(f"Unknown execution_attempt_id: {execution_attempt_id}")
-    return _attach_attempt_details(execution_store=execution_store, attempts=[dict(attempt)])[0]
+    return _attach_attempt_details(
+        execution_store=execution_store, attempts=[dict(attempt)]
+    )[0]
 
 
 def _resolve_session_candidate(
@@ -603,9 +716,13 @@ def _resolve_session_candidate(
     cycle = collector_store.get_cycle(str(candidate["cycle_id"]))
     if cycle is None:
         raise ValueError(f"Missing cycle for candidate_id: {candidate_id}")
-    candidate_session_id = cycle.get("session_id") or build_live_session_id(cycle["label"], cycle["session_date"])
+    candidate_session_id = cycle.get("session_id") or build_live_session_id(
+        cycle["label"], cycle["session_date"]
+    )
     if str(candidate_session_id) != session_id:
-        raise ValueError(f"Candidate {candidate_id} does not belong to session {session_id}")
+        raise ValueError(
+            f"Candidate {candidate_id} does not belong to session {session_id}"
+        )
     return dict(candidate), dict(cycle)
 
 
@@ -620,8 +737,12 @@ def _build_order_request(
     candidate_payload = dict(candidate.get("candidate") or {})
     order_payload = dict(candidate_payload.get("order_payload") or {})
     if not order_payload:
-        raise ValueError("Selected live candidate does not include an executable order payload")
-    resolved_quantity = quantity if quantity is not None else _coerce_int(order_payload.get("qty")) or 1
+        raise ValueError(
+            "Selected live candidate does not include an executable order payload"
+        )
+    resolved_quantity = (
+        quantity if quantity is not None else _coerce_int(order_payload.get("qty")) or 1
+    )
     if resolved_quantity <= 0:
         raise ValueError("Execution quantity must be positive")
     resolved_limit_price = _resolve_open_limit_price(
@@ -657,7 +778,9 @@ def _resolve_source_policies(
     job_run = resolved_job_store.get_job_run(job_run_id)
     payload = {} if job_run is None else dict(job_run["payload"])
     return {
-        "source_job_type": None if job_run is None else _as_text(job_run.get("job_type")),
+        "source_job_type": None
+        if job_run is None
+        else _as_text(job_run.get("job_type")),
         "source_job_key": None if job_run is None else _as_text(job_run.get("job_key")),
         "source_job_run_id": job_run_id,
         "execution_policy": normalize_execution_policy(payload.get("execution_policy")),
@@ -673,7 +796,9 @@ def _policy_source_kind(
     source_job_key: str | None,
     rollout: dict[str, Any] | None,
 ) -> str:
-    if isinstance(request_metadata, dict) and isinstance(request_metadata.get(policy_name), dict):
+    if isinstance(request_metadata, dict) and isinstance(
+        request_metadata.get(policy_name), dict
+    ):
         return "request_override"
     if rollout is not None:
         return "policy_rollout"
@@ -689,7 +814,9 @@ def _requested_policy_payload(
     source_policies: dict[str, Any],
     active_policy_rollouts: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    if isinstance(request_metadata, dict) and isinstance(request_metadata.get(policy_name), dict):
+    if isinstance(request_metadata, dict) and isinstance(
+        request_metadata.get(policy_name), dict
+    ):
         return dict(request_metadata[policy_name])
     rollout = active_policy_rollouts.get(policy_name)
     if rollout is not None and isinstance(rollout.get("policy"), dict):
@@ -728,13 +855,17 @@ def _build_policy_refs(
             ),
             source_job_key=None if risk_rollout is not None else source_job_key,
             source_job_run_id=None if risk_rollout is not None else source_job_run_id,
-            version_token=None if risk_rollout is None else str(risk_rollout["version_token"]),
+            version_token=None
+            if risk_rollout is None
+            else str(risk_rollout["version_token"]),
             extra=(
                 {}
                 if risk_rollout is None
                 else {
                     "policy_rollout_id": str(risk_rollout["policy_rollout_id"]),
-                    "operator_action_id": _as_text(risk_rollout.get("operator_action_id")),
+                    "operator_action_id": _as_text(
+                        risk_rollout.get("operator_action_id")
+                    ),
                 }
             ),
         ),
@@ -753,14 +884,20 @@ def _build_policy_refs(
                 else ("execution_policy" if source_job_key is None else source_job_key)
             ),
             source_job_key=None if execution_rollout is not None else source_job_key,
-            source_job_run_id=None if execution_rollout is not None else source_job_run_id,
-            version_token=None if execution_rollout is None else str(execution_rollout["version_token"]),
+            source_job_run_id=None
+            if execution_rollout is not None
+            else source_job_run_id,
+            version_token=None
+            if execution_rollout is None
+            else str(execution_rollout["version_token"]),
             extra=(
                 {}
                 if execution_rollout is None
                 else {
                     "policy_rollout_id": str(execution_rollout["policy_rollout_id"]),
-                    "operator_action_id": _as_text(execution_rollout.get("operator_action_id")),
+                    "operator_action_id": _as_text(
+                        execution_rollout.get("operator_action_id")
+                    ),
                 }
             ),
         ),
@@ -780,13 +917,17 @@ def _build_policy_refs(
             ),
             source_job_key=None if exit_rollout is not None else source_job_key,
             source_job_run_id=None if exit_rollout is not None else source_job_run_id,
-            version_token=None if exit_rollout is None else str(exit_rollout["version_token"]),
+            version_token=None
+            if exit_rollout is None
+            else str(exit_rollout["version_token"]),
             extra=(
                 {}
                 if exit_rollout is None
                 else {
                     "policy_rollout_id": str(exit_rollout["policy_rollout_id"]),
-                    "operator_action_id": _as_text(exit_rollout.get("operator_action_id")),
+                    "operator_action_id": _as_text(
+                        exit_rollout.get("operator_action_id")
+                    ),
                 }
             ),
         ),
@@ -803,7 +944,9 @@ def _resolve_session_position(
     if position is None:
         raise ValueError(f"Unknown session_position_id: {session_position_id}")
     if str(position["session_id"]) != session_id:
-        raise ValueError(f"Session position {session_position_id} does not belong to session {session_id}")
+        raise ValueError(
+            f"Session position {session_position_id} does not belong to session {session_id}"
+        )
     return dict(position)
 
 
@@ -817,11 +960,15 @@ def _build_close_order_request(
     remaining_quantity = _coerce_float(position.get("remaining_quantity"))
     if remaining_quantity is None or remaining_quantity <= 0:
         raise ValueError("Session position does not have remaining quantity to close")
-    resolved_quantity = quantity if quantity is not None else int(round(remaining_quantity))
+    resolved_quantity = (
+        quantity if quantity is not None else int(round(remaining_quantity))
+    )
     if resolved_quantity <= 0:
         raise ValueError("Close quantity must be positive")
     if resolved_quantity > remaining_quantity:
-        raise ValueError("Close quantity exceeds the remaining session position quantity")
+        raise ValueError(
+            "Close quantity exceeds the remaining session position quantity"
+        )
 
     resolved_limit_price = (
         limit_price
@@ -830,7 +977,9 @@ def _build_close_order_request(
     )
     resolved_limit_price = _normalize_credit_limit(resolved_limit_price)
     if resolved_limit_price is None or resolved_limit_price <= 0:
-        raise ValueError("Close execution requires a positive limit price or a quoted close mark")
+        raise ValueError(
+            "Close execution requires a positive limit price or a quoted close mark"
+        )
 
     request = make_close_order_payload(
         short_symbol=str(position["short_symbol"]),
@@ -885,7 +1034,9 @@ def _flatten_order_snapshot(
     ]
     for leg in order.get("legs") or []:
         if isinstance(leg, dict):
-            rows.extend(_flatten_order_snapshot(leg, parent_broker_order_id=broker_order_id))
+            rows.extend(
+                _flatten_order_snapshot(leg, parent_broker_order_id=broker_order_id)
+            )
     return rows
 
 
@@ -919,7 +1070,9 @@ def _sync_fill_rows(
         matching_order = order_lookup.get(broker_order_id)
         rows.append(
             {
-                "execution_order_id": None if matching_order is None else matching_order.get("execution_order_id"),
+                "execution_order_id": None
+                if matching_order is None
+                else matching_order.get("execution_order_id"),
                 "broker": BROKER_NAME,
                 "broker_fill_id": broker_fill_id,
                 "broker_order_id": broker_order_id,
@@ -966,18 +1119,25 @@ def _sync_attempt_state(
             rows=fill_rows,
         )
 
-    status = str(order_snapshot.get("status") or attempt.get("status") or "unknown").lower()
-    completed_at = _resolve_completed_at(order_snapshot) if _is_terminal_status(status) else None
+    status = str(
+        order_snapshot.get("status") or attempt.get("status") or "unknown"
+    ).lower()
+    completed_at = (
+        _resolve_completed_at(order_snapshot) if _is_terminal_status(status) else None
+    )
     execution_store.update_attempt(
         execution_attempt_id=str(attempt["execution_attempt_id"]),
         status=status,
         broker_order_id=_as_text(order_snapshot.get("id")),
         client_order_id=_as_text(order_snapshot.get("client_order_id")),
-        submitted_at=_as_text(order_snapshot.get("submitted_at")) or str(attempt["requested_at"]),
+        submitted_at=_as_text(order_snapshot.get("submitted_at"))
+        or str(attempt["requested_at"]),
         completed_at=completed_at,
         error_text=None,
     )
-    payload = _get_attempt_payload(execution_store, str(attempt["execution_attempt_id"]))
+    payload = _get_attempt_payload(
+        execution_store, str(attempt["execution_attempt_id"])
+    )
     sync_session_position_from_attempt(
         execution_store=execution_store,
         attempt=payload,
@@ -1020,7 +1180,8 @@ def _publish_risk_decision_event(risk_decision: dict[str, Any]) -> None:
             timestamp=risk_decision.get("decided_at") or _utc_now(),
             source="execution",
             session_date=_as_text(risk_decision.get("session_date")),
-            correlation_id=_as_text(risk_decision.get("opportunity_id")) or _as_text(risk_decision.get("session_id")),
+            correlation_id=_as_text(risk_decision.get("opportunity_id"))
+            or _as_text(risk_decision.get("session_id")),
             causation_id=_as_text(risk_decision.get("candidate_id")),
         )
     except Exception:
@@ -1161,8 +1322,14 @@ def submit_live_session_execution(
         )
         active_policy_rollouts = get_active_policy_rollout_map(storage=storage)
         opportunity = None
-        if signal_store is not None and hasattr(signal_store, "schema_ready") and signal_store.schema_ready():
-            opportunity = signal_store.find_active_opportunity_by_candidate_id(candidate_id)
+        if (
+            signal_store is not None
+            and hasattr(signal_store, "schema_ready")
+            and signal_store.schema_ready()
+        ):
+            opportunity = signal_store.find_active_opportunity_by_candidate_id(
+                candidate_id
+            )
         opportunity_ref = (
             None
             if opportunity is None
@@ -1219,7 +1386,9 @@ def submit_live_session_execution(
             source_policies=source_policies,
             active_policy_rollouts=active_policy_rollouts,
         )
-        resolved_execution_policy = normalize_execution_policy(requested_execution_policy)
+        resolved_execution_policy = normalize_execution_policy(
+            requested_execution_policy
+        )
         order_request, resolved_quantity, resolved_limit_price = _build_order_request(
             candidate=candidate,
             quantity=quantity,
@@ -1243,6 +1412,12 @@ def submit_live_session_execution(
             session_date=str(cycle["session_date"]),
             payload=requested_exit_policy,
         )
+        timing_gate = _validate_open_timing_window(
+            exit_policy=resolved_exit_policy,
+            current_time=parse_datetime(requested_at) or datetime.now(UTC),
+        )
+        if not timing_gate["allowed"]:
+            raise ValueError(str(timing_gate["message"]))
         risk_evaluation = evaluate_open_execution(
             execution_store=execution_store,
             session_id=session_id,
@@ -1261,7 +1436,11 @@ def submit_live_session_execution(
             resolved_execution_policy=resolved_execution_policy,
             resolved_exit_policy=resolved_exit_policy,
         )
-        if risk_store is not None and hasattr(risk_store, "schema_ready") and risk_store.schema_ready():
+        if (
+            risk_store is not None
+            and hasattr(risk_store, "schema_ready")
+            and risk_store.schema_ready()
+        ):
             risk_decision = risk_store.create_risk_decision(
                 risk_decision_id=_risk_decision_id(),
                 decision_kind="open_execution",
@@ -1272,7 +1451,9 @@ def submit_live_session_execution(
                 label=str(cycle["label"]),
                 cycle_id=_as_text(cycle.get("cycle_id")),
                 candidate_id=_coerce_int(candidate.get("candidate_id")),
-                opportunity_id=None if opportunity_ref is None else str(opportunity_ref["opportunity_id"]),
+                opportunity_id=None
+                if opportunity_ref is None
+                else str(opportunity_ref["opportunity_id"]),
                 execution_attempt_id=None,
                 trade_intent=OPEN_TRADE_INTENT,
                 entity_type="signal_subject",
@@ -1285,8 +1466,12 @@ def submit_live_session_execution(
                 strategy=str(candidate["strategy"]),
                 quantity=resolved_quantity,
                 limit_price=resolved_limit_price,
-                reason_codes=[str(value) for value in risk_evaluation.get("reason_codes") or []],
-                blockers=[str(value) for value in risk_evaluation.get("blockers") or []],
+                reason_codes=[
+                    str(value) for value in risk_evaluation.get("reason_codes") or []
+                ],
+                blockers=[
+                    str(value) for value in risk_evaluation.get("blockers") or []
+                ],
                 metrics=dict(risk_evaluation.get("metrics") or {}),
                 evidence={
                     "candidate_generated_at": _as_text(candidate.get("generated_at")),
@@ -1315,8 +1500,12 @@ def submit_live_session_execution(
             session_date=str(cycle["session_date"]),
             label=str(cycle["label"]),
             cycle_id=_as_text(cycle.get("cycle_id")),
-            opportunity_id=None if opportunity_ref is None else str(opportunity_ref["opportunity_id"]),
-            risk_decision_id=None if risk_decision is None else str(risk_decision["risk_decision_id"]),
+            opportunity_id=None
+            if opportunity_ref is None
+            else str(opportunity_ref["opportunity_id"]),
+            risk_decision_id=None
+            if risk_decision is None
+            else str(risk_decision["risk_decision_id"]),
             candidate_id=_coerce_int(candidate.get("candidate_id")),
             bucket=_as_text(candidate.get("bucket")),
             candidate_generated_at=_as_text(candidate.get("generated_at")),
@@ -1378,10 +1567,12 @@ def submit_live_session_execution(
                 pass
         if opportunity_ref is not None and signal_store is not None:
             try:
-                consumed_opportunity, consumed_changed = signal_store.mark_opportunity_consumed(
-                    opportunity_id=str(opportunity_ref["opportunity_id"]),
-                    execution_attempt_id=attempt_id,
-                    consumed_at=requested_at,
+                consumed_opportunity, consumed_changed = (
+                    signal_store.mark_opportunity_consumed(
+                        opportunity_id=str(opportunity_ref["opportunity_id"]),
+                        execution_attempt_id=attempt_id,
+                        consumed_at=requested_at,
+                    )
                 )
                 if consumed_opportunity is not None and consumed_changed:
                     publish_opportunity_event(
@@ -1406,7 +1597,11 @@ def submit_live_session_execution(
     except Exception as exc:
         if attempt_id is not None:
             current_attempt = execution_store.get_attempt(attempt_id)
-            if current_attempt is not None and str(current_attempt.get("status") or "") == PENDING_SUBMISSION_STATUS:
+            if (
+                current_attempt is not None
+                and str(current_attempt.get("status") or "")
+                == PENDING_SUBMISSION_STATUS
+            ):
                 execution_store.update_attempt(
                     execution_attempt_id=attempt_id,
                     status="failed",
@@ -1420,6 +1615,7 @@ def submit_live_session_execution(
                     message=f"Execution failed before submission: {exc}",
                 )
         raise
+
 
 @with_storage()
 def submit_session_position_close(
@@ -1464,11 +1660,13 @@ def submit_session_position_close(
                 "attempt": payload,
             }
 
-        order_request, resolved_quantity, resolved_limit_price = _build_close_order_request(
-            position=position,
-            quantity=quantity,
-            limit_price=limit_price,
-            client_order_id=client_order_id,
+        order_request, resolved_quantity, resolved_limit_price = (
+            _build_close_order_request(
+                position=position,
+                quantity=quantity,
+                limit_price=limit_price,
+                client_order_id=client_order_id,
+            )
         )
         validate_close_execution(
             position=position,
@@ -1527,7 +1725,11 @@ def submit_session_position_close(
     except Exception as exc:
         if attempt_id is not None:
             current_attempt = execution_store.get_attempt(attempt_id)
-            if current_attempt is not None and str(current_attempt.get("status") or "") == PENDING_SUBMISSION_STATUS:
+            if (
+                current_attempt is not None
+                and str(current_attempt.get("status") or "")
+                == PENDING_SUBMISSION_STATUS
+            ):
                 execution_store.update_attempt(
                     execution_attempt_id=attempt_id,
                     status="failed",
@@ -1543,6 +1745,7 @@ def submit_session_position_close(
                 )
         raise
 
+
 @with_storage()
 def refresh_live_session_execution(
     *,
@@ -1557,7 +1760,9 @@ def refresh_live_session_execution(
     if attempt is None:
         raise ValueError(f"Unknown execution_attempt_id: {execution_attempt_id}")
     if str(attempt["session_id"]) != session_id:
-        raise ValueError(f"Execution {execution_attempt_id} does not belong to session {session_id}")
+        raise ValueError(
+            f"Execution {execution_attempt_id} does not belong to session {session_id}"
+        )
     if (
         _as_text(attempt.get("broker_order_id")) is None
         and str(attempt.get("status") or "") == PENDING_SUBMISSION_STATUS
@@ -1634,6 +1839,32 @@ def run_execution_submit(
         )
         raise ValueError("Execution attempt is missing its broker order payload.")
 
+    if str(payload.get("trade_intent") or OPEN_TRADE_INTENT) == OPEN_TRADE_INTENT:
+        timing_gate = _validate_open_timing_window(
+            exit_policy=request.get("exit_policy"),
+            current_time=datetime.now(UTC),
+        )
+        if not timing_gate["allowed"]:
+            execution_store.update_attempt(
+                execution_attempt_id=execution_attempt_id,
+                status="failed",
+                completed_at=_utc_now(),
+                error_text=str(timing_gate["message"]),
+                session_position_id=_as_text(payload.get("session_position_id")),
+            )
+            failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
+            _publish_execution_attempt_event(
+                failed_attempt,
+                message=f"Execution failed before submission: {timing_gate['message']}",
+            )
+            return {
+                "status": "blocked",
+                "reason": str(timing_gate["reason"]),
+                "execution_attempt_id": execution_attempt_id,
+                "message": str(timing_gate["message"]),
+                "attempt": failed_attempt,
+            }
+
     if callable(heartbeat):
         heartbeat()
     client = create_alpaca_client_from_env()
@@ -1647,7 +1878,8 @@ def run_execution_submit(
             execution_attempt_id=execution_attempt_id,
             status=str(submitted_order.get("status") or "submitted").lower(),
             broker_order_id=_as_text(submitted_order.get("id")),
-            client_order_id=_as_text(submitted_order.get("client_order_id")) or client_order_id,
+            client_order_id=_as_text(submitted_order.get("client_order_id"))
+            or client_order_id,
             submitted_at=_as_text(submitted_order.get("submitted_at")) or requested_at,
             session_position_id=_as_text(payload.get("session_position_id")),
         )
@@ -1693,9 +1925,12 @@ def run_execution_submit(
             execution_attempt_id=execution_attempt_id,
             status=submitted_status,
             broker_order_id=broker_order_id,
-            client_order_id=_as_text(submitted_order.get("client_order_id")) or client_order_id,
+            client_order_id=_as_text(submitted_order.get("client_order_id"))
+            or client_order_id,
             submitted_at=_as_text(submitted_order.get("submitted_at")) or requested_at,
-            completed_at=_resolve_completed_at(submitted_order) if _is_terminal_status(submitted_status) else None,
+            completed_at=_resolve_completed_at(submitted_order)
+            if _is_terminal_status(submitted_status)
+            else None,
             error_text=str(exc),
             session_position_id=_as_text(payload.get("session_position_id")),
         )
@@ -1725,7 +1960,8 @@ def submit_auto_session_execution(
     execution_rollout = active_policy_rollouts.get("execution_policy")
     requested_policy = (
         dict(execution_rollout["policy"])
-        if execution_rollout is not None and isinstance(execution_rollout.get("policy"), dict)
+        if execution_rollout is not None
+        and isinstance(execution_rollout.get("policy"), dict)
         else policy
     )
     normalized_policy = normalize_execution_policy(requested_policy)
@@ -1776,9 +2012,13 @@ def submit_auto_session_execution(
             "policy": normalized_policy,
         }
 
-    top_candidate = min(board_candidates, key=lambda candidate: int(candidate["position"]))
+    top_candidate = min(
+        board_candidates, key=lambda candidate: int(candidate["position"])
+    )
     selected_candidate = _candidate_with_payload(top_candidate)
-    blocked_reason, blocked_message = _validate_auto_execution_candidate(selected_candidate)
+    blocked_reason, blocked_message = _validate_auto_execution_candidate(
+        selected_candidate
+    )
     if blocked_reason is not None:
         return {
             "action": "auto_submit",
@@ -1830,7 +2070,9 @@ def submit_auto_session_execution(
                     "candidate_id": int(top_candidate["candidate_id"]),
                 },
                 "execution_policy": normalized_policy,
-                **({} if reactive_quote is None else {"reactive_quote": reactive_quote}),
+                **(
+                    {} if reactive_quote is None else {"reactive_quote": reactive_quote}
+                ),
             },
         )
     except Exception as exc:
