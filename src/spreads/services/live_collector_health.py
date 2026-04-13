@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
+from spreads.services.selection_terms import normalize_uoa_decision_state
+
 
 def _read_int(mapping: Mapping[str, Any] | None, key: str) -> int:
     if mapping is None:
@@ -155,6 +157,75 @@ def build_live_action_gate(
     }
 
 
+def _normalize_uoa_root(row: Mapping[str, Any]) -> dict[str, Any]:
+    payload = dict(row)
+    decision_state = normalize_uoa_decision_state(payload.get("decision_state"))
+    if decision_state is not None:
+        payload["decision_state"] = decision_state
+    return payload
+
+
+def normalize_uoa_decisions_payload(payload: Mapping[str, Any] | None) -> dict[str, Any]:
+    source = {} if not isinstance(payload, Mapping) else dict(payload)
+    overview = (
+        {}
+        if not isinstance(source.get("overview"), Mapping)
+        else dict(source.get("overview"))
+    )
+    normalized_overview = {
+        key: value
+        for key, value in overview.items()
+        if key not in {"watchlist_count", "board_count"}
+    }
+    normalized_overview.setdefault(
+        "monitor_count", overview.get("watchlist_count")
+    )
+    normalized_overview.setdefault(
+        "promotable_count", overview.get("board_count")
+    )
+    normalized_top_decision_state = normalize_uoa_decision_state(
+        normalized_overview.get("top_decision_state")
+    )
+    if normalized_top_decision_state is not None:
+        normalized_overview["top_decision_state"] = normalized_top_decision_state
+    roots = [
+        _normalize_uoa_root(item)
+        for item in list(source.get("roots") or [])
+        if isinstance(item, Mapping)
+    ]
+    top_monitor_roots = [
+        _normalize_uoa_root(item)
+        for item in list(
+            source.get("top_monitor_roots", source.get("top_watchlist_roots")) or []
+        )
+        if isinstance(item, Mapping)
+    ]
+    top_promotable_roots = [
+        _normalize_uoa_root(item)
+        for item in list(
+            source.get("top_promotable_roots", source.get("top_board_roots")) or []
+        )
+        if isinstance(item, Mapping)
+    ]
+    top_high_roots = [
+        _normalize_uoa_root(item)
+        for item in list(source.get("top_high_roots") or [])
+        if isinstance(item, Mapping)
+    ]
+    return {
+        **{
+            key: value
+            for key, value in source.items()
+            if key not in {"overview", "top_watchlist_roots", "top_board_roots"}
+        },
+        "overview": normalized_overview,
+        "roots": roots,
+        "top_monitor_roots": top_monitor_roots,
+        "top_promotable_roots": top_promotable_roots,
+        "top_high_roots": top_high_roots,
+    }
+
+
 def enrich_live_collector_result(result: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if result is None:
         return None
@@ -173,6 +244,11 @@ def enrich_live_collector_result(result: Mapping[str, Any] | None) -> dict[str, 
     )
     enriched["quote_capture"] = quote_capture
     enriched["trade_capture"] = trade_capture
+    enriched["uoa_decisions"] = normalize_uoa_decisions_payload(
+        enriched.get("uoa_decisions")
+        if isinstance(enriched.get("uoa_decisions"), Mapping)
+        else None
+    )
     enriched["live_action_gate"] = dict(
         enriched.get("live_action_gate")
         or build_live_action_gate(

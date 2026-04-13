@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import json
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Mapping
 from uuid import uuid4
 
 from arq import create_pool
@@ -172,6 +172,18 @@ def _validate_open_timing_window(
             "+00:00", "Z"
         ),
     }
+
+
+def _attempt_exit_policy(
+    attempt: Mapping[str, Any] | dict[str, Any],
+) -> dict[str, Any] | None:
+    request = attempt.get("request")
+    if not isinstance(request, Mapping):
+        return None
+    exit_policy = request.get("exit_policy")
+    if not isinstance(exit_policy, Mapping):
+        return None
+    return dict(exit_policy)
 
 
 def _execution_attempt_id() -> str:
@@ -726,6 +738,187 @@ def _get_attempt_payload(
     return _attach_attempt_details(
         execution_store=execution_store, attempts=[dict(attempt)]
     )[0]
+
+
+@with_storage()
+def run_open_execution_guard(
+    *,
+    db_target: str,
+    storage: Any | None = None,
+) -> dict[str, Any]:
+    execution_store = storage.execution
+    if not execution_store.schema_ready():
+        return {
+            "status": "skipped",
+            "reason": "execution_schema_unavailable",
+        }
+
+    open_attempts = [
+        dict(attempt)
+        for attempt in execution_store.list_attempts_by_status(
+            statuses=sorted(OPEN_STATUSES),
+            trade_intent=OPEN_TRADE_INTENT,
+            limit=200,
+        )
+    ]
+    if not open_attempts:
+        return {
+            "status": "ok",
+            "open_attempt_count": 0,
+            "evaluated": 0,
+            "canceled": 0,
+            "failed_unsubmitted": 0,
+            "terminal_synced": 0,
+            "skipped": 0,
+            "failure_count": 0,
+            "decisions": [],
+            "failures": [],
+        }
+
+    now = datetime.now(UTC)
+    client: AlpacaClient | None = None
+    evaluated = 0
+    canceled = 0
+    failed_unsubmitted = 0
+    terminal_synced = 0
+    skipped = 0
+    failures: list[dict[str, Any]] = []
+    decisions: list[dict[str, Any]] = []
+
+    for attempt in open_attempts:
+        execution_attempt_id = str(attempt["execution_attempt_id"])
+        timing_gate = _validate_open_timing_window(
+            exit_policy=_attempt_exit_policy(attempt),
+            current_time=now,
+        )
+        if timing_gate["allowed"]:
+            skipped += 1
+            continue
+
+        evaluated += 1
+        broker_order_id = _as_text(attempt.get("broker_order_id"))
+        session_position_id = _as_text(attempt.get("session_position_id"))
+        if broker_order_id is None:
+            message = (
+                "Open execution expired because the exit force-close window started "
+                "before broker submission."
+            )
+            execution_store.update_attempt(
+                execution_attempt_id=execution_attempt_id,
+                status="failed",
+                completed_at=_utc_now(),
+                error_text=message,
+                session_position_id=session_position_id,
+            )
+            failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
+            _publish_execution_attempt_event(
+                failed_attempt,
+                message=message,
+            )
+            failed_unsubmitted += 1
+            decisions.append(
+                {
+                    "execution_attempt_id": execution_attempt_id,
+                    "symbol": str(attempt.get("underlying_symbol") or ""),
+                    "action": "failed_unsubmitted",
+                    "status": str(failed_attempt.get("status") or ""),
+                    "reason": str(timing_gate["reason"] or ""),
+                }
+            )
+            continue
+
+        try:
+            if client is None:
+                client = create_alpaca_client_from_env()
+            order_snapshot = client.get_order(broker_order_id, nested=True)
+            synced_attempt = _sync_attempt_state(
+                execution_store=execution_store,
+                attempt=attempt,
+                client=client,
+                order_snapshot=order_snapshot,
+            )
+            current_status = str(synced_attempt.get("status") or "").lower()
+            if _is_terminal_status(current_status):
+                terminal_synced += 1
+                decisions.append(
+                    {
+                        "execution_attempt_id": execution_attempt_id,
+                        "symbol": str(synced_attempt.get("underlying_symbol") or ""),
+                        "action": "synced_terminal",
+                        "status": current_status,
+                        "reason": str(timing_gate["reason"] or ""),
+                    }
+                )
+                continue
+
+            if current_status != "pending_cancel":
+                client.cancel_order(broker_order_id)
+                try:
+                    cancel_snapshot = client.get_order(broker_order_id, nested=True)
+                    synced_attempt = _sync_attempt_state(
+                        execution_store=execution_store,
+                        attempt=synced_attempt,
+                        client=client,
+                        order_snapshot=cancel_snapshot,
+                    )
+                except Exception:
+                    execution_store.update_attempt(
+                        execution_attempt_id=execution_attempt_id,
+                        status="pending_cancel",
+                        session_position_id=session_position_id,
+                    )
+                    synced_attempt = _get_attempt_payload(
+                        execution_store, execution_attempt_id
+                    )
+                canceled += 1
+                _publish_execution_attempt_event(
+                    synced_attempt,
+                    message=(
+                        "Canceled open execution because the exit force-close window "
+                        "started before the order completed."
+                    ),
+                )
+                decisions.append(
+                    {
+                        "execution_attempt_id": execution_attempt_id,
+                        "symbol": str(synced_attempt.get("underlying_symbol") or ""),
+                        "action": "cancel_requested",
+                        "status": str(synced_attempt.get("status") or ""),
+                        "reason": str(timing_gate["reason"] or ""),
+                    }
+                )
+                continue
+
+            decisions.append(
+                {
+                    "execution_attempt_id": execution_attempt_id,
+                    "symbol": str(synced_attempt.get("underlying_symbol") or ""),
+                    "action": "already_pending_cancel",
+                    "status": current_status,
+                    "reason": str(timing_gate["reason"] or ""),
+                }
+            )
+        except Exception as exc:
+            failures.append(
+                {
+                    "execution_attempt_id": execution_attempt_id,
+                    "symbol": str(attempt.get("underlying_symbol") or ""),
+                    "error": str(exc),
+                }
+            )
+
+    return {
+        "status": "degraded" if failures else "ok",
+        "open_attempt_count": len(open_attempts),
+        "evaluated": evaluated,
+        "canceled": canceled,
+        "failed_unsubmitted": failed_unsubmitted,
+        "terminal_synced": terminal_synced,
+        "skipped": skipped,
+        "failure_count": len(failures),
+        "decisions": decisions[:25],
+        "failures": failures[:25],
+    }
 
 
 def _resolve_session_candidate(

@@ -881,7 +881,10 @@ class AlpacaClient:
         )
         try:
             with urllib.request.urlopen(request, timeout=self.request_timeout_seconds) as response:
-                return json.load(response)
+                body_bytes = response.read()
+                if not body_bytes:
+                    return None
+                return json.loads(body_bytes.decode("utf-8"))
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"Alpaca request failed: {exc.code} {exc.reason} for {url}\n{body}") from exc
@@ -905,6 +908,9 @@ class AlpacaClient:
         if not isinstance(response, dict):
             raise RuntimeError("Unexpected Alpaca order submission response shape")
         return response
+
+    def cancel_order(self, order_id: str) -> None:
+        self.request_json("DELETE", self.trading_base_url, f"/v2/orders/{order_id}")
 
     def get_order(self, order_id: str, *, nested: bool = False) -> dict[str, Any]:
         response = self.get_json(

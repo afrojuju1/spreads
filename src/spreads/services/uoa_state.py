@@ -4,8 +4,10 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from spreads.db.decorators import with_storage
-from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
-from spreads.services.selection_terms import normalize_uoa_decision_state
+from spreads.services.live_collector_health import (
+    enrich_live_collector_job_run_payload,
+    normalize_uoa_decisions_payload,
+)
 
 
 def _cycle_id_from_run_payload(run_payload: Mapping[str, Any]) -> str | None:
@@ -29,62 +31,6 @@ def _collector_cycle_payload(
 ) -> dict[str, Any] | None:
     cycle = collector_store.get_cycle(cycle_id)
     return None if cycle is None else dict(cycle)
-
-
-def _normalize_uoa_root(row: Mapping[str, Any]) -> dict[str, Any]:
-    payload = dict(row)
-    decision_state = normalize_uoa_decision_state(payload.get("decision_state"))
-    if decision_state is not None:
-        payload["decision_state"] = decision_state
-    return payload
-
-
-def _normalize_uoa_decisions_payload(payload: Any) -> dict[str, Any]:
-    source = {} if not isinstance(payload, Mapping) else dict(payload)
-    overview = (
-        {}
-        if not isinstance(source.get("overview"), Mapping)
-        else dict(source.get("overview"))
-    )
-    normalized_overview = {
-        **overview,
-        "monitor_count": overview.get("monitor_count", overview.get("watchlist_count")),
-        "promotable_count": overview.get(
-            "promotable_count", overview.get("board_count")
-        ),
-    }
-    roots = [
-        _normalize_uoa_root(item)
-        for item in list(source.get("roots") or [])
-        if isinstance(item, Mapping)
-    ]
-    top_monitor_roots = [
-        _normalize_uoa_root(item)
-        for item in list(
-            source.get("top_monitor_roots", source.get("top_watchlist_roots")) or []
-        )
-        if isinstance(item, Mapping)
-    ]
-    top_promotable_roots = [
-        _normalize_uoa_root(item)
-        for item in list(
-            source.get("top_promotable_roots", source.get("top_board_roots")) or []
-        )
-        if isinstance(item, Mapping)
-    ]
-    top_high_roots = [
-        _normalize_uoa_root(item)
-        for item in list(source.get("top_high_roots") or [])
-        if isinstance(item, Mapping)
-    ]
-    return {
-        **source,
-        "overview": normalized_overview,
-        "roots": roots,
-        "top_monitor_roots": top_monitor_roots,
-        "top_promotable_roots": top_promotable_roots,
-        "top_high_roots": top_high_roots,
-    }
 
 
 def _build_uoa_state_payload(
@@ -129,7 +75,7 @@ def _build_uoa_state_payload(
         "trade_capture": dict(run_payload.get("trade_capture") or {}),
         "uoa_summary": dict(run_payload.get("uoa_summary") or {}),
         "uoa_quote_summary": dict(run_payload.get("uoa_quote_summary") or {}),
-        "uoa_decisions": _normalize_uoa_decisions_payload(
+        "uoa_decisions": normalize_uoa_decisions_payload(
             run_payload.get("uoa_decisions")
         ),
         "opportunities": [dict(item) for item in opportunities],

@@ -248,10 +248,29 @@ def run_session_exit_manager(
     storage: Any | None = None,
 ) -> dict[str, Any]:
     execution_store = storage.execution
+    open_attempt_guard: dict[str, Any] = {
+        "status": "skipped",
+        "reason": "not_run",
+    }
     if not execution_store.positions_schema_ready():
         return {
             "status": "skipped",
             "reason": "positions_schema_unavailable",
+            "open_attempt_guard": open_attempt_guard,
+        }
+
+    try:
+        from spreads.services.execution import run_open_execution_guard
+
+        open_attempt_guard = run_open_execution_guard(
+            db_target=db_target,
+            storage=storage,
+        )
+    except Exception as exc:
+        open_attempt_guard = {
+            "status": "degraded",
+            "reason": "guard_error",
+            "error": str(exc),
         }
 
     open_positions = [
@@ -263,12 +282,15 @@ def run_session_exit_manager(
     ]
     if not open_positions:
         return {
-            "status": "ok",
+            "status": "degraded"
+            if open_attempt_guard.get("status") == "degraded"
+            else "ok",
             "position_count": 0,
             "evaluated": 0,
             "submitted": 0,
             "skipped": 0,
             "failure_count": 0,
+            "open_attempt_guard": open_attempt_guard,
         }
 
     _refresh_open_position_marks(
@@ -358,7 +380,9 @@ def run_session_exit_manager(
             )
 
     return {
-        "status": "degraded" if failures else "ok",
+        "status": "degraded"
+        if failures or open_attempt_guard.get("status") == "degraded"
+        else "ok",
         "position_count": len(refreshed_positions),
         "evaluated": evaluated,
         "submitted": submitted,
@@ -366,4 +390,5 @@ def run_session_exit_manager(
         "failure_count": len(failures),
         "decisions": decisions[:25],
         "failures": failures[:25],
+        "open_attempt_guard": open_attempt_guard,
     }

@@ -295,6 +295,67 @@ def build_symbol_strategy_candidates(
     return grouped
 
 
+def _capture_candidate_identity(candidate: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(candidate.get("strategy") or ""),
+        str(candidate.get("short_symbol") or ""),
+        str(candidate.get("long_symbol") or ""),
+    )
+
+
+def build_capture_candidates(
+    *,
+    promotable_candidates: list[dict[str, Any]],
+    monitor_candidates: list[dict[str, Any]],
+    opportunities: list[dict[str, Any]],
+    monitor_limit: int,
+) -> list[dict[str, Any]]:
+    capture_candidates: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def add_candidate(candidate: dict[str, Any]) -> None:
+        identity = _capture_candidate_identity(candidate)
+        if not all(identity) or identity in seen:
+            return
+        seen.add(identity)
+        capture_candidates.append(dict(candidate))
+
+    for candidate in promotable_candidates:
+        add_candidate(candidate)
+    for candidate in monitor_candidates[: max(monitor_limit, 0)]:
+        add_candidate(candidate)
+
+    target_count = max(
+        len(promotable_candidates) + max(monitor_limit, 0),
+        max(monitor_limit, 0),
+    )
+    if len(capture_candidates) >= target_count:
+        return capture_candidates
+
+    ranked_opportunities = sorted(
+        (
+            dict(item)
+            for item in opportunities
+            if isinstance(item, dict)
+            and str(item.get("selection_state") or "") in {"promotable", "monitor"}
+        ),
+        key=lambda item: (
+            int(item.get("selection_rank") or 999_999),
+            str(item.get("selection_state") or ""),
+        ),
+    )
+    for row in ranked_opportunities:
+        candidate_payload = row.get("candidate")
+        if isinstance(candidate_payload, dict) and candidate_payload:
+            add_candidate(dict(candidate_payload))
+        else:
+            add_candidate(row)
+        if len(capture_candidates) >= target_count:
+            break
+
+    return capture_candidates
+
+
 def collect_latest_quote_records(
     *,
     client: AlpacaClient,
@@ -776,7 +837,12 @@ def _run_collection_cycle(
     websocket_trade_records: list[dict[str, Any]] = []
     websocket_quote_error: str | None = None
     websocket_trade_error: str | None = None
-    quote_candidates = promotable_payloads + monitor_payloads[:WATCHLIST_QUOTE_CAPTURE_TOP]
+    quote_candidates = build_capture_candidates(
+        promotable_candidates=promotable_payloads,
+        monitor_candidates=monitor_payloads,
+        opportunities=opportunities,
+        monitor_limit=WATCHLIST_QUOTE_CAPTURE_TOP,
+    )
     contract_metadata_by_symbol = build_quote_symbol_metadata(quote_candidates)
     expected_quote_symbols = list(contract_metadata_by_symbol.keys())
     expected_trade_symbols = list(build_trade_symbol_metadata(quote_candidates).keys())

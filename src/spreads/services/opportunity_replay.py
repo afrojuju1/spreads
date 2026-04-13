@@ -53,8 +53,10 @@ HORIZON_BANDS = (
 SLOT_LIMITS = {
     "reactive": {"slot_limit": 2, "risk_budget": 500.0},
     "tactical": {"slot_limit": 3, "risk_budget": 1000.0},
-    "carry": {"slot_limit": 3, "risk_budget": 2000.0},
+    "carry": {"slot_limit": 2, "risk_budget": 2000.0},
 }
+CARRY_SAME_SYMBOL_OVERRIDE_MARGIN = 5.0
+CARRY_MAX_POSITIONS_PER_SYMBOL = 2
 RECOVERY_TOP = 12
 RECOVERY_PER_STRATEGY = 3
 
@@ -1250,7 +1252,7 @@ def _build_allocation_decisions(
     policy = SLOT_LIMITS.get(style_profile, SLOT_LIMITS["tactical"])
     remaining_budget = float(policy["risk_budget"])
     remaining_slots = int(policy["slot_limit"])
-    taken_symbols: set[str] = set()
+    taken_symbol_counts: dict[str, int] = defaultdict(int)
     ranked = sorted(
         opportunities,
         key=lambda item: (
@@ -1271,11 +1273,32 @@ def _build_allocation_decisions(
         max_loss = opportunity.max_loss or 0.0
         budget_before = remaining_budget
         slots_before = remaining_slots
+        symbol_taken_count = int(taken_symbol_counts.get(opportunity.symbol) or 0)
+        carry_override = False
+
+        best_remaining_other_symbol_score = None
+        if style_profile == "carry" and symbol_taken_count > 0:
+            other_symbol_scores = [
+                _allocation_score(opportunity=item, style_profile=style_profile)
+                for item in ranked
+                if item.symbol != opportunity.symbol
+                and int(taken_symbol_counts.get(item.symbol) or 0) == 0
+                and item.state == "promotable"
+            ]
+            if other_symbol_scores:
+                best_remaining_other_symbol_score = max(other_symbol_scores)
+            carry_override = (
+                symbol_taken_count < CARRY_MAX_POSITIONS_PER_SYMBOL
+                and best_remaining_other_symbol_score is not None
+                and allocation_score
+                >= best_remaining_other_symbol_score
+                + CARRY_SAME_SYMBOL_OVERRIDE_MARGIN
+            )
 
         if opportunity.state != "promotable":
             rejection_codes.append("not_promotable")
             allocation_reason = "Opportunity did not clear the promotion floor."
-        elif opportunity.symbol in taken_symbols:
+        elif symbol_taken_count > 0 and not carry_override:
             rejection_codes.append("same_symbol_conflict")
             allocation_reason = (
                 "A higher-ranked opportunity already consumed the symbol slot."
@@ -1293,8 +1316,14 @@ def _build_allocation_decisions(
             )
         else:
             allocation_state = "allocated"
-            allocation_reason = "Selected by the provisional portfolio allocator."
-            taken_symbols.add(opportunity.symbol)
+            allocation_reason = (
+                "Selected by the provisional portfolio allocator after clearing the "
+                "carry same-symbol override."
+                if carry_override
+                else "Selected by the provisional portfolio allocator."
+            )
+        if allocation_state == "allocated":
+            taken_symbol_counts[opportunity.symbol] = symbol_taken_count + 1
             remaining_slots -= 1
             remaining_budget -= max_loss
 
