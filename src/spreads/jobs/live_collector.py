@@ -24,6 +24,13 @@ from spreads.services.live_collector_health import (
     build_quote_capture_summary,
     build_trade_capture_summary,
 )
+from spreads.services.live_recovery import (
+    LIVE_SLOT_STATUS_MISSED,
+    load_session_slot_health,
+    merge_live_action_gate_with_recovery,
+    refresh_live_session_capture_targets,
+    resolve_live_slot_stale_after_seconds,
+)
 from spreads.services.live_pipelines import build_live_snapshot_label
 from spreads.services.option_market_data_capture import (
     request_option_market_data_capture,
@@ -64,6 +71,10 @@ from spreads.storage.signal_repository import SignalRepository
 WATCHLIST_PER_STRATEGY = 3
 WATCHLIST_TOP = 12
 WATCHLIST_QUOTE_CAPTURE_TOP = 6
+MARKET_RECORDER_SOURCE = "market_recorder"
+MARKET_RECORDER_POLL_SECONDS = 25.0
+MARKET_RECORDER_WAIT_GRACE_SECONDS = 10.0
+MARKET_RECORDER_QUERY_POLL_SECONDS = 2.0
 
 
 @dataclass(frozen=True)
@@ -388,6 +399,93 @@ def collect_latest_quote_records(
     return []
 
 
+def collect_recorded_market_data_records(
+    *,
+    history_store: RunHistoryRepository,
+    label: str,
+    profile: str,
+    expected_quote_symbols: list[str],
+    expected_trade_symbols: list[str],
+    captured_from: str,
+    wait_timeout_seconds: float,
+    poll_interval_seconds: float = MARKET_RECORDER_QUERY_POLL_SECONDS,
+) -> dict[str, Any]:
+    normalized_quote_symbols = sorted(
+        {
+            str(symbol or "").strip()
+            for symbol in expected_quote_symbols
+            if str(symbol or "").strip()
+        }
+    )
+    normalized_trade_symbols = sorted(
+        {
+            str(symbol or "").strip()
+            for symbol in expected_trade_symbols
+            if str(symbol or "").strip()
+        }
+    )
+    if not normalized_quote_symbols and not normalized_trade_symbols:
+        return {
+            "quotes": [],
+            "trades": [],
+            "quote_error": None,
+            "trade_error": None,
+            "quote_complete": True,
+        }
+
+    deadline = datetime.now(UTC) + timedelta(seconds=max(float(wait_timeout_seconds), 0.0))
+    quote_records: list[dict[str, Any]] = []
+    trade_records: list[dict[str, Any]] = []
+    missing_quote_symbols = list(normalized_quote_symbols)
+
+    while True:
+        captured_to = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+        if normalized_quote_symbols:
+            quote_records = history_store.list_option_quote_events_window(
+                option_symbols=normalized_quote_symbols,
+                captured_from=captured_from,
+                captured_to=captured_to,
+                label=label,
+                profile=profile,
+                sources=MARKET_RECORDER_SOURCE,
+            )
+        if normalized_trade_symbols:
+            trade_records = history_store.list_option_trade_events_window(
+                option_symbols=normalized_trade_symbols,
+                captured_from=captured_from,
+                captured_to=captured_to,
+                label=label,
+                profile=profile,
+                sources=MARKET_RECORDER_SOURCE,
+            )
+        covered_quote_symbols = {
+            str(row.get("option_symbol") or "").strip()
+            for row in quote_records
+            if str(row.get("option_symbol") or "").strip()
+        }
+        missing_quote_symbols = [
+            symbol for symbol in normalized_quote_symbols if symbol not in covered_quote_symbols
+        ]
+        if not missing_quote_symbols or datetime.now(UTC) >= deadline:
+            break
+        time_module.sleep(max(float(poll_interval_seconds), 0.2))
+
+    quote_complete = not missing_quote_symbols
+    quote_error = None
+    if missing_quote_symbols:
+        quote_error = (
+            "Market recorder did not cover "
+            f"{len(missing_quote_symbols)}/{len(normalized_quote_symbols)} expected quote symbols before timeout."
+        )
+    return {
+        "quotes": [dict(row) for row in quote_records],
+        "trades": [dict(row) for row in trade_records],
+        "quote_error": quote_error,
+        "trade_error": None,
+        "quote_complete": quote_complete,
+    }
+
+
 def collect_websocket_market_data_records(
     *,
     args: argparse.Namespace,
@@ -501,6 +599,68 @@ def _session_date_for_generated_at(generated_at: str) -> str:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(NEW_YORK).date().isoformat()
+
+
+def _build_skipped_tick_result(
+    *,
+    tick_context: LiveTickContext,
+    status: str,
+    reason: str,
+    message: str,
+    slot_status: str | None = None,
+) -> dict[str, Any]:
+    result = {
+        "status": status,
+        "reason": reason,
+        "message": message,
+        "iterations_completed": 0,
+        "cycle_ids": [],
+        "alerts_sent": 0,
+        "quote_events_saved": 0,
+        "baseline_quote_events_saved": 0,
+        "stream_quote_events_saved": 0,
+        "recovery_quote_events_saved": 0,
+        "expected_quote_symbols": [],
+        "trade_events_saved": 0,
+        "stream_trade_events_saved": 0,
+        "expected_trade_symbols": [],
+        "signal_states_upserted": 0,
+        "signal_transitions_recorded": 0,
+        "opportunities_upserted": 0,
+        "opportunities_expired": 0,
+        "quote_capture": build_quote_capture_summary(
+            expected_quote_symbols=[],
+            total_quote_events_saved=0,
+            baseline_quote_events_saved=0,
+            stream_quote_events_saved=0,
+            recovery_quote_events_saved=0,
+        ),
+        "trade_capture": build_trade_capture_summary(
+            expected_trade_symbols=[],
+            total_trade_events_saved=0,
+            stream_trade_events_saved=0,
+        ),
+        "uoa_summary": build_uoa_trade_summary(
+            expected_trade_symbols=[],
+            trades=[],
+        ),
+        "uoa_quote_summary": build_uoa_quote_summary(
+            as_of=tick_context.slot_at,
+            expected_quote_symbols=[],
+            quotes=[],
+        ),
+        "uoa_decisions": build_uoa_root_decisions(
+            uoa_summary={},
+            baselines_by_symbol={},
+            quote_summary={},
+            capture_window_seconds=0,
+        ),
+        "session_id": tick_context.session_id,
+        "slot_at": tick_context.slot_at,
+    }
+    if slot_status is not None:
+        result["slot_status"] = slot_status
+    return result
 
 
 def _record_quote_market_events(
@@ -706,6 +866,7 @@ def _run_collection_cycle(
     collector_store: CollectorRepository,
     event_store: EventRepository,
     signal_store: SignalRepository,
+    recovery_store: Any | None,
     calendar_resolver: Any,
     greeks_provider: Any,
     emit_output: bool,
@@ -827,16 +988,16 @@ def _run_collection_cycle(
         heartbeat()
     quote_event_count = 0
     baseline_quote_event_count = 0
-    websocket_quote_event_count = 0
+    stream_quote_event_count = 0
     recovery_quote_event_count = 0
     trade_event_count = 0
-    websocket_trade_event_count = 0
+    stream_trade_event_count = 0
     latest_quote_records: list[dict[str, Any]] = []
-    websocket_quote_records: list[dict[str, Any]] = []
+    stream_quote_records: list[dict[str, Any]] = []
     recovery_quote_records: list[dict[str, Any]] = []
-    websocket_trade_records: list[dict[str, Any]] = []
-    websocket_quote_error: str | None = None
-    websocket_trade_error: str | None = None
+    stream_trade_records: list[dict[str, Any]] = []
+    stream_quote_error: str | None = None
+    stream_trade_error: str | None = None
     quote_candidates = build_capture_candidates(
         promotable_candidates=promotable_payloads,
         monitor_candidates=monitor_payloads,
@@ -853,6 +1014,37 @@ def _run_collection_cycle(
             if str(candidate.get("underlying_symbol") or "").strip()
         }
     )
+    capture_targets: dict[str, list[dict[str, Any]]] = {
+        "promotable": [],
+        "monitor": [],
+    }
+    recorder_capture_requested_at: str | None = None
+    if tick_context is not None and recovery_store is not None:
+        requested_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+        try:
+            target_refresh = refresh_live_session_capture_targets(
+                recovery_store=recovery_store,
+                session_id=tick_context.session_id,
+                session_date=session_date,
+                label=label,
+                profile=args.profile,
+                promotable_candidates=promotable_payloads,
+                monitor_candidates=monitor_payloads,
+                capture_candidates=quote_candidates,
+                data_base_url=getattr(scanner_args, "data_base_url", None),
+                session_end_offset_minutes=int(getattr(args, "session_end_offset_minutes", 0)),
+            )
+            capture_targets = {
+                str(reason): [
+                    dict(row)
+                    for row in rows
+                    if isinstance(row, dict)
+                ]
+                for reason, rows in dict(target_refresh.get("capture_targets") or {}).items()
+            }
+            recorder_capture_requested_at = requested_at
+        except Exception as exc:
+            print(f"Capture target refresh unavailable: {exc}")
     if quote_candidates:
         try:
             latest_quote_records = collect_latest_quote_records(
@@ -891,58 +1083,78 @@ def _run_collection_cycle(
             print(
                 "Option trade capture unavailable: option_trade_events table is missing."
             )
-        websocket_quote_duration_seconds = float(max(args.quote_capture_seconds, 0))
-        websocket_trade_duration_seconds = (
+        stream_quote_duration_seconds = float(max(args.quote_capture_seconds, 0))
+        stream_trade_duration_seconds = (
             float(args.trade_capture_seconds) if trade_storage_ready else 0.0
         )
-        if websocket_quote_duration_seconds > 0 or websocket_trade_duration_seconds > 0:
+        if stream_quote_duration_seconds > 0 or stream_trade_duration_seconds > 0:
             try:
-                capture_args = argparse.Namespace(**vars(args))
-                capture_args.quote_capture_seconds = websocket_quote_duration_seconds
-                capture_args.trade_capture_seconds = websocket_trade_duration_seconds
-                capture_response = collect_websocket_market_data_records(
-                    args=capture_args,
-                    candidates=quote_candidates,
-                    feed=scanner_args.feed,
-                )
-                websocket_quote_records = [
+                using_market_recorder = recorder_capture_requested_at is not None
+                if using_market_recorder:
+                    capture_response = collect_recorded_market_data_records(
+                        history_store=history_store,
+                        label=label,
+                        profile=args.profile,
+                        expected_quote_symbols=expected_quote_symbols,
+                        expected_trade_symbols=expected_trade_symbols,
+                        captured_from=recorder_capture_requested_at,
+                        wait_timeout_seconds=max(
+                            stream_quote_duration_seconds,
+                            stream_trade_duration_seconds,
+                            1.0,
+                        )
+                        + MARKET_RECORDER_POLL_SECONDS
+                        + MARKET_RECORDER_WAIT_GRACE_SECONDS,
+                    )
+                else:
+                    capture_args = argparse.Namespace(**vars(args))
+                    capture_args.quote_capture_seconds = stream_quote_duration_seconds
+                    capture_args.trade_capture_seconds = stream_trade_duration_seconds
+                    capture_response = collect_websocket_market_data_records(
+                        args=capture_args,
+                        candidates=quote_candidates,
+                        feed=scanner_args.feed,
+                    )
+                stream_quote_records = [
                     dict(item)
                     for item in (capture_response.get("quotes") or [])
                     if isinstance(item, dict)
                 ]
-                websocket_trade_records = [
+                stream_trade_records = [
                     dict(item)
                     for item in (capture_response.get("trades") or [])
                     if isinstance(item, dict)
                 ]
-                websocket_quote_error = (
+                stream_quote_error = (
                     None
                     if capture_response.get("quote_error") in (None, "")
                     else str(capture_response.get("quote_error"))
                 )
-                websocket_trade_error = (
+                stream_trade_error = (
                     None
                     if capture_response.get("trade_error") in (None, "")
                     else str(capture_response.get("trade_error"))
                 )
-                if websocket_quote_error:
+                if stream_quote_error:
                     print(
-                        f"Live websocket quote capture unavailable: {websocket_quote_error}"
+                        f"Live {'recorder' if using_market_recorder else 'stream'} quote capture unavailable: {stream_quote_error}"
                     )
-                if websocket_trade_error:
+                if stream_trade_error:
                     print(
-                        f"Live websocket trade capture unavailable: {websocket_trade_error}"
+                        f"Live {'recorder' if using_market_recorder else 'stream'} trade capture unavailable: {stream_trade_error}"
                     )
-                if websocket_quote_records:
-                    websocket_quote_event_count = (
-                        history_store.save_option_quote_events(
+                if stream_quote_records:
+                    if using_market_recorder:
+                        if bool(capture_response.get("quote_complete", True)):
+                            stream_quote_event_count = len(stream_quote_records)
+                    else:
+                        stream_quote_event_count = history_store.save_option_quote_events(
                             cycle_id=cycle_id,
                             label=label,
                             profile=args.profile,
-                            quotes=websocket_quote_records,
+                            quotes=stream_quote_records,
                         )
-                    )
-                    quote_event_count += websocket_quote_event_count
+                    quote_event_count += stream_quote_event_count
                     try:
                         _record_quote_market_events(
                             event_store=event_store,
@@ -956,22 +1168,23 @@ def _run_collection_cycle(
                             job_run_id=None
                             if tick_context is None
                             else tick_context.job_run_id,
-                            quotes=websocket_quote_records,
+                            quotes=stream_quote_records,
                         )
                     except Exception as exc:
                         print(
-                            f"Live websocket quote event normalization unavailable: {exc}"
+                            f"Live {'recorder' if using_market_recorder else 'stream'} quote event normalization unavailable: {exc}"
                         )
-                if websocket_trade_records:
-                    websocket_trade_event_count = (
-                        history_store.save_option_trade_events(
+                if stream_trade_records:
+                    if using_market_recorder:
+                        stream_trade_event_count = len(stream_trade_records)
+                    else:
+                        stream_trade_event_count = history_store.save_option_trade_events(
                             cycle_id=cycle_id,
                             label=label,
                             profile=args.profile,
-                            trades=websocket_trade_records,
+                            trades=stream_trade_records,
                         )
-                    )
-                    trade_event_count += websocket_trade_event_count
+                    trade_event_count += stream_trade_event_count
                     try:
                         _record_trade_market_events(
                             event_store=event_store,
@@ -985,14 +1198,18 @@ def _run_collection_cycle(
                             job_run_id=None
                             if tick_context is None
                             else tick_context.job_run_id,
-                            trades=websocket_trade_records,
+                            trades=stream_trade_records,
                         )
                     except Exception as exc:
                         print(
-                            f"Live websocket trade event normalization unavailable: {exc}"
+                            f"Live {'recorder' if using_market_recorder else 'stream'} trade event normalization unavailable: {exc}"
                         )
             except Exception as exc:
-                print(f"Live websocket market-data capture unavailable: {exc}")
+                print(
+                    "Live "
+                    f"{'recorder' if recorder_capture_requested_at is not None else 'stream'} "
+                    f"market-data capture unavailable: {exc}"
+                )
         if quote_event_count == 0:
             try:
                 recovery_quote_records = collect_latest_quote_records(
@@ -1034,28 +1251,43 @@ def _run_collection_cycle(
         expected_quote_symbols=expected_quote_symbols,
         total_quote_events_saved=quote_event_count,
         baseline_quote_events_saved=baseline_quote_event_count,
-        websocket_quote_events_saved=websocket_quote_event_count,
+        stream_quote_events_saved=stream_quote_event_count,
         recovery_quote_events_saved=recovery_quote_event_count,
     )
     trade_capture = build_trade_capture_summary(
         expected_trade_symbols=expected_trade_symbols,
         total_trade_events_saved=trade_event_count,
-        websocket_trade_events_saved=websocket_trade_event_count,
+        stream_trade_events_saved=stream_trade_event_count,
     )
     reactive_quote_records = [
         *latest_quote_records,
-        *websocket_quote_records,
+        *stream_quote_records,
         *recovery_quote_records,
     ]
     live_action_gate = build_live_action_gate(
         profile=args.profile,
         quote_capture=quote_capture,
     )
+    slot_recovery = None
+    if tick_context is not None and recovery_store is not None:
+        try:
+            slot_recovery = load_session_slot_health(
+                recovery_store=recovery_store,
+                session_id=tick_context.session_id,
+            )
+            merged_gate = merge_live_action_gate_with_recovery(
+                base_gate=live_action_gate,
+                slot_health=slot_recovery,
+            )
+            if merged_gate is not None:
+                live_action_gate = merged_gate
+        except Exception as exc:
+            print(f"Live recovery gate unavailable: {exc}")
     uoa_summary = build_uoa_trade_summary(
         as_of=generated_at,
         expected_trade_symbols=expected_trade_symbols,
         contract_metadata_by_symbol=contract_metadata_by_symbol,
-        trades=websocket_trade_records,
+        trades=stream_trade_records,
         top_contracts_limit=max(len(expected_trade_symbols), 10),
         top_roots_limit=max(len(expected_uoa_roots), 10),
     )
@@ -1078,7 +1310,7 @@ def _run_collection_cycle(
         quote_summary=uoa_quote_summary,
         capture_window_seconds=float(max(args.trade_capture_seconds, 1)),
     )
-    if expected_trade_symbols or websocket_trade_records:
+    if expected_trade_symbols or stream_trade_records:
         try:
             _record_uoa_summary_event(
                 event_store=event_store,
@@ -1187,14 +1419,16 @@ def _run_collection_cycle(
         "alerts_sent": len(alerts),
         "quote_events_saved": quote_event_count,
         "baseline_quote_events_saved": baseline_quote_event_count,
-        "websocket_quote_events_saved": websocket_quote_event_count,
+        "stream_quote_events_saved": stream_quote_event_count,
+        "websocket_quote_events_saved": stream_quote_event_count,
         "recovery_quote_events_saved": recovery_quote_event_count,
         "expected_quote_symbols": expected_quote_symbols,
-        "websocket_quote_error": websocket_quote_error,
+        "stream_quote_error": stream_quote_error,
         "trade_events_saved": trade_event_count,
-        "websocket_trade_events_saved": websocket_trade_event_count,
+        "stream_trade_events_saved": stream_trade_event_count,
+        "websocket_trade_events_saved": stream_trade_event_count,
         "expected_trade_symbols": expected_trade_symbols,
-        "websocket_trade_error": websocket_trade_error,
+        "stream_trade_error": stream_trade_error,
         "promotable_opportunity_count": len(promotable_payloads),
         "monitor_opportunity_count": len(monitor_payloads),
         "signal_states_upserted": int(signal_sync["signal_states_upserted"]),
@@ -1204,6 +1438,8 @@ def _run_collection_cycle(
         "quote_capture": quote_capture,
         "trade_capture": trade_capture,
         "live_action_gate": live_action_gate,
+        "slot_recovery": slot_recovery,
+        "capture_targets": capture_targets,
         "uoa_summary": uoa_summary,
         "uoa_quote_summary": uoa_quote_summary,
         "uoa_decisions": uoa_decisions,
@@ -1229,69 +1465,74 @@ def run_collection_tick(
     ):
         if emit_output:
             print("Scheduled slot is outside the collection window. Skipping.")
-        return {
-            "status": "skipped",
-            "reason": "market_closed",
-            "iterations_completed": 0,
-            "cycle_ids": [],
-            "alerts_sent": 0,
-            "quote_events_saved": 0,
-            "baseline_quote_events_saved": 0,
-            "websocket_quote_events_saved": 0,
-            "recovery_quote_events_saved": 0,
-            "expected_quote_symbols": [],
-            "trade_events_saved": 0,
-            "websocket_trade_events_saved": 0,
-            "expected_trade_symbols": [],
-            "signal_states_upserted": 0,
-            "signal_transitions_recorded": 0,
-            "opportunities_upserted": 0,
-            "opportunities_expired": 0,
-            "quote_capture": build_quote_capture_summary(
-                expected_quote_symbols=[],
-                total_quote_events_saved=0,
-                baseline_quote_events_saved=0,
-                websocket_quote_events_saved=0,
-                recovery_quote_events_saved=0,
-            ),
-            "trade_capture": build_trade_capture_summary(
-                expected_trade_symbols=[],
-                total_trade_events_saved=0,
-                websocket_trade_events_saved=0,
-            ),
-            "uoa_summary": build_uoa_trade_summary(
-                expected_trade_symbols=[], trades=[]
-            ),
-            "uoa_quote_summary": build_uoa_quote_summary(
-                as_of=tick_context.slot_at, expected_quote_symbols=[], quotes=[]
-            ),
-            "uoa_decisions": build_uoa_root_decisions(
-                uoa_summary={},
-                baselines_by_symbol={},
-                quote_summary={},
-                capture_window_seconds=0,
-            ),
-            "session_id": tick_context.session_id,
-            "slot_at": tick_context.slot_at,
-        }
+        return _build_skipped_tick_result(
+            tick_context=tick_context,
+            status="skipped",
+            reason="market_closed",
+            message="Scheduled slot is outside the collection window.",
+        )
 
-    key_id = env_or_die("APCA_API_KEY_ID", "ALPACA_API_KEY")
-    secret_key = env_or_die("APCA_API_SECRET_KEY", "ALPACA_SECRET_KEY")
-    client = AlpacaClient(
-        key_id=key_id,
-        secret_key=secret_key,
-        trading_base_url=infer_trading_base_url(key_id, scanner_args.trading_base_url),
-        data_base_url=scanner_args.data_base_url,
-    )
-    calendar_resolver = build_calendar_event_resolver(
-        key_id=key_id,
-        secret_key=secret_key,
-        data_base_url=scanner_args.data_base_url,
-        database_url=args.history_db,
-    )
-    greeks_provider = build_local_greeks_provider()
-    try:
-        with build_storage_context(args.history_db) as storage:
+    with build_storage_context(args.history_db) as storage:
+        recovery_store = storage.recovery
+        stale_after_seconds = resolve_live_slot_stale_after_seconds(
+            int(getattr(args, "interval_seconds", 0))
+        )
+        now = datetime.now(UTC)
+        slot_at = _resolve_collection_reference_time(tick_context.slot_at)
+        if now > slot_at + timedelta(seconds=stale_after_seconds):
+            session_date = str(
+                getattr(args, "session_date", "") or _session_date_for_generated_at(tick_context.slot_at)
+            )
+            label = str(
+                getattr(args, "label", "")
+                or build_live_snapshot_label(
+                    universe_label=args.universe,
+                    strategy=args.strategy,
+                    profile=args.profile,
+                    greeks_source=args.greeks_source,
+                )
+            )
+            message = "Scheduled live slot is stale and will be marked missed instead of replayed."
+            if recovery_store.schema_ready():
+                recovery_store.upsert_live_session_slot(
+                    job_key=str(getattr(args, "job_key", "") or "live_collector"),
+                    session_id=tick_context.session_id,
+                    session_date=session_date,
+                    label=label,
+                    slot_at=tick_context.slot_at,
+                    scheduled_for=tick_context.slot_at,
+                    status=LIVE_SLOT_STATUS_MISSED,
+                    job_run_id=tick_context.job_run_id,
+                    recovery_note=message,
+                    finished_at=now.isoformat().replace("+00:00", "Z"),
+                    updated_at=now.isoformat().replace("+00:00", "Z"),
+                )
+            if emit_output:
+                print(message)
+            return _build_skipped_tick_result(
+                tick_context=tick_context,
+                status="skipped",
+                reason="stale_slot",
+                message=message,
+                slot_status=LIVE_SLOT_STATUS_MISSED,
+            )
+
+        key_id = env_or_die("APCA_API_KEY_ID", "ALPACA_API_KEY")
+        secret_key = env_or_die("APCA_API_SECRET_KEY", "ALPACA_SECRET_KEY")
+        client = AlpacaClient(
+            key_id=key_id,
+            secret_key=secret_key,
+            trading_base_url=infer_trading_base_url(key_id, scanner_args.trading_base_url),
+            data_base_url=scanner_args.data_base_url,
+        )
+        calendar_resolver = build_calendar_event_resolver(
+            key_id=key_id,
+            secret_key=secret_key,
+            data_base_url=scanner_args.data_base_url,
+            database_url=args.history_db,
+        )
+        greeks_provider = build_local_greeks_provider()
+        try:
             if heartbeat is not None:
                 heartbeat()
             cycle_result = _run_collection_cycle(
@@ -1305,13 +1546,14 @@ def run_collection_tick(
                 collector_store=storage.collector,
                 event_store=storage.events,
                 signal_store=storage.signals,
+                recovery_store=recovery_store,
                 calendar_resolver=calendar_resolver,
                 greeks_provider=greeks_provider,
                 emit_output=emit_output,
                 heartbeat=heartbeat,
             )
-    finally:
-        calendar_resolver.store.close()
+        finally:
+            calendar_resolver.store.close()
 
     return {
         "status": "completed",
@@ -1320,11 +1562,13 @@ def run_collection_tick(
         "alerts_sent": cycle_result["alerts_sent"],
         "quote_events_saved": cycle_result["quote_events_saved"],
         "baseline_quote_events_saved": cycle_result["baseline_quote_events_saved"],
-        "websocket_quote_events_saved": cycle_result["websocket_quote_events_saved"],
+        "stream_quote_events_saved": cycle_result["stream_quote_events_saved"],
+        "websocket_quote_events_saved": cycle_result["stream_quote_events_saved"],
         "recovery_quote_events_saved": cycle_result["recovery_quote_events_saved"],
         "expected_quote_symbols": list(cycle_result["expected_quote_symbols"]),
         "trade_events_saved": cycle_result["trade_events_saved"],
-        "websocket_trade_events_saved": cycle_result["websocket_trade_events_saved"],
+        "stream_trade_events_saved": cycle_result["stream_trade_events_saved"],
+        "websocket_trade_events_saved": cycle_result["stream_trade_events_saved"],
         "expected_trade_symbols": list(cycle_result["expected_trade_symbols"]),
         "promotable_opportunity_count": cycle_result["promotable_opportunity_count"],
         "monitor_opportunity_count": cycle_result["monitor_opportunity_count"],
@@ -1369,11 +1613,11 @@ def run_collection(
             "alerts_sent": 0,
             "quote_events_saved": 0,
             "baseline_quote_events_saved": 0,
-            "websocket_quote_events_saved": 0,
+            "stream_quote_events_saved": 0,
             "recovery_quote_events_saved": 0,
             "expected_quote_symbols": [],
             "trade_events_saved": 0,
-            "websocket_trade_events_saved": 0,
+            "stream_trade_events_saved": 0,
             "expected_trade_symbols": [],
             "signal_states_upserted": 0,
             "signal_transitions_recorded": 0,
@@ -1383,13 +1627,13 @@ def run_collection(
                 expected_quote_symbols=[],
                 total_quote_events_saved=0,
                 baseline_quote_events_saved=0,
-                websocket_quote_events_saved=0,
+                stream_quote_events_saved=0,
                 recovery_quote_events_saved=0,
             ),
             "trade_capture": build_trade_capture_summary(
                 expected_trade_symbols=[],
                 total_trade_events_saved=0,
-                websocket_trade_events_saved=0,
+                stream_trade_events_saved=0,
             ),
             "uoa_summary": build_uoa_trade_summary(
                 expected_trade_symbols=[], trades=[]
@@ -1426,10 +1670,10 @@ def run_collection(
     total_alerts = 0
     total_quote_events = 0
     total_baseline_quote_events = 0
-    total_websocket_quote_events = 0
+    total_stream_quote_events = 0
     total_recovery_quote_events = 0
     total_trade_events = 0
-    total_websocket_trade_events = 0
+    total_stream_trade_events = 0
     total_signal_states = 0
     total_signal_transitions = 0
     total_opportunities = 0
@@ -1477,6 +1721,7 @@ def run_collection(
                     collector_store=storage.collector,
                     event_store=storage.events,
                     signal_store=storage.signals,
+                    recovery_store=storage.recovery,
                     calendar_resolver=calendar_resolver,
                     greeks_provider=greeks_provider,
                     emit_output=emit_output,
@@ -1488,15 +1733,15 @@ def run_collection(
                 total_baseline_quote_events += int(
                     cycle_result["baseline_quote_events_saved"]
                 )
-                total_websocket_quote_events += int(
-                    cycle_result["websocket_quote_events_saved"]
+                total_stream_quote_events += int(
+                    cycle_result["stream_quote_events_saved"]
                 )
                 total_recovery_quote_events += int(
                     cycle_result["recovery_quote_events_saved"]
                 )
                 total_trade_events += int(cycle_result["trade_events_saved"])
-                total_websocket_trade_events += int(
-                    cycle_result["websocket_trade_events_saved"]
+                total_stream_trade_events += int(
+                    cycle_result["stream_trade_events_saved"]
                 )
                 total_signal_states += int(cycle_result["signal_states_upserted"])
                 total_signal_transitions += int(
@@ -1530,10 +1775,12 @@ def run_collection(
         "alerts_sent": total_alerts,
         "quote_events_saved": total_quote_events,
         "baseline_quote_events_saved": total_baseline_quote_events,
-        "websocket_quote_events_saved": total_websocket_quote_events,
+        "stream_quote_events_saved": total_stream_quote_events,
+        "websocket_quote_events_saved": total_stream_quote_events,
         "recovery_quote_events_saved": total_recovery_quote_events,
         "trade_events_saved": total_trade_events,
-        "websocket_trade_events_saved": total_websocket_trade_events,
+        "stream_trade_events_saved": total_stream_trade_events,
+        "websocket_trade_events_saved": total_stream_trade_events,
         "signal_states_upserted": total_signal_states,
         "signal_transitions_recorded": total_signal_transitions,
         "opportunities_upserted": total_opportunities,
@@ -1542,13 +1789,13 @@ def run_collection(
             expected_quote_symbols=[],
             total_quote_events_saved=total_quote_events,
             baseline_quote_events_saved=total_baseline_quote_events,
-            websocket_quote_events_saved=total_websocket_quote_events,
+            stream_quote_events_saved=total_stream_quote_events,
             recovery_quote_events_saved=total_recovery_quote_events,
         ),
         "trade_capture": build_trade_capture_summary(
             expected_trade_symbols=[],
             total_trade_events_saved=total_trade_events,
-            websocket_trade_events_saved=total_websocket_trade_events,
+            stream_trade_events_saved=total_stream_trade_events,
         ),
         "uoa_summary": last_uoa_summary,
         "uoa_quote_summary": last_uoa_quote_summary,

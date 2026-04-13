@@ -43,6 +43,8 @@ ExecutionOrderRecord = StorageRow
 ExecutionFillRecord = StorageRow
 SessionPositionRecord = StorageRow
 SessionPositionCloseRecord = StorageRow
+LiveSessionSlotRecord = StorageRow
+MarketRecorderTargetRecord = StorageRow
 
 
 __all__ = [
@@ -78,4 +80,6 @@ __all__ = [
     "ExecutionFillRecord",
     "SessionPositionRecord",
     "SessionPositionCloseRecord",
+    "LiveSessionSlotRecord",
+    "MarketRecorderTargetRecord",
 ]

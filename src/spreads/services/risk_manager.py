@@ -18,11 +18,11 @@ OPEN_POSITION_STATUSES = ["open", "partial_close"]
 DEFAULT_RISK_POLICY = {
     "enabled": True,
     "allow_live": False,
-    "max_open_positions_per_session": 1,
+    "max_open_positions_per_session": 20,
     "max_open_positions_per_underlying": 1,
     "max_open_positions_per_underlying_strategy": 1,
     "max_contracts_per_position": 1,
-    "max_contracts_per_session": 1,
+    "max_contracts_per_session": 20,
     "max_position_notional": 1000.0,
     "max_session_notional": 1000.0,
     "max_position_max_loss": 1000.0,

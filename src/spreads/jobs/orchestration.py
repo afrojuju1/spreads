@@ -153,8 +153,7 @@ def resolve_live_tick_plan(
         now=current,
         interval_seconds=interval_seconds,
     )
-    if not bool(payload.get("backfill_missed_slots", True)) and slots:
-        slots = [slots[-1]]
+    current_slot = None if not slots else slots[-1]
     return {
         "label": label,
         "session_id": session_id,
@@ -163,6 +162,7 @@ def resolve_live_tick_plan(
         "session_start": session_start.astimezone(UTC),
         "session_end": session_end.astimezone(UTC),
         "slots": [slot.astimezone(UTC) for slot in slots],
+        "current_slot": None if current_slot is None else current_slot.astimezone(UTC),
         "payload": payload,
     }
 

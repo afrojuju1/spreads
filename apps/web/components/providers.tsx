@@ -47,6 +47,13 @@ type RealtimeActivityContextValue = {
   dismissNotice: (noticeId: string) => void;
 };
 
+type LayoutChromeContextValue = {
+  layoutNavOpen: boolean;
+  mobileLayoutNavOpen: boolean;
+  setMobileLayoutNavOpen: (open: boolean) => void;
+  toggleLayoutNav: () => void;
+};
+
 const NOTICE_TTL_MS = 6_000;
 const MAX_NOTICES = 4;
 
@@ -55,6 +62,13 @@ const RealtimeActivityContext = createContext<RealtimeActivityContextValue>({
   latestSummary: null,
   notices: [],
   dismissNotice: () => {},
+});
+
+const LayoutChromeContext = createContext<LayoutChromeContextValue>({
+  layoutNavOpen: true,
+  mobileLayoutNavOpen: false,
+  setMobileLayoutNavOpen: () => {},
+  toggleLayoutNav: () => {},
 });
 
 function readText(value: unknown): string | undefined {
@@ -133,7 +147,7 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
         id: `${event.topic}:${event.entity_id}`,
         title,
         body: readText(payload.message) ?? `${symbol} was applied to the ${label} live workflow.`,
-        href: sessionId ? buildSessionHref(sessionId) : "/",
+        href: sessionId ? buildSessionHref(sessionId) : "/sessions",
         summary: `Live ${label} updated`,
         timestamp: event.timestamp,
         tone: "info",
@@ -195,7 +209,7 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
           status === "succeeded"
             ? `The ${label} analysis${sessionDate ? ` for ${sessionDate}` : ""} finished successfully.`
             : `The ${label} analysis${sessionDate ? ` for ${sessionDate}` : ""} failed.`,
-        href: sessionId ? buildSessionHref(sessionId) : "/",
+        href: sessionId ? buildSessionHref(sessionId) : "/sessions",
         summary: `Post-market ${label} ${humanizeToken(status)}`,
         timestamp: event.timestamp,
         tone: status === "succeeded" ? "success" : "error",
@@ -211,7 +225,7 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
         body:
           readText(payload.message) ??
           `${symbol} execution is now ${humanizeToken(status).toLowerCase()}.`,
-        href: sessionId ? buildSessionHref(sessionId) : "/",
+        href: sessionId ? buildSessionHref(sessionId) : "/sessions",
         summary: `Execution ${symbol} ${humanizeToken(status)}`,
         timestamp: event.timestamp,
         tone:
@@ -429,6 +443,10 @@ export function useRealtimeActivity() {
   return useContext(RealtimeActivityContext);
 }
 
+export function useLayoutChrome() {
+  return useContext(LayoutChromeContext);
+}
+
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
     () =>
@@ -445,6 +463,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
   const [connectionState, setConnectionState] = useState<RealtimeConnectionState>("connecting");
   const [latestSummary, setLatestSummary] = useState<string | null>(null);
   const [notices, setNotices] = useState<RealtimeNotice[]>([]);
+  const [layoutNavOpen, setLayoutNavOpen] = useState(true);
+  const [mobileLayoutNavOpen, setMobileLayoutNavOpen] = useState(false);
   const seenNoticeIdsRef = useRef<Set<string>>(new Set());
   const noticeTimersRef = useRef<Map<string, number>>(new Map());
 
@@ -480,21 +500,30 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <RealtimeActivityContext.Provider
+      <LayoutChromeContext.Provider
         value={{
-          connectionState,
-          latestSummary,
-          notices,
-          dismissNotice,
+          layoutNavOpen,
+          mobileLayoutNavOpen,
+          setMobileLayoutNavOpen,
+          toggleLayoutNav: () => setLayoutNavOpen((current) => !current),
         }}
       >
-        <GlobalRealtimeBridge
-          onConnectionStateChange={setConnectionState}
-          onNotice={pushNotice}
-        />
-        {children}
-        <ShellActivityToasts />
-      </RealtimeActivityContext.Provider>
+        <RealtimeActivityContext.Provider
+          value={{
+            connectionState,
+            latestSummary,
+            notices,
+            dismissNotice,
+          }}
+        >
+          <GlobalRealtimeBridge
+            onConnectionStateChange={setConnectionState}
+            onNotice={pushNotice}
+          />
+          {children}
+          <ShellActivityToasts />
+        </RealtimeActivityContext.Provider>
+      </LayoutChromeContext.Provider>
     </QueryClientProvider>
   );
 }

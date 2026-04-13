@@ -62,6 +62,16 @@ def _render_duration(value: Any) -> str:
     return f"{hours}h {minutes}m"
 
 
+def _stream_quote_count(mapping: dict[str, Any] | None) -> Any:
+    payload = {} if mapping is None else mapping
+    return payload.get("stream_quote_events_saved", payload.get("websocket_quote_events_saved"))
+
+
+def _stream_trade_count(mapping: dict[str, Any] | None) -> Any:
+    payload = {} if mapping is None else mapping
+    return payload.get("stream_trade_events_saved", payload.get("websocket_trade_events_saved"))
+
+
 def _truncate(value: Any, *, length: int = 48) -> str:
     text = _render_value(value)
     if len(text) <= length:
@@ -178,14 +188,14 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Job Key")
         table.add_column("Status")
         table.add_column("Capture")
-        table.add_column("Quote WS/Base", justify="right")
+        table.add_column("Quote Stream/Base", justify="right")
         table.add_column("Last Slot")
         for row in collector_rows:
             table.add_row(
                 str(row.get("job_key") or "-"),
                 str(row.get("status") or "-"),
                 str(row.get("capture_status") or "-"),
-                f"{_render_value(row.get('websocket_quote_events_saved'))}/{_render_value(row.get('baseline_quote_events_saved'))}",
+                f"{_render_value(row.get('stream_quote_events_saved'))}/{_render_value(row.get('baseline_quote_events_saved'))}",
                 str(row.get("last_slot_at") or "-"),
             )
         console.print(table)
@@ -345,6 +355,7 @@ def _render_sessions_list(console: Console, payload: dict[str, Any]) -> None:
     table.add_column("Label")
     table.add_column("Status")
     table.add_column("Capture")
+    table.add_column("Recovery")
     table.add_column("Prom/Mon", justify="right")
     table.add_column("Alerts", justify="right")
     table.add_column("Verdict")
@@ -358,6 +369,10 @@ def _render_sessions_list(console: Console, payload: dict[str, Any]) -> None:
             str(row.get("label") or "-"),
             str(row.get("operator_status") or row.get("status") or "-"),
             str(row.get("latest_capture_status") or "-"),
+            (
+                f"{row.get('recovery_state') or '-'} "
+                f"({int(row.get('missed_slot_count') or 0)}/{int(row.get('unrecoverable_slot_count') or 0)})"
+            ),
             f"{_render_value(promotable_count)}/{_render_value(monitor_count)}",
             _render_value(row.get("alert_count")),
             str(row.get("post_market_verdict") or "-"),
@@ -378,6 +393,20 @@ def _render_session_detail(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row("Label", _render_value(summary.get("label")))
     overview.add_row("Date", _render_value(summary.get("session_date")))
     overview.add_row("Capture", _render_value(summary.get("latest_capture_status")))
+    overview.add_row("Recovery", _render_value(summary.get("recovery_state")))
+    overview.add_row("Missed Slots", _render_value(summary.get("missed_slot_count")))
+    overview.add_row(
+        "Unrecoverable",
+        _render_value(summary.get("unrecoverable_slot_count")),
+    )
+    overview.add_row(
+        "Latest Fresh",
+        _render_value(summary.get("latest_fresh_slot_at")),
+    )
+    overview.add_row(
+        "Latest Resume",
+        _render_value(summary.get("latest_resume_slot_at")),
+    )
     overview.add_row("Risk", _render_value(summary.get("risk_status")))
     overview.add_row(
         "Reconciliation", _render_value(summary.get("reconciliation_status"))
@@ -423,14 +452,30 @@ def _render_session_detail(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Slot")
         table.add_column("Status")
         table.add_column("Capture")
-        table.add_column("Quote WS/Base", justify="right")
+        table.add_column("Quote Stream/Base", justify="right")
         for row in slot_runs[:8]:
             quote_capture = dict(row.get("quote_capture") or {})
             table.add_row(
                 str(row.get("slot_at") or row.get("scheduled_for") or "-"),
                 str(row.get("status") or "-"),
                 str(row.get("capture_status") or "-"),
-                f"{_render_value(quote_capture.get('websocket_quote_events_saved'))}/{_render_value(quote_capture.get('baseline_quote_events_saved'))}",
+                f"{_render_value(_stream_quote_count(quote_capture))}/{_render_value(quote_capture.get('baseline_quote_events_saved'))}",
+            )
+        console.print(table)
+
+    recovery_slots = list(details.get("recovery_slots") or [])
+    if recovery_slots:
+        table = Table(title="Recovery Slots", header_style="bold")
+        table.add_column("Slot")
+        table.add_column("Status")
+        table.add_column("Capture")
+        table.add_column("Updated")
+        for row in recovery_slots[:8]:
+            table.add_row(
+                str(row.get("slot_at") or "-"),
+                str(row.get("status") or "-"),
+                str(row.get("capture_status") or "-"),
+                str(row.get("updated_at") or "-"),
             )
         console.print(table)
 
@@ -624,12 +669,12 @@ def _render_job_run_detail(console: Console, payload: dict[str, Any]) -> None:
     if capture_status is not None:
         table = Table(title="Capture Summary", header_style="bold")
         table.add_column("Status")
-        table.add_column("Quotes WS/Base", justify="right")
-        table.add_column("Trades WS/Total", justify="right")
+        table.add_column("Quotes Stream/Base", justify="right")
+        table.add_column("Trades Stream/Total", justify="right")
         table.add_row(
             _render_value(capture_status),
-            f"{_render_value(run.get('websocket_quote_events_saved'))}/{_render_value(run.get('baseline_quote_events_saved'))}",
-            f"{_render_value(run.get('websocket_trade_events_saved'))}/{_render_value(run.get('total_trade_events_saved'))}",
+            f"{_render_value(run.get('stream_quote_events_saved'))}/{_render_value(run.get('baseline_quote_events_saved'))}",
+            f"{_render_value(run.get('stream_trade_events_saved'))}/{_render_value(run.get('total_trade_events_saved'))}",
         )
         console.print(table)
 
@@ -988,8 +1033,8 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Slot")
         table.add_column("Status")
         table.add_column("Capture")
-        table.add_column("Quote WS/Base", justify="right")
-        table.add_column("Trades WS/Total", justify="right")
+        table.add_column("Quote Stream/Base", justify="right")
+        table.add_column("Trades Stream/Total", justify="right")
         for row in slot_runs:
             quote_capture = dict(row.get("quote_capture") or {})
             trade_capture = dict(row.get("trade_capture") or {})
@@ -997,8 +1042,8 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
                 str(row.get("slot_at") or row.get("scheduled_for") or "-"),
                 str(row.get("status") or "-"),
                 str(row.get("capture_status") or "-"),
-                f"{_render_value(quote_capture.get('websocket_quote_events_saved'))}/{_render_value(quote_capture.get('baseline_quote_events_saved'))}",
-                f"{_render_value(trade_capture.get('websocket_trade_events_saved'))}/{_render_value(trade_capture.get('total_trade_events_saved'))}",
+                f"{_render_value(_stream_quote_count(quote_capture))}/{_render_value(quote_capture.get('baseline_quote_events_saved'))}",
+                f"{_render_value(_stream_trade_count(trade_capture))}/{_render_value(trade_capture.get('total_trade_events_saved'))}",
             )
         console.print(table)
 

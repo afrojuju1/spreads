@@ -10,7 +10,11 @@ from typing import Any
 from arq import create_pool
 
 from spreads.events.bus import publish_global_event_async
-from spreads.jobs.registry import get_job_spec
+from spreads.jobs.registry import (
+    COLLECTOR_RECOVERY_JOB_KEY,
+    COLLECTOR_RECOVERY_JOB_TYPE,
+    get_job_spec,
+)
 from spreads.jobs.orchestration import (
     SCHEDULER_RUNTIME_LEASE_KEY,
     build_job_attempt_id,
@@ -23,7 +27,12 @@ from spreads.jobs.orchestration import (
 )
 from spreads.runtime.config import default_database_url, default_redis_url
 from spreads.runtime.redis import build_redis_settings
-from spreads.storage.factory import build_job_repository
+from spreads.services.live_recovery import (
+    LIVE_SLOT_STATUS_MISSED,
+    LIVE_SLOT_STATUS_QUEUED,
+    LIVE_SLOT_TERMINAL_STATUSES,
+)
+from spreads.storage.factory import build_storage_context
 from spreads.storage.serializers import parse_datetime
 
 DEFAULT_POLL_SECONDS = 30
@@ -38,6 +47,13 @@ def _log_scheduler_event(event: str, **payload: Any) -> None:
         **payload,
     }
     print(json.dumps(record, separators=(",", ":"), sort_keys=True), flush=True)
+
+
+def _as_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    rendered = str(value).strip()
+    return rendered or None
 
 
 async def _publish_job_run_update(redis: Any, run_record: Any) -> None:
@@ -147,118 +163,326 @@ def _live_run_active(run_record: Any, *, now: datetime, interval_seconds: int) -
     return False
 
 
-async def _reconcile_live_collector_jobs(job_store: Any, redis: Any, *, now: datetime) -> dict[str, Any]:
-    definitions = await asyncio.to_thread(job_store.list_job_definitions, enabled_only=True, job_type="live_collector")
+def _slot_is_terminal(slot_record: Any) -> bool:
+    return str(slot_record.get("status") or "") in LIVE_SLOT_TERMINAL_STATUSES
+
+
+async def _enqueue_collector_recovery_if_needed(
+    *,
+    job_store: Any,
+    redis: Any,
+    now: datetime,
+) -> str | None:
+    definition = await asyncio.to_thread(
+        job_store.get_job_definition,
+        COLLECTOR_RECOVERY_JOB_KEY,
+    )
+    if definition is None or not bool(definition.get("enabled")):
+        return None
+    latest_runs = await asyncio.to_thread(
+        job_store.list_job_runs,
+        job_key=COLLECTOR_RECOVERY_JOB_KEY,
+        limit=1,
+    )
+    latest_run = latest_runs[0] if latest_runs else None
+    if latest_run is not None and str(latest_run.get("status") or "") in {"queued", "running"}:
+        active_at = (
+            parse_datetime(latest_run.get("heartbeat_at"))
+            or parse_datetime(latest_run.get("started_at"))
+            or parse_datetime(latest_run.get("scheduled_for"))
+        )
+        if active_at is not None and active_at >= now - timedelta(seconds=120):
+            return None
+    payload = dict(definition.get("payload") or {})
+    payload.update(
+        {
+            "job_key": COLLECTOR_RECOVERY_JOB_KEY,
+            "job_type": COLLECTOR_RECOVERY_JOB_TYPE,
+            "scheduled_for": isoformat_utc(now),
+            "singleton_scope": definition.get("singleton_scope"),
+        }
+    )
+    job_run_id = build_job_run_id(COLLECTOR_RECOVERY_JOB_KEY, now)
+    run_record, created = await asyncio.to_thread(
+        job_store.create_job_run,
+        job_run_id=job_run_id,
+        job_key=COLLECTOR_RECOVERY_JOB_KEY,
+        arq_job_id=build_job_attempt_id(job_run_id, 0),
+        job_type=COLLECTOR_RECOVERY_JOB_TYPE,
+        status="queued",
+        scheduled_for=now,
+        payload=payload,
+    )
+    if not created:
+        return None
+    enqueued = await _enqueue_job_run(
+        job_store=job_store,
+        redis=redis,
+        definition=definition,
+        run_record=run_record,
+    )
+    return None if not enqueued else str(run_record["job_run_id"])
+
+
+async def _reconcile_live_collector_jobs(
+    job_store: Any,
+    recovery_store: Any,
+    redis: Any,
+    *,
+    now: datetime,
+) -> dict[str, Any]:
+    definitions = await asyncio.to_thread(
+        job_store.list_job_definitions,
+        enabled_only=True,
+        job_type="live_collector",
+    )
     enqueued: list[str] = []
     skipped: list[dict[str, str]] = []
+    recovery_enqueued: list[str] = []
 
     for definition in definitions:
         plan = resolve_live_tick_plan(definition, now=now)
         if plan is None:
             continue
+        current_slot = plan.get("current_slot")
+        if not isinstance(current_slot, datetime):
+            continue
+        all_slots = list(plan["slots"])
+        session_id = str(plan["session_id"])
+        session_date = str(plan["session_date"])
+        label = str(plan["label"])
+        await asyncio.to_thread(
+            recovery_store.ensure_live_session_slots,
+            job_key=str(definition["job_key"]),
+            session_id=session_id,
+            session_date=session_date,
+            label=label,
+            slots=[
+                {
+                    "slot_at": isoformat_utc(slot_at),
+                    "scheduled_for": isoformat_utc(slot_at),
+                }
+                for slot_at in all_slots
+            ],
+        )
         latest_session_runs = await asyncio.to_thread(
             job_store.list_job_runs,
             job_key=definition["job_key"],
-            session_id=str(plan["session_id"]),
+            session_id=session_id,
             limit=1,
         )
         latest_session_run = latest_session_runs[0] if latest_session_runs else None
         max_retries = max(int(definition["payload"].get("max_slot_retries", LIVE_SLOT_MAX_RETRIES)), 0)
-        for slot_at in plan["slots"]:
+        gap_detected = False
+
+        for slot_at in all_slots:
+            if slot_at >= current_slot:
+                break
+            slot_record = await asyncio.to_thread(
+                recovery_store.get_live_session_slot,
+                session_id=session_id,
+                slot_at=slot_at,
+            )
+            if slot_record is not None and _slot_is_terminal(slot_record):
+                continue
             run_record = await asyncio.to_thread(
                 job_store.get_job_run_for_slot,
                 job_key=definition["job_key"],
-                session_id=str(plan["session_id"]),
+                session_id=session_id,
                 slot_at=slot_at,
             )
-            if run_record is None:
-                if latest_session_run is not None and latest_session_run["status"] in {"queued", "running"} and _live_run_active(
-                    latest_session_run,
-                    now=now,
-                    interval_seconds=int(plan["interval_seconds"]),
-                ):
-                    skipped.append(
-                        {
-                            "job_key": definition["job_key"],
-                            "reason": "previous_slot_active",
-                        }
-                    )
-                    break
-                slot_iso = isoformat_utc(slot_at)
-                payload = dict(plan["payload"])
-                payload.update(
-                    {
-                        "job_key": definition["job_key"],
-                        "job_type": "live_collector",
-                        "label": plan["label"],
-                        "session_id": plan["session_id"],
-                        "scheduled_for": slot_iso,
-                        "slot_at": slot_iso,
-                        "singleton_scope": None,
-                    }
-                )
-                job_run_id = build_job_run_id(definition["job_key"], slot_at)
-                attempt_id = build_job_attempt_id(job_run_id, 0)
-                created_record, created = await asyncio.to_thread(
-                    job_store.create_job_run,
-                    job_run_id=job_run_id,
-                    job_key=definition["job_key"],
-                    arq_job_id=attempt_id,
-                    job_type="live_collector",
-                    status="queued",
-                    scheduled_for=slot_at,
-                    session_id=str(plan["session_id"]),
-                    slot_at=slot_at,
-                    payload=payload,
-                )
-                if created:
-                    if await _enqueue_job_run(
-                        job_store=job_store,
-                        redis=redis,
-                        definition=definition,
-                        run_record=created_record,
-                    ):
-                        enqueued.append(created_record["job_run_id"])
-                    latest_session_run = created_record
-                    break
-                continue
-
-            if run_record["status"] == "succeeded":
-                latest_session_run = run_record
-                continue
-            if run_record["status"] == "failed" and int(run_record.get("retry_count", 0)) >= max_retries:
-                latest_session_run = run_record
-                continue
-            if run_record["status"] in {"queued", "running"} and _live_run_active(
+            if run_record is not None and str(run_record.get("status") or "") in {"queued", "running"} and _live_run_active(
                 run_record,
                 now=now,
                 interval_seconds=int(plan["interval_seconds"]),
             ):
-                latest_session_run = run_record
-                break
+                continue
+            await asyncio.to_thread(
+                recovery_store.upsert_live_session_slot,
+                job_key=str(definition["job_key"]),
+                session_id=session_id,
+                session_date=session_date,
+                label=label,
+                slot_at=isoformat_utc(slot_at),
+                scheduled_for=isoformat_utc(slot_at),
+                status=LIVE_SLOT_STATUS_MISSED,
+                job_run_id=None if run_record is None else str(run_record["job_run_id"]),
+                capture_status=None if slot_record is None else _as_text(slot_record.get("capture_status")),
+                recovery_note="Scheduler advanced past this live slot without a completed fresh run.",
+                slot_details={} if slot_record is None else dict(slot_record.get("slot_details") or {}),
+                queued_at=None if slot_record is None else _as_text(slot_record.get("queued_at")),
+                started_at=None if slot_record is None else _as_text(slot_record.get("started_at")),
+                finished_at=isoformat_utc(now),
+                updated_at=isoformat_utc(now),
+            )
+            gap_detected = True
 
+        slot_at = current_slot
+        run_record = await asyncio.to_thread(
+            job_store.get_job_run_for_slot,
+            job_key=definition["job_key"],
+            session_id=session_id,
+            slot_at=slot_at,
+        )
+        slot_iso = isoformat_utc(slot_at)
+        if run_record is None:
+            if latest_session_run is not None and latest_session_run["status"] in {"queued", "running"} and _live_run_active(
+                latest_session_run,
+                now=now,
+                interval_seconds=int(plan["interval_seconds"]),
+            ):
+                skipped.append(
+                    {
+                        "job_key": definition["job_key"],
+                        "reason": "previous_slot_active",
+                    }
+                )
+                if gap_detected:
+                    recovery_run_id = await _enqueue_collector_recovery_if_needed(
+                        job_store=job_store,
+                        redis=redis,
+                        now=now,
+                    )
+                    if recovery_run_id is not None:
+                        recovery_enqueued.append(recovery_run_id)
+                continue
+            payload = dict(plan["payload"])
+            payload.update(
+                {
+                    "job_key": definition["job_key"],
+                    "job_type": "live_collector",
+                    "label": label,
+                    "session_id": session_id,
+                    "session_date": session_date,
+                    "scheduled_for": slot_iso,
+                    "slot_at": slot_iso,
+                    "singleton_scope": None,
+                }
+            )
+            job_run_id = build_job_run_id(definition["job_key"], slot_at)
+            attempt_id = build_job_attempt_id(job_run_id, 0)
+            created_record, created = await asyncio.to_thread(
+                job_store.create_job_run,
+                job_run_id=job_run_id,
+                job_key=definition["job_key"],
+                arq_job_id=attempt_id,
+                job_type="live_collector",
+                status="queued",
+                scheduled_for=slot_at,
+                session_id=session_id,
+                slot_at=slot_at,
+                payload=payload,
+            )
+            if created:
+                await asyncio.to_thread(
+                    recovery_store.upsert_live_session_slot,
+                    job_key=str(definition["job_key"]),
+                    session_id=session_id,
+                    session_date=session_date,
+                    label=label,
+                    slot_at=slot_iso,
+                    scheduled_for=slot_iso,
+                    status=LIVE_SLOT_STATUS_QUEUED,
+                    job_run_id=str(created_record["job_run_id"]),
+                    queued_at=isoformat_utc(now),
+                    updated_at=isoformat_utc(now),
+                )
+                if await _enqueue_job_run(
+                    job_store=job_store,
+                    redis=redis,
+                    definition=definition,
+                    run_record=created_record,
+                ):
+                    enqueued.append(created_record["job_run_id"])
+                latest_session_run = created_record
+        elif run_record["status"] == "succeeded":
+            latest_session_run = run_record
+        elif run_record["status"] == "failed" and int(run_record.get("retry_count", 0)) >= max_retries:
+            await asyncio.to_thread(
+                recovery_store.upsert_live_session_slot,
+                job_key=str(definition["job_key"]),
+                session_id=session_id,
+                session_date=session_date,
+                label=label,
+                slot_at=slot_iso,
+                scheduled_for=slot_iso,
+                status=LIVE_SLOT_STATUS_MISSED,
+                job_run_id=str(run_record["job_run_id"]),
+                recovery_note="Live slot exceeded its retry budget without a completed fresh run.",
+                finished_at=isoformat_utc(now),
+                updated_at=isoformat_utc(now),
+            )
+            gap_detected = True
+            latest_session_run = run_record
+        elif run_record["status"] in {"queued", "running"} and _live_run_active(
+            run_record,
+            now=now,
+            interval_seconds=int(plan["interval_seconds"]),
+        ):
+            latest_session_run = run_record
+        else:
             next_retry_count = int(run_record.get("retry_count", 0)) + 1
             if run_record["status"] in {"failed", "skipped"} and next_retry_count > max_retries:
+                await asyncio.to_thread(
+                    recovery_store.upsert_live_session_slot,
+                    job_key=str(definition["job_key"]),
+                    session_id=session_id,
+                    session_date=session_date,
+                    label=label,
+                    slot_at=slot_iso,
+                    scheduled_for=slot_iso,
+                    status=LIVE_SLOT_STATUS_MISSED,
+                    job_run_id=str(run_record["job_run_id"]),
+                    recovery_note="Live slot exhausted retries before it could complete fresh.",
+                    finished_at=isoformat_utc(now),
+                    updated_at=isoformat_utc(now),
+                )
+                gap_detected = True
                 latest_session_run = run_record
-                continue
-            attempt_id = build_job_attempt_id(run_record["job_run_id"], next_retry_count)
-            requeued_record = await asyncio.to_thread(
-                job_store.requeue_job_run,
-                job_run_id=run_record["job_run_id"],
-                arq_job_id=attempt_id,
-                payload=dict(run_record["payload"]),
-            )
-            if await _enqueue_job_run(
+            else:
+                attempt_id = build_job_attempt_id(run_record["job_run_id"], next_retry_count)
+                requeued_record = await asyncio.to_thread(
+                    job_store.requeue_job_run,
+                    job_run_id=run_record["job_run_id"],
+                    arq_job_id=attempt_id,
+                    payload=dict(run_record["payload"]),
+                )
+                await asyncio.to_thread(
+                    recovery_store.upsert_live_session_slot,
+                    job_key=str(definition["job_key"]),
+                    session_id=session_id,
+                    session_date=session_date,
+                    label=label,
+                    slot_at=slot_iso,
+                    scheduled_for=slot_iso,
+                    status=LIVE_SLOT_STATUS_QUEUED,
+                    job_run_id=str(requeued_record["job_run_id"]),
+                    queued_at=isoformat_utc(now),
+                    updated_at=isoformat_utc(now),
+                )
+                if await _enqueue_job_run(
+                    job_store=job_store,
+                    redis=redis,
+                    definition=definition,
+                    run_record=requeued_record,
+                ):
+                    enqueued.append(requeued_record["job_run_id"])
+                latest_session_run = requeued_record
+
+        if gap_detected:
+            recovery_run_id = await _enqueue_collector_recovery_if_needed(
                 job_store=job_store,
                 redis=redis,
-                definition=definition,
-                run_record=requeued_record,
-            ):
-                enqueued.append(requeued_record["job_run_id"])
-            latest_session_run = requeued_record
-            break
+                now=now,
+            )
+            if recovery_run_id is not None:
+                recovery_enqueued.append(recovery_run_id)
 
-    return {"enqueued": enqueued, "skipped": skipped}
+    return {
+        "enqueued": enqueued,
+        "skipped": skipped,
+        "recovery_enqueued": recovery_enqueued,
+    }
 
 
 async def _enqueue_definition_jobs(job_store: Any, redis: Any, *, now: datetime) -> dict[str, Any]:
@@ -310,20 +534,23 @@ async def _enqueue_definition_jobs(job_store: Any, redis: Any, *, now: datetime)
     return {"enqueued": enqueued, "skipped": skipped}
 
 
-async def enqueue_due_jobs(job_store: Any, redis: Any) -> dict[str, Any]:
+async def enqueue_due_jobs(job_store: Any, recovery_store: Any, redis: Any) -> dict[str, Any]:
     now = datetime.now(UTC)
     live_result, definition_result = await asyncio.gather(
-        _reconcile_live_collector_jobs(job_store, redis, now=now),
+        _reconcile_live_collector_jobs(job_store, recovery_store, redis, now=now),
         _enqueue_definition_jobs(job_store, redis, now=now),
     )
     return {
         "enqueued": [*live_result["enqueued"], *definition_result["enqueued"]],
         "skipped": [*live_result["skipped"], *definition_result["skipped"]],
+        "recovery_enqueued": list(live_result.get("recovery_enqueued") or []),
     }
 
 
 async def scheduler_loop(args: argparse.Namespace) -> int:
-    job_store = build_job_repository(args.db)
+    storage = build_storage_context(args.db)
+    job_store = storage.jobs
+    recovery_store = storage.recovery
     redis = await create_pool(build_redis_settings(args.redis_url))
     _log_scheduler_event(
         "scheduler_started",
@@ -342,7 +569,7 @@ async def scheduler_loop(args: argparse.Namespace) -> int:
                 expires_in_seconds=lease_seconds,
                 state={"kind": "scheduler", "last_tick_at": datetime.now(UTC).isoformat()},
             )
-            result = await enqueue_due_jobs(job_store, redis)
+            result = await enqueue_due_jobs(job_store, recovery_store, redis)
             _log_scheduler_event(
                 "scheduler_tick",
                 poll_seconds=max(args.poll_seconds, 1),
@@ -350,8 +577,10 @@ async def scheduler_loop(args: argparse.Namespace) -> int:
                 elapsed_ms=round((perf_counter() - tick_started) * 1000, 1),
                 enqueued_count=len(result["enqueued"]),
                 skipped_count=len(result["skipped"]),
+                recovery_enqueued_count=len(result.get("recovery_enqueued") or []),
                 enqueued_job_run_ids=result["enqueued"][:5],
                 skipped_samples=result["skipped"][:5],
+                recovery_job_run_ids=list(result.get("recovery_enqueued") or [])[:5],
             )
             if args.once:
                 break
@@ -359,7 +588,7 @@ async def scheduler_loop(args: argparse.Namespace) -> int:
     finally:
         await asyncio.to_thread(job_store.release_lease, SCHEDULER_RUNTIME_LEASE_KEY, owner="scheduler")
         await redis.close()
-        job_store.close()
+        storage.close()
         _log_scheduler_event("scheduler_stopped")
     return 0
 

@@ -396,7 +396,8 @@ const sessionListItemSchema = z
     latest_slot_at: z.string().nullable().optional(),
     latest_slot_status: z.string().nullable().optional(),
     latest_capture_status: z.string().nullable().optional(),
-    websocket_quote_events_saved: z.number(),
+    stream_quote_events_saved: z.number().optional(),
+    websocket_quote_events_saved: z.number().optional(),
     baseline_quote_events_saved: z.number(),
     recovery_quote_events_saved: z.number(),
     promotable_count: z.number(),
@@ -1071,9 +1072,9 @@ export function parseGlobalRealtimeEvent(payload: string) {
 
 export function buildSessionHref(sessionId?: string | null) {
   if (!sessionId) {
-    return "/";
+    return "/sessions";
   }
-  return `/?session_id=${encodeURIComponent(sessionId)}`;
+  return `/sessions/${encodeURIComponent(sessionId)}`;
 }
 
 export function buildGlobalEventsWebSocketUrl() {

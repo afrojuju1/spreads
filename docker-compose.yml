@@ -118,6 +118,20 @@ services:
     command: ["uv", "run", "spreads", "scheduler"]
     volumes:
       - .:/app
+  market-recorder:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
+    command: ["uv", "run", "spreads", "market-recorder"]
+    volumes:
+      - .:/app
   web:
     build:
       context: ./apps/web

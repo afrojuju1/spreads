@@ -15,6 +15,7 @@ from spreads.storage import event_models as storage_event_models  # noqa: F401
 from spreads.storage import execution_models as storage_execution_models  # noqa: F401
 from spreads.storage import job_models as storage_job_models  # noqa: F401
 from spreads.storage import post_market_models as storage_post_market_models  # noqa: F401
+from spreads.storage import recovery_models as storage_recovery_models  # noqa: F401
 from spreads.storage import risk_models as storage_risk_models  # noqa: F401
 from spreads.storage import signal_models as storage_signal_models  # noqa: F401
 from spreads.storage.db import Base

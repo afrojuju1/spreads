@@ -9,6 +9,10 @@ from spreads.services.control_plane import get_control_state_snapshot
 from spreads.services.execution import list_session_execution_attempts
 from spreads.services.execution_portfolio import build_session_execution_portfolio
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
+from spreads.services.live_recovery import (
+    list_session_slot_health_by_session_id,
+    load_session_slot_health,
+)
 from spreads.services.live_pipelines import parse_live_session_id
 from spreads.services.risk_manager import build_session_risk_snapshot, normalize_risk_policy
 from spreads.storage.serializers import parse_datetime
@@ -43,9 +47,12 @@ def _derive_session_status(
     *,
     latest_run: Mapping[str, Any] | None,
     latest_cycle: Mapping[str, Any] | None,
+    slot_health: Mapping[str, Any] | None = None,
 ) -> str:
+    gap_active = bool((slot_health or {}).get("gap_active"))
     if latest_run is None:
-        return "healthy" if latest_cycle is not None else "idle"
+        status = "healthy" if latest_cycle is not None else "idle"
+        return "degraded" if gap_active and status != "running" else status
 
     status = str(latest_run.get("status") or "idle")
     if status == "running":
@@ -58,8 +65,10 @@ def _derive_session_status(
         return "degraded"
     if status == "succeeded":
         capture_status = str(latest_run.get("capture_status") or "")
-        return "healthy" if capture_status == "healthy" else "degraded"
-    return "idle"
+        status = "healthy" if capture_status == "healthy" else "degraded"
+        return "degraded" if gap_active and status != "running" else status
+    status = "idle"
+    return "degraded" if gap_active and status != "running" else status
 
 
 def _sort_session_runs(runs: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -257,6 +266,11 @@ def list_existing_sessions(
     if not candidate_session_ids:
         return {"sessions": []}
 
+    slot_health_by_session_id = list_session_slot_health_by_session_id(
+        recovery_store=storage.recovery,
+        session_ids=sorted(candidate_session_ids),
+        session_date=session_date,
+    )
     latest_cycles = collector_store.list_latest_cycles_by_session_ids(sorted(candidate_session_ids))
     latest_cycles_by_session_id = {
         str(cycle["session_id"]): dict(cycle)
@@ -327,6 +341,7 @@ def list_existing_sessions(
     for row in resolved_sessions:
         latest_run = row["latest_run"]
         latest_cycle_payload = row["latest_cycle"]
+        slot_health = dict(slot_health_by_session_id.get(str(row["session_id"])) or {})
         cycle_counts = (
             candidate_counts_by_cycle_id.get(str(latest_cycle_payload["cycle_id"]), {})
             if latest_cycle_payload is not None
@@ -339,18 +354,32 @@ def list_existing_sessions(
             None if latest_run is None else str(latest_run.get("slot_at") or latest_run.get("scheduled_for") or ""),
             None if latest_cycle_payload is None else str(latest_cycle_payload.get("generated_at") or ""),
         )
+        stream_quote_events_saved = (
+            0
+            if latest_run is None
+            else int(
+                (latest_run.get("quote_capture") or {}).get("stream_quote_events_saved")
+                or (latest_run.get("quote_capture") or {}).get("websocket_quote_events_saved")
+                or 0
+            )
+        )
         session_rows.append(
             {
                 "session_id": row["session_id"],
                 "label": row["label"],
                 "session_date": row["session_date"],
-                "status": _derive_session_status(latest_run=latest_run, latest_cycle=latest_cycle_payload),
-                "latest_slot_at": None if latest_run is None else latest_run.get("slot_at"),
-                "latest_slot_status": None if latest_run is None else latest_run.get("status"),
+                "status": _derive_session_status(
+                    latest_run=latest_run,
+                    latest_cycle=latest_cycle_payload,
+                    slot_health=slot_health,
+                ),
+                "latest_slot_at": slot_health.get("latest_slot_at")
+                or (None if latest_run is None else latest_run.get("slot_at")),
+                "latest_slot_status": slot_health.get("latest_slot_status")
+                or (None if latest_run is None else latest_run.get("status")),
                 "latest_capture_status": None if latest_run is None else latest_run.get("capture_status"),
-                "websocket_quote_events_saved": 0
-                if latest_run is None
-                else int((latest_run.get("quote_capture") or {}).get("websocket_quote_events_saved") or 0),
+                "stream_quote_events_saved": stream_quote_events_saved,
+                "websocket_quote_events_saved": stream_quote_events_saved,
                 "baseline_quote_events_saved": 0
                 if latest_run is None
                 else int((latest_run.get("quote_capture") or {}).get("baseline_quote_events_saved") or 0),
@@ -361,6 +390,12 @@ def list_existing_sessions(
                 "monitor_count": int(cycle_counts.get("monitor") or 0),
                 "alert_count": int(alert_counts.get((str(row["session_date"]), str(row["label"]))) or 0),
                 "live_action_gate": _session_live_action_gate(latest_run),
+                "gap_active": bool(slot_health.get("gap_active")),
+                "recovery_state": slot_health.get("recovery_state"),
+                "missed_slot_count": int(slot_health.get("missed_slot_count") or 0),
+                "unrecoverable_slot_count": int(slot_health.get("unrecoverable_slot_count") or 0),
+                "latest_fresh_slot_at": slot_health.get("latest_fresh_slot_at"),
+                "latest_resume_slot_at": slot_health.get("latest_resume_slot_at"),
                 "updated_at": updated_at,
             }
         )
@@ -388,6 +423,7 @@ def get_session_detail(
     alert_store = storage.alerts
     post_market_store = storage.post_market
     execution_store = storage.execution
+    recovery_store = storage.recovery
     risk_store = getattr(storage, "risk", None)
     identity = _resolve_session_identity(
         session_id,
@@ -497,18 +533,39 @@ def get_session_detail(
     reconciliation_snapshot = _reconciliation_snapshot(portfolio)
     control_snapshot = get_control_state_snapshot(storage=storage)
     live_action_gate = _session_live_action_gate(latest_run)
+    slot_health = load_session_slot_health(
+        recovery_store=recovery_store,
+        session_id=session_id,
+    )
+    recovery_slots = (
+        []
+        if not recovery_store.schema_ready()
+        else [
+            dict(row)
+            for row in recovery_store.list_live_session_slots(
+                session_id=session_id,
+                limit=50,
+            )
+        ]
+    )
 
     return {
         "session_id": session_id,
         "label": identity["label"],
         "session_date": identity["session_date"],
-        "status": _derive_session_status(latest_run=latest_run, latest_cycle=current_cycle),
+        "status": _derive_session_status(
+            latest_run=latest_run,
+            latest_cycle=current_cycle,
+            slot_health=slot_health,
+        ),
         "updated_at": updated_at,
         "risk_status": risk_snapshot["status"],
         "risk_note": risk_snapshot.get("note"),
         "reconciliation_status": reconciliation_snapshot["status"],
         "reconciliation_note": reconciliation_snapshot.get("note"),
         "latest_slot": latest_run,
+        "slot_health": slot_health,
+        "recovery_slots": recovery_slots,
         "live_action_gate": live_action_gate,
         "current_cycle": current_cycle,
         "opportunities": opportunities,

@@ -97,6 +97,26 @@ def _coerce_int(value: Any) -> int | None:
         return None
 
 
+def _stream_quote_events_saved(capture: Mapping[str, Any] | None) -> int:
+    if not isinstance(capture, Mapping):
+        return 0
+    return (
+        _coerce_int(capture.get("stream_quote_events_saved"))
+        or _coerce_int(capture.get("websocket_quote_events_saved"))
+        or 0
+    )
+
+
+def _stream_trade_events_saved(capture: Mapping[str, Any] | None) -> int:
+    if not isinstance(capture, Mapping):
+        return 0
+    return (
+        _coerce_int(capture.get("stream_trade_events_saved"))
+        or _coerce_int(capture.get("websocket_trade_events_saved"))
+        or 0
+    )
+
+
 def _parse_timestamp(value: Any) -> datetime | None:
     if value is None:
         return None
@@ -286,6 +306,8 @@ def _skip_reason_text(run: Mapping[str, Any]) -> str | None:
 def _skip_is_benign(run: Mapping[str, Any]) -> bool:
     reason = str(_skip_reason_text(run) or "").strip().lower()
     if reason == "singleton_lease_unavailable":
+        return True
+    if reason == "stale_slot" and str(run.get("job_type") or "") == "live_collector":
         return True
     error_text = str(_as_text(run.get("error_text")) or "").strip().lower()
     return error_text == "superseded during queue consolidation"
@@ -519,6 +541,8 @@ def _summarize_slot_run(run: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(run.get("trade_capture"), Mapping)
         else {}
     )
+    stream_quote_events_saved = _stream_quote_events_saved(quote_capture)
+    stream_trade_events_saved = _stream_trade_events_saved(trade_capture)
     return {
         "job_run_id": run.get("job_run_id"),
         "slot_at": run.get("slot_at"),
@@ -529,9 +553,8 @@ def _summarize_slot_run(run: Mapping[str, Any]) -> dict[str, Any]:
         "finished_at": run.get("finished_at"),
         "quote_capture": {
             "capture_status": quote_capture.get("capture_status"),
-            "websocket_quote_events_saved": quote_capture.get(
-                "websocket_quote_events_saved"
-            ),
+            "stream_quote_events_saved": stream_quote_events_saved,
+            "websocket_quote_events_saved": stream_quote_events_saved,
             "baseline_quote_events_saved": quote_capture.get(
                 "baseline_quote_events_saved"
             ),
@@ -542,10 +565,20 @@ def _summarize_slot_run(run: Mapping[str, Any]) -> dict[str, Any]:
         "trade_capture": {
             "capture_status": trade_capture.get("capture_status"),
             "total_trade_events_saved": trade_capture.get("total_trade_events_saved"),
-            "websocket_trade_events_saved": trade_capture.get(
-                "websocket_trade_events_saved"
-            ),
+            "stream_trade_events_saved": stream_trade_events_saved,
+            "websocket_trade_events_saved": stream_trade_events_saved,
         },
+    }
+
+
+def _summarize_recovery_slot(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "slot_at": row.get("slot_at"),
+        "status": row.get("status"),
+        "capture_status": row.get("capture_status"),
+        "recovery_note": row.get("recovery_note"),
+        "job_run_id": row.get("job_run_id"),
+        "updated_at": row.get("updated_at"),
     }
 
 
@@ -584,11 +617,18 @@ def _job_run_operator_status(
     if status == "skipped":
         result = run.get("result") if isinstance(run.get("result"), Mapping) else {}
         reason = _as_text(result.get("reason"))
-        if reason == "singleton_lease_unavailable":
-            return (
-                "degraded",
-                "Job run was skipped because another singleton run still holds the lease.",
-            )
+        if _skip_is_benign(run):
+            if reason == "singleton_lease_unavailable":
+                return (
+                    "healthy",
+                    "Job run was skipped because another singleton run already covered the slot.",
+                )
+            if reason == "stale_slot" and str(run.get("job_type") or "") == "live_collector":
+                return (
+                    "healthy",
+                    "Stale live slot was intentionally marked missed instead of replayed.",
+                )
+            return "healthy", "Job run was superseded during queue consolidation."
         return "degraded", reason or "Job run was skipped."
     if status == "queued":
         queue_age_seconds = _seconds_since(run.get("scheduled_for"), now=now)
@@ -664,6 +704,8 @@ def _summarize_job_run(
         if isinstance(enriched.get("live_action_gate"), Mapping)
         else {}
     )
+    stream_quote_events_saved = _stream_quote_events_saved(quote_capture)
+    stream_trade_events_saved = _stream_trade_events_saved(trade_capture)
     return {
         "job_run_id": enriched.get("job_run_id"),
         "job_key": enriched.get("job_key"),
@@ -688,10 +730,8 @@ def _summarize_job_run(
         "result_status": result.get("status"),
         "result_reason": result.get("reason"),
         "live_action_gate": dict(live_action_gate),
-        "websocket_quote_events_saved": _coerce_int(
-            quote_capture.get("websocket_quote_events_saved")
-        )
-        or 0,
+        "stream_quote_events_saved": stream_quote_events_saved,
+        "websocket_quote_events_saved": stream_quote_events_saved,
         "baseline_quote_events_saved": _coerce_int(
             quote_capture.get("baseline_quote_events_saved")
         )
@@ -704,10 +744,8 @@ def _summarize_job_run(
             trade_capture.get("total_trade_events_saved")
         )
         or 0,
-        "websocket_trade_events_saved": _coerce_int(
-            trade_capture.get("websocket_trade_events_saved")
-        )
-        or 0,
+        "stream_trade_events_saved": stream_trade_events_saved,
+        "websocket_trade_events_saved": stream_trade_events_saved,
     }
 
 
@@ -925,6 +963,7 @@ def build_system_status(
             quote_capture = {} if run is None else dict(run.get("quote_capture") or {})
             collector_status = _collector_status(run)
             needs_attention = _collector_requires_attention(run, now=now)
+            stream_quote_events_saved = _stream_quote_events_saved(quote_capture)
             latest_collectors.append(
                 {
                     "job_key": job_key,
@@ -939,10 +978,8 @@ def build_system_status(
                     "last_slot_at": None
                     if run is None
                     else run.get("slot_at") or run.get("scheduled_for"),
-                    "websocket_quote_events_saved": _coerce_int(
-                        quote_capture.get("websocket_quote_events_saved")
-                    )
-                    or 0,
+                    "stream_quote_events_saved": stream_quote_events_saved,
+                    "websocket_quote_events_saved": stream_quote_events_saved,
                     "baseline_quote_events_saved": _coerce_int(
                         quote_capture.get("baseline_quote_events_saved")
                     )
@@ -1444,6 +1481,11 @@ def build_sessions_view(
             if isinstance(session.get("latest_slot"), Mapping)
             else {}
         )
+        slot_health = (
+            session.get("slot_health")
+            if isinstance(session.get("slot_health"), Mapping)
+            else {}
+        )
         live_action_gate = (
             session.get("live_action_gate")
             if isinstance(session.get("live_action_gate"), Mapping)
@@ -1467,6 +1509,20 @@ def build_sessions_view(
                     code=str(live_action_gate.get("reason_code") or "live_action_blocked"),
                     message=_as_text(live_action_gate.get("message"))
                     or "Live session actions are blocked.",
+                )
+            )
+        if bool(slot_health.get("gap_active")):
+            statuses.append("blocked")
+            attention.append(
+                _attention(
+                    severity="high",
+                    code=str(
+                        slot_health.get("recovery_state") or "collector_gap_active"
+                    ),
+                    message=(
+                        f"Collector recovery is active with {int(slot_health.get('missed_slot_count') or 0)} missed "
+                        f"slot(s) and {int(slot_health.get('unrecoverable_slot_count') or 0)} unrecoverable slot(s)."
+                    ),
                 )
             )
 
@@ -1534,6 +1590,11 @@ def build_sessions_view(
             _summarize_slot_run(row)
             for row in list(session.get("slot_runs") or [])[:10]
         ]
+        recovery_slots = [
+            _summarize_recovery_slot(row)
+            for row in list(session.get("recovery_slots") or [])[:10]
+            if isinstance(row, Mapping)
+        ]
         alerts = [
             _summarize_alert(row) for row in list(session.get("alerts") or [])[:25]
         ]
@@ -1553,6 +1614,13 @@ def build_sessions_view(
                 "session_date": session.get("session_date"),
                 "latest_capture_status": capture_status,
                 "live_action_gate_status": live_action_gate.get("status"),
+                "recovery_state": slot_health.get("recovery_state"),
+                "missed_slot_count": int(slot_health.get("missed_slot_count") or 0),
+                "unrecoverable_slot_count": int(
+                    slot_health.get("unrecoverable_slot_count") or 0
+                ),
+                "latest_fresh_slot_at": slot_health.get("latest_fresh_slot_at"),
+                "latest_resume_slot_at": slot_health.get("latest_resume_slot_at"),
                 "risk_status": session.get("risk_status"),
                 "reconciliation_status": session.get("reconciliation_status"),
                 "control_mode": control.get("mode"),
@@ -1568,6 +1636,7 @@ def build_sessions_view(
                 "current_cycle_id": current_cycle.get("cycle_id"),
                 "current_cycle_generated_at": current_cycle.get("generated_at"),
                 "live_action_gate": dict(live_action_gate),
+                "slot_health": dict(slot_health),
                 "promotable_count": int(
                     dict(current_cycle.get("selection_counts") or {}).get("promotable")
                     or 0
@@ -1577,6 +1646,7 @@ def build_sessions_view(
                     or 0
                 ),
                 "slot_runs": slot_runs,
+                "recovery_slots": recovery_slots,
                 "alerts": alerts,
                 "executions": executions,
                 "portfolio_summary": portfolio_summary,
@@ -1615,6 +1685,11 @@ def build_sessions_view(
         )
         if str(live_action_gate.get("status") or "") == "blocked":
             operator_status = "blocked"
+        elif bool(row.get("gap_active")) or str(row.get("recovery_state") or "") not in {
+            "",
+            "clear",
+        }:
+            operator_status = "blocked"
         elif str(row.get("status") or "") == "failed":
             operator_status = "blocked"
         elif str(row.get("status") or "") in {"degraded"} or str(
@@ -1642,6 +1717,11 @@ def build_sessions_view(
                 and str(live_action_gate.get("status") or "") == "blocked"
                 else None
             )
+            if status_reason is None and bool(row.get("gap_active")):
+                status_reason = (
+                    f"{row['session_id']} ({row['label']}) has collector recovery state "
+                    f"{row.get('recovery_state')} with {int(row.get('missed_slot_count') or 0)} missed slot(s)."
+                )
             attention.append(
                 _attention(
                     severity="high" if operator_status == "blocked" else "medium",

@@ -1,0 +1,123 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import {
+  Activity,
+  BellRing,
+  BriefcaseBusiness,
+  CandlestickChart,
+  Sparkles,
+} from "lucide-react";
+
+import { cn } from "@/lib/utils";
+
+export const LAYOUT_NAV_ITEMS = [
+  {
+    href: "/sessions",
+    label: "Sessions",
+    caption: "live workflow",
+    icon: CandlestickChart,
+  },
+  {
+    href: "/account",
+    label: "Account",
+    caption: "broker state",
+    icon: Activity,
+  },
+  {
+    href: "/generator",
+    label: "Generator",
+    caption: "single-symbol ideas",
+    icon: Sparkles,
+  },
+  {
+    href: "/alerts",
+    label: "Alerts",
+    caption: "delivery history",
+    icon: BellRing,
+  },
+  {
+    href: "/jobs",
+    label: "Jobs",
+    caption: "runtime health",
+    icon: BriefcaseBusiness,
+  },
+];
+
+export function resolveActiveLayoutItem(pathname: string) {
+  return (
+    LAYOUT_NAV_ITEMS.find((item) =>
+      pathname === item.href || pathname.startsWith(`${item.href}/`),
+    ) ?? LAYOUT_NAV_ITEMS[0]
+  );
+}
+
+export function LayoutNav({
+  compact = false,
+  onNavigate,
+}: {
+  compact?: boolean;
+  onNavigate?: () => void;
+}) {
+  const pathname = usePathname();
+
+  return (
+    <nav className="flex flex-col gap-1.5">
+      {LAYOUT_NAV_ITEMS.map((item) => {
+        const isActive =
+          pathname === item.href || pathname.startsWith(`${item.href}/`);
+        const Icon = item.icon;
+
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            onClick={onNavigate}
+            aria-current={isActive ? "page" : undefined}
+            className={cn(
+              "group flex items-center gap-3 rounded-2xl border transition-all",
+              compact ? "justify-center px-2 py-3" : "px-3 py-3",
+              isActive
+                ? "border-stone-900 bg-stone-900 text-stone-50 shadow-[0_18px_48px_-34px_rgba(28,25,23,0.85)]"
+                : "border-border/70 bg-background/70 text-foreground hover:border-border hover:bg-accent/60",
+            )}
+            title={compact ? item.label : undefined}
+          >
+            <div
+              className={cn(
+                "flex items-center justify-center rounded-xl",
+                isActive
+                  ? "bg-white/12 text-stone-50"
+                  : "bg-accent/80 text-foreground/80 group-hover:text-foreground",
+                compact ? "size-10" : "size-9",
+              )}
+            >
+              <Icon />
+            </div>
+            <div
+              className={cn(
+                "min-w-0 flex-1 transition-[opacity,transform,width] duration-200",
+                compact
+                  ? "w-0 -translate-x-2 overflow-hidden opacity-0"
+                  : "w-auto translate-x-0 opacity-100",
+              )}
+            >
+              <div className="text-sm font-medium tracking-[0.01em]">
+                {item.label}
+              </div>
+              <div
+                className={cn(
+                  "mt-1 text-[11px] uppercase tracking-[0.18em]",
+                  isActive ? "text-stone-300" : "text-muted-foreground",
+                )}
+              >
+                {item.caption}
+              </div>
+            </div>
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}

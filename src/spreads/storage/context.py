@@ -12,6 +12,7 @@ from spreads.storage.execution_repository import ExecutionRepository
 from spreads.storage.job_repository import JobRepository
 from spreads.storage.ops_store import OpsStore
 from spreads.storage.post_market_repository import PostMarketAnalysisRepository
+from spreads.storage.recovery_repository import RecoveryRepository
 from spreads.storage.risk_repository import RiskDecisionRepository
 from spreads.storage.run_history_repository import RunHistoryRepository
 from spreads.storage.signal_repository import SignalRepository
@@ -84,6 +85,10 @@ class StorageContext:
     @property
     def post_market(self) -> PostMarketAnalysisRepository:
         return self._build_repository("post_market", PostMarketAnalysisRepository)  # type: ignore[return-value]
+
+    @property
+    def recovery(self) -> RecoveryRepository:
+        return self._build_repository("recovery", RecoveryRepository)  # type: ignore[return-value]
 
     @property
     def ops(self) -> OpsStore:

@@ -15,7 +15,7 @@ from spreads.storage.records import (
     ScanRunRecord,
     SessionTopRunRecord,
 )
-from spreads.storage.serializers import parse_date, parse_datetime
+from spreads.storage.serializers import parse_date, parse_datetime, render_value
 
 
 class RunHistoryRepository(RepositoryBase):
@@ -222,6 +222,62 @@ class RunHistoryRepository(RepositoryBase):
             rows = session.scalars(statement).all()
         return self.rows(rows)
 
+    def list_option_quote_events_window(
+        self,
+        *,
+        option_symbols: list[str],
+        captured_from: str | datetime,
+        captured_to: str | datetime | None = None,
+        label: str | None = None,
+        profile: str | None = None,
+        sources: str | list[str] | None = None,
+    ) -> list[OptionQuoteEventRecord]:
+        normalized_symbols = sorted(
+            {
+                str(symbol or "").strip()
+                for symbol in option_symbols
+                if str(symbol or "").strip()
+            }
+        )
+        if not normalized_symbols:
+            return []
+        captured_from_dt = parse_datetime(captured_from)
+        captured_to_dt = parse_datetime(captured_to)
+        if captured_from_dt is None:
+            return []
+        if captured_to_dt is not None and captured_from_dt >= captured_to_dt:
+            return []
+        normalized_sources = []
+        if isinstance(sources, str):
+            normalized_sources = [sources.strip()] if sources.strip() else []
+        elif isinstance(sources, list):
+            normalized_sources = [
+                str(source or "").strip()
+                for source in sources
+                if str(source or "").strip()
+            ]
+
+        statement = (
+            select(OptionQuoteEventModel)
+            .where(OptionQuoteEventModel.option_symbol.in_(normalized_symbols))
+            .where(OptionQuoteEventModel.captured_at >= captured_from_dt)
+            .order_by(
+                OptionQuoteEventModel.captured_at.asc(),
+                OptionQuoteEventModel.quote_id.asc(),
+            )
+        )
+        if captured_to_dt is not None:
+            statement = statement.where(OptionQuoteEventModel.captured_at < captured_to_dt)
+        if label is not None:
+            statement = statement.where(OptionQuoteEventModel.label == label)
+        if profile is not None:
+            statement = statement.where(OptionQuoteEventModel.profile == profile)
+        if normalized_sources:
+            statement = statement.where(OptionQuoteEventModel.source.in_(normalized_sources))
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return self.rows(rows)
+
     def save_option_quote_events(
         self,
         *,
@@ -258,6 +314,74 @@ class RunHistoryRepository(RepositoryBase):
             )
         return len(quotes)
 
+    def save_option_quote_event_rows(
+        self,
+        *,
+        rows: list[dict[str, Any]],
+    ) -> int:
+        if not rows:
+            return 0
+
+        with self.session_scope() as session:
+            session.add_all(
+                [
+                    OptionQuoteEventModel(
+                        cycle_id=str(row["cycle_id"]),
+                        captured_at=parse_datetime(row["captured_at"]),
+                        label=str(row["label"]),
+                        underlying_symbol=row.get("underlying_symbol"),
+                        strategy=row.get("strategy"),
+                        profile=row.get("profile"),
+                        option_symbol=str(row["option_symbol"]),
+                        leg_role=str(row.get("leg_role") or "unknown"),
+                        bid=float(row["bid"]),
+                        ask=float(row["ask"]),
+                        midpoint=float(row["midpoint"]),
+                        bid_size=int(row["bid_size"]),
+                        ask_size=int(row["ask_size"]),
+                        quote_timestamp=parse_datetime(row.get("quote_timestamp")),
+                        source=str(row.get("source") or "alpaca_websocket"),
+                    )
+                    for row in rows
+                ]
+            )
+        return len(rows)
+
+    def summarize_option_quote_window(
+        self,
+        *,
+        option_symbols: list[str],
+        captured_from: str | datetime,
+        captured_to: str | datetime,
+    ) -> dict[str, dict[str, Any]]:
+        if not option_symbols:
+            return {}
+        captured_from_dt = parse_datetime(captured_from)
+        captured_to_dt = parse_datetime(captured_to)
+        if captured_from_dt is None or captured_to_dt is None or captured_from_dt >= captured_to_dt:
+            return {}
+
+        statement = (
+            select(
+                OptionQuoteEventModel.option_symbol,
+                func.count(OptionQuoteEventModel.quote_id),
+                func.max(OptionQuoteEventModel.captured_at),
+            )
+            .where(OptionQuoteEventModel.option_symbol.in_(option_symbols))
+            .where(OptionQuoteEventModel.captured_at >= captured_from_dt)
+            .where(OptionQuoteEventModel.captured_at < captured_to_dt)
+            .group_by(OptionQuoteEventModel.option_symbol)
+        )
+        with self.session_factory() as session:
+            rows = session.execute(statement).all()
+        return {
+            str(option_symbol): {
+                "event_count": int(event_count or 0),
+                "last_captured_at": render_value(last_captured_at),
+            }
+            for option_symbol, event_count, last_captured_at in rows
+        }
+
     def list_session_trade_events(
         self,
         *,
@@ -273,6 +397,62 @@ class RunHistoryRepository(RepositoryBase):
             .where(OptionTradeEventModel.label == label)
             .order_by(OptionTradeEventModel.trade_id.asc())
         )
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return self.rows(rows)
+
+    def list_option_trade_events_window(
+        self,
+        *,
+        option_symbols: list[str],
+        captured_from: str | datetime,
+        captured_to: str | datetime | None = None,
+        label: str | None = None,
+        profile: str | None = None,
+        sources: str | list[str] | None = None,
+    ) -> list[OptionTradeEventRecord]:
+        normalized_symbols = sorted(
+            {
+                str(symbol or "").strip()
+                for symbol in option_symbols
+                if str(symbol or "").strip()
+            }
+        )
+        if not normalized_symbols:
+            return []
+        captured_from_dt = parse_datetime(captured_from)
+        captured_to_dt = parse_datetime(captured_to)
+        if captured_from_dt is None:
+            return []
+        if captured_to_dt is not None and captured_from_dt >= captured_to_dt:
+            return []
+        normalized_sources = []
+        if isinstance(sources, str):
+            normalized_sources = [sources.strip()] if sources.strip() else []
+        elif isinstance(sources, list):
+            normalized_sources = [
+                str(source or "").strip()
+                for source in sources
+                if str(source or "").strip()
+            ]
+
+        statement = (
+            select(OptionTradeEventModel)
+            .where(OptionTradeEventModel.option_symbol.in_(normalized_symbols))
+            .where(OptionTradeEventModel.captured_at >= captured_from_dt)
+            .order_by(
+                OptionTradeEventModel.captured_at.asc(),
+                OptionTradeEventModel.trade_id.asc(),
+            )
+        )
+        if captured_to_dt is not None:
+            statement = statement.where(OptionTradeEventModel.captured_at < captured_to_dt)
+        if label is not None:
+            statement = statement.where(OptionTradeEventModel.label == label)
+        if profile is not None:
+            statement = statement.where(OptionTradeEventModel.profile == profile)
+        if normalized_sources:
+            statement = statement.where(OptionTradeEventModel.source.in_(normalized_sources))
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
         return self.rows(rows)
@@ -385,6 +565,77 @@ class RunHistoryRepository(RepositoryBase):
                 ]
             )
         return len(trades)
+
+    def save_option_trade_event_rows(
+        self,
+        *,
+        rows: list[dict[str, Any]],
+    ) -> int:
+        if not rows:
+            return 0
+
+        with self.session_scope() as session:
+            session.add_all(
+                [
+                    OptionTradeEventModel(
+                        cycle_id=str(row["cycle_id"]),
+                        captured_at=parse_datetime(row["captured_at"]),
+                        label=str(row["label"]),
+                        underlying_symbol=row.get("underlying_symbol"),
+                        strategy=row.get("strategy"),
+                        profile=row.get("profile"),
+                        option_symbol=str(row["option_symbol"]),
+                        leg_role=str(row.get("leg_role") or "contract"),
+                        price=float(row["price"]),
+                        size=int(row["size"]),
+                        premium=float(row["premium"]),
+                        exchange_code=row.get("exchange_code"),
+                        conditions_json=list(row.get("conditions") or []),
+                        trade_timestamp=parse_datetime(row.get("trade_timestamp")),
+                        included_in_score=bool(row.get("included_in_score")),
+                        exclusion_reason=row.get("exclusion_reason"),
+                        raw_payload_json=dict(row.get("raw_payload") or {}),
+                        source=str(row.get("source") or "alpaca_websocket"),
+                    )
+                    for row in rows
+                ]
+            )
+        return len(rows)
+
+    def summarize_option_trade_window(
+        self,
+        *,
+        option_symbols: list[str],
+        captured_from: str | datetime,
+        captured_to: str | datetime,
+    ) -> dict[str, dict[str, Any]]:
+        if not option_symbols:
+            return {}
+        captured_from_dt = parse_datetime(captured_from)
+        captured_to_dt = parse_datetime(captured_to)
+        if captured_from_dt is None or captured_to_dt is None or captured_from_dt >= captured_to_dt:
+            return {}
+
+        statement = (
+            select(
+                OptionTradeEventModel.option_symbol,
+                func.count(OptionTradeEventModel.trade_id),
+                func.max(OptionTradeEventModel.captured_at),
+            )
+            .where(OptionTradeEventModel.option_symbol.in_(option_symbols))
+            .where(OptionTradeEventModel.captured_at >= captured_from_dt)
+            .where(OptionTradeEventModel.captured_at < captured_to_dt)
+            .group_by(OptionTradeEventModel.option_symbol)
+        )
+        with self.session_factory() as session:
+            rows = session.execute(statement).all()
+        return {
+            str(option_symbol): {
+                "event_count": int(event_count or 0),
+                "last_captured_at": render_value(last_captured_at),
+            }
+            for option_symbol, event_count, last_captured_at in rows
+        }
 
 
 

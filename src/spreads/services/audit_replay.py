@@ -492,6 +492,14 @@ def _summarize_slot_run(run: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(run.get("trade_capture"), Mapping)
         else {}
     )
+    stream_quote_events_saved = quote_capture.get(
+        "stream_quote_events_saved",
+        quote_capture.get("websocket_quote_events_saved"),
+    )
+    stream_trade_events_saved = trade_capture.get(
+        "stream_trade_events_saved",
+        trade_capture.get("websocket_trade_events_saved"),
+    )
     return {
         "job_run_id": _as_text(run.get("job_run_id")),
         "slot_at": _as_text(run.get("slot_at")),
@@ -502,9 +510,8 @@ def _summarize_slot_run(run: Mapping[str, Any]) -> dict[str, Any]:
         "finished_at": _as_text(run.get("finished_at")),
         "quote_capture": {
             "capture_status": _as_text(quote_capture.get("capture_status")),
-            "websocket_quote_events_saved": quote_capture.get(
-                "websocket_quote_events_saved"
-            ),
+            "stream_quote_events_saved": stream_quote_events_saved,
+            "websocket_quote_events_saved": stream_quote_events_saved,
             "baseline_quote_events_saved": quote_capture.get(
                 "baseline_quote_events_saved"
             ),
@@ -515,9 +522,8 @@ def _summarize_slot_run(run: Mapping[str, Any]) -> dict[str, Any]:
         "trade_capture": {
             "capture_status": _as_text(trade_capture.get("capture_status")),
             "total_trade_events_saved": trade_capture.get("total_trade_events_saved"),
-            "websocket_trade_events_saved": trade_capture.get(
-                "websocket_trade_events_saved"
-            ),
+            "stream_trade_events_saved": stream_trade_events_saved,
+            "websocket_trade_events_saved": stream_trade_events_saved,
         },
     }
 

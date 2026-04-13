@@ -11,6 +11,7 @@ from spreads.storage.execution_repository import ExecutionRepository
 from spreads.storage.job_repository import JobRepository
 from spreads.storage.ops_store import OpsStore
 from spreads.storage.post_market_repository import PostMarketAnalysisRepository
+from spreads.storage.recovery_repository import RecoveryRepository
 from spreads.storage.risk_repository import RiskDecisionRepository
 from spreads.storage.run_history_repository import RunHistoryRepository
 from spreads.storage.signal_repository import SignalRepository
@@ -114,6 +115,13 @@ def build_post_market_repository(path_or_url: str | None = None, *, context: Sto
         return context.post_market
     value = _resolve_postgres_url(path_or_url)
     return PostMarketAnalysisRepository(value)
+
+
+def build_recovery_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):
+    if context is not None:
+        return context.recovery
+    value = _resolve_postgres_url(path_or_url)
+    return RecoveryRepository(value)
 
 
 def build_ops_store(path_or_url: str | None = None, *, context: StorageContext | None = None) -> OpsStore:

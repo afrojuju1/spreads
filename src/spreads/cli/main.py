@@ -18,6 +18,7 @@ from spreads.jobs.scheduler import main as scheduler_main
 from spreads.jobs.seed import main as seed_jobs_main
 from spreads.services.alpaca_research import main as research_alpaca_main
 from spreads.services.analysis import main as analyze_main
+from spreads.services.market_recorder import main as market_recorder_main
 from spreads.services.post_market_analysis import main as post_market_analyze_main
 from spreads.services.scanner import main as scan_main
 
@@ -135,6 +136,15 @@ app.add_typer(research_app, name="research")
 )
 def scheduler_command(ctx: typer.Context) -> None:
     _run_passthrough(ctx=ctx, entrypoint=scheduler_main)
+
+
+@app.command(
+    "market-recorder",
+    context_settings=PASSTHROUGH_CONTEXT_SETTINGS,
+    help="Run the recovery market recorder loop.",
+)
+def market_recorder_command(ctx: typer.Context) -> None:
+    _run_passthrough(ctx=ctx, entrypoint=market_recorder_main)
 
 
 @jobs_app.command(

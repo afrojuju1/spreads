@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, Space_Grotesk } from "next/font/google";
 
-import { AppToolbar } from "@/components/app-toolbar";
+import { LayoutHeader } from "@/components/layout-header";
+import { LayoutSidebar } from "@/components/layout-sidebar";
 import { Providers } from "@/components/providers";
 import "./globals.css";
 
@@ -33,9 +34,12 @@ export default function RootLayout({
     >
       <body className="min-h-full font-sans">
         <Providers>
-          <div className="min-h-dvh">
-            <AppToolbar />
-            {children}
+          <div className="min-h-dvh lg:flex">
+            <LayoutSidebar />
+            <div className="min-w-0 flex-1">
+              <LayoutHeader />
+              {children}
+            </div>
           </div>
         </Providers>
       </body>

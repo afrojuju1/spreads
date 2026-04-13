@@ -14,12 +14,14 @@ POST_CLOSE_ANALYSIS_JOB_TYPE = "post_close_analysis"
 POST_MARKET_ANALYSIS_JOB_TYPE = "post_market_analysis"
 SESSION_EXIT_MANAGER_JOB_TYPE = "session_exit_manager"
 GENERATOR_JOB_TYPE = "generator"
+COLLECTOR_RECOVERY_JOB_TYPE = "collector_recovery"
 
 EXECUTION_SUBMIT_ADHOC_JOB_KEY = "execution_submit:adhoc"
 ALERT_DELIVERY_ADHOC_JOB_KEY = "alert_delivery:adhoc"
 ALERT_RECONCILE_JOB_KEY = "alert_reconcile:scheduled"
 POST_CLOSE_ANALYSIS_ADHOC_JOB_KEY = "post_close_analysis:adhoc"
 GENERATOR_ADHOC_JOB_KEY = "generator:adhoc"
+COLLECTOR_RECOVERY_JOB_KEY = "collector_recovery:global"
 
 
 @dataclass(frozen=True)
@@ -85,6 +87,11 @@ JOB_SPECS = {
             task_name="run_generator_job",
             queue_name=MAIN_QUEUE_NAME,
         ),
+        JobSpec(
+            job_type=COLLECTOR_RECOVERY_JOB_TYPE,
+            task_name="run_collector_recovery_job",
+            queue_name=MAIN_QUEUE_NAME,
+        ),
     )
 }
 
@@ -101,6 +108,7 @@ WORKER_LANES = (
             JOB_SPECS[POST_CLOSE_ANALYSIS_JOB_TYPE].task_name,
             JOB_SPECS[POST_MARKET_ANALYSIS_JOB_TYPE].task_name,
             JOB_SPECS[GENERATOR_JOB_TYPE].task_name,
+            JOB_SPECS[COLLECTOR_RECOVERY_JOB_TYPE].task_name,
         ),
         max_jobs=4,
     ),

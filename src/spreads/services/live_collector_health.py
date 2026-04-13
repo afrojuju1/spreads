@@ -55,66 +55,102 @@ def _resolve_profile(profile: Any, *, label: Any = None) -> str | None:
     return normalized or None
 
 
+def _with_legacy_count_aliases(
+    payload: dict[str, Any],
+    *,
+    stream_key: str,
+    legacy_key: str,
+) -> dict[str, Any]:
+    count = _read_int(payload, stream_key) or _read_int(payload, legacy_key)
+    payload[stream_key] = count
+    payload[legacy_key] = count
+    return payload
+
+
 def build_quote_capture_summary(
     *,
     expected_quote_symbols: Sequence[str] | None,
     total_quote_events_saved: int,
     baseline_quote_events_saved: int,
-    websocket_quote_events_saved: int,
+    stream_quote_events_saved: int = 0,
+    websocket_quote_events_saved: int | None = None,
     recovery_quote_events_saved: int = 0,
 ) -> dict[str, Any]:
     expected_symbols = normalize_expected_quote_symbols(expected_quote_symbols)
     total = max(int(total_quote_events_saved), 0)
     baseline = max(int(baseline_quote_events_saved), 0)
-    websocket = max(int(websocket_quote_events_saved), 0)
+    stream = max(
+        int(
+            stream_quote_events_saved
+            if stream_quote_events_saved
+            else (websocket_quote_events_saved or 0)
+        ),
+        0,
+    )
     recovery = max(int(recovery_quote_events_saved), 0)
     recovery_used = recovery > 0
 
     if total <= 0:
         capture_status = "empty"
-    elif websocket > 0:
+    elif stream > 0:
         capture_status = "healthy"
     elif recovery_used:
         capture_status = "recovery_only"
     else:
         capture_status = "baseline_only"
 
-    return {
-        "capture_status": capture_status,
-        "expected_quote_symbols": expected_symbols,
-        "expected_quote_symbol_count": len(expected_symbols),
-        "total_quote_events_saved": total,
-        "baseline_quote_events_saved": baseline,
-        "websocket_quote_events_saved": websocket,
-        "recovery_quote_events_saved": recovery,
-        "recovery_used": recovery_used,
-    }
+    return _with_legacy_count_aliases(
+        {
+            "capture_status": capture_status,
+            "expected_quote_symbols": expected_symbols,
+            "expected_quote_symbol_count": len(expected_symbols),
+            "total_quote_events_saved": total,
+            "baseline_quote_events_saved": baseline,
+            "stream_quote_events_saved": stream,
+            "recovery_quote_events_saved": recovery,
+            "recovery_used": recovery_used,
+        },
+        stream_key="stream_quote_events_saved",
+        legacy_key="websocket_quote_events_saved",
+    )
 
 
 def build_trade_capture_summary(
     *,
     expected_trade_symbols: Sequence[str] | None,
     total_trade_events_saved: int,
-    websocket_trade_events_saved: int,
+    stream_trade_events_saved: int = 0,
+    websocket_trade_events_saved: int | None = None,
 ) -> dict[str, Any]:
     expected_symbols = normalize_expected_trade_symbols(expected_trade_symbols)
     total = max(int(total_trade_events_saved), 0)
-    websocket = max(int(websocket_trade_events_saved), 0)
+    stream = max(
+        int(
+            stream_trade_events_saved
+            if stream_trade_events_saved
+            else (websocket_trade_events_saved or 0)
+        ),
+        0,
+    )
 
     if total <= 0:
         capture_status = "empty"
-    elif websocket > 0:
+    elif stream > 0:
         capture_status = "healthy"
     else:
         capture_status = "baseline_only"
 
-    return {
-        "capture_status": capture_status,
-        "expected_trade_symbols": expected_symbols,
-        "expected_trade_symbol_count": len(expected_symbols),
-        "total_trade_events_saved": total,
-        "websocket_trade_events_saved": websocket,
-    }
+    return _with_legacy_count_aliases(
+        {
+            "capture_status": capture_status,
+            "expected_trade_symbols": expected_symbols,
+            "expected_trade_symbol_count": len(expected_symbols),
+            "total_trade_events_saved": total,
+            "stream_trade_events_saved": stream,
+        },
+        stream_key="stream_trade_events_saved",
+        legacy_key="websocket_trade_events_saved",
+    )
 
 
 def build_live_action_gate(
@@ -234,14 +270,20 @@ def enrich_live_collector_result(result: Mapping[str, Any] | None) -> dict[str, 
         expected_quote_symbols=enriched.get("expected_quote_symbols"),
         total_quote_events_saved=_read_int(enriched, "quote_events_saved"),
         baseline_quote_events_saved=_read_int(enriched, "baseline_quote_events_saved"),
+        stream_quote_events_saved=_read_int(enriched, "stream_quote_events_saved"),
         websocket_quote_events_saved=_read_int(enriched, "websocket_quote_events_saved"),
         recovery_quote_events_saved=_read_int(enriched, "recovery_quote_events_saved"),
     )
     trade_capture = build_trade_capture_summary(
         expected_trade_symbols=enriched.get("expected_trade_symbols"),
         total_trade_events_saved=_read_int(enriched, "trade_events_saved"),
+        stream_trade_events_saved=_read_int(enriched, "stream_trade_events_saved"),
         websocket_trade_events_saved=_read_int(enriched, "websocket_trade_events_saved"),
     )
+    enriched["stream_quote_events_saved"] = quote_capture["stream_quote_events_saved"]
+    enriched["websocket_quote_events_saved"] = quote_capture["websocket_quote_events_saved"]
+    enriched["stream_trade_events_saved"] = trade_capture["stream_trade_events_saved"]
+    enriched["websocket_trade_events_saved"] = trade_capture["websocket_trade_events_saved"]
     enriched["quote_capture"] = quote_capture
     enriched["trade_capture"] = trade_capture
     enriched["uoa_decisions"] = normalize_uoa_decisions_payload(
