@@ -1,7 +1,7 @@
 {
   "name": "spreads-ops",
   "version": "0.1.0",
-  "description": "Repo-local skills for operating and triaging the spreads system.",
+  "description": "Repo-local skills for triaging incidents and rolling out live ops changes in the spreads system.",
   "author": {
     "name": "Adeb"
   },
@@ -10,19 +10,20 @@
     "spreads",
     "operations",
     "incident-triage",
+    "rollout",
     "trading"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Spreads Ops",
-    "shortDescription": "Triage runtime, capture, and strategy issues in spreads",
+    "shortDescription": "Triage incidents and roll out live changes in spreads",
     "developerName": "Adeb",
     "category": "Coding",
     "capabilities": [
       "Interactive"
     ],
     "defaultPrompt": [
-      "Triage a spreads collector, worker, or end-of-day incident"
+      "Triage a spreads collector, trading, or rollout issue"
     ]
   }
 }
