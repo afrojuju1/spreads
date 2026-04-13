@@ -7,9 +7,11 @@ from typing import Any
 
 from spreads.db.decorators import with_storage
 from spreads.jobs.orchestration import (
+    NEW_YORK,
     SCHEDULER_RUNTIME_LEASE_KEY,
     SINGLETON_LEASE_PREFIX,
     WORKER_RUNTIME_LEASE_PREFIX,
+    _market_schedule,
     singleton_lease_key,
 )
 from spreads.services.account_state import get_account_overview
@@ -42,6 +44,7 @@ BROKER_SYNC_STALE_AFTER_SECONDS = 15 * 60
 MARK_STALE_AFTER_SECONDS = 15 * 60
 JOB_RUN_QUEUE_STALE_AFTER_SECONDS = 15 * 60
 JOB_RUN_HEARTBEAT_STALE_AFTER_SECONDS = 10 * 60
+OPS_INCIDENT_WINDOW_SECONDS = 24 * 60 * 60
 RECENT_FAILURE_LIMIT = 10
 RECENT_ALERT_LIMIT = 200
 TOP_POSITION_LIMIT = 5
@@ -123,6 +126,16 @@ def _seconds_until(value: Any, *, now: datetime) -> float | None:
     if parsed is None:
         return None
     return (parsed - now).total_seconds()
+
+
+def _is_recent(
+    value: Any,
+    *,
+    now: datetime,
+    within_seconds: int = OPS_INCIDENT_WINDOW_SECONDS,
+) -> bool:
+    age_seconds = _seconds_since(value, now=now)
+    return age_seconds is not None and age_seconds <= within_seconds
 
 
 def _combine_statuses(*statuses: str | None) -> str:
@@ -217,8 +230,101 @@ def _collector_status(run: Mapping[str, Any] | None) -> str:
     return "degraded"
 
 
+def _collector_requires_attention(
+    run: Mapping[str, Any] | None,
+    *,
+    now: datetime,
+) -> bool:
+    if run is None:
+        return True
+    collector_status = _collector_status(run)
+    if collector_status == "healthy":
+        return False
+    return _is_recent(
+        run.get("slot_at")
+        or run.get("finished_at")
+        or run.get("scheduled_for")
+        or run.get("started_at"),
+        now=now,
+    )
+
+
+def _market_session_context(
+    *,
+    now: datetime,
+    calendar_name: str = "NYSE",
+) -> dict[str, Any]:
+    local_now = now.astimezone(NEW_YORK)
+    market_window = _market_schedule(calendar_name, local_now.date())
+    if market_window is None:
+        return {
+            "calendar": calendar_name,
+            "status": "closed",
+            "is_open": False,
+            "market_open_at": None,
+            "market_close_at": None,
+        }
+    market_open, market_close = market_window
+    return {
+        "calendar": calendar_name,
+        "status": "open" if market_open <= local_now < market_close else "closed",
+        "is_open": market_open <= local_now < market_close,
+        "market_open_at": market_open.astimezone(UTC)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z"),
+        "market_close_at": market_close.astimezone(UTC)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z"),
+    }
+
+
+def _skip_reason_text(run: Mapping[str, Any]) -> str | None:
+    result = run.get("result") if isinstance(run.get("result"), Mapping) else {}
+    return _as_text(result.get("reason"))
+
+
+def _skip_is_benign(run: Mapping[str, Any]) -> bool:
+    reason = str(_skip_reason_text(run) or "").strip().lower()
+    if reason == "singleton_lease_unavailable":
+        return True
+    error_text = str(_as_text(run.get("error_text")) or "").strip().lower()
+    return error_text == "superseded during queue consolidation"
+
+
+def _job_run_requires_attention(
+    run: Mapping[str, Any],
+    *,
+    now: datetime,
+) -> bool:
+    if not _is_recent(_activity_at(run), now=now):
+        return False
+    status = str(run.get("status") or "").strip().lower()
+    if status == "failed":
+        return True
+    if status == "skipped":
+        return not _skip_is_benign(run)
+    return False
+
+
+def _definition_requires_attention(
+    definition: Mapping[str, Any],
+    *,
+    now: datetime,
+) -> bool:
+    operator_status = str(definition.get("operator_status") or "unknown").strip().lower()
+    if operator_status not in {"degraded", "blocked"}:
+        return False
+    latest_run_at = definition.get("latest_run_at")
+    if latest_run_at is None:
+        return True
+    return _is_recent(latest_run_at, now=now)
+
+
 def _broker_sync_payload(
-    state: Mapping[str, Any] | None, *, now: datetime
+    state: Mapping[str, Any] | None,
+    *,
+    now: datetime,
+    market_session: Mapping[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     if state is None:
         return (
@@ -233,6 +339,7 @@ def _broker_sync_payload(
             },
         )
     payload = dict(state)
+    summary = payload.get("summary") if isinstance(payload.get("summary"), Mapping) else {}
     age_seconds = _seconds_since(payload.get("updated_at"), now=now)
     status = str(payload.get("status") or "unknown")
     normalized = "unknown"
@@ -242,31 +349,54 @@ def _broker_sync_payload(
         normalized = "degraded"
     elif status == "failed":
         normalized = "blocked"
+    open_position_count = _coerce_int(summary.get("open_position_count")) or 0
+    queued_attempt_count = _coerce_int(summary.get("queued_attempt_count")) or 0
+    requires_freshness = bool((market_session or {}).get("is_open")) or bool(
+        open_position_count or queued_attempt_count
+    )
+    freshness = "current"
     if (
         age_seconds is not None
         and age_seconds > BROKER_SYNC_STALE_AFTER_SECONDS
         and normalized == "healthy"
     ):
-        normalized = "degraded"
+        freshness = "stale"
+        normalized = "degraded" if requires_freshness else "idle"
     payload["raw_status"] = status
     payload["status"] = normalized
     payload["age_seconds"] = age_seconds
+    payload["freshness"] = freshness
+    payload["requires_freshness"] = requires_freshness
+    payload["market_session"] = dict(market_session or {})
     return normalized, payload
 
 
-def _alert_delivery_payload(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    counts = Counter(str(row.get("status") or "unknown") for row in rows)
+def _alert_delivery_payload(
+    rows: list[dict[str, Any]],
+    *,
+    now: datetime,
+) -> dict[str, Any]:
+    recent_rows = [
+        row
+        for row in rows
+        if _is_recent(row.get("updated_at") or row.get("created_at"), now=now)
+    ]
+    counts = Counter(str(row.get("status") or "unknown") for row in recent_rows)
     status = "healthy"
     if counts.get("dead_letter", 0) or counts.get("retry_wait", 0):
         status = "degraded"
     return {
         "status": status,
-        "count": len(rows),
+        "count": len(recent_rows),
+        "recent_count": len(recent_rows),
         "status_counts": dict(counts),
         "dead_letter_count": counts.get("dead_letter", 0),
         "retry_wait_count": counts.get("retry_wait", 0),
         "dispatching_count": counts.get("dispatching", 0),
         "pending_count": counts.get("pending", 0),
+        "historical_status_counts": dict(
+            Counter(str(row.get("status") or "unknown") for row in rows)
+        ),
     }
 
 
@@ -649,11 +779,13 @@ def build_system_status(
 ) -> dict[str, Any]:
     generated_at = _utc_now()
     now = _parse_timestamp(generated_at) or datetime.now(UTC)
+    market_session = _market_session_context(now=now)
     control = get_control_state_snapshot(storage=storage)
     attention: list[dict[str, str]] = []
     statuses = [_control_status(control)]
     details: dict[str, Any] = {
         "control": control,
+        "market_session": market_session,
     }
 
     if str(control.get("mode") or "") == "halted":
@@ -679,6 +811,7 @@ def build_system_status(
     running_jobs: list[dict[str, Any]]
     queued_jobs: list[dict[str, Any]]
     recent_failures: list[dict[str, Any]]
+    actionable_recent_failures: list[dict[str, Any]]
     latest_collectors: list[dict[str, Any]]
     if not job_store.schema_ready():
         scheduler_payload = {
@@ -690,6 +823,7 @@ def build_system_status(
         running_jobs = []
         queued_jobs = []
         recent_failures = []
+        actionable_recent_failures = []
         latest_collectors = []
         statuses.append("blocked")
         attention.append(
@@ -756,12 +890,18 @@ def build_system_status(
         recent_failures = _sorted_by_activity(failed_jobs + skipped_jobs)[
             :RECENT_FAILURE_LIMIT
         ]
-        if recent_failures:
+        actionable_recent_failures = [
+            row for row in recent_failures if _job_run_requires_attention(row, now=now)
+        ]
+        if actionable_recent_failures:
             attention.append(
                 _attention(
                     severity="medium",
                     code="recent_job_failures",
-                    message=f"{len(recent_failures)} recent failed or skipped job runs need attention.",
+                    message=(
+                        f"{len(actionable_recent_failures)} recent failed or skipped "
+                        "job runs need attention."
+                    ),
                 )
             )
 
@@ -784,10 +924,12 @@ def build_system_status(
             run = latest_run_by_key.get(job_key)
             quote_capture = {} if run is None else dict(run.get("quote_capture") or {})
             collector_status = _collector_status(run)
+            needs_attention = _collector_requires_attention(run, now=now)
             latest_collectors.append(
                 {
                     "job_key": job_key,
                     "status": collector_status,
+                    "needs_attention": needs_attention,
                     "capture_status": None
                     if run is None
                     else run.get("capture_status"),
@@ -808,7 +950,7 @@ def build_system_status(
                     "session_id": None if run is None else run.get("session_id"),
                 }
             )
-            if collector_status != "healthy":
+            if needs_attention:
                 attention.append(
                     _attention(
                         severity="medium",
@@ -821,9 +963,9 @@ def build_system_status(
             _combine_statuses(
                 scheduler_payload["status"],
                 worker_status,
-                "degraded" if recent_failures else "healthy",
+                "degraded" if actionable_recent_failures else "healthy",
                 "degraded"
-                if any(row["status"] != "healthy" for row in latest_collectors)
+                if any(row["needs_attention"] for row in latest_collectors)
                 else "healthy",
             )
         )
@@ -850,8 +992,9 @@ def build_system_status(
         broker_sync_status, broker_sync = _broker_sync_payload(
             broker_store.get_sync_state(BROKER_SYNC_KEY),
             now=now,
+            market_session=market_session,
         )
-        if broker_sync_status != "healthy":
+        if broker_sync_status not in {"healthy", "idle"}:
             attention.append(
                 _attention(
                     severity="high" if broker_sync_status == "blocked" else "medium",
@@ -866,7 +1009,7 @@ def build_system_status(
         recent_alerts = [
             dict(row) for row in alert_store.list_alert_events(limit=RECENT_ALERT_LIMIT)
         ]
-        alert_delivery = _alert_delivery_payload(recent_alerts)
+        alert_delivery = _alert_delivery_payload(recent_alerts, now=now)
         if alert_delivery["status"] != "healthy":
             attention.append(
                 _attention(
@@ -898,7 +1041,7 @@ def build_system_status(
                     **row,
                     "activity_at": _activity_at(row),
                 }
-                for row in recent_failures
+                for row in actionable_recent_failures
             ],
             "latest_collectors": latest_collectors,
             "broker_sync": broker_sync,
@@ -917,13 +1060,14 @@ def build_system_status(
         "queued_jobs_by_type": dict(
             Counter(str(row.get("job_type") or "unknown") for row in queued_jobs)
         ),
-        "recent_failure_count": len(recent_failures),
+        "recent_failure_count": len(actionable_recent_failures),
         "collector_count": len(latest_collectors),
         "collector_degraded_count": sum(
-            1 for row in latest_collectors if row["status"] != "healthy"
+            1 for row in latest_collectors if row["needs_attention"]
         ),
         "broker_sync_status": broker_sync.get("status"),
         "alert_delivery_status": alert_delivery.get("status"),
+        "market_session_status": market_session.get("status"),
     }
     return {
         "status": _combine_statuses(*statuses),
@@ -942,9 +1086,10 @@ def build_trading_health(
 ) -> dict[str, Any]:
     generated_at = _utc_now()
     now = _parse_timestamp(generated_at) or datetime.now(UTC)
+    market_session = _market_session_context(now=now)
     attention: list[dict[str, str]] = []
     statuses: list[str] = []
-    details: dict[str, Any] = {}
+    details: dict[str, Any] = {"market_session": market_session}
 
     control = get_control_state_snapshot(storage=storage)
     details["control"] = control
@@ -974,7 +1119,9 @@ def build_trading_health(
     broker_store = storage.broker
     if broker_store.schema_ready():
         broker_sync_status, broker_sync = _broker_sync_payload(
-            broker_store.get_sync_state(BROKER_SYNC_KEY), now=now
+            broker_store.get_sync_state(BROKER_SYNC_KEY),
+            now=now,
+            market_session=market_session,
         )
     else:
         broker_sync_status = "blocked"
@@ -995,7 +1142,7 @@ def build_trading_health(
         )
     statuses.append(broker_sync_status)
     details["broker_sync"] = broker_sync
-    if broker_sync_status != "healthy":
+    if broker_sync_status not in {"healthy", "idle"}:
         attention.append(
             _attention(
                 severity="high" if broker_sync_status == "blocked" else "medium",
@@ -1172,18 +1319,18 @@ def build_trading_health(
         trading_allowed = False
     elif str(control.get("mode") or "") != "normal":
         trading_allowed = False
+    elif not bool(market_session.get("is_open")):
+        trading_allowed = False
     elif broker_sync_status != "healthy":
         trading_allowed = False
-    elif (
-        str((details.get("account_overview") or {}).get("source") or "snapshot")
-        != "live"
-    ):
+    elif str((account_overview or {}).get("source") or "snapshot") != "live":
         trading_allowed = False
     elif account.get("trading_blocked") or account.get("account_blocked"):
         trading_allowed = False
 
     summary = {
         "trading_allowed": trading_allowed,
+        "market_session_status": market_session.get("status"),
         "account_source": None
         if account_overview is None
         else account_overview.get("source"),
@@ -1707,18 +1854,22 @@ def build_jobs_overview(
             )
         )
 
-    definition_status_counts = Counter(
-        str(row.get("operator_status") or "unknown") for row in definition_rows
+    actionable_definition_rows = [
+        row for row in definition_rows if _definition_requires_attention(row, now=now)
+    ]
+    actionable_definition_status_counts = Counter(
+        str(row.get("operator_status") or "unknown")
+        for row in actionable_definition_rows
     )
-    if definition_status_counts.get("degraded", 0) or definition_status_counts.get(
-        "blocked", 0
-    ):
+    if actionable_definition_status_counts.get(
+        "degraded", 0
+    ) or actionable_definition_status_counts.get("blocked", 0):
         attention.append(
             _attention(
                 severity="medium",
                 code="job_definitions_need_attention",
                 message=(
-                    f"{definition_status_counts.get('degraded', 0) + definition_status_counts.get('blocked', 0)} "
+                    f"{actionable_definition_status_counts.get('degraded', 0) + actionable_definition_status_counts.get('blocked', 0)} "
                     "job definition(s) have an unhealthy latest run."
                 ),
             )
@@ -1753,8 +1904,8 @@ def build_jobs_overview(
             or degraded_capture_count
             else "healthy",
             "degraded"
-            if definition_status_counts.get("degraded", 0)
-            or definition_status_counts.get("blocked", 0)
+            if actionable_definition_status_counts.get("degraded", 0)
+            or actionable_definition_status_counts.get("blocked", 0)
             else "healthy",
             "degraded" if stale_singleton_leases else "healthy",
         )

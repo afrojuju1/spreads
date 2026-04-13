@@ -212,6 +212,7 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
     details = dict(payload.get("details") or {})
     account = dict(details.get("account") or {})
     broker_sync = dict(details.get("broker_sync") or {})
+    market_session = dict(details.get("market_session") or {})
 
     overview = Table.grid(padding=(0, 2))
     overview.add_row("Overall", _status_text(payload.get("status")))
@@ -219,6 +220,7 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row(
         "Trading Allowed", "yes" if summary.get("trading_allowed") else "no"
     )
+    overview.add_row("Market", _render_value(market_session.get("status")))
     overview.add_row("Account Source", _render_value(summary.get("account_source")))
     overview.add_row("Environment", _render_value(summary.get("environment")))
     overview.add_row("Equity", _render_money(account.get("equity")))

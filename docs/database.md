@@ -84,7 +84,7 @@ Redis default connection URL:
 redis://localhost:56379/0
 ```
 
-`spreads collect` now persists live collector cycles, board/watchlist selections, events, and quote events directly to Postgres.
+`spreads collect` now persists live collector cycles, promotable/monitor opportunity state, events, and quote events directly to Postgres.
 
 Discord alert delivery is optional. If configured, collector alerts are sent through:
 
