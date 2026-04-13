@@ -12,7 +12,7 @@ Implementation and evaluation companion:
 
 - use `uv run spreads replay` for single-session offline decision replays
 - use `uv run spreads replay recent --limit <N>` for batch policy comparison across recent sessions
-- treat `uv run spreads-analyze` as the legacy post-close report surface, not the canonical replay/evaluation path
+- treat `uv run spreads analyze` as the legacy post-close report surface, not the canonical replay/evaluation path
 
 Detailed design specifications:
 

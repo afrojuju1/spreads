@@ -26,13 +26,6 @@ dependencies = [
 
 [project.scripts]
 spreads = "spreads.cli.main:main"
-spreads-scan = "spreads.cli.scan:main"
-spreads-collect = "spreads.cli.collect:main"
-spreads-analyze = "spreads.cli.analyze:main"
-spreads-research-alpaca = "spreads.cli.alpaca_research:main"
-spreads-post-market-analyze = "spreads.services.post_market_analysis:main"
-spreads-scheduler = "spreads.jobs.scheduler:main"
-spreads-seed-jobs = "spreads.jobs.seed:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/spreads"]

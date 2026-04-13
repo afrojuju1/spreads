@@ -1491,9 +1491,9 @@ def run_collection(
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     load_local_env()
-    args = parse_args()
+    args = parse_args(argv)
     run_collection(args, emit_output=True)
     return 0
 

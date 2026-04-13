@@ -115,7 +115,7 @@ services:
     environment:
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
       REDIS_URL: redis://redis:6379/0
-    command: ["uv", "run", "spreads-scheduler"]
+    command: ["uv", "run", "spreads", "scheduler"]
     volumes:
       - .:/app
   web:

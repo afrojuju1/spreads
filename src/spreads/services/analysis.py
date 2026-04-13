@@ -1129,8 +1129,8 @@ def run_post_close_analysis(args: argparse.Namespace, *, emit_output: bool = Tru
     }
 
 
-def main() -> int:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     run_post_close_analysis(args, emit_output=True)
     return 0
 

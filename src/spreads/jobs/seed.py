@@ -305,8 +305,8 @@ def seed_definitions(db: str) -> list[str]:
     return job_keys
 
 
-def main() -> int:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     keys = seed_definitions(args.db)
     for key in keys:
         print(key)

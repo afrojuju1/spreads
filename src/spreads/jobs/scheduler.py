@@ -364,8 +364,8 @@ async def scheduler_loop(args: argparse.Namespace) -> int:
     return 0
 
 
-def main() -> int:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     return asyncio.run(scheduler_loop(args))
 
 

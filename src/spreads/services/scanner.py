@@ -2,7 +2,7 @@
 """Scan Alpaca option chains for credit spread candidates.
 
 Usage:
-    uv run spreads-scan --symbol SPY
+    uv run spreads scan --symbol SPY
 
 Required environment variables:
     APCA_API_KEY_ID
@@ -3842,9 +3842,9 @@ def merge_strategy_candidates(
     return sort_candidates_for_display(merged)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     load_local_env()
-    args = parse_args()
+    args = parse_args(argv)
 
     key_id = env_or_die("APCA_API_KEY_ID", "ALPACA_API_KEY")
     secret_key = env_or_die("APCA_API_SECRET_KEY", "ALPACA_SECRET_KEY")

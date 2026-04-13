@@ -5,7 +5,7 @@ Verified on April 9, 2026 using:
 - [Alpaca Capabilities Statement](/Users/adeb/Projects/spreads/docs/research/alpaca_capabilities_statement.md)
 - [Features Tracker](/Users/adeb/Projects/spreads/docs/product/features_tracker.md)
 - [Alpaca UOA API Inventory](/Users/adeb/Projects/spreads/docs/research/alpaca_uoa_api_inventory.md)
-- live probe output from `uv run spreads-research-alpaca`
+- live probe output from `uv run spreads research alpaca`
 
 ## Thesis
 
@@ -145,8 +145,8 @@ If we want adjacent research products after the UOA scanner, the best order is:
 Use the new probe CLI to refresh this research surface as the repo evolves:
 
 ```bash
-uv run spreads-research-alpaca --symbol SPY --output-format markdown --output outputs/alpaca_research_surface_report.md
-uv run spreads-research-alpaca --symbol SPY --output-format json --output outputs/alpaca_research_surface_report.json
+uv run spreads research alpaca --symbol SPY --output-format markdown --output outputs/alpaca_research_surface_report.md
+uv run spreads research alpaca --symbol SPY --output-format json --output outputs/alpaca_research_surface_report.json
 ```
 
 This tool probes the live Alpaca surface, checks official OpenAPI coverage, and renders both the endpoint report and the research-feature opportunities.

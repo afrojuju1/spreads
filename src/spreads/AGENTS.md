@@ -36,7 +36,7 @@
   - `uv run spreads replay --label <label> --date <YYYY-MM-DD>`
   - `uv run spreads replay recent --limit <N>`
 - Treat `uv run spreads replay` as the canonical decision-evaluation path.
-- Treat `uv run spreads-analyze` / `services.analysis.py` as legacy post-close reporting, not the canonical decision-replay path.
+- Treat `uv run spreads analyze` / `services.analysis.py` as legacy post-close reporting, not the canonical decision-replay path.
 - `uv run spreads doctor` is not a current command; do not rely on it in investigations or automations.
 - For closed-session investigations, check post-market analysis before tuning strategy thresholds from raw session counts alone.
 
@@ -55,7 +55,7 @@
 ## Rollout Checklist
 
 - After schema changes, run `uv run alembic upgrade head`.
-- If job definitions or scheduled/manual job keys changed, run `uv run spreads-seed-jobs`.
+- If job definitions or scheduled/manual job keys changed, run `uv run spreads jobs seed`.
 - After changing code imported by `worker-main`, `worker-collector`, or `scheduler`, restart those containers before trusting runtime behavior.
 - Use `docker compose ps` and recent `docker compose logs` to verify startup and job execution after restart.
 - Restart `api` only when the changed runtime surface requires it or when explicitly requested.

@@ -536,8 +536,8 @@ def run_post_market_analysis(
         repository.close()
 
 
-def main() -> int:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     run_post_market_analysis(args, emit_output=True)
     return 0
 

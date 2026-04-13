@@ -140,7 +140,7 @@ If the task turns into a code change, finish with:
 
 ```bash
 uv run alembic upgrade head
-uv run spreads-seed-jobs
+uv run spreads jobs seed
 docker compose restart scheduler worker-main worker-collector
 docker compose ps
 docker compose logs --tail=100 scheduler worker-main worker-collector api

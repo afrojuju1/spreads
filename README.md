@@ -65,7 +65,7 @@ Apply migrations and seed job definitions:
 
 ```bash
 uv run alembic upgrade head
-uv run spreads-seed-jobs
+uv run spreads jobs seed
 ```
 
 Main local surfaces:
@@ -80,32 +80,34 @@ Main local surfaces:
 Scan a symbol:
 
 ```bash
-uv run spreads-scan --symbol SPY
+uv run spreads scan --symbol SPY
 ```
 
 Run a collector profile:
 
 ```bash
-uv run spreads-collect --profile weekly --universe explore_10
+uv run spreads collect --profile weekly --universe explore_10
 ```
 
 Analyze a label:
 
 ```bash
-uv run spreads-analyze --label explore_10_combined_weekly_auto
+uv run spreads analyze --label explore_10_combined_weekly_auto
 ```
 
 Run post-market analysis:
 
 ```bash
-uv run spreads-post-market-analyze --label explore_10_combined_weekly_auto --date 2026-04-10
+uv run spreads post-market analyze --label explore_10_combined_weekly_auto --date 2026-04-10
 ```
 
 Run the scheduler directly:
 
 ```bash
-uv run spreads-scheduler
+uv run spreads scheduler
 ```
+
+`spreads` is the canonical CLI.
 
 ## Local Development Notes
 

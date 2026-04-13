@@ -35,7 +35,7 @@ Apply the schema with Alembic:
 
 ```bash
 uv run alembic upgrade head
-uv run spreads-seed-jobs
+uv run spreads jobs seed
 ```
 
 Create a new migration:
@@ -63,15 +63,15 @@ Resolution order:
 The existing commands use Postgres automatically:
 
 ```bash
-uv run spreads-scan --symbol SPY
-uv run spreads-collect --profile weekly --universe explore_10
-uv run spreads-analyze --label explore_10_combined_weekly_auto
+uv run spreads scan --symbol SPY
+uv run spreads collect --profile weekly --universe explore_10
+uv run spreads analyze --label explore_10_combined_weekly_auto
 ```
 
 ARQ orchestration defaults:
 
 ```bash
-uv run spreads-scheduler
+uv run spreads scheduler
 uv run arq spreads.jobs.worker.FastWorkerSettings
 uv run arq spreads.jobs.worker.CollectorWorkerSettings
 uv run arq spreads.jobs.worker.AnalysisWorkerSettings
@@ -84,7 +84,7 @@ Redis default connection URL:
 redis://localhost:56379/0
 ```
 
-`spreads-collect` now persists live collector cycles, board/watchlist selections, events, and quote events directly to Postgres.
+`spreads collect` now persists live collector cycles, board/watchlist selections, events, and quote events directly to Postgres.
 
 Discord alert delivery is optional. If configured, collector alerts are sent through:
 
@@ -96,7 +96,7 @@ The runtime also accepts legacy `DISCORD_WEBHOOK_URL` if that is already present
 
 If the webhook is missing, alert rows are still persisted in Postgres with status `skipped`.
 
-`spreads-analyze` renders the post-close markdown report to stdout from Postgres-backed analytics; it does not write a report file.
+`spreads analyze` renders the post-close markdown report to stdout from Postgres-backed analytics; it does not write a report file.
 
 ## API
 
