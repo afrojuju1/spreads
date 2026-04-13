@@ -34,6 +34,14 @@ from spreads.services.exit_manager import (
     normalize_exit_policy,
     resolve_exit_policy_snapshot,
 )
+from spreads.services.execution_lifecycle import (
+    OPEN_ATTEMPT_STATUSES,
+    PENDING_SUBMISSION_STATUS,
+    TERMINAL_ATTEMPT_STATUSES,
+    is_terminal_execution_attempt_status,
+    resolve_execution_attempt_source,
+    resolve_execution_attempt_source_job,
+)
 from spreads.services.live_pipelines import build_live_session_id
 from spreads.services.risk_manager import (
     evaluate_open_execution,
@@ -55,33 +63,13 @@ BROKER_NAME = "alpaca"
 EXECUTION_SCHEMA_MESSAGE = (
     "Execution tables are not available yet. Run the latest Alembic migrations."
 )
-PENDING_SUBMISSION_STATUS = "pending_submission"
-TERMINAL_STATUSES = {
-    "canceled",
-    "done_for_day",
-    "expired",
-    "failed",
-    "filled",
-    "rejected",
-}
-OPEN_STATUSES = {
-    PENDING_SUBMISSION_STATUS,
-    "accepted",
-    "accepted_for_bidding",
-    "calculated",
-    "held",
-    "new",
-    "partially_filled",
-    "pending_cancel",
-    "pending_new",
-    "pending_replace",
-    "replaced",
-    "stopped",
-    "suspended",
-}
+OPEN_STATUSES = OPEN_ATTEMPT_STATUSES
+TERMINAL_STATUSES = TERMINAL_ATTEMPT_STATUSES
 DEFAULT_ENTRY_PRICING_MODE = "adaptive_credit"
 DEFAULT_MIN_CREDIT_RETENTION_PCT = 0.95
 DEFAULT_MAX_CREDIT_CONCESSION = 0.02
+AUTO_OPEN_ATTEMPT_STALE_AFTER_FALLBACK_SECONDS = 300
+AUTO_OPEN_ATTEMPT_STALE_AFTER_MIN_SECONDS = 120
 ATTEMPT_CONTEXT_BUCKET_MIRROR = {
     "open_promotable": "promotable",
     "open_monitor": "monitor",
@@ -186,6 +174,139 @@ def _attempt_exit_policy(
     return dict(exit_policy)
 
 
+def _is_auto_session_execution_attempt(attempt: Mapping[str, Any]) -> bool:
+    source = resolve_execution_attempt_source(attempt)
+    return _as_text(source.get("kind")) == "auto_session_execution"
+
+
+def _attempt_guard_started_at(attempt: Mapping[str, Any]) -> datetime | None:
+    return parse_datetime(
+        _as_text(attempt.get("submitted_at")) or _as_text(attempt.get("requested_at"))
+    )
+
+
+def _resolve_auto_open_attempt_stale_after_seconds(
+    *,
+    storage: Any,
+    attempt: Mapping[str, Any],
+) -> float | None:
+    if not _is_auto_session_execution_attempt(attempt):
+        return None
+
+    stale_after_seconds = AUTO_OPEN_ATTEMPT_STALE_AFTER_FALLBACK_SECONDS
+    source_job = resolve_execution_attempt_source_job(attempt)
+    source_job_key = _as_text(source_job.get("job_key"))
+    job_store = getattr(storage, "jobs", None)
+    if (
+        source_job_key is not None
+        and job_store is not None
+        and (
+            not hasattr(job_store, "schema_ready")
+            or job_store.schema_ready()
+        )
+    ):
+        try:
+            definition = job_store.get_job_definition(source_job_key)
+        except Exception:
+            definition = None
+        payload = (
+            definition.get("payload")
+            if isinstance(definition, Mapping)
+            else {}
+        )
+        interval_seconds = (
+            _coerce_int(payload.get("interval_seconds"))
+            if isinstance(payload, Mapping)
+            else None
+        )
+        if interval_seconds is not None and interval_seconds > 0:
+            stale_after_seconds = max(
+                interval_seconds * 2,
+                AUTO_OPEN_ATTEMPT_STALE_AFTER_MIN_SECONDS,
+            )
+
+    return float(stale_after_seconds)
+
+
+def _evaluate_open_attempt_guard(
+    *,
+    storage: Any,
+    attempt: Mapping[str, Any],
+    current_time: datetime,
+) -> dict[str, Any]:
+    timing_gate = _validate_open_timing_window(
+        exit_policy=_attempt_exit_policy(attempt),
+        current_time=current_time,
+    )
+    if not timing_gate["allowed"]:
+        return dict(timing_gate)
+
+    stale_after_seconds = _resolve_auto_open_attempt_stale_after_seconds(
+        storage=storage,
+        attempt=attempt,
+    )
+    started_at = _attempt_guard_started_at(attempt)
+    if stale_after_seconds is None or started_at is None:
+        return dict(timing_gate)
+
+    age_seconds = max((current_time - started_at).total_seconds(), 0.0)
+    if age_seconds < stale_after_seconds:
+        return {
+            **dict(timing_gate),
+            "age_seconds": round(age_seconds, 3),
+            "stale_after_seconds": stale_after_seconds,
+        }
+
+    return {
+        "allowed": False,
+        "reason": "stale_auto_open_attempt",
+        "message": "Automatic open execution remained pending past its stale-order window.",
+        "force_close_at": timing_gate.get("force_close_at"),
+        "age_seconds": round(age_seconds, 3),
+        "stale_after_seconds": stale_after_seconds,
+    }
+
+
+def _guard_intervention_message(
+    guard_decision: Mapping[str, Any],
+    *,
+    submitted: bool,
+) -> str:
+    reason = _as_text(guard_decision.get("reason"))
+    if reason == "stale_auto_open_attempt":
+        age_seconds = _coerce_float(guard_decision.get("age_seconds"))
+        stale_after_seconds = _coerce_int(guard_decision.get("stale_after_seconds"))
+        age_fragment = (
+            ""
+            if age_seconds is None
+            else f" after {int(round(age_seconds))}s"
+        )
+        threshold_fragment = (
+            ""
+            if stale_after_seconds is None
+            else f" (stale threshold {stale_after_seconds}s)"
+        )
+        if submitted:
+            return (
+                "Canceled automatic open execution because the order remained pending"
+                f"{age_fragment}{threshold_fragment}."
+            )
+        return (
+            "Automatic open execution expired before broker submission because it remained pending"
+            f"{age_fragment}{threshold_fragment}."
+        )
+
+    if submitted:
+        return (
+            "Canceled open execution because the exit force-close window "
+            "started before the order completed."
+        )
+    return (
+        "Open execution expired because the exit force-close window started "
+        "before broker submission."
+    )
+
+
 def _execution_attempt_id() -> str:
     return f"execution:{uuid4().hex}"
 
@@ -207,7 +328,7 @@ def _order_intent_key(execution_attempt_id: str) -> str:
 
 
 def _is_terminal_status(status: str | None) -> bool:
-    return str(status or "").lower() in TERMINAL_STATUSES
+    return is_terminal_execution_attempt_status(status)
 
 
 def _policy_version_token(payload: dict[str, Any]) -> str:
@@ -787,11 +908,12 @@ def run_open_execution_guard(
 
     for attempt in open_attempts:
         execution_attempt_id = str(attempt["execution_attempt_id"])
-        timing_gate = _validate_open_timing_window(
-            exit_policy=_attempt_exit_policy(attempt),
+        guard_decision = _evaluate_open_attempt_guard(
+            storage=storage,
+            attempt=attempt,
             current_time=now,
         )
-        if timing_gate["allowed"]:
+        if guard_decision["allowed"]:
             skipped += 1
             continue
 
@@ -799,9 +921,9 @@ def run_open_execution_guard(
         broker_order_id = _as_text(attempt.get("broker_order_id"))
         session_position_id = _as_text(attempt.get("session_position_id"))
         if broker_order_id is None:
-            message = (
-                "Open execution expired because the exit force-close window started "
-                "before broker submission."
+            message = _guard_intervention_message(
+                guard_decision,
+                submitted=False,
             )
             execution_store.update_attempt(
                 execution_attempt_id=execution_attempt_id,
@@ -822,7 +944,11 @@ def run_open_execution_guard(
                     "symbol": str(attempt.get("underlying_symbol") or ""),
                     "action": "failed_unsubmitted",
                     "status": str(failed_attempt.get("status") or ""),
-                    "reason": str(timing_gate["reason"] or ""),
+                    "reason": str(guard_decision["reason"] or ""),
+                    "age_seconds": guard_decision.get("age_seconds"),
+                    "stale_after_seconds": guard_decision.get(
+                        "stale_after_seconds"
+                    ),
                 }
             )
             continue
@@ -846,7 +972,11 @@ def run_open_execution_guard(
                         "symbol": str(synced_attempt.get("underlying_symbol") or ""),
                         "action": "synced_terminal",
                         "status": current_status,
-                        "reason": str(timing_gate["reason"] or ""),
+                        "reason": str(guard_decision["reason"] or ""),
+                        "age_seconds": guard_decision.get("age_seconds"),
+                        "stale_after_seconds": guard_decision.get(
+                            "stale_after_seconds"
+                        ),
                     }
                 )
                 continue
@@ -873,9 +1003,9 @@ def run_open_execution_guard(
                 canceled += 1
                 _publish_execution_attempt_event(
                     synced_attempt,
-                    message=(
-                        "Canceled open execution because the exit force-close window "
-                        "started before the order completed."
+                    message=_guard_intervention_message(
+                        guard_decision,
+                        submitted=True,
                     ),
                 )
                 decisions.append(
@@ -884,7 +1014,11 @@ def run_open_execution_guard(
                         "symbol": str(synced_attempt.get("underlying_symbol") or ""),
                         "action": "cancel_requested",
                         "status": str(synced_attempt.get("status") or ""),
-                        "reason": str(timing_gate["reason"] or ""),
+                        "reason": str(guard_decision["reason"] or ""),
+                        "age_seconds": guard_decision.get("age_seconds"),
+                        "stale_after_seconds": guard_decision.get(
+                            "stale_after_seconds"
+                        ),
                     }
                 )
                 continue
@@ -895,7 +1029,11 @@ def run_open_execution_guard(
                     "symbol": str(synced_attempt.get("underlying_symbol") or ""),
                     "action": "already_pending_cancel",
                     "status": current_status,
-                    "reason": str(timing_gate["reason"] or ""),
+                    "reason": str(guard_decision["reason"] or ""),
+                    "age_seconds": guard_decision.get("age_seconds"),
+                    "stale_after_seconds": guard_decision.get(
+                        "stale_after_seconds"
+                    ),
                 }
             )
         except Exception as exc:

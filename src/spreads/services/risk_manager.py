@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import os
 from datetime import UTC, datetime
 from typing import Any
 
 from spreads.services.alpaca import create_alpaca_client_from_env, resolve_trading_environment
+from spreads.services.execution_lifecycle import (
+    OPEN_ATTEMPT_STATUS_LIST,
+    is_open_execution_attempt_status,
+    resolve_execution_attempt_filled_quantity,
+)
 from spreads.storage.serializers import parse_datetime
 
 OPEN_POSITION_STATUSES = ["open", "partial_close"]
@@ -79,7 +85,9 @@ def _coerce_bool(value: Any) -> bool:
 
 def _candidate_payload(candidate: dict[str, Any]) -> dict[str, Any]:
     payload = candidate.get("candidate")
-    return dict(payload) if isinstance(payload, dict) else {}
+    if isinstance(payload, dict):
+        return dict(payload)
+    return dict(candidate) if isinstance(candidate, dict) else {}
 
 
 def normalize_risk_policy(payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -132,7 +140,7 @@ def _current_trading_environment() -> str:
     return resolve_trading_environment(client.trading_base_url)
 
 
-def _candidate_entry_notional(candidate: dict[str, Any], quantity: int, price: float | None) -> float | None:
+def _candidate_entry_notional(candidate: dict[str, Any], quantity: float, price: float | None) -> float | None:
     entry_price = price
     if entry_price is None or entry_price <= 0:
         entry_price = _coerce_float(_candidate_payload(candidate).get("midpoint_credit"))
@@ -141,7 +149,7 @@ def _candidate_entry_notional(candidate: dict[str, Any], quantity: int, price: f
     return round(entry_price * 100.0 * quantity, 2)
 
 
-def _candidate_max_loss(candidate: dict[str, Any], quantity: int) -> float | None:
+def _candidate_max_loss(candidate: dict[str, Any], quantity: float) -> float | None:
     candidate_payload = _candidate_payload(candidate)
     max_loss = _coerce_float(candidate_payload.get("max_loss"))
     if max_loss is None:
@@ -165,12 +173,142 @@ def _open_positions(execution_store: Any, *, session_id: str) -> list[dict[str, 
     ]
 
 
+def _open_attempts(execution_store: Any, *, session_id: str) -> list[dict[str, Any]]:
+    list_for_status = getattr(execution_store, "list_session_attempts_by_status", None)
+    if callable(list_for_status):
+        rows = list_for_status(
+            session_id=session_id,
+            statuses=list(OPEN_ATTEMPT_STATUS_LIST),
+            trade_intent="open",
+            limit=200,
+        )
+        return [dict(row) for row in rows]
+
+    list_attempts = getattr(execution_store, "list_attempts", None)
+    if not callable(list_attempts):
+        return []
+    rows = list_attempts(session_id=session_id, limit=200)
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        payload = dict(row)
+        if str(payload.get("trade_intent") or "").lower() != "open":
+            continue
+        if not is_open_execution_attempt_status(payload.get("status")):
+            continue
+        filtered.append(payload)
+    return filtered
+
+
+def _pending_open_attempt_quantity(attempt: Mapping[str, Any]) -> float:
+    requested_quantity = _coerce_float(attempt.get("quantity")) or 0.0
+    if requested_quantity <= 0:
+        return 0.0
+    filled_quantity = min(
+        resolve_execution_attempt_filled_quantity(attempt),
+        requested_quantity,
+    )
+    return max(requested_quantity - filled_quantity, 0.0)
+
+
+def _pending_open_attempt_exposures(
+    attempts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    exposures: list[dict[str, Any]] = []
+    for attempt in attempts:
+        filled_quantity = resolve_execution_attempt_filled_quantity(attempt)
+        pending_quantity = _pending_open_attempt_quantity(attempt)
+        if pending_quantity <= 0:
+            continue
+        candidate = attempt.get("candidate")
+        candidate_payload = (
+            dict(candidate)
+            if isinstance(candidate, Mapping)
+            else {}
+        )
+        linked_position_id = _as_text(attempt.get("session_position_id"))
+        exposures.append(
+            {
+                "execution_attempt_id": _as_text(attempt.get("execution_attempt_id")),
+                "underlying_symbol": _as_text(attempt.get("underlying_symbol")),
+                "strategy": _as_text(attempt.get("strategy")),
+                "pending_quantity": pending_quantity,
+                "pending_entry_notional": _candidate_entry_notional(
+                    candidate_payload,
+                    pending_quantity,
+                    _coerce_float(attempt.get("limit_price")),
+                ),
+                "pending_max_loss": _candidate_max_loss(
+                    candidate_payload,
+                    pending_quantity,
+                ),
+                # A partially filled attempt already consumes a slot through its
+                # linked/open session position, so only count unfilled attempts
+                # with no fills toward additional position capacity.
+                "occupies_position_slot": (
+                    linked_position_id is None and filled_quantity <= 0
+                ),
+            }
+        )
+    return exposures
+
+
 def _session_position_metrics(positions: list[dict[str, Any]]) -> dict[str, float]:
     return {
         "open_position_count": float(len(positions)),
         "open_contract_count": sum(_coerce_float(position.get("remaining_quantity")) or 0.0 for position in positions),
         "entry_notional_total": sum(_coerce_float(position.get("entry_notional")) or 0.0 for position in positions),
         "max_loss_total": sum(_coerce_float(position.get("max_loss")) or 0.0 for position in positions),
+    }
+
+
+def _session_pending_open_attempt_metrics(
+    pending_attempts: list[dict[str, Any]],
+) -> dict[str, float]:
+    return {
+        "pending_open_attempt_count": float(len(pending_attempts)),
+        "pending_open_position_slot_count": sum(
+            1.0 for attempt in pending_attempts if bool(attempt.get("occupies_position_slot"))
+        ),
+        "pending_open_contract_count": sum(
+            _coerce_float(attempt.get("pending_quantity")) or 0.0
+            for attempt in pending_attempts
+        ),
+        "pending_entry_notional_total": sum(
+            _coerce_float(attempt.get("pending_entry_notional")) or 0.0
+            for attempt in pending_attempts
+        ),
+        "pending_max_loss_total": sum(
+            _coerce_float(attempt.get("pending_max_loss")) or 0.0
+            for attempt in pending_attempts
+        ),
+    }
+
+
+def _session_open_metrics(
+    positions: list[dict[str, Any]],
+    pending_attempts: list[dict[str, Any]],
+) -> dict[str, float]:
+    position_metrics = _session_position_metrics(positions)
+    pending_metrics = _session_pending_open_attempt_metrics(pending_attempts)
+    return {
+        **position_metrics,
+        **pending_metrics,
+        "active_open_position_count": (
+            position_metrics["open_position_count"]
+            + pending_metrics["pending_open_position_slot_count"]
+        ),
+        "active_open_contract_count": (
+            position_metrics["open_contract_count"]
+            + pending_metrics["pending_open_contract_count"]
+        ),
+        "active_entry_notional_total": (
+            position_metrics["entry_notional_total"]
+            + pending_metrics["pending_entry_notional_total"]
+        ),
+        "active_max_loss_total": (
+            position_metrics["max_loss_total"]
+            + pending_metrics["pending_max_loss_total"]
+        ),
     }
 
 
@@ -296,20 +434,22 @@ def build_session_risk_snapshot(
         }
 
     open_positions = _open_positions(execution_store, session_id=session_id)
-    metrics = _session_position_metrics(open_positions)
+    open_attempts = _open_attempts(execution_store, session_id=session_id)
+    pending_attempts = _pending_open_attempt_exposures(open_attempts)
+    metrics = _session_open_metrics(open_positions, pending_attempts)
     reasons: list[str] = []
 
-    if metrics["open_position_count"] >= float(normalized_policy["max_open_positions_per_session"]):
+    if metrics["active_open_position_count"] >= float(normalized_policy["max_open_positions_per_session"]):
         reasons.append("max_open_positions_per_session reached")
-    if metrics["open_contract_count"] >= float(normalized_policy["max_contracts_per_session"]):
+    if metrics["active_open_contract_count"] >= float(normalized_policy["max_contracts_per_session"]):
         reasons.append("max_contracts_per_session reached")
 
     max_session_notional = _coerce_float(normalized_policy.get("max_session_notional"))
-    if max_session_notional is not None and metrics["entry_notional_total"] >= max_session_notional:
+    if max_session_notional is not None and metrics["active_entry_notional_total"] >= max_session_notional:
         reasons.append("max_session_notional reached")
 
     max_session_max_loss = _coerce_float(normalized_policy.get("max_session_max_loss"))
-    if max_session_max_loss is not None and metrics["max_loss_total"] >= max_session_max_loss:
+    if max_session_max_loss is not None and metrics["active_max_loss_total"] >= max_session_max_loss:
         reasons.append("max_session_max_loss reached")
 
     if reasons:
@@ -339,7 +479,9 @@ def evaluate_open_execution(
 ) -> dict[str, Any]:
     normalized_policy = normalize_risk_policy(risk_policy)
     open_positions = _open_positions(execution_store, session_id=session_id)
-    session_metrics = _session_position_metrics(open_positions)
+    open_attempts = _open_attempts(execution_store, session_id=session_id)
+    pending_attempts = _pending_open_attempt_exposures(open_attempts)
+    session_metrics = _session_open_metrics(open_positions, pending_attempts)
     position_notional = _candidate_entry_notional(candidate, quantity, limit_price)
     position_max_loss = _candidate_max_loss(candidate, quantity)
     candidate_timestamp = _candidate_timestamp(candidate, cycle)
@@ -351,13 +493,24 @@ def evaluate_open_execution(
     matching_underlyings = [
         position for position in open_positions if str(position.get("underlying_symbol")) == underlying_symbol
     ]
+    matching_pending_underlyings = [
+        attempt
+        for attempt in pending_attempts
+        if bool(attempt.get("occupies_position_slot"))
+        and str(attempt.get("underlying_symbol")) == underlying_symbol
+    ]
     matching_strategy = [
         position
         for position in matching_underlyings
         if str(position.get("strategy")) == strategy
     ]
-    session_notional = sum(_coerce_float(position.get("entry_notional")) or 0.0 for position in open_positions)
-    session_max_loss = sum(_coerce_float(position.get("max_loss")) or 0.0 for position in open_positions)
+    matching_pending_strategy = [
+        attempt
+        for attempt in matching_pending_underlyings
+        if str(attempt.get("strategy")) == strategy
+    ]
+    session_notional = session_metrics["active_entry_notional_total"]
+    session_max_loss = session_metrics["active_max_loss_total"]
     metrics = {
         **session_metrics,
         "requested_quantity": int(quantity),
@@ -373,8 +526,12 @@ def evaluate_open_execution(
         "session_max_loss_after": (
             None if position_max_loss is None else round(session_max_loss + position_max_loss, 2)
         ),
-        "matching_underlying_count": len(matching_underlyings),
-        "matching_underlying_strategy_count": len(matching_strategy),
+        "matching_underlying_count": (
+            len(matching_underlyings) + len(matching_pending_underlyings)
+        ),
+        "matching_underlying_strategy_count": (
+            len(matching_strategy) + len(matching_pending_strategy)
+        ),
     }
 
     kill_switch_reason = _kill_switch_reason()
@@ -444,7 +601,9 @@ def evaluate_open_execution(
             "metrics": metrics,
         }
 
-    if len(open_positions) >= int(normalized_policy["max_open_positions_per_session"]):
+    if session_metrics["active_open_position_count"] >= int(
+        normalized_policy["max_open_positions_per_session"]
+    ):
         return {
             "status": "blocked",
             "note": "Open execution exceeds max_open_positions_per_session.",
@@ -454,7 +613,9 @@ def evaluate_open_execution(
             "metrics": metrics,
         }
 
-    if len(matching_underlyings) >= int(normalized_policy["max_open_positions_per_underlying"]):
+    if len(matching_underlyings) + len(matching_pending_underlyings) >= int(
+        normalized_policy["max_open_positions_per_underlying"]
+    ):
         return {
             "status": "blocked",
             "note": "Open execution exceeds max_open_positions_per_underlying.",
@@ -464,7 +625,9 @@ def evaluate_open_execution(
             "metrics": metrics,
         }
 
-    if len(matching_strategy) >= int(normalized_policy["max_open_positions_per_underlying_strategy"]):
+    if len(matching_strategy) + len(matching_pending_strategy) >= int(
+        normalized_policy["max_open_positions_per_underlying_strategy"]
+    ):
         return {
             "status": "blocked",
             "note": "Open execution exceeds max_open_positions_per_underlying_strategy.",
@@ -474,7 +637,7 @@ def evaluate_open_execution(
             "metrics": metrics,
         }
 
-    open_contracts = sum(_coerce_float(position.get("remaining_quantity")) or 0.0 for position in open_positions)
+    open_contracts = session_metrics["active_open_contract_count"]
     if open_contracts + quantity > float(normalized_policy["max_contracts_per_session"]):
         return {
             "status": "blocked",

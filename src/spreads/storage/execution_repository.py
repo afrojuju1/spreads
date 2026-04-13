@@ -126,6 +126,29 @@ class ExecutionRepository(RepositoryBase):
             rows = session.scalars(statement).all()
         return self.rows(rows)
 
+    def list_session_attempts_by_status(
+        self,
+        *,
+        session_id: str,
+        statuses: list[str],
+        trade_intent: str | None = None,
+        limit: int = 200,
+    ) -> list[ExecutionAttemptRecord]:
+        statement = (
+            select(ExecutionAttemptModel)
+            .where(ExecutionAttemptModel.session_id == session_id)
+            .where(ExecutionAttemptModel.status.in_(statuses))
+        )
+        if trade_intent is not None:
+            statement = statement.where(ExecutionAttemptModel.trade_intent == trade_intent)
+        statement = statement.order_by(
+            ExecutionAttemptModel.requested_at.desc(),
+            ExecutionAttemptModel.execution_attempt_id.desc(),
+        ).limit(limit)
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return self.rows(rows)
+
     def list_attempts_by_status(
         self,
         *,

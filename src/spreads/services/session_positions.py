@@ -5,6 +5,11 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from spreads.services.execution_lifecycle import (
+    resolve_execution_attempt_filled_quantity,
+    resolve_execution_attempt_primary_order,
+)
+
 OPEN_TRADE_INTENT = "open"
 CLOSE_TRADE_INTENT = "close"
 SUPPORTED_TRADE_INTENTS = {OPEN_TRADE_INTENT, CLOSE_TRADE_INTENT}
@@ -119,49 +124,14 @@ def _attempt_source_job(attempt: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _resolve_primary_order(attempt: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    orders = attempt.get("orders")
-    if not isinstance(orders, list):
-        return None
-    primary = next(
-        (
-            order
-            for order in orders
-            if isinstance(order, Mapping) and not _as_text(order.get("parent_broker_order_id"))
-        ),
-        None,
-    )
-    if primary is not None:
-        return primary
-    return next((order for order in orders if isinstance(order, Mapping)), None)
+    return resolve_execution_attempt_primary_order(attempt)
 
 
 def _resolve_filled_quantity(attempt: Mapping[str, Any], primary_order: Mapping[str, Any] | None) -> float:
-    primary_value = None if primary_order is None else _coerce_float(primary_order.get("filled_qty"))
-    if primary_value is not None and primary_value > 0:
-        return primary_value
-
-    order_values: list[float] = []
-    for order in attempt.get("orders") or []:
-        if not isinstance(order, Mapping):
-            continue
-        filled = _coerce_float(order.get("filled_qty"))
-        if filled is not None and filled > 0:
-            order_values.append(filled)
-    if order_values:
-        return max(order_values)
-
-    fill_values: list[float] = []
-    for fill in attempt.get("fills") or []:
-        if not isinstance(fill, Mapping):
-            continue
-        cumulative = _coerce_float(fill.get("cumulative_quantity"))
-        quantity = _coerce_float(fill.get("quantity"))
-        candidate = cumulative if cumulative is not None and cumulative > 0 else quantity
-        if candidate is not None and candidate > 0:
-            fill_values.append(candidate)
-    if fill_values:
-        return max(fill_values)
-    return 0.0
+    return resolve_execution_attempt_filled_quantity(
+        attempt,
+        primary_order=primary_order,
+    )
 
 
 def _weighted_average(pairs: list[tuple[float, float]]) -> float | None:
