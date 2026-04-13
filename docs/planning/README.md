@@ -4,6 +4,7 @@ This directory holds architecture notes, refactor plans, and design specificatio
 
 Use these entrypoints:
 
+- [Current System State](../current_system_state.md) for the runtime topology that exists in code today
 - [Fresh Spread Opportunity System Design](./2026-04-11_fresh_spread_system_design.md) for the current clean-sheet architecture
 - [Spread Selection Review And Refactor Plan](./2026-04-11_spread_selection_refactor_plan.md) for the diagnosis of the current selection path
 - [Ops CLI Visibility Plan](./ops_cli_visibility_plan.md) for shipped and deferred operator tooling

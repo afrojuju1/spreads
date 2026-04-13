@@ -4,131 +4,276 @@ This document describes the current runtime shape of the application as it exist
 
 It is meant to be a working architecture map, not a target-state proposal.
 
+Last updated: 2026-04-12
+
 ## Runtime Stack
 
 ```text
-Browser
+Operator
   |
-  v
-Next.js web app
+  +--> Browser
+  |     |
+  |     +--> Next.js web app
+  |             |
+  |             +--> HTTP to FastAPI
+  |             +--> WebSocket to FastAPI (/ws/events, /ws/generator/...)
   |
-  +--> HTTP proxy to FastAPI
-  |
-  +--> direct WebSocket connection to FastAPI for live events
+  +--> `uv run spreads ...`
+        |
+        +--> direct CLI entrypoints for ops, replay, scan, collect, analyze,
+             research, scheduler, and job seeding
 
 FastAPI
   |
-  +--> Postgres
-  +--> Redis pub/sub
-  +--> Alpaca trading/account APIs
-  +--> internal quote-capture broker
+  +--> Postgres reads and writes
+  +--> Redis pub/sub subscription and event publishing
+  +--> Alpaca account / trading / market-data calls
+  +--> internal option stream + quote/trade capture brokers
 
 Scheduler
   |
-  +--> Redis queue
+  +--> reads job definitions from Postgres
+  +--> enqueues ARQ jobs into Redis
 
 ARQ workers
   |
-  +--> Postgres
-  +--> Redis
-  +--> Alpaca trading/account APIs
-  +--> FastAPI internal quote-capture endpoint
-  +--> Discord webhook
+  +--> read and write Postgres
+  +--> consume Redis queues
+  +--> publish global events to Redis
+  +--> call Alpaca REST and option websocket flows
+  +--> deliver alerts to Discord when configured
 
-Postgres
-Redis
+Postgres = source of truth
+Redis = transport, queueing, leases, and pub/sub fanout
 ```
 
 ## High-Level System Diagram
 
 ```text
-                                 +----------------------+
-                                 |     Operator UI      |
-                                 |  Browser + Next.js   |
-                                 +----------+-----------+
-                                            |
-                               HTTP via /api/backend/*
-                                            |
-                                            v
-+----------------------+        +-----------+-----------+        +----------------------+
-|      Scheduler       |------->|        FastAPI        |<------>|  Browser WS client   |
-|  due jobs -> Redis   |        |     apps/api/main     |        |   /ws/events etc.    |
-+----------+-----------+        +-----------+-----------+        +----------------------+
-           |                                |    \
-           |                                |     \ internal quote-capture endpoint
-           v                                |      \
-+----------+-----------+                    |       v
-|       Redis          |<-------------------+   +----------------------+
-|   ARQ queue + pubsub |                        | Quote capture broker  |
-+----------+-----------+                        |  holds Alpaca WS      |
-           |                                    +----------+-----------+
-           v                                               |
-+----------+-----------+                                   |
-|       Workers        |-----------------------------------+
-| fast lane            |
-| collector lane       |
-| analysis lane        |
-| generator lane       |
-+----------+-----------+                      |
-           |                                  |
-           v                                  v
-+----------+----------------------------------+-----------+
-|                    Postgres                              |
-| collector tables | execution tables | broker tables     |
-| jobs | alerts | post_market tables                      |
-+----------------------------------------------------------+
-
-External edges:
-- API/Workers <-> Alpaca trading + account REST
-- Quote capture broker <-> Alpaca option quote websocket
-- Workers -> Discord webhook
+                              +------------------------------+
+                              |           Operator           |
+                              |  Browser + `uv run spreads`  |
+                              +---------------+--------------+
+                                              |
+                     +------------------------+------------------------+
+                     |                                                 |
+                     v                                                 v
+          +----------+-----------+                         +-----------+----------+
+          |   Web UI (Next.js)   |                         |   CLI entrypoints    |
+          |     apps/web         |                         | scan / collect / ops |
+          +----------+-----------+                         | replay / research    |
+                     |                                     +-----------+----------+
+                     | HTTP + WS                                      |
+                     v                                                 |
+          +----------+-------------------------------------------------+----------+
+          |                         API (FastAPI)                                  |
+          |                        apps/api/main                                   |
+          | sessions | ops | jobs | execution | generator | alerts | ws/events    |
+          +----------+-------------------------------+----------------+------------+
+                     |                               |                |
+                     | SQL reads / writes            | publish / sub  | Alpaca REST
+                     v                               v                v
+          +----------+-----------+        +----------+-----------+   +------------+
+          |       Postgres       |        |         Redis        |   |   Alpaca   |
+          | source of truth      |        | queues + leases      |   | trading +  |
+          | jobs/events/state    |        | + spreads:events     |   | market data|
+          +----------+-----------+        +----------+-----------+   +------------+
+                     ^                               ^                ^
+                     |                               |                |
+          +----------+-----------+                   |                |
+          |      Scheduler       |-------------------+                |
+          |   `spreads scheduler`|   enqueue due jobs                 |
+          +----------+-----------+                                    |
+                     |                                                |
+                     v                                                |
+   +-----------------+------------------+               +-------------+--------------+
+   |      Main workers (2 replicas)     |               | Collector workers (3 repl.)|
+   | broker_sync                         |               | live_collector             |
+   | execution_submit                    |               | scanner + selection        |
+   | alert_delivery / alert_reconcile    |               | quote/trade capture        |
+   | session_exit_manager                |               | UOA + signal persistence   |
+   | post_close_analysis                 |               | live_action_gate           |
+   | post_market_analysis                |               +-------------+--------------+
+   | generator                           |                             |
+   +-----------------+------------------+                             |
+                     |                                                |
+                     +-------------------+----------------------------+
+                                         |
+                                         v
+                              +----------+-----------+
+                              |   External sinks     |
+                              | Discord webhook      |
+                              | published events     |
+                              +----------------------+
 ```
 
-## Trading Core Diagram
+## Service And Queue Diagram
 
 ```text
-                    +-------------------+
-                    |   live_collector  |
-                    | scan + board rank |
-                    +---------+---------+
-                              |
-                              | best candidate
-                              v
-                    +---------+---------+
-                    |     risk_exit     |
-                    |  risk_manager     |
-                    |  exit_manager     |
-                    +----+---------+----+
-                         |         |
-            open submit  |         | close submit
-     manual or automated |         | automated or manual
-                         v         v
-                 +-------+---------+-------+
-                 |       execution         |
-                 | immutable broker ledger |
-                 | attempts / orders / fills
-                 +------------+------------+
-                              |
-                              | derive/update state
-                              v
-                 +------------+------------+
-                 |    session_positions    |
-                 | day-local ownership     |
-                 | marks / pnl / status    |
-                 | reconciliation flags    |
-                 +------------+------------+
-                              ^
-                              |
-                              | refresh / fills / reconcile
-                 +------------+------------+
-                 |      broker_sync        |
-                 | poll Alpaca first       |
-                 | account_snapshots       |
-                 | broker_sync_state       |
-                 +------------+------------+
-                              |
-                              v
-                           Alpaca
+             +---------------------------+
+             | Postgres job_definitions  |
+             | Postgres job_runs         |
+             +-------------+-------------+
+                           |
+                           v
+             +-------------+-------------+
+             | scheduler                  |
+             | `uv run spreads scheduler` |
+             +-------------+-------------+
+                           |
+                           | enqueue by job_type
+                           v
+        +------------------+------------------+
+        |               Redis                 |
+        | arq:queue:fast | arq:queue:collector|
+        +--------+-------------------+--------+
+                 |                   |
+                 v                   v
+   +-------------+----------+   +----+----------------------+
+   | MainWorkerSettings     |   | CollectorWorkerSettings   |
+   | queue: arq:queue:fast  |   | queue: arq:queue:collector|
+   +-------------+----------+   +----+----------------------+
+                 |                   |
+                 | runs              | runs
+                 |                   |
+                 | broker_sync       | live_collector
+                 | execution_submit  |
+                 | alert_delivery    |
+                 | alert_reconcile   |
+                 | session_exit_mgr  |
+                 | post_close        |
+                 | post_market       |
+                 | generator         |
+                 v                   v
+        +--------+-------------------+--------+
+        |            Postgres                 |
+        | state tables + event log + outputs  |
+        +-------------------------------------+
+```
+
+## Domain Slice Diagrams
+
+### Collector -> Signals -> Opportunities
+
+```text
+        market calendar + profile
+                  |
+                  v
+        +---------+----------+
+        |   live_collector   |
+        | scanner + ranking  |
+        +---------+----------+
+                  |
+                  | cycle result
+                  v
+   +--------------+------------------+
+   | collector_cycles                |
+   | collector_cycle_candidates      |
+   | collector_cycle_events          |
+   +--------------+------------------+
+                  |
+                  | quote/trade context + UOA
+                  v
+   +--------------+------------------+
+   | option_quote_events             |
+   | option_trade_events             |
+   | uoa summaries in job results    |
+   +--------------+------------------+
+                  |
+                  | normalize state
+                  v
+   +--------------+------------------+
+   | signal_states                   |
+   | signal_state_transitions        |
+   | opportunities                   |
+   +--------------+------------------+
+                  |
+                  | operator reads + auto-open input
+                  v
+   +--------------+------------------+
+   | sessions / ops / audit / replay |
+   +---------------------------------+
+```
+
+### Execution -> Session Positions -> Broker Sync
+
+```text
+ manual open / auto open / manual close / exit_manager close
+                           |
+                           v
+              +------------+-------------+
+              | execution service        |
+              | submit_*_execution(...)  |
+              +------------+-------------+
+                           |
+                           | immutable broker ledger
+                           v
+              +------------+-------------+
+              | execution_attempts       |
+              | execution_orders         |
+              | execution_fills          |
+              +------------+-------------+
+                           |
+                           | derive session ownership
+                           v
+              +------------+-------------+
+              | session_positions        |
+              | session_position_closes  |
+              +------------+-------------+
+                           ^
+                           |
+                           | refresh / reconcile / marks
+                           |
+              +------------+-------------+
+              | broker_sync              |
+              | account_snapshots        |
+              | broker_sync_state        |
+              +------------+-------------+
+                           |
+                           v
+                        Alpaca
+
+Rule:
+- execution = immutable broker interaction log
+- session_positions = mutable session/day ownership model
+- broker_sync updates state and mismatches, but does not take ownership away
+```
+
+### Scheduler -> Queues -> Workers -> Event Fanout
+
+```text
+      job_definitions
+           |
+           v
+   +-------+--------+
+   |   scheduler    |
+   +-------+--------+
+           |
+           | create job_runs + enqueue
+           v
+   +-------+------------------------------+
+   | Redis                               |
+   | arq:queue:fast                      |
+   | arq:queue:collector                 |
+   | spreads:events                      |
+   +-------+------------------------------+
+           |                      ^
+           |                      |
+           v                      | publish global events
+   +-------+--------+    +--------+---------+
+   | main workers   |    | collector workers|
+   +-------+--------+    +--------+---------+
+           |                      |
+           +----------+-----------+
+                      |
+                      v
+               Postgres writes
+                      |
+                      v
+                 API WebSocket
+                      |
+                      v
+                    Web UI
 ```
 
 ## Core Constraint
@@ -187,10 +332,18 @@ Workers:
 - publish runtime events to Redis pub/sub
 - execute the actual business jobs
 
+Current worker topology is:
+
+- `MainWorkerSettings`
+- `CollectorWorkerSettings`
+
 Current main job types are:
 
 - `live_collector`
 - `broker_sync`
+- `execution_submit`
+- `alert_delivery`
+- `alert_reconcile`
 - `session_exit_manager`
 - `post_close_analysis`
 - `post_market_analysis`
@@ -205,12 +358,13 @@ The live collector is the intraday scanning loop.
 At a high level it:
 
 1. scans the configured universe
-2. builds board and watchlist candidates
-3. compares the new board against the previous cycle
-4. persists the new cycle, candidates, and events
-5. optionally auto-submits an open execution through the normal execution service
-6. dispatches alerts
-7. captures option quote events for selected legs
+2. ranks live candidates into canonical `promotable` and `monitor` states
+3. compares the new cycle against prior selection memory
+4. captures quote and trade data for the chosen option legs
+5. computes and persists UOA, signal-state, and opportunity data
+6. applies `live_action_gate` behavior before alerts or auto-execution
+7. optionally auto-submits an open execution through the normal execution service
+8. dispatches alerts when the gate allows it
 
 Its persistent outputs live mainly in:
 
@@ -218,8 +372,14 @@ Its persistent outputs live mainly in:
 - `collector_cycle_candidates`
 - `collector_cycle_events`
 - `option_quote_events`
+- `option_trade_events`
+- `signal_states`
+- `signal_state_transitions`
+- `opportunities`
 
 This is the source of live session opportunity state.
+
+For `0dte`, degraded quote capture can now persist the cycle and diagnostics while still blocking alerts and auto-execution. That block is surfaced as `live_action_gate`.
 
 ### 4. Execution Domain
 
@@ -368,6 +528,15 @@ collector:
   collector_cycle_candidates
   collector_cycle_events
   option_quote_events
+  option_trade_events
+
+signals:
+  signal_states
+  signal_state_transitions
+  opportunities
+
+risk:
+  risk_decisions
 
 execution:
   execution_attempts
@@ -394,17 +563,27 @@ alerts:
 analysis:
   post_market_analysis_runs
   plus read-only derived summaries built from collector and execution history
+
+control:
+  control_state
+  operator_actions
+  policy_rollouts
+
+events:
+  event_log
 ```
 
 ## Current System Summary
 
 The current application is best understood as one operator dashboard sitting on top of one backend runtime with several cooperating subsystems:
 
-- a live collector that discovers intraday opportunities
+- a live collector that discovers intraday opportunities and persists promotable and monitor state
 - an execution ledger that records broker interactions immutably
 - a session position model that owns day-local trade state
 - a broker sync process that reconciles broker reality without taking ownership
 - a shared risk and exit layer for both manual and automated actions
+- an API and WebSocket layer that assembles read models and fans realtime events to the UI
+- a scheduler plus two worker lanes over Redis ARQ
 - supporting generator, alerts, and analysis subsystems around that core
 
 If you want to drill further, the next useful cuts are:
