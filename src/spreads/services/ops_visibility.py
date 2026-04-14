@@ -1991,7 +1991,8 @@ def build_job_run_view(
 @with_storage()
 def build_audit_view(
     *,
-    session_id: str,
+    pipeline_id: str,
+    market_date: str,
     db_target: str | None = None,
     timeline_limit: int = 120,
     event_scan_limit: int = DEFAULT_EVENT_SCAN_LIMIT,
@@ -2001,7 +2002,8 @@ def build_audit_view(
     try:
         replay = build_audit_replay(
             db_target=db_target or "",
-            session_id=session_id,
+            pipeline_id=pipeline_id,
+            market_date=market_date,
             timeline_limit=timeline_limit,
             event_scan_limit=event_scan_limit,
             storage=storage,
@@ -2009,9 +2011,7 @@ def build_audit_view(
     except ValueError as exc:
         raise OpsLookupError(str(exc)) from exc
 
-    session = (
-        replay.get("session") if isinstance(replay.get("session"), Mapping) else {}
-    )
+    target = replay.get("target") if isinstance(replay.get("target"), Mapping) else {}
     timeline_stats = (
         replay.get("timeline_stats")
         if isinstance(replay.get("timeline_stats"), Mapping)
@@ -2080,27 +2080,31 @@ def build_audit_view(
 
     attention: list[dict[str, str]] = []
     statuses = [
-        _session_status(session.get("status") or state_summary.get("status")),
+        _session_status(target.get("status") or state_summary.get("status")),
         _control_status(control),
     ]
 
-    session_status = _session_status(
-        session.get("status") or state_summary.get("status")
-    )
-    if session_status == "blocked":
+    target_status = _session_status(target.get("status") or state_summary.get("status"))
+    if target_status == "blocked":
         attention.append(
             _attention(
                 severity="high",
-                code="audit_session_failed",
-                message=f"Session {session_id} is recorded as failed.",
+                code="audit_pipeline_run_failed",
+                message=(
+                    f"Pipeline {target.get('pipeline_id') or pipeline_id} on "
+                    f"{target.get('market_date') or market_date} is recorded as failed."
+                ),
             )
         )
-    elif session_status == "degraded":
+    elif target_status == "degraded":
         attention.append(
             _attention(
                 severity="medium",
-                code="audit_session_degraded",
-                message=f"Session {session_id} is degraded.",
+                code="audit_pipeline_run_degraded",
+                message=(
+                    f"Pipeline {target.get('pipeline_id') or pipeline_id} on "
+                    f"{target.get('market_date') or market_date} is degraded."
+                ),
             )
         )
 
@@ -2122,22 +2126,22 @@ def build_audit_view(
             )
         )
 
-    risk_status = str(session.get("risk_status") or "").strip().lower()
+    risk_status = str(target.get("risk_status") or "").strip().lower()
     if risk_status == "blocked":
         statuses.append("blocked")
         attention.append(
             _attention(
                 severity="high",
                 code="audit_risk_blocked",
-                message=_as_text(session.get("risk_note"))
-                or "Session risk state was blocked.",
+                message=_as_text(target.get("risk_note"))
+                or "Pipeline run risk state was blocked.",
             )
         )
     elif risk_status not in {"", "ok", "disabled"}:
         statuses.append("degraded")
 
     reconciliation_status = (
-        str(session.get("reconciliation_status") or "").strip().lower()
+        str(target.get("reconciliation_status") or "").strip().lower()
     )
     if reconciliation_status == "mismatch":
         statuses.append("degraded")
@@ -2145,8 +2149,8 @@ def build_audit_view(
             _attention(
                 severity="medium",
                 code="audit_reconciliation_mismatch",
-                message=_as_text(session.get("reconciliation_note"))
-                or "Session reconciliation had mismatches.",
+                message=_as_text(target.get("reconciliation_note"))
+                or "Pipeline run reconciliation had mismatches.",
             )
         )
 
@@ -2239,13 +2243,13 @@ def build_audit_view(
         "generated_at": generated_at,
         "summary": {
             "view": "audit",
-            "session_id": session.get("session_id") or session_id,
-            "label": session.get("label"),
-            "session_date": session.get("session_date"),
-            "session_status": session.get("status") or state_summary.get("status"),
+            "pipeline_id": target.get("pipeline_id") or pipeline_id,
+            "label": target.get("label"),
+            "market_date": target.get("market_date") or market_date,
+            "run_status": target.get("status") or state_summary.get("status"),
             "control_mode": control.get("mode"),
-            "risk_status": session.get("risk_status"),
-            "reconciliation_status": session.get("reconciliation_status"),
+            "risk_status": target.get("risk_status"),
+            "reconciliation_status": target.get("reconciliation_status"),
             "alert_count": counts.get("alerts"),
             "opportunity_count": counts.get("opportunities"),
             "risk_decision_count": counts.get("risk_decisions"),
@@ -2260,7 +2264,7 @@ def build_audit_view(
         "attention": attention[:10],
         "details": {
             "view": "audit",
-            "session": dict(session),
+            "target": dict(target),
             "control": dict(control),
             "current_cycle": dict(current_cycle),
             "counts": dict(counts),

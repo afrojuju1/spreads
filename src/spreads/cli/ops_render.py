@@ -754,6 +754,7 @@ def _render_uoa_detail(console: Console, payload: dict[str, Any]) -> None:
 def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
     summary = dict(payload.get("summary") or {})
     details = dict(payload.get("details") or {})
+    target = dict(details.get("target") or {})
     current_cycle = dict(details.get("current_cycle") or {})
     portfolio_summary = dict(details.get("portfolio_summary") or {})
     post_market = dict(details.get("post_market") or {})
@@ -762,10 +763,10 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
     overview = Table.grid(padding=(0, 2))
     overview.add_row("Overall", _status_text(payload.get("status")))
     overview.add_row("Generated", _render_value(payload.get("generated_at")))
-    overview.add_row("Session", _render_value(summary.get("session_id")))
+    overview.add_row("Pipeline", _render_value(summary.get("pipeline_id")))
     overview.add_row("Label", _render_value(summary.get("label")))
-    overview.add_row("Date", _render_value(summary.get("session_date")))
-    overview.add_row("Session Status", _render_value(summary.get("session_status")))
+    overview.add_row("Date", _render_value(summary.get("market_date")))
+    overview.add_row("Run Status", _render_value(summary.get("run_status")))
     overview.add_row("Control", _render_value(summary.get("control_mode")))
     overview.add_row("Risk", _render_value(summary.get("risk_status")))
     overview.add_row(
@@ -792,7 +793,7 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
     console.print(
         Panel(
             overview,
-            title="Audit",
+            title="Pipeline Audit",
             border_style=STATUS_STYLES.get(str(payload.get("status")), "white"),
         )
     )

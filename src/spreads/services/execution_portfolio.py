@@ -366,9 +366,6 @@ def build_session_execution_portfolio(
             positions.append(
                 {
                     "position_id": str(persisted["position_id"]),
-                    "session_position_id": _as_text(
-                        persisted.get("session_position_id")
-                    ),
                     "execution_attempt_id": str(persisted["open_execution_attempt_id"]),
                     "open_execution_attempt_id": str(
                         persisted["open_execution_attempt_id"]

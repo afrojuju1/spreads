@@ -595,7 +595,6 @@ const sessionPortfolioPositionSchema = z
   .object({
     position_id: z.string(),
     execution_attempt_id: z.string(),
-    session_position_id: z.string().optional(),
     open_execution_attempt_id: z.string().optional(),
     candidate_id: z.number().nullable().optional(),
     underlying_symbol: z.string(),
@@ -733,7 +732,6 @@ const opportunitySchema = z
     confidence: z.number().nullable().optional(),
     promotion_score: z.number().nullable().optional(),
     execution_score: z.number().nullable().optional(),
-    legacy_session_id: z.string().nullable().optional(),
     order_payload: z.record(z.string(), z.unknown()).nullable().optional(),
     legs: z.array(z.record(z.string(), z.unknown())).default([]),
     economics: z.record(z.string(), z.unknown()).default({}),
@@ -766,7 +764,6 @@ const positionSchema = z
     unrealized_pnl: z.number().nullable().optional(),
     net_pnl: z.number().nullable().optional(),
     open_execution_attempt_id: z.string(),
-    legacy_session_position_id: z.string().nullable().optional(),
     legs_json: z.array(z.record(z.string(), z.unknown())).default([]),
     economics_json: z.record(z.string(), z.unknown()).default({}),
     strategy_metrics_json: z.record(z.string(), z.unknown()).default({}),

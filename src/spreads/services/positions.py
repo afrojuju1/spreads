@@ -100,6 +100,18 @@ def _serialize_position(
     execution_store: Any,
 ) -> dict[str, Any]:
     row = enrich_position_row(row)
+    public_row = {
+        key: value
+        for key, value in row.items()
+        if key
+        not in {
+            "session_id",
+            "session_date",
+            "label",
+            "legacy_session_position_id",
+            "session_position_id",
+        }
+    }
     closes = execution_store.list_position_closes(position_id=str(row["position_id"]))
     total_closed_quantity = sum(
         _coerce_float(close.get("closed_quantity")) or 0.0 for close in closes
@@ -107,12 +119,11 @@ def _serialize_position(
     realized_pnl = _coerce_float(row.get("realized_pnl")) or 0.0
     unrealized_pnl = _coerce_float(row.get("unrealized_pnl"))
     return {
-        **row,
+        **public_row,
         "market_date": str(row.get("market_date_opened")),
         "position_status": row.get("status"),
         "closed_quantity": _round_money(total_closed_quantity),
         "net_pnl": _round_money(realized_pnl + (unrealized_pnl or 0.0)),
-        "legacy_session_position_id": row.get("legacy_session_position_id"),
         "open_execution_attempt": execution_store.get_attempt(
             str(row["open_execution_attempt_id"])
         ),

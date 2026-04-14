@@ -150,7 +150,8 @@ def trading_command(
 
 
 def audit_command(
-    session_id: str = typer.Argument(..., help="Session id to audit."),
+    pipeline_id: str = typer.Argument(..., help="Pipeline id to audit."),
+    date: str = typer.Option(..., "--date", help="Market date to audit."),
     timeline_limit: int = typer.Option(
         120,
         "--timeline-limit",
@@ -182,7 +183,8 @@ def audit_command(
         raise typer.Exit(3) from None
     _run_visibility_command(
         builder=lambda: build_audit_view(
-            session_id=session_id,
+            pipeline_id=pipeline_id,
+            market_date=date,
             db_target=db,
             timeline_limit=resolved_timeline_limit,
             event_scan_limit=resolved_event_scan_limit,

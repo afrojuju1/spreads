@@ -9,7 +9,11 @@ from spreads.services.pipelines import (
     DEFAULT_ANALYSIS_STOP_MULTIPLE,
     get_pipeline_detail,
 )
-from spreads.services.runtime_identity import build_pipeline_id, parse_live_session_id
+from spreads.services.runtime_identity import (
+    build_live_session_id,
+    build_pipeline_id,
+    parse_pipeline_id,
+)
 from spreads.services.selection_terms import promotable_monitor_pnl_spread
 from spreads.storage.serializers import parse_datetime
 
@@ -579,28 +583,19 @@ def _summarize_post_market(analysis: Mapping[str, Any] | None) -> dict[str, Any]
 
 def _resolve_audit_scope(
     *,
-    session_id: str,
-    storage: Any,
+    pipeline_id: str,
+    market_date: str,
 ) -> dict[str, str]:
-    resolved = parse_live_session_id(session_id)
-    if resolved is not None:
-        return {
-            "session_id": session_id,
-            "label": resolved["label"],
-            "session_date": resolved["session_date"],
-            "pipeline_id": build_pipeline_id(resolved["label"]),
-        }
-
-    latest_cycle = storage.collector.get_latest_session_cycle(session_id)
-    if latest_cycle is None:
-        raise ValueError(f"Unknown session_id: {session_id}")
-    label = str(latest_cycle["label"])
-    session_date = str(latest_cycle["session_date"])
+    resolved = parse_pipeline_id(pipeline_id)
+    label = str(pipeline_id if resolved is None else resolved["label"])
+    normalized_pipeline_id = str(
+        build_pipeline_id(label) if resolved is None else resolved["pipeline_id"]
+    )
     return {
-        "session_id": session_id,
+        "pipeline_id": normalized_pipeline_id,
         "label": label,
-        "session_date": session_date,
-        "pipeline_id": build_pipeline_id(label),
+        "market_date": market_date,
+        "session_id": build_live_session_id(label, market_date),
     }
 
 
@@ -608,24 +603,27 @@ def _resolve_audit_scope(
 def build_audit_replay(
     *,
     db_target: str,
-    session_id: str,
+    pipeline_id: str,
+    market_date: str,
     timeline_limit: int = DEFAULT_TIMELINE_LIMIT,
     event_scan_limit: int = DEFAULT_EVENT_SCAN_LIMIT,
     storage: Any | None = None,
 ) -> dict[str, Any]:
-    scope = _resolve_audit_scope(session_id=session_id, storage=storage)
-    session = get_pipeline_detail(
+    scope = _resolve_audit_scope(pipeline_id=pipeline_id, market_date=market_date)
+    pipeline_run = get_pipeline_detail(
         db_target=db_target,
         pipeline_id=scope["pipeline_id"],
-        market_date=scope["session_date"],
+        market_date=scope["market_date"],
         profit_target=DEFAULT_ANALYSIS_PROFIT_TARGET,
         stop_multiple=DEFAULT_ANALYSIS_STOP_MULTIPLE,
         storage=storage,
     )
     label = str(scope["label"])
-    session_date = str(scope["session_date"])
+    session_date = str(scope["market_date"])
     analysis = (
-        session.get("analysis") if isinstance(session.get("analysis"), Mapping) else {}
+        pipeline_run.get("analysis")
+        if isinstance(pipeline_run.get("analysis"), Mapping)
+        else {}
     )
     event_store = storage.events
     signal_store = storage.signals
@@ -672,7 +670,8 @@ def build_audit_replay(
 
     timeline_items, collapsed_quote_count = _collapse_market_quote_events(raw_events)
     timeline_items.extend(
-        _normalize_collector_event(dict(event)) for event in session.get("events") or []
+        _normalize_collector_event(dict(event))
+        for event in pipeline_run.get("events") or []
     )
     timeline_items.sort(key=_timeline_sort_key)
     limited_timeline, timeline_truncated, hidden_count = _apply_timeline_limit(
@@ -686,54 +685,54 @@ def build_audit_replay(
         if str(item.get("topic") or "").startswith("control.")
     ]
     prioritized_opportunities = _selected_opportunities_for_explanation(
-        current_cycle=session.get("current_cycle"),
+        current_cycle=pipeline_run.get("current_cycle"),
         opportunities=opportunities,
     )
 
     state_summary = {
-        "status": session.get("status"),
-        "updated_at": session.get("updated_at"),
-        "control_snapshot": dict(session.get("control") or {}),
-        "current_cycle": _current_cycle_summary(session.get("current_cycle")),
+        "status": pipeline_run.get("status"),
+        "updated_at": pipeline_run.get("updated_at"),
+        "control_snapshot": dict(pipeline_run.get("control") or {}),
+        "current_cycle": _current_cycle_summary(pipeline_run.get("current_cycle")),
         "counts": {
             "timeline_items": len(timeline_items),
             "events_scanned": len(raw_events),
-            "collector_events": len(list(session.get("events") or [])),
+            "collector_events": len(list(pipeline_run.get("events") or [])),
             "signal_states": len(signal_states),
             "signal_transitions": len(signal_transitions),
             "opportunities": len(opportunities),
-            "risk_decisions": len(list(session.get("risk_decisions") or [])),
-            "executions": len(list(session.get("executions") or [])),
-            "alerts": len(list(session.get("alerts") or [])),
+            "risk_decisions": len(list(pipeline_run.get("risk_decisions") or [])),
+            "executions": len(list(pipeline_run.get("executions") or [])),
+            "alerts": len(list(pipeline_run.get("alerts") or [])),
         },
         "signals": signal_states,
         "opportunities": opportunities,
-        "risk_decisions": list(session.get("risk_decisions") or []),
-        "executions": list(session.get("executions") or []),
-        "portfolio": dict(session.get("portfolio") or {}),
+        "risk_decisions": list(pipeline_run.get("risk_decisions") or []),
+        "executions": list(pipeline_run.get("executions") or []),
+        "portfolio": dict(pipeline_run.get("portfolio") or {}),
     }
     slot_runs = [
         _summarize_slot_run(dict(row))
-        for row in list(session.get("slot_runs") or [])[:10]
+        for row in list(pipeline_run.get("slot_runs") or [])[:10]
         if isinstance(row, Mapping)
     ]
     alerts = [
         _summarize_alert(dict(row))
-        for row in list(session.get("alerts") or [])[:25]
+        for row in list(pipeline_run.get("alerts") or [])[:25]
         if isinstance(row, Mapping)
     ]
 
     return {
-        "session": {
-            "session_id": scope["session_id"],
+        "target": {
+            "pipeline_id": scope["pipeline_id"],
             "label": label,
-            "session_date": session_date,
-            "status": session.get("status"),
-            "updated_at": session.get("updated_at"),
-            "risk_status": session.get("risk_status"),
-            "risk_note": session.get("risk_note"),
-            "reconciliation_status": session.get("reconciliation_status"),
-            "reconciliation_note": session.get("reconciliation_note"),
+            "market_date": session_date,
+            "status": pipeline_run.get("status"),
+            "updated_at": pipeline_run.get("updated_at"),
+            "risk_status": pipeline_run.get("risk_status"),
+            "risk_note": pipeline_run.get("risk_note"),
+            "reconciliation_status": pipeline_run.get("reconciliation_status"),
+            "reconciliation_note": pipeline_run.get("reconciliation_note"),
         },
         "timeline": limited_timeline,
         "timeline_stats": {
@@ -764,11 +763,11 @@ def build_audit_replay(
             ],
             "risk_decisions": [
                 _summarize_risk_decision(dict(row))
-                for row in list(session.get("risk_decisions") or [])[:10]
+                for row in list(pipeline_run.get("risk_decisions") or [])[:10]
             ],
             "execution_outcomes": [
                 _summarize_execution(dict(row))
-                for row in list(session.get("executions") or [])[:10]
+                for row in list(pipeline_run.get("executions") or [])[:10]
             ],
             "control_actions": [
                 {
