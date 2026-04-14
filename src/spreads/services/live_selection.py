@@ -4,7 +4,9 @@ from typing import Any
 
 from spreads.services.candidate_policy import (
     candidate_has_intraday_setup_context,
+    candidate_meets_return_on_risk_floor,
     candidate_requires_favorable_setup,
+    resolve_deployment_quality_thresholds,
 )
 
 DEFAULT_SELECTION_THRESHOLDS = {
@@ -19,6 +21,7 @@ DEFAULT_SELECTION_THRESHOLDS = {
     "monitor_per_symbol": 2,
     "min_promotable_midpoint_credit": None,
     "min_monitor_midpoint_credit": None,
+    "min_promotable_return_on_risk": None,
 }
 
 PROFILE_SELECTION_THRESHOLDS = {
@@ -42,6 +45,7 @@ def _selection_thresholds(profile: str | None) -> dict[str, Any]:
     normalized = str(profile or "").strip().lower()
     thresholds = dict(DEFAULT_SELECTION_THRESHOLDS)
     thresholds.update(PROFILE_SELECTION_THRESHOLDS.get(normalized, {}))
+    thresholds.update(resolve_deployment_quality_thresholds(normalized))
     return thresholds
 
 
@@ -73,6 +77,26 @@ def _meets_midpoint_credit_floor(
     if minimum_credit is None:
         return True
     return float(candidate.get("midpoint_credit") or 0.0) >= float(minimum_credit)
+
+
+def _meets_promotable_thresholds(
+    candidate: dict[str, Any],
+    thresholds: dict[str, Any],
+    *,
+    score_floor: float,
+) -> bool:
+    return (
+        float(candidate.get("quality_score") or 0.0) >= float(score_floor)
+        and promotable_candidate_is_eligible(candidate)
+        and _meets_midpoint_credit_floor(
+            candidate,
+            thresholds.get("min_promotable_midpoint_credit"),
+        )
+        and candidate_meets_return_on_risk_floor(
+            candidate,
+            thresholds.get("min_promotable_return_on_risk"),
+        )
+    )
 
 
 def read_previous_selection(
@@ -157,12 +181,10 @@ def _select_promotable_candidates(
         viable = [
             candidate
             for candidate in options
-            if float(candidate.get("quality_score") or 0.0)
-            >= float(thresholds["promotable_score_floor"])
-            and promotable_candidate_is_eligible(candidate)
-            and _meets_midpoint_credit_floor(
+            if _meets_promotable_thresholds(
                 candidate,
-                thresholds.get("min_promotable_midpoint_credit"),
+                thresholds,
+                score_floor=float(thresholds["promotable_score_floor"]),
             )
         ]
         winner = viable[0] if viable else None
@@ -234,9 +256,12 @@ def _select_promotable_candidates(
 
         if (
             current_anchor is not None
-            and float(current_anchor["quality_score"])
-            >= float(thresholds["promotable_score_floor"])
-            - float(thresholds["promotable_hold_tolerance"])
+            and _meets_promotable_thresholds(
+                current_anchor,
+                thresholds,
+                score_floor=float(thresholds["promotable_score_floor"])
+                - float(thresholds["promotable_hold_tolerance"]),
+            )
         ):
             accepted = current_anchor
         elif winner is not None:

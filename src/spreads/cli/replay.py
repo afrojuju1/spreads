@@ -35,6 +35,35 @@ def _write_csv_export(path: str, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
+def _append_deployment_quality_lines(
+    lines: list[str],
+    deployment_quality: Mapping[str, Any] | None,
+) -> None:
+    if not isinstance(deployment_quality, Mapping):
+        return
+    allocator = deployment_quality.get("allocator_selected") or {}
+    actual = deployment_quality.get("actual_deployed") or {}
+    if not allocator and not actual:
+        return
+    lines.append("")
+    lines.append("Deployment quality:")
+    if allocator:
+        lines.append(
+            "- "
+            f"allocator selected count {allocator.get('count')} "
+            f"| pooled modeled close RoR {allocator.get('pooled_estimated_close_return_on_risk')} "
+            f"| pooled modeled final RoR {allocator.get('pooled_estimated_final_return_on_risk')} "
+            f"| pooled actual RoR {allocator.get('pooled_actual_net_return_on_risk')}"
+        )
+    if actual:
+        lines.append(
+            "- "
+            f"actual deployed count {actual.get('count')} "
+            f"| pooled actual RoR {actual.get('pooled_actual_net_return_on_risk')} "
+            f"| pooled actual minus modeled close RoR {actual.get('pooled_actual_minus_estimated_close_return_on_risk')}"
+        )
+
+
 def _render_replay_text(payload: Mapping[str, Any]) -> str:
     session = payload.get("session") or {}
     summary = payload.get("summary") or {}
@@ -177,6 +206,10 @@ def _render_replay_text(payload: Mapping[str, Any]) -> str:
             f"| rank-only {rank_only_metrics.get('average_actual_minus_estimated_close_pnl')} "
             f"| allocator {allocator_metrics.get('average_actual_minus_estimated_close_pnl')}"
         )
+        _append_deployment_quality_lines(
+            lines,
+            scorecard.get("deployment_quality"),
+        )
     warnings = payload.get("warnings") or []
     if warnings:
         lines.append("")
@@ -246,6 +279,10 @@ def _render_replay_batch_text(payload: Mapping[str, Any]) -> str:
         lines.append("Warnings:")
         for warning in warnings:
             lines.append(f"- {warning}")
+    _append_deployment_quality_lines(
+        lines,
+        aggregate.get("deployment_quality"),
+    )
     return "\n".join(lines)
 
 

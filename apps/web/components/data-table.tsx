@@ -10,7 +10,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -28,9 +28,11 @@ type DataTableProps<TData> = {
   data: TData[];
   emptyMessage: string;
   getRowId?: (row: TData) => string;
+  isExpanded?: (row: TData) => boolean;
   onSelect?: (row: TData) => void;
   selectedId?: string | null;
   pageSize?: number;
+  renderExpandedContent?: (row: TData) => ReactNode;
 };
 
 export function DataTable<TData>({
@@ -38,9 +40,11 @@ export function DataTable<TData>({
   data,
   emptyMessage,
   getRowId,
+  isExpanded,
   onSelect,
   selectedId,
   pageSize = 30,
+  renderExpandedContent,
 }: DataTableProps<TData>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [pagination, setPagination] = useState<PaginationState>({
@@ -122,24 +126,39 @@ export function DataTable<TData>({
             table.getRowModel().rows.map((row) => {
               const rowId = selectedId ?? "";
               const isSelected = rowId && row.id === rowId;
+              const expandedContent =
+                renderExpandedContent && isExpanded?.(row.original)
+                  ? renderExpandedContent(row.original)
+                  : null;
 
               return (
-                <TableRow
-                  key={row.id}
-                  data-state={isSelected ? "selected" : undefined}
-                  className={cn(
-                    "border-border/60",
-                    onSelect ? "cursor-pointer" : "",
-                    isSelected ? "bg-accent/60" : "hover:bg-accent/30",
-                  )}
-                  onClick={onSelect ? () => onSelect(row.original) : undefined}
-                >
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id} className="px-3 py-2">
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </TableCell>
-                  ))}
-                </TableRow>
+                <Fragment key={row.id}>
+                  <TableRow
+                    data-state={isSelected ? "selected" : undefined}
+                    className={cn(
+                      "border-border/60",
+                      onSelect ? "cursor-pointer" : "",
+                      isSelected ? "bg-accent/60" : "hover:bg-accent/30",
+                    )}
+                    onClick={onSelect ? () => onSelect(row.original) : undefined}
+                  >
+                    {row.getVisibleCells().map((cell) => (
+                      <TableCell key={cell.id} className="px-3 py-2">
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                  {expandedContent ? (
+                    <TableRow className="border-border/60 bg-muted/15 hover:bg-muted/15">
+                      <TableCell
+                        colSpan={row.getVisibleCells().length}
+                        className="px-3 py-0"
+                      >
+                        {expandedContent}
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
+                </Fragment>
               );
             })
           ) : (

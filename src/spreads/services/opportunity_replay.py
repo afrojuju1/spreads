@@ -60,6 +60,8 @@ CARRY_MAX_POSITIONS_PER_SYMBOL = 2
 RECOVERY_TOP = 12
 RECOVERY_PER_STRATEGY = 3
 
+UNKNOWN_BUCKET_ORDER = 99
+
 
 class OpportunityReplayLookupError(LookupError):
     pass
@@ -83,6 +85,91 @@ def _as_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _ratio_or_none(numerator: Any, denominator: Any) -> float | None:
+    resolved_numerator = _as_float(numerator)
+    resolved_denominator = _as_float(denominator)
+    if (
+        resolved_numerator is None
+        or resolved_denominator is None
+        or resolved_denominator <= 0.0
+    ):
+        return None
+    return round(resolved_numerator / resolved_denominator, 4)
+
+
+def _entry_return_on_risk_bucket(value: Any) -> tuple[str, int]:
+    resolved = _as_float(value)
+    if resolved is None:
+        return "unknown", UNKNOWN_BUCKET_ORDER
+    if resolved < 0.08:
+        return "<0.08", 0
+    if resolved < 0.10:
+        return "0.08-0.10", 1
+    if resolved < 0.12:
+        return "0.10-0.12", 2
+    if resolved < 0.14:
+        return "0.12-0.14", 3
+    if resolved < 0.16:
+        return "0.14-0.16", 4
+    if resolved < 0.20:
+        return "0.16-0.20", 5
+    return "0.20+", 6
+
+
+def _midpoint_credit_bucket(value: Any) -> tuple[str, int]:
+    resolved = _as_float(value)
+    if resolved is None:
+        return "unknown", UNKNOWN_BUCKET_ORDER
+    if resolved < 0.10:
+        return "<0.10", 0
+    if resolved < 0.15:
+        return "0.10-0.14", 1
+    if resolved < 0.20:
+        return "0.15-0.19", 2
+    if resolved < 0.25:
+        return "0.20-0.24", 3
+    if resolved < 0.35:
+        return "0.25-0.34", 4
+    if resolved < 0.50:
+        return "0.35-0.49", 5
+    return "0.50+", 6
+
+
+def _width_bucket(value: Any) -> tuple[str, int]:
+    resolved = _as_float(value)
+    if resolved is None:
+        return "unknown", UNKNOWN_BUCKET_ORDER
+    if resolved <= 1.0:
+        return "<=1.00", 0
+    if resolved <= 2.0:
+        return "1.01-2.00", 1
+    if resolved <= 3.0:
+        return "2.01-3.00", 2
+    if resolved <= 5.0:
+        return "3.01-5.00", 3
+    return ">5.00", 4
+
+
+def _dte_bucket(value: Any) -> tuple[str, int]:
+    resolved = _as_float(value)
+    if resolved is None:
+        return "unknown", UNKNOWN_BUCKET_ORDER
+    dte = int(resolved)
+    if dte <= 0:
+        return "0", 0
+    if dte <= 2:
+        return "1-2", 1
+    if dte <= 5:
+        return "3-5", 2
+    if dte <= 10:
+        return "6-10", 3
+    if dte <= 20:
+        return "11-20", 4
+    if dte <= 45:
+        return "21-45", 5
+    return "46+", 6
 
 
 def _normalize_legacy_selection_state(value: Any) -> str | None:
@@ -1175,6 +1262,7 @@ def _build_opportunities(
                 "data_status": _as_text(candidate.get("data_status")),
                 "calendar_status": _as_text(candidate.get("calendar_status")),
                 "days_to_expiration": candidate.get("days_to_expiration"),
+                "width": _as_float(candidate.get("width")),
                 "midpoint_credit": _as_float(candidate.get("midpoint_credit")),
                 "natural_credit": _as_float(candidate.get("natural_credit")),
                 "selection_source": _as_text(candidate.get("selection_source")),
@@ -2028,6 +2116,50 @@ def _summarize_outcome_rows(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
         weighted_total = sum(float(row.get(total_field) or 0.0) for row in rows)
         return round(weighted_total / weighted_count, 4)
 
+    def _average_ratio(field: str) -> float | None:
+        values = [float(row[field]) for row in rows if row.get(field) is not None]
+        if not values:
+            return None
+        return round(mean(values), 4)
+
+    def _pooled_return_on_risk(pnl_field: str) -> tuple[float | None, float]:
+        numerator_total = 0.0
+        denominator_total = 0.0
+        for row in rows:
+            pnl_value = _as_float(row.get(pnl_field))
+            max_loss = _as_float(row.get("max_loss"))
+            if pnl_value is None or max_loss is None or max_loss <= 0.0:
+                continue
+            numerator_total += pnl_value
+            denominator_total += max_loss
+        if denominator_total <= 0.0:
+            return None, 0.0
+        return round(numerator_total / denominator_total, 4), round(
+            denominator_total, 2
+        )
+
+    pooled_estimated_final_ror, estimated_final_max_loss_total = (
+        _pooled_return_on_risk("estimated_pnl")
+    )
+    pooled_estimated_close_ror, estimated_close_max_loss_total = (
+        _pooled_return_on_risk("estimated_close_pnl")
+    )
+    pooled_actual_net_ror, actual_max_loss_total = _pooled_return_on_risk(
+        "actual_net_pnl"
+    )
+    (
+        pooled_actual_minus_estimated_close_ror,
+        actual_minus_close_max_loss_total,
+    ) = _pooled_return_on_risk("actual_minus_estimated_close_pnl")
+    overall_max_loss_total = round(
+        sum(
+            max(_as_float(row.get("max_loss")) or 0.0, 0.0)
+            for row in rows
+            if _as_float(row.get("max_loss")) is not None
+        ),
+        2,
+    )
+
     return {
         "average_estimated_pnl": None if not pnl_values else round(mean(pnl_values), 4),
         "estimated_pnl_count": len(modeled_final_rows),
@@ -2181,6 +2313,27 @@ def _summarize_outcome_rows(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
             4,
         ),
         "actual_minus_estimated_close_count": len(actual_minus_close_rows),
+        "max_loss_total": overall_max_loss_total,
+        "average_estimated_final_return_on_risk": _average_ratio(
+            "estimated_final_return_on_risk"
+        ),
+        "pooled_estimated_final_return_on_risk": pooled_estimated_final_ror,
+        "estimated_final_return_on_risk_max_loss_total": estimated_final_max_loss_total,
+        "average_estimated_close_return_on_risk": _average_ratio(
+            "estimated_close_return_on_risk"
+        ),
+        "pooled_estimated_close_return_on_risk": pooled_estimated_close_ror,
+        "estimated_close_return_on_risk_max_loss_total": estimated_close_max_loss_total,
+        "average_actual_net_return_on_risk": _average_ratio(
+            "actual_net_return_on_risk"
+        ),
+        "pooled_actual_net_return_on_risk": pooled_actual_net_ror,
+        "actual_net_return_on_risk_max_loss_total": actual_max_loss_total,
+        "average_actual_minus_estimated_close_return_on_risk": _average_ratio(
+            "actual_minus_estimated_close_return_on_risk"
+        ),
+        "pooled_actual_minus_estimated_close_return_on_risk": pooled_actual_minus_estimated_close_ror,
+        "actual_minus_estimated_close_return_on_risk_max_loss_total": actual_minus_close_max_loss_total,
     }
 
 
@@ -2238,6 +2391,19 @@ def _flatten_opportunity_rows(
     for opportunity in opportunities:
         allocation = allocation_by_id.get(opportunity.opportunity_id)
         outcome = outcome_matches.get(opportunity.opportunity_id, {})
+        max_loss = _as_float(opportunity.max_loss)
+        entry_return_on_risk = _as_float(opportunity.expected_edge_value)
+        midpoint_credit = _as_float(opportunity.evidence.get("midpoint_credit"))
+        width = _as_float(opportunity.evidence.get("width"))
+        days_to_expiration = _as_float(opportunity.evidence.get("days_to_expiration"))
+        entry_ror_bucket, entry_ror_bucket_order = _entry_return_on_risk_bucket(
+            entry_return_on_risk
+        )
+        midpoint_credit_bucket, midpoint_credit_bucket_order = (
+            _midpoint_credit_bucket(midpoint_credit)
+        )
+        width_bucket, width_bucket_order = _width_bucket(width)
+        dte_bucket, dte_bucket_order = _dte_bucket(days_to_expiration)
         rows.append(
             {
                 "label": session.get("label"),
@@ -2246,11 +2412,27 @@ def _flatten_opportunity_rows(
                 "candidate_id": opportunity.candidate_id,
                 "opportunity_id": opportunity.opportunity_id,
                 "symbol": opportunity.symbol,
+                "style_profile": opportunity.style_profile,
                 "strategy_family": opportunity.strategy_family,
                 "legacy_strategy": opportunity.legacy_strategy,
                 "expiration_date": opportunity.expiration_date,
                 "short_symbol": opportunity.short_symbol,
                 "long_symbol": opportunity.long_symbol,
+                "max_loss": max_loss,
+                "entry_return_on_risk": entry_return_on_risk,
+                "entry_return_on_risk_bucket": entry_ror_bucket,
+                "entry_return_on_risk_bucket_order": entry_ror_bucket_order,
+                "midpoint_credit": midpoint_credit,
+                "midpoint_credit_bucket": midpoint_credit_bucket,
+                "midpoint_credit_bucket_order": midpoint_credit_bucket_order,
+                "width": width,
+                "width_bucket": width_bucket,
+                "width_bucket_order": width_bucket_order,
+                "days_to_expiration": None
+                if days_to_expiration is None
+                else int(days_to_expiration),
+                "dte_bucket": dte_bucket,
+                "dte_bucket_order": dte_bucket_order,
                 "legacy_selection_state": opportunity.legacy_selection_state,
                 "rank": opportunity.rank,
                 "state": opportunity.state,
@@ -2268,6 +2450,14 @@ def _flatten_opportunity_rows(
                 "estimated_close_pnl": outcome.get("estimated_close_pnl"),
                 "estimated_expiry_pnl": outcome.get("estimated_expiry_pnl"),
                 "estimated_pnl": outcome.get("estimated_pnl"),
+                "estimated_close_return_on_risk": _ratio_or_none(
+                    outcome.get("estimated_close_pnl"),
+                    max_loss,
+                ),
+                "estimated_final_return_on_risk": _ratio_or_none(
+                    outcome.get("estimated_pnl"),
+                    max_loss,
+                ),
                 "positive_outcome": outcome.get("positive_outcome"),
                 "outcome_bucket": outcome.get("outcome_bucket"),
                 "replay_verdict": outcome.get("replay_verdict"),
@@ -2284,9 +2474,17 @@ def _flatten_opportunity_rows(
                 "actual_realized_pnl": outcome.get("actual_realized_pnl"),
                 "actual_unrealized_pnl": outcome.get("actual_unrealized_pnl"),
                 "actual_net_pnl": outcome.get("actual_net_pnl"),
+                "actual_net_return_on_risk": _ratio_or_none(
+                    outcome.get("actual_net_pnl"),
+                    max_loss,
+                ),
                 "actual_positive_outcome": outcome.get("actual_positive_outcome"),
                 "actual_minus_estimated_close_pnl": outcome.get(
                     "actual_minus_estimated_close_pnl"
+                ),
+                "actual_minus_estimated_close_return_on_risk": _ratio_or_none(
+                    outcome.get("actual_minus_estimated_close_pnl"),
+                    max_loss,
                 ),
                 "execution_attempted": outcome.get("execution_attempted"),
                 "execution_attempt_ids": outcome.get("execution_attempt_ids"),
@@ -2361,6 +2559,7 @@ def _aggregate_dimension_rows(
     rows: list[dict[str, Any]],
     *,
     field: str,
+    order_field: str | None = None,
 ) -> list[dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
@@ -2402,8 +2601,53 @@ def _aggregate_dimension_rows(
                 **metrics,
             }
         )
-    result.sort(key=lambda row: (-int(row["count"]), row["group_value"]))
+    if order_field is not None:
+        result.sort(
+            key=lambda row: (
+                min(
+                    int(group_row.get(order_field) or UNKNOWN_BUCKET_ORDER)
+                    for group_row in grouped[row["group_value"]]
+                ),
+                row["group_value"],
+            )
+        )
+    else:
+        result.sort(key=lambda row: (-int(row["count"]), row["group_value"]))
     return result
+
+
+def _build_deployment_quality_views(
+    rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    matched_rows = [row for row in rows if row.get("matched_outcome")]
+    return {
+        "count": len(rows),
+        "matched_count": len(matched_rows),
+        "coverage_rate": None if not rows else round(len(matched_rows) / len(rows), 4),
+        **_summarize_outcome_rows(rows),
+        "by_profile": _aggregate_dimension_rows(rows, field="style_profile"),
+        "by_strategy_family": _aggregate_dimension_rows(rows, field="strategy_family"),
+        "by_entry_return_on_risk_bucket": _aggregate_dimension_rows(
+            rows,
+            field="entry_return_on_risk_bucket",
+            order_field="entry_return_on_risk_bucket_order",
+        ),
+        "by_midpoint_credit_bucket": _aggregate_dimension_rows(
+            rows,
+            field="midpoint_credit_bucket",
+            order_field="midpoint_credit_bucket_order",
+        ),
+        "by_width_bucket": _aggregate_dimension_rows(
+            rows,
+            field="width_bucket",
+            order_field="width_bucket_order",
+        ),
+        "by_dte_bucket": _aggregate_dimension_rows(
+            rows,
+            field="dte_bucket",
+            order_field="dte_bucket_order",
+        ),
+    }
 
 
 def _build_scorecard(
@@ -2961,6 +3205,14 @@ def build_opportunity_replay(
         comparison=comparison,
         outcome_matches=outcome_matches,
     )
+    scorecard["deployment_quality"] = {
+        "allocator_selected": _build_deployment_quality_views(
+            [row for row in rows if row.get("is_allocator_selected")]
+        ),
+        "actual_deployed": _build_deployment_quality_views(
+            [row for row in rows if row.get("actual_position_matched")]
+        ),
+    }
     if analysis_run is not None:
         matched_count = sum(
             1 for match in outcome_matches.values() if bool(match.get("matched"))
@@ -3281,6 +3533,14 @@ def build_recent_opportunity_replay_batch(
         "by_label": _aggregate_dimension_rows(all_rows, field="label"),
         "by_family": _aggregate_dimension_rows(all_rows, field="strategy_family"),
         "by_symbol": _aggregate_dimension_rows(all_rows, field="symbol"),
+        "deployment_quality": {
+            "allocator_selected": _build_deployment_quality_views(
+                [row for row in all_rows if row.get("is_allocator_selected")]
+            ),
+            "actual_deployed": _build_deployment_quality_views(
+                [row for row in all_rows if row.get("actual_position_matched")]
+            ),
+        },
     }
     warnings: list[str] = []
     if session_count < recent:

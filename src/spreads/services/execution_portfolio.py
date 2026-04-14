@@ -70,23 +70,30 @@ def _quote_payload(quote: LiveOptionQuote, *, source: str) -> dict[str, Any]:
     }
 
 
-def _fetch_latest_quotes(symbols: list[str]) -> tuple[dict[str, LiveOptionQuote], dict[str, str], str | None]:
+def fetch_latest_option_quotes(
+    symbols: list[str],
+    *,
+    client: Any | None = None,
+    feeds: tuple[str, ...] = QUOTE_FEEDS,
+) -> tuple[dict[str, LiveOptionQuote], dict[str, str], str | None]:
     if not symbols:
         return {}, {}, None
-    try:
-        client = create_alpaca_client_from_env()
-    except Exception as exc:
-        return {}, {}, str(exc)
+    resolved_client = client
+    if resolved_client is None:
+        try:
+            resolved_client = create_alpaca_client_from_env()
+        except Exception as exc:
+            return {}, {}, str(exc)
     quotes: dict[str, LiveOptionQuote] = {}
     sources: dict[str, str] = {}
     errors: list[str] = []
 
-    for feed in QUOTE_FEEDS:
+    for feed in feeds:
         pending = [symbol for symbol in symbols if symbol not in quotes]
         if not pending:
             break
         try:
-            response = client.get_latest_option_quotes(pending, feed=feed)
+            response = resolved_client.get_latest_option_quotes(pending, feed=feed)
         except Exception as exc:
             errors.append(f"{feed}: {exc}")
             continue
@@ -100,10 +107,13 @@ def _fetch_latest_quotes(symbols: list[str]) -> tuple[dict[str, LiveOptionQuote]
     return quotes, sources, error_text
 
 
-def _mark_source_for_symbols(sources: dict[str, str], short_symbol: str, long_symbol: str) -> str | None:
+def resolve_quote_source_for_symbols(
+    sources: dict[str, str],
+    *symbols: str,
+) -> str | None:
     values = {
         sources[symbol]
-        for symbol in (short_symbol, long_symbol)
+        for symbol in symbols
         if symbol in sources and sources[symbol]
     }
     if not values:
@@ -111,6 +121,44 @@ def _mark_source_for_symbols(sources: dict[str, str], short_symbol: str, long_sy
     if len(values) == 1:
         return next(iter(values))
     return "mixed"
+
+
+def build_credit_spread_quote_snapshot(
+    *,
+    short_symbol: str,
+    long_symbol: str,
+    client: Any | None = None,
+    feeds: tuple[str, ...] = QUOTE_FEEDS,
+) -> tuple[dict[str, Any] | None, str | None]:
+    quotes, sources, error_text = fetch_latest_option_quotes(
+        [short_symbol, long_symbol],
+        client=client,
+        feeds=feeds,
+    )
+    short_quote = quotes.get(short_symbol)
+    long_quote = quotes.get(long_symbol)
+    if short_quote is None or long_quote is None:
+        return None, error_text
+
+    return (
+        {
+            "short_symbol": short_symbol,
+            "long_symbol": long_symbol,
+            "midpoint_credit": round(short_quote.midpoint - long_quote.midpoint, 4),
+            "natural_credit": round(short_quote.bid - long_quote.ask, 4),
+            "short_bid": short_quote.bid,
+            "short_ask": short_quote.ask,
+            "long_bid": long_quote.bid,
+            "long_ask": long_quote.ask,
+            "captured_at": _max_timestamp(short_quote.timestamp, long_quote.timestamp),
+            "quote_source": resolve_quote_source_for_symbols(
+                sources,
+                short_symbol,
+                long_symbol,
+            ),
+        },
+        error_text,
+    )
 
 
 def _sum_or_none(values: list[float | None]) -> float | None:
@@ -196,7 +244,7 @@ def refresh_session_position_marks(
             if symbol
         }
     )
-    quotes, sources, mark_error = _fetch_latest_quotes(quote_symbols)
+    quotes, sources, mark_error = fetch_latest_option_quotes(quote_symbols)
     retrieved_at = _utc_now()
     updated_position_count = 0
     quoted_position_count = 0
@@ -220,7 +268,11 @@ def refresh_session_position_marks(
         execution_store.update_session_position(
             session_position_id=str(position["session_position_id"]),
             close_mark=_round_money(spread_mark_close),
-            close_mark_source=_mark_source_for_symbols(sources, short_symbol, long_symbol),
+            close_mark_source=resolve_quote_source_for_symbols(
+                sources,
+                short_symbol,
+                long_symbol,
+            ),
             close_marked_at=_max_timestamp(short_quote.timestamp, long_quote.timestamp),
             unrealized_pnl=_round_money(unrealized_pnl),
             updated_at=retrieved_at,

@@ -22,6 +22,8 @@ from spreads.runtime.redis import build_redis_settings
 from spreads.services.alpaca import create_alpaca_client_from_env
 from spreads.services.candidate_policy import (
     candidate_has_intraday_setup_context,
+    resolve_candidate_profile,
+    resolve_deployment_quality_thresholds,
 )
 from spreads.services.control_plane import (
     OPEN_ACTIVITY_AUTO,
@@ -46,6 +48,7 @@ from spreads.services.execution_lifecycle import (
     resolve_execution_submit_job_run_id,
     resolve_execution_attempt_source_job,
 )
+from spreads.services.execution_portfolio import build_credit_spread_quote_snapshot
 from spreads.services.runtime_identity import (
     build_live_session_id,
     build_pipeline_id,
@@ -611,6 +614,115 @@ def _resolve_reactive_auto_execution(
     }
 
 
+def _credit_spread_return_on_risk(
+    *,
+    midpoint_credit: float | None,
+    width: float | None,
+) -> float | None:
+    if (
+        midpoint_credit is None
+        or width is None
+        or midpoint_credit <= 0
+        or width <= 0
+        or midpoint_credit >= width
+    ):
+        return None
+    return round(midpoint_credit / (width - midpoint_credit), 4)
+
+
+def _validate_live_deployment_quality(
+    *,
+    candidate_payload: Mapping[str, Any],
+    client: Any | None = None,
+) -> dict[str, Any]:
+    profile = resolve_candidate_profile(candidate_payload)
+    thresholds = resolve_deployment_quality_thresholds(profile)
+    minimum_return_on_risk = _coerce_float(
+        thresholds.get("min_execution_return_on_risk")
+    )
+    if minimum_return_on_risk is None:
+        return {
+            "ok": True,
+            "profile": profile,
+        }
+
+    short_symbol = _as_text(candidate_payload.get("short_symbol"))
+    long_symbol = _as_text(candidate_payload.get("long_symbol"))
+    width = _coerce_float(candidate_payload.get("width"))
+    if short_symbol is None or long_symbol is None or width is None or width <= 0:
+        return {
+            "ok": False,
+            "reason": "live_deployment_quality_unavailable",
+            "message": (
+                "Open execution is blocked because the candidate is missing spread "
+                "geometry for live deployment validation."
+            ),
+            "profile": profile,
+        }
+
+    live_snapshot, error_text = build_credit_spread_quote_snapshot(
+        short_symbol=short_symbol,
+        long_symbol=long_symbol,
+        client=client,
+    )
+    if live_snapshot is None:
+        return {
+            "ok": False,
+            "reason": "live_quotes_unavailable",
+            "message": (
+                "Open execution is blocked because a current two-leg live quote "
+                "snapshot is unavailable."
+            ),
+            "profile": profile,
+            "quote_error": error_text,
+        }
+
+    live_midpoint_credit = _normalize_credit_limit(live_snapshot.get("midpoint_credit"))
+    live_return_on_risk = _credit_spread_return_on_risk(
+        midpoint_credit=live_midpoint_credit,
+        width=width,
+    )
+    if live_midpoint_credit is None or live_return_on_risk is None:
+        return {
+            "ok": False,
+            "reason": "live_quotes_not_executable",
+            "message": (
+                "Open execution is blocked because the live spread quotes were not executable."
+            ),
+            "profile": profile,
+            "live_quote": live_snapshot,
+        }
+
+    if live_return_on_risk < minimum_return_on_risk:
+        return {
+            "ok": False,
+            "reason": "live_return_on_risk_below_floor",
+            "message": (
+                "Open execution is blocked because live return on risk "
+                f"{live_return_on_risk:.4f} is below the deployment floor "
+                f"{minimum_return_on_risk:.4f}."
+            ),
+            "profile": profile,
+            "live_quote": {
+                **live_snapshot,
+                "width": width,
+                "live_return_on_risk": live_return_on_risk,
+                "minimum_return_on_risk": minimum_return_on_risk,
+            },
+        }
+
+    return {
+        "ok": True,
+        "profile": profile,
+        "live_quote": {
+            **live_snapshot,
+            "width": width,
+            "live_return_on_risk": live_return_on_risk,
+            "minimum_return_on_risk": minimum_return_on_risk,
+        },
+    }
+
+
 def _resolve_open_limit_price(
     *,
     candidate_payload: dict[str, Any],
@@ -707,6 +819,27 @@ def _classify_auto_execution_block(exc: Exception) -> dict[str, Any] | None:
             "reason": "environment_blocked",
             "message": message,
             "block_category": "environment",
+        }
+    if (
+        message
+        == "Open execution is blocked because a current two-leg live quote snapshot is unavailable."
+    ):
+        return {
+            "reason": "live_quotes_unavailable",
+            "message": message,
+            "block_category": "deployment_quality",
+        }
+    if message == "Open execution is blocked because the live spread quotes were not executable.":
+        return {
+            "reason": "live_quotes_not_executable",
+            "message": message,
+            "block_category": "deployment_quality",
+        }
+    if message.startswith("Open execution is blocked because live return on risk "):
+        return {
+            "reason": "live_return_on_risk_below_floor",
+            "message": message,
+            "block_category": "deployment_quality",
         }
     return None
 
@@ -1840,6 +1973,11 @@ def submit_live_session_execution(
             execution_policy=resolved_execution_policy,
             client_order_id=client_order_id,
         )
+        live_deployment_quality = _validate_live_deployment_quality(
+            candidate_payload=dict(candidate.get("candidate") or {}),
+        )
+        if not live_deployment_quality["ok"]:
+            raise ValueError(str(live_deployment_quality["message"]))
         requested_risk_policy = _requested_policy_payload(
             request_metadata=request_metadata,
             policy_name="risk_policy",
@@ -2491,6 +2629,39 @@ def run_execution_submit(
     if callable(heartbeat):
         heartbeat()
     client = create_alpaca_client_from_env()
+    if str(payload.get("trade_intent") or OPEN_TRADE_INTENT) == OPEN_TRADE_INTENT:
+        live_deployment_quality = _validate_live_deployment_quality(
+            candidate_payload=dict(payload.get("candidate") or {}),
+            client=client,
+        )
+        if not live_deployment_quality["ok"]:
+            execution_store.update_attempt(
+                execution_attempt_id=execution_attempt_id,
+                status="failed",
+                completed_at=_utc_now(),
+                error_text=str(live_deployment_quality["message"]),
+                session_position_id=_as_text(payload.get("session_position_id")),
+            )
+            failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
+            _publish_execution_attempt_event(
+                failed_attempt,
+                message=(
+                    "Execution failed before submission: "
+                    f"{live_deployment_quality['message']}"
+                ),
+            )
+            return {
+                "status": "blocked",
+                "reason": str(live_deployment_quality["reason"]),
+                "execution_attempt_id": execution_attempt_id,
+                "message": str(live_deployment_quality["message"]),
+                "attempt": failed_attempt,
+                **(
+                    {}
+                    if live_deployment_quality.get("live_quote") is None
+                    else {"live_quote": dict(live_deployment_quality["live_quote"])}
+                ),
+            }
     requested_at = _as_text(payload.get("requested_at")) or _utc_now()
     client_order_id = _as_text(payload.get("client_order_id"))
 
