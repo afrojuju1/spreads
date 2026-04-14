@@ -112,14 +112,14 @@ def _fresh_slot(row: Mapping[str, Any]) -> bool:
     if str(row.get("status") or "") != LIVE_SLOT_STATUS_SUCCEEDED:
         return False
     capture_status = str(row.get("capture_status") or "").strip().lower()
-    return capture_status == "healthy"
+    return capture_status in {"healthy", "idle"}
 
 
 def _resume_eligible_slot(row: Mapping[str, Any]) -> bool:
     if str(row.get("status") or "") != LIVE_SLOT_STATUS_SUCCEEDED:
         return False
     capture_status = str(row.get("capture_status") or "").strip().lower()
-    return capture_status in {"healthy", "baseline_only"}
+    return capture_status in {"healthy", "baseline_only", "idle"}
 
 
 def resolve_live_slot_stale_after_seconds(interval_seconds: int | None) -> int:

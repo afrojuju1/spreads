@@ -77,7 +77,10 @@ def _derive_runtime_status(
         return "degraded"
     if status == "succeeded":
         capture_status = str(latest_run.get("capture_status") or "")
-        status = "healthy" if capture_status == "healthy" else "degraded"
+        if capture_status in {"healthy", "idle"}:
+            status = "healthy" if capture_status == "healthy" else "idle"
+        else:
+            status = "degraded"
         return "degraded" if gap_active and status != "running" else status
     status = "idle"
     return "degraded" if gap_active and status != "running" else status

@@ -246,8 +246,11 @@ def _collector_status(run: Mapping[str, Any] | None) -> str:
         return "blocked"
     if str(run.get("status") or "") != "succeeded":
         return "degraded"
-    if str(run.get("capture_status") or "") == "healthy":
+    capture_status = str(run.get("capture_status") or "")
+    if capture_status == "healthy":
         return "healthy"
+    if capture_status == "idle":
+        return "idle"
     return "degraded"
 
 
@@ -259,7 +262,7 @@ def _collector_requires_attention(
     if run is None:
         return True
     collector_status = _collector_status(run)
-    if collector_status == "healthy":
+    if collector_status in {"healthy", "idle"}:
         return False
     return _is_recent(
         run.get("slot_at")
@@ -756,7 +759,7 @@ def _job_run_operator_status(
                     or "Live collector actions are blocked.",
                 )
             capture_status = str(run.get("capture_status") or "").strip().lower()
-            if capture_status and capture_status != "healthy":
+            if capture_status and capture_status not in {"healthy", "idle"}:
                 return (
                     "degraded",
                     f"Live collector capture finished as {capture_status}.",
@@ -2430,6 +2433,8 @@ def _uoa_quote_status(
         if expected_count > 0 and liquid_count <= 0:
             return "degraded", "Expected UOA contracts have no liquid quotes."
         return "healthy", None
+    if capture_status == "idle":
+        return "idle", None
     if capture_status == "baseline_only":
         return "degraded", "UOA quote capture fell back to baseline-only quotes."
     if capture_status == "recovery_only":
@@ -2453,6 +2458,8 @@ def _uoa_trade_status(
 
     if capture_status == "healthy":
         return "healthy", None
+    if capture_status == "idle":
+        return "idle", None
     if capture_status == "baseline_only" and raw_trade_count > 0:
         return (
             "degraded",

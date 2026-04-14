@@ -317,6 +317,19 @@ def _capture_candidate_identity(candidate: dict[str, Any]) -> tuple[str, str, st
     )
 
 
+def _opportunity_is_live_capture_eligible(opportunity: dict[str, Any]) -> bool:
+    eligibility = (
+        str(
+            opportunity.get("eligibility_state")
+            or opportunity.get("eligibility")
+            or "live"
+        )
+        .strip()
+        .lower()
+    )
+    return eligibility == "live"
+
+
 def build_capture_candidates(
     *,
     promotable_candidates: list[dict[str, Any]],
@@ -352,6 +365,7 @@ def build_capture_candidates(
             for item in opportunities
             if isinstance(item, dict)
             and str(item.get("selection_state") or "") in {"promotable", "monitor"}
+            and _opportunity_is_live_capture_eligible(item)
         ),
         key=lambda item: (
             int(item.get("selection_rank") or 999_999),

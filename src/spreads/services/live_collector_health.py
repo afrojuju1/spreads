@@ -167,7 +167,9 @@ def build_quote_capture_summary(
     recovery = max(int(recovery_quote_events_saved), 0)
     recovery_used = recovery > 0
 
-    if total <= 0:
+    if total <= 0 and not expected_symbols:
+        capture_status = "idle"
+    elif total <= 0:
         capture_status = "empty"
     elif stream > 0:
         capture_status = "healthy"
@@ -210,7 +212,9 @@ def build_trade_capture_summary(
         0,
     )
 
-    if total <= 0:
+    if total <= 0 and not expected_symbols:
+        capture_status = "idle"
+    elif total <= 0:
         capture_status = "empty"
     elif stream > 0:
         capture_status = "healthy"
