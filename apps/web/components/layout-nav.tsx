@@ -34,6 +34,14 @@ export const LAYOUT_NAV_ITEMS = [
 ];
 
 export function resolveActiveLayoutItem(pathname: string) {
+  if (pathname === "/sessions" || pathname.startsWith("/sessions/")) {
+    return {
+      href: "/sessions",
+      label: "Sessions",
+      caption: "compatibility history",
+      icon: CandlestickChart,
+    };
+  }
   return (
     LAYOUT_NAV_ITEMS.find((item) =>
       pathname === item.href || pathname.startsWith(`${item.href}/`),

@@ -7,6 +7,7 @@ import { CandlestickChart, RefreshCw, Rows3 } from "lucide-react";
 
 import { DataTable } from "@/components/data-table";
 import {
+  buildPipelineHref,
   buildSessionHref,
   getSessions,
   type SessionListItem,
@@ -27,6 +28,7 @@ import {
 
 type SessionListRow = {
   id: string;
+  pipelineId: string | null;
   label: string;
   sessionDate: string;
   status: string;
@@ -40,6 +42,7 @@ type SessionListRow = {
 function buildSessionListRows(sessions: SessionListItem[]): SessionListRow[] {
   return sessions.map((session) => ({
     id: session.session_id,
+    pipelineId: session.pipeline_id ?? null,
     label: session.label,
     sessionDate: session.session_date,
     status: session.status,
@@ -104,12 +107,25 @@ const SESSION_LIST_COLUMNS: ColumnDef<SessionListRow>[] = [
     id: "actions",
     header: "",
     cell: ({ row }) => (
-      <Link
-        href={buildSessionHref(row.original.id)}
-        className={buttonVariants({ variant: "outline", size: "sm" })}
-      >
-        Open
-      </Link>
+      <div className="flex items-center justify-end gap-2">
+        {row.original.pipelineId ? (
+          <Link
+            href={buildPipelineHref(
+              row.original.pipelineId,
+              row.original.sessionDate,
+            )}
+            className={buttonVariants({ variant: "ghost", size: "sm" })}
+          >
+            Pipeline
+          </Link>
+        ) : null}
+        <Link
+          href={buildSessionHref(row.original.id)}
+          className={buttonVariants({ variant: "outline", size: "sm" })}
+        >
+          History
+        </Link>
+      </div>
     ),
   },
 ];
@@ -149,21 +165,26 @@ export function SessionsIndexPageContent() {
               ) : null}
             </div>
             <div className="mt-4 text-3xl font-semibold tracking-[0.02em]">
-              Persisted sessions
+              Session compatibility history
             </div>
             <div className="mt-2 text-sm text-foreground/70">
-              Browse historical and active sessions, then open a single session
-              detail page.
+              Browse the legacy session view built from pipeline cycles. Use
+              pipelines for the canonical runtime workspace.
             </div>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void sessionsQuery.refetch()}
-          >
-            <RefreshCw data-icon="inline-start" />
-            Refresh
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link href="/pipelines" className={buttonVariants({ variant: "outline" })}>
+              Canonical Pipelines
+            </Link>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void sessionsQuery.refetch()}
+            >
+              <RefreshCw data-icon="inline-start" />
+              Refresh
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -175,9 +196,9 @@ export function SessionsIndexPageContent() {
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <MetricTile
-          label="Sessions"
+          label="History Rows"
           value={String(sessions.length)}
-          note="Persisted sessions in storage"
+          note="Compatibility sessions in storage"
         />
         <MetricTile
           label="Latest Session"
@@ -202,16 +223,16 @@ export function SessionsIndexPageContent() {
       </div>
 
       <SectionSurface
-        title="Session List"
-        description="Open a session to inspect opportunities, executions, slots, and post-market analysis."
+        title="Session History"
+        description="Open a compatibility session to inspect historical slot state, executions, and post-market analysis, or jump straight to the canonical pipeline view."
       >
         {!sessions.length ? (
           <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
             <Rows3 className="size-10 text-muted-foreground" />
-            <div className="text-lg font-medium">No persisted sessions found</div>
+            <div className="text-lg font-medium">No session history found</div>
             <div className="max-w-[34rem] text-sm text-muted-foreground">
-              Session history will appear here after live collector slots are
-              persisted.
+              Compatibility session history will appear here after pipeline
+              cycles are persisted.
             </div>
           </div>
         ) : (
@@ -219,7 +240,7 @@ export function SessionsIndexPageContent() {
             columns={SESSION_LIST_COLUMNS}
             data={sessionRows}
             getRowId={(row) => row.id}
-            emptyMessage="No sessions matched the current query."
+            emptyMessage="No session history matched the current query."
           />
         )}
       </SectionSurface>

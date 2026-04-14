@@ -336,6 +336,7 @@ const sessionTuningSchema = z.object({
 const sessionListItemSchema = z
   .object({
     session_id: z.string(),
+    pipeline_id: z.string().nullable().optional(),
     label: z.string(),
     session_date: z.string(),
     status: z.string(),
@@ -579,6 +580,7 @@ const sessionPortfolioSchema = z
 const sessionDetailSchema = z
   .object({
     session_id: z.string(),
+    pipeline_id: z.string().nullable().optional(),
     label: z.string(),
     session_date: z.string(),
     status: z.string(),

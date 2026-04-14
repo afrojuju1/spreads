@@ -16,6 +16,7 @@ import { startTransition, useEffect, useState } from "react";
 
 import { DataTable } from "@/components/data-table";
 import {
+  buildPipelineHref,
   buildSessionHref,
   closeSessionPosition,
   createSessionExecution,
@@ -1292,6 +1293,10 @@ export function SessionDetailPageContent({
   });
 
   const session = sessionDetailQuery.data ?? null;
+  const canonicalPipelineHref = buildPipelineHref(
+    session?.pipeline_id ?? selectedSession?.pipeline_id ?? null,
+    session?.session_date ?? selectedSession?.session_date ?? null,
+  );
   const latestSlotCapture = session?.latest_slot
     ? quoteCapture(session.latest_slot)
     : {};
@@ -1394,7 +1399,7 @@ export function SessionDetailPageContent({
                 className="rounded-full border-border/70 bg-background/80 px-2.5 py-1 text-[11px] uppercase tracking-[0.18em] text-muted-foreground"
               >
                 <CandlestickChart data-icon="inline-start" />
-                Session detail
+                Session history
               </Badge>
               {selectedSession ? (
                 <SessionStatusBadge value={selectedSession.status} />
@@ -1407,7 +1412,7 @@ export function SessionDetailPageContent({
               <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
                 <div className="min-w-0 flex-1">
                   <div className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
-                    Existing sessions
+                    Compatibility sessions
                   </div>
                   <Select
                     value={selectedSessionId ?? undefined}
@@ -1426,7 +1431,7 @@ export function SessionDetailPageContent({
                           <span>
                             {selectedSession
                               ? formatDate(selectedSession.session_date)
-                              : "No persisted sessions were found."}
+                              : "No session history was found."}
                           </span>
                           {selectedSession ? (
                             <span className="font-mono">
@@ -1462,16 +1467,27 @@ export function SessionDetailPageContent({
                   Refresh
                 </Button>
                 <Link
+                  href={canonicalPipelineHref}
+                  className={buttonVariants({ variant: "outline" })}
+                >
+                  Open Pipeline
+                </Link>
+                <Link
                   href="/sessions"
                   className={buttonVariants({ variant: "outline" })}
                 >
-                  All Sessions
+                  Session History
                 </Link>
               </div>
               <div className="text-sm text-foreground/70">
                 {sessions.length
-                  ? `${sessions.length} persisted sessions available in storage.`
-                  : "No persisted sessions were found in storage."}
+                  ? `${sessions.length} compatibility sessions are available in storage.`
+                  : "No compatibility sessions were found in storage."}
+              </div>
+              <div className="rounded-2xl border border-dashed border-border/70 bg-background/75 px-4 py-3 text-sm text-foreground/70">
+                This page preserves the legacy session workflow for history and
+                compatibility. Use the pipeline workspace for the canonical live
+                runtime view.
               </div>
               <div className="rounded-2xl border border-border/70 bg-background/80 px-4 py-4">
                 <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
@@ -1536,12 +1552,12 @@ export function SessionDetailPageContent({
         {sessionDetailQuery.isLoading ? (
           <div className="mt-5 flex items-center gap-2 text-sm text-muted-foreground">
             <LoaderCircle className="size-4 animate-spin" />
-            Loading session detail…
+            Loading session history…
           </div>
         ) : null}
         {sessionDetailQuery.isError ? (
           <div className="app-tone-error mt-5 rounded-2xl border px-4 py-3 text-sm">
-            Session detail could not be loaded.
+            Session history could not be loaded.
           </div>
         ) : null}
       </div>
@@ -1620,14 +1636,15 @@ export function SessionDetailPageContent({
       ) : (
         <SectionSurface
           title="No session selected"
-          description="Select a persisted session to inspect slot health, current opportunities, and analysis."
+          description="Select a compatibility session to inspect slot health, historical opportunities, and analysis."
         >
           <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
             <Rows3 className="size-10 text-muted-foreground" />
-            <div className="text-lg font-medium">No persisted sessions found</div>
+            <div className="text-lg font-medium">No session history found</div>
             <div className="max-w-[34rem] text-sm text-muted-foreground">
-              This page only shows sessions that already exist in storage. Once
-              live collector slots persist, they will appear here automatically.
+              This page only shows compatibility sessions that already exist in
+              storage. Once pipeline cycles persist, they will appear here
+              automatically.
             </div>
           </div>
         </SectionSurface>
