@@ -2139,6 +2139,19 @@ def _flatten_opportunity_rows(
                     .get("post_event_confirmation_signal", {})
                     .get("score")
                 ),
+                "options_bias_alignment": (opportunity.evidence.get("signal_bundle") or {}).get(
+                    "options_bias_alignment"
+                ),
+                "neutral_regime_signal": _as_float(
+                    (opportunity.evidence.get("signal_bundle") or {}).get(
+                        "neutral_regime_signal"
+                    )
+                ),
+                "residual_iv_richness": _as_float(
+                    (opportunity.evidence.get("signal_bundle") or {}).get(
+                        "residual_iv_richness"
+                    )
+                ),
                 "signal_gate_active": bool(
                     (opportunity.evidence.get("signal_gate") or {}).get("active")
                 ),

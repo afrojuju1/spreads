@@ -41,6 +41,8 @@ def _candidate_row(
     options_bias_alignment: bool | None = None,
     debit_width_ratio: float | None = None,
     modeled_move_vs_implied_move: float | None = None,
+    order_legs: list[dict[str, object]] | None = None,
+    candidate_overrides: dict[str, object] | None = None,
 ) -> dict[str, object]:
     candidate = {
         "underlying_symbol": symbol,
@@ -65,7 +67,8 @@ def _candidate_row(
         "midpoint_credit": 1.25,
         "natural_credit": 1.1,
         "order_payload": {
-            "legs": [
+            "legs": order_legs
+            or [
                 {
                     "symbol": short_symbol,
                     "side": "sell",
@@ -93,6 +96,8 @@ def _candidate_row(
         candidate["debit_width_ratio"] = debit_width_ratio
     if modeled_move_vs_implied_move is not None:
         candidate["modeled_move_vs_implied_move"] = modeled_move_vs_implied_move
+    if candidate_overrides:
+        candidate.update(candidate_overrides)
     return {
         "candidate_id": candidate_id,
         "underlying_symbol": symbol,
@@ -221,6 +226,86 @@ class EarningsSignalFlowE2ETests(unittest.TestCase):
         self.assertGreaterEqual(row["pricing_signal"], 0.60)
         self.assertEqual(row["event_state"], "through_event")
         self.assertTrue(row["signal_gate_active"])
+
+    def test_post_event_iron_condor_flows_with_derived_neutral_and_iv_signals(
+        self,
+    ) -> None:
+        payload = _run_replay_flow(
+            [
+                _candidate_row(
+                    candidate_id=3,
+                    symbol="SPY",
+                    strategy="iron_condor",
+                    expiration_date="2026-04-22",
+                    short_symbol="SPY260422P500",
+                    long_symbol="SPY260422P495",
+                    days_to_expiration=8,
+                    earnings_phase="post_event_fresh",
+                    setup_score=62.0,
+                    setup_intraday_score=59.0,
+                    fill_ratio=0.94,
+                    quality_score=90.0,
+                    expected_move_pct=0.033,
+                    order_legs=[
+                        {
+                            "symbol": "SPY260422P500",
+                            "side": "sell",
+                            "position_intent": "open",
+                            "ratio_qty": "1",
+                        },
+                        {
+                            "symbol": "SPY260422P495",
+                            "side": "buy",
+                            "position_intent": "open",
+                            "ratio_qty": "1",
+                        },
+                        {
+                            "symbol": "SPY260422C520",
+                            "side": "sell",
+                            "position_intent": "open",
+                            "ratio_qty": "1",
+                        },
+                        {
+                            "symbol": "SPY260422C525",
+                            "side": "buy",
+                            "position_intent": "open",
+                            "ratio_qty": "1",
+                        },
+                    ],
+                    candidate_overrides={
+                        "earnings_event_date": "2026-04-11",
+                        "setup_status": "neutral",
+                        "setup_spot_vs_vwap_pct": 0.0006,
+                        "setup_intraday_return_pct": 0.0011,
+                        "setup_distance_to_session_extreme_pct": 0.0105,
+                        "setup_opening_range_break_pct": 0.0004,
+                        "setup_latest_close": 505.1,
+                        "setup_opening_range_high": 505.8,
+                        "setup_opening_range_low": 504.4,
+                        "short_implied_volatility": 0.47,
+                        "long_implied_volatility": 0.44,
+                        "dominant_flow": "mixed",
+                    },
+                ),
+            ]
+        )
+
+        strategy_intent = payload["strategy_intents"][0]
+        horizon_intent = payload["horizon_intents"][0]
+        opportunity = payload["opportunities"][0]
+        row = payload["rows"][0]
+
+        self.assertEqual(strategy_intent.strategy_family, "iron_condor")
+        self.assertEqual(strategy_intent.policy_state, "allowed")
+        self.assertEqual(horizon_intent.event_timing_rule, "post_event")
+        self.assertEqual(len(opportunity.legs), 4)
+        self.assertEqual(opportunity.evidence["earnings_phase"], "post_event_fresh")
+        self.assertTrue(opportunity.evidence["signal_gate"]["active"])
+        self.assertTrue(opportunity.evidence["signal_gate"]["eligible"])
+        self.assertGreaterEqual(row["neutral_regime_signal"], 0.60)
+        self.assertGreaterEqual(row["residual_iv_richness"], 0.60)
+        self.assertEqual(row["event_state"], "post_event_fresh")
+        self.assertTrue(row["signal_gate_eligible"])
 
 
 if __name__ == "__main__":

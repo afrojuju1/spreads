@@ -692,6 +692,14 @@ class SpreadCandidate:
     setup_intraday_score: float | None = None
     setup_intraday_minutes: int | None = None
     setup_has_intraday_context: bool = False
+    setup_spot_vs_vwap_pct: float | None = None
+    setup_intraday_return_pct: float | None = None
+    setup_distance_to_session_extreme_pct: float | None = None
+    setup_opening_range_break_pct: float | None = None
+    setup_latest_close: float | None = None
+    setup_vwap: float | None = None
+    setup_opening_range_high: float | None = None
+    setup_opening_range_low: float | None = None
     data_status: str = "clean"
     data_reasons: tuple[str, ...] = ()
     selection_notes: tuple[str, ...] = ()
@@ -1977,6 +1985,14 @@ def attach_underlying_setup(
             setup_intraday_score=setup.intraday_score,
             setup_intraday_minutes=setup.source_window_minutes,
             setup_has_intraday_context=has_intraday_context,
+            setup_spot_vs_vwap_pct=setup.spot_vs_vwap_pct,
+            setup_intraday_return_pct=setup.intraday_return_pct,
+            setup_distance_to_session_extreme_pct=setup.distance_to_session_extreme_pct,
+            setup_opening_range_break_pct=setup.opening_range_break_pct,
+            setup_latest_close=setup.latest_close,
+            setup_vwap=setup.vwap,
+            setup_opening_range_high=setup.opening_range_high,
+            setup_opening_range_low=setup.opening_range_low,
         )
         for candidate in candidates
     ]
@@ -2823,6 +2839,18 @@ def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
         "setup_status",
         "setup_score",
         "setup_reasons",
+        "setup_daily_score",
+        "setup_intraday_score",
+        "setup_intraday_minutes",
+        "setup_has_intraday_context",
+        "setup_spot_vs_vwap_pct",
+        "setup_intraday_return_pct",
+        "setup_distance_to_session_extreme_pct",
+        "setup_opening_range_break_pct",
+        "setup_latest_close",
+        "setup_vwap",
+        "setup_opening_range_high",
+        "setup_opening_range_low",
         "data_status",
         "data_reasons",
         "selection_notes",

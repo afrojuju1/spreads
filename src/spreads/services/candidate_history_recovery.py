@@ -103,6 +103,18 @@ def _serialize_recovered_candidate(
         ),
         "setup_intraday_score": _as_float(setup.get("intraday_score")),
         "setup_intraday_minutes": intraday_minutes,
+        "setup_spot_vs_vwap_pct": _as_float(setup.get("spot_vs_vwap_pct")),
+        "setup_intraday_return_pct": _as_float(setup.get("intraday_return_pct")),
+        "setup_distance_to_session_extreme_pct": _as_float(
+            setup.get("distance_to_session_extreme_pct")
+        ),
+        "setup_opening_range_break_pct": _as_float(
+            setup.get("opening_range_break_pct")
+        ),
+        "setup_latest_close": _as_float(setup.get("latest_close")),
+        "setup_vwap": _as_float(setup.get("vwap")),
+        "setup_opening_range_high": _as_float(setup.get("opening_range_high")),
+        "setup_opening_range_low": _as_float(setup.get("opening_range_low")),
         "selection_source": "session_history_recovery",
         "recovered_from_run_generated_at": run_payload.get("generated_at"),
     }

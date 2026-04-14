@@ -8,6 +8,10 @@ from spreads.services.candidate_policy import (
     candidate_has_intraday_setup_context,
     candidate_requires_favorable_setup,
 )
+from spreads.services.earnings_signal_features import (
+    EARNINGS_SIGNAL_FIELDS,
+    build_earnings_signal_bundle,
+)
 
 TOP_TIER_ETF_SYMBOLS = {"SPY", "QQQ", "IWM", "DIA", "GLD", "TLT"}
 BROAD_ETF_SYMBOLS = {"XLF", "XLE", "XLI", "XLV"}
@@ -47,39 +51,6 @@ SHORT_PREMIUM_FAMILIES = {
     "iron_condor",
 }
 SUPPORTED_EARNINGS_HORIZONS = {"next_daily", "near_term", "post_event"}
-EARNINGS_SIGNAL_FIELDS = (
-    "direction_signal",
-    "jump_risk_signal",
-    "pricing_signal",
-    "post_event_confirmation_signal",
-)
-SIGNAL_SCORE_ALIASES = {
-    "direction_signal": ("direction_signal", "earnings_direction_signal"),
-    "jump_risk_signal": ("jump_risk_signal", "earnings_jump_risk_signal"),
-    "pricing_signal": ("pricing_signal", "earnings_pricing_signal"),
-    "post_event_confirmation_signal": (
-        "post_event_confirmation_signal",
-        "earnings_post_event_confirmation_signal",
-    ),
-}
-SIGNAL_SUBSIGNAL_COUNT_ALIASES = {
-    "direction_signal": (
-        "direction_signal_subsignal_count",
-        "direction_signal_component_count",
-    ),
-    "jump_risk_signal": (
-        "jump_risk_signal_subsignal_count",
-        "jump_risk_signal_component_count",
-    ),
-    "pricing_signal": (
-        "pricing_signal_subsignal_count",
-        "pricing_signal_component_count",
-    ),
-    "post_event_confirmation_signal": (
-        "post_event_confirmation_signal_subsignal_count",
-        "post_event_confirmation_signal_component_count",
-    ),
-}
 
 
 def _clamp(value: float, lower: float, upper: float) -> float:
@@ -109,46 +80,11 @@ def _as_int(value: Any) -> int | None:
     return int(parsed)
 
 
-def _as_bool(value: Any) -> bool | None:
-    if isinstance(value, bool):
-        return value
-    if value in (None, ""):
-        return None
-    normalized = str(value).strip().lower()
-    if normalized in {"true", "1", "yes", "y", "on"}:
-        return True
-    if normalized in {"false", "0", "no", "n", "off"}:
-        return False
-    return None
-
-
 def _normalize_score(value: Any, *, default: float = 0.0) -> float:
     parsed = _as_float(value)
     if parsed is None:
         return default
     return _clamp(parsed / 100.0, 0.0, 1.0)
-
-
-def _normalize_unit_score(value: Any) -> float | None:
-    parsed = _as_float(value)
-    if parsed is None:
-        return None
-    if parsed > 1.0:
-        parsed = parsed / 100.0
-    return round(_clamp(parsed, 0.0, 1.0), 4)
-
-
-def _first_present_value(candidate: Mapping[str, Any], aliases: tuple[str, ...]) -> Any:
-    for alias in aliases:
-        if alias in candidate and candidate.get(alias) not in (None, ""):
-            return candidate.get(alias)
-    return None
-
-
-def _mean_score(values: list[float]) -> float | None:
-    if not values:
-        return None
-    return round(sum(values) / float(len(values)), 4)
 
 
 def resolve_style_profile(
@@ -223,179 +159,6 @@ def candidate_event_timing_rule(candidate: Mapping[str, Any]) -> str:
         "post_event_fresh": "post_event",
         "post_event_settled": "normal_policy",
     }.get(phase, "none")
-
-
-def _is_friday_after_hours_event(candidate: Mapping[str, Any]) -> bool:
-    event_date = _as_text(candidate.get("earnings_event_date"))
-    session_timing = str(candidate.get("earnings_session_timing") or "").strip().lower()
-    if event_date is None or session_timing != "after_close":
-        return False
-    try:
-        return datetime.fromisoformat(event_date).weekday() == 4
-    except ValueError:
-        return False
-
-
-def _derived_direction_signal(candidate: Mapping[str, Any]) -> tuple[float | None, int | None]:
-    components: list[float] = []
-    setup_score = _normalize_unit_score(candidate.get("setup_score"))
-    intraday_score = _normalize_unit_score(candidate.get("setup_intraday_score"))
-    quality_score = _normalize_unit_score(candidate.get("quality_score"))
-    for item in (intraday_score, setup_score, quality_score):
-        if item is not None:
-            components.append(item)
-    score = _mean_score(components)
-    if score is None:
-        return None, None
-    setup_status = str(candidate.get("setup_status") or "").strip().lower()
-    score += {
-        "favorable": 0.08,
-        "neutral": 0.0,
-        "unfavorable": -0.12,
-    }.get(setup_status, 0.0)
-    alignment = _as_bool(candidate.get("options_bias_alignment"))
-    if alignment is True:
-        score += 0.05
-        return round(_clamp(score, 0.0, 1.0), 4), len(components) + 1
-    if alignment is False:
-        score -= 0.05
-        return round(_clamp(score, 0.0, 1.0), 4), len(components) + 1
-    return round(_clamp(score, 0.0, 1.0), 4), len(components)
-
-
-def _volume_oi_score(candidate: Mapping[str, Any]) -> float | None:
-    scores: list[float] = []
-    for volume_key, oi_key in (
-        ("short_volume", "short_open_interest"),
-        ("long_volume", "long_open_interest"),
-    ):
-        volume = _as_float(candidate.get(volume_key))
-        open_interest = _as_float(candidate.get(oi_key))
-        if volume is None or open_interest in (None, 0.0):
-            continue
-        scores.append(_clamp(volume / max(open_interest, 1.0), 0.0, 1.0))
-    return _mean_score(scores)
-
-
-def _derived_jump_risk_signal(candidate: Mapping[str, Any]) -> tuple[float | None, int | None]:
-    components: list[float] = []
-    expected_move_pct = _as_float(candidate.get("expected_move_pct"))
-    if expected_move_pct is not None:
-        components.append(_clamp((expected_move_pct - 0.01) / 0.025, 0.0, 1.0))
-    volume_oi_score = _volume_oi_score(candidate)
-    if volume_oi_score is not None:
-        components.append(volume_oi_score)
-    quality_score = _normalize_unit_score(candidate.get("quality_score"))
-    if quality_score is not None:
-        components.append(_clamp(quality_score * 0.9, 0.0, 1.0))
-    score = _mean_score(components)
-    if score is None:
-        return None, None
-    return round(score, 4), len(components)
-
-
-def _derived_pricing_signal(candidate: Mapping[str, Any]) -> tuple[float | None, int | None]:
-    components: list[float] = []
-    fill_ratio = _as_float(candidate.get("fill_ratio"))
-    if fill_ratio is not None:
-        components.append(_clamp((fill_ratio - 0.6) / 0.35, 0.0, 1.0))
-    debit_width_ratio = _as_float(candidate.get("debit_width_ratio"))
-    if debit_width_ratio is not None:
-        components.append(_clamp((0.70 - debit_width_ratio) / 0.25, 0.0, 1.0))
-    modeled_move_vs_implied_move = _as_float(candidate.get("modeled_move_vs_implied_move"))
-    if modeled_move_vs_implied_move is not None:
-        components.append(_clamp((modeled_move_vs_implied_move - 0.9) / 0.3, 0.0, 1.0))
-    modeled_move_vs_break_even_move = _as_float(
-        candidate.get("modeled_move_vs_break_even_move")
-    )
-    if modeled_move_vs_break_even_move is not None:
-        components.append(
-            _clamp((modeled_move_vs_break_even_move - 0.9) / 0.25, 0.0, 1.0)
-        )
-    score = _mean_score(components)
-    if score is None:
-        return None, None
-    return round(score, 4), len(components)
-
-
-def _derived_post_event_confirmation_signal(
-    candidate: Mapping[str, Any],
-) -> tuple[float | None, int | None]:
-    components: list[float] = []
-    intraday_score = _normalize_unit_score(candidate.get("setup_intraday_score"))
-    setup_score = _normalize_unit_score(candidate.get("setup_score"))
-    quality_score = _normalize_unit_score(candidate.get("quality_score"))
-    for item in (intraday_score, setup_score, quality_score):
-        if item is not None:
-            components.append(item)
-    score = _mean_score(components)
-    if score is None:
-        return None, None
-    setup_status = str(candidate.get("setup_status") or "").strip().lower()
-    score += {
-        "favorable": 0.08,
-        "neutral": 0.0,
-        "unfavorable": -0.12,
-    }.get(setup_status, 0.0)
-    return round(_clamp(score, 0.0, 1.0), 4), len(components)
-
-
-def _derived_signal(
-    field: str,
-    candidate: Mapping[str, Any],
-) -> tuple[float | None, int | None]:
-    if field == "direction_signal":
-        return _derived_direction_signal(candidate)
-    if field == "jump_risk_signal":
-        return _derived_jump_risk_signal(candidate)
-    if field == "pricing_signal":
-        return _derived_pricing_signal(candidate)
-    if field == "post_event_confirmation_signal":
-        return _derived_post_event_confirmation_signal(candidate)
-    return None, None
-
-
-def build_earnings_signal_bundle(candidate: Mapping[str, Any]) -> dict[str, Any]:
-    signals: dict[str, dict[str, Any]] = {}
-    for field in EARNINGS_SIGNAL_FIELDS:
-        explicit_score = _normalize_unit_score(
-            _first_present_value(candidate, SIGNAL_SCORE_ALIASES[field])
-        )
-        explicit_subsignal_count = _as_int(
-            _first_present_value(candidate, SIGNAL_SUBSIGNAL_COUNT_ALIASES[field])
-        )
-        derived_score, derived_subsignal_count = _derived_signal(field, candidate)
-        signals[field] = {
-            "score": explicit_score if explicit_score is not None else derived_score,
-            "subsignal_count": (
-                explicit_subsignal_count
-                if explicit_subsignal_count is not None
-                else derived_subsignal_count
-            ),
-            "source": (
-                "explicit"
-                if explicit_score is not None
-                else ("derived" if derived_score is not None else "missing")
-            ),
-        }
-    return {
-        "signals": signals,
-        "options_bias_alignment": _as_bool(candidate.get("options_bias_alignment")),
-        "debit_width_ratio": _as_float(candidate.get("debit_width_ratio")),
-        "modeled_move_vs_implied_move": _as_float(
-            candidate.get("modeled_move_vs_implied_move")
-        ),
-        "modeled_move_vs_break_even_move": _as_float(
-            candidate.get("modeled_move_vs_break_even_move")
-        ),
-        "neutral_regime_signal": _normalize_unit_score(
-            candidate.get("neutral_regime_signal")
-        ),
-        "residual_iv_richness": _normalize_unit_score(
-            candidate.get("residual_iv_richness")
-        ),
-        "friday_after_hours_event": _is_friday_after_hours_event(candidate),
-    }
 
 
 def earnings_signal_thresholds(
@@ -566,7 +329,7 @@ def evaluate_earnings_signal_gate(
     earnings_phase: str,
     days_to_expiration: int | None,
 ) -> dict[str, Any]:
-    bundle = build_earnings_signal_bundle(candidate)
+    bundle = build_earnings_signal_bundle(candidate, family=family)
     thresholds = earnings_signal_thresholds(
         family=family,
         earnings_phase=earnings_phase,
