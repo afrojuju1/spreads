@@ -37,7 +37,12 @@ from spreads.services.opportunity_execution_plan import (
     rank_opportunities,
 )
 from spreads.services.positions import enrich_position_row
-from spreads.services.opportunity_scoring import build_candidate_opportunity_score
+from spreads.services.opportunity_scoring import (
+    build_candidate_opportunity_score,
+    candidate_earnings_phase,
+    candidate_event_state,
+    candidate_event_timing_rule,
+)
 
 TOP_TIER_ETF_SYMBOLS = {"SPY", "QQQ", "IWM", "DIA", "GLD", "TLT"}
 BROAD_ETF_SYMBOLS = {"XLF", "XLE", "XLI", "XLV"}
@@ -303,10 +308,7 @@ def _vol_level(candidate: Mapping[str, Any]) -> str:
 
 
 def _event_state(candidate: Mapping[str, Any]) -> str:
-    calendar_status = str(candidate.get("calendar_status") or "").strip().lower()
-    if calendar_status in {"clean", ""}:
-        return "clean"
-    return "event_risk"
+    return candidate_event_state(candidate)
 
 
 def _parse_datetime(value: Any) -> datetime | None:
@@ -854,6 +856,9 @@ def _build_regime_snapshots(
                         _as_text(item.get("calendar_status"))
                         for item in symbol_candidates
                     ],
+                    "earnings_phases": [
+                        candidate_earnings_phase(item) for item in symbol_candidates
+                    ],
                     "legacy_profile": cycle.get("profile"),
                     "source": "collector_cycle_candidates",
                 },
@@ -916,6 +921,7 @@ def _build_strategy_intents(
         if str(candidate.get("data_status") or "") != "clean":
             blockers.append("data_quality_not_clean")
         calendar_status = str(candidate.get("calendar_status") or "")
+        earnings_phase = candidate_earnings_phase(candidate)
         if _calendar_blocks_strategy(
             calendar_status=calendar_status,
             style_profile=snapshot.style_profile,
@@ -966,6 +972,8 @@ def _build_strategy_intents(
                     "fill_ratio": _as_float(candidate.get("fill_ratio")),
                     "product_class": product_class,
                     "legacy_strategy": _as_text(candidate.get("strategy")),
+                    "earnings_phase": earnings_phase,
+                    "event_timing_rule": candidate_event_timing_rule(candidate),
                 },
             )
         )
@@ -1011,10 +1019,7 @@ def _build_horizon_intents(
             else ("low" if band == "carry" else "normal")
         )
         event_timing_rule = (
-            "avoid_event"
-            if candidate
-            and str(candidate.get("calendar_status") or "") not in {"", "clean"}
-            else "none"
+            "none" if candidate is None else candidate_event_timing_rule(candidate)
         )
         intents.append(
             HorizonIntent(
@@ -1034,7 +1039,11 @@ def _build_horizon_intents(
                 confidence=round(
                     _clamp(
                         strategy_intent.confidence
-                        - (0.05 if event_timing_rule != "none" else 0.0),
+                        - (
+                            0.05
+                            if event_timing_rule not in {"none", "normal_policy"}
+                            else 0.0
+                        ),
                         0.0,
                         1.0,
                     ),
@@ -1047,6 +1056,9 @@ def _build_horizon_intents(
                     "candidate_expiration_date": None
                     if candidate is None
                     else candidate.get("expiration_date"),
+                    "earnings_phase": None
+                    if candidate is None
+                    else candidate_earnings_phase(candidate),
                 },
             )
         )
@@ -1142,6 +1154,8 @@ def _build_opportunities(
                 "setup_status": _as_text(candidate.get("setup_status")),
                 "data_status": _as_text(candidate.get("data_status")),
                 "calendar_status": _as_text(candidate.get("calendar_status")),
+                "earnings_phase": candidate_earnings_phase(candidate),
+                "event_timing_rule": candidate_event_timing_rule(candidate),
                 "days_to_expiration": candidate.get("days_to_expiration"),
                 "width": _as_float(candidate.get("width")),
                 "midpoint_credit": _as_float(candidate.get("midpoint_credit")),
@@ -2062,6 +2076,8 @@ def _flatten_opportunity_rows(
                 "style_profile": opportunity.style_profile,
                 "strategy_family": opportunity.strategy_family,
                 "legacy_strategy": opportunity.legacy_strategy,
+                "event_state": opportunity.evidence.get("earnings_phase"),
+                "event_timing_rule": opportunity.evidence.get("event_timing_rule"),
                 "expiration_date": opportunity.expiration_date,
                 "short_symbol": opportunity.short_symbol,
                 "long_symbol": opportunity.long_symbol,

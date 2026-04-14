@@ -16,6 +16,7 @@ from .config import (
     SOURCE_CONFIDENCE_RANK,
     SOURCE_FRESHNESS_HOURS,
 )
+from .earnings_phase import resolve_earnings_phase_snapshot
 from .models import (
     CalendarEventContext,
     CalendarEventQuery,
@@ -109,30 +110,34 @@ class CalendarEventResolver:
         confidences: list[str] = []
         reasons: list[CalendarEventReason] = []
         missing_required = False
+        earnings_query = query
 
         for adapter in self.adapters:
             if not adapter.applies_to(query):
                 continue
+            adapter_query = adapter.coverage_query(query)
+            if adapter.source_name == "dolt_earnings_calendar":
+                earnings_query = adapter_query
             freshness_hours = SOURCE_FRESHNESS_HOURS.get(adapter.source_name, 24)
             scope_key = adapter.scope_key(query)
             has_fresh_coverage = self.store.has_fresh_coverage(
                 source=adapter.source_name,
                 scope_key=scope_key,
-                coverage_start=window_start,
-                coverage_end=window_end,
+                coverage_start=adapter_query.window_start,
+                coverage_end=adapter_query.window_end,
                 freshness_hours=freshness_hours,
             )
 
             fetch_error: Exception | None = None
             if refresh or not has_fresh_coverage or adapter.refresh_always:
                 try:
-                    records = adapter.fetch(query)
+                    records = adapter.fetch(adapter_query)
                     self.store.upsert_events(records)
                     self.store.set_refresh_state(
                         source=adapter.source_name,
                         scope_key=scope_key,
-                        coverage_start=window_start,
-                        coverage_end=window_end,
+                        coverage_start=adapter_query.window_start,
+                        coverage_end=adapter_query.window_end,
                         refreshed_at=_utc_now_iso(),
                     )
                 except Exception as exc:
@@ -141,8 +146,8 @@ class CalendarEventResolver:
             has_fresh_coverage = self.store.has_fresh_coverage(
                 source=adapter.source_name,
                 scope_key=scope_key,
-                coverage_start=window_start,
-                coverage_end=window_end,
+                coverage_start=adapter_query.window_start,
+                coverage_end=adapter_query.window_end,
                 freshness_hours=freshness_hours,
             )
             if has_fresh_coverage:
@@ -196,6 +201,25 @@ class CalendarEventResolver:
         else:
             status = "clean"
 
+        earnings_snapshot = resolve_earnings_phase_snapshot(
+            records=()
+            if underlying_type != "single_name_equity"
+            else self.store.query_events(
+                symbol=query.symbol,
+                asset_scope=None,
+                window_start=earnings_query.window_start,
+                window_end=earnings_query.window_end,
+            ),
+            as_of=query.window_start,
+            horizon_end=query.window_end,
+        )
+        earnings_timing_confidence = earnings_snapshot.timing_confidence
+        if (
+            underlying_type == "single_name_equity"
+            and "dolt_earnings_calendar" not in covered_sources
+        ):
+            earnings_timing_confidence = "unknown"
+
         return CalendarEventContext(
             status=status,
             reasons=tuple(reasons),
@@ -206,6 +230,14 @@ class CalendarEventResolver:
             source_confidence=_aggregate_confidence(confidences),
             sources=tuple(sorted(covered_sources)),
             last_updated=max(source_updates) if source_updates else None,
+            earnings_phase=earnings_snapshot.phase,
+            earnings_event_date=earnings_snapshot.event_date,
+            earnings_session_timing=earnings_snapshot.session_timing,
+            earnings_cohort_key=earnings_snapshot.cohort_key,
+            earnings_days_to_event=earnings_snapshot.days_to_event,
+            earnings_days_since_event=earnings_snapshot.days_since_event,
+            earnings_timing_confidence=earnings_timing_confidence,
+            earnings_horizon_crosses_report=earnings_snapshot.horizon_crosses_report,
         )
 
 

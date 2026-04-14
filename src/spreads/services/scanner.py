@@ -677,6 +677,14 @@ class SpreadCandidate:
     calendar_last_updated: str | None = None
     calendar_days_to_nearest_event: int | None = None
     macro_regime: str | None = None
+    earnings_phase: str = "clean"
+    earnings_event_date: str | None = None
+    earnings_session_timing: str = "unknown"
+    earnings_cohort_key: str | None = None
+    earnings_days_to_event: int | None = None
+    earnings_days_since_event: int | None = None
+    earnings_timing_confidence: str = "unknown"
+    earnings_horizon_crosses_report: bool = False
     setup_status: str = "unknown"
     setup_score: float | None = None
     setup_reasons: tuple[str, ...] = ()
@@ -2082,6 +2090,8 @@ def build_selection_notes(
         notes.append("calendar-clean")
     elif candidate.calendar_status == "penalized":
         notes.append("calendar-risk")
+    if candidate.earnings_phase not in {"", "clean", "post_event_settled"}:
+        notes.append(f"earnings-{candidate.earnings_phase.replace('_', '-')}")
     if candidate.setup_status == "favorable":
         notes.append("setup-favorable")
     elif candidate.setup_status == "neutral":
@@ -2802,6 +2812,14 @@ def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
         "calendar_last_updated",
         "calendar_days_to_nearest_event",
         "macro_regime",
+        "earnings_phase",
+        "earnings_event_date",
+        "earnings_session_timing",
+        "earnings_cohort_key",
+        "earnings_days_to_event",
+        "earnings_days_since_event",
+        "earnings_timing_confidence",
+        "earnings_horizon_crosses_report",
         "setup_status",
         "setup_score",
         "setup_reasons",
@@ -3113,6 +3131,14 @@ def attach_calendar_decisions(
                 calendar_last_updated=decision.last_updated,
                 calendar_days_to_nearest_event=decision.days_to_nearest_event,
                 macro_regime=decision.macro_regime,
+                earnings_phase=decision.earnings_phase,
+                earnings_event_date=decision.earnings_event_date,
+                earnings_session_timing=decision.earnings_session_timing,
+                earnings_cohort_key=decision.earnings_cohort_key,
+                earnings_days_to_event=decision.earnings_days_to_event,
+                earnings_days_since_event=decision.earnings_days_since_event,
+                earnings_timing_confidence=decision.earnings_timing_confidence,
+                earnings_horizon_crosses_report=decision.earnings_horizon_crosses_report,
             )
         )
     return filtered_candidates

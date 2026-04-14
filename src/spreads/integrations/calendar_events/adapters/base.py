@@ -10,6 +10,9 @@ class BaseCalendarEventAdapter(ABC):
     source_confidence = "unknown"
     refresh_always = False
 
+    def coverage_query(self, query: CalendarEventQuery) -> CalendarEventQuery:
+        return query
+
     @abstractmethod
     def applies_to(self, query: CalendarEventQuery) -> bool:
         raise NotImplementedError

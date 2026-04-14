@@ -20,6 +20,7 @@ Detailed design specifications:
 - [Regime Detection Specification](./2026-04-11_regime_detection_spec.md)
 - [Strategy Policy Matrix](./2026-04-11_strategy_policy_matrix.md)
 - [Horizon Selection Specification](./2026-04-12_horizon_selection_spec.md)
+- [Earnings Options Architecture](./2026-04-14_earnings_options_architecture.md)
 - [Product Policy Matrix](./2026-04-12_product_policy_matrix.md)
 - [Portfolio Allocation Specification](./2026-04-12_allocation_spec.md)
 - [Execution Templates](./2026-04-12_execution_templates.md)

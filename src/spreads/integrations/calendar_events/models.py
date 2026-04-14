@@ -5,6 +5,14 @@ from typing import Literal
 
 CalendarStatus = Literal["clean", "penalized", "blocked", "unknown"]
 SourceConfidence = Literal["high", "medium", "low", "unknown"]
+EarningsEventPhase = Literal[
+    "clean",
+    "pre_event_runup",
+    "through_event",
+    "post_event_fresh",
+    "post_event_settled",
+]
+EventSessionTiming = Literal["before_open", "after_close", "during_market", "unknown"]
 
 
 @dataclass(frozen=True)
@@ -54,6 +62,14 @@ class CalendarEventContext:
     source_confidence: SourceConfidence = "unknown"
     sources: tuple[str, ...] = field(default_factory=tuple)
     last_updated: str | None = None
+    earnings_phase: EarningsEventPhase = "clean"
+    earnings_event_date: str | None = None
+    earnings_session_timing: EventSessionTiming = "unknown"
+    earnings_cohort_key: str | None = None
+    earnings_days_to_event: int | None = None
+    earnings_days_since_event: int | None = None
+    earnings_timing_confidence: SourceConfidence = "unknown"
+    earnings_horizon_crosses_report: bool = False
 
 
 @dataclass(frozen=True)
@@ -67,3 +83,11 @@ class CalendarPolicyDecision:
     source_confidence: SourceConfidence = "unknown"
     sources: tuple[str, ...] = field(default_factory=tuple)
     last_updated: str | None = None
+    earnings_phase: EarningsEventPhase = "clean"
+    earnings_event_date: str | None = None
+    earnings_session_timing: EventSessionTiming = "unknown"
+    earnings_cohort_key: str | None = None
+    earnings_days_to_event: int | None = None
+    earnings_days_since_event: int | None = None
+    earnings_timing_confidence: SourceConfidence = "unknown"
+    earnings_horizon_crosses_report: bool = False

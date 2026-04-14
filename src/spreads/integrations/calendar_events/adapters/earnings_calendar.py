@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 import urllib.parse
 import urllib.request
+from dataclasses import replace
 from datetime import UTC, date, datetime, time
+from datetime import timedelta
 from zoneinfo import ZoneInfo
 
 from .base import BaseCalendarEventAdapter
+from ..config import EARNINGS_POST_EVENT_SETTLED_DAYS, EARNINGS_PRE_EVENT_LOOKAHEAD_DAYS
 from ..models import CalendarEventQuery, CalendarEventRecord
 
 NEW_YORK = ZoneInfo("America/New_York")
@@ -14,6 +17,12 @@ NEW_YORK = ZoneInfo("America/New_York")
 
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _parse_datetime(value: str) -> datetime:
+    normalized = value.replace("Z", "+00:00") if value.endswith("Z") else value
+    parsed = datetime.fromisoformat(normalized)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def _earnings_timestamp(date_str: str, session_label: str | None) -> str:
@@ -37,6 +46,18 @@ class EarningsCalendarAdapter(BaseCalendarEventAdapter):
 
     def scope_key(self, query: CalendarEventQuery) -> str:
         return query.symbol.upper()
+
+    def coverage_query(self, query: CalendarEventQuery) -> CalendarEventQuery:
+        start_dt = _parse_datetime(query.window_start)
+        end_dt = _parse_datetime(query.window_end)
+        return replace(
+            query,
+            window_start=(start_dt - timedelta(days=EARNINGS_POST_EVENT_SETTLED_DAYS)).isoformat(),
+            window_end=max(
+                end_dt,
+                start_dt + timedelta(days=EARNINGS_PRE_EVENT_LOOKAHEAD_DAYS),
+            ).isoformat(),
+        )
 
     def fetch(self, query: CalendarEventQuery) -> list[CalendarEventRecord]:
         symbol = query.symbol.upper().replace("'", "''")

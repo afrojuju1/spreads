@@ -51,6 +51,14 @@ def apply_credit_spread_policy(
         source_confidence=context.source_confidence,
         sources=context.sources,
         last_updated=context.last_updated,
+        earnings_phase=context.earnings_phase,
+        earnings_event_date=context.earnings_event_date,
+        earnings_session_timing=context.earnings_session_timing,
+        earnings_cohort_key=context.earnings_cohort_key,
+        earnings_days_to_event=context.earnings_days_to_event,
+        earnings_days_since_event=context.earnings_days_since_event,
+        earnings_timing_confidence=context.earnings_timing_confidence,
+        earnings_horizon_crosses_report=context.earnings_horizon_crosses_report,
     )
 
 

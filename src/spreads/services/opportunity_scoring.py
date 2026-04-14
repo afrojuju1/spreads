@@ -27,6 +27,13 @@ HORIZON_BANDS = (
     ("swing", 21, 45, "weekly"),
     ("carry", 46, 120, "monthly"),
 )
+EARNINGS_PHASES = {
+    "clean",
+    "pre_event_runup",
+    "through_event",
+    "post_event_fresh",
+    "post_event_settled",
+}
 
 
 def _clamp(value: float, lower: float, upper: float) -> float:
@@ -103,6 +110,31 @@ def horizon_band(days_to_expiration: int | None) -> tuple[str, int, int, str]:
     if days_to_expiration < 0:
         return ("same_day", 0, 0, "daily")
     return ("carry", 46, max(days_to_expiration, 46), "monthly")
+
+
+def candidate_earnings_phase(candidate: Mapping[str, Any]) -> str:
+    normalized = str(candidate.get("earnings_phase") or "").strip().lower()
+    if normalized in EARNINGS_PHASES:
+        return normalized
+    calendar_status = str(candidate.get("calendar_status") or "").strip().lower()
+    if calendar_status in {"penalized", "blocked"}:
+        return "through_event"
+    return "clean"
+
+
+def candidate_event_state(candidate: Mapping[str, Any]) -> str:
+    return candidate_earnings_phase(candidate)
+
+
+def candidate_event_timing_rule(candidate: Mapping[str, Any]) -> str:
+    phase = candidate_earnings_phase(candidate)
+    return {
+        "clean": "none",
+        "pre_event_runup": "avoid_event",
+        "through_event": "include_event",
+        "post_event_fresh": "post_event",
+        "post_event_settled": "normal_policy",
+    }.get(phase, "none")
 
 
 def style_score_thresholds(style_profile: str) -> dict[str, float]:
@@ -186,6 +218,7 @@ def profile_specific_score_components(
         evidence["buffer_ratio"] = round(buffer_ratio, 4)
 
     if style_profile == "tactical":
+        earnings_phase = candidate_earnings_phase(candidate)
         setup_status = str(candidate.get("setup_status") or "").strip().lower()
         if setup_status == "favorable":
             components["tactical_setup_delta"] = 2.5
@@ -226,6 +259,7 @@ def profile_specific_score_components(
             else:
                 components["tactical_event_proximity_penalty"] = 1.0
             evidence["days_to_nearest_event"] = days_to_event
+        evidence["earnings_phase"] = earnings_phase
 
     if style_profile == "reactive":
         stale_minutes = _minutes_between(
@@ -495,12 +529,17 @@ def build_candidate_opportunity_score(
         ),
         4,
     )
+    earnings_phase = candidate_earnings_phase(candidate)
+    event_timing_rule = candidate_event_timing_rule(candidate)
 
     return {
         "style_profile": resolved_style,
         "strategy_family": family,
         "product_class": product_class_value,
         "horizon_band": horizon_band_value,
+        "earnings_phase": earnings_phase,
+        "event_state": candidate_event_state(candidate),
+        "event_timing_rule": event_timing_rule,
         "policy_state": resolved_policy_state,
         "blockers": resolved_blockers,
         "discovery_score": discovery_score,
@@ -544,6 +583,9 @@ def score_candidate_opportunity(
 
 __all__ = [
     "build_candidate_opportunity_score",
+    "candidate_earnings_phase",
+    "candidate_event_state",
+    "candidate_event_timing_rule",
     "product_class",
     "resolve_style_profile",
     "score_candidate_opportunity",
