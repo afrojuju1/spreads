@@ -29,7 +29,7 @@ from spreads.services.candidate_history_recovery import (
     recover_session_candidates_from_history,
 )
 from spreads.services.execution import list_session_execution_attempts
-from spreads.services.live_pipelines import parse_live_session_id
+from spreads.services.live_pipelines import parse_live_run_scope_id
 from spreads.services.opportunity_execution_plan import (
     build_allocation_decisions,
     build_execution_intents,
@@ -740,10 +740,10 @@ def _resolve_target(
     if session_id:
         cycle = collector_store.get_latest_session_cycle(session_id)
         if cycle is None:
-            parsed = parse_live_session_id(session_id)
+            parsed = parse_live_run_scope_id(session_id)
             if parsed is not None:
                 label = parsed["label"]
-                session_date = parsed["session_date"]
+                session_date = parsed["market_date"]
                 cycles = collector_store.list_cycles(
                     label, session_date=session_date, limit=1
                 )
@@ -1266,7 +1266,7 @@ def _build_position_matches(
     if session_id is None or not storage.execution.portfolio_schema_ready():
         return {}
 
-    resolved_scope = parse_live_session_id(session_id)
+    resolved_scope = parse_live_run_scope_id(session_id)
     if resolved_scope is None:
         return {}
     resolved_positions = (
@@ -1276,7 +1276,7 @@ def _build_position_matches(
             enrich_position_row(dict(row))
             for row in storage.execution.list_positions(
                 pipeline_id=f"pipeline:{resolved_scope['label']}",
-                market_date=resolved_scope["session_date"],
+                market_date=resolved_scope["market_date"],
             )
         ]
     )
@@ -1356,7 +1356,7 @@ def _build_execution_matches(
     if session_id is None or not storage.execution.schema_ready():
         return {}
 
-    resolved_scope = parse_live_session_id(session_id)
+    resolved_scope = parse_live_run_scope_id(session_id)
     if resolved_scope is None:
         return {}
     resolved_positions = (
@@ -1366,7 +1366,7 @@ def _build_execution_matches(
             enrich_position_row(dict(row))
             for row in storage.execution.list_positions(
                 pipeline_id=f"pipeline:{resolved_scope['label']}",
-                market_date=resolved_scope["session_date"],
+                market_date=resolved_scope["market_date"],
             )
         ]
     )
@@ -1601,13 +1601,13 @@ def _build_outcome_matches(
     positions: list[Mapping[str, Any]] | None = None
     attempts: list[Mapping[str, Any]] | None = None
     if session_id is not None and storage.execution.schema_ready():
-        resolved_scope = parse_live_session_id(session_id)
+        resolved_scope = parse_live_run_scope_id(session_id)
         if resolved_scope is not None:
             positions = [
                 enrich_position_row(dict(row))
                 for row in storage.execution.list_positions(
                     pipeline_id=f"pipeline:{resolved_scope['label']}",
-                    market_date=resolved_scope["session_date"],
+                    market_date=resolved_scope["market_date"],
                 )
             ]
         attempts = list_session_execution_attempts(

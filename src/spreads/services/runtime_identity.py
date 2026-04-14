@@ -23,15 +23,17 @@ def parse_pipeline_id(pipeline_id: str) -> dict[str, str] | None:
     }
 
 
-def build_live_session_id(label: str, session_date: str | date) -> str:
-    rendered = session_date.isoformat() if isinstance(session_date, date) else str(session_date)
+def build_live_run_scope_id(label: str, market_date: str | date) -> str:
+    rendered = (
+        market_date.isoformat() if isinstance(market_date, date) else str(market_date)
+    )
     return f"live:{label}:{rendered}"
 
 
-def parse_live_session_id(session_id: str) -> dict[str, str] | None:
-    if not session_id:
+def parse_live_run_scope_id(run_scope_id: str) -> dict[str, str] | None:
+    if not run_scope_id:
         return None
-    prefix, separator, remainder = session_id.partition(":")
+    prefix, separator, remainder = run_scope_id.partition(":")
     if prefix != "live" or not separator:
         return None
     label, separator, resolved_market_date = remainder.rpartition(":")
@@ -42,9 +44,9 @@ def parse_live_session_id(session_id: str) -> dict[str, str] | None:
     except ValueError:
         return None
     return {
-        "session_id": session_id,
+        "run_scope_id": run_scope_id,
         "label": label,
-        "session_date": rendered_date,
+        "market_date": rendered_date,
     }
 
 
@@ -79,7 +81,12 @@ def resolve_product_class(
 ) -> str:
     normalized_universe = str(universe_label or "").strip().lower()
     normalized_symbol = str(root_symbol or "").strip().upper()
-    if normalized_universe.startswith("0dte") or normalized_symbol in {"SPY", "QQQ", "IWM", "DIA"}:
+    if normalized_universe.startswith("0dte") or normalized_symbol in {
+        "SPY",
+        "QQQ",
+        "IWM",
+        "DIA",
+    }:
         return "index_etf_options"
     if normalized_symbol:
         return "equity_options"

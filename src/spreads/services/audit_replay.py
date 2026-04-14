@@ -10,7 +10,7 @@ from spreads.services.pipelines import (
     get_pipeline_detail,
 )
 from spreads.services.runtime_identity import (
-    build_live_session_id,
+    build_live_run_scope_id,
     build_pipeline_id,
     parse_pipeline_id,
 )
@@ -594,7 +594,7 @@ def _resolve_audit_scope(
         "pipeline_id": normalized_pipeline_id,
         "label": label,
         "market_date": market_date,
-        "session_id": build_live_session_id(label, market_date),
+        "session_id": build_live_run_scope_id(label, market_date),
     }
 
 

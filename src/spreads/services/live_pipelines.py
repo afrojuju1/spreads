@@ -5,9 +5,9 @@ from types import SimpleNamespace
 from typing import Any
 
 from spreads.services.runtime_identity import (
-    build_live_session_id,
+    build_live_run_scope_id,
     build_pipeline_id,
-    parse_live_session_id,
+    parse_live_run_scope_id,
     parse_pipeline_id,
     resolve_horizon_intent,
     resolve_pipeline_policy_fields,

@@ -5,7 +5,10 @@ from zoneinfo import ZoneInfo
 
 import pandas_market_calendars as mcal
 
-from spreads.services.live_pipelines import build_live_session_id, resolve_live_collector_label
+from spreads.services.live_pipelines import (
+    build_live_run_scope_id,
+    resolve_live_collector_label,
+)
 from spreads.storage.records import JobDefinitionRecord
 
 NEW_YORK = ZoneInfo("America/New_York")
@@ -26,9 +29,13 @@ def worker_runtime_lease_key(worker_name: str) -> str:
     return f"{WORKER_RUNTIME_LEASE_PREFIX}{worker_name}"
 
 
-def _market_schedule(calendar_name: str, session_day: date) -> tuple[datetime, datetime] | None:
+def _market_schedule(
+    calendar_name: str, session_day: date
+) -> tuple[datetime, datetime] | None:
     calendar = mcal.get_calendar(calendar_name)
-    schedule = calendar.schedule(start_date=session_day.isoformat(), end_date=session_day.isoformat())
+    schedule = calendar.schedule(
+        start_date=session_day.isoformat(), end_date=session_day.isoformat()
+    )
     if schedule.empty:
         return None
     session = schedule.iloc[0]
@@ -46,7 +53,9 @@ def isoformat_utc(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
-def _interval_market_cutoff(payload: dict[str, object], *, market_close: datetime) -> datetime:
+def _interval_market_cutoff(
+    payload: dict[str, object], *, market_close: datetime
+) -> datetime:
     raw_grace_minutes = payload.get("post_close_grace_minutes", 0)
     try:
         grace_minutes = max(int(raw_grace_minutes), 0)
@@ -70,7 +79,9 @@ def resolve_scheduled_for(
         payload = dict(definition.get("payload") or {})
         if bool(payload.get("allow_off_hours")):
             return slot.astimezone(UTC)
-        market_window = _market_schedule(str(definition.get("market_calendar") or "NYSE"), current.date())
+        market_window = _market_schedule(
+            str(definition.get("market_calendar") or "NYSE"), current.date()
+        )
         if market_window is None:
             return None
         market_open, market_close = market_window
@@ -83,7 +94,9 @@ def resolve_scheduled_for(
             return None
         return slot.astimezone(UTC)
 
-    market_window = _market_schedule(str(definition.get("market_calendar") or "NYSE"), current.date())
+    market_window = _market_schedule(
+        str(definition.get("market_calendar") or "NYSE"), current.date()
+    )
     if market_window is None:
         return None
     market_open, market_close = market_window
@@ -123,7 +136,10 @@ def _session_slots(
     cutoff = min(now, session_end)
     elapsed_seconds = int(max((cutoff - session_start).total_seconds(), 0))
     slot_count = (elapsed_seconds // max(interval_seconds, 1)) + 1
-    return [session_start + timedelta(seconds=index * interval_seconds) for index in range(slot_count)]
+    return [
+        session_start + timedelta(seconds=index * interval_seconds)
+        for index in range(slot_count)
+    ]
 
 
 def resolve_live_tick_plan(
@@ -132,21 +148,30 @@ def resolve_live_tick_plan(
     now: datetime | None = None,
 ) -> dict[str, object] | None:
     current = (now or utc_now()).astimezone(NEW_YORK)
-    market_window = _market_schedule(str(definition.get("market_calendar") or "NYSE"), current.date())
+    market_window = _market_schedule(
+        str(definition.get("market_calendar") or "NYSE"), current.date()
+    )
     if market_window is None:
         return None
     market_open, market_close = market_window
     payload = dict(definition.get("payload") or {})
     interval_seconds = max(int(payload.get("interval_seconds", 300)), 1)
     session_start = market_open + timedelta(
-        minutes=int(payload.get("session_start_offset_minutes", (definition.get("schedule") or {}).get("minutes", 0)))
+        minutes=int(
+            payload.get(
+                "session_start_offset_minutes",
+                (definition.get("schedule") or {}).get("minutes", 0),
+            )
+        )
     )
-    session_end = market_close + timedelta(minutes=int(payload.get("session_end_offset_minutes", 0)))
+    session_end = market_close + timedelta(
+        minutes=int(payload.get("session_end_offset_minutes", 0))
+    )
     recovery_deadline = session_end + timedelta(seconds=interval_seconds)
     if current < session_start or current > recovery_deadline:
         return None
     label = resolve_live_collector_label(payload)
-    session_id = build_live_session_id(label, session_start.date())
+    session_id = build_live_run_scope_id(label, session_start.date())
     slots = _session_slots(
         session_start=session_start,
         session_end=session_end,
@@ -167,7 +192,9 @@ def resolve_live_tick_plan(
     }
 
 
-def due_job_payload(definition: JobDefinitionRecord, *, now: datetime | None = None) -> tuple[str, datetime, dict[str, object]] | None:
+def due_job_payload(
+    definition: JobDefinitionRecord, *, now: datetime | None = None
+) -> tuple[str, datetime, dict[str, object]] | None:
     scheduled_for = resolve_scheduled_for(definition, now=now)
     if scheduled_for is None:
         return None

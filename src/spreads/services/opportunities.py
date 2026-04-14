@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from spreads.db.decorators import with_storage
-from spreads.services.runtime_identity import build_live_session_id
+from spreads.services.runtime_identity import build_live_run_scope_id
 
 
 def _serialize_opportunity(row: dict[str, Any]) -> dict[str, Any]:
@@ -18,7 +18,7 @@ def _serialize_opportunity(row: dict[str, Any]) -> dict[str, Any]:
         "style_profile": row.get("style_profile"),
         "horizon_intent": row.get("horizon_intent"),
         "product_class": row.get("product_class"),
-        "legacy_session_id": build_live_session_id(label, market_date)
+        "legacy_session_id": build_live_run_scope_id(label, market_date)
         if label and market_date
         else None,
         "order_payload": row.get("order_payload_json")

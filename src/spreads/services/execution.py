@@ -54,7 +54,7 @@ from spreads.services.execution_portfolio import build_credit_spread_quote_snaps
 from spreads.services.opportunity_execution_plan import build_execution_plan
 from spreads.services.positions import enrich_position_row
 from spreads.services.runtime_identity import (
-    build_live_session_id,
+    build_live_run_scope_id,
     build_pipeline_id,
     resolve_pipeline_policy_fields,
 )
@@ -626,7 +626,7 @@ def _plan_opportunity_from_signal_row(
     return Opportunity(
         opportunity_id=opportunity_id,
         cycle_id=cycle_id,
-        session_id=build_live_session_id(label, market_date),
+        session_id=build_live_run_scope_id(label, market_date),
         candidate_id=candidate_id,
         symbol=str(
             opportunity.get("underlying_symbol")
@@ -1583,7 +1583,7 @@ def _resolve_session_candidate(
     cycle = collector_store.get_cycle(str(candidate["cycle_id"]))
     if cycle is None:
         raise ValueError(f"Missing cycle for candidate_id: {candidate_id}")
-    candidate_session_id = cycle.get("session_id") or build_live_session_id(
+    candidate_session_id = cycle.get("session_id") or build_live_run_scope_id(
         cycle["label"], cycle["session_date"]
     )
     if str(candidate_session_id) != session_id:
@@ -2628,7 +2628,7 @@ def submit_opportunity_execution(
         raise ValueError("Opportunity is missing label or market_date")
     return submit_live_session_execution(
         db_target=db_target,
-        session_id=build_live_session_id(label, market_date),
+        session_id=build_live_run_scope_id(label, market_date),
         candidate_id=candidate_id,
         quantity=quantity,
         limit_price=limit_price,
@@ -2712,7 +2712,7 @@ def submit_position_close_by_id(
         attempt_id = _execution_attempt_id()
         attempt = execution_store.create_attempt(
             execution_attempt_id=attempt_id,
-            session_id=build_live_session_id(label, market_date),
+            session_id=build_live_run_scope_id(label, market_date),
             session_date=market_date,
             label=label,
             pipeline_id=pipeline_id,
@@ -2815,7 +2815,7 @@ def refresh_execution_attempt(
             raise ValueError(
                 "Execution attempt is missing session compatibility fields"
             )
-        session_id = build_live_session_id(label, market_date)
+        session_id = build_live_run_scope_id(label, market_date)
     return refresh_live_session_execution(
         db_target=db_target,
         session_id=session_id,

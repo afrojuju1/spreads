@@ -62,7 +62,7 @@ from spreads.services.live_recovery import (
 )
 from spreads.services.live_pipelines import (
     build_live_session_catalog,
-    build_live_session_id,
+    build_live_run_scope_id,
 )
 from spreads.services.post_market_analysis import parse_args as parse_post_market_args
 from spreads.services.post_market_analysis import run_post_market_analysis
@@ -330,7 +330,7 @@ async def _publish_post_market_event(
         and isinstance(session_date, str)
         and session_date
     ):
-        session_id = build_live_session_id(label, session_date)
+        session_id = build_live_run_scope_id(label, session_date)
     try:
         await publish_global_event_async(
             event_bus,
@@ -683,7 +683,7 @@ def build_live_session_catalog_for_date(
             job_key=str(pipeline["job_key"]),
             job_type="live_collector",
             status="succeeded",
-            session_id=build_live_session_id(str(pipeline["label"]), session_date),
+            session_id=build_live_run_scope_id(str(pipeline["label"]), session_date),
             limit=1,
         )
     ]

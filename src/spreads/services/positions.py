@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from spreads.db.decorators import with_storage
-from spreads.services.runtime_identity import build_live_session_id
+from spreads.services.runtime_identity import build_live_run_scope_id
 
 OPEN_POSITION_STATUSES = {"open", "partial_open", "partial_close", "pending_open"}
 
@@ -75,7 +75,7 @@ def enrich_position_row(row: Mapping[str, Any]) -> dict[str, Any]:
             "label": label,
             "session_id": None
             if label is None or market_date is None
-            else build_live_session_id(label, market_date),
+            else build_live_run_scope_id(label, market_date),
             "position_status": payload.get("status"),
             "underlying_symbol": payload.get("root_symbol"),
             "strategy": payload.get("strategy_family"),

@@ -15,7 +15,7 @@ from spreads.services.execution_lifecycle import (
     resolve_execution_attempt_filled_quantity,
 )
 from spreads.services.positions import enrich_position_row
-from spreads.services.runtime_identity import parse_live_session_id
+from spreads.services.runtime_identity import parse_live_run_scope_id
 from spreads.storage.serializers import parse_datetime
 
 OPEN_POSITION_STATUSES = ["open", "partial_close"]
@@ -180,14 +180,14 @@ def _candidate_max_loss(candidate: dict[str, Any], quantity: float) -> float | N
 
 
 def _open_positions(execution_store: Any, *, session_id: str) -> list[dict[str, Any]]:
-    resolved = parse_live_session_id(session_id)
+    resolved = parse_live_run_scope_id(session_id)
     if resolved is None:
         return []
     return [
         enrich_position_row(dict(position))
         for position in execution_store.list_positions(
             pipeline_id=f"pipeline:{resolved['label']}",
-            market_date=resolved["session_date"],
+            market_date=resolved["market_date"],
             statuses=OPEN_POSITION_STATUSES,
             limit=200,
         )

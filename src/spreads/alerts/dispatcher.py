@@ -12,7 +12,7 @@ from spreads.alerts.rules import (
     score_anchor_key,
 )
 from spreads.services.alert_delivery import plan_alert_delivery
-from spreads.services.live_pipelines import build_live_session_id
+from spreads.services.live_pipelines import build_live_run_scope_id
 from spreads.storage.alert_repository import AlertRepository
 from spreads.storage.collector_repository import CollectorRepository
 from spreads.storage.job_repository import JobRepository
@@ -95,7 +95,7 @@ def dispatch_cycle_alerts(
     webhook_url: str | None = None,
 ) -> list[dict[str, Any]]:
     session_date = resolve_session_date(generated_at)
-    resolved_session_id = session_id or build_live_session_id(label, session_date)
+    resolved_session_id = session_id or build_live_run_scope_id(label, session_date)
     get_state = alert_store.get_alert_state
 
     decisions = [

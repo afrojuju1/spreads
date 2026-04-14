@@ -7,7 +7,7 @@ from spreads.db.decorators import with_storage
 from spreads.services.alpaca import create_alpaca_client_from_env
 from spreads.services.positions import enrich_position_row
 from spreads.services.risk_manager import assess_position_risk
-from spreads.services.runtime_identity import parse_live_session_id
+from spreads.services.runtime_identity import parse_live_run_scope_id
 from spreads.services.scanner import LiveOptionQuote
 
 QUOTE_FEEDS = ("opra", "indicative")
@@ -169,13 +169,13 @@ def _sum_or_none(values: list[float | None]) -> float | None:
 
 
 def _position_matches_session_id(position: dict[str, Any], session_id: str) -> bool:
-    resolved = parse_live_session_id(session_id)
+    resolved = parse_live_run_scope_id(session_id)
     if resolved is None:
         return False
     return (
         str(position.get("pipeline_id")) == f"pipeline:{resolved['label']}"
         and str(position.get("market_date_opened") or position.get("market_date"))
-        == resolved["session_date"]
+        == resolved["market_date"]
     )
 
 
@@ -319,7 +319,7 @@ def build_session_execution_portfolio(
     def _build_portfolio(resolved_execution_store: Any) -> dict[str, Any]:
         if not resolved_execution_store.portfolio_schema_ready():
             return _empty_portfolio()
-        resolved_scope = parse_live_session_id(session_id)
+        resolved_scope = parse_live_run_scope_id(session_id)
         if resolved_scope is None:
             return _empty_portfolio()
 
@@ -327,7 +327,7 @@ def build_session_execution_portfolio(
             enrich_position_row(dict(position))
             for position in resolved_execution_store.list_positions(
                 pipeline_id=f"pipeline:{resolved_scope['label']}",
-                market_date=resolved_scope["session_date"],
+                market_date=resolved_scope["market_date"],
             )
         ]
         if not persisted_positions:

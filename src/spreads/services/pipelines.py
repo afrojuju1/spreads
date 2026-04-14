@@ -25,7 +25,7 @@ from spreads.services.risk_manager import (
     build_session_risk_snapshot,
     normalize_risk_policy,
 )
-from spreads.services.runtime_identity import build_live_session_id, parse_pipeline_id
+from spreads.services.runtime_identity import build_live_run_scope_id, parse_pipeline_id
 from spreads.storage.serializers import parse_datetime
 
 DEFAULT_ANALYSIS_PROFIT_TARGET = 0.5
@@ -440,7 +440,7 @@ def list_pipelines(
         str(row["pipeline_id"]): row for row in latest_cycles
     }
     session_ids = [
-        build_live_session_id(str(row["label"]), str(row["market_date"]))
+        build_live_run_scope_id(str(row["label"]), str(row["market_date"]))
         for row in latest_cycles
     ]
     slot_health_by_session_id = list_session_slot_health_by_session_id(
@@ -470,7 +470,7 @@ def list_pipelines(
         latest_cycle = latest_cycle_by_pipeline_id.get(str(pipeline["pipeline_id"]))
         if latest_cycle is None:
             continue
-        legacy_session_id = build_live_session_id(
+        legacy_session_id = build_live_run_scope_id(
             str(latest_cycle["label"]),
             str(latest_cycle["market_date"]),
         )
@@ -543,7 +543,7 @@ def get_pipeline_detail(
         raise ValueError(f"Unknown pipeline_id: {pipeline_id}")
 
     resolved_market_date = str(latest_cycle["market_date"])
-    legacy_session_id = build_live_session_id(
+    legacy_session_id = build_live_run_scope_id(
         str(latest_cycle["label"]),
         resolved_market_date,
     )
@@ -712,7 +712,7 @@ def get_pipeline_detail(
     cycles = [
         {
             **dict(row),
-            "legacy_session_id": build_live_session_id(
+            "legacy_session_id": build_live_run_scope_id(
                 str(row["label"]),
                 str(row["market_date"]),
             ),
