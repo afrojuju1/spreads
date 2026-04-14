@@ -10,8 +10,6 @@ from spreads.jobs.registry import (
     COLLECTOR_RECOVERY_JOB_TYPE,
     EXECUTION_SUBMIT_ADHOC_JOB_KEY,
     EXECUTION_SUBMIT_JOB_TYPE,
-    GENERATOR_ADHOC_JOB_KEY,
-    GENERATOR_JOB_TYPE,
     LIVE_COLLECTOR_JOB_TYPE,
     POST_CLOSE_ANALYSIS_ADHOC_JOB_KEY,
     POST_CLOSE_ANALYSIS_JOB_TYPE,
@@ -52,6 +50,10 @@ DEFAULT_AUTO_EXIT_POLICY = {
     "force_close_minutes_before_close": 10,
 }
 
+RETIRED_JOB_KEYS = (
+    "generator:adhoc",
+)
+
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Seed default ARQ-managed job definitions.")
@@ -63,6 +65,8 @@ def seed_definitions(db: str) -> list[str]:
     repo = build_job_repository(db)
     job_keys: list[str] = []
     try:
+        for retired_job_key in RETIRED_JOB_KEYS:
+            repo.delete_job_definition(retired_job_key)
         definitions = [
             {
                 "job_key": ALERT_RECONCILE_JOB_KEY,
@@ -279,15 +283,6 @@ def seed_definitions(db: str) -> list[str]:
             {
                 "job_key": POST_CLOSE_ANALYSIS_ADHOC_JOB_KEY,
                 "job_type": POST_CLOSE_ANALYSIS_JOB_TYPE,
-                "enabled": False,
-                "schedule_type": "manual",
-                "schedule": {},
-                "payload": {},
-                "singleton_scope": None,
-            },
-            {
-                "job_key": GENERATOR_ADHOC_JOB_KEY,
-                "job_type": GENERATOR_JOB_TYPE,
                 "enabled": False,
                 "schedule_type": "manual",
                 "schedule": {},

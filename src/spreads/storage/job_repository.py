@@ -56,6 +56,14 @@ class JobRepository(RepositoryBase):
             return None
         return self.row(row)
 
+    def delete_job_definition(self, job_key: str) -> bool:
+        with self.session_scope() as session:
+            row = session.get(JobDefinitionModel, job_key)
+            if row is None:
+                return False
+            session.delete(row)
+            return True
+
     def list_job_definitions(
         self,
         *,

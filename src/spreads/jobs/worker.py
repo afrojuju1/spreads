@@ -48,11 +48,6 @@ from spreads.services.alert_delivery import (
 from spreads.services.broker_sync import run_broker_sync
 from spreads.services.exit_manager import run_session_exit_manager
 from spreads.services.execution import run_execution_submit
-from spreads.services.generator import (
-    build_generator_args,
-    build_generator_job_payload,
-    generate_symbol_ideas,
-)
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
 from spreads.services.live_recovery import (
     LIVE_SLOT_STATUS_MISSED,
@@ -269,29 +264,6 @@ async def shutdown(ctx: dict[str, Any]) -> None:
     event_bus = ctx.get("event_bus")
     if event_bus is not None:
         await event_bus.aclose()
-
-
-async def _publish_generator_job_event(
-    ctx: dict[str, Any],
-    run_record: Any,
-) -> None:
-    event_bus = ctx.get("event_bus")
-    if event_bus is None:
-        return
-    try:
-        await publish_global_event_async(
-            event_bus,
-            topic="generator.job.updated",
-            event_class="control_event",
-            entity_type="job_run",
-            entity_id=str(run_record["job_run_id"]),
-            payload=build_generator_job_payload(run_record),
-            timestamp=run_record.get("finished_at") or run_record.get("started_at") or run_record["scheduled_for"],
-            source="worker",
-            correlation_id=str(run_record["job_key"]),
-        )
-    except Exception:
-        pass
 
 
 async def _publish_job_run_event(ctx: dict[str, Any], run_record: Any) -> None:
@@ -1335,59 +1307,6 @@ async def run_post_market_analysis_job(
         raise
 
 
-async def run_generator_job(
-    ctx: dict[str, Any],
-    job_key: str,
-    job_run_id: str,
-    payload: dict[str, Any],
-    arq_job_id: str,
-) -> dict[str, Any]:
-    job_store = ctx["job_store"]
-    runtime_owner = ctx["worker_name"]
-    running_record = await _mark_running(
-        job_store,
-        job_run_id=job_run_id,
-        runtime_owner=runtime_owner,
-        arq_job_id=arq_job_id,
-    )
-    await _publish_job_run_event(ctx, running_record)
-    await _publish_generator_job_event(ctx, running_record)
-    try:
-        args = build_generator_args(payload)
-        result = await asyncio.to_thread(generate_symbol_ideas, args)
-        final_status = "succeeded" if result.get("status") == "ok" else "no_play"
-        completed_record = await asyncio.to_thread(
-            job_store.update_job_run_status,
-            job_run_id=job_run_id,
-            status=final_status,
-            expected_arq_job_id=arq_job_id,
-            worker_name=runtime_owner,
-            finished_at=datetime.now(UTC),
-            heartbeat_at=datetime.now(UTC),
-            result=result,
-        )
-        if completed_record is None:
-            raise SupersededJobRun(f"Job run {job_run_id} was superseded before completion.")
-        await _publish_job_run_event(ctx, completed_record)
-        await _publish_generator_job_event(ctx, completed_record)
-        return build_generator_job_payload(completed_record)
-    except Exception as exc:
-        failed_record = await asyncio.to_thread(
-            job_store.update_job_run_status,
-            job_run_id=job_run_id,
-            status="failed",
-            expected_arq_job_id=arq_job_id,
-            worker_name=runtime_owner,
-            finished_at=datetime.now(UTC),
-            heartbeat_at=datetime.now(UTC),
-            error_text=str(exc),
-        )
-        if failed_record is not None:
-            await _publish_job_run_event(ctx, failed_record)
-            await _publish_generator_job_event(ctx, failed_record)
-        raise
-
-
 class MainWorkerSettings:
     functions = [
         run_broker_sync_job,
@@ -1398,7 +1317,6 @@ class MainWorkerSettings:
         run_session_exit_manager_job,
         run_post_close_analysis_job,
         run_post_market_analysis_job,
-        run_generator_job,
     ]
     queue_name = MAIN_QUEUE_NAME
     redis_settings = build_redis_settings(default_redis_url())

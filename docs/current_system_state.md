@@ -4,7 +4,7 @@ This document describes the current runtime shape of the application as it exist
 
 It is meant to be a working architecture map, not a target-state proposal.
 
-Last updated: 2026-04-12
+Last updated: 2026-04-13
 
 ## Runtime Stack
 
@@ -16,7 +16,7 @@ Operator
   |     +--> Next.js web app
   |             |
   |             +--> HTTP to FastAPI
-  |             +--> WebSocket to FastAPI (/ws/events, /ws/generator/...)
+  |             +--> WebSocket to FastAPI (/ws/events)
   |
   +--> `uv run spreads ...`
         |
@@ -28,7 +28,7 @@ FastAPI
   +--> Postgres reads and writes
   +--> Redis pub/sub subscription and event publishing
   +--> Alpaca account / trading / market-data calls
-  +--> internal option stream + quote/trade capture brokers
+  +--> internal option stream + combined market-data capture broker
 
 Scheduler
   |
@@ -67,8 +67,8 @@ Redis = transport, queueing, leases, and pub/sub fanout
                      v                                                 |
           +----------+-------------------------------------------------+----------+
           |                         API (FastAPI)                                  |
-          |                        apps/api/main                                   |
-          | sessions | ops | jobs | execution | generator | alerts | ws/events    |
+          |                        apps/api/app                                    |
+          | account | control | sessions | internal capture | UOA | ws/events     |
           +----------+-------------------------------+----------------+------------+
                      |                               |                |
                      | SQL reads / writes            | publish / sub  | Alpaca REST
@@ -94,7 +94,6 @@ Redis = transport, queueing, leases, and pub/sub fanout
    | session_exit_manager                |               | UOA + signal persistence   |
    | post_close_analysis                 |               | live_action_gate           |
    | post_market_analysis                |               +-------------+--------------+
-   | generator                           |                             |
    +-----------------+------------------+                             |
                      |                                                |
                      +-------------------+----------------------------+
@@ -143,7 +142,6 @@ Redis = transport, queueing, leases, and pub/sub fanout
                  | session_exit_mgr  |
                  | post_close        |
                  | post_market       |
-                 | generator         |
                  v                   v
         +--------+-------------------+--------+
         |            Postgres                 |
@@ -293,23 +291,22 @@ Alpaca broker positions are used for reconciliation, not session truth.
 
 ### 1. Web And API
 
-The web app is a Next.js operator dashboard. It does not talk directly to Postgres or Redis.
+The web app is a narrow Next.js runtime console. It does not talk directly to Postgres or Redis.
 
 It uses:
 
 - a Next route proxy at `/api/backend/*` for normal HTTP calls into FastAPI
-- direct browser WebSocket connections to FastAPI for global realtime events and generator job updates
+- direct browser WebSocket connections to FastAPI for global realtime events
 
 FastAPI is the main application surface. It serves:
 
 - account overview
-- live collector snapshots, cycles, and events
+- control state and mode changes
 - sessions and session detail
 - execution open, close, and refresh actions
-- alerts
-- jobs and job health
-- generator job creation and retrieval
-- post-close and post-market analysis reads
+- internal option market-data capture and stream health
+- internal UOA state reads
+- global realtime events over `/ws/events`
 
 FastAPI is also the mutation boundary for manual trading actions.
 
@@ -347,7 +344,6 @@ Current main job types are:
 - `session_exit_manager`
 - `post_close_analysis`
 - `post_market_analysis`
-- `generator`
 
 Redis is transport and event fanout. Postgres remains the source of truth for job state.
 
@@ -489,22 +485,16 @@ Realtime updates are pushed through Redis pub/sub and exposed by FastAPI WebSock
 
 The UI uses this for:
 
-- generator updates
-- job run updates
+- session and execution updates
 - live collector degradation notices
 - execution status changes
-- alert feed notices
+- session-linked alert notices
+- session-linked job notices
 - broker sync health events
 
-### 9. Generator, Alerts, And Analysis
+### 9. Alerts And Analysis
 
 These are adjacent subsystems, not part of the core trade ownership model.
-
-Generator:
-
-- runs one-off symbol idea generation jobs
-- stores job state in `job_runs` under the generator job type
-- exposes both HTTP and dedicated realtime updates
 
 Alerts:
 
@@ -575,7 +565,7 @@ events:
 
 ## Current System Summary
 
-The current application is best understood as one operator dashboard sitting on top of one backend runtime with several cooperating subsystems:
+The current application is best understood as one narrow runtime console sitting on top of one backend runtime with several cooperating subsystems:
 
 - a live collector that discovers intraday opportunities and persists promotable and monitor state
 - an execution ledger that records broker interactions immutably
@@ -584,7 +574,7 @@ The current application is best understood as one operator dashboard sitting on 
 - a shared risk and exit layer for both manual and automated actions
 - an API and WebSocket layer that assembles read models and fans realtime events to the UI
 - a scheduler plus two worker lanes over Redis ARQ
-- supporting generator, alerts, and analysis subsystems around that core
+- supporting alerts and analysis subsystems around that core
 
 If you want to drill further, the next useful cuts are:
 

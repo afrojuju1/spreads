@@ -126,6 +126,15 @@ type SessionPortfolioPositionRow = {
   raw: SessionPortfolioPosition;
 };
 
+const TERMINAL_EXECUTION_STATUSES = new Set([
+  "filled",
+  "canceled",
+  "done_for_day",
+  "expired",
+  "failed",
+  "rejected",
+]);
+
 function buildCandidateRows(candidates: LiveCandidate[]): CandidateRow[] {
   return candidates.map((candidate) => ({
     id: String(candidate.candidate_id),
@@ -222,6 +231,63 @@ function buildSessionPortfolioPositionRows(
     closedAt: position.closed_at,
     raw: position,
   }));
+}
+
+function isWorkingExecutionAttempt(attempt: ExecutionAttempt): boolean {
+  return !TERMINAL_EXECUTION_STATUSES.has(readString(attempt.status, "unknown"));
+}
+
+function buildOperatorFocus({
+  session,
+  promotableCount,
+  monitorCount,
+  selectedPromotable,
+}: {
+  session: SessionDetail | null;
+  promotableCount: number;
+  monitorCount: number;
+  selectedPromotable: LiveCandidate | null;
+}): {
+  title: string;
+  detail: string;
+} {
+  const openPositionCount = session?.portfolio.summary.open_position_count ?? 0;
+  const workingExecutionCount = (session?.executions ?? []).filter(
+    isWorkingExecutionAttempt,
+  ).length;
+
+  if (openPositionCount > 0) {
+    return {
+      title: "Manage open risk",
+      detail: `${openPositionCount} open position${openPositionCount === 1 ? "" : "s"} and ${workingExecutionCount} working execution${workingExecutionCount === 1 ? "" : "s"} are still active in this session.`,
+    };
+  }
+
+  if (workingExecutionCount > 0) {
+    return {
+      title: "Watch broker progress",
+      detail: `${workingExecutionCount} execution attempt${workingExecutionCount === 1 ? "" : "s"} still need broker resolution before the session is clean.`,
+    };
+  }
+
+  if (selectedPromotable) {
+    return {
+      title: `${selectedPromotable.underlying_symbol} is ready to act`,
+      detail: `${promotableCount} promotable ${promotableCount === 1 ? "opportunity is" : "opportunities are"} available; ${selectedPromotable.strategy.replaceAll("_", " ")} is currently selected for execution.`,
+    };
+  }
+
+  if (monitorCount > 0) {
+    return {
+      title: "Monitor live flow",
+      detail: `${monitorCount} monitor ${monitorCount === 1 ? "opportunity remains" : "opportunities remain"}, but nothing is promotable right now.`,
+    };
+  }
+
+  return {
+    title: "Collector is quiet",
+    detail: "No promotable or monitor opportunities are currently persisted for this session.",
+  };
 }
 
 const CANDIDATE_COLUMNS: ColumnDef<CandidateRow>[] = [
@@ -571,8 +637,8 @@ function SessionPortfolioSection({
 
   return (
     <SectionSurface
-      title="Trade PnL"
-      description="Day-scoped session positions backed by persisted executions, with realized PnL from closes and live quote marks layered on top."
+      title="Open Risk & PnL"
+      description="Persisted session positions, close controls, and quote-backed PnL for the risk that is still sitting on the book."
     >
       {!positionRows.length ? (
         <div className="rounded-2xl border border-dashed border-border/70 px-4 py-8 text-sm text-muted-foreground">
@@ -650,6 +716,323 @@ function SessionPortfolioSection({
           />
         </div>
       )}
+    </SectionSurface>
+  );
+}
+
+function SessionActionDesk({
+  session,
+  promotableRows,
+  selectedPromotable,
+  selectedPromotablePayload,
+  selectedPromotableId,
+  onSelectPromotable,
+  onExecuteSelected,
+  submitPending,
+  submitError,
+  submitMessage,
+  refreshingAttemptId,
+  onRefreshExecution,
+  refreshError,
+  refreshMessage,
+}: {
+  session: SessionDetail;
+  promotableRows: CandidateRow[];
+  selectedPromotable: LiveCandidate | null;
+  selectedPromotablePayload: Record<string, unknown> | null;
+  selectedPromotableId: string | null;
+  onSelectPromotable: (candidateId: string) => void;
+  onExecuteSelected: (candidate: LiveCandidate) => void;
+  submitPending: boolean;
+  submitError: string | null;
+  submitMessage: string | null;
+  refreshingAttemptId: string | null;
+  onRefreshExecution: (executionAttemptId: string) => void;
+  refreshError: string | null;
+  refreshMessage: string | null;
+}) {
+  const workingExecutionCount = session.executions.filter(
+    isWorkingExecutionAttempt,
+  ).length;
+  const filledExecutionCount = session.executions.filter(
+    (attempt) => readString(attempt.status, "unknown") === "filled",
+  ).length;
+
+  return (
+    <SectionSurface
+      title="Action Desk"
+      description="Act on the current best opportunity and keep broker-working executions in view from the same workspace."
+    >
+      <div className="flex flex-col gap-4">
+        <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+          <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
+            <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+              Promotable queue
+            </div>
+            <div className="mt-3">
+              <DataTable
+                columns={CANDIDATE_COLUMNS}
+                data={promotableRows}
+                getRowId={(row) => row.id}
+                selectedId={selectedPromotableId ?? undefined}
+                onSelect={(row) => onSelectPromotable(row.id)}
+                emptyMessage="No promotable opportunities were persisted for this session."
+              />
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-border/70 bg-background/70 px-4 py-4">
+            <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+              Selected action
+            </div>
+            {selectedPromotable ? (
+              <div className="mt-3 flex flex-col gap-4">
+                <div>
+                  <div className="text-lg font-medium">
+                    {selectedPromotable.underlying_symbol} ·{" "}
+                    {selectedPromotable.strategy.replaceAll("_", " ")}
+                  </div>
+                  <div className="mt-1 text-sm text-muted-foreground">
+                    {selectedPromotable.short_symbol} /{" "}
+                    {selectedPromotable.long_symbol} · expires{" "}
+                    {formatDate(selectedPromotable.expiration_date)}
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <MetricTile
+                    label="Score"
+                    value={formatScore(selectedPromotable.quality_score)}
+                  />
+                  <MetricTile
+                    label="Credit"
+                    value={formatCurrency(selectedPromotable.midpoint_credit)}
+                  />
+                  <MetricTile
+                    label="Limit"
+                    value={formatCurrency(
+                      readNumber(
+                        selectedPromotablePayload?.limit_price ??
+                          selectedPromotablePayload?.midpoint_credit,
+                      ),
+                    )}
+                    note="Persisted candidate payload"
+                  />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={submitPending}
+                    onClick={() => onExecuteSelected(selectedPromotable)}
+                  >
+                    {submitPending ? (
+                      <LoaderCircle className="size-4 animate-spin" />
+                    ) : null}
+                    Execute 1x
+                  </Button>
+                  <div className="text-sm text-muted-foreground">
+                    Uses the candidate&apos;s persisted Alpaca multi-leg order
+                    payload and saved limit price.
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-3 rounded-2xl border border-dashed border-border/70 px-4 py-8 text-sm text-muted-foreground">
+                No promotable opportunity is ready for execution right now.
+              </div>
+            )}
+            {submitError ? (
+              <div className="mt-3 text-sm text-rose-700">{submitError}</div>
+            ) : null}
+            {submitMessage ? (
+              <div className="mt-3 text-sm text-foreground/70">
+                {submitMessage}
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <MetricTile
+            label="Working"
+            value={String(workingExecutionCount)}
+            note="Non-terminal broker attempts"
+          />
+          <MetricTile
+            label="Filled"
+            value={String(filledExecutionCount)}
+            note="Attempts that reached filled"
+          />
+          <MetricTile
+            label="Total attempts"
+            value={String(session.executions.length)}
+            note="Persisted execution attempts"
+          />
+          <MetricTile
+            label="Linked positions"
+            value={String(session.portfolio.positions.length)}
+            note="Session positions from filled opens"
+          />
+        </div>
+
+        <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
+          <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+            Execution ledger
+          </div>
+          {!session.executions.length ? (
+            <div className="mt-3 rounded-2xl border border-dashed border-border/70 px-4 py-8 text-sm text-muted-foreground">
+              No execution attempts were recorded for this session yet.
+            </div>
+          ) : (
+            <div className="mt-3 flex flex-col gap-3">
+              {session.executions.map((attempt) => (
+                <ExecutionAttemptCard
+                  key={attempt.execution_attempt_id}
+                  attempt={attempt}
+                  refreshing={refreshingAttemptId === attempt.execution_attempt_id}
+                  onRefresh={() => onRefreshExecution(attempt.execution_attempt_id)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        {refreshError ? (
+          <div className="text-sm text-rose-700">{refreshError}</div>
+        ) : null}
+        {refreshMessage ? (
+          <div className="text-sm text-foreground/70">{refreshMessage}</div>
+        ) : null}
+      </div>
+    </SectionSurface>
+  );
+}
+
+function SessionLiveFlow({
+  monitorRows,
+  alertRows,
+  eventRows,
+}: {
+  monitorRows: CandidateRow[];
+  alertRows: AlertRow[];
+  eventRows: EventRow[];
+}) {
+  return (
+    <SectionSurface
+      title="Live Flow"
+      description="Keep the monitor queue, alerts, and collector events together so the session narrative stays in one place."
+    >
+      <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+        <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
+          <div className="mb-3 flex items-center gap-2 text-sm font-medium">
+            <Rows3 className="size-4 text-muted-foreground" />
+            Monitor queue
+          </div>
+          <DataTable
+            columns={CANDIDATE_COLUMNS}
+            data={monitorRows}
+            getRowId={(row) => row.id}
+            emptyMessage="No monitor opportunities were persisted for this session."
+          />
+        </div>
+
+        <div className="flex flex-col gap-4">
+          <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
+            <div className="mb-3 flex items-center gap-2 text-sm font-medium">
+              <BellRing className="size-4 text-muted-foreground" />
+              Alerts
+            </div>
+            <DataTable
+              columns={ALERT_COLUMNS}
+              data={alertRows}
+              getRowId={(row) => row.id}
+              emptyMessage="No alert records were found for this session."
+            />
+          </div>
+          <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
+            <div className="mb-3 flex items-center gap-2 text-sm font-medium">
+              <Activity className="size-4 text-muted-foreground" />
+              Events
+            </div>
+            <DataTable
+              columns={EVENT_COLUMNS}
+              data={eventRows}
+              getRowId={(row) => row.id}
+              emptyMessage="No collector events were found for this session."
+            />
+          </div>
+        </div>
+      </div>
+    </SectionSurface>
+  );
+}
+
+function SessionCollectorHealth({
+  session,
+  latestSlotCapture,
+  slotRows,
+}: {
+  session: SessionDetail;
+  latestSlotCapture: Record<string, unknown>;
+  slotRows: SlotRow[];
+}) {
+  const currentCycle = session.current_cycle;
+
+  return (
+    <SectionSurface
+      title="Collector Health"
+      description="Slot timing, quote-capture mix, and current-cycle context for the collector that fed this session."
+    >
+      <div className="flex flex-col gap-4">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <MetricTile
+            label="Latest slot"
+            value={
+              session.latest_slot
+                ? formatTime(
+                    readString(
+                      session.latest_slot.slot_at ??
+                        session.latest_slot.scheduled_for ??
+                        session.latest_slot.finished_at,
+                      "",
+                    ),
+                  )
+                : "—"
+            }
+            note={readString(session.latest_slot?.status, "No slot")}
+          />
+          <MetricTile
+            label="Capture mix"
+            value={`${readStreamQuoteCount(latestSlotCapture)} stream`}
+            note={`${readNumber(latestSlotCapture.baseline_quote_events_saved)} baseline / ${readNumber(latestSlotCapture.recovery_quote_events_saved)} recovery`}
+          />
+          <MetricTile
+            label="Updated"
+            value={formatTime(session.updated_at)}
+            note={formatDate(session.updated_at)}
+          />
+          <MetricTile
+            label="Slot runs"
+            value={String(slotRows.length)}
+            note={`${session.events.length} recorded events`}
+          />
+          <MetricTile
+            label="Current cycle"
+            value={currentCycle ? formatTime(currentCycle.generated_at) : "—"}
+            note={
+              currentCycle
+                ? `p ${currentCycle.selection_counts.promotable} / m ${currentCycle.selection_counts.monitor}`
+                : "No live cycle cached"
+            }
+          />
+        </div>
+        <DataTable
+          columns={SLOT_COLUMNS}
+          data={slotRows}
+          getRowId={(row) => row.id}
+          emptyMessage="No slot runs were persisted for this session."
+        />
+      </div>
     </SectionSurface>
   );
 }
@@ -934,6 +1317,18 @@ export function SessionDetailPageContent({
     selectedPromotable && typeof selectedPromotable.candidate === "object"
       ? (selectedPromotable.candidate as Record<string, unknown>)
       : null;
+  const workingExecutionCount = (session?.executions ?? []).filter(
+    isWorkingExecutionAttempt,
+  ).length;
+  const filledExecutionCount = (session?.executions ?? []).filter(
+    (attempt) => readString(attempt.status, "unknown") === "filled",
+  ).length;
+  const operatorFocus = buildOperatorFocus({
+    session,
+    promotableCount: promotableRows.length,
+    monitorCount: monitorRows.length,
+    selectedPromotable,
+  });
 
   const invalidateSessionQueries = async () => {
     await Promise.all([
@@ -1078,28 +1473,63 @@ export function SessionDetailPageContent({
                   ? `${sessions.length} persisted sessions available in storage.`
                   : "No persisted sessions were found in storage."}
               </div>
+              <div className="rounded-2xl border border-border/70 bg-background/80 px-4 py-4">
+                <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                  Operator focus
+                </div>
+                <div className="mt-2 text-lg font-medium">
+                  {operatorFocus.title}
+                </div>
+                <div className="mt-1 text-sm text-foreground/70">
+                  {operatorFocus.detail}
+                </div>
+              </div>
             </div>
           </div>
-          <div className="grid flex-1 gap-3 sm:grid-cols-2 xl:max-w-[720px] xl:grid-cols-4">
+          <div className="grid flex-1 gap-3 sm:grid-cols-2 xl:max-w-[860px] xl:grid-cols-3">
             <MetricTile
               label="Latest slot"
               value={selectedSession ? formatTime(selectedSession.latest_slot_at) : "—"}
               note={selectedSession?.latest_slot_status ?? "No slot"}
             />
             <MetricTile
+              label="Open positions"
+              value={String(session?.portfolio.summary.open_position_count ?? 0)}
+              note={
+                session
+                  ? `Net ${formatSignedCurrency(session.portfolio.summary.net_pnl_total)}`
+                  : "Waiting for session detail"
+              }
+            />
+            <MetricTile
+              label="Working execs"
+              value={String(workingExecutionCount)}
+              note={`${filledExecutionCount} filled / ${session?.executions.length ?? 0} total`}
+            />
+            <MetricTile
               label="Promotable"
-              value={String(selectedSession?.promotable_count ?? 0)}
-              note="Current promotable opportunities"
+              value={String(promotableRows.length)}
+              note={
+                selectedPromotable
+                  ? `${selectedPromotable.underlying_symbol} selected`
+                  : "No promotable action ready"
+              }
             />
             <MetricTile
-              label="Monitor"
-              value={String(selectedSession?.monitor_count ?? 0)}
-              note="Current monitor opportunities"
+              label="Risk"
+              value={readString(session?.risk_status, "unknown").toUpperCase()}
+              note={readString(session?.risk_note, "No session risk note")}
             />
             <MetricTile
-              label="Alerts"
-              value={String(selectedSession?.alert_count ?? 0)}
-              note="Recorded alert events"
+              label="Reconciliation"
+              value={readString(
+                session?.reconciliation_status,
+                "unknown",
+              ).toUpperCase()}
+              note={readString(
+                session?.reconciliation_note,
+                "No reconciliation note",
+              )}
             />
           </div>
         </div>
@@ -1118,29 +1548,6 @@ export function SessionDetailPageContent({
 
       {session ? (
         <>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <MetricTile
-              label="Capture mix"
-              value={`${readStreamQuoteCount(latestSlotCapture)} stream`}
-              note={`${readNumber(latestSlotCapture.baseline_quote_events_saved)} baseline / ${readNumber(latestSlotCapture.recovery_quote_events_saved)} recovery`}
-            />
-            <MetricTile
-              label="Updated"
-              value={formatTime(session.updated_at)}
-              note={formatDate(session.updated_at)}
-            />
-            <MetricTile
-              label="Slot runs"
-              value={String(session.slot_runs.length)}
-              note="Persisted intraday slots"
-            />
-            <MetricTile
-              label="Events"
-              value={String(session.events.length)}
-              note="Collector events for this session"
-            />
-          </div>
-
           <SessionPortfolioSection
             session={session}
             closingPositionId={closingPositionId}
@@ -1155,199 +1562,56 @@ export function SessionDetailPageContent({
             closeMessage={closePositionMutation.data?.message ?? null}
           />
 
-          <SectionSurface
-            title="Promotable"
-            description="Current promotable opportunities from the latest successful cycle."
-          >
-            <div className="flex flex-col gap-4">
-              <DataTable
-                columns={CANDIDATE_COLUMNS}
-                data={promotableRows}
-                getRowId={(row) => row.id}
-                selectedId={
-                  selectedPromotable
-                    ? String(selectedPromotable.candidate_id)
-                    : undefined
-                }
-                onSelect={(row) => setSelectedPromotableId(row.id)}
-                emptyMessage="No promotable opportunities were persisted for this session."
-              />
-              {selectedPromotable ? (
-                <div className="rounded-2xl border border-border/70 bg-background/70 px-4 py-4">
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="min-w-0">
-                      <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                        Selected promotable opportunity
-                      </div>
-                      <div className="mt-2 text-lg font-medium">
-                        {selectedPromotable.underlying_symbol} ·{" "}
-                        {selectedPromotable.strategy.replaceAll("_", " ")}
-                      </div>
-                      <div className="mt-1 text-sm text-muted-foreground">
-                        {selectedPromotable.short_symbol} /{" "}
-                        {selectedPromotable.long_symbol} · expires{" "}
-                        {formatDate(selectedPromotable.expiration_date)}
-                      </div>
-                      <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                        <MetricTile
-                          label="score"
-                          value={formatScore(selectedPromotable.quality_score)}
-                        />
-                        <MetricTile
-                          label="credit"
-                          value={formatCurrency(selectedPromotable.midpoint_credit)}
-                        />
-                        <MetricTile
-                          label="limit"
-                          value={formatCurrency(
-                            readNumber(
-                              selectedPromotablePayload?.limit_price ??
-                                selectedPromotablePayload?.midpoint_credit,
-                            ),
-                          )}
-                          note="Persisted candidate payload"
-                        />
-                      </div>
-                    </div>
-                    <div className="flex flex-col gap-2 lg:items-end">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        disabled={
-                          submitExecutionMutation.isPending || !selectedSessionId
-                        }
-                        onClick={() =>
-                          submitExecutionMutation.mutate(selectedPromotable)
-                        }
-                      >
-                        {submitExecutionMutation.isPending ? (
-                          <LoaderCircle className="size-4 animate-spin" />
-                        ) : null}
-                        Execute 1x
-                      </Button>
-                      <div className="max-w-sm text-sm text-muted-foreground lg:text-right">
-                        Uses the candidate&apos;s persisted Alpaca multi-leg order
-                        payload and saved limit price.
-                      </div>
-                    </div>
-                  </div>
-                  {submitExecutionMutation.isError ? (
-                    <div className="mt-3 text-sm text-rose-700">
-                      {submitExecutionMutation.error instanceof Error
-                        ? submitExecutionMutation.error.message
-                        : "Could not submit this live execution."}
-                    </div>
-                  ) : null}
-                  {submitExecutionMutation.data ? (
-                    <div className="mt-3 text-sm text-foreground/70">
-                      {submitExecutionMutation.data.message}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          </SectionSurface>
-
-          <SectionSurface
-            title="Executions"
-            description="Persisted trade attempts, broker orders, and any fills linked to this session."
-          >
-            {!session.executions.length ? (
-              <div className="rounded-2xl border border-dashed border-border/70 px-4 py-8 text-sm text-muted-foreground">
-                No execution attempts were recorded for this session yet.
-              </div>
-            ) : (
-              <div className="flex flex-col gap-3">
-                {session.executions.map((attempt) => (
-                  <ExecutionAttemptCard
-                    key={attempt.execution_attempt_id}
-                    attempt={attempt}
-                    refreshing={
-                      refreshingAttemptId === attempt.execution_attempt_id
-                    }
-                    onRefresh={() =>
-                      refreshExecutionMutation.mutate(
-                        attempt.execution_attempt_id,
-                      )
-                    }
-                  />
-                ))}
-              </div>
-            )}
-            {refreshExecutionMutation.isError ? (
-              <div className="mt-3 text-sm text-rose-700">
-                {refreshExecutionMutation.error instanceof Error
+          <SessionActionDesk
+            session={session}
+            promotableRows={promotableRows}
+            selectedPromotable={selectedPromotable}
+            selectedPromotablePayload={selectedPromotablePayload}
+            selectedPromotableId={
+              selectedPromotable ? String(selectedPromotable.candidate_id) : null
+            }
+            onSelectPromotable={setSelectedPromotableId}
+            onExecuteSelected={(candidate) =>
+              submitExecutionMutation.mutate(candidate)
+            }
+            submitPending={submitExecutionMutation.isPending}
+            submitError={
+              submitExecutionMutation.isError
+                ? submitExecutionMutation.error instanceof Error
+                  ? submitExecutionMutation.error.message
+                  : "Could not submit this live execution."
+                : null
+            }
+            submitMessage={submitExecutionMutation.data?.message ?? null}
+            refreshingAttemptId={refreshingAttemptId}
+            onRefreshExecution={(executionAttemptId) =>
+              refreshExecutionMutation.mutate(executionAttemptId)
+            }
+            refreshError={
+              refreshExecutionMutation.isError
+                ? refreshExecutionMutation.error instanceof Error
                   ? refreshExecutionMutation.error.message
-                  : "Could not refresh broker execution status."}
-              </div>
-            ) : null}
-            {refreshExecutionMutation.data ? (
-              <div className="mt-3 text-sm text-foreground/70">
-                {refreshExecutionMutation.data.message}
-              </div>
-            ) : null}
-          </SectionSurface>
+                  : "Could not refresh broker execution status."
+                : null
+            }
+            refreshMessage={refreshExecutionMutation.data?.message ?? null}
+          />
 
-          <SectionSurface
-            title="Monitor"
-            description="Current monitor opportunities from the latest successful cycle."
-          >
-            <DataTable
-              columns={CANDIDATE_COLUMNS}
-              data={monitorRows}
-              getRowId={(row) => row.id}
-              emptyMessage="No monitor opportunities were persisted for this session."
-            />
-          </SectionSurface>
-
-          <SectionSurface
-            title="Slots"
-            description="One row per persisted collector slot for this session."
-          >
-            <DataTable
-              columns={SLOT_COLUMNS}
-              data={slotRows}
-              getRowId={(row) => row.id}
-              emptyMessage="No slot runs were persisted for this session."
-            />
-          </SectionSurface>
+          <SessionLiveFlow
+            monitorRows={monitorRows}
+            alertRows={alertRows}
+            eventRows={eventRows}
+          />
 
           <div className="grid gap-4 xl:grid-cols-2">
+            <SessionCollectorHealth
+              session={session}
+              latestSlotCapture={latestSlotCapture}
+              slotRows={slotRows}
+            />
             <SectionSurface
-              title="Alerts & Events"
-              description="Recent alerts and collector events scoped to this session."
-            >
-              <div className="flex flex-col gap-4">
-                <div>
-                  <div className="mb-3 flex items-center gap-2 text-sm font-medium">
-                    <BellRing className="size-4 text-muted-foreground" />
-                    Alerts
-                  </div>
-                  <DataTable
-                    columns={ALERT_COLUMNS}
-                    data={alertRows}
-                    getRowId={(row) => row.id}
-                    emptyMessage="No alert records were found for this session."
-                  />
-                </div>
-                <div>
-                  <div className="mb-3 flex items-center gap-2 text-sm font-medium">
-                    <Activity className="size-4 text-muted-foreground" />
-                    Events
-                  </div>
-                  <DataTable
-                    columns={EVENT_COLUMNS}
-                    data={eventRows}
-                    getRowId={(row) => row.id}
-                    emptyMessage="No collector events were found for this session."
-                  />
-                </div>
-              </div>
-            </SectionSurface>
-
-            <SectionSurface
-              title="Analysis"
-              description="Persisted post-market analysis and signal tuning for this session."
+              title="Post-Market Context"
+              description="Persisted post-close signal context and tuning for this session."
             >
               <SessionAnalysis session={session} />
             </SectionSurface>
