@@ -1401,7 +1401,7 @@ def run_open_execution_guard(
 
         evaluated += 1
         broker_order_id = _as_text(attempt.get("broker_order_id"))
-        session_position_id = _as_text(attempt.get("session_position_id"))
+        position_id = _as_text(attempt.get("position_id"))
         intervention = _as_text(guard_decision.get("intervention"))
         if intervention == "mark_submit_unknown":
             message = _guard_intervention_message(
@@ -1412,7 +1412,7 @@ def run_open_execution_guard(
                 execution_attempt_id=execution_attempt_id,
                 status=SUBMIT_UNKNOWN_STATUS,
                 error_text=message,
-                session_position_id=session_position_id,
+                position_id=position_id,
             )
             uncertain_attempt = _get_attempt_payload(
                 execution_store, execution_attempt_id
@@ -1445,7 +1445,7 @@ def run_open_execution_guard(
                 status="failed",
                 completed_at=_utc_now(),
                 error_text=message,
-                session_position_id=session_position_id,
+                position_id=position_id,
             )
             failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
             _publish_execution_attempt_event(
@@ -1508,7 +1508,7 @@ def run_open_execution_guard(
                     execution_store.update_attempt(
                         execution_attempt_id=execution_attempt_id,
                         status="pending_cancel",
-                        session_position_id=session_position_id,
+                        position_id=position_id,
                     )
                     synced_attempt = _get_attempt_payload(
                         execution_store, execution_attempt_id
@@ -2102,7 +2102,7 @@ def _queue_execution_attempt(
             status="failed",
             completed_at=_utc_now(),
             error_text=str(exc),
-            session_position_id=_as_text(attempt.get("session_position_id")),
+            position_id=_as_text(attempt.get("position_id")),
         )
         failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
         _publish_execution_attempt_event(
@@ -2123,7 +2123,7 @@ def _queue_execution_attempt(
             status="failed",
             completed_at=_utc_now(),
             error_text="Execution submit job was not enqueued.",
-            session_position_id=_as_text(attempt.get("session_position_id")),
+            position_id=_as_text(attempt.get("position_id")),
         )
         failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
         _publish_execution_attempt_event(
@@ -2396,7 +2396,6 @@ def submit_live_session_execution(
             short_symbol=str(candidate["short_symbol"]),
             long_symbol=str(candidate["long_symbol"]),
             trade_intent=OPEN_TRADE_INTENT,
-            session_position_id=None,
             position_id=None,
             root_symbol=str(candidate["underlying_symbol"]),
             strategy_family=str(candidate["strategy"]),
@@ -2500,46 +2499,6 @@ def submit_live_session_execution(
                     message=f"Execution failed before submission: {exc}",
                 )
         raise
-
-
-@with_storage()
-def submit_session_position_close(
-    *,
-    db_target: str,
-    session_id: str,
-    session_position_id: str,
-    quantity: int | None = None,
-    limit_price: float | None = None,
-    request_metadata: dict[str, Any] | None = None,
-    storage: Any | None = None,
-) -> dict[str, Any]:
-    execution_store = storage.execution
-    _require_position_schema(execution_store)
-    position = execution_store.get_position_by_legacy_session_position_id(
-        session_position_id
-    )
-    if position is None:
-        fallback = execution_store.get_position(session_position_id)
-        if fallback is not None:
-            position = fallback
-    if position is None:
-        raise ValueError(f"Unknown session_position_id: {session_position_id}")
-    hydrated = enrich_position_row(dict(position))
-    if str(hydrated.get("session_id") or "") != session_id:
-        raise ValueError(
-            f"Session position {session_position_id} does not belong to session {session_id}"
-        )
-    return submit_position_close_by_id(
-        db_target=db_target,
-        position_id=str(hydrated["position_id"]),
-        quantity=quantity,
-        limit_price=limit_price,
-        request_metadata={
-            **({} if request_metadata is None else request_metadata),
-            "session_position_id": session_position_id,
-        },
-        storage=storage,
-    )
 
 
 @with_storage()
@@ -2772,7 +2731,6 @@ def submit_position_close_by_id(
             short_symbol=str(position["short_symbol"]),
             long_symbol=str(position["long_symbol"]),
             trade_intent=trade_intent,
-            session_position_id=_as_text(position.get("session_position_id")),
             position_id=position_id,
             root_symbol=str(position["underlying_symbol"]),
             strategy_family=str(position["strategy"]),
@@ -2900,7 +2858,7 @@ def run_execution_submit(
             status="failed",
             completed_at=_utc_now(),
             error_text="Execution attempt is missing its broker order payload.",
-            session_position_id=_as_text(payload.get("session_position_id")),
+            position_id=_as_text(payload.get("position_id")),
         )
         failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
         _publish_execution_attempt_event(
@@ -2921,7 +2879,7 @@ def run_execution_submit(
                 status="failed",
                 completed_at=_utc_now(),
                 error_text=str(timing_gate["message"]),
-                session_position_id=_as_text(payload.get("session_position_id")),
+                position_id=_as_text(payload.get("position_id")),
             )
             failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
             _publish_execution_attempt_event(
@@ -2950,7 +2908,7 @@ def run_execution_submit(
                 status="failed",
                 completed_at=_utc_now(),
                 error_text=str(live_deployment_quality["message"]),
-                session_position_id=_as_text(payload.get("session_position_id")),
+                position_id=_as_text(payload.get("position_id")),
             )
             failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
             _publish_execution_attempt_event(
@@ -2985,7 +2943,7 @@ def run_execution_submit(
             client_order_id=_as_text(submitted_order.get("client_order_id"))
             or client_order_id,
             submitted_at=_as_text(submitted_order.get("submitted_at")) or requested_at,
-            session_position_id=_as_text(payload.get("session_position_id")),
+            position_id=_as_text(payload.get("position_id")),
         )
         if callable(heartbeat):
             heartbeat()
@@ -3015,7 +2973,7 @@ def run_execution_submit(
                 client_order_id=client_order_id,
                 completed_at=requested_at,
                 error_text=str(exc),
-                session_position_id=_as_text(payload.get("session_position_id")),
+                position_id=_as_text(payload.get("position_id")),
             )
             failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
             _publish_execution_attempt_event(
@@ -3036,7 +2994,7 @@ def run_execution_submit(
             if _is_terminal_status(submitted_status)
             else None,
             error_text=str(exc),
-            session_position_id=_as_text(payload.get("session_position_id")),
+            position_id=_as_text(payload.get("position_id")),
         )
         failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
         _publish_execution_attempt_event(

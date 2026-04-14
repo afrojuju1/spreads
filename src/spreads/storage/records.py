@@ -8,11 +8,14 @@ StorageRow: TypeAlias = dict[str, Any]
 RecordMapping: TypeAlias = Mapping[str, Any]
 
 
-def make_storage_row(values: Mapping[str, Any] | None = None, /, **kwargs: Any) -> StorageRow:
+def make_storage_row(
+    values: Mapping[str, Any] | None = None, /, **kwargs: Any
+) -> StorageRow:
     payload = {} if values is None else dict(values)
     if kwargs:
         payload.update(kwargs)
     return payload
+
 
 ScanRunRecord = StorageRow
 ScanCandidateRecord = StorageRow
@@ -43,8 +46,6 @@ PostMarketAnalysisRunRecord = StorageRow
 ExecutionAttemptRecord = StorageRow
 ExecutionOrderRecord = StorageRow
 ExecutionFillRecord = StorageRow
-SessionPositionRecord = StorageRow
-SessionPositionCloseRecord = StorageRow
 PortfolioPositionRecord = StorageRow
 PositionCloseRecord = StorageRow
 LiveSessionSlotRecord = StorageRow
@@ -84,8 +85,6 @@ __all__ = [
     "ExecutionAttemptRecord",
     "ExecutionOrderRecord",
     "ExecutionFillRecord",
-    "SessionPositionRecord",
-    "SessionPositionCloseRecord",
     "PortfolioPositionRecord",
     "PositionCloseRecord",
     "LiveSessionSlotRecord",

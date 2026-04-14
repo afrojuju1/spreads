@@ -77,8 +77,6 @@ def enrich_position_row(row: Mapping[str, Any]) -> dict[str, Any]:
             if label is None or market_date is None
             else build_live_session_id(label, market_date),
             "position_status": payload.get("status"),
-            "legacy_session_position_id": payload.get("legacy_session_position_id"),
-            "session_position_id": payload.get("legacy_session_position_id"),
             "underlying_symbol": payload.get("root_symbol"),
             "strategy": payload.get("strategy_family"),
             "short_symbol": short_symbol,
@@ -105,11 +103,7 @@ def _serialize_position(
         for key, value in row.items()
         if key
         not in {
-            "session_id",
-            "session_date",
             "label",
-            "legacy_session_position_id",
-            "session_position_id",
         }
     }
     closes = execution_store.list_position_closes(position_id=str(row["position_id"]))

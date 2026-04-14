@@ -3,7 +3,16 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, Date, DateTime, Float, ForeignKey, Index, Integer, Text
+from sqlalchemy import (
+    BigInteger,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    Text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -14,13 +23,28 @@ class ExecutionAttemptModel(Base):
     __tablename__ = "execution_attempts"
     __table_args__ = (
         Index("idx_execution_attempts_session_requested", "session_id", "requested_at"),
-        Index("idx_execution_attempts_pipeline_requested", "pipeline_id", "requested_at"),
+        Index(
+            "idx_execution_attempts_pipeline_requested", "pipeline_id", "requested_at"
+        ),
         Index("idx_execution_attempts_status_requested", "status", "requested_at"),
-        Index("idx_execution_attempts_candidate_requested", "candidate_id", "requested_at"),
-        Index("idx_execution_attempts_position_requested", "session_position_id", "requested_at"),
-        Index("idx_execution_attempts_runtime_position_requested", "position_id", "requested_at"),
-        Index("idx_execution_attempts_opportunity_requested", "opportunity_id", "requested_at"),
-        Index("idx_execution_attempts_risk_decision_requested", "risk_decision_id", "requested_at"),
+        Index(
+            "idx_execution_attempts_candidate_requested", "candidate_id", "requested_at"
+        ),
+        Index(
+            "idx_execution_attempts_runtime_position_requested",
+            "position_id",
+            "requested_at",
+        ),
+        Index(
+            "idx_execution_attempts_opportunity_requested",
+            "opportunity_id",
+            "requested_at",
+        ),
+        Index(
+            "idx_execution_attempts_risk_decision_requested",
+            "risk_decision_id",
+            "requested_at",
+        ),
     )
 
     execution_attempt_id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -50,7 +74,9 @@ class ExecutionAttemptModel(Base):
         nullable=True,
     )
     attempt_context: Mapped[str | None] = mapped_column(Text, nullable=True)
-    candidate_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    candidate_generated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     run_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     job_run_id: Mapped[str | None] = mapped_column(
         Text,
@@ -63,11 +89,6 @@ class ExecutionAttemptModel(Base):
     short_symbol: Mapped[str] = mapped_column(Text, nullable=False)
     long_symbol: Mapped[str] = mapped_column(Text, nullable=False)
     trade_intent: Mapped[str] = mapped_column(Text, nullable=False, default="open")
-    session_position_id: Mapped[str | None] = mapped_column(
-        Text,
-        ForeignKey("session_positions.session_position_id", ondelete="SET NULL"),
-        nullable=True,
-    )
     position_id: Mapped[str | None] = mapped_column(
         Text,
         ForeignKey("portfolio_positions.position_id", ondelete="SET NULL"),
@@ -82,9 +103,15 @@ class ExecutionAttemptModel(Base):
     requested_limit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     limit_price: Mapped[float] = mapped_column(Float, nullable=False)
-    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    submitted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     status: Mapped[str] = mapped_column(Text, nullable=False)
     broker: Mapped[str] = mapped_column(Text, nullable=False, default="alpaca")
     broker_order_id: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -97,12 +124,16 @@ class ExecutionAttemptModel(Base):
 class ExecutionOrderModel(Base):
     __tablename__ = "execution_orders"
     __table_args__ = (
-        Index("idx_execution_orders_attempt_updated", "execution_attempt_id", "updated_at"),
+        Index(
+            "idx_execution_orders_attempt_updated", "execution_attempt_id", "updated_at"
+        ),
         Index("idx_execution_orders_parent", "parent_broker_order_id"),
         Index("ux_execution_orders_broker_order_id", "broker_order_id", unique=True),
     )
 
-    execution_order_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    execution_order_id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, autoincrement=True
+    )
     execution_attempt_id: Mapped[str] = mapped_column(
         Text,
         ForeignKey("execution_attempts.execution_attempt_id", ondelete="CASCADE"),
@@ -125,20 +156,28 @@ class ExecutionOrderModel(Base):
     limit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     filled_qty: Mapped[float | None] = mapped_column(Float, nullable=True)
     filled_avg_price: Mapped[float | None] = mapped_column(Float, nullable=True)
-    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    submitted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     order_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
 
 
 class ExecutionFillModel(Base):
     __tablename__ = "execution_fills"
     __table_args__ = (
-        Index("idx_execution_fills_attempt_filled", "execution_attempt_id", "filled_at"),
+        Index(
+            "idx_execution_fills_attempt_filled", "execution_attempt_id", "filled_at"
+        ),
         Index("idx_execution_fills_order", "broker_order_id"),
         Index("ux_execution_fills_broker_fill_id", "broker_fill_id", unique=True),
     )
 
-    execution_fill_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    execution_fill_id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, autoincrement=True
+    )
     execution_attempt_id: Mapped[str] = mapped_column(
         Text,
         ForeignKey("execution_attempts.execution_attempt_id", ondelete="CASCADE"),
@@ -163,97 +202,16 @@ class ExecutionFillModel(Base):
     fill_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
 
 
-class SessionPositionModel(Base):
-    __tablename__ = "session_positions"
-    __table_args__ = (
-        Index("idx_session_positions_session_updated", "session_id", "updated_at"),
-        Index("idx_session_positions_session_status", "session_id", "status"),
-        Index("ux_session_positions_open_attempt", "open_execution_attempt_id", unique=True),
-    )
-
-    session_position_id: Mapped[str] = mapped_column(Text, primary_key=True)
-    session_id: Mapped[str] = mapped_column(Text, nullable=False)
-    session_date: Mapped[date] = mapped_column(Date, nullable=False)
-    label: Mapped[str] = mapped_column(Text, nullable=False)
-    candidate_id: Mapped[int | None] = mapped_column(
-        BigInteger,
-        ForeignKey("collector_cycle_candidates.candidate_id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    open_execution_attempt_id: Mapped[str] = mapped_column(
-        Text,
-        ForeignKey("execution_attempts.execution_attempt_id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    underlying_symbol: Mapped[str] = mapped_column(Text, nullable=False)
-    strategy: Mapped[str] = mapped_column(Text, nullable=False)
-    expiration_date: Mapped[date] = mapped_column(Date, nullable=False)
-    short_symbol: Mapped[str] = mapped_column(Text, nullable=False)
-    long_symbol: Mapped[str] = mapped_column(Text, nullable=False)
-    requested_quantity: Mapped[int] = mapped_column(Integer, nullable=False)
-    opened_quantity: Mapped[float] = mapped_column(Float, nullable=False)
-    remaining_quantity: Mapped[float] = mapped_column(Float, nullable=False)
-    entry_credit: Mapped[float | None] = mapped_column(Float, nullable=True)
-    entry_notional: Mapped[float | None] = mapped_column(Float, nullable=True)
-    width: Mapped[float | None] = mapped_column(Float, nullable=True)
-    max_profit: Mapped[float | None] = mapped_column(Float, nullable=True)
-    max_loss: Mapped[float | None] = mapped_column(Float, nullable=True)
-    opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    status: Mapped[str] = mapped_column(Text, nullable=False)
-    realized_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    unrealized_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
-    close_mark: Mapped[float | None] = mapped_column(Float, nullable=True)
-    close_mark_source: Mapped[str | None] = mapped_column(Text, nullable=True)
-    close_marked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_broker_status: Mapped[str | None] = mapped_column(Text, nullable=True)
-    exit_policy_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
-    risk_policy_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
-    source_job_type: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source_job_key: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source_job_run_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    last_exit_evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_exit_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    last_reconciled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    reconciliation_status: Mapped[str | None] = mapped_column(Text, nullable=True)
-    reconciliation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class SessionPositionCloseModel(Base):
-    __tablename__ = "session_position_closes"
-    __table_args__ = (
-        Index("idx_session_position_closes_position_closed", "session_position_id", "closed_at"),
-        Index("ux_session_position_closes_execution_attempt", "execution_attempt_id", unique=True),
-    )
-
-    session_position_close_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    session_position_id: Mapped[str] = mapped_column(
-        Text,
-        ForeignKey("session_positions.session_position_id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    execution_attempt_id: Mapped[str] = mapped_column(
-        Text,
-        ForeignKey("execution_attempts.execution_attempt_id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    closed_quantity: Mapped[float] = mapped_column(Float, nullable=False)
-    exit_debit: Mapped[float | None] = mapped_column(Float, nullable=True)
-    realized_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    broker_order_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
 class PortfolioPositionModel(Base):
     __tablename__ = "portfolio_positions"
     __table_args__ = (
         Index("idx_portfolio_positions_pipeline_updated", "pipeline_id", "updated_at"),
         Index("idx_portfolio_positions_pipeline_status", "pipeline_id", "status"),
-        Index("ux_portfolio_positions_open_attempt", "open_execution_attempt_id", unique=True),
+        Index(
+            "ux_portfolio_positions_open_attempt",
+            "open_execution_attempt_id",
+            unique=True,
+        ),
     )
 
     position_id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -261,11 +219,6 @@ class PortfolioPositionModel(Base):
     source_opportunity_id: Mapped[str | None] = mapped_column(
         Text,
         ForeignKey("opportunities.opportunity_id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    legacy_session_position_id: Mapped[str | None] = mapped_column(
-        Text,
-        ForeignKey("session_positions.session_position_id", ondelete="SET NULL"),
         nullable=True,
     )
     open_execution_attempt_id: Mapped[str] = mapped_column(
@@ -281,9 +234,15 @@ class PortfolioPositionModel(Base):
     market_date_opened: Mapped[date] = mapped_column(Date, nullable=False)
     market_date_closed: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False)
-    legs_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
-    economics_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
-    strategy_metrics_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    legs_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    economics_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    strategy_metrics_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
     requested_quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     opened_quantity: Mapped[float] = mapped_column(Float, nullable=False)
     remaining_quantity: Mapped[float] = mapped_column(Float, nullable=False)
@@ -292,32 +251,54 @@ class PortfolioPositionModel(Base):
     unrealized_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
     close_mark: Mapped[float | None] = mapped_column(Float, nullable=True)
     close_mark_source: Mapped[str | None] = mapped_column(Text, nullable=True)
-    close_marked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    close_marked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     last_broker_status: Mapped[str | None] = mapped_column(Text, nullable=True)
-    exit_policy_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
-    risk_policy_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    exit_policy_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    risk_policy_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
     source_job_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_job_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_job_run_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    last_exit_evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_exit_evaluated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     last_exit_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    last_reconciled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_reconciled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     reconciliation_status: Mapped[str | None] = mapped_column(Text, nullable=True)
     reconciliation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    opened_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
 
 class PositionCloseModel(Base):
     __tablename__ = "position_closes"
     __table_args__ = (
         Index("idx_position_closes_position_closed", "position_id", "closed_at"),
-        Index("ux_position_closes_execution_attempt", "execution_attempt_id", unique=True),
+        Index(
+            "ux_position_closes_execution_attempt", "execution_attempt_id", unique=True
+        ),
     )
 
-    position_close_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    position_close_id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, autoincrement=True
+    )
     position_id: Mapped[str] = mapped_column(
         Text,
         ForeignKey("portfolio_positions.position_id", ondelete="CASCADE"),
@@ -328,15 +309,16 @@ class PositionCloseModel(Base):
         ForeignKey("execution_attempts.execution_attempt_id", ondelete="CASCADE"),
         nullable=False,
     )
-    legacy_session_position_id: Mapped[str | None] = mapped_column(
-        Text,
-        ForeignKey("session_positions.session_position_id", ondelete="SET NULL"),
-        nullable=True,
-    )
     closed_quantity: Mapped[float] = mapped_column(Float, nullable=False)
     exit_value: Mapped[float | None] = mapped_column(Float, nullable=True)
     realized_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     broker_order_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    closed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )

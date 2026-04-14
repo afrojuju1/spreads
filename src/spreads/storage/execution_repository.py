@@ -11,8 +11,6 @@ from spreads.storage.execution_models import (
     ExecutionOrderModel,
     PortfolioPositionModel,
     PositionCloseModel,
-    SessionPositionCloseModel,
-    SessionPositionModel,
 )
 from spreads.storage.records import (
     ExecutionAttemptRecord,
@@ -20,8 +18,6 @@ from spreads.storage.records import (
     ExecutionOrderRecord,
     PortfolioPositionRecord,
     PositionCloseRecord,
-    SessionPositionCloseRecord,
-    SessionPositionRecord,
 )
 from spreads.storage.serializers import parse_date, parse_datetime
 
@@ -39,9 +35,7 @@ class ExecutionRepository(RepositoryBase):
         )
 
     def positions_schema_ready(self) -> bool:
-        return self.schema_has_tables(
-            "execution_attempts", "session_positions", "session_position_closes"
-        )
+        return self.portfolio_schema_ready()
 
     def portfolio_schema_ready(self) -> bool:
         return self.schema_has_tables(
@@ -71,7 +65,6 @@ class ExecutionRepository(RepositoryBase):
         short_symbol: str,
         long_symbol: str,
         trade_intent: str,
-        session_position_id: str | None,
         position_id: str | None = None,
         root_symbol: str | None = None,
         strategy_family: str | None = None,
@@ -113,7 +106,6 @@ class ExecutionRepository(RepositoryBase):
                 short_symbol=short_symbol,
                 long_symbol=long_symbol,
                 trade_intent=trade_intent,
-                session_position_id=session_position_id,
                 position_id=position_id,
                 root_symbol=root_symbol or underlying_symbol,
                 strategy_family=strategy_family or strategy,
@@ -258,23 +250,6 @@ class ExecutionRepository(RepositoryBase):
             rows = session.scalars(statement).all()
         return self.rows(rows)
 
-    def list_open_attempts_for_session_position(
-        self,
-        *,
-        session_position_id: str,
-        statuses: list[str],
-    ) -> list[ExecutionAttemptRecord]:
-        statement = (
-            select(ExecutionAttemptModel)
-            .where(ExecutionAttemptModel.session_position_id == session_position_id)
-            .where(ExecutionAttemptModel.trade_intent == "close")
-            .where(ExecutionAttemptModel.status.in_(statuses))
-            .order_by(ExecutionAttemptModel.requested_at.desc())
-        )
-        with self.session_factory() as session:
-            rows = session.scalars(statement).all()
-        return self.rows(rows)
-
     def list_open_attempts_for_position(
         self,
         *,
@@ -302,7 +277,6 @@ class ExecutionRepository(RepositoryBase):
         submitted_at: str | None = None,
         completed_at: str | None = None,
         error_text: str | None = None,
-        session_position_id: str | None = None,
         position_id: str | None = None,
     ) -> ExecutionAttemptRecord:
         with self.session_scope() as session:
@@ -321,8 +295,6 @@ class ExecutionRepository(RepositoryBase):
                 row.submitted_at = parse_datetime(submitted_at)
             if completed_at is not None:
                 row.completed_at = parse_datetime(completed_at)
-            if session_position_id is not None:
-                row.session_position_id = session_position_id
             if position_id is not None:
                 row.position_id = position_id
             if error_text is not None or (status == "failed"):
@@ -494,301 +466,6 @@ class ExecutionRepository(RepositoryBase):
                 session.refresh(row)
             return self.rows(persisted)
 
-    def get_session_position(
-        self, session_position_id: str
-    ) -> SessionPositionRecord | None:
-        with self.session_factory() as session:
-            row = session.get(SessionPositionModel, session_position_id)
-        if row is None:
-            return None
-        return self.row(row)
-
-    def get_session_position_by_open_attempt(
-        self, open_execution_attempt_id: str
-    ) -> SessionPositionRecord | None:
-        statement = select(SessionPositionModel).where(
-            SessionPositionModel.open_execution_attempt_id == open_execution_attempt_id
-        )
-        with self.session_factory() as session:
-            row = session.scalars(statement).first()
-        if row is None:
-            return None
-        return self.row(row)
-
-    def list_session_positions(
-        self,
-        *,
-        session_id: str | None = None,
-        statuses: list[str] | None = None,
-        limit: int | None = None,
-    ) -> list[SessionPositionRecord]:
-        statement = select(SessionPositionModel)
-        if session_id is not None:
-            statement = statement.where(SessionPositionModel.session_id == session_id)
-        if statuses:
-            statement = statement.where(SessionPositionModel.status.in_(statuses))
-        statement = statement.order_by(
-            SessionPositionModel.updated_at.desc(),
-            SessionPositionModel.session_position_id.desc(),
-        )
-        if limit is not None:
-            statement = statement.limit(limit)
-        with self.session_factory() as session:
-            rows = session.scalars(statement).all()
-        return self.rows(rows)
-
-    def create_session_position(
-        self,
-        *,
-        session_position_id: str,
-        session_id: str,
-        session_date: str,
-        label: str,
-        candidate_id: int | None,
-        open_execution_attempt_id: str,
-        underlying_symbol: str,
-        strategy: str,
-        expiration_date: str,
-        short_symbol: str,
-        long_symbol: str,
-        requested_quantity: int,
-        opened_quantity: float,
-        remaining_quantity: float,
-        entry_credit: float | None,
-        entry_notional: float | None,
-        width: float | None,
-        max_profit: float | None,
-        max_loss: float | None,
-        opened_at: str | None,
-        closed_at: str | None,
-        status: str,
-        realized_pnl: float,
-        unrealized_pnl: float | None,
-        close_mark: float | None,
-        close_mark_source: str | None,
-        close_marked_at: str | None,
-        last_broker_status: str | None,
-        exit_policy: dict[str, Any],
-        risk_policy: dict[str, Any],
-        source_job_type: str | None,
-        source_job_key: str | None,
-        source_job_run_id: str | None,
-        last_exit_evaluated_at: str | None,
-        last_exit_reason: str | None,
-        last_reconciled_at: str | None,
-        reconciliation_status: str | None,
-        reconciliation_note: str | None,
-        created_at: str,
-        updated_at: str,
-    ) -> SessionPositionRecord:
-        with self.session_scope() as session:
-            row = SessionPositionModel(
-                session_position_id=session_position_id,
-                session_id=session_id,
-                session_date=parse_date(session_date),
-                label=label,
-                candidate_id=candidate_id,
-                open_execution_attempt_id=open_execution_attempt_id,
-                underlying_symbol=underlying_symbol,
-                strategy=strategy,
-                expiration_date=parse_date(expiration_date),
-                short_symbol=short_symbol,
-                long_symbol=long_symbol,
-                requested_quantity=int(requested_quantity),
-                opened_quantity=float(opened_quantity),
-                remaining_quantity=float(remaining_quantity),
-                entry_credit=entry_credit,
-                entry_notional=entry_notional,
-                width=width,
-                max_profit=max_profit,
-                max_loss=max_loss,
-                opened_at=parse_datetime(opened_at),
-                closed_at=parse_datetime(closed_at),
-                status=status,
-                realized_pnl=float(realized_pnl),
-                unrealized_pnl=unrealized_pnl,
-                close_mark=close_mark,
-                close_mark_source=close_mark_source,
-                close_marked_at=parse_datetime(close_marked_at),
-                last_broker_status=last_broker_status,
-                exit_policy_json=exit_policy,
-                risk_policy_json=risk_policy,
-                source_job_type=source_job_type,
-                source_job_key=source_job_key,
-                source_job_run_id=source_job_run_id,
-                last_exit_evaluated_at=parse_datetime(last_exit_evaluated_at),
-                last_exit_reason=last_exit_reason,
-                last_reconciled_at=parse_datetime(last_reconciled_at),
-                reconciliation_status=reconciliation_status,
-                reconciliation_note=reconciliation_note,
-                created_at=parse_datetime(created_at),
-                updated_at=parse_datetime(updated_at),
-            )
-            session.add(row)
-            session.flush()
-            session.refresh(row)
-            return self.row(row)
-
-    def update_session_position(
-        self,
-        *,
-        session_position_id: str,
-        opened_quantity: float | None = None,
-        remaining_quantity: float | None = None,
-        entry_credit: float | None = None,
-        entry_notional: float | None = None,
-        width: float | None = None,
-        max_profit: float | None = None,
-        max_loss: float | None = None,
-        opened_at: str | None = None,
-        closed_at: str | None = None,
-        status: str | None = None,
-        realized_pnl: float | None = None,
-        unrealized_pnl: float | None = None,
-        close_mark: float | None = None,
-        close_mark_source: str | None = None,
-        close_marked_at: str | None = None,
-        last_broker_status: str | None = None,
-        exit_policy: dict[str, Any] | None = None,
-        risk_policy: dict[str, Any] | None = None,
-        source_job_type: str | None = None,
-        source_job_key: str | None = None,
-        source_job_run_id: str | None = None,
-        last_exit_evaluated_at: str | None = None,
-        last_exit_reason: str | None = None,
-        last_reconciled_at: str | None = None,
-        reconciliation_status: str | None = None,
-        reconciliation_note: str | None = None,
-        updated_at: str | None = None,
-    ) -> SessionPositionRecord:
-        with self.session_scope() as session:
-            row = session.get(SessionPositionModel, session_position_id)
-            if row is None:
-                raise ValueError(f"Unknown session_position_id: {session_position_id}")
-            if opened_quantity is not None:
-                row.opened_quantity = float(opened_quantity)
-            if remaining_quantity is not None:
-                row.remaining_quantity = float(remaining_quantity)
-            if entry_credit is not None:
-                row.entry_credit = entry_credit
-            if entry_notional is not None:
-                row.entry_notional = entry_notional
-            if width is not None:
-                row.width = width
-            if max_profit is not None:
-                row.max_profit = max_profit
-            if max_loss is not None:
-                row.max_loss = max_loss
-            if opened_at is not None:
-                row.opened_at = parse_datetime(opened_at)
-            if closed_at is not None:
-                row.closed_at = parse_datetime(closed_at)
-            if status is not None:
-                row.status = status
-            if realized_pnl is not None:
-                row.realized_pnl = float(realized_pnl)
-            if (
-                unrealized_pnl is not None
-                or (close_mark is not None)
-                or (close_mark_source is not None)
-                or (close_marked_at is not None)
-            ):
-                row.unrealized_pnl = unrealized_pnl
-            if close_mark is not None:
-                row.close_mark = close_mark
-            if close_mark_source is not None:
-                row.close_mark_source = close_mark_source
-            if close_marked_at is not None:
-                row.close_marked_at = parse_datetime(close_marked_at)
-            if last_broker_status is not None:
-                row.last_broker_status = last_broker_status
-            if exit_policy is not None:
-                row.exit_policy_json = exit_policy
-            if risk_policy is not None:
-                row.risk_policy_json = risk_policy
-            if source_job_type is not None:
-                row.source_job_type = source_job_type
-            if source_job_key is not None:
-                row.source_job_key = source_job_key
-            if source_job_run_id is not None:
-                row.source_job_run_id = source_job_run_id
-            if last_exit_evaluated_at is not None:
-                row.last_exit_evaluated_at = parse_datetime(last_exit_evaluated_at)
-            if last_exit_reason is not None:
-                row.last_exit_reason = last_exit_reason
-            if last_reconciled_at is not None:
-                row.last_reconciled_at = parse_datetime(last_reconciled_at)
-            if reconciliation_status is not None:
-                row.reconciliation_status = reconciliation_status
-                row.reconciliation_note = reconciliation_note
-            elif reconciliation_note is not None:
-                row.reconciliation_note = reconciliation_note
-            row.updated_at = (
-                parse_datetime(updated_at) if updated_at is not None else row.updated_at
-            )
-            session.flush()
-            session.refresh(row)
-            return self.row(row)
-
-    def list_session_position_closes(
-        self,
-        *,
-        session_position_ids: list[str] | None = None,
-        session_position_id: str | None = None,
-    ) -> list[SessionPositionCloseRecord]:
-        statement = select(SessionPositionCloseModel)
-        if session_position_id is not None:
-            statement = statement.where(
-                SessionPositionCloseModel.session_position_id == session_position_id
-            )
-        elif session_position_ids:
-            statement = statement.where(
-                SessionPositionCloseModel.session_position_id.in_(session_position_ids)
-            )
-        statement = statement.order_by(
-            SessionPositionCloseModel.closed_at.desc(),
-            SessionPositionCloseModel.session_position_close_id.desc(),
-        )
-        with self.session_factory() as session:
-            rows = session.scalars(statement).all()
-        return self.rows(rows)
-
-    def upsert_session_position_close(
-        self,
-        *,
-        session_position_id: str,
-        execution_attempt_id: str,
-        closed_quantity: float,
-        exit_debit: float | None,
-        realized_pnl: float,
-        broker_order_id: str | None,
-        closed_at: str | None,
-        created_at: str,
-        updated_at: str,
-    ) -> SessionPositionCloseRecord:
-        with self.session_scope() as session:
-            statement = select(SessionPositionCloseModel).where(
-                SessionPositionCloseModel.execution_attempt_id == execution_attempt_id
-            )
-            row = session.scalars(statement).first()
-            if row is None:
-                row = SessionPositionCloseModel(
-                    session_position_id=session_position_id,
-                    execution_attempt_id=execution_attempt_id,
-                    created_at=parse_datetime(created_at),
-                )
-                session.add(row)
-            row.session_position_id = session_position_id
-            row.closed_quantity = float(closed_quantity)
-            row.exit_debit = exit_debit
-            row.realized_pnl = float(realized_pnl)
-            row.broker_order_id = broker_order_id
-            row.closed_at = parse_datetime(closed_at)
-            row.updated_at = parse_datetime(updated_at)
-            session.flush()
-            session.refresh(row)
-            return self.row(row)
-
     def get_position(self, position_id: str) -> PortfolioPositionRecord | None:
         with self.session_factory() as session:
             row = session.get(PortfolioPositionModel, position_id)
@@ -802,20 +479,6 @@ class ExecutionRepository(RepositoryBase):
         statement = select(PortfolioPositionModel).where(
             PortfolioPositionModel.open_execution_attempt_id
             == open_execution_attempt_id
-        )
-        with self.session_factory() as session:
-            row = session.scalars(statement).first()
-        if row is None:
-            return None
-        return self.row(row)
-
-    def get_position_by_legacy_session_position_id(
-        self,
-        legacy_session_position_id: str,
-    ) -> PortfolioPositionRecord | None:
-        statement = select(PortfolioPositionModel).where(
-            PortfolioPositionModel.legacy_session_position_id
-            == legacy_session_position_id
         )
         with self.session_factory() as session:
             row = session.scalars(statement).first()
@@ -859,7 +522,6 @@ class ExecutionRepository(RepositoryBase):
         position_id: str,
         pipeline_id: str,
         source_opportunity_id: str | None,
-        legacy_session_position_id: str | None,
         open_execution_attempt_id: str,
         root_symbol: str,
         strategy_family: str,
@@ -902,7 +564,6 @@ class ExecutionRepository(RepositoryBase):
                 position_id=position_id,
                 pipeline_id=pipeline_id,
                 source_opportunity_id=source_opportunity_id,
-                legacy_session_position_id=legacy_session_position_id,
                 open_execution_attempt_id=open_execution_attempt_id,
                 root_symbol=root_symbol,
                 strategy_family=strategy_family,
@@ -951,7 +612,6 @@ class ExecutionRepository(RepositoryBase):
         position_id: str,
         pipeline_id: str | None = None,
         source_opportunity_id: str | None = None,
-        legacy_session_position_id: str | None = None,
         root_symbol: str | None = None,
         strategy_family: str | None = None,
         style_profile: str | None = None,
@@ -995,8 +655,6 @@ class ExecutionRepository(RepositoryBase):
                 row.pipeline_id = pipeline_id
             if source_opportunity_id is not None:
                 row.source_opportunity_id = source_opportunity_id
-            if legacy_session_position_id is not None:
-                row.legacy_session_position_id = legacy_session_position_id
             if root_symbol is not None:
                 row.root_symbol = root_symbol
             if strategy_family is not None:
@@ -1102,7 +760,6 @@ class ExecutionRepository(RepositoryBase):
         *,
         position_id: str,
         execution_attempt_id: str,
-        legacy_session_position_id: str | None,
         closed_quantity: float,
         exit_value: float | None,
         realized_pnl: float,
@@ -1124,7 +781,6 @@ class ExecutionRepository(RepositoryBase):
                 )
                 session.add(row)
             row.position_id = position_id
-            row.legacy_session_position_id = legacy_session_position_id
             row.closed_quantity = float(closed_quantity)
             row.exit_value = exit_value
             row.realized_pnl = float(realized_pnl)

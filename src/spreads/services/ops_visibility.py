@@ -597,7 +597,6 @@ def _summarize_execution_attempt(
         "completed_at": attempt.get("completed_at"),
         "broker_order_id": attempt.get("broker_order_id"),
         "candidate_id": attempt.get("candidate_id"),
-        "session_position_id": attempt.get("session_position_id"),
         "source_kind": lifecycle_payload.get("source_kind"),
         "lifecycle_phase": lifecycle_payload.get("phase"),
         "lifecycle_note": lifecycle_payload.get("note"),

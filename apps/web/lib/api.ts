@@ -552,7 +552,6 @@ const executionAttemptSchema = z
     short_symbol: z.string(),
     long_symbol: z.string(),
     trade_intent: z.string(),
-    session_position_id: z.string().nullable().optional(),
     position_id: z.string().nullable().optional(),
     quantity: z.number(),
     limit_price: z.number(),

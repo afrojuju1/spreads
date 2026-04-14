@@ -381,11 +381,6 @@ def _position_common_payload(
         width=width,
         quantity=remaining_quantity,
     )
-    legacy_session_position_id = _as_text(
-        existing.get("legacy_session_position_id")
-        if isinstance(existing, Mapping)
-        else None
-    ) or resolve_attempt_session_position_id(attempt)
     exit_policy = (
         dict(existing.get("exit_policy") or {})
         if isinstance(existing, Mapping)
@@ -409,7 +404,6 @@ def _position_common_payload(
             if isinstance(existing, Mapping)
             else None
         ),
-        "legacy_session_position_id": legacy_session_position_id,
         "root_symbol": root_symbol,
         "strategy_family": _as_text(attempt.get("strategy_family"))
         or _as_text(
@@ -654,7 +648,6 @@ def _sync_open_position(
 
     execution_store.update_attempt(
         execution_attempt_id=str(attempt["execution_attempt_id"]),
-        session_position_id=resolve_attempt_session_position_id(attempt),
         position_id=str(existing["position_id"]),
     )
     return existing
@@ -681,12 +674,8 @@ def _sync_close_position(
         raise ValueError(f"Unknown position_id: {position_id}")
 
     broker_status = (_as_text(attempt.get("status")) or "unknown").lower()
-    legacy_session_position_id = resolve_attempt_session_position_id(
-        attempt
-    ) or _as_text(position.get("legacy_session_position_id"))
     execution_store.update_attempt(
         execution_attempt_id=str(attempt["execution_attempt_id"]),
-        session_position_id=legacy_session_position_id,
         position_id=position_id,
     )
     execution_store.update_position(
@@ -714,7 +703,6 @@ def _sync_close_position(
     execution_store.upsert_position_close(
         position_id=position_id,
         execution_attempt_id=str(attempt["execution_attempt_id"]),
-        legacy_session_position_id=legacy_session_position_id,
         closed_quantity=filled_quantity,
         exit_value=_round_money(exit_value),
         realized_pnl=realized_pnl,

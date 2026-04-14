@@ -475,7 +475,6 @@ def _summarize_execution(attempt: Mapping[str, Any]) -> dict[str, Any]:
         "strategy": _as_text(attempt.get("strategy")),
         "opportunity_id": _as_text(attempt.get("opportunity_id")),
         "risk_decision_id": _as_text(attempt.get("risk_decision_id")),
-        "session_position_id": _as_text(attempt.get("session_position_id")),
         "broker_order_id": _as_text(attempt.get("broker_order_id")),
         "requested_at": _as_text(attempt.get("requested_at")),
         "submitted_at": _as_text(attempt.get("submitted_at")),
