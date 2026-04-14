@@ -47,6 +47,10 @@ def _candidate_blockers(candidate: dict[str, Any]) -> list[str]:
     calendar_status = str(candidate.get("calendar_status") or "clean").lower()
     if calendar_status != "clean":
         blockers.append(f"calendar_{calendar_status}")
+    for blocker in list(candidate.get("scoring_blockers") or []):
+        rendered = str(blocker or "").strip()
+        if rendered and rendered not in blockers:
+            blockers.append(rendered)
     return blockers
 
 
@@ -79,13 +83,26 @@ def _opportunity_side(candidate: dict[str, Any]) -> str | None:
 def _candidate_confidence(candidate: dict[str, Any] | None) -> float | None:
     if candidate is None:
         return None
+    explicit_confidence = candidate.get("confidence")
+    if explicit_confidence not in (None, ""):
+        try:
+            return round(max(0.0, min(float(explicit_confidence), 1.0)), 4)
+        except (TypeError, ValueError):
+            return None
+    score_value = candidate.get("execution_score")
+    if score_value in (None, ""):
+        score_value = candidate.get("promotion_score")
+    if score_value in (None, ""):
+        score_value = candidate.get("quality_score")
     try:
-        score = float(candidate.get("quality_score"))
+        score = float(score_value)
     except (TypeError, ValueError):
         return None
-    normalized = (score - MONITOR_SCORE_FLOOR) / max(
-        PROMOTABLE_STRONG_SCORE - MONITOR_SCORE_FLOOR, 1.0
+    monitor_floor = float(
+        (candidate.get("score_thresholds") or {}).get("monitor_floor")
+        or MONITOR_SCORE_FLOOR
     )
+    normalized = (score - monitor_floor) / max(100.0 - monitor_floor, 1.0)
     return round(max(0.0, min(normalized, 1.0)), 4)
 
 
@@ -203,6 +220,11 @@ def _candidate_evidence(
                 "candidate_identity": _candidate_identity(candidate),
                 "strategy": candidate.get("strategy"),
                 "quality_score": candidate.get("quality_score"),
+                "discovery_score": candidate.get("discovery_score"),
+                "promotion_score": candidate.get("promotion_score"),
+                "execution_score": candidate.get("execution_score"),
+                "scoring_state": candidate.get("scoring_state"),
+                "execution_blockers": candidate.get("execution_blockers"),
                 "return_on_risk": candidate.get("return_on_risk"),
                 "midpoint_credit": candidate.get("midpoint_credit"),
                 "setup_status": candidate.get("setup_status"),
@@ -328,20 +350,22 @@ def _build_opportunity_payload(
         "origin": str(row.get("origin") or "live_scan"),
         "eligibility": str(row.get("eligibility") or "live"),
         "eligibility_state": str(row.get("eligibility") or "live"),
-        "promotion_score": candidate.get("quality_score"),
-        "execution_score": candidate.get("quality_score"),
+        "promotion_score": candidate.get("promotion_score"),
+        "execution_score": candidate.get("execution_score"),
         "confidence": _candidate_confidence(candidate),
-        "signal_state_ref": build_signal_state_id(label, str(candidate["underlying_symbol"])),
+        "signal_state_ref": build_signal_state_id(
+            label, str(candidate["underlying_symbol"])
+        ),
         "lifecycle_state": (
-            "ready"
-            if str(row["selection_state"]) == "promotable"
-            else "candidate"
+            "ready" if str(row["selection_state"]) == "promotable" else "candidate"
         ),
         "created_at": generated_at,
         "updated_at": generated_at,
         "expires_at": _expires_at(generated_at, profile),
         "reason_codes": [str(row.get("state_reason") or "selected")],
-        "blockers": [] if str(row.get("eligibility") or "live") == "live" else ["analysis_only"],
+        "blockers": []
+        if str(row.get("eligibility") or "live") == "live"
+        else ["analysis_only"],
         "legs": _candidate_legs(candidate),
         "economics": _candidate_economics(candidate),
         "strategy_metrics": _candidate_strategy_metrics(candidate),
@@ -352,14 +376,18 @@ def _build_opportunity_payload(
             "origin": row.get("origin"),
             "eligibility": row.get("eligibility"),
             "generated_at": generated_at,
+            "discovery_score": candidate.get("discovery_score"),
+            "promotion_score": candidate.get("promotion_score"),
+            "execution_score": candidate.get("execution_score"),
+            "scoring_state": candidate.get("scoring_state"),
+            "scoring_state_reason": candidate.get("scoring_state_reason"),
+            "execution_blockers": candidate.get("execution_blockers"),
         },
         "execution_shape": _execution_shape(candidate),
         "risk_hints": _risk_hints(candidate),
         "source_cycle_id": cycle_id,
         "source_candidate_id": (
-            None
-            if row.get("candidate_id") in (None, "")
-            else int(row["candidate_id"])
+            None if row.get("candidate_id") in (None, "") else int(row["candidate_id"])
         ),
         "source_selection_state": str(row["selection_state"]),
         "candidate_identity": _candidate_identity(candidate),
@@ -392,7 +420,9 @@ def _derive_symbol_slice(
         else str(primary_live_opportunity.get("selection_state") or "")
     )
     origin = (
-        None if primary_live_opportunity is None else primary_live_opportunity.get("origin")
+        None
+        if primary_live_opportunity is None
+        else primary_live_opportunity.get("origin")
     )
     eligibility = (
         None
@@ -437,14 +467,20 @@ def _derive_symbol_slice(
     else:
         raw_best = raw_candidates[0] if raw_candidates else None
         if raw_best is not None:
-            raw_quality = float(raw_best.get("quality_score") or 0.0)
+            raw_quality = float(
+                raw_best.get("promotion_score") or raw_best.get("quality_score") or 0.0
+            )
+            monitor_floor = float(
+                (raw_best.get("score_thresholds") or {}).get("monitor_floor")
+                or MONITOR_SCORE_FLOOR
+            )
             raw_blockers = _candidate_blockers(raw_best)
             if raw_blockers:
                 state = "BLOCKED"
                 reason_codes = list(raw_blockers)
                 blockers = list(raw_blockers)
                 candidate = raw_best
-            elif raw_quality >= MONITOR_SCORE_FLOOR:
+            elif raw_quality >= monitor_floor:
                 state = "ARMING"
                 reason_codes = ["live_candidate_retained"]
                 candidate = raw_best
@@ -528,7 +564,11 @@ def sync_live_collector_signal_layer(
     for symbol, rows in symbol_candidates.items():
         raw_by_symbol[str(symbol)] = sorted(
             [_candidate_with_payload(row) for row in rows],
-            key=lambda candidate: float(candidate.get("quality_score") or 0.0),
+            key=lambda candidate: float(
+                candidate.get("promotion_score")
+                or candidate.get("quality_score")
+                or 0.0
+            ),
             reverse=True,
         )
 

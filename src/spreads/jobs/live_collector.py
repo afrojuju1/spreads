@@ -926,6 +926,7 @@ def _run_collection_cycle(
         top_monitor=WATCHLIST_TOP,
         profile=args.profile,
     )
+    symbol_strategy_candidates = dict(selection.get("symbol_candidates") or {})
     promotable_payloads = list(selection["promotable_candidates"])
     monitor_payloads = list(selection["monitor_candidates"])
     if args.profile == "0dte" and not promotable_payloads and not monitor_payloads:
@@ -949,6 +950,7 @@ def _run_collection_cycle(
             profile=args.profile,
             recovered_candidates=recovered_payloads,
         )
+        symbol_strategy_candidates = dict(selection.get("symbol_candidates") or {})
         promotable_payloads = list(selection["promotable_candidates"])
         monitor_payloads = list(selection["monitor_candidates"])
     opportunities = list(selection["opportunities"])

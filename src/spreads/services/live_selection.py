@@ -8,6 +8,7 @@ from spreads.services.candidate_policy import (
     candidate_requires_favorable_setup,
     resolve_deployment_quality_thresholds,
 )
+from spreads.services.opportunity_scoring import build_candidate_opportunity_score
 
 DEFAULT_SELECTION_THRESHOLDS = {
     "promotable_score_floor": 65.0,
@@ -50,16 +51,112 @@ def _selection_thresholds(profile: str | None) -> dict[str, Any]:
 
 
 def candidate_identity(candidate: dict[str, Any]) -> str:
-    return (
-        f"{candidate['strategy']}|{candidate['short_symbol']}|{candidate['long_symbol']}"
-    )
+    return f"{candidate['strategy']}|{candidate['short_symbol']}|{candidate['long_symbol']}"
 
 
 def summarize_candidate(candidate: dict[str, Any]) -> str:
     return (
         f"{candidate['strategy']} {candidate['short_strike']:.2f}/{candidate['long_strike']:.2f} "
-        f"score {candidate['quality_score']:.1f}"
+        f"score {_selection_score(candidate):.1f}"
     )
+
+
+def _selection_score(candidate: dict[str, Any]) -> float:
+    promotion_score = candidate.get("promotion_score")
+    if promotion_score not in (None, ""):
+        return float(promotion_score)
+    return float(candidate.get("quality_score") or 0.0)
+
+
+def _candidate_promotion_floor(
+    candidate: dict[str, Any],
+    thresholds: dict[str, Any],
+) -> float:
+    return float(
+        (candidate.get("score_thresholds") or {}).get("promotion_floor")
+        or thresholds["promotable_score_floor"]
+    )
+
+
+def _candidate_monitor_floor(
+    candidate: dict[str, Any],
+    thresholds: dict[str, Any],
+) -> float:
+    return float(
+        (candidate.get("score_thresholds") or {}).get("monitor_floor")
+        or thresholds["monitor_score_floor"]
+    )
+
+
+def _scored_candidate(
+    candidate: dict[str, Any],
+    *,
+    thresholds: dict[str, Any],
+    profile: str | None,
+    generated_at: str,
+) -> dict[str, Any]:
+    scorecard = build_candidate_opportunity_score(
+        candidate,
+        cycle={
+            "generated_at": generated_at,
+            "profile": profile,
+        },
+    )
+    execution_blockers: list[str] = []
+    if str(scorecard["state"]) == "blocked":
+        execution_blockers.extend(list(scorecard["blockers"]))
+    if not promotable_candidate_is_eligible(candidate):
+        execution_blockers.append("selection_not_live_ready")
+    if not _meets_midpoint_credit_floor(
+        candidate,
+        thresholds.get("min_promotable_midpoint_credit"),
+    ):
+        execution_blockers.append("midpoint_credit_below_promotable_floor")
+    if not candidate_meets_return_on_risk_floor(
+        candidate,
+        thresholds.get("min_promotable_return_on_risk"),
+    ):
+        execution_blockers.append("return_on_risk_below_promotable_floor")
+    execution_penalty = min(float(len(execution_blockers)) * 12.0, 30.0)
+    execution_score = round(
+        max(float(scorecard["execution_score"]) - execution_penalty, 0.0),
+        1,
+    )
+    monitor_floor = float(scorecard["monitor_floor"])
+    confidence = round(
+        max(
+            0.0,
+            min(
+                (execution_score - monitor_floor) / max(100.0 - monitor_floor, 1.0), 1.0
+            ),
+        ),
+        4,
+    )
+    return {
+        **dict(candidate),
+        "discovery_score": scorecard["discovery_score"],
+        "promotion_score": scorecard["promotion_score"],
+        "execution_score": execution_score,
+        "confidence": confidence,
+        "score_style_profile": scorecard["style_profile"],
+        "scoring_state": scorecard["state"],
+        "scoring_state_reason": scorecard["state_reason"],
+        "scoring_blockers": list(scorecard["blockers"]),
+        "execution_blockers": execution_blockers,
+        "score_thresholds": {
+            "promotion_floor": scorecard["promotion_floor"],
+            "monitor_floor": scorecard["monitor_floor"],
+        },
+        "score_evidence": {
+            "setup_score_delta": scorecard["setup_score_delta"],
+            "fill_ratio_delta": scorecard["fill_ratio_delta"],
+            "calibration_delta": scorecard["calibration_delta"],
+            "calibration_breakdown": scorecard["calibration_breakdown"],
+            "profile_score_components": scorecard["profile_score_components"],
+            "profile_score_evidence": scorecard["profile_score_evidence"],
+            "penalty": scorecard["penalty"],
+        },
+    }
 
 
 def promotable_candidate_is_eligible(candidate: dict[str, Any]) -> bool:
@@ -86,7 +183,8 @@ def _meets_promotable_thresholds(
     score_floor: float,
 ) -> bool:
     return (
-        float(candidate.get("quality_score") or 0.0) >= float(score_floor)
+        str(candidate.get("scoring_state") or "") != "blocked"
+        and _selection_score(candidate) >= float(score_floor)
         and promotable_candidate_is_eligible(candidate)
         and _meets_midpoint_credit_floor(
             candidate,
@@ -153,7 +251,13 @@ def _sort_candidates(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         payloads,
         key=lambda candidate: (
-            float(candidate.get("quality_score") or 0.0),
+            _selection_score(candidate),
+            float(candidate.get("execution_score") or 0.0),
+            float(
+                candidate.get("discovery_score")
+                or candidate.get("quality_score")
+                or 0.0
+            ),
             float(candidate.get("return_on_risk") or 0.0),
             float(candidate.get("midpoint_credit") or 0.0),
             min(
@@ -184,16 +288,14 @@ def _select_promotable_candidates(
             if _meets_promotable_thresholds(
                 candidate,
                 thresholds,
-                score_floor=float(thresholds["promotable_score_floor"]),
+                score_floor=_candidate_promotion_floor(candidate, thresholds),
             )
         ]
         winner = viable[0] if viable else None
         runner_up = viable[1] if len(viable) > 1 else None
         winner_gap = None
         if winner is not None and runner_up is not None:
-            winner_gap = float(winner["quality_score"]) - float(
-                runner_up["quality_score"]
-            )
+            winner_gap = _selection_score(winner) - _selection_score(runner_up)
 
         previous = previous_promotable.get(symbol)
         symbol_memory = dict(previous_memory.get(symbol) or {})
@@ -203,7 +305,7 @@ def _select_promotable_candidates(
         if previous is None:
             if winner is not None:
                 if (
-                    float(winner["quality_score"])
+                    _selection_score(winner)
                     >= float(thresholds["promotable_strong_score"])
                     or runner_up is None
                     or (
@@ -228,7 +330,7 @@ def _select_promotable_candidates(
                     {
                         "accepted_identity": candidate_identity(accepted),
                         "accepted_strategy": accepted["strategy"],
-                        "accepted_score": float(accepted["quality_score"]),
+                        "accepted_score": _selection_score(accepted),
                     }
                 )
                 selected.append(accepted)
@@ -237,7 +339,11 @@ def _select_promotable_candidates(
 
         previous_id = candidate_identity(previous)
         previous_match = next(
-            (candidate for candidate in options if candidate_identity(candidate) == previous_id),
+            (
+                candidate
+                for candidate in options
+                if candidate_identity(candidate) == previous_id
+            ),
             None,
         )
         previous_same_side = next(
@@ -254,14 +360,11 @@ def _select_promotable_candidates(
         ):
             current_anchor = None
 
-        if (
-            current_anchor is not None
-            and _meets_promotable_thresholds(
-                current_anchor,
-                thresholds,
-                score_floor=float(thresholds["promotable_score_floor"])
-                - float(thresholds["promotable_hold_tolerance"]),
-            )
+        if current_anchor is not None and _meets_promotable_thresholds(
+            current_anchor,
+            thresholds,
+            score_floor=_candidate_promotion_floor(current_anchor, thresholds)
+            - float(thresholds["promotable_hold_tolerance"]),
         ):
             accepted = current_anchor
         elif winner is not None:
@@ -284,13 +387,9 @@ def _select_promotable_candidates(
             winner_id = candidate_identity(winner)
             if winner_id != accepted_id:
                 same_side = winner["strategy"] == accepted["strategy"]
-                score_gap = float(winner["quality_score"]) - float(
-                    accepted["quality_score"]
-                )
+                score_gap = _selection_score(winner) - _selection_score(accepted)
                 if same_side:
-                    if score_gap >= float(
-                        thresholds["promotable_replacement_margin"]
-                    ):
+                    if score_gap >= float(thresholds["promotable_replacement_margin"]):
                         confirmed, memory_update = _evaluate_pending_candidate(
                             winner=winner,
                             previous_memory=symbol_memory,
@@ -320,8 +419,8 @@ def _select_promotable_candidates(
                             memory_update = {}
 
         if accepted is not None:
-            accepted_score = float(accepted.get("quality_score") or 0.0)
-            if accepted_score >= float(thresholds["promotable_score_floor"]):
+            accepted_score = _selection_score(accepted)
+            if accepted_score >= _candidate_promotion_floor(accepted, thresholds):
                 memory_update.update(
                     {
                         "accepted_identity": candidate_identity(accepted),
@@ -359,8 +458,10 @@ def _select_monitor_candidates(
         for candidate in _sort_candidates(list(symbol_candidates.get(symbol) or [])):
             if candidate_identity(candidate) in accepted_ids:
                 continue
-            if float(candidate.get("quality_score") or 0.0) < float(
-                thresholds["monitor_score_floor"]
+            if str(candidate.get("scoring_state") or "") == "blocked":
+                continue
+            if _selection_score(candidate) < _candidate_monitor_floor(
+                candidate, thresholds
             ):
                 continue
             if not _meets_midpoint_credit_floor(
@@ -464,16 +565,14 @@ def build_selection_events(
                 f"{summarize_candidate(previous)} -> {summarize_candidate(current)}"
             )
         else:
-            score_change = float(current["quality_score"]) - float(
-                previous["quality_score"]
-            )
+            score_change = _selection_score(current) - _selection_score(previous)
             if abs(score_change) < score_delta_threshold:
                 continue
             direction = "up" if score_change > 0 else "down"
             event_type = f"promotable_score_{direction}"
             message = (
                 f"{symbol} promotable score {direction}: "
-                f"{previous['quality_score']:.1f} -> {current['quality_score']:.1f} "
+                f"{_selection_score(previous):.1f} -> {_selection_score(current):.1f} "
                 f"for {summarize_candidate(current)}"
             )
 
@@ -506,15 +605,36 @@ def select_live_opportunities(
     recovered_candidates: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     thresholds = _selection_thresholds(profile)
+    scored_symbol_candidates = {
+        symbol: [
+            _scored_candidate(
+                dict(candidate),
+                thresholds=thresholds,
+                profile=profile,
+                generated_at=generated_at,
+            )
+            for candidate in rows
+        ]
+        for symbol, rows in symbol_candidates.items()
+    }
+    scored_recovered_candidates = [
+        _scored_candidate(
+            dict(candidate),
+            thresholds=thresholds,
+            profile=profile,
+            generated_at=generated_at,
+        )
+        for candidate in list(recovered_candidates or [])
+    ]
     promotable_candidates, selection_memory = _select_promotable_candidates(
-        symbol_candidates=symbol_candidates,
+        symbol_candidates=scored_symbol_candidates,
         previous_promotable=previous_promotable,
         previous_memory=previous_selection_memory,
         top=top_promotable,
         thresholds=thresholds,
     )
     monitor_candidates = _select_monitor_candidates(
-        symbol_candidates=symbol_candidates,
+        symbol_candidates=scored_symbol_candidates,
         promotable_candidates=promotable_candidates,
         top=top_monitor,
         thresholds=thresholds,
@@ -547,7 +667,7 @@ def select_live_opportunities(
         )
         next_rank += 1
 
-    for candidate in list(recovered_candidates or []):
+    for candidate in scored_recovered_candidates:
         opportunities.append(
             _selection_row(
                 candidate,
@@ -561,7 +681,8 @@ def select_live_opportunities(
         next_rank += 1
 
     current_promotable = {
-        str(candidate["underlying_symbol"]): candidate for candidate in promotable_candidates
+        str(candidate["underlying_symbol"]): candidate
+        for candidate in promotable_candidates
     }
     events = build_selection_events(
         label=label,
@@ -573,6 +694,7 @@ def select_live_opportunities(
 
     return {
         "opportunities": opportunities,
+        "symbol_candidates": scored_symbol_candidates,
         "selection_memory": selection_memory,
         "promotable_candidates": promotable_candidates,
         "monitor_candidates": monitor_candidates,

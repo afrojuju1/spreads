@@ -30,6 +30,7 @@ from spreads.services.candidate_history_recovery import (
 )
 from spreads.services.execution import list_session_execution_attempts
 from spreads.services.live_pipelines import parse_live_session_id
+from spreads.services.opportunity_scoring import build_candidate_opportunity_score
 
 TOP_TIER_ETF_SYMBOLS = {"SPY", "QQQ", "IWM", "DIA", "GLD", "TLT"}
 BROAD_ETF_SYMBOLS = {"XLF", "XLE", "XLI", "XLV"}
@@ -607,7 +608,9 @@ def _build_historical_dimension_lookup(
                     },
                 )
                 bucket_totals["count"] += float(count)
-                bucket_totals["legacy_promotable_baseline_count"] += float(legacy_promotable_baseline_count)
+                bucket_totals["legacy_promotable_baseline_count"] += float(
+                    legacy_promotable_baseline_count
+                )
                 bucket_totals["legacy_monitor_count"] += float(legacy_monitor_count)
                 bucket_totals["estimated_pnl_total"] += average_estimated_pnl * float(
                     count
@@ -1119,104 +1122,19 @@ def _build_opportunities(
         if strategy_intent is None or horizon_intent is None:
             continue
 
-        discovery_score = round(
-            _as_float(row.get("quality_score"))
-            or _as_float(candidate.get("quality_score"))
-            or 0.0,
-            1,
-        )
-        calibration_breakdown: list[dict[str, Any]] = []
-        calibration_delta = 0.0
-        for dimension, _, weight in _calibration_dimensions(
-            strategy_intent.style_profile
-        ):
-            if weight <= 0.0:
-                continue
-            if dimension == "classification":
-                group_value = _legacy_selection_state_from_row(row)
-            elif dimension == "strategy":
-                group_value = _as_text(candidate.get("strategy")) or _as_text(
-                    row.get("strategy")
-                )
-            elif dimension == "symbol":
-                group_value = symbol
-            else:
-                group_value = _as_text(candidate.get("setup_status"))
-            delta, evidence = _dimension_adjustment(
-                dimension_lookup=dimension_lookup,
-                dimension=dimension,
-                group_value=group_value,
-                weight=weight,
-            )
-            calibration_delta += delta
-            if evidence is not None:
-                evidence["score_delta"] = round(delta, 3)
-                calibration_breakdown.append(evidence)
-
-        setup_delta = ((_as_float(candidate.get("setup_score")) or 50.0) - 50.0) * 0.15
-        fill_ratio_delta = (
-            (_as_float(candidate.get("fill_ratio")) or 0.8) - 0.8
-        ) * 25.0
-        profile_components, profile_evidence = _profile_specific_score_components(
-            candidate=candidate,
-            style_profile=strategy_intent.style_profile,
+        scorecard = build_candidate_opportunity_score(
+            candidate,
             cycle=cycle,
-        )
-        component_boost = sum(
-            value
-            for key, value in profile_components.items()
-            if not key.endswith("_penalty")
-        )
-        component_penalty = sum(
-            value
-            for key, value in profile_components.items()
-            if key.endswith("_penalty")
-        )
-        penalty = 0.0
-        if str(candidate.get("data_status") or "") != "clean":
-            penalty += 8.0
-        penalty += _calendar_penalty(
-            calendar_status=str(candidate.get("calendar_status") or ""),
             style_profile=strategy_intent.style_profile,
+            policy_state=strategy_intent.policy_state,
+            blockers=strategy_intent.blockers,
+            legacy_selection_state=_legacy_selection_state_from_row(row),
+            dimension_lookup=dimension_lookup,
         )
-        if strategy_intent.policy_state == "blocked":
-            penalty += 20.0
-
-        raw_promotion_score = (
-            discovery_score
-            + setup_delta
-            + fill_ratio_delta
-            + calibration_delta
-            + component_boost
-            - penalty
-            - component_penalty
-        )
-        promotion_score = round(_clamp(raw_promotion_score, 0.0, 100.0), 1)
-
-        promotion_floor = 70.0
-        monitor_floor = 55.0
-        if strategy_intent.style_profile == "reactive":
-            promotion_floor = 78.0
-            monitor_floor = 62.0
-        elif strategy_intent.style_profile == "tactical":
-            promotion_floor = 72.0
-            monitor_floor = 60.0
-        elif strategy_intent.style_profile == "carry":
-            promotion_floor = 68.0
-            monitor_floor = 58.0
-
-        if strategy_intent.policy_state == "blocked":
-            state = "blocked"
-            state_reason = "Blocked by product or event policy."
-        elif promotion_score >= promotion_floor:
-            state = "promotable"
-            state_reason = "Meets provisional promotion floor."
-        elif promotion_score >= monitor_floor:
-            state = "monitor"
-            state_reason = "Retained but below promotion floor."
-        else:
-            state = "discarded"
-            state_reason = "Below provisional retention floor."
+        discovery_score = scorecard["discovery_score"]
+        promotion_score = scorecard["promotion_score"]
+        state = str(scorecard["state"])
+        state_reason = str(scorecard["state_reason"])
 
         opportunity = Opportunity(
             opportunity_id=f"opportunity:{cycle['cycle_id']}:{row['candidate_id']}",
@@ -1251,13 +1169,13 @@ def _build_opportunities(
                 "legacy_selection_state": _legacy_selection_state_from_row(row),
                 "legacy_position": row.get("position"),
                 "quality_score": _as_float(candidate.get("quality_score")),
-                "setup_score_delta": round(setup_delta, 3),
-                "fill_ratio_delta": round(fill_ratio_delta, 3),
-                "calibration_delta": round(calibration_delta, 3),
-                "calibration_breakdown": calibration_breakdown,
-                "profile_score_components": profile_components,
-                "profile_score_evidence": profile_evidence,
-                "penalty": round(penalty, 3),
+                "setup_score_delta": scorecard["setup_score_delta"],
+                "fill_ratio_delta": scorecard["fill_ratio_delta"],
+                "calibration_delta": scorecard["calibration_delta"],
+                "calibration_breakdown": scorecard["calibration_breakdown"],
+                "profile_score_components": scorecard["profile_score_components"],
+                "profile_score_evidence": scorecard["profile_score_evidence"],
+                "penalty": scorecard["penalty"],
                 "setup_status": _as_text(candidate.get("setup_status")),
                 "data_status": _as_text(candidate.get("data_status")),
                 "calendar_status": _as_text(candidate.get("calendar_status")),
@@ -1379,8 +1297,7 @@ def _build_allocation_decisions(
                 symbol_taken_count < CARRY_MAX_POSITIONS_PER_SYMBOL
                 and best_remaining_other_symbol_score is not None
                 and allocation_score
-                >= best_remaining_other_symbol_score
-                + CARRY_SAME_SYMBOL_OVERRIDE_MARGIN
+                >= best_remaining_other_symbol_score + CARRY_SAME_SYMBOL_OVERRIDE_MARGIN
             )
 
         if opportunity.state != "promotable":
@@ -2138,11 +2055,11 @@ def _summarize_outcome_rows(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
             denominator_total, 2
         )
 
-    pooled_estimated_final_ror, estimated_final_max_loss_total = (
-        _pooled_return_on_risk("estimated_pnl")
+    pooled_estimated_final_ror, estimated_final_max_loss_total = _pooled_return_on_risk(
+        "estimated_pnl"
     )
-    pooled_estimated_close_ror, estimated_close_max_loss_total = (
-        _pooled_return_on_risk("estimated_close_pnl")
+    pooled_estimated_close_ror, estimated_close_max_loss_total = _pooled_return_on_risk(
+        "estimated_close_pnl"
     )
     pooled_actual_net_ror, actual_max_loss_total = _pooled_return_on_risk(
         "actual_net_pnl"
@@ -2399,8 +2316,8 @@ def _flatten_opportunity_rows(
         entry_ror_bucket, entry_ror_bucket_order = _entry_return_on_risk_bucket(
             entry_return_on_risk
         )
-        midpoint_credit_bucket, midpoint_credit_bucket_order = (
-            _midpoint_credit_bucket(midpoint_credit)
+        midpoint_credit_bucket, midpoint_credit_bucket_order = _midpoint_credit_bucket(
+            midpoint_credit
         )
         width_bucket, width_bucket_order = _width_bucket(width)
         dte_bucket, dte_bucket_order = _dte_bucket(days_to_expiration)
@@ -2581,9 +2498,7 @@ def _aggregate_dimension_rows(
                     1 for row in group_rows if row.get("is_allocator_selected")
                 ),
                 "legacy_promotable_baseline_count": sum(
-                    1
-                    for row in group_rows
-                    if row.get("is_legacy_promotable_baseline")
+                    1 for row in group_rows if row.get("is_legacy_promotable_baseline")
                 ),
                 "rank_only_top_count": sum(
                     1 for row in group_rows if row.get("is_rank_only_top")
@@ -2594,9 +2509,7 @@ def _aggregate_dimension_rows(
                     if row.get("is_promoted_from_legacy_monitor")
                 ),
                 "rejected_legacy_promotable_count": sum(
-                    1
-                    for row in group_rows
-                    if row.get("is_rejected_legacy_promotable")
+                    1 for row in group_rows if row.get("is_rejected_legacy_promotable")
                 ),
                 **metrics,
             }
@@ -2773,9 +2686,9 @@ def _build_scorecard(
         "legacy_monitor_promotion_hit_rate": scorecard["promoted_from_legacy_monitor"][
             "positive_rate"
         ],
-        "rejected_legacy_promotable_miss_rate": scorecard[
-            "rejected_legacy_promotable"
-        ]["positive_rate"],
+        "rejected_legacy_promotable_miss_rate": scorecard["rejected_legacy_promotable"][
+            "positive_rate"
+        ],
     }
     return scorecard
 
@@ -2839,7 +2752,9 @@ def _build_comparison(
     )
 
     allocated_ids = {item.opportunity_id for item in allocated}
-    legacy_promotable_baseline_ids = {item.opportunity_id for item in legacy_promotable_baseline}
+    legacy_promotable_baseline_ids = {
+        item.opportunity_id for item in legacy_promotable_baseline
+    }
     rank_only_ids = {item.opportunity_id for item in rank_only_top}
 
     return {
@@ -2925,7 +2840,9 @@ def _build_comparison(
             if item.opportunity_id not in rank_only_ids
         ],
         "overlap": {
-            "allocator_vs_legacy_promotable_baseline_count": len(allocated_ids & legacy_promotable_baseline_ids),
+            "allocator_vs_legacy_promotable_baseline_count": len(
+                allocated_ids & legacy_promotable_baseline_ids
+            ),
             "allocator_vs_rank_only_count": len(allocated_ids & rank_only_ids),
         },
     }
@@ -2967,8 +2884,7 @@ def _build_summary(
         {
             item.symbol
             for item in opportunities
-            if item.legacy_selection_state == "monitor"
-            and item.state == "promotable"
+            if item.legacy_selection_state == "monitor" and item.state == "promotable"
         }
     )
     summary = {
@@ -3352,7 +3268,9 @@ def build_recent_opportunity_replay_batch(
         scorecard = dict(payload.get("scorecard") or {})
         verdict = _as_text(summary.get("analysis_verdict")) or "unknown"
         verdict_counts[verdict] += 1
-        promoted_from_legacy_monitor = list(comparison.get("promoted_from_legacy_monitor") or [])
+        promoted_from_legacy_monitor = list(
+            comparison.get("promoted_from_legacy_monitor") or []
+        )
         rejected_legacy_promotable = list(
             comparison.get("rejected_legacy_promotable") or []
         )
@@ -3417,10 +3335,10 @@ def build_recent_opportunity_replay_batch(
     legacy_promotable_baseline_metrics = pooled_metrics("is_legacy_promotable_baseline")
     rank_only_top_metrics = pooled_metrics("is_rank_only_top")
     allocator_selected_metrics = pooled_metrics("is_allocator_selected")
-    promoted_from_legacy_monitor_metrics = pooled_metrics("is_promoted_from_legacy_monitor")
-    rejected_legacy_promotable_metrics = pooled_metrics(
-        "is_rejected_legacy_promotable"
+    promoted_from_legacy_monitor_metrics = pooled_metrics(
+        "is_promoted_from_legacy_monitor"
     )
+    rejected_legacy_promotable_metrics = pooled_metrics("is_rejected_legacy_promotable")
     sessions_with_allocator_selections = sum(
         1
         for item in sessions
@@ -3505,12 +3423,19 @@ def build_recent_opportunity_replay_batch(
         "allocator_minus_legacy_promotable_baseline_avg_actual_minus_estimated_close_pnl": None
         if allocator_selected_metrics["average_actual_minus_estimated_close_pnl"]
         is None
-        or legacy_promotable_baseline_metrics["average_actual_minus_estimated_close_pnl"] is None
+        or legacy_promotable_baseline_metrics[
+            "average_actual_minus_estimated_close_pnl"
+        ]
+        is None
         else round(
             float(
                 allocator_selected_metrics["average_actual_minus_estimated_close_pnl"]
             )
-            - float(legacy_promotable_baseline_metrics["average_actual_minus_estimated_close_pnl"]),
+            - float(
+                legacy_promotable_baseline_metrics[
+                    "average_actual_minus_estimated_close_pnl"
+                ]
+            ),
             4,
         ),
         "allocator_minus_rank_only_avg_actual_minus_estimated_close_pnl": None
