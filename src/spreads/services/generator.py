@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict
-from datetime import UTC, datetime, timedelta
-from threading import Lock
+from datetime import UTC, datetime
 from typing import Any, Mapping
 
 from spreads.common import env_or_die, load_local_env
-from spreads.domain.profiles import UNIVERSE_PRESETS
 from spreads.integrations.alpaca.client import AlpacaClient, infer_trading_base_url
 from spreads.integrations.calendar_events import build_calendar_event_resolver
 from spreads.integrations.greeks import build_local_greeks_provider
@@ -21,11 +19,6 @@ from spreads.services.scanner import (
 )
 from spreads.storage.factory import build_history_store
 
-
-OPTIONABLE_SYMBOL_CACHE_TTL = timedelta(minutes=15)
-_optionable_symbol_cache: dict[str, Any] = {"loaded_at": None, "assets": None}
-_optionable_symbol_cache_lock = Lock()
-GENERATOR_JOB_CHANNEL_PREFIX = "generator-job:"
 DIAGNOSTIC_BUCKET_ORDER = [
     "market_data",
     "greeks",
@@ -42,10 +35,6 @@ REASON_BUCKET_BY_CODE = {
     "all_candidates_filtered": "filtering",
     "no_viable_spread": "candidate_quality",
 }
-
-
-def generator_job_channel(generator_job_id: str) -> str:
-    return f"{GENERATOR_JOB_CHANNEL_PREFIX}{generator_job_id}"
 
 
 def build_generator_args(overrides: dict[str, Any] | None = None) -> argparse.Namespace:
@@ -81,84 +70,6 @@ def _create_alpaca_client(*, data_base_url: str | None = None, trading_base_url:
         trading_base_url=resolved_trading_base_url,
         data_base_url=resolved_data_base_url,
     )
-
-
-def _load_optionable_underlyings() -> list[dict[str, Any]]:
-    now = datetime.now(UTC)
-    with _optionable_symbol_cache_lock:
-        cached_at = _optionable_symbol_cache["loaded_at"]
-        cached_assets = _optionable_symbol_cache["assets"]
-        if (
-            isinstance(cached_at, datetime)
-            and isinstance(cached_assets, list)
-            and now - cached_at < OPTIONABLE_SYMBOL_CACHE_TTL
-        ):
-            return cached_assets
-
-    client = _create_alpaca_client()
-    assets = client.list_optionable_underlyings()
-    normalized_assets = [
-        {
-            "symbol": str(item.get("symbol") or "").upper(),
-            "name": str(item.get("name") or "").strip() or None,
-        }
-        for item in assets
-        if str(item.get("symbol") or "").strip()
-    ]
-    normalized_assets.sort(key=lambda item: item["symbol"])
-
-    with _optionable_symbol_cache_lock:
-        _optionable_symbol_cache["loaded_at"] = now
-        _optionable_symbol_cache["assets"] = normalized_assets
-    return normalized_assets
-
-
-def list_generator_symbol_suggestions(
-    *,
-    query: str = "",
-    limit: int = 40,
-) -> dict[str, Any]:
-    normalized_query = query.strip().upper()
-    curated_symbols = sorted({symbol for symbols in UNIVERSE_PRESETS.values() for symbol in symbols})
-
-    def rank_asset(asset: dict[str, Any]) -> tuple[int, int, str]:
-        symbol = str(asset.get("symbol") or "").upper()
-        name = str(asset.get("name") or "").upper()
-        if not normalized_query:
-            return (0 if symbol in curated_symbols else 1, 0, symbol)
-        if symbol == normalized_query:
-            return (0, 0, symbol)
-        if symbol.startswith(normalized_query):
-            return (0 if symbol in curated_symbols else 1, 1, symbol)
-        if normalized_query in symbol:
-            return (0 if symbol in curated_symbols else 1, 2, symbol)
-        if normalized_query and normalized_query in name:
-            return (0 if symbol in curated_symbols else 1, 3, symbol)
-        return (9, 9, symbol)
-
-    try:
-        assets = _load_optionable_underlyings()
-        source_status = "alpaca"
-    except Exception:
-        assets = [{"symbol": symbol, "name": None} for symbol in curated_symbols]
-        source_status = "fallback"
-
-    filtered_assets = [
-        {
-            "symbol": str(asset["symbol"]).upper(),
-            "name": asset.get("name"),
-            "in_curated_universe": str(asset["symbol"]).upper() in curated_symbols,
-        }
-        for asset in assets
-        if rank_asset(asset)[0] < 9
-    ]
-    filtered_assets.sort(key=rank_asset)
-    return {
-        "query": normalized_query,
-        "source_status": source_status,
-        "symbols": filtered_assets[:limit],
-    }
-
 
 def summarize_setup(setup: UnderlyingSetupContext | None) -> dict[str, Any] | None:
     if setup is None:

@@ -52,7 +52,6 @@ from spreads.services.generator import (
     build_generator_args,
     build_generator_job_payload,
     generate_symbol_ideas,
-    generator_job_channel,
 )
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
 from spreads.services.live_recovery import (
@@ -274,18 +273,11 @@ async def shutdown(ctx: dict[str, Any]) -> None:
 
 async def _publish_generator_job_event(
     ctx: dict[str, Any],
-    event_type: str,
     run_record: Any,
 ) -> None:
     event_bus = ctx.get("event_bus")
     if event_bus is None:
         return
-    payload = build_generator_job_payload(run_record)
-    payload = {
-        "type": event_type,
-        "job": payload,
-    }
-    await event_bus.publish(generator_job_channel(str(run_record["job_run_id"])), json.dumps(payload))
     try:
         await publish_global_event_async(
             event_bus,
@@ -1359,7 +1351,7 @@ async def run_generator_job(
         arq_job_id=arq_job_id,
     )
     await _publish_job_run_event(ctx, running_record)
-    await _publish_generator_job_event(ctx, "running", running_record)
+    await _publish_generator_job_event(ctx, running_record)
     try:
         args = build_generator_args(payload)
         result = await asyncio.to_thread(generate_symbol_ideas, args)
@@ -1377,7 +1369,7 @@ async def run_generator_job(
         if completed_record is None:
             raise SupersededJobRun(f"Job run {job_run_id} was superseded before completion.")
         await _publish_job_run_event(ctx, completed_record)
-        await _publish_generator_job_event(ctx, "completed", completed_record)
+        await _publish_generator_job_event(ctx, completed_record)
         return build_generator_job_payload(completed_record)
     except Exception as exc:
         failed_record = await asyncio.to_thread(
@@ -1392,7 +1384,7 @@ async def run_generator_job(
         )
         if failed_record is not None:
             await _publish_job_run_event(ctx, failed_record)
-            await _publish_generator_job_event(ctx, "failed", failed_record)
+            await _publish_generator_job_event(ctx, failed_record)
         raise
 
 
