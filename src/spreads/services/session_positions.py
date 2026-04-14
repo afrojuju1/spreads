@@ -68,20 +68,22 @@ def _derive_live_exposure(
             "max_loss": 0.0,
         }
 
-    entry_notional = None if entry_credit is None else round(entry_credit * 100.0 * normalized_quantity, 2)
+    entry_notional = (
+        None
+        if entry_credit is None
+        else round(entry_credit * 100.0 * normalized_quantity, 2)
+    )
     max_profit = entry_notional
     max_loss = None
     if entry_credit is not None and width is not None:
-        max_loss = round(max(width - entry_credit, 0.0) * 100.0 * normalized_quantity, 2)
+        max_loss = round(
+            max(width - entry_credit, 0.0) * 100.0 * normalized_quantity, 2
+        )
     return {
         "entry_notional": entry_notional,
         "max_profit": max_profit,
         "max_loss": max_loss,
     }
-
-
-def _new_session_position_id() -> str:
-    return f"session_position:{uuid4().hex}"
 
 
 def resolve_trade_intent(value: Any) -> str:
@@ -100,7 +102,9 @@ def resolve_attempt_trade_intent(attempt: Mapping[str, Any]) -> str:
 
 def resolve_attempt_session_position_id(attempt: Mapping[str, Any]) -> str | None:
     request = attempt.get("request")
-    request_value = request.get("session_position_id") if isinstance(request, Mapping) else None
+    request_value = (
+        request.get("session_position_id") if isinstance(request, Mapping) else None
+    )
     return _as_text(attempt.get("session_position_id")) or _as_text(request_value)
 
 
@@ -137,7 +141,9 @@ def _resolve_primary_order(attempt: Mapping[str, Any]) -> Mapping[str, Any] | No
     return resolve_execution_attempt_primary_order(attempt)
 
 
-def _resolve_filled_quantity(attempt: Mapping[str, Any], primary_order: Mapping[str, Any] | None) -> float:
+def _resolve_filled_quantity(
+    attempt: Mapping[str, Any], primary_order: Mapping[str, Any] | None
+) -> float:
     return resolve_execution_attempt_filled_quantity(
         attempt,
         primary_order=primary_order,
@@ -177,7 +183,9 @@ def _resolve_leg_average_price(attempt: Mapping[str, Any], symbol: str) -> float
     for order in attempt.get("orders") or []:
         if not isinstance(order, Mapping):
             continue
-        order_symbol = _as_text(order.get("leg_symbol")) or _as_text(order.get("symbol"))
+        order_symbol = _as_text(order.get("leg_symbol")) or _as_text(
+            order.get("symbol")
+        )
         if order_symbol != symbol:
             continue
         price = _coerce_float(order.get("filled_avg_price"))
@@ -233,7 +241,9 @@ def _resolve_opened_at(attempt: Mapping[str, Any]) -> str | None:
     filtered = [value for value in fill_times if value]
     if filtered:
         return min(filtered)
-    return _as_text(attempt.get("submitted_at")) or _as_text(attempt.get("requested_at"))
+    return _as_text(attempt.get("submitted_at")) or _as_text(
+        attempt.get("requested_at")
+    )
 
 
 def _resolve_closed_at(attempt: Mapping[str, Any]) -> str | None:
@@ -245,7 +255,9 @@ def _resolve_closed_at(attempt: Mapping[str, Any]) -> str | None:
     filtered = [value for value in fill_times if value]
     if filtered:
         return max(filtered)
-    return _as_text(attempt.get("completed_at")) or _as_text(attempt.get("submitted_at"))
+    return _as_text(attempt.get("completed_at")) or _as_text(
+        attempt.get("submitted_at")
+    )
 
 
 def _resolve_width(attempt: Mapping[str, Any]) -> float | None:
@@ -290,106 +302,235 @@ def _position_strategy_metrics(position: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _sync_portfolio_position_from_session_position(
-    *,
-    execution_store: Any,
-    attempt: Mapping[str, Any],
-    session_position: Mapping[str, Any],
-) -> dict[str, Any] | None:
-    if not execution_store.portfolio_schema_ready():
-        return None
+def _new_position_id() -> str:
+    return f"position:{uuid4().hex}"
 
-    position_id = resolve_attempt_position_id(attempt) or str(session_position["session_position_id"])
-    candidate = attempt.get("candidate")
-    if not isinstance(candidate, Mapping):
-        candidate = {}
+
+def _position_width(position: Mapping[str, Any]) -> float | None:
+    strategy_metrics = (
+        position.get("strategy_metrics")
+        if isinstance(position.get("strategy_metrics"), Mapping)
+        else {}
+    )
+    return _coerce_float(strategy_metrics.get("width")) or _coerce_float(
+        position.get("width")
+    )
+
+
+def _position_entry_value(position: Mapping[str, Any]) -> float | None:
+    economics = (
+        position.get("economics")
+        if isinstance(position.get("economics"), Mapping)
+        else {}
+    )
+    return _coerce_float(position.get("entry_value")) or _coerce_float(
+        economics.get("entry_credit")
+    )
+
+
+def _position_common_payload(
+    *,
+    attempt: Mapping[str, Any],
+    existing: Mapping[str, Any] | None,
+    requested_quantity: int,
+    opened_quantity: float,
+    remaining_quantity: float,
+    entry_credit: float | None,
+    realized_pnl: float,
+    unrealized_pnl: float | None,
+    close_mark: float | None,
+    close_mark_source: str | None,
+    close_marked_at: str | None,
+    last_broker_status: str | None,
+    status: str,
+    opened_at: str | None,
+    closed_at: str | None,
+    last_exit_evaluated_at: str | None,
+    last_exit_reason: str | None,
+    last_reconciled_at: str | None,
+    reconciliation_status: str | None,
+    reconciliation_note: str | None,
+) -> dict[str, Any]:
+    candidate = (
+        attempt.get("candidate")
+        if isinstance(attempt.get("candidate"), Mapping)
+        else {}
+    )
+    root_symbol = str(
+        attempt.get("underlying_symbol") or existing.get("root_symbol") or ""
+    )
+    pipeline_id = (
+        _as_text(attempt.get("pipeline_id"))
+        or _as_text(existing.get("pipeline_id"))
+        or build_pipeline_id(str(attempt.get("label") or ""))
+    )
+    market_date = (
+        _as_text(attempt.get("market_date"))
+        or _as_text(attempt.get("session_date"))
+        or _as_text(existing.get("market_date_opened"))
+    )
     policy_fields = resolve_pipeline_policy_fields(
-        profile=candidate.get("profile"),
-        root_symbol=str(session_position["underlying_symbol"]),
+        profile=candidate.get("profile")
+        or _as_text(attempt.get("style_profile"))
+        or _as_text(existing.get("style_profile")),
+        root_symbol=root_symbol,
     )
-    now = _utc_now()
-    existing = execution_store.get_position(position_id) or execution_store.get_position_by_open_attempt(
-        str(session_position["open_execution_attempt_id"])
+    width = _resolve_width(attempt) or _position_width(existing or {})
+    exposure = _derive_live_exposure(
+        entry_credit=entry_credit,
+        width=width,
+        quantity=remaining_quantity,
     )
-    common_payload = {
-        "pipeline_id": _as_text(attempt.get("pipeline_id")) or build_pipeline_id(str(session_position["label"])),
-        "source_opportunity_id": _as_text(attempt.get("opportunity_id")),
-        "legacy_session_position_id": str(session_position["session_position_id"]),
-        "root_symbol": str(session_position["underlying_symbol"]),
-        "strategy_family": _as_text(attempt.get("strategy_family")) or str(session_position["strategy"]),
-        "style_profile": _as_text(attempt.get("style_profile")) or str(policy_fields["style_profile"]),
-        "horizon_intent": _as_text(attempt.get("horizon_intent")) or str(policy_fields["horizon_intent"]),
-        "product_class": _as_text(attempt.get("product_class")) or str(policy_fields["product_class"]),
-        "market_date_opened": _as_text(attempt.get("market_date")) or str(session_position["session_date"]),
-        "market_date_closed": None if _as_text(session_position.get("closed_at")) is None else str(session_position["session_date"]),
-        "status": str(session_position["status"]),
-        "legs": _position_legs(session_position),
-        "economics": _position_economics(session_position),
-        "strategy_metrics": _position_strategy_metrics(session_position),
-        "requested_quantity": _coerce_int(session_position.get("requested_quantity")) or 1,
-        "opened_quantity": _coerce_float(session_position.get("opened_quantity")) or 0.0,
-        "remaining_quantity": _coerce_float(session_position.get("remaining_quantity")) or 0.0,
-        "entry_value": _coerce_float(session_position.get("entry_credit")),
-        "realized_pnl": _coerce_float(session_position.get("realized_pnl")) or 0.0,
-        "unrealized_pnl": _coerce_float(session_position.get("unrealized_pnl")),
-        "close_mark": _coerce_float(session_position.get("close_mark")),
-        "close_mark_source": _as_text(session_position.get("close_mark_source")),
-        "close_marked_at": _as_text(session_position.get("close_marked_at")),
-        "last_broker_status": _as_text(session_position.get("last_broker_status")),
-        "exit_policy": dict(session_position.get("exit_policy_json") or {}),
-        "risk_policy": dict(session_position.get("risk_policy_json") or {}),
-        "source_job_type": _as_text(session_position.get("source_job_type")),
-        "source_job_key": _as_text(session_position.get("source_job_key")),
-        "source_job_run_id": _as_text(session_position.get("source_job_run_id")),
-        "last_exit_evaluated_at": _as_text(session_position.get("last_exit_evaluated_at")),
-        "last_exit_reason": _as_text(session_position.get("last_exit_reason")),
-        "last_reconciled_at": _as_text(session_position.get("last_reconciled_at")),
-        "reconciliation_status": _as_text(session_position.get("reconciliation_status")),
-        "reconciliation_note": _as_text(session_position.get("reconciliation_note")),
-        "opened_at": _as_text(session_position.get("opened_at")),
-        "closed_at": _as_text(session_position.get("closed_at")),
-        "updated_at": now,
+    legacy_session_position_id = _as_text(
+        existing.get("legacy_session_position_id")
+        if isinstance(existing, Mapping)
+        else None
+    ) or resolve_attempt_session_position_id(attempt)
+    exit_policy = (
+        dict(existing.get("exit_policy") or {})
+        if isinstance(existing, Mapping)
+        and isinstance(existing.get("exit_policy"), Mapping)
+        else {}
+    )
+    exit_policy.update(_attempt_exit_policy(attempt))
+    risk_policy = (
+        dict(existing.get("risk_policy") or {})
+        if isinstance(existing, Mapping)
+        and isinstance(existing.get("risk_policy"), Mapping)
+        else {}
+    )
+    risk_policy.update(_attempt_risk_policy(attempt))
+    source_job = _attempt_source_job(attempt)
+    return {
+        "pipeline_id": pipeline_id,
+        "source_opportunity_id": _as_text(attempt.get("opportunity_id"))
+        or _as_text(
+            existing.get("source_opportunity_id")
+            if isinstance(existing, Mapping)
+            else None
+        ),
+        "legacy_session_position_id": legacy_session_position_id,
+        "root_symbol": root_symbol,
+        "strategy_family": _as_text(attempt.get("strategy_family"))
+        or _as_text(
+            existing.get("strategy_family") if isinstance(existing, Mapping) else None
+        )
+        or str(attempt.get("strategy") or "unknown"),
+        "style_profile": _as_text(attempt.get("style_profile"))
+        or _as_text(
+            existing.get("style_profile") if isinstance(existing, Mapping) else None
+        )
+        or str(policy_fields["style_profile"]),
+        "horizon_intent": _as_text(attempt.get("horizon_intent"))
+        or _as_text(
+            existing.get("horizon_intent") if isinstance(existing, Mapping) else None
+        )
+        or str(policy_fields["horizon_intent"]),
+        "product_class": _as_text(attempt.get("product_class"))
+        or _as_text(
+            existing.get("product_class") if isinstance(existing, Mapping) else None
+        )
+        or str(policy_fields["product_class"]),
+        "market_date_opened": market_date,
+        "market_date_closed": None
+        if closed_at is None or market_date is None
+        else market_date,
+        "status": status,
+        "legs": [
+            {
+                "symbol": str(
+                    attempt.get("short_symbol")
+                    or (existing or {}).get("short_symbol")
+                    or ""
+                ),
+                "role": "short",
+                "expiration_date": _as_text(attempt.get("expiration_date"))
+                or _as_text((existing or {}).get("expiration_date")),
+            },
+            {
+                "symbol": str(
+                    attempt.get("long_symbol")
+                    or (existing or {}).get("long_symbol")
+                    or ""
+                ),
+                "role": "long",
+                "expiration_date": _as_text(attempt.get("expiration_date"))
+                or _as_text((existing or {}).get("expiration_date")),
+            },
+        ],
+        "economics": {
+            "entry_credit": _round_money(entry_credit),
+            "entry_notional": exposure["entry_notional"],
+            "max_profit": exposure["max_profit"],
+            "max_loss": exposure["max_loss"],
+        },
+        "strategy_metrics": {
+            "width": width,
+            "strategy": _as_text(attempt.get("strategy"))
+            or _as_text(
+                existing.get("strategy_family")
+                if isinstance(existing, Mapping)
+                else None
+            ),
+        },
+        "requested_quantity": requested_quantity,
+        "opened_quantity": opened_quantity,
+        "remaining_quantity": remaining_quantity,
+        "entry_value": _round_money(entry_credit),
+        "realized_pnl": realized_pnl,
+        "unrealized_pnl": unrealized_pnl,
+        "close_mark": close_mark,
+        "close_mark_source": close_mark_source,
+        "close_marked_at": close_marked_at,
+        "last_broker_status": last_broker_status,
+        "exit_policy": exit_policy,
+        "risk_policy": risk_policy,
+        "source_job_type": _as_text(source_job.get("job_type"))
+        or _as_text(
+            existing.get("source_job_type") if isinstance(existing, Mapping) else None
+        ),
+        "source_job_key": _as_text(source_job.get("job_key"))
+        or _as_text(
+            existing.get("source_job_key") if isinstance(existing, Mapping) else None
+        ),
+        "source_job_run_id": _as_text(source_job.get("job_run_id"))
+        or _as_text(
+            existing.get("source_job_run_id") if isinstance(existing, Mapping) else None
+        ),
+        "last_exit_evaluated_at": last_exit_evaluated_at,
+        "last_exit_reason": last_exit_reason,
+        "last_reconciled_at": last_reconciled_at,
+        "reconciliation_status": reconciliation_status,
+        "reconciliation_note": reconciliation_note,
+        "opened_at": opened_at,
+        "closed_at": closed_at,
+        "updated_at": _utc_now(),
     }
 
-    if existing is None:
-        position = execution_store.create_position(
-            position_id=position_id,
-            open_execution_attempt_id=str(session_position["open_execution_attempt_id"]),
-            created_at=now,
-            **common_payload,
-        )
-    else:
-        position = execution_store.update_position(
-            position_id=str(existing["position_id"]),
-            **common_payload,
-        )
 
-    execution_store.update_attempt(
-        execution_attempt_id=str(attempt["execution_attempt_id"]),
-        session_position_id=str(session_position["session_position_id"]),
-        position_id=str(position["position_id"]),
-    )
-    return position
-
-
-def _recalculate_session_position(
+def _recalculate_position(
     *,
     execution_store: Any,
-    session_position_id: str,
+    position_id: str,
     last_broker_status: str | None,
 ) -> dict[str, Any]:
-    position = execution_store.get_session_position(session_position_id)
+    position = execution_store.get_position(position_id)
     if position is None:
-        raise ValueError(f"Unknown session_position_id: {session_position_id}")
-
-    closes = execution_store.list_session_position_closes(session_position_id=session_position_id)
+        raise ValueError(f"Unknown position_id: {position_id}")
+    closes = execution_store.list_position_closes(position_id=position_id)
     opened_quantity = _coerce_float(position.get("opened_quantity")) or 0.0
-    total_closed_quantity = sum(_coerce_float(close.get("closed_quantity")) or 0.0 for close in closes)
+    total_closed_quantity = sum(
+        _coerce_float(close.get("closed_quantity")) or 0.0 for close in closes
+    )
     remaining_quantity = max(opened_quantity - total_closed_quantity, 0.0)
-    realized_pnl = round(sum(_coerce_float(close.get("realized_pnl")) or 0.0 for close in closes), 2)
+    realized_pnl = round(
+        sum(_coerce_float(close.get("realized_pnl")) or 0.0 for close in closes), 2
+    )
+    entry_credit = _position_entry_value(position)
+    width = _position_width(position)
     exposure = _derive_live_exposure(
-        entry_credit=_coerce_float(position.get("entry_credit")),
-        width=_coerce_float(position.get("width")),
+        entry_credit=entry_credit,
+        width=width,
         quantity=remaining_quantity,
     )
 
@@ -397,23 +538,30 @@ def _recalculate_session_position(
         status = "open"
         closed_at = None
         unrealized_pnl = None
+        market_date_closed = None
     elif remaining_quantity <= 0:
         status = "closed"
         closed_times = [_as_text(close.get("closed_at")) for close in closes]
         closed_at = max((value for value in closed_times if value), default=None)
         unrealized_pnl = 0.0
+        market_date_closed = _as_text(position.get("market_date_opened"))
     else:
         status = "partial_close"
         closed_at = None
         unrealized_pnl = None
+        market_date_closed = None
 
-    updated = execution_store.update_session_position(
-        session_position_id=session_position_id,
-        remaining_quantity=remaining_quantity,
+    updated = execution_store.update_position(
+        position_id=position_id,
         status=status,
-        entry_notional=exposure["entry_notional"],
-        max_profit=exposure["max_profit"],
-        max_loss=exposure["max_loss"],
+        market_date_closed=market_date_closed,
+        remaining_quantity=remaining_quantity,
+        economics={
+            "entry_credit": _round_money(entry_credit),
+            "entry_notional": exposure["entry_notional"],
+            "max_profit": exposure["max_profit"],
+            "max_loss": exposure["max_loss"],
+        },
         realized_pnl=realized_pnl,
         unrealized_pnl=unrealized_pnl,
         closed_at=closed_at,
@@ -423,7 +571,7 @@ def _recalculate_session_position(
     return updated
 
 
-def _sync_open_session_position(
+def _sync_open_position(
     *,
     execution_store: Any,
     attempt: Mapping[str, Any],
@@ -433,119 +581,116 @@ def _sync_open_session_position(
     if filled_quantity <= 0:
         return None
 
-    existing = execution_store.get_session_position_by_open_attempt(str(attempt["execution_attempt_id"]))
-    session_position_id = (
-        str(existing["session_position_id"])
-        if existing is not None
-        else resolve_attempt_session_position_id(attempt) or _new_session_position_id()
+    requested_quantity = _coerce_int(attempt.get("quantity")) or max(
+        int(round(filled_quantity)), 1
     )
-    requested_quantity = _coerce_int(attempt.get("quantity")) or max(int(round(filled_quantity)), 1)
     entry_credit = _resolve_spread_amount(attempt, primary_order, filled_quantity)
-    width = _resolve_width(attempt)
-    exposure = _derive_live_exposure(
-        entry_credit=entry_credit,
-        width=width,
-        quantity=filled_quantity,
+    broker_status = (_as_text(attempt.get("status")) or "unknown").lower()
+    position_id = resolve_attempt_position_id(attempt)
+    existing = (
+        None if position_id is None else execution_store.get_position(position_id)
     )
-
     if existing is None:
-        execution_store.create_session_position(
-            session_position_id=session_position_id,
-            session_id=str(attempt["session_id"]),
-            session_date=str(attempt["session_date"]),
-            label=str(attempt["label"]),
-            candidate_id=_coerce_int(attempt.get("candidate_id")),
-            open_execution_attempt_id=str(attempt["execution_attempt_id"]),
-            underlying_symbol=str(attempt["underlying_symbol"]),
-            strategy=str(attempt["strategy"]),
-            expiration_date=str(attempt["expiration_date"]),
-            short_symbol=str(attempt["short_symbol"]),
-            long_symbol=str(attempt["long_symbol"]),
-            requested_quantity=requested_quantity,
-            opened_quantity=filled_quantity,
-            remaining_quantity=filled_quantity,
-            entry_credit=_round_money(entry_credit),
-            entry_notional=exposure["entry_notional"],
-            width=width,
-            max_profit=exposure["max_profit"],
-            max_loss=exposure["max_loss"],
-            opened_at=_resolve_opened_at(attempt),
-            closed_at=None,
-            status=_resolve_position_status((_as_text(attempt.get("status")) or "unknown").lower(), filled_quantity),
-            realized_pnl=0.0,
-            unrealized_pnl=None,
-            close_mark=None,
-            close_mark_source=None,
-            close_marked_at=None,
-            last_broker_status=(_as_text(attempt.get("status")) or "unknown").lower(),
-            exit_policy=_attempt_exit_policy(attempt),
-            risk_policy=_attempt_risk_policy(attempt),
-            source_job_type=_as_text(_attempt_source_job(attempt).get("job_type")),
-            source_job_key=_as_text(_attempt_source_job(attempt).get("job_key")),
-            source_job_run_id=_as_text(_attempt_source_job(attempt).get("job_run_id")),
-            last_exit_evaluated_at=None,
-            last_exit_reason=None,
-            last_reconciled_at=None,
-            reconciliation_status=None,
-            reconciliation_note=None,
-            created_at=_utc_now(),
-            updated_at=_utc_now(),
+        existing = execution_store.get_position_by_open_attempt(
+            str(attempt["execution_attempt_id"])
         )
+    if existing is None:
+        position_id = position_id or _new_position_id()
+        created = execution_store.create_position(
+            position_id=position_id,
+            open_execution_attempt_id=str(attempt["execution_attempt_id"]),
+            created_at=_utc_now(),
+            **_position_common_payload(
+                attempt=attempt,
+                existing=None,
+                requested_quantity=requested_quantity,
+                opened_quantity=filled_quantity,
+                remaining_quantity=filled_quantity,
+                entry_credit=entry_credit,
+                realized_pnl=0.0,
+                unrealized_pnl=None,
+                close_mark=None,
+                close_mark_source=None,
+                close_marked_at=None,
+                last_broker_status=broker_status,
+                status=_resolve_position_status(broker_status, filled_quantity),
+                opened_at=_resolve_opened_at(attempt),
+                closed_at=None,
+                last_exit_evaluated_at=None,
+                last_exit_reason=None,
+                last_reconciled_at=None,
+                reconciliation_status=None,
+                reconciliation_note=None,
+            ),
+        )
+        existing = created
     else:
-        execution_store.update_session_position(
-            session_position_id=session_position_id,
-            opened_quantity=filled_quantity,
-            entry_credit=_round_money(entry_credit),
-            entry_notional=exposure["entry_notional"],
-            width=width,
-            max_profit=exposure["max_profit"],
-            max_loss=exposure["max_loss"],
-            opened_at=_resolve_opened_at(attempt),
-            last_broker_status=(_as_text(attempt.get("status")) or "unknown").lower(),
-            exit_policy=_attempt_exit_policy(attempt),
-            risk_policy=_attempt_risk_policy(attempt),
-            source_job_type=_as_text(_attempt_source_job(attempt).get("job_type")),
-            source_job_key=_as_text(_attempt_source_job(attempt).get("job_key")),
-            source_job_run_id=_as_text(_attempt_source_job(attempt).get("job_run_id")),
-            updated_at=_utc_now(),
+        position_id = str(existing["position_id"])
+        existing = execution_store.update_position(
+            position_id=position_id,
+            **_position_common_payload(
+                attempt=attempt,
+                existing=existing,
+                requested_quantity=requested_quantity,
+                opened_quantity=filled_quantity,
+                remaining_quantity=filled_quantity,
+                entry_credit=entry_credit,
+                realized_pnl=_coerce_float(existing.get("realized_pnl")) or 0.0,
+                unrealized_pnl=_coerce_float(existing.get("unrealized_pnl")),
+                close_mark=_coerce_float(existing.get("close_mark")),
+                close_mark_source=_as_text(existing.get("close_mark_source")),
+                close_marked_at=_as_text(existing.get("close_marked_at")),
+                last_broker_status=broker_status,
+                status=_resolve_position_status(broker_status, filled_quantity),
+                opened_at=_resolve_opened_at(attempt),
+                closed_at=None,
+                last_exit_evaluated_at=_as_text(existing.get("last_exit_evaluated_at")),
+                last_exit_reason=_as_text(existing.get("last_exit_reason")),
+                last_reconciled_at=_as_text(existing.get("last_reconciled_at")),
+                reconciliation_status=_as_text(existing.get("reconciliation_status")),
+                reconciliation_note=_as_text(existing.get("reconciliation_note")),
+            ),
         )
 
     execution_store.update_attempt(
         execution_attempt_id=str(attempt["execution_attempt_id"]),
-        session_position_id=session_position_id,
+        session_position_id=resolve_attempt_session_position_id(attempt),
+        position_id=str(existing["position_id"]),
     )
-    updated_position = _recalculate_session_position(
-        execution_store=execution_store,
-        session_position_id=session_position_id,
-        last_broker_status=(_as_text(attempt.get("status")) or "unknown").lower(),
-    )
-    _sync_portfolio_position_from_session_position(
-        execution_store=execution_store,
-        attempt=attempt,
-        session_position=updated_position,
-    )
-    return updated_position
+    return existing
 
 
-def _sync_close_session_position(
+def _sync_close_position(
     *,
     execution_store: Any,
     attempt: Mapping[str, Any],
 ) -> dict[str, Any]:
-    session_position_id = resolve_attempt_session_position_id(attempt)
-    if session_position_id is None:
-        raise ValueError("Close execution attempt is missing a session_position_id")
-    position = execution_store.get_session_position(session_position_id)
+    position_id = resolve_attempt_position_id(attempt) or _as_text(
+        attempt.get("position_id")
+    )
+    if position_id is None:
+        legacy_session_position_id = resolve_attempt_session_position_id(attempt)
+        if legacy_session_position_id is not None:
+            fallback = execution_store.get_position(legacy_session_position_id)
+            if fallback is not None:
+                position_id = str(fallback["position_id"])
+    if position_id is None:
+        raise ValueError("Close execution attempt is missing a canonical position_id")
+    position = execution_store.get_position(position_id)
     if position is None:
-        raise ValueError(f"Unknown session_position_id: {session_position_id}")
+        raise ValueError(f"Unknown position_id: {position_id}")
 
     broker_status = (_as_text(attempt.get("status")) or "unknown").lower()
+    legacy_session_position_id = resolve_attempt_session_position_id(
+        attempt
+    ) or _as_text(position.get("legacy_session_position_id"))
     execution_store.update_attempt(
         execution_attempt_id=str(attempt["execution_attempt_id"]),
-        session_position_id=session_position_id,
+        session_position_id=legacy_session_position_id,
+        position_id=position_id,
     )
-    execution_store.update_session_position(
-        session_position_id=session_position_id,
+    execution_store.update_position(
+        position_id=position_id,
         last_broker_status=broker_status,
         updated_at=_utc_now(),
     )
@@ -553,60 +698,36 @@ def _sync_close_session_position(
     primary_order = _resolve_primary_order(attempt)
     filled_quantity = _resolve_filled_quantity(attempt, primary_order)
     if filled_quantity <= 0:
-        updated_position = _recalculate_session_position(
+        return _recalculate_position(
             execution_store=execution_store,
-            session_position_id=session_position_id,
+            position_id=position_id,
             last_broker_status=broker_status,
         )
-        _sync_portfolio_position_from_session_position(
-            execution_store=execution_store,
-            attempt=attempt,
-            session_position=updated_position,
-        )
-        return updated_position
 
-    exit_debit = _resolve_spread_amount(attempt, primary_order, filled_quantity)
-    entry_credit = _coerce_float(position.get("entry_credit"))
+    exit_value = _resolve_spread_amount(attempt, primary_order, filled_quantity)
+    entry_credit = _position_entry_value(position)
     realized_pnl = 0.0
-    if entry_credit is not None and exit_debit is not None:
-        realized_pnl = round((entry_credit - exit_debit) * 100.0 * filled_quantity, 2)
+    if entry_credit is not None and exit_value is not None:
+        realized_pnl = round((entry_credit - exit_value) * 100.0 * filled_quantity, 2)
 
     now = _utc_now()
-    execution_store.upsert_session_position_close(
-        session_position_id=session_position_id,
+    execution_store.upsert_position_close(
+        position_id=position_id,
         execution_attempt_id=str(attempt["execution_attempt_id"]),
+        legacy_session_position_id=legacy_session_position_id,
         closed_quantity=filled_quantity,
-        exit_debit=_round_money(exit_debit),
+        exit_value=_round_money(exit_value),
         realized_pnl=realized_pnl,
         broker_order_id=_as_text(attempt.get("broker_order_id")),
         closed_at=_resolve_closed_at(attempt),
         created_at=now,
         updated_at=now,
     )
-    updated_position = _recalculate_session_position(
+    return _recalculate_position(
         execution_store=execution_store,
-        session_position_id=session_position_id,
+        position_id=position_id,
         last_broker_status=broker_status,
     )
-    portfolio_position = _sync_portfolio_position_from_session_position(
-        execution_store=execution_store,
-        attempt=attempt,
-        session_position=updated_position,
-    )
-    if portfolio_position is not None:
-        execution_store.upsert_position_close(
-            position_id=str(portfolio_position["position_id"]),
-            execution_attempt_id=str(attempt["execution_attempt_id"]),
-            legacy_session_position_id=session_position_id,
-            closed_quantity=filled_quantity,
-            exit_value=_round_money(exit_debit),
-            realized_pnl=realized_pnl,
-            broker_order_id=_as_text(attempt.get("broker_order_id")),
-            closed_at=_resolve_closed_at(attempt),
-            created_at=now,
-            updated_at=now,
-        )
-    return updated_position
 
 
 def sync_session_position_from_attempt(
@@ -614,9 +735,9 @@ def sync_session_position_from_attempt(
     execution_store: Any,
     attempt: Mapping[str, Any],
 ) -> dict[str, Any] | None:
-    if not execution_store.positions_schema_ready():
+    if not execution_store.portfolio_schema_ready():
         return None
     trade_intent = resolve_attempt_trade_intent(attempt)
     if trade_intent == CLOSE_TRADE_INTENT:
-        return _sync_close_session_position(execution_store=execution_store, attempt=attempt)
-    return _sync_open_session_position(execution_store=execution_store, attempt=attempt)
+        return _sync_close_position(execution_store=execution_store, attempt=attempt)
+    return _sync_open_position(execution_store=execution_store, attempt=attempt)

@@ -36,6 +36,7 @@ from spreads.services.opportunity_execution_plan import (
     execution_complexity,
     rank_opportunities,
 )
+from spreads.services.positions import enrich_position_row
 from spreads.services.opportunity_scoring import build_candidate_opportunity_score
 
 TOP_TIER_ETF_SYMBOLS = {"SPY", "QQQ", "IWM", "DIA", "GLD", "TLT"}
@@ -1262,13 +1263,22 @@ def _build_position_matches(
     session_id: str | None,
     positions: list[Mapping[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    if session_id is None or not storage.execution.positions_schema_ready():
+    if session_id is None or not storage.execution.portfolio_schema_ready():
         return {}
 
+    resolved_scope = parse_live_session_id(session_id)
+    if resolved_scope is None:
+        return {}
     resolved_positions = (
         list(positions)
         if positions is not None
-        else list(storage.execution.list_session_positions(session_id=session_id))
+        else [
+            enrich_position_row(dict(row))
+            for row in storage.execution.list_positions(
+                pipeline_id=f"pipeline:{resolved_scope['label']}",
+                market_date=resolved_scope["session_date"],
+            )
+        ]
     )
     positions_by_identity: dict[
         tuple[str, str, str, str, str], list[Mapping[str, Any]]
@@ -1321,9 +1331,9 @@ def _build_position_matches(
             "actual_position_matched": True,
             "actual_position_count": position_count,
             "actual_position_ids": [
-                str(row.get("session_position_id"))
+                str(row.get("position_id"))
                 for row in matched_positions
-                if row.get("session_position_id") is not None
+                if row.get("position_id") is not None
             ],
             "actual_position_status_counts": dict(sorted(status_counts.items())),
             "actual_closed_rate": round(closed_count / position_count, 4),
@@ -1346,10 +1356,19 @@ def _build_execution_matches(
     if session_id is None or not storage.execution.schema_ready():
         return {}
 
+    resolved_scope = parse_live_session_id(session_id)
+    if resolved_scope is None:
+        return {}
     resolved_positions = (
         list(positions)
         if positions is not None
-        else list(storage.execution.list_session_positions(session_id=session_id))
+        else [
+            enrich_position_row(dict(row))
+            for row in storage.execution.list_positions(
+                pipeline_id=f"pipeline:{resolved_scope['label']}",
+                market_date=resolved_scope["session_date"],
+            )
+        ]
     )
     resolved_attempts = (
         [dict(item) for item in attempts]
@@ -1372,9 +1391,9 @@ def _build_execution_matches(
         _opportunity_identity(item): item for item in opportunities
     }
     position_by_id = {
-        str(row.get("session_position_id")): row
+        str(row.get("position_id")): row
         for row in resolved_positions
-        if row.get("session_position_id") is not None
+        if row.get("position_id") is not None
     }
     position_to_opportunity_id: dict[str, str] = {}
     for row in resolved_positions:
@@ -1387,11 +1406,9 @@ def _build_execution_matches(
                 opportunity = None
         if opportunity is None:
             opportunity = opportunity_by_identity.get(_position_identity(row))
-        if opportunity is None or row.get("session_position_id") is None:
+        if opportunity is None or row.get("position_id") is None:
             continue
-        position_to_opportunity_id[str(row["session_position_id"])] = (
-            opportunity.opportunity_id
-        )
+        position_to_opportunity_id[str(row["position_id"])] = opportunity.opportunity_id
 
     matches = {item.opportunity_id: _empty_execution_match() for item in opportunities}
 
@@ -1418,17 +1435,14 @@ def _build_execution_matches(
                 opportunity_id = matched_opportunity.opportunity_id
         elif trade_intent == "close":
             request = attempt.get("request")
-            request_session_position_id = (
-                _as_text(request.get("session_position_id"))
+            request_position_id = (
+                _as_text(request.get("position_id"))
                 if isinstance(request, Mapping)
                 else None
             )
-            session_position_id = (
-                _as_text(attempt.get("session_position_id"))
-                or request_session_position_id
-            )
-            if session_position_id is not None:
-                opportunity_id = position_to_opportunity_id.get(session_position_id)
+            position_id = _as_text(attempt.get("position_id")) or request_position_id
+            if position_id is not None:
+                opportunity_id = position_to_opportunity_id.get(position_id)
 
         if opportunity_id is None:
             continue
@@ -1483,7 +1497,7 @@ def _build_execution_matches(
                 match["fill_to_force_close_total"] += float(fill_to_force_close_minutes)
                 match["fill_to_force_close_count"] += 1
 
-            session_position_id = _as_text(attempt.get("session_position_id"))
+            session_position_id = _as_text(attempt.get("position_id"))
             position = (
                 None
                 if session_position_id is None
@@ -1587,9 +1601,15 @@ def _build_outcome_matches(
     positions: list[Mapping[str, Any]] | None = None
     attempts: list[Mapping[str, Any]] | None = None
     if session_id is not None and storage.execution.schema_ready():
-        positions = list(
-            storage.execution.list_session_positions(session_id=session_id)
-        )
+        resolved_scope = parse_live_session_id(session_id)
+        if resolved_scope is not None:
+            positions = [
+                enrich_position_row(dict(row))
+                for row in storage.execution.list_positions(
+                    pipeline_id=f"pipeline:{resolved_scope['label']}",
+                    market_date=resolved_scope["session_date"],
+                )
+            ]
         attempts = list_session_execution_attempts(
             db_target="",
             session_id=session_id,

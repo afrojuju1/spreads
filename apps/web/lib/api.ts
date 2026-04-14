@@ -449,36 +449,6 @@ const autoExecutionSummarySchema = z
   })
   .passthrough();
 
-const sessionListItemSchema = z
-  .object({
-    session_id: z.string(),
-    pipeline_id: z.string().nullable().optional(),
-    label: z.string(),
-    session_date: z.string(),
-    status: z.string(),
-    latest_slot_at: z.string().nullable().optional(),
-    latest_slot_status: z.string().nullable().optional(),
-    latest_capture_status: z.string().nullable().optional(),
-    latest_auto_execution: autoExecutionSummarySchema.nullable().optional(),
-    latest_auto_execution_status: z.string().nullable().optional(),
-    tradeability_state: z.string().nullable().optional(),
-    tradeability_reason: z.string().nullable().optional(),
-    tradeability_message: z.string().nullable().optional(),
-    stream_quote_events_saved: z.number().optional(),
-    websocket_quote_events_saved: z.number().optional(),
-    baseline_quote_events_saved: z.number(),
-    recovery_quote_events_saved: z.number(),
-    promotable_count: z.number(),
-    monitor_count: z.number(),
-    alert_count: z.number(),
-    updated_at: z.string().nullable().optional(),
-  })
-  .passthrough();
-
-const sessionListResponseSchema = z.object({
-  sessions: z.array(sessionListItemSchema),
-});
-
 const pipelineListItemSchema = z
   .object({
     pipeline_id: z.string(),
@@ -486,7 +456,6 @@ const pipelineListItemSchema = z
     name: z.string().nullable().optional(),
     status: z.string(),
     latest_market_date: z.string(),
-    legacy_session_id: z.string(),
     latest_slot_at: z.string().nullable().optional(),
     latest_slot_status: z.string().nullable().optional(),
     latest_capture_status: z.string().nullable().optional(),
@@ -705,10 +674,8 @@ const sessionPortfolioSchema = z
 
 const sessionDetailSchema = z
   .object({
-    session_id: z.string(),
     pipeline_id: z.string().nullable().optional(),
     label: z.string(),
-    session_date: z.string(),
     status: z.string(),
     updated_at: z.string().nullable().optional(),
     risk_status: z.string().nullable().optional(),
@@ -742,7 +709,6 @@ const pipelineDetailSchema = sessionDetailSchema
   .extend({
     pipeline_id: z.string(),
     market_date: z.string(),
-    legacy_session_id: z.string(),
     pipeline: z.record(z.string(), z.unknown()).nullable().optional(),
     cycles: z.array(z.record(z.string(), z.unknown())).default([]),
     replay: pipelineReplaySchema.nullable().optional(),
@@ -838,7 +804,6 @@ export type AccountHistoryRange = z.infer<typeof accountHistoryRangeSchema>;
 export type SessionIdea = z.infer<typeof sessionIdeaSchema>;
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 export type SessionTuning = z.infer<typeof sessionTuningSchema>;
-export type SessionListItem = z.infer<typeof sessionListItemSchema>;
 export type PipelineListItem = z.infer<typeof pipelineListItemSchema>;
 export type ExecutionOrder = z.infer<typeof executionOrderSchema>;
 export type ExecutionFill = z.infer<typeof executionFillSchema>;
@@ -847,7 +812,6 @@ export type SessionPortfolioQuote = z.infer<typeof sessionPortfolioQuoteSchema>;
 export type SessionPortfolioPosition = z.infer<typeof sessionPortfolioPositionSchema>;
 export type SessionPortfolioSummary = z.infer<typeof sessionPortfolioSummarySchema>;
 export type SessionPortfolio = z.infer<typeof sessionPortfolioSchema>;
-export type SessionDetail = z.infer<typeof sessionDetailSchema>;
 export type PipelineDetail = z.infer<typeof pipelineDetailSchema>;
 export type Opportunity = z.infer<typeof opportunitySchema>;
 export type Position = z.infer<typeof positionSchema>;
@@ -1044,29 +1008,8 @@ export function refreshExecution(executionAttemptId: string) {
   );
 }
 
-export function getSessions(filters?: {
-  sessionDate?: string;
-  limit?: number;
-}) {
-  return fetchApi("sessions", sessionListResponseSchema, {
-    session_date: filters?.sessionDate,
-    limit: filters?.limit,
-  });
-}
-
-export function getSessionDetail(sessionId: string) {
-  return fetchApi(`sessions/${encodeURIComponent(sessionId)}`, sessionDetailSchema);
-}
-
 export function parseGlobalRealtimeEvent(payload: string) {
   return globalRealtimeEventSchema.parse(JSON.parse(payload));
-}
-
-export function buildSessionHref(sessionId?: string | null) {
-  if (!sessionId) {
-    return "/sessions";
-  }
-  return `/sessions/${encodeURIComponent(sessionId)}`;
 }
 
 export function buildPipelineHref(pipelineId?: string | null, marketDate?: string | null) {

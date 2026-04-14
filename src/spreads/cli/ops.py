@@ -11,7 +11,6 @@ from spreads.cli.ops_render import (
     render_audit_view,
     render_jobs_view,
     render_json_payload,
-    render_sessions_view,
     render_system_status,
     render_trading_health,
     render_uoa_view,
@@ -21,7 +20,6 @@ from spreads.services.ops_visibility import (
     build_audit_view,
     build_job_run_view,
     build_jobs_overview,
-    build_sessions_view,
     build_system_status,
     build_trading_health,
     build_uoa_cycle_view,
@@ -145,40 +143,6 @@ def trading_command(
     _run_visibility_command(
         builder=lambda: build_trading_health(db_target=db),
         renderer=render_trading_health,
-        json_output=json_output,
-        watch_seconds=watch,
-        no_color=no_color,
-    )
-
-
-def sessions_command(
-    session_id: str | None = typer.Argument(None, help="Session id to inspect."),
-    date: str | None = typer.Option(
-        None, "--date", help="Filter list mode to one session date."
-    ),
-    limit: int = typer.Option(25, "--limit", help="Maximum sessions to list."),
-    db: str | None = typer.Option(None, "--db", help="Database URL override."),
-    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
-    watch: float | None = typer.Option(
-        None, "--watch", help="Refresh every N seconds."
-    ),
-    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
-) -> None:
-    try:
-        if session_id is not None and date is not None:
-            raise ValueError("--date cannot be used with a session id.")
-        resolved_limit = _validate_limit(limit, option_name="--limit")
-    except ValueError as exc:
-        typer.secho(str(exc), err=True, fg=typer.colors.RED)
-        raise typer.Exit(3) from None
-    _run_visibility_command(
-        builder=lambda: build_sessions_view(
-            db_target=db,
-            session_id=session_id,
-            session_date=date,
-            limit=resolved_limit,
-        ),
-        renderer=render_sessions_view,
         json_output=json_output,
         watch_seconds=watch,
         no_color=no_color,

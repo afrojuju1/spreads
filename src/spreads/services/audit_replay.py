@@ -4,11 +4,12 @@ from collections.abc import Mapping
 from typing import Any
 
 from spreads.db.decorators import with_storage
-from spreads.services.sessions import (
+from spreads.services.pipelines import (
     DEFAULT_ANALYSIS_PROFIT_TARGET,
     DEFAULT_ANALYSIS_STOP_MULTIPLE,
-    get_session_detail,
+    get_pipeline_detail,
 )
+from spreads.services.runtime_identity import build_pipeline_id, parse_live_session_id
 from spreads.services.selection_terms import promotable_monitor_pnl_spread
 from spreads.storage.serializers import parse_datetime
 
@@ -416,11 +417,11 @@ def _selected_opportunities_for_explanation(
                     merged_row["confidence"] = _confidence_from_quality_score(
                         merged_row.get("quality_score")
                     )
-                if not merged_row.get("reason_codes") and merged_row.get("state_reason"):
+                if not merged_row.get("reason_codes") and merged_row.get(
+                    "state_reason"
+                ):
                     merged_row["reason_codes"] = [str(merged_row["state_reason"])]
-                merged_rows.append(
-                    merged_row
-                )
+                merged_rows.append(merged_row)
             selection_priority = {
                 "promotable": 0,
                 "monitor": 1,
@@ -576,6 +577,33 @@ def _summarize_post_market(analysis: Mapping[str, Any] | None) -> dict[str, Any]
     }
 
 
+def _resolve_audit_scope(
+    *,
+    session_id: str,
+    storage: Any,
+) -> dict[str, str]:
+    resolved = parse_live_session_id(session_id)
+    if resolved is not None:
+        return {
+            "session_id": session_id,
+            "label": resolved["label"],
+            "session_date": resolved["session_date"],
+            "pipeline_id": build_pipeline_id(resolved["label"]),
+        }
+
+    latest_cycle = storage.collector.get_latest_session_cycle(session_id)
+    if latest_cycle is None:
+        raise ValueError(f"Unknown session_id: {session_id}")
+    label = str(latest_cycle["label"])
+    session_date = str(latest_cycle["session_date"])
+    return {
+        "session_id": session_id,
+        "label": label,
+        "session_date": session_date,
+        "pipeline_id": build_pipeline_id(label),
+    }
+
+
 @with_storage()
 def build_audit_replay(
     *,
@@ -585,15 +613,17 @@ def build_audit_replay(
     event_scan_limit: int = DEFAULT_EVENT_SCAN_LIMIT,
     storage: Any | None = None,
 ) -> dict[str, Any]:
-    session = get_session_detail(
+    scope = _resolve_audit_scope(session_id=session_id, storage=storage)
+    session = get_pipeline_detail(
         db_target=db_target,
-        session_id=session_id,
+        pipeline_id=scope["pipeline_id"],
+        market_date=scope["session_date"],
         profit_target=DEFAULT_ANALYSIS_PROFIT_TARGET,
         stop_multiple=DEFAULT_ANALYSIS_STOP_MULTIPLE,
         storage=storage,
     )
-    label = str(session["label"])
-    session_date = str(session["session_date"])
+    label = str(scope["label"])
+    session_date = str(scope["session_date"])
     analysis = (
         session.get("analysis") if isinstance(session.get("analysis"), Mapping) else {}
     )
@@ -695,7 +725,7 @@ def build_audit_replay(
 
     return {
         "session": {
-            "session_id": session_id,
+            "session_id": scope["session_id"],
             "label": label,
             "session_date": session_date,
             "status": session.get("status"),

@@ -141,7 +141,9 @@ def resolve_execution_attempt_filled_quantity(
         if primary_order is not None
         else resolve_execution_attempt_primary_order(attempt)
     )
-    primary_value = None if primary is None else _coerce_float(primary.get("filled_qty"))
+    primary_value = (
+        None if primary is None else _coerce_float(primary.get("filled_qty"))
+    )
     if primary_value is not None and primary_value > 0:
         return primary_value
 
@@ -161,7 +163,9 @@ def resolve_execution_attempt_filled_quantity(
             continue
         cumulative = _coerce_float(fill.get("cumulative_quantity"))
         quantity = _coerce_float(fill.get("quantity"))
-        candidate = cumulative if cumulative is not None and cumulative > 0 else quantity
+        candidate = (
+            cumulative if cumulative is not None and cumulative > 0 else quantity
+        )
         if candidate is not None and candidate > 0:
             fill_values.append(candidate)
     if fill_values:
@@ -212,8 +216,10 @@ def classify_open_execution_attempt(
     source_kind = _as_text(source.get("kind")) or "unknown"
     filled_quantity = resolve_execution_attempt_filled_quantity(attempt)
     requested_quantity = max(_coerce_float(attempt.get("quantity")) or 0.0, 0.0)
-    pending_quantity = max(requested_quantity - min(filled_quantity, requested_quantity), 0.0)
-    linked_position_id = _as_text(attempt.get("session_position_id"))
+    pending_quantity = max(
+        requested_quantity - min(filled_quantity, requested_quantity), 0.0
+    )
+    linked_position_id = _as_text(attempt.get("position_id"))
     occupies_position_slot = linked_position_id is None and filled_quantity <= 0
     submit_job_status = normalize_execution_attempt_status(
         None if not isinstance(submit_job, Mapping) else submit_job.get("status")
@@ -224,7 +230,9 @@ def classify_open_execution_attempt(
         now=now,
     )
     submit_job_age_seconds = _seconds_since(
-        None if not isinstance(submit_job, Mapping) else submit_job.get("scheduled_for"),
+        None
+        if not isinstance(submit_job, Mapping)
+        else submit_job.get("scheduled_for"),
         now=now,
     )
     submit_job_heartbeat_age_seconds = _seconds_since(
@@ -329,7 +337,9 @@ def classify_open_execution_attempt(
     if status == SUBMIT_UNKNOWN_STATUS:
         lifecycle["phase"] = "submit_unknown"
         lifecycle["stale"] = True
-        lifecycle["note"] = "Execution submit outcome is uncertain and needs broker reconciliation."
+        lifecycle["note"] = (
+            "Execution submit outcome is uncertain and needs broker reconciliation."
+        )
         lifecycle["next_action"] = "reconcile_broker"
         return lifecycle
 
@@ -344,13 +354,17 @@ def classify_open_execution_attempt(
         ):
             lifecycle["stale"] = True
             lifecycle["next_action"] = "escalate"
-            lifecycle["note"] = "Execution cancel request is stale and needs operator review."
+            lifecycle["note"] = (
+                "Execution cancel request is stale and needs operator review."
+            )
         return lifecycle
 
     if status == "partially_filled":
         lifecycle["phase"] = "partial_open"
         lifecycle["occupies_position_slot"] = False
-        lifecycle["note"] = "Execution is partially filled and linked to position ownership."
+        lifecycle["note"] = (
+            "Execution is partially filled and linked to position ownership."
+        )
         lifecycle["next_action"] = "manage_partial_open"
         return lifecycle
 
@@ -367,10 +381,14 @@ def classify_open_execution_attempt(
         if source_kind == "auto_session_execution":
             lifecycle["next_action"] = "cancel_order"
             lifecycle["intervention"] = "cancel_order"
-            lifecycle["note"] = "Automatic open execution remained pending past its stale-order window."
+            lifecycle["note"] = (
+                "Automatic open execution remained pending past its stale-order window."
+            )
         else:
             lifecycle["next_action"] = "escalate"
-            lifecycle["note"] = "Manual open execution remained pending past its review window."
+            lifecycle["note"] = (
+                "Manual open execution remained pending past its review window."
+            )
     return lifecycle
 
 

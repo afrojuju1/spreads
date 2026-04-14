@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from spreads.db.decorators import with_storage
+from spreads.services.runtime_identity import build_live_session_id
 
 OPEN_POSITION_STATUSES = {"open", "partial_open", "partial_close", "pending_open"}
 
@@ -29,13 +31,79 @@ def _round_money(value: float | None) -> float | None:
     return round(float(value), 2)
 
 
+def _derive_position_legs(
+    row: Mapping[str, Any],
+) -> tuple[str | None, str | None, str | None]:
+    short_symbol = None
+    long_symbol = None
+    expiration_date = _as_text(row.get("expiration_date"))
+    legs = row.get("legs") if isinstance(row.get("legs"), list) else []
+    for leg in legs:
+        if not isinstance(leg, Mapping):
+            continue
+        symbol = _as_text(leg.get("symbol"))
+        role = _as_text(leg.get("role"))
+        if role == "short" and short_symbol is None:
+            short_symbol = symbol
+        elif role == "long" and long_symbol is None:
+            long_symbol = symbol
+        if expiration_date is None:
+            expiration_date = _as_text(leg.get("expiration_date"))
+    return short_symbol, long_symbol, expiration_date
+
+
+def enrich_position_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    payload = dict(row)
+    economics = (
+        payload.get("economics")
+        if isinstance(payload.get("economics"), Mapping)
+        else {}
+    )
+    strategy_metrics = (
+        payload.get("strategy_metrics")
+        if isinstance(payload.get("strategy_metrics"), Mapping)
+        else {}
+    )
+    short_symbol, long_symbol, expiration_date = _derive_position_legs(payload)
+    pipeline_id = _as_text(payload.get("pipeline_id"))
+    label = None if pipeline_id is None else pipeline_id.partition(":")[2]
+    market_date = _as_text(payload.get("market_date_opened"))
+    payload.update(
+        {
+            "market_date": market_date,
+            "session_date": market_date,
+            "label": label,
+            "session_id": None
+            if label is None or market_date is None
+            else build_live_session_id(label, market_date),
+            "position_status": payload.get("status"),
+            "legacy_session_position_id": payload.get("legacy_session_position_id"),
+            "session_position_id": payload.get("legacy_session_position_id"),
+            "underlying_symbol": payload.get("root_symbol"),
+            "strategy": payload.get("strategy_family"),
+            "short_symbol": short_symbol,
+            "long_symbol": long_symbol,
+            "expiration_date": expiration_date,
+            "entry_credit": _coerce_float(economics.get("entry_credit")),
+            "entry_notional": _coerce_float(economics.get("entry_notional")),
+            "max_profit": _coerce_float(economics.get("max_profit")),
+            "max_loss": _coerce_float(economics.get("max_loss")),
+            "width": _coerce_float(strategy_metrics.get("width")),
+        }
+    )
+    return payload
+
+
 def _serialize_position(
     row: dict[str, Any],
     *,
     execution_store: Any,
 ) -> dict[str, Any]:
+    row = enrich_position_row(row)
     closes = execution_store.list_position_closes(position_id=str(row["position_id"]))
-    total_closed_quantity = sum(_coerce_float(close.get("closed_quantity")) or 0.0 for close in closes)
+    total_closed_quantity = sum(
+        _coerce_float(close.get("closed_quantity")) or 0.0 for close in closes
+    )
     realized_pnl = _coerce_float(row.get("realized_pnl")) or 0.0
     unrealized_pnl = _coerce_float(row.get("unrealized_pnl"))
     return {
@@ -45,7 +113,9 @@ def _serialize_position(
         "closed_quantity": _round_money(total_closed_quantity),
         "net_pnl": _round_money(realized_pnl + (unrealized_pnl or 0.0)),
         "legacy_session_position_id": row.get("legacy_session_position_id"),
-        "open_execution_attempt": execution_store.get_attempt(str(row["open_execution_attempt_id"])),
+        "open_execution_attempt": execution_store.get_attempt(
+            str(row["open_execution_attempt_id"])
+        ),
         "closes": closes,
     }
 
@@ -61,7 +131,14 @@ def list_positions(
 ) -> dict[str, Any]:
     execution_store = storage.execution
     if not execution_store.portfolio_schema_ready():
-        return {"summary": {"position_count": 0, "open_position_count": 0, "closed_position_count": 0}, "positions": []}
+        return {
+            "summary": {
+                "position_count": 0,
+                "open_position_count": 0,
+                "closed_position_count": 0,
+            },
+            "positions": [],
+        }
 
     rows = [
         _serialize_position(dict(row), execution_store=execution_store)
@@ -71,7 +148,9 @@ def list_positions(
             limit=limit,
         )
     ]
-    open_count = sum(1 for row in rows if str(row.get("position_status")) in OPEN_POSITION_STATUSES)
+    open_count = sum(
+        1 for row in rows if str(row.get("position_status")) in OPEN_POSITION_STATUSES
+    )
     closed_count = sum(1 for row in rows if str(row.get("position_status")) == "closed")
     return {
         "summary": {

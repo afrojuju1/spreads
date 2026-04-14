@@ -7,6 +7,7 @@ from typing import Any
 
 from spreads.jobs.orchestration import NEW_YORK, _market_schedule
 from spreads.services.live_collector_health import TRADEABILITY_STATE_RECOVERY_ONLY
+from spreads.services.positions import enrich_position_row
 from spreads.services.control_plane import get_control_state_snapshot, set_control_mode
 from spreads.services.option_quote_records import build_quote_symbol_metadata
 from spreads.services.option_trade_records import build_trade_symbol_metadata
@@ -535,7 +536,7 @@ def refresh_execution_capture_targets(
         reason=CAPTURE_TARGET_REASON_PENDING_EXECUTION,
     )
 
-    if not execution_store.positions_schema_ready():
+    if not execution_store.portfolio_schema_ready():
         return {
             "status": "ok",
             "pending_execution_target_count": sum(
@@ -546,15 +547,15 @@ def refresh_execution_capture_targets(
         }
 
     position_rows = [
-        dict(row)
-        for row in execution_store.list_session_positions(
+        enrich_position_row(dict(row))
+        for row in execution_store.list_positions(
             statuses=OPEN_POSITION_CAPTURE_STATUSES,
             limit=500,
         )
     ]
     position_owner_keys: list[str] = []
     for position in position_rows:
-        owner_key = str(position["session_position_id"])
+        owner_key = str(position["position_id"])
         position_owner_keys.append(owner_key)
         recovery_store.replace_capture_targets(
             owner_kind=CAPTURE_OWNER_SESSION_POSITION,

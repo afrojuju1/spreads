@@ -7,6 +7,7 @@ import pandas_market_calendars as mcal
 
 from spreads.db.decorators import with_storage
 from spreads.services.execution_portfolio import refresh_session_position_marks
+from spreads.services.positions import enrich_position_row
 from spreads.services.risk_manager import normalize_risk_policy
 from spreads.storage.serializers import parse_datetime
 
@@ -74,10 +75,14 @@ def _coerce_bool(value: Any) -> bool:
     return False
 
 
-def _calendar_close(session_date: str, market_calendar: str = "NYSE") -> datetime | None:
+def _calendar_close(
+    session_date: str, market_calendar: str = "NYSE"
+) -> datetime | None:
     session_day = datetime.fromisoformat(session_date).date()
     calendar = mcal.get_calendar(market_calendar)
-    schedule = calendar.schedule(start_date=session_day.isoformat(), end_date=session_day.isoformat())
+    schedule = calendar.schedule(
+        start_date=session_day.isoformat(), end_date=session_day.isoformat()
+    )
     if schedule.empty:
         return None
     return schedule.iloc[0]["market_close"].to_pydatetime().astimezone(UTC)
@@ -85,7 +90,11 @@ def _calendar_close(session_date: str, market_calendar: str = "NYSE") -> datetim
 
 def normalize_exit_policy(payload: dict[str, Any] | None) -> dict[str, Any]:
     source = payload if isinstance(payload, dict) else {}
-    raw_policy = source.get("exit_policy") if isinstance(source.get("exit_policy"), dict) else source
+    raw_policy = (
+        source.get("exit_policy")
+        if isinstance(source.get("exit_policy"), dict)
+        else source
+    )
     policy = dict(DEFAULT_EXIT_POLICY)
     if "enabled" in raw_policy:
         policy["enabled"] = _coerce_bool(raw_policy["enabled"])
@@ -100,14 +109,22 @@ def normalize_exit_policy(payload: dict[str, Any] | None) -> dict[str, Any]:
     return policy
 
 
-def resolve_exit_policy_snapshot(*, session_date: str, payload: dict[str, Any] | None) -> dict[str, Any]:
+def resolve_exit_policy_snapshot(
+    *, session_date: str, payload: dict[str, Any] | None
+) -> dict[str, Any]:
     policy = normalize_exit_policy(payload)
     if policy["force_close_at"] is not None:
         return policy
 
     source = payload if isinstance(payload, dict) else {}
-    raw_policy = source.get("exit_policy") if isinstance(source.get("exit_policy"), dict) else source
-    force_close_minutes = _coerce_int(raw_policy.get("force_close_minutes_before_close"))
+    raw_policy = (
+        source.get("exit_policy")
+        if isinstance(source.get("exit_policy"), dict)
+        else source
+    )
+    force_close_minutes = _coerce_int(
+        raw_policy.get("force_close_minutes_before_close")
+    )
     if force_close_minutes is None:
         force_close_minutes = DEFAULT_FORCE_CLOSE_MINUTES_BEFORE_CLOSE
 
@@ -116,7 +133,9 @@ def resolve_exit_policy_snapshot(*, session_date: str, payload: dict[str, Any] |
         policy["force_close_at"] = None
         return policy
     force_close_at = market_close - timedelta(minutes=force_close_minutes)
-    policy["force_close_at"] = force_close_at.isoformat(timespec="seconds").replace("+00:00", "Z")
+    policy["force_close_at"] = force_close_at.isoformat(timespec="seconds").replace(
+        "+00:00", "Z"
+    )
     return policy
 
 
@@ -130,7 +149,9 @@ def _resolve_effective_exit_mark(
         return None, "awaiting_mark"
 
     risk_policy = normalize_risk_policy(position.get("risk_policy"))
-    stale_quote_after_seconds = _coerce_float(risk_policy.get("stale_quote_after_seconds"))
+    stale_quote_after_seconds = _coerce_float(
+        risk_policy.get("stale_quote_after_seconds")
+    )
     if stale_quote_after_seconds is None:
         return mark, "mark"
 
@@ -186,7 +207,8 @@ def evaluate_exit_policy(
     if (
         entry_credit is not None
         and effective_mark is not None
-        and effective_mark <= entry_credit * max(1.0 - float(policy["profit_target_pct"]), 0.0)
+        and effective_mark
+        <= entry_credit * max(1.0 - float(policy["profit_target_pct"]), 0.0)
     ):
         return {
             "should_close": True,
@@ -224,16 +246,18 @@ def evaluate_exit_policy(
     return {"should_close": False, "reason": "hold"}
 
 
-def _has_open_close_attempt(execution_store: Any, session_position_id: str) -> bool:
+def _has_open_close_attempt(execution_store: Any, position_id: str) -> bool:
     return bool(
-        execution_store.list_open_attempts_for_session_position(
-            session_position_id=session_position_id,
+        execution_store.list_open_attempts_for_position(
+            position_id=position_id,
             statuses=sorted(OPEN_CLOSE_ATTEMPT_STATUSES),
         )
     )
 
 
-def _refresh_open_position_marks(*, db_target: str, session_ids: list[str], storage: Any | None = None) -> None:
+def _refresh_open_position_marks(
+    *, db_target: str, session_ids: list[str], storage: Any | None = None
+) -> None:
     refresh_session_position_marks(
         db_target=db_target,
         session_ids=session_ids,
@@ -252,7 +276,7 @@ def run_session_exit_manager(
         "status": "skipped",
         "reason": "not_run",
     }
-    if not execution_store.positions_schema_ready():
+    if not execution_store.portfolio_schema_ready():
         return {
             "status": "skipped",
             "reason": "positions_schema_unavailable",
@@ -274,8 +298,8 @@ def run_session_exit_manager(
         }
 
     open_positions = [
-        dict(position)
-        for position in execution_store.list_session_positions(
+        enrich_position_row(dict(position))
+        for position in execution_store.list_positions(
             statuses=OPEN_POSITION_STATUSES,
             limit=200,
         )
@@ -295,12 +319,14 @@ def run_session_exit_manager(
 
     _refresh_open_position_marks(
         db_target=db_target,
-        session_ids=sorted({str(position["session_id"]) for position in open_positions}),
+        session_ids=sorted(
+            {str(position["session_id"]) for position in open_positions}
+        ),
         storage=storage,
     )
     refreshed_positions = [
-        dict(position)
-        for position in execution_store.list_session_positions(
+        enrich_position_row(dict(position))
+        for position in execution_store.list_positions(
             statuses=OPEN_POSITION_STATUSES,
             limit=200,
         )
@@ -313,19 +339,19 @@ def run_session_exit_manager(
     decisions: list[dict[str, Any]] = []
     now = datetime.now(UTC)
     for position in refreshed_positions:
-        session_position_id = str(position["session_position_id"])
-        if _has_open_close_attempt(execution_store, session_position_id):
+        position_id = str(position["position_id"])
+        if _has_open_close_attempt(execution_store, position_id):
             evaluated += 1
             skipped += 1
-            execution_store.update_session_position(
-                session_position_id=session_position_id,
+            execution_store.update_position(
+                position_id=position_id,
                 last_exit_evaluated_at=_utc_now(),
                 last_exit_reason="close_already_open",
                 updated_at=_utc_now(),
             )
             decisions.append(
                 {
-                    "session_position_id": session_position_id,
+                    "position_id": position_id,
                     "reason": "close_already_open",
                     "should_close": False,
                 }
@@ -338,15 +364,15 @@ def run_session_exit_manager(
             now=now,
         )
         evaluated += 1
-        execution_store.update_session_position(
-            session_position_id=session_position_id,
+        execution_store.update_position(
+            position_id=position_id,
             last_exit_evaluated_at=_utc_now(),
             last_exit_reason=str(decision["reason"]),
             updated_at=_utc_now(),
         )
         decisions.append(
             {
-                "session_position_id": session_position_id,
+                "position_id": position_id,
                 "reason": decision["reason"],
                 "should_close": bool(decision["should_close"]),
             }
@@ -355,18 +381,19 @@ def run_session_exit_manager(
             skipped += 1
             continue
         try:
-            from spreads.services.execution import submit_session_position_close
+            from spreads.services.execution import submit_position_close_by_id
 
-            submit_session_position_close(
+            submit_position_close_by_id(
                 db_target=db_target,
-                session_id=str(position["session_id"]),
-                session_position_id=session_position_id,
+                position_id=position_id,
                 limit_price=float(decision["limit_price"]),
                 request_metadata={
                     "source": {
                         "kind": "exit_manager",
                         "reason": decision["reason"],
-                        "limit_price_source": _as_text(decision.get("limit_price_source")),
+                        "limit_price_source": _as_text(
+                            decision.get("limit_price_source")
+                        ),
                     }
                 },
             )
@@ -374,7 +401,7 @@ def run_session_exit_manager(
         except Exception as exc:
             failures.append(
                 {
-                    "session_position_id": session_position_id,
+                    "position_id": position_id,
                     "error": str(exc),
                 }
             )

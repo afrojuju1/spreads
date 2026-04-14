@@ -363,10 +363,6 @@ def _serialize_pipeline_summary(
         str(latest_cycle.get("generated_at") or ""),
         str(pipeline.get("updated_at") or ""),
     )
-    legacy_session_id = build_live_session_id(
-        str(latest_cycle["label"]),
-        str(latest_cycle["market_date"]),
-    )
     tradeability_fields = _tradeability_fields(
         latest_run=latest_run,
         slot_health=slot_health,
@@ -386,7 +382,6 @@ def _serialize_pipeline_summary(
             slot_health=slot_health,
         ),
         "latest_market_date": str(latest_cycle["market_date"]),
-        "legacy_session_id": legacy_session_id,
         "latest_slot_at": slot_health.get("latest_slot_at")
         or (None if latest_run is None else latest_run.get("slot_at")),
         "latest_slot_status": slot_health.get("latest_slot_status")
@@ -738,10 +733,7 @@ def get_pipeline_detail(
     return {
         "pipeline_id": pipeline_id,
         "market_date": resolved_market_date,
-        "legacy_session_id": legacy_session_id,
-        "session_id": legacy_session_id,
         "label": str(latest_cycle["label"]),
-        "session_date": resolved_market_date,
         "status": _derive_runtime_status(
             latest_run=latest_run,
             latest_cycle=current_cycle,
@@ -789,13 +781,7 @@ def list_pipeline_cycles(
     if not collector_store.pipeline_schema_ready():
         return {"cycles": []}
     rows = [
-        {
-            **dict(row),
-            "legacy_session_id": build_live_session_id(
-                str(row["label"]),
-                str(row["market_date"]),
-            ),
-        }
+        dict(row)
         for row in collector_store.list_pipeline_cycles(
             pipeline_id=pipeline_id,
             market_date=market_date,

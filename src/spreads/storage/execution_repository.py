@@ -34,13 +34,19 @@ def _optional_date(value: str | None) -> Any:
 
 class ExecutionRepository(RepositoryBase):
     def schema_ready(self) -> bool:
-        return self.schema_has_tables("execution_attempts", "execution_orders", "execution_fills")
+        return self.schema_has_tables(
+            "execution_attempts", "execution_orders", "execution_fills"
+        )
 
     def positions_schema_ready(self) -> bool:
-        return self.schema_has_tables("execution_attempts", "session_positions", "session_position_closes")
+        return self.schema_has_tables(
+            "execution_attempts", "session_positions", "session_position_closes"
+        )
 
     def portfolio_schema_ready(self) -> bool:
-        return self.schema_has_tables("execution_attempts", "portfolio_positions", "position_closes")
+        return self.schema_has_tables(
+            "execution_attempts", "portfolio_positions", "position_closes"
+        )
 
     def create_attempt(
         self,
@@ -150,7 +156,10 @@ class ExecutionRepository(RepositoryBase):
         statement = (
             select(ExecutionAttemptModel)
             .where(ExecutionAttemptModel.session_id == session_id)
-            .order_by(ExecutionAttemptModel.requested_at.desc(), ExecutionAttemptModel.execution_attempt_id.desc())
+            .order_by(
+                ExecutionAttemptModel.requested_at.desc(),
+                ExecutionAttemptModel.execution_attempt_id.desc(),
+            )
             .limit(limit)
         )
         with self.session_factory() as session:
@@ -164,9 +173,13 @@ class ExecutionRepository(RepositoryBase):
         market_date: str | None = None,
         limit: int = 50,
     ) -> list[ExecutionAttemptRecord]:
-        statement = select(ExecutionAttemptModel).where(ExecutionAttemptModel.pipeline_id == pipeline_id)
+        statement = select(ExecutionAttemptModel).where(
+            ExecutionAttemptModel.pipeline_id == pipeline_id
+        )
         if market_date is not None:
-            statement = statement.where(ExecutionAttemptModel.market_date == parse_date(market_date))
+            statement = statement.where(
+                ExecutionAttemptModel.market_date == parse_date(market_date)
+            )
         statement = statement.order_by(
             ExecutionAttemptModel.requested_at.desc(),
             ExecutionAttemptModel.execution_attempt_id.desc(),
@@ -189,7 +202,9 @@ class ExecutionRepository(RepositoryBase):
             .where(ExecutionAttemptModel.status.in_(statuses))
         )
         if trade_intent is not None:
-            statement = statement.where(ExecutionAttemptModel.trade_intent == trade_intent)
+            statement = statement.where(
+                ExecutionAttemptModel.trade_intent == trade_intent
+            )
         statement = statement.order_by(
             ExecutionAttemptModel.requested_at.desc(),
             ExecutionAttemptModel.execution_attempt_id.desc(),
@@ -205,9 +220,13 @@ class ExecutionRepository(RepositoryBase):
         trade_intent: str | None = None,
         limit: int = 200,
     ) -> list[ExecutionAttemptRecord]:
-        statement = select(ExecutionAttemptModel).where(ExecutionAttemptModel.status.in_(statuses))
+        statement = select(ExecutionAttemptModel).where(
+            ExecutionAttemptModel.status.in_(statuses)
+        )
         if trade_intent is not None:
-            statement = statement.where(ExecutionAttemptModel.trade_intent == trade_intent)
+            statement = statement.where(
+                ExecutionAttemptModel.trade_intent == trade_intent
+            )
         statement = statement.order_by(
             ExecutionAttemptModel.requested_at.desc(),
             ExecutionAttemptModel.execution_attempt_id.desc(),
@@ -289,7 +308,9 @@ class ExecutionRepository(RepositoryBase):
         with self.session_scope() as session:
             row = session.get(ExecutionAttemptModel, execution_attempt_id)
             if row is None:
-                raise ValueError(f"Unknown execution_attempt_id: {execution_attempt_id}")
+                raise ValueError(
+                    f"Unknown execution_attempt_id: {execution_attempt_id}"
+                )
             if status is not None:
                 row.status = status
             if broker_order_id is not None:
@@ -320,9 +341,13 @@ class ExecutionRepository(RepositoryBase):
     ) -> list[ExecutionOrderRecord]:
         statement = select(ExecutionOrderModel)
         if execution_attempt_id is not None:
-            statement = statement.where(ExecutionOrderModel.execution_attempt_id == execution_attempt_id)
+            statement = statement.where(
+                ExecutionOrderModel.execution_attempt_id == execution_attempt_id
+            )
         elif execution_attempt_ids:
-            statement = statement.where(ExecutionOrderModel.execution_attempt_id.in_(execution_attempt_ids))
+            statement = statement.where(
+                ExecutionOrderModel.execution_attempt_id.in_(execution_attempt_ids)
+            )
         statement = statement.order_by(
             ExecutionOrderModel.updated_at.desc(),
             ExecutionOrderModel.execution_order_id.desc(),
@@ -340,7 +365,10 @@ class ExecutionRepository(RepositoryBase):
         statement = (
             select(ExecutionOrderModel)
             .where(ExecutionOrderModel.broker_order_id.in_(broker_order_ids))
-            .order_by(ExecutionOrderModel.updated_at.desc(), ExecutionOrderModel.execution_order_id.desc())
+            .order_by(
+                ExecutionOrderModel.updated_at.desc(),
+                ExecutionOrderModel.execution_order_id.desc(),
+            )
         )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
@@ -357,7 +385,9 @@ class ExecutionRepository(RepositoryBase):
         broker_order_ids = [str(row["broker_order_id"]) for row in rows]
         with self.session_scope() as session:
             existing_rows = session.scalars(
-                select(ExecutionOrderModel).where(ExecutionOrderModel.broker_order_id.in_(broker_order_ids))
+                select(ExecutionOrderModel).where(
+                    ExecutionOrderModel.broker_order_id.in_(broker_order_ids)
+                )
             ).all()
             existing_by_order_id = {row.broker_order_id: row for row in existing_rows}
             persisted: list[ExecutionOrderModel] = []
@@ -404,9 +434,13 @@ class ExecutionRepository(RepositoryBase):
     ) -> list[ExecutionFillRecord]:
         statement = select(ExecutionFillModel)
         if execution_attempt_id is not None:
-            statement = statement.where(ExecutionFillModel.execution_attempt_id == execution_attempt_id)
+            statement = statement.where(
+                ExecutionFillModel.execution_attempt_id == execution_attempt_id
+            )
         elif execution_attempt_ids:
-            statement = statement.where(ExecutionFillModel.execution_attempt_id.in_(execution_attempt_ids))
+            statement = statement.where(
+                ExecutionFillModel.execution_attempt_id.in_(execution_attempt_ids)
+            )
         statement = statement.order_by(
             ExecutionFillModel.filled_at.desc(),
             ExecutionFillModel.execution_fill_id.desc(),
@@ -426,7 +460,9 @@ class ExecutionRepository(RepositoryBase):
         broker_fill_ids = [str(row["broker_fill_id"]) for row in rows]
         with self.session_scope() as session:
             existing_rows = session.scalars(
-                select(ExecutionFillModel).where(ExecutionFillModel.broker_fill_id.in_(broker_fill_ids))
+                select(ExecutionFillModel).where(
+                    ExecutionFillModel.broker_fill_id.in_(broker_fill_ids)
+                )
             ).all()
             existing_by_fill_id = {row.broker_fill_id: row for row in existing_rows}
             persisted: list[ExecutionFillModel] = []
@@ -458,14 +494,18 @@ class ExecutionRepository(RepositoryBase):
                 session.refresh(row)
             return self.rows(persisted)
 
-    def get_session_position(self, session_position_id: str) -> SessionPositionRecord | None:
+    def get_session_position(
+        self, session_position_id: str
+    ) -> SessionPositionRecord | None:
         with self.session_factory() as session:
             row = session.get(SessionPositionModel, session_position_id)
         if row is None:
             return None
         return self.row(row)
 
-    def get_session_position_by_open_attempt(self, open_execution_attempt_id: str) -> SessionPositionRecord | None:
+    def get_session_position_by_open_attempt(
+        self, open_execution_attempt_id: str
+    ) -> SessionPositionRecord | None:
         statement = select(SessionPositionModel).where(
             SessionPositionModel.open_execution_attempt_id == open_execution_attempt_id
         )
@@ -487,7 +527,10 @@ class ExecutionRepository(RepositoryBase):
             statement = statement.where(SessionPositionModel.session_id == session_id)
         if statuses:
             statement = statement.where(SessionPositionModel.status.in_(statuses))
-        statement = statement.order_by(SessionPositionModel.updated_at.desc(), SessionPositionModel.session_position_id.desc())
+        statement = statement.order_by(
+            SessionPositionModel.updated_at.desc(),
+            SessionPositionModel.session_position_id.desc(),
+        )
         if limit is not None:
             statement = statement.limit(limit)
         with self.session_factory() as session:
@@ -644,7 +687,12 @@ class ExecutionRepository(RepositoryBase):
                 row.status = status
             if realized_pnl is not None:
                 row.realized_pnl = float(realized_pnl)
-            if unrealized_pnl is not None or (close_mark is not None) or (close_mark_source is not None) or (close_marked_at is not None):
+            if (
+                unrealized_pnl is not None
+                or (close_mark is not None)
+                or (close_mark_source is not None)
+                or (close_marked_at is not None)
+            ):
                 row.unrealized_pnl = unrealized_pnl
             if close_mark is not None:
                 row.close_mark = close_mark
@@ -675,7 +723,9 @@ class ExecutionRepository(RepositoryBase):
                 row.reconciliation_note = reconciliation_note
             elif reconciliation_note is not None:
                 row.reconciliation_note = reconciliation_note
-            row.updated_at = parse_datetime(updated_at) if updated_at is not None else row.updated_at
+            row.updated_at = (
+                parse_datetime(updated_at) if updated_at is not None else row.updated_at
+            )
             session.flush()
             session.refresh(row)
             return self.row(row)
@@ -688,9 +738,13 @@ class ExecutionRepository(RepositoryBase):
     ) -> list[SessionPositionCloseRecord]:
         statement = select(SessionPositionCloseModel)
         if session_position_id is not None:
-            statement = statement.where(SessionPositionCloseModel.session_position_id == session_position_id)
+            statement = statement.where(
+                SessionPositionCloseModel.session_position_id == session_position_id
+            )
         elif session_position_ids:
-            statement = statement.where(SessionPositionCloseModel.session_position_id.in_(session_position_ids))
+            statement = statement.where(
+                SessionPositionCloseModel.session_position_id.in_(session_position_ids)
+            )
         statement = statement.order_by(
             SessionPositionCloseModel.closed_at.desc(),
             SessionPositionCloseModel.session_position_close_id.desc(),
@@ -742,9 +796,26 @@ class ExecutionRepository(RepositoryBase):
             return None
         return self.row(row)
 
-    def get_position_by_open_attempt(self, open_execution_attempt_id: str) -> PortfolioPositionRecord | None:
+    def get_position_by_open_attempt(
+        self, open_execution_attempt_id: str
+    ) -> PortfolioPositionRecord | None:
         statement = select(PortfolioPositionModel).where(
-            PortfolioPositionModel.open_execution_attempt_id == open_execution_attempt_id
+            PortfolioPositionModel.open_execution_attempt_id
+            == open_execution_attempt_id
+        )
+        with self.session_factory() as session:
+            row = session.scalars(statement).first()
+        if row is None:
+            return None
+        return self.row(row)
+
+    def get_position_by_legacy_session_position_id(
+        self,
+        legacy_session_position_id: str,
+    ) -> PortfolioPositionRecord | None:
+        statement = select(PortfolioPositionModel).where(
+            PortfolioPositionModel.legacy_session_position_id
+            == legacy_session_position_id
         )
         with self.session_factory() as session:
             row = session.scalars(statement).first()
@@ -762,13 +833,20 @@ class ExecutionRepository(RepositoryBase):
     ) -> list[PortfolioPositionRecord]:
         statement = select(PortfolioPositionModel)
         if pipeline_id is not None:
-            statement = statement.where(PortfolioPositionModel.pipeline_id == pipeline_id)
+            statement = statement.where(
+                PortfolioPositionModel.pipeline_id == pipeline_id
+            )
         if market_date is not None:
             market_date_value = parse_date(market_date)
-            statement = statement.where(PortfolioPositionModel.market_date_opened == market_date_value)
+            statement = statement.where(
+                PortfolioPositionModel.market_date_opened == market_date_value
+            )
         if statuses:
             statement = statement.where(PortfolioPositionModel.status.in_(statuses))
-        statement = statement.order_by(PortfolioPositionModel.updated_at.desc(), PortfolioPositionModel.position_id.desc())
+        statement = statement.order_by(
+            PortfolioPositionModel.updated_at.desc(),
+            PortfolioPositionModel.position_id.desc(),
+        )
         if limit is not None:
             statement = statement.limit(limit)
         with self.session_factory() as session:
@@ -951,7 +1029,12 @@ class ExecutionRepository(RepositoryBase):
                 row.entry_value = entry_value
             if realized_pnl is not None:
                 row.realized_pnl = float(realized_pnl)
-            if unrealized_pnl is not None or close_mark is not None or close_mark_source is not None or close_marked_at is not None:
+            if (
+                unrealized_pnl is not None
+                or close_mark is not None
+                or close_mark_source is not None
+                or close_marked_at is not None
+            ):
                 row.unrealized_pnl = unrealized_pnl
             if close_mark is not None:
                 row.close_mark = close_mark
@@ -986,7 +1069,9 @@ class ExecutionRepository(RepositoryBase):
                 row.opened_at = parse_datetime(opened_at)
             if closed_at is not None:
                 row.closed_at = parse_datetime(closed_at)
-            row.updated_at = parse_datetime(updated_at) if updated_at is not None else row.updated_at
+            row.updated_at = (
+                parse_datetime(updated_at) if updated_at is not None else row.updated_at
+            )
             session.flush()
             session.refresh(row)
             return self.row(row)
@@ -1001,8 +1086,13 @@ class ExecutionRepository(RepositoryBase):
         if position_id is not None:
             statement = statement.where(PositionCloseModel.position_id == position_id)
         elif position_ids:
-            statement = statement.where(PositionCloseModel.position_id.in_(position_ids))
-        statement = statement.order_by(PositionCloseModel.closed_at.desc(), PositionCloseModel.position_close_id.desc())
+            statement = statement.where(
+                PositionCloseModel.position_id.in_(position_ids)
+            )
+        statement = statement.order_by(
+            PositionCloseModel.closed_at.desc(),
+            PositionCloseModel.position_close_id.desc(),
+        )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
         return self.rows(rows)

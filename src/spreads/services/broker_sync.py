@@ -7,9 +7,14 @@ from spreads.db.decorators import with_storage
 from spreads.events.bus import publish_global_event_sync
 from spreads.services.account_state import fetch_account_overview_live
 from spreads.services.alpaca import create_alpaca_client_from_env
-from spreads.services.execution import OPEN_STATUSES, PENDING_SUBMISSION_STATUS, refresh_live_session_execution
+from spreads.services.execution import (
+    OPEN_STATUSES,
+    PENDING_SUBMISSION_STATUS,
+    refresh_live_session_execution,
+)
 from spreads.services.execution_lifecycle import SUBMIT_UNKNOWN_STATUS
 from spreads.services.execution_portfolio import refresh_session_position_marks
+from spreads.services.positions import enrich_position_row
 from spreads.services.session_positions import sync_session_position_from_attempt
 from spreads.storage.serializers import parse_datetime
 
@@ -38,18 +43,24 @@ def _as_text(value: Any) -> str | None:
     return rendered or None
 
 
-def _hydrate_attempt_payload(execution_store: Any, execution_attempt_id: str) -> dict[str, Any] | None:
+def _hydrate_attempt_payload(
+    execution_store: Any, execution_attempt_id: str
+) -> dict[str, Any] | None:
     attempt = execution_store.get_attempt(execution_attempt_id)
     if attempt is None:
         return None
     payload = dict(attempt)
     payload["orders"] = [
         dict(order)
-        for order in execution_store.list_orders(execution_attempt_id=execution_attempt_id)
+        for order in execution_store.list_orders(
+            execution_attempt_id=execution_attempt_id
+        )
     ]
     payload["fills"] = [
         dict(fill)
-        for fill in execution_store.list_fills(execution_attempt_id=execution_attempt_id)
+        for fill in execution_store.list_fills(
+            execution_attempt_id=execution_attempt_id
+        )
     ]
     return payload
 
@@ -58,7 +69,9 @@ def _parse_activity_timestamp(activity: dict[str, Any]) -> datetime | None:
     return parse_datetime(_as_text(activity.get("transaction_time")))
 
 
-def _activity_dates(sync_state: dict[str, Any] | None, *, lookback_days: int) -> list[str]:
+def _activity_dates(
+    sync_state: dict[str, Any] | None, *, lookback_days: int
+) -> list[str]:
     today = datetime.now(UTC).date()
     start_date = today - timedelta(days=max(lookback_days, 0))
     cursor = {} if sync_state is None else dict(sync_state.get("cursor") or {})
@@ -71,10 +84,14 @@ def _activity_dates(sync_state: dict[str, Any] | None, *, lookback_days: int) ->
         if cursor_date is not None:
             start_date = max(start_date, cursor_date - timedelta(days=1))
     days = (today - start_date).days
-    return [(start_date + timedelta(days=offset)).isoformat() for offset in range(days + 1)]
+    return [
+        (start_date + timedelta(days=offset)).isoformat() for offset in range(days + 1)
+    ]
 
 
-def _fetch_fill_activities(*, activity_dates: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
+def _fetch_fill_activities(
+    *, activity_dates: list[str]
+) -> tuple[list[dict[str, Any]], list[str]]:
     client = create_alpaca_client_from_env()
     errors: list[str] = []
     activities_by_id: dict[str, dict[str, Any]] = {}
@@ -98,7 +115,8 @@ def _fetch_fill_activities(*, activity_dates: list[str]) -> tuple[list[dict[str,
             activities_by_id[activity_id] = dict(activity)
     activities = list(activities_by_id.values())
     activities.sort(
-        key=lambda activity: _parse_activity_timestamp(activity) or datetime.min.replace(tzinfo=UTC),
+        key=lambda activity: _parse_activity_timestamp(activity)
+        or datetime.min.replace(tzinfo=UTC),
         reverse=False,
     )
     return activities, errors
@@ -126,8 +144,7 @@ def _sync_recent_fill_activities(
     )
     persisted_orders = execution_store.list_orders_by_broker_order_ids(broker_order_ids)
     orders_by_broker_order_id = {
-        str(order["broker_order_id"]): dict(order)
-        for order in persisted_orders
+        str(order["broker_order_id"]): dict(order) for order in persisted_orders
     }
 
     matched_rows_by_attempt: dict[str, list[dict[str, Any]]] = {}
@@ -151,7 +168,9 @@ def _sync_recent_fill_activities(
         if order is None:
             unmatched_activity_count += 1
             continue
-        matched_rows_by_attempt.setdefault(str(order["execution_attempt_id"]), []).append(
+        matched_rows_by_attempt.setdefault(
+            str(order["execution_attempt_id"]), []
+        ).append(
             {
                 "execution_order_id": order.get("execution_order_id"),
                 "broker": str(order.get("broker") or "alpaca"),
@@ -175,7 +194,9 @@ def _sync_recent_fill_activities(
             execution_attempt_id=execution_attempt_id,
             rows=rows,
         )
-        attempt_payload = _hydrate_attempt_payload(execution_store, execution_attempt_id)
+        attempt_payload = _hydrate_attempt_payload(
+            execution_store, execution_attempt_id
+        )
         if attempt_payload is not None:
             sync_session_position_from_attempt(
                 execution_store=execution_store,
@@ -185,14 +206,24 @@ def _sync_recent_fill_activities(
 
     latest_activity_timestamp = None
     if activities:
-        timestamps = [timestamp for timestamp in (_parse_activity_timestamp(activity) for activity in activities) if timestamp]
+        timestamps = [
+            timestamp
+            for timestamp in (
+                _parse_activity_timestamp(activity) for activity in activities
+            )
+            if timestamp
+        ]
         if timestamps:
-            latest_activity_timestamp = max(timestamps).isoformat(timespec="seconds").replace("+00:00", "Z")
+            latest_activity_timestamp = (
+                max(timestamps).isoformat(timespec="seconds").replace("+00:00", "Z")
+            )
 
     summary = {
         "activity_dates": activity_dates,
         "activity_count": len(activities),
-        "matched_activity_count": sum(len(rows) for rows in matched_rows_by_attempt.values()),
+        "matched_activity_count": sum(
+            len(rows) for rows in matched_rows_by_attempt.values()
+        ),
         "unmatched_activity_count": unmatched_activity_count,
         "affected_attempt_count": len(affected_attempt_ids),
         "error_count": len(errors),
@@ -233,9 +264,17 @@ def _reconcile_position(
     long_position = broker_positions_by_symbol.get(long_symbol)
 
     issues: list[str] = []
-    short_qty = abs(_coerce_float(None if short_position is None else short_position.get("qty")) or 0.0)
-    long_qty = abs(_coerce_float(None if long_position is None else long_position.get("qty")) or 0.0)
-    short_side = _as_text(None if short_position is None else short_position.get("side"))
+    short_qty = abs(
+        _coerce_float(None if short_position is None else short_position.get("qty"))
+        or 0.0
+    )
+    long_qty = abs(
+        _coerce_float(None if long_position is None else long_position.get("qty"))
+        or 0.0
+    )
+    short_side = _as_text(
+        None if short_position is None else short_position.get("side")
+    )
     long_side = _as_text(None if long_position is None else long_position.get("side"))
 
     if short_position is None:
@@ -254,8 +293,8 @@ def _reconcile_position(
 
     reconciliation_status = "matched" if not issues else "mismatch"
     reconciliation_note = None if not issues else "; ".join(issues)
-    updated = execution_store.update_session_position(
-        session_position_id=str(position["session_position_id"]),
+    updated = execution_store.update_position(
+        position_id=str(position["position_id"]),
         last_reconciled_at=reconciled_at,
         reconciliation_status=reconciliation_status,
         reconciliation_note=reconciliation_note,
@@ -276,7 +315,11 @@ def run_broker_sync(
     broker_store = storage.broker
     execution_store = storage.execution
     try:
-        if not broker_store.schema_ready() or not execution_store.schema_ready() or not execution_store.positions_schema_ready():
+        if (
+            not broker_store.schema_ready()
+            or not execution_store.schema_ready()
+            or not execution_store.portfolio_schema_ready()
+        ):
             return {
                 "status": "skipped",
                 "reason": "broker_sync_schema_unavailable",
@@ -348,8 +391,8 @@ def run_broker_sync(
             if isinstance(position, dict) and position.get("symbol")
         }
         open_positions = [
-            dict(position)
-            for position in execution_store.list_session_positions(
+            enrich_position_row(dict(position))
+            for position in execution_store.list_positions(
                 statuses=OPEN_POSITION_STATUSES,
                 limit=200,
             )
@@ -365,7 +408,9 @@ def run_broker_sync(
         ]
         mark_summary = refresh_session_position_marks(
             db_target=db_target,
-            session_ids=sorted({str(position["session_id"]) for position in open_positions}),
+            session_ids=sorted(
+                {str(position["session_id"]) for position in open_positions}
+            ),
             storage=storage,
         )
         mismatch_positions = [
@@ -381,7 +426,8 @@ def run_broker_sync(
         orphan_broker_positions = [
             position
             for symbol, position in broker_positions_by_symbol.items()
-            if symbol not in tracked_symbols and str(position.get("asset_class") or "").lower() == "option"
+            if symbol not in tracked_symbols
+            and str(position.get("asset_class") or "").lower() == "option"
         ]
 
         summary = {
@@ -396,8 +442,12 @@ def run_broker_sync(
             "open_position_count": len(open_positions),
             "mismatch_position_count": len(mismatch_positions),
             "orphan_broker_position_count": len(orphan_broker_positions),
-            "marked_position_count": int(mark_summary.get("updated_position_count") or 0),
-            "unquoted_position_count": int(mark_summary.get("unquoted_position_count") or 0),
+            "marked_position_count": int(
+                mark_summary.get("updated_position_count") or 0
+            ),
+            "unquoted_position_count": int(
+                mark_summary.get("unquoted_position_count") or 0
+            ),
             "activity_count": activity_summary["activity_count"],
             "matched_activity_count": activity_summary["matched_activity_count"],
             "unmatched_activity_count": activity_summary["unmatched_activity_count"],
@@ -423,7 +473,9 @@ def run_broker_sync(
             updated_at=now,
             cursor={
                 "last_snapshot_at": snapshot["captured_at"],
-                "last_activity_timestamp": activity_summary["latest_activity_timestamp"],
+                "last_activity_timestamp": activity_summary[
+                    "latest_activity_timestamp"
+                ],
             },
             summary={
                 **summary,
@@ -432,7 +484,7 @@ def run_broker_sync(
                 "mark_error": mark_summary.get("mark_error"),
                 "mismatch_positions": [
                     {
-                        "session_position_id": position["session_position_id"],
+                        "position_id": position["position_id"],
                         "reconciliation_note": position.get("reconciliation_note"),
                     }
                     for position in mismatch_positions[:25]

@@ -52,6 +52,7 @@ from spreads.services.execution_lifecycle import (
 )
 from spreads.services.execution_portfolio import build_credit_spread_quote_snapshot
 from spreads.services.opportunity_execution_plan import build_execution_plan
+from spreads.services.positions import enrich_position_row
 from spreads.services.runtime_identity import (
     build_live_session_id,
     build_pipeline_id,
@@ -1155,7 +1156,7 @@ def _require_execution_schema(execution_store: Any) -> None:
 
 
 def _require_position_schema(execution_store: Any) -> None:
-    if not execution_store.positions_schema_ready():
+    if not execution_store.portfolio_schema_ready():
         raise RuntimeError(EXECUTION_SCHEMA_MESSAGE)
 
 
@@ -1798,22 +1799,6 @@ def _build_policy_refs(
             ),
         ),
     }
-
-
-def _resolve_session_position(
-    *,
-    execution_store: Any,
-    session_id: str,
-    session_position_id: str,
-) -> dict[str, Any]:
-    position = execution_store.get_session_position(session_position_id)
-    if position is None:
-        raise ValueError(f"Unknown session_position_id: {session_position_id}")
-    if str(position["session_id"]) != session_id:
-        raise ValueError(
-            f"Session position {session_position_id} does not belong to session {session_id}"
-        )
-    return dict(position)
 
 
 def _build_close_order_request(
@@ -2529,140 +2514,32 @@ def submit_session_position_close(
     storage: Any | None = None,
 ) -> dict[str, Any]:
     execution_store = storage.execution
-    job_store = storage.jobs
-    requested_at = _utc_now()
-    client_order_id = _execution_client_order_id()
-    attempt_id: str | None = None
-    try:
-        _require_execution_schema(execution_store)
-        _require_position_schema(execution_store)
-        position = _resolve_session_position(
-            execution_store=execution_store,
-            session_id=session_id,
-            session_position_id=session_position_id,
+    _require_position_schema(execution_store)
+    position = execution_store.get_position_by_legacy_session_position_id(
+        session_position_id
+    )
+    if position is None:
+        fallback = execution_store.get_position(session_position_id)
+        if fallback is not None:
+            position = fallback
+    if position is None:
+        raise ValueError(f"Unknown session_position_id: {session_position_id}")
+    hydrated = enrich_position_row(dict(position))
+    if str(hydrated.get("session_id") or "") != session_id:
+        raise ValueError(
+            f"Session position {session_position_id} does not belong to session {session_id}"
         )
-        if str(position.get("status") or "open") == "closed":
-            raise ValueError("Session position is already closed")
-
-        existing_attempts = execution_store.list_open_attempts_for_session_position(
-            session_position_id=session_position_id,
-            statuses=sorted(OPEN_STATUSES),
-        )
-        if existing_attempts:
-            payload = _get_attempt_payload(
-                execution_store,
-                str(existing_attempts[0]["execution_attempt_id"]),
-            )
-            return {
-                "action": "submit",
-                "changed": False,
-                "message": "An active close execution already exists for this session position.",
-                "attempt": payload,
-            }
-
-        order_request, resolved_quantity, resolved_limit_price = (
-            _build_close_order_request(
-                position=position,
-                quantity=quantity,
-                limit_price=limit_price,
-                client_order_id=client_order_id,
-            )
-        )
-        validate_close_execution(
-            position=position,
-            quantity=resolved_quantity,
-            limit_price=resolved_limit_price,
-        )
-        trade_intent = resolve_trade_intent(CLOSE_TRADE_INTENT)
-        pipeline_policy_fields = resolve_pipeline_policy_fields(
-            profile=(position.get("risk_policy_json") or {}).get("profile"),
-            root_symbol=str(position["underlying_symbol"]),
-        )
-        portfolio_position = (
-            None
-            if not execution_store.portfolio_schema_ready()
-            else execution_store.get_position(session_position_id)
-        )
-
-        attempt_id = _execution_attempt_id()
-        attempt = execution_store.create_attempt(
-            execution_attempt_id=attempt_id,
-            session_id=session_id,
-            session_date=str(position["session_date"]),
-            label=str(position["label"]),
-            pipeline_id=build_pipeline_id(str(position["label"])),
-            market_date=str(position["session_date"]),
-            cycle_id=None,
-            opportunity_id=None,
-            risk_decision_id=None,
-            candidate_id=_coerce_int(position.get("candidate_id")),
-            attempt_context="position_close",
-            candidate_generated_at=None,
-            run_id=None,
-            job_run_id=None,
-            underlying_symbol=str(position["underlying_symbol"]),
-            strategy=str(position["strategy"]),
-            expiration_date=str(position["expiration_date"]),
-            short_symbol=str(position["short_symbol"]),
-            long_symbol=str(position["long_symbol"]),
-            trade_intent=trade_intent,
-            session_position_id=session_position_id,
-            position_id=None
-            if portfolio_position is None
-            else str(portfolio_position["position_id"]),
-            root_symbol=str(position["underlying_symbol"]),
-            strategy_family=str(position["strategy"]),
-            style_profile=str(pipeline_policy_fields["style_profile"]),
-            horizon_intent=str(pipeline_policy_fields["horizon_intent"]),
-            product_class=str(pipeline_policy_fields["product_class"]),
-            quantity=resolved_quantity,
-            limit_price=resolved_limit_price,
-            requested_at=requested_at,
-            status=PENDING_SUBMISSION_STATUS,
-            broker=BROKER_NAME,
-            client_order_id=client_order_id,
-            request={
-                **({} if request_metadata is None else request_metadata),
-                "trade_intent": trade_intent,
-                "session_position_id": session_position_id,
-                "order": order_request,
-            },
-            candidate={},
-        )
-        payload = _queue_execution_attempt(
-            job_store=job_store,
-            execution_store=execution_store,
-            attempt=attempt,
-        )
-        message = _submission_message(payload, queued=True)
-        return {
-            "action": "submit",
-            "changed": True,
-            "message": message,
-            "attempt": payload,
-        }
-    except Exception as exc:
-        if attempt_id is not None:
-            current_attempt = execution_store.get_attempt(attempt_id)
-            if (
-                current_attempt is not None
-                and str(current_attempt.get("status") or "")
-                == PENDING_SUBMISSION_STATUS
-            ):
-                execution_store.update_attempt(
-                    execution_attempt_id=attempt_id,
-                    status="failed",
-                    client_order_id=client_order_id,
-                    completed_at=requested_at,
-                    error_text=str(exc),
-                    session_position_id=session_position_id,
-                )
-                payload = _get_attempt_payload(execution_store, attempt_id)
-                _publish_execution_attempt_event(
-                    payload,
-                    message=f"Close execution failed before submission: {exc}",
-                )
-        raise
+    return submit_position_close_by_id(
+        db_target=db_target,
+        position_id=str(hydrated["position_id"]),
+        quantity=quantity,
+        limit_price=limit_price,
+        request_metadata={
+            **({} if request_metadata is None else request_metadata),
+            "session_position_id": session_position_id,
+        },
+        storage=storage,
+    )
 
 
 @with_storage()
@@ -2817,33 +2694,145 @@ def submit_position_close_by_id(
     storage: Any | None = None,
 ) -> dict[str, Any]:
     execution_store = storage.execution
+    job_store = storage.jobs
     if not execution_store.portfolio_schema_ready():
         raise ValueError(f"Unknown position_id: {position_id}")
-    position = execution_store.get_position(position_id)
-    if position is None:
+    stored_position = execution_store.get_position(position_id)
+    if stored_position is None:
         raise ValueError(f"Unknown position_id: {position_id}")
-    legacy_session_position_id = _as_text(position.get("legacy_session_position_id"))
-    if legacy_session_position_id is None:
-        raise ValueError("Position is missing a legacy session position id")
-    pipeline_id = _as_text(position.get("pipeline_id"))
-    pipeline_label = None if pipeline_id is None else pipeline_id.partition(":")[2]
-    market_date = _as_text(position.get("market_date_opened"))
-    if pipeline_label is None or market_date is None:
-        raise ValueError("Position is missing pipeline or market_date")
-    return submit_session_position_close(
-        db_target=db_target,
-        session_id=build_live_session_id(pipeline_label, market_date),
-        session_position_id=legacy_session_position_id,
-        quantity=quantity,
-        limit_price=limit_price,
-        request_metadata={
-            **({} if request_metadata is None else request_metadata),
-            "position_id": position_id,
-            "pipeline_id": pipeline_id,
-            "market_date": market_date,
-        },
-        storage=storage,
+    position = enrich_position_row(dict(stored_position))
+    if (
+        str(position.get("position_status") or position.get("status") or "open")
+        == "closed"
+    ):
+        raise ValueError("Position is already closed")
+
+    existing_attempts = execution_store.list_open_attempts_for_position(
+        position_id=position_id,
+        statuses=sorted(OPEN_STATUSES),
     )
+    if existing_attempts:
+        payload = _get_attempt_payload(
+            execution_store,
+            str(existing_attempts[0]["execution_attempt_id"]),
+        )
+        return {
+            "action": "submit",
+            "changed": False,
+            "message": "An active close execution already exists for this position.",
+            "attempt": payload,
+        }
+
+    requested_at = _utc_now()
+    client_order_id = _execution_client_order_id()
+    trade_intent = resolve_trade_intent(CLOSE_TRADE_INTENT)
+    attempt_id: str | None = None
+    try:
+        order_request, resolved_quantity, resolved_limit_price = (
+            _build_close_order_request(
+                position=position,
+                quantity=quantity,
+                limit_price=limit_price,
+                client_order_id=client_order_id,
+            )
+        )
+        validate_close_execution(
+            position=position,
+            quantity=resolved_quantity,
+            limit_price=resolved_limit_price,
+        )
+        pipeline_id = _as_text(position.get("pipeline_id"))
+        label = _as_text(position.get("label"))
+        market_date = _as_text(position.get("market_date"))
+        if pipeline_id is None or label is None or market_date is None:
+            raise ValueError("Position is missing pipeline or market_date")
+        policy_fields = resolve_pipeline_policy_fields(
+            profile=(position.get("risk_policy") or {}).get("profile"),
+            root_symbol=str(position["underlying_symbol"]),
+        )
+        attempt_id = _execution_attempt_id()
+        attempt = execution_store.create_attempt(
+            execution_attempt_id=attempt_id,
+            session_id=build_live_session_id(label, market_date),
+            session_date=market_date,
+            label=label,
+            pipeline_id=pipeline_id,
+            market_date=market_date,
+            cycle_id=None,
+            opportunity_id=_as_text(position.get("source_opportunity_id")),
+            risk_decision_id=None,
+            candidate_id=_coerce_int(position.get("candidate_id")),
+            attempt_context="position_close",
+            candidate_generated_at=None,
+            run_id=None,
+            job_run_id=None,
+            underlying_symbol=str(position["underlying_symbol"]),
+            strategy=str(position["strategy"]),
+            expiration_date=str(position["expiration_date"]),
+            short_symbol=str(position["short_symbol"]),
+            long_symbol=str(position["long_symbol"]),
+            trade_intent=trade_intent,
+            session_position_id=_as_text(position.get("session_position_id")),
+            position_id=position_id,
+            root_symbol=str(position["underlying_symbol"]),
+            strategy_family=str(position["strategy"]),
+            style_profile=str(
+                position.get("style_profile") or policy_fields["style_profile"]
+            ),
+            horizon_intent=str(
+                position.get("horizon_intent") or policy_fields["horizon_intent"]
+            ),
+            product_class=str(
+                position.get("product_class") or policy_fields["product_class"]
+            ),
+            quantity=resolved_quantity,
+            limit_price=resolved_limit_price,
+            requested_at=requested_at,
+            status=PENDING_SUBMISSION_STATUS,
+            broker=BROKER_NAME,
+            client_order_id=client_order_id,
+            request={
+                **({} if request_metadata is None else request_metadata),
+                "trade_intent": trade_intent,
+                "position_id": position_id,
+                "order": order_request,
+            },
+            candidate={},
+        )
+        payload = _queue_execution_attempt(
+            job_store=job_store,
+            execution_store=execution_store,
+            attempt=attempt,
+        )
+        message = _submission_message(payload, queued=True)
+        return {
+            "action": "submit",
+            "changed": True,
+            "message": message,
+            "attempt": payload,
+        }
+    except Exception as exc:
+        if attempt_id is not None:
+            current_attempt = execution_store.get_attempt(attempt_id)
+            if (
+                current_attempt is not None
+                and str(current_attempt.get("status") or "")
+                == PENDING_SUBMISSION_STATUS
+            ):
+                execution_store.update_attempt(
+                    execution_attempt_id=attempt_id,
+                    status="failed",
+                    client_order_id=client_order_id,
+                    completed_at=requested_at,
+                    error_text=str(exc),
+                    position_id=position_id,
+                )
+                payload = _get_attempt_payload(execution_store, attempt_id)
+                _publish_execution_attempt_event(
+                    payload,
+                    message=f"Close execution failed before submission: {exc}",
+                )
+        raise
 
 
 @with_storage()
