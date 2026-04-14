@@ -11,7 +11,7 @@ from arq import create_pool
 
 from spreads.db.decorators import with_storage
 from spreads.events.bus import publish_global_event_sync
-from spreads.integrations.alpaca.client import AlpacaClient
+from spreads.integrations.alpaca.client import AlpacaClient, AlpacaRequestError
 from spreads.jobs.registry import (
     EXECUTION_SUBMIT_ADHOC_JOB_KEY,
     EXECUTION_SUBMIT_JOB_TYPE,
@@ -36,10 +36,14 @@ from spreads.services.exit_manager import (
 )
 from spreads.services.execution_lifecycle import (
     OPEN_ATTEMPT_STATUSES,
+    PENDING_SUBMISSION_GRACE_SECONDS,
+    PENDING_SUBMISSION_RUNNING_STALE_AFTER_SECONDS,
     PENDING_SUBMISSION_STATUS,
+    SUBMIT_UNKNOWN_STATUS,
     TERMINAL_ATTEMPT_STATUSES,
+    classify_open_execution_attempt,
     is_terminal_execution_attempt_status,
-    resolve_execution_attempt_source,
+    resolve_execution_submit_job_run_id,
     resolve_execution_attempt_source_job,
 )
 from spreads.services.live_pipelines import build_live_session_id
@@ -68,8 +72,6 @@ TERMINAL_STATUSES = TERMINAL_ATTEMPT_STATUSES
 DEFAULT_ENTRY_PRICING_MODE = "adaptive_credit"
 DEFAULT_MIN_CREDIT_RETENTION_PCT = 0.95
 DEFAULT_MAX_CREDIT_CONCESSION = 0.02
-AUTO_OPEN_ATTEMPT_STALE_AFTER_FALLBACK_SECONDS = 300
-AUTO_OPEN_ATTEMPT_STALE_AFTER_MIN_SECONDS = 120
 ATTEMPT_CONTEXT_BUCKET_MIRROR = {
     "open_promotable": "promotable",
     "open_monitor": "monitor",
@@ -174,58 +176,45 @@ def _attempt_exit_policy(
     return dict(exit_policy)
 
 
-def _is_auto_session_execution_attempt(attempt: Mapping[str, Any]) -> bool:
-    source = resolve_execution_attempt_source(attempt)
-    return _as_text(source.get("kind")) == "auto_session_execution"
-
-
-def _attempt_guard_started_at(attempt: Mapping[str, Any]) -> datetime | None:
-    return parse_datetime(
-        _as_text(attempt.get("submitted_at")) or _as_text(attempt.get("requested_at"))
-    )
-
-
-def _resolve_auto_open_attempt_stale_after_seconds(
-    *,
-    storage: Any,
-    attempt: Mapping[str, Any],
-) -> float | None:
-    if not _is_auto_session_execution_attempt(attempt):
+def _execution_submit_job_run(
+    storage: Any, execution_attempt_id: str
+) -> Mapping[str, Any] | None:
+    job_store = getattr(storage, "jobs", None)
+    if (
+        job_store is None
+        or (
+            hasattr(job_store, "schema_ready")
+            and not job_store.schema_ready()
+        )
+    ):
+        return None
+    try:
+        return job_store.get_job_run(
+            resolve_execution_submit_job_run_id(execution_attempt_id)
+        )
+    except Exception:
         return None
 
-    stale_after_seconds = AUTO_OPEN_ATTEMPT_STALE_AFTER_FALLBACK_SECONDS
+
+def _source_job_definition(
+    storage: Any, attempt: Mapping[str, Any]
+) -> Mapping[str, Any] | None:
     source_job = resolve_execution_attempt_source_job(attempt)
     source_job_key = _as_text(source_job.get("job_key"))
     job_store = getattr(storage, "jobs", None)
     if (
-        source_job_key is not None
-        and job_store is not None
-        and (
-            not hasattr(job_store, "schema_ready")
-            or job_store.schema_ready()
+        source_job_key is None
+        or job_store is None
+        or (
+            hasattr(job_store, "schema_ready")
+            and not job_store.schema_ready()
         )
     ):
-        try:
-            definition = job_store.get_job_definition(source_job_key)
-        except Exception:
-            definition = None
-        payload = (
-            definition.get("payload")
-            if isinstance(definition, Mapping)
-            else {}
-        )
-        interval_seconds = (
-            _coerce_int(payload.get("interval_seconds"))
-            if isinstance(payload, Mapping)
-            else None
-        )
-        if interval_seconds is not None and interval_seconds > 0:
-            stale_after_seconds = max(
-                interval_seconds * 2,
-                AUTO_OPEN_ATTEMPT_STALE_AFTER_MIN_SECONDS,
-            )
-
-    return float(stale_after_seconds)
+        return None
+    try:
+        return job_store.get_job_definition(source_job_key)
+    except Exception:
+        return None
 
 
 def _evaluate_open_attempt_guard(
@@ -234,36 +223,65 @@ def _evaluate_open_attempt_guard(
     attempt: Mapping[str, Any],
     current_time: datetime,
 ) -> dict[str, Any]:
+    lifecycle = classify_open_execution_attempt(
+        attempt,
+        now=current_time,
+        submit_job=_execution_submit_job_run(
+            storage, str(attempt.get("execution_attempt_id") or "")
+        ),
+        source_job_definition=_source_job_definition(storage, attempt),
+        submission_grace_seconds=PENDING_SUBMISSION_GRACE_SECONDS,
+        running_submit_stale_after_seconds=PENDING_SUBMISSION_RUNNING_STALE_AFTER_SECONDS,
+    )
     timing_gate = _validate_open_timing_window(
         exit_policy=_attempt_exit_policy(attempt),
         current_time=current_time,
     )
-    if not timing_gate["allowed"]:
-        return dict(timing_gate)
-
-    stale_after_seconds = _resolve_auto_open_attempt_stale_after_seconds(
-        storage=storage,
-        attempt=attempt,
-    )
-    started_at = _attempt_guard_started_at(attempt)
-    if stale_after_seconds is None or started_at is None:
-        return dict(timing_gate)
-
-    age_seconds = max((current_time - started_at).total_seconds(), 0.0)
-    if age_seconds < stale_after_seconds:
+    if str(lifecycle.get("phase") or "") == "submit_unknown":
         return {
             **dict(timing_gate),
-            "age_seconds": round(age_seconds, 3),
-            "stale_after_seconds": stale_after_seconds,
+            "lifecycle": lifecycle,
+            "age_seconds": lifecycle.get("age_seconds"),
+            "stale_after_seconds": lifecycle.get("working_stale_after_seconds"),
+        }
+    if not timing_gate["allowed"]:
+        return {
+            **dict(timing_gate),
+            "lifecycle": lifecycle,
+            "intervention": "cancel_order"
+            if _as_text(attempt.get("broker_order_id"))
+            else "fail_unsubmitted",
         }
 
+    intervention = _as_text(lifecycle.get("intervention"))
+    if intervention is None:
+        return {
+            **dict(timing_gate),
+            "lifecycle": lifecycle,
+            "age_seconds": lifecycle.get("age_seconds"),
+            "stale_after_seconds": lifecycle.get("working_stale_after_seconds"),
+        }
+
+    reason = (
+        "stale_auto_open_attempt"
+        if intervention == "cancel_order"
+        else (
+            "submit_outcome_uncertain"
+            if intervention == "mark_submit_unknown"
+            else "stale_pending_submission"
+        )
+    )
     return {
         "allowed": False,
-        "reason": "stale_auto_open_attempt",
-        "message": "Automatic open execution remained pending past its stale-order window.",
+        "reason": reason,
+        "message": _as_text(lifecycle.get("note")),
         "force_close_at": timing_gate.get("force_close_at"),
-        "age_seconds": round(age_seconds, 3),
-        "stale_after_seconds": stale_after_seconds,
+        "age_seconds": lifecycle.get("age_seconds"),
+        "stale_after_seconds": lifecycle.get("working_stale_after_seconds"),
+        "queue_grace_seconds": lifecycle.get("submission_grace_seconds"),
+        "submit_job_status": lifecycle.get("submit_job_status"),
+        "intervention": intervention,
+        "lifecycle": lifecycle,
     }
 
 
@@ -273,6 +291,9 @@ def _guard_intervention_message(
     submitted: bool,
 ) -> str:
     reason = _as_text(guard_decision.get("reason"))
+    direct_message = _as_text(guard_decision.get("message"))
+    if reason in {"stale_pending_submission", "submit_outcome_uncertain"}:
+        return direct_message or "Execution needs operator reconciliation."
     if reason == "stale_auto_open_attempt":
         age_seconds = _coerce_float(guard_decision.get("age_seconds"))
         stale_after_seconds = _coerce_int(guard_decision.get("stale_after_seconds"))
@@ -307,6 +328,32 @@ def _guard_intervention_message(
     )
 
 
+def _reconcile_submit_unknown_attempt(
+    *,
+    execution_store: Any,
+    attempt: Mapping[str, Any],
+    client: AlpacaClient,
+) -> dict[str, Any] | None:
+    client_order_id = _as_text(attempt.get("client_order_id"))
+    if client_order_id is None:
+        return None
+    try:
+        order_snapshot = client.get_order_by_client_order_id(
+            client_order_id,
+            nested=True,
+        )
+    except AlpacaRequestError as exc:
+        if exc.status_code == 404:
+            return None
+        raise
+    return _sync_attempt_state(
+        execution_store=execution_store,
+        attempt=dict(attempt),
+        client=client,
+        order_snapshot=order_snapshot,
+    )
+
+
 def _execution_attempt_id() -> str:
     return f"execution:{uuid4().hex}"
 
@@ -320,7 +367,7 @@ def _execution_client_order_id() -> str:
 
 
 def _execution_submit_job_run_id(execution_attempt_id: str) -> str:
-    return f"execution_submit:{execution_attempt_id}"
+    return resolve_execution_submit_job_run_id(execution_attempt_id)
 
 
 def _order_intent_key(execution_attempt_id: str) -> str:
@@ -889,6 +936,7 @@ def run_open_execution_guard(
             "evaluated": 0,
             "canceled": 0,
             "failed_unsubmitted": 0,
+            "submit_unknown": 0,
             "terminal_synced": 0,
             "skipped": 0,
             "failure_count": 0,
@@ -901,6 +949,7 @@ def run_open_execution_guard(
     evaluated = 0
     canceled = 0
     failed_unsubmitted = 0
+    submit_unknown = 0
     terminal_synced = 0
     skipped = 0
     failures: list[dict[str, Any]] = []
@@ -920,6 +969,41 @@ def run_open_execution_guard(
         evaluated += 1
         broker_order_id = _as_text(attempt.get("broker_order_id"))
         session_position_id = _as_text(attempt.get("session_position_id"))
+        intervention = _as_text(guard_decision.get("intervention"))
+        if intervention == "mark_submit_unknown":
+            message = _guard_intervention_message(
+                guard_decision,
+                submitted=False,
+            )
+            execution_store.update_attempt(
+                execution_attempt_id=execution_attempt_id,
+                status=SUBMIT_UNKNOWN_STATUS,
+                error_text=message,
+                session_position_id=session_position_id,
+            )
+            uncertain_attempt = _get_attempt_payload(
+                execution_store, execution_attempt_id
+            )
+            _publish_execution_attempt_event(
+                uncertain_attempt,
+                message=message,
+            )
+            submit_unknown += 1
+            decisions.append(
+                {
+                    "execution_attempt_id": execution_attempt_id,
+                    "symbol": str(attempt.get("underlying_symbol") or ""),
+                    "action": "marked_submit_unknown",
+                    "status": str(uncertain_attempt.get("status") or ""),
+                    "reason": str(guard_decision["reason"] or ""),
+                    "age_seconds": guard_decision.get("age_seconds"),
+                    "stale_after_seconds": guard_decision.get(
+                        "stale_after_seconds"
+                    ),
+                    "submit_job_status": guard_decision.get("submit_job_status"),
+                }
+            )
+            continue
         if broker_order_id is None:
             message = _guard_intervention_message(
                 guard_decision,
@@ -1051,6 +1135,7 @@ def run_open_execution_guard(
         "evaluated": evaluated,
         "canceled": canceled,
         "failed_unsubmitted": failed_unsubmitted,
+        "submit_unknown": submit_unknown,
         "terminal_synced": terminal_synced,
         "skipped": skipped,
         "failure_count": len(failures),
@@ -2130,6 +2215,50 @@ def refresh_live_session_execution(
             "changed": False,
             "message": "Execution is still queued for broker submission.",
             "attempt": payload,
+        }
+    if (
+        _as_text(attempt.get("broker_order_id")) is None
+        and str(attempt.get("status") or "") == SUBMIT_UNKNOWN_STATUS
+    ):
+        client_order_id = _as_text(attempt.get("client_order_id"))
+        if client_order_id is None:
+            payload = _get_attempt_payload(execution_store, execution_attempt_id)
+            return {
+                "action": "refresh",
+                "changed": False,
+                "message": (
+                    "Execution submit outcome is uncertain and cannot be reconciled "
+                    "because the client order id is missing."
+                ),
+                "attempt": payload,
+            }
+        client = create_alpaca_client_from_env()
+        reconciled_attempt = _reconcile_submit_unknown_attempt(
+            execution_store=execution_store,
+            attempt=attempt,
+            client=client,
+        )
+        if reconciled_attempt is None:
+            payload = _get_attempt_payload(execution_store, execution_attempt_id)
+            return {
+                "action": "refresh",
+                "changed": False,
+                "message": (
+                    "Execution submit outcome is uncertain and no broker order has been "
+                    f"found yet for client_order_id {client_order_id}."
+                ),
+                "attempt": payload,
+            }
+        message = (
+            f"Reconciled execution {execution_attempt_id} via client_order_id "
+            f"{client_order_id}: {reconciled_attempt['status']}."
+        )
+        _publish_execution_attempt_event(reconciled_attempt, message=message)
+        return {
+            "action": "refresh",
+            "changed": True,
+            "message": message,
+            "attempt": reconciled_attempt,
         }
     broker_order_id = _as_text(attempt.get("broker_order_id"))
     if broker_order_id is None:

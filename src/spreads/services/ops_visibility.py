@@ -22,6 +22,12 @@ from spreads.services.control_plane import (
     resolve_execution_kill_switch_reason,
 )
 from spreads.services.execution import OPEN_STATUSES
+from spreads.services.execution_lifecycle import (
+    classify_open_execution_attempt,
+    is_open_execution_attempt_status,
+    resolve_execution_attempt_source_job,
+    resolve_execution_submit_job_run_id,
+)
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
 from spreads.services.risk_manager import assess_position_risk
 from spreads.services.selection_terms import (
@@ -513,7 +519,72 @@ def _top_positions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return ranked[:TOP_POSITION_LIMIT]
 
 
-def _summarize_execution_attempt(attempt: Mapping[str, Any]) -> dict[str, Any]:
+def _load_execution_attempt_job_context(
+    *,
+    job_store: Any,
+    attempts: list[Mapping[str, Any]],
+) -> tuple[dict[str, Mapping[str, Any] | None], dict[str, Mapping[str, Any] | None]]:
+    submit_jobs: dict[str, Mapping[str, Any] | None] = {}
+    source_definitions: dict[str, Mapping[str, Any] | None] = {}
+    if job_store is None or (
+        hasattr(job_store, "schema_ready") and not job_store.schema_ready()
+    ):
+        return submit_jobs, source_definitions
+
+    for attempt in attempts:
+        execution_attempt_id = _as_text(attempt.get("execution_attempt_id"))
+        if execution_attempt_id is None:
+            continue
+        try:
+            submit_jobs[execution_attempt_id] = job_store.get_job_run(
+                resolve_execution_submit_job_run_id(execution_attempt_id)
+            )
+        except Exception:
+            submit_jobs[execution_attempt_id] = None
+
+        source_job = resolve_execution_attempt_source_job(attempt)
+        source_job_key = _as_text(source_job.get("job_key"))
+        if source_job_key is None or source_job_key in source_definitions:
+            continue
+        try:
+            source_definitions[source_job_key] = job_store.get_job_definition(
+                source_job_key
+            )
+        except Exception:
+            source_definitions[source_job_key] = None
+    return submit_jobs, source_definitions
+
+
+def _execution_attempt_lifecycle(
+    *,
+    attempt: Mapping[str, Any],
+    now: datetime,
+    submit_jobs: Mapping[str, Mapping[str, Any] | None],
+    source_definitions: Mapping[str, Mapping[str, Any] | None],
+) -> dict[str, Any]:
+    if not is_open_execution_attempt_status(attempt.get("status")):
+        return {}
+    execution_attempt_id = _as_text(attempt.get("execution_attempt_id")) or ""
+    source_job = resolve_execution_attempt_source_job(attempt)
+    source_job_key = _as_text(source_job.get("job_key"))
+    submit_job = submit_jobs.get(execution_attempt_id)
+    source_definition = (
+        None if source_job_key is None else source_definitions.get(source_job_key)
+    )
+    return classify_open_execution_attempt(
+        attempt,
+        now=now,
+        submit_job=submit_job,
+        source_job_definition=source_definition,
+    )
+
+
+def _summarize_execution_attempt(
+    attempt: Mapping[str, Any],
+    *,
+    lifecycle: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    lifecycle_payload = dict(lifecycle or {})
     return {
         "execution_attempt_id": attempt.get("execution_attempt_id"),
         "session_id": attempt.get("session_id"),
@@ -527,6 +598,23 @@ def _summarize_execution_attempt(attempt: Mapping[str, Any]) -> dict[str, Any]:
         "completed_at": attempt.get("completed_at"),
         "broker_order_id": attempt.get("broker_order_id"),
         "candidate_id": attempt.get("candidate_id"),
+        "session_position_id": attempt.get("session_position_id"),
+        "source_kind": lifecycle_payload.get("source_kind"),
+        "lifecycle_phase": lifecycle_payload.get("phase"),
+        "lifecycle_note": lifecycle_payload.get("note"),
+        "age_seconds": lifecycle_payload.get("age_seconds"),
+        "queue_age_seconds": lifecycle_payload.get("queue_age_seconds"),
+        "stale_after_seconds": lifecycle_payload.get("working_stale_after_seconds"),
+        "submission_grace_seconds": lifecycle_payload.get("submission_grace_seconds"),
+        "submit_job_status": lifecycle_payload.get("submit_job_status"),
+        "submit_job_age_seconds": lifecycle_payload.get("submit_job_age_seconds"),
+        "submit_job_heartbeat_age_seconds": lifecycle_payload.get(
+            "submit_job_heartbeat_age_seconds"
+        ),
+        "stale": bool(lifecycle_payload.get("stale")),
+        "next_action": lifecycle_payload.get("next_action"),
+        "blocks_capacity": bool(lifecycle_payload.get("blocks_capacity")),
+        "occupies_position_slot": bool(lifecycle_payload.get("occupies_position_slot")),
     }
 
 
@@ -1231,6 +1319,7 @@ def build_trading_health(
             )
 
     execution_store = storage.execution
+    job_store = getattr(storage, "jobs", None)
     open_execution_attempts: list[dict[str, Any]]
     if execution_store.schema_ready():
         open_execution_attempts = [
@@ -1248,6 +1337,82 @@ def build_trading_health(
                 severity="high",
                 code="execution_schema_unavailable",
                 message="Execution attempts storage is not available yet.",
+            )
+        )
+
+    submit_jobs, source_definitions = _load_execution_attempt_job_context(
+        job_store=job_store,
+        attempts=open_execution_attempts,
+    )
+    summarized_open_execution_attempts = [
+        _summarize_execution_attempt(
+            row,
+            lifecycle=_execution_attempt_lifecycle(
+                attempt=row,
+                now=now,
+                submit_jobs=submit_jobs,
+                source_definitions=source_definitions,
+            ),
+        )
+        for row in _sorted_by_activity(open_execution_attempts)
+    ]
+    stale_open_execution_count = sum(
+        1 for row in summarized_open_execution_attempts if bool(row.get("stale"))
+    )
+    submit_unknown_execution_count = sum(
+        1
+        for row in summarized_open_execution_attempts
+        if str(row.get("lifecycle_phase") or "") == "submit_unknown"
+    )
+    capacity_blocked_underlyings = sorted(
+        {
+            str(row.get("underlying_symbol") or "")
+            for row in summarized_open_execution_attempts
+            if bool(row.get("blocks_capacity"))
+            and _as_text(row.get("underlying_symbol"))
+        }
+    )
+    capacity_blocked_underlying_count = len(
+        capacity_blocked_underlyings
+    )
+    execution_health_status = (
+        "degraded"
+        if stale_open_execution_count or submit_unknown_execution_count
+        else "healthy"
+    )
+    if submit_unknown_execution_count:
+        statuses.append("degraded")
+        attention.append(
+            _attention(
+                severity="high",
+                code="execution_submit_unknown",
+                message=(
+                    f"{submit_unknown_execution_count} open execution attempt(s) have uncertain submit "
+                    "outcomes and still block capacity."
+                ),
+            )
+        )
+    elif stale_open_execution_count:
+        statuses.append("degraded")
+        attention.append(
+            _attention(
+                severity="medium",
+                code="stale_open_executions_present",
+                message=(
+                    f"{stale_open_execution_count} open execution attempt(s) are stale and need "
+                    "reconciliation, cancellation, or operator review."
+                ),
+            )
+        )
+    elif capacity_blocked_underlyings:
+        attention.append(
+            _attention(
+                severity="low",
+                code="open_execution_capacity_reserved",
+                message=(
+                    "Open execution attempts currently reserve capacity for "
+                    f"{', '.join(capacity_blocked_underlyings[:5])}."
+                ),
             )
         )
 
@@ -1364,6 +1529,8 @@ def build_trading_health(
         trading_allowed = False
     elif account.get("trading_blocked") or account.get("account_blocked"):
         trading_allowed = False
+    elif stale_open_execution_count or submit_unknown_execution_count:
+        trading_allowed = False
 
     summary = {
         "trading_allowed": trading_allowed,
@@ -1376,6 +1543,10 @@ def build_trading_health(
         else account_overview.get("environment"),
         "open_position_count": len(open_positions),
         "open_execution_count": len(open_execution_attempts),
+        "stale_open_execution_count": stale_open_execution_count,
+        "submit_unknown_execution_count": submit_unknown_execution_count,
+        "capacity_blocked_underlying_count": capacity_blocked_underlying_count,
+        "execution_health_status": execution_health_status,
         "risk_breach_count": risk_breach_count,
         "reconciliation_mismatch_count": reconciliation_mismatch_count,
         "mark_health_status": mark_health_status,
@@ -1384,10 +1555,7 @@ def build_trading_health(
 
     details.update(
         {
-            "open_execution_attempts": [
-                _summarize_execution_attempt(row)
-                for row in _sorted_by_activity(open_execution_attempts)
-            ],
+            "open_execution_attempts": summarized_open_execution_attempts,
             "open_positions": open_positions,
             "top_positions": top_positions,
             "mark_health": {
@@ -1396,6 +1564,13 @@ def build_trading_health(
                 "stale_mark_count": stale_mark_count,
                 "broker_unquoted_position_count": broker_unquoted_positions,
                 "mark_error": mark_error,
+            },
+            "execution_health": {
+                "status": execution_health_status,
+                "stale_open_execution_count": stale_open_execution_count,
+                "submit_unknown_execution_count": submit_unknown_execution_count,
+                "capacity_blocked_underlying_count": capacity_blocked_underlying_count,
+                "capacity_blocked_underlyings": capacity_blocked_underlyings,
             },
         }
     )
@@ -1598,11 +1773,91 @@ def build_sessions_view(
         alerts = [
             _summarize_alert(row) for row in list(session.get("alerts") or [])[:25]
         ]
+        execution_rows = _sorted_by_activity(
+            [
+                dict(row)
+                for row in list(session.get("executions") or [])
+                if isinstance(row, Mapping)
+            ]
+        )
+        job_store = getattr(storage, "jobs", None)
+        submit_jobs, source_definitions = _load_execution_attempt_job_context(
+            job_store=job_store,
+            attempts=execution_rows,
+        )
+        generated_at_dt = _parse_timestamp(generated_at) or datetime.now(UTC)
         executions = [
-            _summarize_execution_attempt(row)
-            for row in list(session.get("executions") or [])[:25]
-            if isinstance(row, Mapping)
+            _summarize_execution_attempt(
+                row,
+                lifecycle=_execution_attempt_lifecycle(
+                    attempt=row,
+                    now=generated_at_dt,
+                    submit_jobs=submit_jobs,
+                    source_definitions=source_definitions,
+                ),
+            )
+            for row in execution_rows[:25]
         ]
+        open_executions = [
+            row
+            for row in executions
+            if str(row.get("status") or "").strip().lower() in OPEN_STATUSES
+        ]
+        stale_open_executions = [
+            row for row in open_executions if bool(row.get("stale"))
+        ]
+        submit_unknown_executions = [
+            row
+            for row in open_executions
+            if str(row.get("lifecycle_phase") or "") == "submit_unknown"
+        ]
+        blocking_execution_keys = sorted(
+            {
+                f"{row['underlying_symbol']} {row['strategy']}"
+                for row in open_executions
+                if bool(row.get("blocks_capacity"))
+                and _as_text(row.get("underlying_symbol"))
+                and _as_text(row.get("strategy"))
+            }
+        )
+        if submit_unknown_executions:
+            statuses.append("degraded")
+            attention.append(
+                _attention(
+                    severity="high",
+                    code="session_execution_submit_unknown",
+                    message=(
+                        f"{len(submit_unknown_executions)} open execution attempt(s) have uncertain submit "
+                        "outcomes and still block session capacity."
+                    ),
+                )
+            )
+        elif stale_open_executions:
+            statuses.append("degraded")
+            attention.append(
+                _attention(
+                    severity="medium",
+                    code="session_stale_open_execution",
+                    message=(
+                        f"{len(stale_open_executions)} open execution attempt(s) are stale and "
+                        "need reconciliation, cancellation, or operator review."
+                    ),
+                )
+            )
+        elif blocking_execution_keys and str(session.get("risk_status") or "") in {
+            "ok",
+            "healthy",
+        }:
+            attention.append(
+                _attention(
+                    severity="low",
+                    code="session_capacity_reserved_by_open_execution",
+                    message=(
+                        "Session capacity is currently reserved by open execution attempts for "
+                        f"{', '.join(blocking_execution_keys[:5])}."
+                    ),
+                )
+            )
 
         return {
             "status": _combine_statuses(*statuses),
@@ -1626,6 +1881,9 @@ def build_sessions_view(
                 "control_mode": control.get("mode"),
                 "alert_count": len(list(session.get("alerts") or [])),
                 "execution_count": len(list(session.get("executions") or [])),
+                "open_execution_count": len(open_executions),
+                "stale_open_execution_count": len(stale_open_executions),
+                "blocking_execution_key_count": len(blocking_execution_keys),
                 "open_position_count": portfolio_summary.get("open_position_count"),
                 "post_market_verdict": verdict,
                 "promotable_monitor_pnl_spread": promotable_monitor_pnl_spread_value,
@@ -1649,6 +1907,8 @@ def build_sessions_view(
                 "recovery_slots": recovery_slots,
                 "alerts": alerts,
                 "executions": executions,
+                "open_executions": open_executions,
+                "blocking_execution_keys": blocking_execution_keys,
                 "portfolio_summary": portfolio_summary,
                 "recommendations": recommendations,
                 "top_modeled_ideas": top_modeled_ideas,

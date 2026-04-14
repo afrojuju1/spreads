@@ -246,9 +246,23 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row(
         "Open Executions", _render_value(summary.get("open_execution_count"))
     )
+    overview.add_row(
+        "Stale Open Execs", _render_value(summary.get("stale_open_execution_count"))
+    )
+    overview.add_row(
+        "Unknown Submit",
+        _render_value(summary.get("submit_unknown_execution_count")),
+    )
+    overview.add_row(
+        "Blocked Underlyings",
+        _render_value(summary.get("capacity_blocked_underlying_count")),
+    )
     overview.add_row("Risk Breaches", _render_value(summary.get("risk_breach_count")))
     overview.add_row(
         "Mismatches", _render_value(summary.get("reconciliation_mismatch_count"))
+    )
+    overview.add_row(
+        "Execution Health", _render_value(summary.get("execution_health_status"))
     )
     overview.add_row(
         "Broker Sync",
@@ -291,14 +305,18 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Underlying")
         table.add_column("Intent")
         table.add_column("Status")
-        table.add_column("Requested At")
+        table.add_column("Phase")
+        table.add_column("Age")
+        table.add_column("Next")
         for row in open_attempts[:8]:
             table.add_row(
                 str(row.get("session_id") or "-"),
                 str(row.get("underlying_symbol") or "-"),
                 str(row.get("trade_intent") or "-"),
                 str(row.get("status") or "-"),
-                str(row.get("requested_at") or "-"),
+                str(row.get("lifecycle_phase") or "-"),
+                _render_duration(row.get("age_seconds")),
+                str(row.get("next_action") or "-"),
             )
         console.print(table)
 
@@ -415,6 +433,15 @@ def _render_session_detail(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row("Alerts", _render_value(summary.get("alert_count")))
     overview.add_row("Executions", _render_value(summary.get("execution_count")))
     overview.add_row(
+        "Open Execs", _render_value(summary.get("open_execution_count"))
+    )
+    overview.add_row(
+        "Stale Execs", _render_value(summary.get("stale_open_execution_count"))
+    )
+    overview.add_row(
+        "Blocked Keys", _render_value(summary.get("blocking_execution_key_count"))
+    )
+    overview.add_row(
         "Open Positions", _render_value(summary.get("open_position_count"))
     )
     overview.add_row("Verdict", _render_value(summary.get("post_market_verdict")))
@@ -478,6 +505,36 @@ def _render_session_detail(console: Console, payload: dict[str, Any]) -> None:
                 str(row.get("updated_at") or "-"),
             )
         console.print(table)
+
+    open_executions = list(details.get("open_executions") or [])
+    if open_executions:
+        table = Table(title="Open Executions", header_style="bold")
+        table.add_column("Underlying")
+        table.add_column("Intent")
+        table.add_column("Status")
+        table.add_column("Phase")
+        table.add_column("Age")
+        table.add_column("Next")
+        for row in open_executions[:8]:
+            table.add_row(
+                str(row.get("underlying_symbol") or "-"),
+                str(row.get("trade_intent") or "-"),
+                str(row.get("status") or "-"),
+                str(row.get("lifecycle_phase") or "-"),
+                _render_duration(row.get("age_seconds")),
+                str(row.get("next_action") or "-"),
+            )
+        console.print(table)
+
+    blocking_execution_keys = list(details.get("blocking_execution_keys") or [])
+    if blocking_execution_keys:
+        console.print(
+            Panel(
+                ", ".join(str(row) for row in blocking_execution_keys[:12]),
+                title="Capacity Reserved",
+                border_style="yellow",
+            )
+        )
 
     top_ideas = list(details.get("top_modeled_ideas") or [])
     if top_ideas:
@@ -1062,6 +1119,26 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
                 str(row.get("alert_type") or "-"),
                 str(row.get("delivery_target") or "-"),
                 str(row.get("status") or "-"),
+            )
+        console.print(table)
+
+    open_executions = list(details.get("open_executions") or [])
+    if open_executions:
+        table = Table(title="Open Executions", header_style="bold")
+        table.add_column("Underlying")
+        table.add_column("Intent")
+        table.add_column("Status")
+        table.add_column("Phase")
+        table.add_column("Age")
+        table.add_column("Next")
+        for row in open_executions[:8]:
+            table.add_row(
+                str(row.get("underlying_symbol") or "-"),
+                str(row.get("trade_intent") or "-"),
+                str(row.get("status") or "-"),
+                str(row.get("lifecycle_phase") or "-"),
+                _render_duration(row.get("age_seconds")),
+                str(row.get("next_action") or "-"),
             )
         console.print(table)
 

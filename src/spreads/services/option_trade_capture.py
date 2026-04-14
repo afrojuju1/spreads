@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import json
-import urllib.error
-import urllib.request
 from typing import Any
 
+from spreads.services.option_market_data_capture import request_option_market_data_capture
 from spreads.services.option_stream_broker import (
     AlpacaOptionStreamBroker,
-    LiveOptionTrade,
-    default_internal_api_base_url,
     render_option_capture_timestamp,
 )
 from spreads.services.option_trade_records import (
@@ -29,32 +25,18 @@ def request_option_trade_capture(
     if not candidates or duration_seconds <= 0:
         return []
 
-    request_payload = {
-        "candidates": candidates,
-        "feed": str(feed),
-        "duration_seconds": float(duration_seconds),
-        "data_base_url": data_base_url or DEFAULT_DATA_BASE_URL,
-    }
-    request_data = json.dumps(request_payload).encode("utf-8")
-    request_url = f"{(api_base_url or default_internal_api_base_url()).rstrip('/')}/internal/market-data/option-trades/capture"
-    request = urllib.request.Request(
-        request_url,
-        data=request_data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
+    payload = request_option_market_data_capture(
+        candidates=candidates,
+        feed=feed,
+        quote_duration_seconds=0.0,
+        trade_duration_seconds=duration_seconds,
+        data_base_url=data_base_url or DEFAULT_DATA_BASE_URL,
+        api_base_url=api_base_url,
     )
-    timeout_seconds = max(float(duration_seconds) + 15.0, 20.0)
-    try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Option trade capture request failed: {exc.code} {detail}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Option trade capture request failed: {exc.reason}") from exc
-    trades = payload.get("trades")
-    if not isinstance(trades, list):
-        raise RuntimeError("Option trade capture response did not include a trades list")
+    trade_error = payload.get("trade_error")
+    if trade_error not in (None, ""):
+        raise RuntimeError(f"Option trade capture request failed: {trade_error}")
+    trades = payload.get("trades") or []
     return [dict(item) for item in trades if isinstance(item, dict)]
 
 

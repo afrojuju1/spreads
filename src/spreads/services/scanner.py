@@ -72,6 +72,21 @@ UNIVERSE_PRESETS: dict[str, tuple[str, ...]] = {
 }
 
 
+class AlpacaRequestError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        url: str | None = None,
+        response_body: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.url = url
+        self.response_body = response_body
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Find credit spread candidates for one symbol or a ranked multi-symbol universe using Alpaca."
@@ -887,9 +902,17 @@ class AlpacaClient:
                 return json.loads(body_bytes.decode("utf-8"))
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"Alpaca request failed: {exc.code} {exc.reason} for {url}\n{body}") from exc
+            raise AlpacaRequestError(
+                f"Alpaca request failed: {exc.code} {exc.reason} for {url}\n{body}",
+                status_code=exc.code,
+                url=url,
+                response_body=body,
+            ) from exc
         except urllib.error.URLError as exc:
-            raise RuntimeError(f"Failed to reach Alpaca for {url}: {exc.reason}") from exc
+            raise AlpacaRequestError(
+                f"Failed to reach Alpaca for {url}: {exc.reason}",
+                url=url,
+            ) from exc
 
     def get_json(self, base_url: str, path: str, params: dict[str, Any] | None = None) -> Any:
         return self.request_json("GET", base_url, path, params=params)
@@ -917,6 +940,24 @@ class AlpacaClient:
             self.trading_base_url,
             f"/v2/orders/{order_id}",
             {"nested": "true" if nested else None},
+        )
+        if not isinstance(response, dict):
+            raise RuntimeError("Unexpected Alpaca order response shape")
+        return response
+
+    def get_order_by_client_order_id(
+        self,
+        client_order_id: str,
+        *,
+        nested: bool = False,
+    ) -> dict[str, Any]:
+        response = self.get_json(
+            self.trading_base_url,
+            "/v2/orders:by_client_order_id",
+            {
+                "client_order_id": client_order_id,
+                "nested": "true" if nested else None,
+            },
         )
         if not isinstance(response, dict):
             raise RuntimeError("Unexpected Alpaca order response shape")

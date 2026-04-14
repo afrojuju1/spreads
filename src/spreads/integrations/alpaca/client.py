@@ -1,5 +1,6 @@
 from spreads.services.scanner import (
     AlpacaClient,
+    AlpacaRequestError,
     AlpacaOptionQuoteStreamer,
     DEFAULT_DATA_BASE_URL,
     DEFAULT_TRADING_BASE_URL,
@@ -8,6 +9,7 @@ from spreads.services.scanner import (
 
 __all__ = [
     "AlpacaClient",
+    "AlpacaRequestError",
     "AlpacaOptionQuoteStreamer",
     "DEFAULT_DATA_BASE_URL",
     "DEFAULT_TRADING_BASE_URL",
