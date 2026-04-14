@@ -9,6 +9,11 @@ from spreads.services.control_plane import get_control_state_snapshot
 from spreads.services.execution import list_session_execution_attempts
 from spreads.services.execution_portfolio import build_session_execution_portfolio
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
+from spreads.services.opportunity_replay import (
+    OpportunityReplayLookupError,
+    build_opportunity_replay,
+    build_recent_opportunity_replay_batch,
+)
 from spreads.services.live_recovery import (
     list_session_slot_health_by_session_id,
     load_session_slot_health,
@@ -19,6 +24,7 @@ from spreads.storage.serializers import parse_datetime
 
 DEFAULT_ANALYSIS_PROFIT_TARGET = 0.5
 DEFAULT_ANALYSIS_STOP_MULTIPLE = 2.0
+DEFAULT_PIPELINE_REPLAY_RECENT = 20
 
 
 def _parse_sort_value(value: str | None):
@@ -124,6 +130,58 @@ def _cycle_opportunity_payloads(
         if selection_state in live_counts:
             live_counts[selection_state] += 1
     return opportunities, live_counts
+
+
+def _normalize_pipeline_replay_mode(value: str | None) -> str:
+    normalized = value.strip().lower() if isinstance(value, str) else "none"
+    if normalized not in {"none", "current", "recent", "both"}:
+        raise ValueError(f"Unsupported include_replay mode: {value}")
+    return normalized
+
+
+def _resolve_pipeline_replay(
+    *,
+    db_target: str,
+    label: str,
+    market_date: str,
+    include_replay: str,
+    storage: Any,
+) -> dict[str, Any] | None:
+    normalized_mode = _normalize_pipeline_replay_mode(include_replay)
+    if normalized_mode == "none":
+        return None
+
+    replay_payload: dict[str, Any] = {
+        "include_replay": normalized_mode,
+        "recent_limit": DEFAULT_PIPELINE_REPLAY_RECENT,
+        "current": None,
+        "recent": None,
+        "warnings": [],
+    }
+
+    if normalized_mode in {"current", "both"}:
+        try:
+            replay_payload["current"] = build_opportunity_replay(
+                db_target=db_target,
+                label=label,
+                session_date=market_date,
+                storage=storage,
+            )
+        except OpportunityReplayLookupError as exc:
+            replay_payload["warnings"].append(str(exc))
+
+    if normalized_mode in {"recent", "both"}:
+        try:
+            replay_payload["recent"] = build_recent_opportunity_replay_batch(
+                db_target=db_target,
+                recent=DEFAULT_PIPELINE_REPLAY_RECENT,
+                label=label,
+                storage=storage,
+            )
+        except OpportunityReplayLookupError as exc:
+            replay_payload["warnings"].append(str(exc))
+
+    return replay_payload
 
 
 def _reconciliation_snapshot(portfolio: Mapping[str, Any]) -> dict[str, Any]:
@@ -400,6 +458,7 @@ def get_pipeline_detail(
     db_target: str,
     pipeline_id: str,
     market_date: str | None,
+    include_replay: str = "none",
     profit_target: float,
     stop_multiple: float,
     storage: Any | None = None,
@@ -520,6 +579,13 @@ def get_pipeline_detail(
             stop_multiple=stop_multiple,
             storage=storage,
         )
+    replay = _resolve_pipeline_replay(
+        db_target=db_target,
+        label=str(latest_cycle["label"]),
+        market_date=resolved_market_date,
+        include_replay=include_replay,
+        storage=storage,
+    )
 
     updated_at = _latest_activity_timestamp(
         None if latest_run is None else str(latest_run.get("finished_at") or ""),
@@ -627,6 +693,7 @@ def get_pipeline_detail(
         "control": control_snapshot,
         "portfolio": portfolio,
         "analysis": analysis,
+        "replay": replay,
     }
 
 

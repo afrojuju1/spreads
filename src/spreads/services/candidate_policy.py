@@ -6,16 +6,22 @@ from typing import Any, Mapping
 DEFAULT_DEPLOYMENT_QUALITY_THRESHOLDS = {
     "min_promotable_return_on_risk": None,
     "min_execution_return_on_risk": None,
+    "min_minutes_to_force_close": None,
 }
 
 PROFILE_DEPLOYMENT_QUALITY_THRESHOLDS = {
+    "0dte": {
+        "min_minutes_to_force_close": 45.0,
+    },
     "weekly": {
         "min_promotable_return_on_risk": 0.13,
         "min_execution_return_on_risk": 0.13,
+        "min_minutes_to_force_close": 90.0,
     },
     "core": {
         "min_promotable_return_on_risk": 0.16,
         "min_execution_return_on_risk": 0.16,
+        "min_minutes_to_force_close": 120.0,
     },
 }
 

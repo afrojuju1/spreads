@@ -3,8 +3,15 @@
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Radar, RefreshCw, RotateCw, Rows3, ShieldAlert } from "lucide-react";
-import { useMemo } from "react";
+import {
+  Radar,
+  RefreshCw,
+  RotateCw,
+  Rows3,
+  ShieldAlert,
+  TriangleAlert,
+} from "lucide-react";
+import { useMemo, useState } from "react";
 
 import { DataTable } from "@/components/data-table";
 import {
@@ -13,6 +20,8 @@ import {
   executeOpportunity,
   getPipelineDetail,
   getPipelines,
+  type ReplayDeploymentSlice,
+  type ReplayGroup,
   refreshExecution,
   type LiveCandidate,
   type PipelineListItem,
@@ -21,13 +30,19 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   CaptureStatusBadge,
   ExecutionStatusBadge,
   formatDate,
   formatNullableCurrency,
   formatQuantity,
   formatSignedCurrency,
-  formatTime,
   formatTimestamp,
   LoadingState,
   MetricTile,
@@ -70,6 +85,261 @@ type PositionRow = {
   realizedPnl: number | null | undefined;
   unrealizedPnl: number | null | undefined;
 };
+
+type DeploymentSource = "allocator_selected" | "actual_deployed";
+
+type DeploymentBucketKey =
+  | "by_entry_return_on_risk_bucket"
+  | "by_midpoint_credit_bucket"
+  | "by_width_bucket"
+  | "by_dte_bucket";
+
+type ReplayBucketRow = ReplayGroup;
+
+type DeploymentSummaryCardProps = {
+  title: string;
+  slice: ReplayDeploymentSlice | null | undefined;
+  note: string;
+};
+
+type DeploymentQualityPanelProps = {
+  title: string;
+  description: string;
+  warnings: string[];
+  allocatorSlice: ReplayDeploymentSlice | null | undefined;
+  actualSlice: ReplayDeploymentSlice | null | undefined;
+};
+
+const deploymentSourceOptions: Array<{
+  value: DeploymentSource;
+  label: string;
+}> = [
+  { value: "allocator_selected", label: "Allocator selected" },
+  { value: "actual_deployed", label: "Actual deployed" },
+];
+
+const deploymentBucketDefinitions: Array<{
+  key: DeploymentBucketKey;
+  title: string;
+  description: string;
+}> = [
+  {
+    key: "by_entry_return_on_risk_bucket",
+    title: "Entry RoR",
+    description: "Bucketed by scanned return on risk at entry.",
+  },
+  {
+    key: "by_midpoint_credit_bucket",
+    title: "Credit",
+    description: "Bucketed by midpoint entry credit.",
+  },
+  {
+    key: "by_width_bucket",
+    title: "Width",
+    description: "Bucketed by spread width.",
+  },
+  {
+    key: "by_dte_bucket",
+    title: "DTE",
+    description: "Bucketed by days to expiration.",
+  },
+];
+
+function formatReturnOnRisk(value: number | null | undefined): string {
+  return value == null ? "—" : `${(value * 100).toFixed(1)}%`;
+}
+
+function deploymentSliceCount(slice: ReplayDeploymentSlice | null | undefined): number {
+  return readNumber(slice?.count);
+}
+
+function deploymentSummaryNote(
+  slice: ReplayDeploymentSlice | null | undefined,
+  fallback: string,
+): string {
+  if (!slice) {
+    return fallback;
+  }
+  const coverage = slice.coverage_rate;
+  if (coverage == null) {
+    return fallback;
+  }
+  return `${(coverage * 100).toFixed(0)}% matched`;
+}
+
+function deploymentBucketColumns(): ColumnDef<ReplayBucketRow>[] {
+  return [
+    {
+      accessorKey: "group_value",
+      header: "Bucket",
+      cell: ({ getValue }) => (
+        <span className="font-mono text-[12px]">{String(getValue())}</span>
+      ),
+    },
+    {
+      accessorKey: "count",
+      header: "Count",
+      cell: ({ getValue }) => (
+        <span className="font-mono">{formatQuantity(Number(getValue()))}</span>
+      ),
+    },
+    {
+      accessorKey: "coverage_rate",
+      header: "Coverage",
+      cell: ({ getValue }) => formatReturnOnRisk(getValue() as number | null | undefined),
+    },
+    {
+      accessorKey: "pooled_estimated_close_return_on_risk",
+      header: "Modeled Close",
+      cell: ({ getValue }) => formatReturnOnRisk(getValue() as number | null | undefined),
+    },
+    {
+      accessorKey: "pooled_actual_net_return_on_risk",
+      header: "Actual",
+      cell: ({ getValue }) => formatReturnOnRisk(getValue() as number | null | undefined),
+    },
+  ];
+}
+
+function DeploymentSummaryCard({
+  title,
+  slice,
+  note,
+}: DeploymentSummaryCardProps) {
+  const count = deploymentSliceCount(slice);
+
+  return (
+    <div className="rounded-2xl border border-border/70 bg-card/70 p-4">
+      <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+        {title}
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricTile
+          label="Count"
+          value={String(count)}
+          note={note}
+        />
+        <MetricTile
+          label="Modeled Close"
+          value={formatReturnOnRisk(slice?.pooled_estimated_close_return_on_risk)}
+          note="pooled pnl / max loss"
+        />
+        <MetricTile
+          label="Modeled Final"
+          value={formatReturnOnRisk(slice?.pooled_estimated_final_return_on_risk)}
+          note="pooled pnl / max loss"
+        />
+        <MetricTile
+          label="Actual"
+          value={formatReturnOnRisk(slice?.pooled_actual_net_return_on_risk)}
+          note="pooled pnl / max loss"
+        />
+      </div>
+    </div>
+  );
+}
+
+function DeploymentQualityPanel({
+  title,
+  description,
+  warnings,
+  allocatorSlice,
+  actualSlice,
+}: DeploymentQualityPanelProps) {
+  const defaultSource =
+    deploymentSliceCount(allocatorSlice) > 0
+      ? "allocator_selected"
+      : "actual_deployed";
+  const [selectedSource, setSelectedSource] =
+    useState<DeploymentSource>(defaultSource);
+  const selectedSlice =
+    selectedSource === "actual_deployed" ? actualSlice : allocatorSlice;
+  const bucketColumns = useMemo(() => deploymentBucketColumns(), []);
+
+  return (
+    <div className="rounded-2xl border border-border/70 bg-card/60 p-4">
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+        <div>
+          <div className="text-sm font-semibold">{title}</div>
+          <div className="mt-1 text-sm text-muted-foreground">{description}</div>
+        </div>
+        <Select
+          value={selectedSource}
+          onValueChange={(value) => setSelectedSource(value as DeploymentSource)}
+        >
+          <SelectTrigger size="sm" className="w-[180px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {deploymentSourceOptions.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="mt-4 grid gap-4">
+        <DeploymentSummaryCard
+          title="Allocator selected"
+          slice={allocatorSlice}
+          note={deploymentSummaryNote(
+            allocatorSlice,
+            "Replay-selected opportunities",
+          )}
+        />
+        <DeploymentSummaryCard
+          title="Actual deployed"
+          slice={actualSlice}
+          note={deploymentSummaryNote(
+            actualSlice,
+            "Filled positions matched to replay",
+          )}
+        />
+      </div>
+
+      {warnings.length ? (
+        <div className="mt-4 space-y-2">
+          {warnings.map((warning) => (
+            <div
+              key={warning}
+              className="rounded-xl border border-amber-300/70 bg-amber-100/80 px-3 py-2 text-sm text-amber-950 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-100"
+            >
+              <div className="flex items-start gap-2">
+                <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+                <span>{warning}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-2">
+        {deploymentBucketDefinitions.map((bucket) => (
+          <div
+            key={bucket.key}
+            className="rounded-2xl border border-border/70 bg-background/70 p-4"
+          >
+            <div className="text-sm font-semibold">{bucket.title}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {bucket.description}
+            </div>
+            <div className="mt-3">
+              <DataTable
+                columns={bucketColumns}
+                data={(selectedSlice?.[bucket.key] ?? []) as ReplayBucketRow[]}
+                emptyMessage="No replay rows were available for this bucket."
+                getRowId={(row) => `${bucket.key}:${row.group_value}`}
+                pageSize={6}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function buildOpportunityRows(opportunities: LiveCandidate[]): OpportunityRow[] {
   return opportunities.map((row) => ({
@@ -130,8 +400,12 @@ export function PipelineDetailPageContent({
     queryFn: () => getPipelines({ limit: 120 }),
   });
   const detailQuery = useQuery({
-    queryKey: ["pipelines", pipelineId, marketDate ?? ""],
-    queryFn: () => getPipelineDetail(pipelineId, { marketDate }),
+    queryKey: ["pipelines", pipelineId, marketDate ?? "", "both"],
+    queryFn: () =>
+      getPipelineDetail(pipelineId, {
+        marketDate,
+        includeReplay: "both",
+      }),
   });
 
   const executeMutation = useMutation({
@@ -181,6 +455,14 @@ export function PipelineDetailPageContent({
     () => buildPositionRows(detail?.portfolio?.positions ?? []),
     [detail?.portfolio?.positions],
   );
+  const replay = detail?.replay ?? null;
+  const currentDeploymentQuality =
+    replay?.current?.scorecard?.deployment_quality ?? null;
+  const recentDeploymentQuality =
+    replay?.recent?.aggregate?.deployment_quality ?? null;
+  const replayWarnings = replay?.warnings ?? [];
+  const currentReplayWarnings = replay?.current?.warnings ?? [];
+  const recentReplayWarnings = replay?.recent?.warnings ?? [];
 
   const opportunityColumns = useMemo<ColumnDef<OpportunityRow>[]>(
     () => [
@@ -422,6 +704,43 @@ export function PipelineDetailPageContent({
           note={readString(detail.risk_note)}
         />
       </div>
+
+      <SectionSurface
+        title="Deployment Quality"
+        description="Replay-backed pooled return-on-risk for this pipeline date and the recent label sample."
+      >
+        {replayWarnings.length ? (
+          <div className="mb-4 space-y-2">
+            {replayWarnings.map((warning) => (
+              <div
+                key={warning}
+                className="rounded-xl border border-amber-300/70 bg-amber-100/80 px-3 py-2 text-sm text-amber-950 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-100"
+              >
+                <div className="flex items-start gap-2">
+                  <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+                  <span>{warning}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        <div className="grid gap-4 xl:grid-cols-2">
+          <DeploymentQualityPanel
+            title="Current session"
+            description={`Replay for ${formatDate(detail.market_date)}.`}
+            allocatorSlice={currentDeploymentQuality?.allocator_selected}
+            actualSlice={currentDeploymentQuality?.actual_deployed}
+            warnings={currentReplayWarnings}
+          />
+          <DeploymentQualityPanel
+            title="Recent label sample"
+            description={`Latest ${readNumber(replay?.recent_limit ?? 20)} replayable sessions for ${detail.label}.`}
+            allocatorSlice={recentDeploymentQuality?.allocator_selected}
+            actualSlice={recentDeploymentQuality?.actual_deployed}
+            warnings={recentReplayWarnings}
+          />
+        </div>
+      </SectionSurface>
 
       <SectionSurface
         title="Pipeline Runs"

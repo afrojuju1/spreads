@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ChevronDown, ChevronRight, Radar, RefreshCw, TriangleAlert } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { startTransition, useEffect, useState, type ReactNode } from "react";
 
 import { DataTable } from "@/components/data-table";
 import {
@@ -271,6 +272,10 @@ function formatAge(value: string | null | undefined): string {
   const hours = Math.floor(elapsedSeconds / 3600);
   const minutes = Math.floor((elapsedSeconds % 3600) / 60);
   return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+}
+
+function isMarketDateValue(value: string | null | undefined): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value ?? "");
 }
 
 function isOpportunityConsumed(opportunity: Opportunity): boolean {
@@ -641,14 +646,48 @@ function TimingCell({
   );
 }
 
-export function OpportunitiesIndexPageContent() {
+export function OpportunitiesIndexPageContent({
+  marketDate,
+  defaultMarketDate,
+}: {
+  marketDate?: string;
+  defaultMarketDate: string;
+}) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const [expandedOpportunityId, setExpandedOpportunityId] = useState<string | null>(
     null,
   );
+  const scopeMode = marketDate === "all" ? "all" : "today";
+  const effectiveMarketDate =
+    scopeMode === "all"
+      ? undefined
+      : isMarketDateValue(marketDate)
+        ? marketDate
+        : defaultMarketDate;
+
+  useEffect(() => {
+    if (marketDate === "all" || isMarketDateValue(marketDate)) {
+      return;
+    }
+    const nextParams = new URLSearchParams(searchParams.toString());
+    nextParams.set("marketDate", defaultMarketDate);
+    startTransition(() => {
+      router.replace(`${pathname}?${nextParams.toString()}`, {
+        scroll: false,
+      });
+    });
+  }, [defaultMarketDate, marketDate, pathname, router, searchParams]);
+
   const opportunitiesQuery = useQuery({
-    queryKey: ["opportunities"],
-    queryFn: () => getOpportunities({ limit: 200 }),
+    queryKey: ["opportunities", effectiveMarketDate ?? "all"],
+    queryFn: () =>
+      getOpportunities({
+        marketDate: effectiveMarketDate,
+        limit: 200,
+      }),
   });
   const executeMutation = useMutation({
     mutationFn: (opportunityId: string) => executeOpportunity(opportunityId, {}),
@@ -694,6 +733,24 @@ export function OpportunitiesIndexPageContent() {
     }
     return latest;
   }, null);
+  const scopeLabel =
+    scopeMode === "all"
+      ? "All dates"
+      : `Today · ${formatDate(effectiveMarketDate ?? defaultMarketDate)}`;
+
+  function setScope(nextScope: "today" | "all") {
+    const nextParams = new URLSearchParams(searchParams.toString());
+    if (nextScope === "all") {
+      nextParams.set("marketDate", "all");
+    } else {
+      nextParams.set("marketDate", defaultMarketDate);
+    }
+    startTransition(() => {
+      router.replace(`${pathname}?${nextParams.toString()}`, {
+        scroll: false,
+      });
+    });
+  }
 
   const columns: ColumnDef<Opportunity>[] = [
     {
@@ -786,27 +843,53 @@ export function OpportunitiesIndexPageContent() {
             <div className="mt-4 text-3xl font-semibold tracking-[0.02em]">
               Opportunity board
             </div>
-            <div className="mt-2 text-sm text-foreground/70">
+          <div className="mt-2 text-sm text-foreground/70">
               Scan the live pool across pipelines, execute directly, and expand
-              any row for setup rationale, leg shape, and lineage.
+              any row for setup rationale, leg shape, and lineage. Current
+              scope: {scopeLabel}.
             </div>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void opportunitiesQuery.refetch()}
-          >
-            <RefreshCw data-icon="inline-start" />
-            Refresh
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant={scopeMode === "today" ? "default" : "outline"}
+              onClick={() => setScope("today")}
+            >
+              Today
+            </Button>
+            <Button
+              type="button"
+              variant={scopeMode === "all" ? "default" : "outline"}
+              onClick={() => setScope("all")}
+            >
+              All dates
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void opportunitiesQuery.refetch()}
+            >
+              <RefreshCw data-icon="inline-start" />
+              Refresh
+            </Button>
+          </div>
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-7">
+        <MetricTile
+          label="Scope"
+          value={scopeMode === "all" ? "All dates" : "Today"}
+          note={
+            scopeMode === "all"
+              ? "No market-date filter"
+              : formatDate(effectiveMarketDate ?? defaultMarketDate)
+          }
+        />
         <MetricTile
           label="Opportunities"
           value={String(opportunities.length)}
-          note="Current live rows"
+          note={scopeMode === "all" ? "Cross-date live rows" : "Current live rows"}
         />
         <MetricTile
           label="Promotable"
@@ -831,7 +914,11 @@ export function OpportunitiesIndexPageContent() {
         <MetricTile
           label="Pipelines"
           value={String(pipelineCount)}
-          note={latestTimestamp ? `Updated ${formatTimestamp(latestTimestamp)}` : "No recent update"}
+          note={
+            latestTimestamp
+              ? `Updated ${formatTimestamp(latestTimestamp)}`
+              : "No recent update"
+          }
         />
       </div>
 

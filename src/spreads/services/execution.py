@@ -137,6 +137,7 @@ def _validate_open_timing_window(
     *,
     exit_policy: dict[str, Any] | None,
     current_time: datetime,
+    profile: str | None = None,
 ) -> dict[str, Any]:
     normalized_policy = normalize_exit_policy(exit_policy)
     force_close_at_text = _as_text(normalized_policy.get("force_close_at"))
@@ -149,7 +150,17 @@ def _validate_open_timing_window(
             "reason": None,
             "message": None,
             "force_close_at": force_close_at_text,
+            "minutes_to_force_close": None,
+            "minimum_minutes_to_force_close": None,
         }
+    thresholds = resolve_deployment_quality_thresholds(profile)
+    minimum_minutes_to_force_close = _coerce_float(
+        thresholds.get("min_minutes_to_force_close")
+    )
+    minutes_to_force_close = round(
+        max((force_close_at - current_time).total_seconds(), 0.0) / 60.0,
+        1,
+    )
     if current_time >= force_close_at:
         return {
             "allowed": False,
@@ -160,6 +171,27 @@ def _validate_open_timing_window(
             "force_close_at": force_close_at.isoformat(timespec="seconds").replace(
                 "+00:00", "Z"
             ),
+            "minutes_to_force_close": minutes_to_force_close,
+            "minimum_minutes_to_force_close": minimum_minutes_to_force_close,
+        }
+    if (
+        minimum_minutes_to_force_close is not None
+        and minutes_to_force_close < minimum_minutes_to_force_close
+    ):
+        return {
+            "allowed": False,
+            "reason": "insufficient_time_to_force_close",
+            "message": (
+                "Open execution is blocked because only "
+                f"{minutes_to_force_close:.1f} minutes remain before force-close at "
+                f"{force_close_at.isoformat(timespec='seconds').replace('+00:00', 'Z')}, "
+                f"below the {minimum_minutes_to_force_close:.1f}-minute deployment threshold."
+            ),
+            "force_close_at": force_close_at.isoformat(timespec="seconds").replace(
+                "+00:00", "Z"
+            ),
+            "minutes_to_force_close": minutes_to_force_close,
+            "minimum_minutes_to_force_close": minimum_minutes_to_force_close,
         }
     return {
         "allowed": True,
@@ -168,6 +200,8 @@ def _validate_open_timing_window(
         "force_close_at": force_close_at.isoformat(timespec="seconds").replace(
             "+00:00", "Z"
         ),
+        "minutes_to_force_close": minutes_to_force_close,
+        "minimum_minutes_to_force_close": minimum_minutes_to_force_close,
     }
 
 
@@ -243,6 +277,7 @@ def _evaluate_open_attempt_guard(
     timing_gate = _validate_open_timing_window(
         exit_policy=_attempt_exit_policy(attempt),
         current_time=current_time,
+        profile=resolve_candidate_profile(dict(attempt.get("candidate") or {})),
     )
     if str(lifecycle.get("phase") or "") == "submit_unknown":
         return {
@@ -322,6 +357,30 @@ def _guard_intervention_message(
         return (
             "Automatic open execution expired before broker submission because it remained pending"
             f"{age_fragment}{threshold_fragment}."
+        )
+    if reason == "insufficient_time_to_force_close":
+        minimum_minutes = _coerce_float(
+            guard_decision.get("minimum_minutes_to_force_close")
+        )
+        minutes_remaining = _coerce_float(guard_decision.get("minutes_to_force_close"))
+        threshold_fragment = (
+            ""
+            if minimum_minutes is None
+            else f" below the {minimum_minutes:.1f}-minute threshold"
+        )
+        remaining_fragment = (
+            ""
+            if minutes_remaining is None
+            else f" with {minutes_remaining:.1f} minutes remaining"
+        )
+        if submitted:
+            return (
+                "Canceled open execution because remaining time to force-close fell"
+                f"{threshold_fragment}{remaining_fragment}."
+            )
+        return (
+            "Open execution expired before broker submission because remaining time to"
+            f" force-close fell{threshold_fragment}{remaining_fragment}."
         )
 
     if submitted:
@@ -799,6 +858,12 @@ def _classify_auto_execution_block(exc: Exception) -> dict[str, Any] | None:
     ):
         return {
             "reason": "force_close_window_started",
+            "message": message,
+            "block_category": "timing_window",
+        }
+    if message.startswith("Open execution is blocked because only "):
+        return {
+            "reason": "insufficient_time_to_force_close",
             "message": message,
             "block_category": "timing_window",
         }
@@ -1997,6 +2062,7 @@ def submit_live_session_execution(
         timing_gate = _validate_open_timing_window(
             exit_policy=resolved_exit_policy,
             current_time=parse_datetime(requested_at) or datetime.now(UTC),
+            profile=resolve_candidate_profile(dict(candidate.get("candidate") or {})),
         )
         if not timing_gate["allowed"]:
             raise ValueError(str(timing_gate["message"]))
@@ -2604,6 +2670,7 @@ def run_execution_submit(
         timing_gate = _validate_open_timing_window(
             exit_policy=request.get("exit_policy"),
             current_time=datetime.now(UTC),
+            profile=resolve_candidate_profile(dict(payload.get("candidate") or {})),
         )
         if not timing_gate["allowed"]:
             execution_store.update_attempt(
