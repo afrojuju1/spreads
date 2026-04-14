@@ -13,6 +13,7 @@ from spreads.services.execution import (
     refresh_live_session_execution,
 )
 from spreads.services.execution_lifecycle import SUBMIT_UNKNOWN_STATUS
+from spreads.services.option_structures import position_legs
 from spreads.services.execution_portfolio import refresh_session_position_marks
 from spreads.services.positions import enrich_position_row
 from spreads.services.session_positions import sync_session_position_from_attempt
@@ -258,38 +259,27 @@ def _reconcile_position(
     reconciled_at: str,
 ) -> dict[str, Any]:
     remaining_quantity = _coerce_float(position.get("remaining_quantity")) or 0.0
-    short_symbol = str(position["short_symbol"])
-    long_symbol = str(position["long_symbol"])
-    short_position = broker_positions_by_symbol.get(short_symbol)
-    long_position = broker_positions_by_symbol.get(long_symbol)
-
     issues: list[str] = []
-    short_qty = abs(
-        _coerce_float(None if short_position is None else short_position.get("qty"))
-        or 0.0
-    )
-    long_qty = abs(
-        _coerce_float(None if long_position is None else long_position.get("qty"))
-        or 0.0
-    )
-    short_side = _as_text(
-        None if short_position is None else short_position.get("side")
-    )
-    long_side = _as_text(None if long_position is None else long_position.get("side"))
-
-    if short_position is None:
-        issues.append(f"missing broker short leg {short_symbol}")
-    elif short_side != "short":
-        issues.append(f"short leg side mismatch for {short_symbol}")
-    elif short_qty < remaining_quantity:
-        issues.append(f"short leg quantity mismatch for {short_symbol}")
-
-    if long_position is None:
-        issues.append(f"missing broker long leg {long_symbol}")
-    elif long_side != "long":
-        issues.append(f"long leg side mismatch for {long_symbol}")
-    elif long_qty < remaining_quantity:
-        issues.append(f"long leg quantity mismatch for {long_symbol}")
+    for leg in position_legs(position):
+        symbol = _as_text(leg.get("symbol"))
+        role = _as_text(leg.get("role")) or "unknown"
+        if symbol is None:
+            continue
+        broker_position = broker_positions_by_symbol.get(symbol)
+        broker_qty = abs(
+            _coerce_float(None if broker_position is None else broker_position.get("qty"))
+            or 0.0
+        )
+        broker_side = _as_text(
+            None if broker_position is None else broker_position.get("side")
+        )
+        expected_side = "short" if role == "short" else "long"
+        if broker_position is None:
+            issues.append(f"missing broker {role} leg {symbol}")
+        elif broker_side != expected_side:
+            issues.append(f"{role} leg side mismatch for {symbol}")
+        elif broker_qty < remaining_quantity:
+            issues.append(f"{role} leg quantity mismatch for {symbol}")
 
     reconciliation_status = "matched" if not issues else "mismatch"
     reconciliation_note = None if not issues else "; ".join(issues)

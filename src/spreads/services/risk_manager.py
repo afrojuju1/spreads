@@ -14,6 +14,7 @@ from spreads.services.execution_lifecycle import (
     is_open_execution_attempt_status,
     resolve_execution_attempt_filled_quantity,
 )
+from spreads.services.option_structures import position_legs
 from spreads.services.positions import enrich_position_row
 from spreads.services.runtime_identity import parse_live_run_scope_id
 from spreads.storage.serializers import parse_datetime
@@ -836,10 +837,7 @@ def validate_close_execution(
         raise ValueError("Close quantity exceeds the remaining position quantity.")
     if limit_price is not None and limit_price <= 0:
         raise ValueError("Close execution requires a positive limit price.")
-    if (
-        _as_text(position.get("short_symbol")) is None
-        or _as_text(position.get("long_symbol")) is None
-    ):
+    if not position_legs(position):
         raise ValueError("Position is missing the broker symbols required to close.")
     return {
         "status": "ok",

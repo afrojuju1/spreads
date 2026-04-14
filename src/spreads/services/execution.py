@@ -50,7 +50,17 @@ from spreads.services.execution_lifecycle import (
     resolve_execution_submit_job_run_id,
     resolve_execution_attempt_source_job,
 )
-from spreads.services.execution_portfolio import build_credit_spread_quote_snapshot
+from spreads.services.execution_portfolio import build_vertical_spread_quote_snapshot
+from spreads.services.option_structures import (
+    build_multileg_order_payload,
+    candidate_legs,
+    closing_legs,
+    legs_identity_key,
+    net_premium_kind,
+    normalize_legs,
+    normalize_strategy_family,
+    primary_short_long_symbols,
+)
 from spreads.services.opportunity_execution_plan import build_execution_plan
 from spreads.services.positions import enrich_position_row
 from spreads.services.runtime_identity import (
@@ -63,7 +73,6 @@ from spreads.services.risk_manager import (
     normalize_risk_policy,
     validate_close_execution,
 )
-from spreads.services.scanner import make_close_order_payload
 from spreads.services.signal_state import publish_opportunity_event
 from spreads.services.session_positions import (
     CLOSE_TRADE_INTENT,
@@ -478,6 +487,34 @@ def _candidate_with_payload(candidate: dict[str, Any]) -> dict[str, Any]:
     return dict(candidate)
 
 
+def _strategy_family_from_payload(payload: Mapping[str, Any]) -> str:
+    return normalize_strategy_family(
+        _as_text(payload.get("strategy_family")) or _as_text(payload.get("strategy"))
+    )
+
+
+def _execution_attempt_identity(attempt: Mapping[str, Any]) -> str | None:
+    request = attempt.get("request")
+    request_order = (
+        dict(request.get("order") or {}) if isinstance(request, Mapping) else {}
+    )
+    candidate_payload = (
+        dict(attempt.get("candidate") or {})
+        if isinstance(attempt.get("candidate"), Mapping)
+        else {}
+    )
+    legs = normalize_legs(request_order.get("legs")) or candidate_legs(candidate_payload)
+    if not legs:
+        return None
+    strategy = (
+        _as_text(attempt.get("strategy_family"))
+        or _as_text(attempt.get("strategy"))
+        or _as_text(candidate_payload.get("strategy_family"))
+        or _as_text(candidate_payload.get("strategy"))
+    )
+    return legs_identity_key(strategy=strategy, legs=legs)
+
+
 def _opportunity_legs_from_row(opportunity: Mapping[str, Any]) -> list[OpportunityLeg]:
     legs_payload = opportunity.get("legs")
     if not isinstance(legs_payload, list):
@@ -486,21 +523,16 @@ def _opportunity_legs_from_row(opportunity: Mapping[str, Any]) -> list[Opportuni
             order_payload = execution_shape.get("order_payload")
             if isinstance(order_payload, Mapping):
                 legs_payload = order_payload.get("legs")
-    if not isinstance(legs_payload, list):
+    resolved_legs = normalize_legs(legs_payload)
+    if not resolved_legs:
         return []
     built: list[OpportunityLeg] = []
-    for index, leg in enumerate(legs_payload, start=1):
-        if not isinstance(leg, Mapping):
-            continue
-        symbol = _as_text(leg.get("symbol"))
-        side = _as_text(leg.get("side"))
-        if symbol is None or side is None:
-            continue
+    for index, leg in enumerate(resolved_legs, start=1):
         built.append(
             OpportunityLeg(
                 leg_index=index,
-                symbol=symbol,
-                side=side,
+                symbol=str(leg["symbol"]),
+                side=str(leg["side"] or ""),
                 position_intent=_as_text(leg.get("position_intent")),
                 ratio_qty=_as_text(leg.get("ratio_qty")),
             )
@@ -739,19 +771,47 @@ def _clamp_fraction(
     return max(minimum, min(maximum, float(value)))
 
 
-def _normalize_credit_limit(value: Any) -> float | None:
+def _normalize_limit_value(value: Any) -> float | None:
     numeric = _coerce_float(value)
     if numeric is None or numeric == 0:
         return None
     return abs(numeric)
 
 
-def _resolve_candidate_credit_prices(
+def _resolve_candidate_entry_prices(
     candidate_payload: dict[str, Any],
 ) -> tuple[float | None, float | None]:
-    midpoint_credit = _normalize_credit_limit(candidate_payload.get("midpoint_credit"))
-    natural_credit = _normalize_credit_limit(candidate_payload.get("natural_credit"))
-    return midpoint_credit, natural_credit
+    midpoint_value = _normalize_limit_value(
+        candidate_payload.get("midpoint_value", candidate_payload.get("midpoint_credit"))
+    )
+    natural_value = _normalize_limit_value(
+        candidate_payload.get("natural_value", candidate_payload.get("natural_credit"))
+    )
+    return midpoint_value, natural_value
+
+
+def _entry_fill_ratio(
+    *,
+    midpoint_value: float,
+    natural_value: float,
+    premium_kind: str | None,
+) -> float:
+    if midpoint_value <= 0 or natural_value <= 0:
+        return 0.0
+    if premium_kind == "debit":
+        return round(_clamp_fraction(midpoint_value / natural_value, maximum=1.0), 4)
+    return round(_clamp_fraction(natural_value / midpoint_value, maximum=1.0), 4)
+
+
+def _execution_retention_bound(
+    *,
+    midpoint_value: float,
+    premium_kind: str | None,
+    min_retention_pct: float,
+) -> float:
+    if premium_kind == "debit":
+        return round(max(midpoint_value / min_retention_pct, midpoint_value), 4)
+    return round(midpoint_value * min_retention_pct, 4)
 
 
 def _quote_record_sort_key(record: dict[str, Any]) -> tuple[str, str]:
@@ -781,8 +841,11 @@ def _resolve_reactive_quote_snapshot(
     quote_records: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
     latest_quotes = _latest_quote_records_by_symbol(quote_records)
-    short_symbol = _as_text(candidate.get("short_symbol"))
-    long_symbol = _as_text(candidate.get("long_symbol"))
+    candidate_payload = _candidate_with_payload(candidate)
+    strategy_family = _strategy_family_from_payload(candidate_payload)
+    premium_kind = net_premium_kind(strategy_family)
+    legs = candidate_legs(candidate_payload)
+    short_symbol, long_symbol = primary_short_long_symbols(legs)
     if short_symbol is None or long_symbol is None:
         return None
     short_quote = latest_quotes.get(short_symbol)
@@ -793,15 +856,25 @@ def _resolve_reactive_quote_snapshot(
     short_midpoint = _coerce_float(short_quote.get("midpoint"))
     long_midpoint = _coerce_float(long_quote.get("midpoint"))
     short_bid = _coerce_float(short_quote.get("bid"))
+    short_ask = _coerce_float(short_quote.get("ask"))
+    long_bid = _coerce_float(long_quote.get("bid"))
     long_ask = _coerce_float(long_quote.get("ask"))
     if (
         short_midpoint is None
         or long_midpoint is None
         or short_bid is None
+        or short_ask is None
+        or long_bid is None
         or long_ask is None
     ):
         return None
 
+    if premium_kind == "debit":
+        midpoint_value = round(long_midpoint - short_midpoint, 4)
+        natural_value = round(long_ask - short_bid, 4)
+    else:
+        midpoint_value = round(short_midpoint - long_midpoint, 4)
+        natural_value = round(short_bid - long_ask, 4)
     captured_at = max(
         _as_text(short_quote.get("quote_timestamp"))
         or _as_text(short_quote.get("captured_at"))
@@ -814,11 +887,15 @@ def _resolve_reactive_quote_snapshot(
         "captured_at": captured_at or None,
         "short_symbol": short_symbol,
         "long_symbol": long_symbol,
-        "midpoint_credit": round(short_midpoint - long_midpoint, 4),
-        "natural_credit": round(short_bid - long_ask, 4),
+        "strategy_family": strategy_family,
+        "premium_kind": premium_kind,
+        "midpoint_value": midpoint_value,
+        "natural_value": natural_value,
+        "midpoint_credit": midpoint_value,
+        "natural_credit": natural_value,
         "short_bid": short_bid,
-        "short_ask": _coerce_float(short_quote.get("ask")),
-        "long_bid": _coerce_float(long_quote.get("bid")),
+        "short_ask": short_ask,
+        "long_bid": long_bid,
         "long_ask": long_ask,
     }
 
@@ -829,6 +906,7 @@ def _resolve_reactive_auto_execution(
     execution_policy: dict[str, Any],
     quote_records: list[dict[str, Any]] | None,
 ) -> dict[str, Any]:
+    candidate_payload = _candidate_with_payload(candidate)
     if not quote_records:
         return {
             "ok": False,
@@ -841,16 +919,18 @@ def _resolve_reactive_auto_execution(
         return {
             "ok": False,
             "reason": "awaiting_reactive_quotes",
-            "message": "Automatic 0DTE execution skipped because a current two-leg quote snapshot was not available.",
+            "message": "Automatic 0DTE execution skipped because a current spread quote snapshot was not available.",
         }
 
-    live_midpoint_credit = _normalize_credit_limit(live_snapshot.get("midpoint_credit"))
-    live_natural_credit = _normalize_credit_limit(live_snapshot.get("natural_credit"))
+    strategy_family = _strategy_family_from_payload(candidate_payload)
+    premium_kind = net_premium_kind(strategy_family)
+    live_midpoint_value = _normalize_limit_value(live_snapshot.get("midpoint_value"))
+    live_natural_value = _normalize_limit_value(live_snapshot.get("natural_value"))
     if (
-        live_midpoint_credit is None
-        or live_natural_credit is None
-        or live_midpoint_credit <= 0
-        or live_natural_credit <= 0
+        live_midpoint_value is None
+        or live_natural_value is None
+        or live_midpoint_value <= 0
+        or live_natural_value <= 0
     ):
         return {
             "ok": False,
@@ -859,14 +939,28 @@ def _resolve_reactive_auto_execution(
             "reactive_quote": live_snapshot,
         }
 
-    scanned_midpoint_credit = _normalize_credit_limit(candidate.get("midpoint_credit"))
-    if scanned_midpoint_credit is not None:
-        credit_floor = round(
-            scanned_midpoint_credit
-            * float(execution_policy["min_credit_retention_pct"]),
-            4,
+    scanned_midpoint_value = _normalize_limit_value(
+        candidate_payload.get("midpoint_credit")
+    )
+    if scanned_midpoint_value is not None:
+        retention_bound = _execution_retention_bound(
+            midpoint_value=scanned_midpoint_value,
+            premium_kind=premium_kind,
+            min_retention_pct=float(execution_policy["min_credit_retention_pct"]),
         )
-        if live_midpoint_credit < credit_floor:
+        if premium_kind == "debit" and live_midpoint_value > retention_bound:
+            return {
+                "ok": False,
+                "reason": "live_debit_above_ceiling",
+                "message": (
+                    "Automatic 0DTE execution skipped because the live spread debit rose above the concession ceiling."
+                ),
+                "reactive_quote": {
+                    **live_snapshot,
+                    "debit_ceiling": retention_bound,
+                },
+            }
+        if premium_kind != "debit" and live_midpoint_value < retention_bound:
             return {
                 "ok": False,
                 "reason": "live_credit_below_floor",
@@ -875,17 +969,19 @@ def _resolve_reactive_auto_execution(
                 ),
                 "reactive_quote": {
                     **live_snapshot,
-                    "credit_floor": credit_floor,
+                    "credit_floor": retention_bound,
                 },
             }
 
     pricing_candidate = {
-        **candidate,
-        "midpoint_credit": live_midpoint_credit,
-        "natural_credit": live_natural_credit,
-        "fill_ratio": 0.0
-        if live_midpoint_credit <= 0
-        else round(live_natural_credit / live_midpoint_credit, 4),
+        **candidate_payload,
+        "midpoint_credit": live_midpoint_value,
+        "natural_credit": live_natural_value,
+        "fill_ratio": _entry_fill_ratio(
+            midpoint_value=live_midpoint_value,
+            natural_value=live_natural_value,
+            premium_kind=premium_kind,
+        ),
     }
     limit_price = _resolve_open_limit_price(
         candidate_payload=pricing_candidate,
@@ -903,20 +999,23 @@ def _resolve_reactive_auto_execution(
     }
 
 
-def _credit_spread_return_on_risk(
+def _vertical_return_on_risk(
     *,
-    midpoint_credit: float | None,
+    midpoint_value: float | None,
     width: float | None,
+    premium_kind: str | None,
 ) -> float | None:
     if (
-        midpoint_credit is None
+        midpoint_value is None
         or width is None
-        or midpoint_credit <= 0
+        or midpoint_value <= 0
         or width <= 0
-        or midpoint_credit >= width
+        or midpoint_value >= width
     ):
         return None
-    return round(midpoint_credit / (width - midpoint_credit), 4)
+    if premium_kind == "debit":
+        return round((width - midpoint_value) / midpoint_value, 4)
+    return round(midpoint_value / (width - midpoint_value), 4)
 
 
 def _validate_live_deployment_quality(
@@ -935,8 +1034,11 @@ def _validate_live_deployment_quality(
             "profile": profile,
         }
 
-    short_symbol = _as_text(candidate_payload.get("short_symbol"))
-    long_symbol = _as_text(candidate_payload.get("long_symbol"))
+    strategy_family = _strategy_family_from_payload(candidate_payload)
+    premium_kind = net_premium_kind(strategy_family)
+    short_symbol, long_symbol = primary_short_long_symbols(
+        candidate_legs(candidate_payload)
+    )
     width = _coerce_float(candidate_payload.get("width"))
     if short_symbol is None or long_symbol is None or width is None or width <= 0:
         return {
@@ -949,9 +1051,10 @@ def _validate_live_deployment_quality(
             "profile": profile,
         }
 
-    live_snapshot, error_text = build_credit_spread_quote_snapshot(
+    live_snapshot, error_text = build_vertical_spread_quote_snapshot(
         short_symbol=short_symbol,
         long_symbol=long_symbol,
+        strategy_family=strategy_family,
         client=client,
     )
     if live_snapshot is None:
@@ -959,19 +1062,20 @@ def _validate_live_deployment_quality(
             "ok": False,
             "reason": "live_quotes_unavailable",
             "message": (
-                "Open execution is blocked because a current two-leg live quote "
+                "Open execution is blocked because a current live spread "
                 "snapshot is unavailable."
             ),
             "profile": profile,
             "quote_error": error_text,
         }
 
-    live_midpoint_credit = _normalize_credit_limit(live_snapshot.get("midpoint_credit"))
-    live_return_on_risk = _credit_spread_return_on_risk(
-        midpoint_credit=live_midpoint_credit,
+    live_midpoint_value = _normalize_limit_value(live_snapshot.get("midpoint_value"))
+    live_return_on_risk = _vertical_return_on_risk(
+        midpoint_value=live_midpoint_value,
         width=width,
+        premium_kind=premium_kind,
     )
-    if live_midpoint_credit is None or live_return_on_risk is None:
+    if live_midpoint_value is None or live_return_on_risk is None:
         return {
             "ok": False,
             "reason": "live_quotes_not_executable",
@@ -1018,24 +1122,23 @@ def _resolve_open_limit_price(
     explicit_limit_price: float | None,
     execution_policy: dict[str, Any],
 ) -> float:
-    explicit_credit = _normalize_credit_limit(explicit_limit_price)
-    if explicit_credit is not None:
-        return round(max(explicit_credit, 0.01), 2)
+    premium_kind = net_premium_kind(_strategy_family_from_payload(candidate_payload))
+    explicit_value = _normalize_limit_value(explicit_limit_price)
+    if explicit_value is not None:
+        return round(max(explicit_value, 0.01), 2)
 
-    midpoint_credit, natural_credit = _resolve_candidate_credit_prices(
-        candidate_payload
-    )
-    if midpoint_credit is None:
+    midpoint_value, natural_value = _resolve_candidate_entry_prices(candidate_payload)
+    if midpoint_value is None:
         order_payload = dict(candidate_payload.get("order_payload") or {})
-        midpoint_credit = _normalize_credit_limit(order_payload.get("limit_price"))
-    if midpoint_credit is None or midpoint_credit <= 0:
+        midpoint_value = _normalize_limit_value(order_payload.get("limit_price"))
+    if midpoint_value is None or midpoint_value <= 0:
         raise ValueError("Execution limit price must be positive")
 
     pricing_mode = str(
         execution_policy.get("pricing_mode") or DEFAULT_ENTRY_PRICING_MODE
     )
-    if pricing_mode == "midpoint" or natural_credit is None or natural_credit <= 0:
-        return round(max(midpoint_credit, 0.01), 2)
+    if pricing_mode == "midpoint" or natural_value is None or natural_value <= 0:
+        return round(max(midpoint_value, 0.01), 2)
 
     fill_ratio = _clamp_fraction(
         _coerce_float(candidate_payload.get("fill_ratio")) or 0.0, maximum=1.0
@@ -1051,15 +1154,35 @@ def _resolve_open_limit_price(
         or DEFAULT_MAX_CREDIT_CONCESSION,
         0.0,
     )
-    credit_floor = max(natural_credit, midpoint_credit * min_credit_retention_pct, 0.01)
-    max_concession_to_floor = max(midpoint_credit - credit_floor, 0.0)
-    fill_ratio_concession = max(midpoint_credit - natural_credit, 0.0) * max(
+    if premium_kind == "debit":
+        debit_ceiling = _execution_retention_bound(
+            midpoint_value=midpoint_value,
+            premium_kind=premium_kind,
+            min_retention_pct=min_credit_retention_pct,
+        )
+        max_concession_to_ceiling = max(debit_ceiling - midpoint_value, 0.0)
+        fill_ratio_concession = max(natural_value - midpoint_value, 0.0) * max(
+            1.0 - fill_ratio, 0.0
+        )
+        concession = min(
+            fill_ratio_concession, max_credit_concession, max_concession_to_ceiling
+        )
+        return round(
+            min(
+                max(midpoint_value + concession, 0.01),
+                max(natural_value, 0.01),
+                debit_ceiling,
+            ),
+            2,
+        )
+
+    credit_floor = max(natural_value, midpoint_value * min_credit_retention_pct, 0.01)
+    max_concession_to_floor = max(midpoint_value - credit_floor, 0.0)
+    fill_ratio_concession = max(midpoint_value - natural_value, 0.0) * max(
         1.0 - fill_ratio, 0.0
     )
-    concession = min(
-        fill_ratio_concession, max_credit_concession, max_concession_to_floor
-    )
-    return round(max(midpoint_credit - concession, credit_floor, 0.01), 2)
+    concession = min(fill_ratio_concession, max_credit_concession, max_concession_to_floor)
+    return round(max(midpoint_value - concession, credit_floor, 0.01), 2)
 
 
 def _classify_auto_execution_block(exc: Exception) -> dict[str, Any] | None:
@@ -1117,7 +1240,7 @@ def _classify_auto_execution_block(exc: Exception) -> dict[str, Any] | None:
         }
     if (
         message
-        == "Open execution is blocked because a current two-leg live quote snapshot is unavailable."
+        == "Open execution is blocked because a current live spread snapshot is unavailable."
     ):
         return {
             "reason": "live_quotes_unavailable",
@@ -1236,7 +1359,7 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
         pricing_mode = DEFAULT_ENTRY_PRICING_MODE
         min_credit_retention_pct = DEFAULT_MIN_CREDIT_RETENTION_PCT
         max_credit_concession = DEFAULT_MAX_CREDIT_CONCESSION
-    if pricing_mode not in {"midpoint", "adaptive_credit"}:
+    if pricing_mode not in {"midpoint", "adaptive_credit", "adaptive_debit", "adaptive"}:
         raise ValueError(f"Unsupported execution pricing mode: {pricing_mode}")
     min_credit_retention_pct = _clamp_fraction(
         min_credit_retention_pct, minimum=0.5, maximum=1.0
@@ -1601,9 +1724,13 @@ def _build_order_request(
     execution_policy: dict[str, Any],
     client_order_id: str,
 ) -> tuple[dict[str, Any], int, float]:
-    candidate_payload = dict(candidate.get("candidate") or {})
+    candidate_payload = _candidate_with_payload(candidate)
+    strategy_family = _strategy_family_from_payload(candidate_payload)
     order_payload = dict(candidate_payload.get("order_payload") or {})
-    if not order_payload:
+    resolved_legs = normalize_legs(order_payload.get("legs")) or candidate_legs(
+        candidate_payload
+    )
+    if not resolved_legs:
         raise ValueError(
             "Selected live candidate does not include an executable order payload"
         )
@@ -1617,11 +1744,13 @@ def _build_order_request(
         explicit_limit_price=limit_price,
         execution_policy=execution_policy,
     )
-
-    request = dict(order_payload)
-    request["qty"] = str(int(resolved_quantity))
-    # Alpaca expects negative net prices for credit mleg orders.
-    request["limit_price"] = f"{-abs(float(resolved_limit_price)):.2f}"
+    request = build_multileg_order_payload(
+        legs=resolved_legs,
+        limit_price=resolved_limit_price,
+        strategy_family=strategy_family,
+        trade_intent=OPEN_TRADE_INTENT,
+        quantity=resolved_quantity,
+    )
     request["client_order_id"] = client_order_id
     return request, int(resolved_quantity), round(float(resolved_limit_price), 2)
 
@@ -1826,19 +1955,25 @@ def _build_close_order_request(
         if limit_price is not None
         else _coerce_float(position.get("close_mark"))
     )
-    resolved_limit_price = _normalize_credit_limit(resolved_limit_price)
+    resolved_limit_price = _normalize_limit_value(resolved_limit_price)
     if resolved_limit_price is None or resolved_limit_price <= 0:
         raise ValueError(
             "Close execution requires a positive limit price or a quoted close mark"
         )
 
-    request = make_close_order_payload(
-        short_symbol=str(position["short_symbol"]),
-        long_symbol=str(position["long_symbol"]),
+    strategy_family = _strategy_family_from_payload(position)
+    resolved_legs = normalize_legs(position.get("legs"))
+    if not resolved_legs:
+        resolved_legs = candidate_legs(position)
+    if not resolved_legs:
+        raise ValueError("Close execution requires canonical position legs")
+    request = build_multileg_order_payload(
+        legs=closing_legs(resolved_legs),
         limit_price=float(resolved_limit_price),
+        strategy_family=strategy_family,
+        trade_intent=CLOSE_TRADE_INTENT,
+        quantity=resolved_quantity,
     )
-    request["qty"] = str(int(resolved_quantity))
-    request["limit_price"] = f"{float(resolved_limit_price):.2f}"
     request["client_order_id"] = client_order_id
     return request, int(resolved_quantity), round(float(resolved_limit_price), 2)
 
@@ -2167,6 +2302,12 @@ def submit_live_session_execution(
             session_id=session_id,
             candidate_id=candidate_id,
         )
+        candidate_payload = _candidate_with_payload(candidate)
+        candidate_strategy_family = _strategy_family_from_payload(candidate_payload)
+        candidate_identity = legs_identity_key(
+            strategy=candidate_strategy_family,
+            legs=candidate_legs(candidate_payload),
+        )
         source_policies = _resolve_source_policies(
             cycle=cycle,
             job_store=job_store,
@@ -2206,13 +2347,30 @@ def submit_live_session_execution(
             }
         )
 
-        existing_attempts = execution_store.list_open_attempts_for_identity(
-            session_id=session_id,
-            strategy=str(candidate["strategy"]),
-            short_symbol=str(candidate["short_symbol"]),
-            long_symbol=str(candidate["long_symbol"]),
-            statuses=sorted(OPEN_STATUSES),
+        list_open_attempts = getattr(
+            execution_store,
+            "list_session_attempts_by_status",
+            None,
         )
+        if callable(list_open_attempts):
+            existing_attempts = [
+                dict(attempt)
+                for attempt in list_open_attempts(
+                    session_id=session_id,
+                    statuses=sorted(OPEN_STATUSES),
+                    trade_intent=OPEN_TRADE_INTENT,
+                    limit=200,
+                )
+                if _execution_attempt_identity(dict(attempt)) == candidate_identity
+            ]
+        else:
+            existing_attempts = execution_store.list_open_attempts_for_identity(
+                session_id=session_id,
+                strategy=str(candidate["strategy"]),
+                short_symbol=str(candidate["short_symbol"]),
+                long_symbol=str(candidate["long_symbol"]),
+                statuses=sorted(OPEN_STATUSES),
+            )
         if existing_attempts:
             payload = _get_attempt_payload(
                 execution_store,
@@ -2262,7 +2420,7 @@ def submit_live_session_execution(
             client_order_id=client_order_id,
         )
         live_deployment_quality = _validate_live_deployment_quality(
-            candidate_payload=dict(candidate.get("candidate") or {}),
+            candidate_payload=candidate_payload,
         )
         if not live_deployment_quality["ok"]:
             raise ValueError(str(live_deployment_quality["message"]))
@@ -2285,7 +2443,7 @@ def submit_live_session_execution(
         timing_gate = _validate_open_timing_window(
             exit_policy=resolved_exit_policy,
             current_time=parse_datetime(requested_at) or datetime.now(UTC),
-            profile=resolve_candidate_profile(dict(candidate.get("candidate") or {})),
+            profile=resolve_candidate_profile(candidate_payload),
         )
         if not timing_gate["allowed"]:
             raise ValueError(str(timing_gate["message"]))
@@ -2365,8 +2523,14 @@ def submit_live_session_execution(
             raise ValueError(str(risk_evaluation["note"]))
 
         pipeline_policy_fields = resolve_pipeline_policy_fields(
-            profile=(candidate.get("candidate") or {}).get("profile"),
+            profile=candidate_payload.get("profile"),
             root_symbol=str(candidate["underlying_symbol"]),
+        )
+        attempt_legs = normalize_legs(order_request.get("legs")) or candidate_legs(
+            candidate_payload
+        )
+        compatibility_short_symbol, compatibility_long_symbol = (
+            primary_short_long_symbols(attempt_legs)
         )
         attempt_id = _execution_attempt_id()
         attempt = execution_store.create_attempt(
@@ -2393,12 +2557,16 @@ def submit_live_session_execution(
             underlying_symbol=str(candidate["underlying_symbol"]),
             strategy=str(candidate["strategy"]),
             expiration_date=str(candidate["expiration_date"]),
-            short_symbol=str(candidate["short_symbol"]),
-            long_symbol=str(candidate["long_symbol"]),
+            short_symbol=str(
+                compatibility_short_symbol or candidate.get("short_symbol") or ""
+            ),
+            long_symbol=str(
+                compatibility_long_symbol or candidate.get("long_symbol") or ""
+            ),
             trade_intent=OPEN_TRADE_INTENT,
             position_id=None,
             root_symbol=str(candidate["underlying_symbol"]),
-            strategy_family=str(candidate["strategy"]),
+            strategy_family=candidate_strategy_family,
             style_profile=str(pipeline_policy_fields["style_profile"]),
             horizon_intent=str(pipeline_policy_fields["horizon_intent"]),
             product_class=str(pipeline_policy_fields["product_class"]),
@@ -2433,7 +2601,7 @@ def submit_live_session_execution(
                 },
                 "order": order_request,
             },
-            candidate=dict(candidate.get("candidate") or {}),
+            candidate=candidate_payload,
         )
         payload = _queue_execution_attempt(
             job_store=job_store,
@@ -2709,6 +2877,12 @@ def submit_position_close_by_id(
             profile=(position.get("risk_policy") or {}).get("profile"),
             root_symbol=str(position["underlying_symbol"]),
         )
+        attempt_legs = normalize_legs(order_request.get("legs")) or normalize_legs(
+            position.get("legs")
+        )
+        compatibility_short_symbol, compatibility_long_symbol = (
+            primary_short_long_symbols(attempt_legs)
+        )
         attempt_id = _execution_attempt_id()
         attempt = execution_store.create_attempt(
             execution_attempt_id=attempt_id,
@@ -2728,12 +2902,16 @@ def submit_position_close_by_id(
             underlying_symbol=str(position["underlying_symbol"]),
             strategy=str(position["strategy"]),
             expiration_date=str(position["expiration_date"]),
-            short_symbol=str(position["short_symbol"]),
-            long_symbol=str(position["long_symbol"]),
+            short_symbol=str(
+                compatibility_short_symbol or position.get("short_symbol") or ""
+            ),
+            long_symbol=str(
+                compatibility_long_symbol or position.get("long_symbol") or ""
+            ),
             trade_intent=trade_intent,
             position_id=position_id,
             root_symbol=str(position["underlying_symbol"]),
-            strategy_family=str(position["strategy"]),
+            strategy_family=_strategy_family_from_payload(position),
             style_profile=str(
                 position.get("style_profile") or policy_fields["style_profile"]
             ),

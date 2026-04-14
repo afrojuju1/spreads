@@ -5,6 +5,13 @@ from typing import Any
 
 from spreads.db.decorators import with_storage
 from spreads.services.alpaca import create_alpaca_client_from_env
+from spreads.services.option_structures import (
+    net_premium_kind,
+    normalize_strategy_family,
+    position_legs,
+    primary_short_long_symbols,
+    unique_leg_symbols,
+)
 from spreads.services.positions import enrich_position_row
 from spreads.services.risk_manager import assess_position_risk
 from spreads.services.runtime_identity import parse_live_run_scope_id
@@ -123,10 +130,11 @@ def resolve_quote_source_for_symbols(
     return "mixed"
 
 
-def build_credit_spread_quote_snapshot(
+def build_vertical_spread_quote_snapshot(
     *,
     short_symbol: str,
     long_symbol: str,
+    strategy_family: str,
     client: Any | None = None,
     feeds: tuple[str, ...] = QUOTE_FEEDS,
 ) -> tuple[dict[str, Any] | None, str | None]:
@@ -140,12 +148,28 @@ def build_credit_spread_quote_snapshot(
     if short_quote is None or long_quote is None:
         return None, error_text
 
+    family = normalize_strategy_family(strategy_family)
+    premium_kind = net_premium_kind(family)
+    if premium_kind == "debit":
+        midpoint_value = round(long_quote.midpoint - short_quote.midpoint, 4)
+        natural_value = round(long_quote.ask - short_quote.bid, 4)
+        close_mark = round(max(long_quote.bid - short_quote.ask, 0.0), 4)
+    else:
+        midpoint_value = round(short_quote.midpoint - long_quote.midpoint, 4)
+        natural_value = round(short_quote.bid - long_quote.ask, 4)
+        close_mark = round(max(short_quote.ask - long_quote.bid, 0.0), 4)
+
     return (
         {
             "short_symbol": short_symbol,
             "long_symbol": long_symbol,
-            "midpoint_credit": round(short_quote.midpoint - long_quote.midpoint, 4),
-            "natural_credit": round(short_quote.bid - long_quote.ask, 4),
+            "strategy_family": family,
+            "premium_kind": premium_kind,
+            "midpoint_value": midpoint_value,
+            "natural_value": natural_value,
+            "close_mark": close_mark,
+            "midpoint_credit": midpoint_value,
+            "natural_credit": natural_value,
             "short_bid": short_quote.bid,
             "short_ask": short_quote.ask,
             "long_bid": long_quote.bid,
@@ -158,6 +182,22 @@ def build_credit_spread_quote_snapshot(
             ),
         },
         error_text,
+    )
+
+
+def build_credit_spread_quote_snapshot(
+    *,
+    short_symbol: str,
+    long_symbol: str,
+    client: Any | None = None,
+    feeds: tuple[str, ...] = QUOTE_FEEDS,
+) -> tuple[dict[str, Any] | None, str | None]:
+    return build_vertical_spread_quote_snapshot(
+        short_symbol=short_symbol,
+        long_symbol=long_symbol,
+        strategy_family="call_credit_spread",
+        client=client,
+        feeds=feeds,
     )
 
 
@@ -251,10 +291,9 @@ def refresh_session_position_marks(
 
     quote_symbols = sorted(
         {
-            str(symbol)
+            symbol
             for position in open_positions
-            for symbol in (position.get("short_symbol"), position.get("long_symbol"))
-            if symbol
+            for symbol in unique_leg_symbols(position_legs(position))
         }
     )
     quotes, sources, mark_error = fetch_latest_option_quotes(quote_symbols)
@@ -265,8 +304,11 @@ def refresh_session_position_marks(
     for position in open_positions:
         remaining_quantity = _coerce_float(position.get("remaining_quantity")) or 0.0
         entry_credit = _coerce_float(position.get("entry_credit"))
-        short_symbol = str(position["short_symbol"])
-        long_symbol = str(position["long_symbol"])
+        strategy_family = str(position.get("strategy") or position.get("strategy_family") or "")
+        legs = position_legs(position)
+        short_symbol, long_symbol = primary_short_long_symbols(legs)
+        if short_symbol is None or long_symbol is None:
+            continue
         short_quote = quotes.get(short_symbol)
         long_quote = quotes.get(long_symbol)
         if (
@@ -276,8 +318,13 @@ def refresh_session_position_marks(
             or long_quote is None
         ):
             continue
-        spread_mark_close = max(short_quote.ask - long_quote.bid, 0.0)
-        unrealized_pnl = (entry_credit - spread_mark_close) * 100.0 * remaining_quantity
+        premium_kind = net_premium_kind(strategy_family)
+        if premium_kind == "debit":
+            spread_mark_close = max(long_quote.bid - short_quote.ask, 0.0)
+            unrealized_pnl = (spread_mark_close - entry_credit) * 100.0 * remaining_quantity
+        else:
+            spread_mark_close = max(short_quote.ask - long_quote.bid, 0.0)
+            unrealized_pnl = (entry_credit - spread_mark_close) * 100.0 * remaining_quantity
         execution_store.update_position(
             position_id=str(position["position_id"]),
             close_mark=_round_money(spread_mark_close),
@@ -341,6 +388,9 @@ def build_session_execution_portfolio(
                 _coerce_float(persisted.get("remaining_quantity")) or 0.0
             )
             entry_credit = _coerce_float(persisted.get("entry_credit"))
+            strategy_family = str(
+                persisted.get("strategy") or persisted.get("strategy_family") or ""
+            )
             short_symbol = str(persisted["short_symbol"])
             long_symbol = str(persisted["long_symbol"])
             spread_mark_midpoint = None
@@ -355,9 +405,18 @@ def build_session_execution_portfolio(
                 and entry_credit is not None
                 and spread_mark_close is not None
             ):
-                unrealized_pnl = (
-                    (entry_credit - spread_mark_close) * 100.0 * remaining_quantity
-                )
+                if net_premium_kind(strategy_family) == "debit":
+                    unrealized_pnl = (
+                        (spread_mark_close - entry_credit)
+                        * 100.0
+                        * remaining_quantity
+                    )
+                else:
+                    unrealized_pnl = (
+                        (entry_credit - spread_mark_close)
+                        * 100.0
+                        * remaining_quantity
+                    )
             elif status == "closed":
                 unrealized_pnl = 0.0
 

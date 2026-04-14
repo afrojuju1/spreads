@@ -4,7 +4,11 @@ from .config import PENALTY_EVENT_CODES
 from .models import CalendarEventContext, CalendarPolicyDecision
 
 
-def apply_credit_spread_policy(
+SHORT_PREMIUM_STRATEGIES = {"call_credit", "put_credit", "iron_condor"}
+CALL_LONG_STRATEGIES = {"call_debit", "long_call"}
+
+
+def apply_strategy_calendar_policy(
     context: CalendarEventContext,
     *,
     strategy: str,
@@ -15,11 +19,15 @@ def apply_credit_spread_policy(
         return CalendarPolicyDecision(status="clean")
 
     codes = {reason.code for reason in context.reasons}
-    blocking_codes = {"earnings_before_expiry"}
+    blocking_codes: set[str] = set()
+    if strategy in SHORT_PREMIUM_STRATEGIES:
+        blocking_codes.add("earnings_before_expiry")
     if strategy == "call_credit":
         blocking_codes.add("ex_dividend_before_expiry")
     penalty_codes = set(PENALTY_EVENT_CODES)
     if strategy == "put_credit" and "ex_dividend_before_expiry" in codes:
+        penalty_codes.add("ex_dividend_before_expiry")
+    if strategy in CALL_LONG_STRATEGIES and "ex_dividend_before_expiry" in codes:
         penalty_codes.add("ex_dividend_before_expiry")
 
     if mode == "strict":
@@ -59,6 +67,21 @@ def apply_credit_spread_policy(
         earnings_days_since_event=context.earnings_days_since_event,
         earnings_timing_confidence=context.earnings_timing_confidence,
         earnings_horizon_crosses_report=context.earnings_horizon_crosses_report,
+    )
+
+
+def apply_credit_spread_policy(
+    context: CalendarEventContext,
+    *,
+    strategy: str,
+    underlying_type: str,
+    mode: str,
+) -> CalendarPolicyDecision:
+    return apply_strategy_calendar_policy(
+        context,
+        strategy=strategy,
+        underlying_type=underlying_type,
+        mode=mode,
     )
 
 

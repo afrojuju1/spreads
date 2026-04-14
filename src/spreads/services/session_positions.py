@@ -9,6 +9,12 @@ from spreads.services.execution_lifecycle import (
     resolve_execution_attempt_filled_quantity,
     resolve_execution_attempt_primary_order,
 )
+from spreads.services.option_structures import (
+    candidate_legs,
+    net_premium_kind,
+    normalize_legs,
+    position_legs as canonical_position_legs,
+)
 from spreads.services.runtime_identity import (
     build_pipeline_id,
     resolve_pipeline_policy_fields,
@@ -56,9 +62,10 @@ def _round_money(value: float | None) -> float | None:
 
 def _derive_live_exposure(
     *,
-    entry_credit: float | None,
+    entry_value: float | None,
     width: float | None,
     quantity: float,
+    strategy_family: str | None,
 ) -> dict[str, float | None]:
     normalized_quantity = max(float(quantity), 0.0)
     if normalized_quantity <= 0:
@@ -70,15 +77,23 @@ def _derive_live_exposure(
 
     entry_notional = (
         None
-        if entry_credit is None
-        else round(entry_credit * 100.0 * normalized_quantity, 2)
+        if entry_value is None
+        else round(entry_value * 100.0 * normalized_quantity, 2)
     )
+    premium_kind = net_premium_kind(strategy_family)
     max_profit = entry_notional
     max_loss = None
-    if entry_credit is not None and width is not None:
-        max_loss = round(
-            max(width - entry_credit, 0.0) * 100.0 * normalized_quantity, 2
-        )
+    if entry_value is not None and width is not None:
+        if premium_kind == "debit":
+            max_profit = round(
+                max(width - entry_value, 0.0) * 100.0 * normalized_quantity, 2
+            )
+            max_loss = entry_notional
+        else:
+            max_profit = entry_notional
+            max_loss = round(
+                max(width - entry_value, 0.0) * 100.0 * normalized_quantity, 2
+            )
     return {
         "entry_notional": entry_notional,
         "max_profit": max_profit,
@@ -201,8 +216,34 @@ def _resolve_spread_amount(
     primary_order: Mapping[str, Any] | None,
     filled_quantity: float,
 ) -> float | None:
-    short_symbol = _as_text(attempt.get("short_symbol"))
-    long_symbol = _as_text(attempt.get("long_symbol"))
+    request = _attempt_request(attempt)
+    order = request.get("order") if isinstance(request.get("order"), Mapping) else {}
+    legs = normalize_legs(
+        order.get("legs"),
+        expiration_date=_as_text(attempt.get("expiration_date")),
+    )
+    if not legs:
+        candidate = attempt.get("candidate")
+        if isinstance(candidate, Mapping):
+            legs = candidate_legs(candidate)
+    if not legs:
+        legs = canonical_position_legs(attempt)
+    short_symbol = next(
+        (
+            _as_text(leg.get("symbol"))
+            for leg in legs
+            if _as_text(leg.get("role")) == "short"
+        ),
+        None,
+    )
+    long_symbol = next(
+        (
+            _as_text(leg.get("symbol"))
+            for leg in legs
+            if _as_text(leg.get("role")) == "long"
+        ),
+        None,
+    )
     if short_symbol and long_symbol:
         short_price = _resolve_leg_average_price(attempt, short_symbol)
         long_price = _resolve_leg_average_price(attempt, long_symbol)
@@ -272,23 +313,14 @@ def _resolve_width(attempt: Mapping[str, Any]) -> float | None:
 
 
 def _position_legs(position: Mapping[str, Any]) -> list[dict[str, Any]]:
-    return [
-        {
-            "symbol": str(position["short_symbol"]),
-            "role": "short",
-            "expiration_date": _as_text(position.get("expiration_date")),
-        },
-        {
-            "symbol": str(position["long_symbol"]),
-            "role": "long",
-            "expiration_date": _as_text(position.get("expiration_date")),
-        },
-    ]
+    return canonical_position_legs(position)
 
 
 def _position_economics(position: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "entry_credit": _coerce_float(position.get("entry_credit")),
+        "entry_value": _coerce_float(position.get("entry_value"))
+        or _coerce_float(position.get("entry_credit")),
         "entry_notional": _coerce_float(position.get("entry_notional")),
         "max_profit": _coerce_float(position.get("max_profit")),
         "max_loss": _coerce_float(position.get("max_loss")),
@@ -324,6 +356,8 @@ def _position_entry_value(position: Mapping[str, Any]) -> float | None:
         else {}
     )
     return _coerce_float(position.get("entry_value")) or _coerce_float(
+        economics.get("entry_value")
+    ) or _coerce_float(
         economics.get("entry_credit")
     )
 
@@ -376,10 +410,14 @@ def _position_common_payload(
         root_symbol=root_symbol,
     )
     width = _resolve_width(attempt) or _position_width(existing or {})
+    strategy_family = _as_text(attempt.get("strategy_family")) or _as_text(
+        existing.get("strategy_family") if isinstance(existing, Mapping) else None
+    )
     exposure = _derive_live_exposure(
-        entry_credit=entry_credit,
+        entry_value=entry_credit,
         width=width,
         quantity=remaining_quantity,
+        strategy_family=strategy_family,
     )
     exit_policy = (
         dict(existing.get("exit_policy") or {})
@@ -395,6 +433,16 @@ def _position_common_payload(
         else {}
     )
     risk_policy.update(_attempt_risk_policy(attempt))
+    request = _attempt_request(attempt)
+    order = request.get("order") if isinstance(request.get("order"), Mapping) else {}
+    attempt_legs = normalize_legs(
+        order.get("legs"),
+        expiration_date=_as_text(attempt.get("expiration_date")),
+    )
+    if not attempt_legs and candidate:
+        attempt_legs = candidate_legs(candidate)
+    existing_legs = canonical_position_legs(existing or {})
+    persisted_legs = attempt_legs or existing_legs
     source_job = _attempt_source_job(attempt)
     return {
         "pipeline_id": pipeline_id,
@@ -405,10 +453,7 @@ def _position_common_payload(
             else None
         ),
         "root_symbol": root_symbol,
-        "strategy_family": _as_text(attempt.get("strategy_family"))
-        or _as_text(
-            existing.get("strategy_family") if isinstance(existing, Mapping) else None
-        )
+        "strategy_family": strategy_family
         or str(attempt.get("strategy") or "unknown"),
         "style_profile": _as_text(attempt.get("style_profile"))
         or _as_text(
@@ -430,30 +475,11 @@ def _position_common_payload(
         if closed_at is None or market_date is None
         else market_date,
         "status": status,
-        "legs": [
-            {
-                "symbol": str(
-                    attempt.get("short_symbol")
-                    or (existing or {}).get("short_symbol")
-                    or ""
-                ),
-                "role": "short",
-                "expiration_date": _as_text(attempt.get("expiration_date"))
-                or _as_text((existing or {}).get("expiration_date")),
-            },
-            {
-                "symbol": str(
-                    attempt.get("long_symbol")
-                    or (existing or {}).get("long_symbol")
-                    or ""
-                ),
-                "role": "long",
-                "expiration_date": _as_text(attempt.get("expiration_date"))
-                or _as_text((existing or {}).get("expiration_date")),
-            },
-        ],
+        "legs": persisted_legs,
         "economics": {
             "entry_credit": _round_money(entry_credit),
+            "entry_value": _round_money(entry_credit),
+            "entry_value_kind": net_premium_kind(strategy_family),
             "entry_notional": exposure["entry_notional"],
             "max_profit": exposure["max_profit"],
             "max_loss": exposure["max_loss"],
@@ -522,10 +548,14 @@ def _recalculate_position(
     )
     entry_credit = _position_entry_value(position)
     width = _position_width(position)
+    strategy_family = _as_text(position.get("strategy_family")) or _as_text(
+        position.get("strategy")
+    )
     exposure = _derive_live_exposure(
-        entry_credit=entry_credit,
+        entry_value=entry_credit,
         width=width,
         quantity=remaining_quantity,
+        strategy_family=strategy_family,
     )
 
     if total_closed_quantity <= 0:
@@ -552,6 +582,8 @@ def _recalculate_position(
         remaining_quantity=remaining_quantity,
         economics={
             "entry_credit": _round_money(entry_credit),
+            "entry_value": _round_money(entry_credit),
+            "entry_value_kind": net_premium_kind(strategy_family),
             "entry_notional": exposure["entry_notional"],
             "max_profit": exposure["max_profit"],
             "max_loss": exposure["max_loss"],

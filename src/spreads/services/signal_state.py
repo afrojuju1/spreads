@@ -8,6 +8,7 @@ from spreads.services.candidate_policy import (
     candidate_has_intraday_setup_context,
     candidate_requires_favorable_setup,
 )
+from spreads.services.option_structures import candidate_legs, legs_identity_key
 from spreads.services.runtime_identity import (
     build_pipeline_id,
     resolve_pipeline_policy_fields,
@@ -20,7 +21,10 @@ PROMOTABLE_STRONG_SCORE = 82.0
 
 
 def _candidate_identity(candidate: dict[str, Any]) -> str:
-    return f"{candidate['strategy']}|{candidate['short_symbol']}|{candidate['long_symbol']}"
+    return legs_identity_key(
+        strategy=candidate.get("strategy"),
+        legs=candidate_legs(candidate),
+    )
 
 
 def _candidate_with_payload(candidate: dict[str, Any]) -> dict[str, Any]:
@@ -67,7 +71,7 @@ def build_opportunity_id(
 ) -> str:
     return (
         f"opportunity:{label}:{session_date}:{candidate['underlying_symbol']}:"
-        f"{candidate['strategy']}:{candidate['short_symbol']}:{candidate['long_symbol']}"
+        f"{_candidate_identity(candidate)}"
     )
 
 
@@ -258,28 +262,7 @@ def _execution_shape(candidate: dict[str, Any]) -> dict[str, Any]:
 
 
 def _candidate_legs(candidate: dict[str, Any]) -> list[dict[str, Any]]:
-    legs: list[dict[str, Any]] = []
-    short_symbol = candidate.get("short_symbol")
-    long_symbol = candidate.get("long_symbol")
-    if short_symbol:
-        legs.append(
-            {
-                "symbol": str(short_symbol),
-                "role": "short",
-                "strike": candidate.get("short_strike"),
-                "expiration_date": candidate.get("expiration_date"),
-            }
-        )
-    if long_symbol:
-        legs.append(
-            {
-                "symbol": str(long_symbol),
-                "role": "long",
-                "strike": candidate.get("long_strike"),
-                "expiration_date": candidate.get("expiration_date"),
-            }
-        )
-    return legs
+    return candidate_legs(candidate)
 
 
 def _candidate_economics(candidate: dict[str, Any]) -> dict[str, Any]:

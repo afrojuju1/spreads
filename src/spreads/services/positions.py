@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from spreads.db.decorators import with_storage
+from spreads.services.option_structures import position_legs, primary_short_long_symbols
 from spreads.services.runtime_identity import build_live_run_scope_id
 
 OPEN_POSITION_STATUSES = {"open", "partial_open", "partial_close", "pending_open"}
@@ -34,19 +35,10 @@ def _round_money(value: float | None) -> float | None:
 def _derive_position_legs(
     row: Mapping[str, Any],
 ) -> tuple[str | None, str | None, str | None]:
-    short_symbol = None
-    long_symbol = None
     expiration_date = _as_text(row.get("expiration_date"))
-    legs = row.get("legs") if isinstance(row.get("legs"), list) else []
+    legs = position_legs(row)
+    short_symbol, long_symbol = primary_short_long_symbols(legs)
     for leg in legs:
-        if not isinstance(leg, Mapping):
-            continue
-        symbol = _as_text(leg.get("symbol"))
-        role = _as_text(leg.get("role"))
-        if role == "short" and short_symbol is None:
-            short_symbol = symbol
-        elif role == "long" and long_symbol is None:
-            long_symbol = symbol
         if expiration_date is None:
             expiration_date = _as_text(leg.get("expiration_date"))
     return short_symbol, long_symbol, expiration_date

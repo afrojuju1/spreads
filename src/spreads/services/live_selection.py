@@ -8,6 +8,7 @@ from spreads.services.candidate_policy import (
     candidate_requires_favorable_setup,
     resolve_deployment_quality_thresholds,
 )
+from spreads.services.option_structures import candidate_legs, legs_identity_key
 from spreads.services.opportunity_scoring import build_candidate_opportunity_score
 
 DEFAULT_SELECTION_THRESHOLDS = {
@@ -51,7 +52,10 @@ def _selection_thresholds(profile: str | None) -> dict[str, Any]:
 
 
 def candidate_identity(candidate: dict[str, Any]) -> str:
-    return f"{candidate['strategy']}|{candidate['short_symbol']}|{candidate['long_symbol']}"
+    return legs_identity_key(
+        strategy=candidate.get("strategy"),
+        legs=candidate_legs(candidate),
+    )
 
 
 def summarize_candidate(candidate: dict[str, Any]) -> str:

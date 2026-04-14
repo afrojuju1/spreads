@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scan Alpaca option chains for credit spread candidates.
+"""Scan Alpaca option chains for vertical spread candidates.
 
 Usage:
     uv run spreads scan --symbol SPY
@@ -11,7 +11,7 @@ Required environment variables:
 Notes:
     - Uses Alpaca's Trading API for option contract metadata.
     - Uses Alpaca's Market Data API for underlying price and option chain snapshots.
-    - Supports call credit and put credit spreads with shared ranking/replay logic.
+    - Supports call/put credit and debit vertical spreads with shared ranking/replay logic.
 """
 
 from __future__ import annotations
@@ -37,9 +37,15 @@ import websocket
 
 from spreads.integrations.calendar_events import build_calendar_event_resolver, classify_underlying_type
 from spreads.integrations.calendar_events.models import CalendarPolicyDecision
-from spreads.integrations.calendar_events.policy import apply_credit_spread_policy
+from spreads.integrations.calendar_events.policy import apply_strategy_calendar_policy
 from spreads.integrations.greeks import build_local_greeks_provider
 from spreads.runtime.config import default_database_url
+from spreads.services.option_structures import (
+    build_multileg_order_payload,
+    net_premium_kind,
+    normalize_strategy_family,
+    vertical_opening_legs,
+)
 from spreads.storage.factory import build_history_store
 from spreads.storage.run_history_repository import RunHistoryRepository
 
@@ -89,7 +95,7 @@ class AlpacaRequestError(RuntimeError):
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Find credit spread candidates for one symbol or a ranked multi-symbol universe using Alpaca."
+        description="Find vertical spread candidates for one symbol or a ranked multi-symbol universe using Alpaca."
     )
     parser.add_argument("--symbol", help="Scan a single underlying.")
     parser.add_argument(
@@ -108,8 +114,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--strategy",
         default="call_credit",
-        choices=("call_credit", "put_credit", "combined"),
-        help="Credit spread strategy. Use combined to evaluate both call and put credit spreads. Default: call_credit",
+        choices=("call_credit", "put_credit", "call_debit", "put_debit", "combined"),
+        help=(
+            "Vertical spread strategy. Use combined to evaluate both call and put credit spreads. "
+            "Default: call_credit"
+        ),
     )
     parser.add_argument(
         "--profile",
@@ -384,10 +393,32 @@ def concrete_strategies(strategy: str) -> tuple[str, ...]:
 
 def strategy_display_label(strategy: str) -> str:
     return {
-        "call_credit": "Call",
-        "put_credit": "Put",
+        "call_credit": "Call Credit",
+        "put_credit": "Put Credit",
+        "call_debit": "Call Debit",
+        "put_debit": "Put Debit",
         "combined": "Combined",
     }.get(strategy, strategy)
+
+
+def strategy_option_type(strategy: str) -> str:
+    normalized = normalize_strategy_family(strategy)
+    if normalized in {"call_credit_spread", "call_debit_spread", "long_call"}:
+        return "call"
+    if normalized in {"put_credit_spread", "put_debit_spread", "long_put"}:
+        return "put"
+    return "call"
+
+
+def strategy_direction(strategy: str) -> str:
+    normalized = normalize_strategy_family(strategy)
+    if normalized in {"put_credit_spread", "call_debit_spread", "long_call"}:
+        return "bullish"
+    if normalized in {"call_credit_spread", "put_debit_spread", "long_put"}:
+        return "bearish"
+    if normalized == "iron_condor":
+        return "neutral"
+    return "unknown"
 
 
 def zero_dte_session_bucket(now: datetime | None = None) -> str:
@@ -1638,6 +1669,8 @@ def analyze_daily_setup(
     *,
     strategy: str,
 ) -> UnderlyingSetupContext:
+    direction = strategy_direction(strategy)
+    bullish = direction == "bullish"
     if len(bars) < 20:
         return UnderlyingSetupContext(
             strategy=strategy,
@@ -1670,7 +1703,7 @@ def analyze_daily_setup(
     spot_vs_sma20_pct = ((spot_price - sma20) / sma20) if sma20 else None
     sma20_vs_sma50_pct = ((sma20 - sma50) / sma50) if sma20 and sma50 else None
 
-    if strategy == "put_credit":
+    if bullish:
         distance_to_20d_extreme_pct = (spot_price - low_20) / spot_price if spot_price > 0 else None
         price_vs_sma20_score = 0.5 if spot_vs_sma20_pct is None else clamp(0.5 + (spot_vs_sma20_pct / 0.08))
         trend_score = 0.5 if sma20_vs_sma50_pct is None else clamp(0.5 + (sma20_vs_sma50_pct / 0.06))
@@ -1699,7 +1732,7 @@ def analyze_daily_setup(
     )
 
     reasons: list[str] = []
-    if strategy == "put_credit":
+    if bullish:
         if spot_vs_sma20_pct is not None:
             if spot_vs_sma20_pct > 0.02:
                 reasons.append(supportive_note("spot is extended above the 20-day average"))
@@ -1744,10 +1777,10 @@ def analyze_daily_setup(
 
     status = setup_status_from_score(score)
     if not reasons:
-        if strategy == "put_credit":
-            reasons.append(f"{symbol} daily setup is {status} for bullish or neutral premium selling")
+        if bullish:
+            reasons.append(f"{symbol} daily setup is {status} for bullish positioning")
         else:
-            reasons.append(f"{symbol} daily setup is {status} for bearish or neutral premium selling")
+            reasons.append(f"{symbol} daily setup is {status} for bearish positioning")
 
     return UnderlyingSetupContext(
         strategy=strategy,
@@ -1774,6 +1807,8 @@ def analyze_intraday_setup(
     *,
     strategy: str,
 ) -> UnderlyingSetupContext | None:
+    direction = strategy_direction(strategy)
+    bullish = direction == "bullish"
     if len(bars) < 5:
         return None
 
@@ -1794,7 +1829,7 @@ def analyze_intraday_setup(
     opening_range_window = bars[: min(30, len(bars))]
     opening_range_high = max(bar.high for bar in opening_range_window)
     opening_range_low = min(bar.low for bar in opening_range_window)
-    if strategy == "put_credit":
+    if bullish:
         distance_to_session_extreme_pct = (spot_price - session_low) / spot_price if spot_price > 0 else None
         opening_range_break_pct = (spot_price - opening_range_high) / spot_price if spot_price > 0 else None
         vwap_score = 0.5 if spot_vs_vwap_pct is None else clamp(0.5 + (spot_vs_vwap_pct / 0.01))
@@ -1826,7 +1861,7 @@ def analyze_intraday_setup(
     status = setup_status_from_score(score)
 
     reasons: list[str] = []
-    if strategy == "put_credit":
+    if bullish:
         if spot_vs_vwap_pct is not None:
             if spot_vs_vwap_pct > 0.0015:
                 reasons.append(supportive_note("spot is holding above VWAP"))
@@ -1870,10 +1905,10 @@ def analyze_intraday_setup(
                 reasons.append(supportive_note("spot has room below the session high"))
 
     if not reasons:
-        if strategy == "put_credit":
-            reasons.append(f"{symbol} intraday setup is {status} for bullish or neutral premium selling")
+        if bullish:
+            reasons.append(f"{symbol} intraday setup is {status} for bullish positioning")
         else:
-            reasons.append(f"{symbol} intraday setup is {status} for bearish or neutral premium selling")
+            reasons.append(f"{symbol} intraday setup is {status} for bearish positioning")
 
     return UnderlyingSetupContext(
         strategy=strategy,
@@ -2209,57 +2244,67 @@ def validate_resolved_args(args: argparse.Namespace) -> None:
         raise SystemExit("Expected min-breakeven-vs-expected-move-ratio to be between -1 and 1")
 
 
-def make_open_order_payload(short_symbol: str, long_symbol: str, limit_price: float) -> dict[str, Any]:
-    return {
-        "order_class": "mleg",
-        "qty": "1",
-        "type": "limit",
-        # Alpaca expects negative net prices for credit mleg orders.
-        "limit_price": f"{-abs(limit_price):.2f}",
-        "time_in_force": "day",
-        "legs": [
-            {
-                "symbol": short_symbol,
-                "ratio_qty": "1",
-                "side": "sell",
-                "position_intent": "sell_to_open",
-            },
-            {
-                "symbol": long_symbol,
-                "ratio_qty": "1",
-                "side": "buy",
-                "position_intent": "buy_to_open",
-            },
-        ],
-    }
+def make_open_order_payload(
+    short_symbol: str,
+    long_symbol: str,
+    limit_price: float,
+    *,
+    strategy: str = "call_credit",
+) -> dict[str, Any]:
+    return build_multileg_order_payload(
+        legs=vertical_opening_legs(
+            short_symbol=short_symbol,
+            long_symbol=long_symbol,
+        ),
+        limit_price=limit_price,
+        strategy_family=strategy,
+        trade_intent="open",
+    )
 
 
-def make_close_order_payload(short_symbol: str, long_symbol: str, limit_price: float) -> dict[str, Any]:
-    return {
-        "order_class": "mleg",
-        "qty": "1",
-        "type": "limit",
-        "limit_price": f"{abs(limit_price):.2f}",
-        "time_in_force": "day",
-        "legs": [
+def make_close_order_payload(
+    short_symbol: str,
+    long_symbol: str,
+    limit_price: float,
+    *,
+    strategy: str = "call_credit",
+) -> dict[str, Any]:
+    return build_multileg_order_payload(
+        legs=[
             {
                 "symbol": short_symbol,
                 "ratio_qty": "1",
                 "side": "buy",
                 "position_intent": "buy_to_close",
+                "role": "short",
             },
             {
                 "symbol": long_symbol,
                 "ratio_qty": "1",
                 "side": "sell",
                 "position_intent": "sell_to_close",
+                "role": "long",
             },
         ],
-    }
+        limit_price=limit_price,
+        strategy_family=strategy,
+        trade_intent="close",
+    )
 
 
-def make_order_payload(short_symbol: str, long_symbol: str, limit_price: float) -> dict[str, Any]:
-    return make_open_order_payload(short_symbol=short_symbol, long_symbol=long_symbol, limit_price=limit_price)
+def make_order_payload(
+    short_symbol: str,
+    long_symbol: str,
+    limit_price: float,
+    *,
+    strategy: str = "call_credit",
+) -> dict[str, Any]:
+    return make_open_order_payload(
+        short_symbol=short_symbol,
+        long_symbol=long_symbol,
+        limit_price=limit_price,
+        strategy=strategy,
+    )
 
 
 def infer_trading_base_url(key_id: str, explicit_base_url: str | None) -> str:
@@ -2275,6 +2320,8 @@ def default_output_path(symbol: str, strategy: str, output_format: str) -> str:
     directory = {
         "call_credit": "call_credit_spreads",
         "put_credit": "put_credit_spreads",
+        "call_debit": "call_debit_spreads",
+        "put_debit": "put_debit_spreads",
         "combined": "combined_credit_spreads",
     }.get(strategy, "call_credit_spreads")
     return str(Path("outputs") / directory / f"{symbol.lower()}_{timestamp}.{output_format}")
@@ -2369,7 +2416,7 @@ def enrich_missing_greeks(
     return enriched_by_expiration
 
 
-def build_credit_spreads(
+def build_vertical_spreads(
     *,
     symbol: str,
     strategy: str,
@@ -2380,6 +2427,8 @@ def build_credit_spreads(
     args: argparse.Namespace,
 ) -> list[SpreadCandidate]:
     candidates: list[SpreadCandidate] = []
+    option_type = strategy_option_type(strategy)
+    premium_kind = net_premium_kind(strategy)
 
     for expiration_date, contracts in sorted(contracts_by_expiration.items()):
         snapshot_map = snapshots_by_expiration.get(expiration_date, {})
@@ -2387,13 +2436,15 @@ def build_credit_spreads(
         expected_move = expected_moves_by_expiration.get(expiration_date)
         days_to_expiration = days_from_today(expiration_date)
 
-        short_contracts = sorted_contracts if strategy == "call_credit" else list(reversed(sorted_contracts))
+        short_contracts = (
+            sorted_contracts if option_type == "call" else list(reversed(sorted_contracts))
+        )
 
         for short_contract in short_contracts:
             short_snapshot = snapshot_map.get(short_contract.symbol)
             if not short_snapshot:
                 continue
-            if strategy == "call_credit":
+            if option_type == "call":
                 if short_contract.strike_price <= spot_price:
                     continue
             else:
@@ -2413,27 +2464,39 @@ def build_credit_spreads(
             if not (args.short_delta_min <= short_delta_magnitude <= args.short_delta_max):
                 continue
 
-            if strategy == "call_credit":
-                long_contract_iterable = sorted_contracts
-            else:
-                short_index = sorted_contracts.index(short_contract)
+            short_index = sorted_contracts.index(short_contract)
+            if option_type == "call" and premium_kind == "credit":
+                long_contract_iterable = sorted_contracts[short_index + 1 :]
+            elif option_type == "call":
                 long_contract_iterable = reversed(sorted_contracts[:short_index])
+            elif premium_kind == "credit":
+                long_contract_iterable = reversed(sorted_contracts[:short_index])
+            else:
+                long_contract_iterable = sorted_contracts[short_index + 1 :]
 
             for long_contract in long_contract_iterable:
-                if strategy == "call_credit":
-                    if long_contract.strike_price <= short_contract.strike_price:
-                        continue
-                    width = long_contract.strike_price - short_contract.strike_price
+                if option_type == "call":
+                    if premium_kind == "credit":
+                        if long_contract.strike_price <= short_contract.strike_price:
+                            continue
+                        width = long_contract.strike_price - short_contract.strike_price
+                    else:
+                        if long_contract.strike_price >= short_contract.strike_price:
+                            continue
+                        width = short_contract.strike_price - long_contract.strike_price
                 else:
-                    if long_contract.strike_price >= short_contract.strike_price:
-                        continue
-                    width = short_contract.strike_price - long_contract.strike_price
+                    if premium_kind == "credit":
+                        if long_contract.strike_price >= short_contract.strike_price:
+                            continue
+                        width = short_contract.strike_price - long_contract.strike_price
+                    else:
+                        if long_contract.strike_price <= short_contract.strike_price:
+                            continue
+                        width = long_contract.strike_price - short_contract.strike_price
                 if width < args.min_width:
                     continue
                 if width > args.max_width:
-                    if strategy == "call_credit":
-                        break
-                    break
+                    continue
 
                 long_snapshot = snapshot_map.get(long_contract.symbol)
                 if not long_snapshot:
@@ -2447,8 +2510,12 @@ def build_credit_spreads(
                     continue
                 long_delta = long_snapshot.delta
 
-                midpoint_credit = short_snapshot.midpoint - long_snapshot.midpoint
-                natural_credit = short_snapshot.bid - long_snapshot.ask
+                if premium_kind == "debit":
+                    midpoint_credit = long_snapshot.midpoint - short_snapshot.midpoint
+                    natural_credit = long_snapshot.ask - short_snapshot.bid
+                else:
+                    midpoint_credit = short_snapshot.midpoint - long_snapshot.midpoint
+                    natural_credit = short_snapshot.bid - long_snapshot.ask
                 if midpoint_credit < effective_min_credit(width, args):
                     continue
                 if natural_credit <= 0:
@@ -2456,22 +2523,35 @@ def build_credit_spreads(
                 if midpoint_credit >= width:
                     continue
 
-                max_profit = midpoint_credit * 100.0
-                max_loss = (width - midpoint_credit) * 100.0
-                if max_loss <= 0:
+                if premium_kind == "debit":
+                    max_profit = (width - midpoint_credit) * 100.0
+                    max_loss = midpoint_credit * 100.0
+                else:
+                    max_profit = midpoint_credit * 100.0
+                    max_loss = (width - midpoint_credit) * 100.0
+                if max_loss <= 0 or max_profit <= 0:
                     continue
 
-                return_on_risk = midpoint_credit / (width - midpoint_credit)
+                if premium_kind == "debit":
+                    return_on_risk = (width - midpoint_credit) / midpoint_credit
+                else:
+                    return_on_risk = midpoint_credit / (width - midpoint_credit)
                 if return_on_risk < args.min_return_on_risk:
                     continue
 
-                if strategy == "call_credit":
-                    breakeven = short_contract.strike_price + midpoint_credit
+                if option_type == "call":
+                    breakeven = long_contract.strike_price + midpoint_credit if premium_kind == "debit" else short_contract.strike_price + midpoint_credit
                     short_otm_pct = (short_contract.strike_price - spot_price) / spot_price
+                    breakeven_cushion_pct = (breakeven - spot_price) / spot_price
                 else:
-                    breakeven = short_contract.strike_price - midpoint_credit
+                    breakeven = long_contract.strike_price - midpoint_credit if premium_kind == "debit" else short_contract.strike_price - midpoint_credit
                     short_otm_pct = (spot_price - short_contract.strike_price) / spot_price
-                fill_ratio = clamp(natural_credit / midpoint_credit, 0.0, 1.25)
+                    breakeven_cushion_pct = (spot_price - breakeven) / spot_price
+                fill_ratio = clamp(
+                    midpoint_credit / natural_credit if premium_kind == "debit" else natural_credit / midpoint_credit,
+                    0.0,
+                    1.25,
+                )
                 short_vs_expected_move = None
                 breakeven_vs_expected_move = None
                 expected_move_amount = None
@@ -2481,14 +2561,22 @@ def build_credit_spreads(
                     expected_move_amount = expected_move.amount
                     expected_move_pct = expected_move.percent_of_spot
                     expected_move_source_strike = expected_move.reference_strike
-                    if strategy == "call_credit":
+                    if option_type == "call":
                         expected_move_boundary = spot_price + expected_move.amount
                         short_vs_expected_move = short_contract.strike_price - expected_move_boundary
-                        breakeven_vs_expected_move = breakeven - expected_move_boundary
+                        breakeven_vs_expected_move = (
+                            expected_move_boundary - breakeven
+                            if premium_kind == "debit"
+                            else breakeven - expected_move_boundary
+                        )
                     else:
                         expected_move_boundary = spot_price - expected_move.amount
                         short_vs_expected_move = expected_move_boundary - short_contract.strike_price
-                        breakeven_vs_expected_move = expected_move_boundary - breakeven
+                        breakeven_vs_expected_move = (
+                            breakeven - expected_move_boundary
+                            if premium_kind == "debit"
+                            else expected_move_boundary - breakeven
+                        )
 
                 candidates.append(
                     SpreadCandidate(
@@ -2520,11 +2608,7 @@ def build_credit_spreads(
                         max_loss=max_loss,
                         return_on_risk=return_on_risk,
                         breakeven=breakeven,
-                        breakeven_cushion_pct=(
-                            (breakeven - spot_price) / spot_price
-                            if strategy == "call_credit"
-                            else (spot_price - breakeven) / spot_price
-                        ),
+                        breakeven_cushion_pct=breakeven_cushion_pct,
                         short_otm_pct=short_otm_pct,
                         short_open_interest=short_contract.open_interest,
                         long_open_interest=long_contract.open_interest,
@@ -2546,6 +2630,7 @@ def build_credit_spreads(
                             short_contract.symbol,
                             long_contract.symbol,
                             midpoint_credit,
+                            strategy=strategy,
                         ),
                         short_bid_size=short_snapshot.bid_size,
                         short_ask_size=short_snapshot.ask_size,
@@ -2561,7 +2646,29 @@ def build_credit_spreads(
     return candidates
 
 
+def build_credit_spreads(
+    *,
+    symbol: str,
+    strategy: str,
+    spot_price: float,
+    contracts_by_expiration: dict[str, list[OptionContract]],
+    snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
+    expected_moves_by_expiration: dict[str, ExpectedMoveEstimate],
+    args: argparse.Namespace,
+) -> list[SpreadCandidate]:
+    return build_vertical_spreads(
+        symbol=symbol,
+        strategy=strategy,
+        spot_price=spot_price,
+        contracts_by_expiration=contracts_by_expiration,
+        snapshots_by_expiration=snapshots_by_expiration,
+        expected_moves_by_expiration=expected_moves_by_expiration,
+        args=args,
+    )
+
+
 def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> float:
+    premium_kind = net_premium_kind(candidate.strategy)
     session_bucket = zero_dte_session_bucket() if args.profile == "0dte" else None
     if args.profile == "0dte":
         delta_target = zero_dte_delta_target(session_bucket or "off_hours")
@@ -2595,7 +2702,10 @@ def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> flo
     width_score = 1.0 - min(abs(candidate.width - width_target) / width_window, 1.0)
 
     return_on_risk_score = clamp(candidate.return_on_risk / 0.60)
-    breakeven_cushion_score = clamp(candidate.breakeven_cushion_pct / 0.035)
+    if premium_kind == "debit":
+        breakeven_cushion_score = clamp(1.0 - (candidate.breakeven_cushion_pct / 0.08))
+    else:
+        breakeven_cushion_score = clamp(candidate.breakeven_cushion_pct / 0.035)
 
     if candidate.expected_move and candidate.expected_move > 0:
         short_expected_move_score = clamp(0.50 + (candidate.short_vs_expected_move or 0.0) / candidate.expected_move)
@@ -2735,11 +2845,11 @@ def print_human_readable(
     print()
 
     if not candidates:
-        print("No credit spreads matched the current filters and calendar policy.")
+        print("No vertical spreads matched the current filters and calendar policy.")
         return
 
     include_strategy = strategy == "combined" or len({candidate.strategy for candidate in candidates}) > 1
-    headers = ["Expiry", "DTE", "Short", "Long", "Width", "MidCr", "ROR%", "Score", "Δ", "OTM%", "BE%", "S-EM", "MinOI", "Cal", "DQ", "EvtD"]
+    headers = ["Expiry", "DTE", "Short", "Long", "Width", "Entry", "ROR%", "Score", "Δ", "OTM%", "BE%", "S-EM", "MinOI", "Cal", "DQ", "EvtD"]
     if include_strategy:
         headers = ["Side", *headers]
     rows = build_table_rows(candidates, include_strategy=include_strategy)
@@ -3137,7 +3247,7 @@ def attach_calendar_decisions(
             underlying_type=underlying_type,
             refresh=refresh_calendar_events,
         )
-        decisions_by_expiration[expiration_date] = apply_credit_spread_policy(
+        decisions_by_expiration[expiration_date] = apply_strategy_calendar_policy(
             context,
             strategy=strategy,
             underlying_type=underlying_type,
@@ -3198,7 +3308,19 @@ def latest_option_bar_on_or_before(
     return latest_bar_on_or_before(bars_by_symbol.get(symbol, []), target_date)
 
 
-def estimate_spread_bar(short_bar: DailyBar, long_bar: DailyBar) -> dict[str, float]:
+def estimate_spread_bar(
+    short_bar: DailyBar,
+    long_bar: DailyBar,
+    *,
+    strategy: str,
+) -> dict[str, float]:
+    if net_premium_kind(strategy) == "debit":
+        return {
+            "open": max(long_bar.open - short_bar.open, 0.0),
+            "high": max(long_bar.high - short_bar.low, 0.0),
+            "low": max(long_bar.low - short_bar.high, 0.0),
+            "close": max(long_bar.close - short_bar.close, 0.0),
+        }
     return {
         "open": max(short_bar.open - long_bar.open, 0.0),
         "high": max(short_bar.high - long_bar.low, 0.0),
@@ -3241,8 +3363,13 @@ def simulate_exit_until_date(
     short_bars = option_bars_by_date(option_bars.get(candidate["short_symbol"], []))
     long_bars = option_bars_by_date(option_bars.get(candidate["long_symbol"], []))
     entry_credit = candidate["midpoint_credit"]
-    target_mark = max(entry_credit * (1.0 - profit_target), 0.0)
-    stop_mark = entry_credit * stop_multiple
+    premium_kind = net_premium_kind(candidate.get("strategy"))
+    if premium_kind == "debit":
+        target_mark = entry_credit * (1.0 + profit_target)
+        stop_mark = max(entry_credit / max(stop_multiple, 1.0), 0.0)
+    else:
+        target_mark = max(entry_credit * (1.0 - profit_target), 0.0)
+        stop_mark = entry_credit * stop_multiple
 
     path_dates = sorted(d for d in short_bars if start_date <= d <= target_date and d in long_bars)
     if not path_dates:
@@ -3250,10 +3377,18 @@ def simulate_exit_until_date(
 
     last_mark = None
     for path_date in path_dates:
-        spread_bar = estimate_spread_bar(short_bars[path_date], long_bars[path_date])
+        spread_bar = estimate_spread_bar(
+            short_bars[path_date],
+            long_bars[path_date],
+            strategy=str(candidate.get("strategy") or ""),
+        )
         last_mark = spread_bar["close"]
-        hit_target = spread_bar["low"] <= target_mark
-        hit_stop = spread_bar["high"] >= stop_mark
+        if premium_kind == "debit":
+            hit_target = spread_bar["high"] >= target_mark
+            hit_stop = spread_bar["low"] <= stop_mark
+        else:
+            hit_target = spread_bar["low"] <= target_mark
+            hit_stop = spread_bar["high"] >= stop_mark
 
         if hit_target and hit_stop:
             return {
@@ -3261,7 +3396,11 @@ def simulate_exit_until_date(
                 "exit_date": path_date.isoformat(),
                 "exit_reason": "conflict_stop_first",
                 "exit_mark": stop_mark,
-                "estimated_pnl": (entry_credit - stop_mark) * 100.0,
+                "estimated_pnl": (
+                    (stop_mark - entry_credit) * 100.0
+                    if premium_kind == "debit"
+                    else (entry_credit - stop_mark) * 100.0
+                ),
                 "spread_mark_close": spread_bar["close"],
                 "spread_mark_low": spread_bar["low"],
                 "spread_mark_high": spread_bar["high"],
@@ -3274,7 +3413,11 @@ def simulate_exit_until_date(
                 "exit_date": path_date.isoformat(),
                 "exit_reason": "profit_target",
                 "exit_mark": target_mark,
-                "estimated_pnl": (entry_credit - target_mark) * 100.0,
+                "estimated_pnl": (
+                    (target_mark - entry_credit) * 100.0
+                    if premium_kind == "debit"
+                    else (entry_credit - target_mark) * 100.0
+                ),
                 "spread_mark_close": spread_bar["close"],
                 "spread_mark_low": spread_bar["low"],
                 "spread_mark_high": spread_bar["high"],
@@ -3287,7 +3430,11 @@ def simulate_exit_until_date(
                 "exit_date": path_date.isoformat(),
                 "exit_reason": "stop",
                 "exit_mark": stop_mark,
-                "estimated_pnl": (entry_credit - stop_mark) * 100.0,
+                "estimated_pnl": (
+                    (stop_mark - entry_credit) * 100.0
+                    if premium_kind == "debit"
+                    else (entry_credit - stop_mark) * 100.0
+                ),
                 "spread_mark_close": spread_bar["close"],
                 "spread_mark_low": spread_bar["low"],
                 "spread_mark_high": spread_bar["high"],
@@ -3300,7 +3447,13 @@ def simulate_exit_until_date(
         "exit_date": path_dates[-1].isoformat(),
         "exit_reason": "mark",
         "exit_mark": last_mark,
-        "estimated_pnl": (entry_credit - last_mark) * 100.0 if last_mark is not None else None,
+        "estimated_pnl": (
+            ((last_mark - entry_credit) * 100.0)
+            if premium_kind == "debit"
+            else ((entry_credit - last_mark) * 100.0)
+        )
+        if last_mark is not None
+        else None,
         "spread_mark_close": last_mark,
         "spread_mark_low": None,
         "spread_mark_high": None,
@@ -3320,15 +3473,24 @@ def mark_spread_on_date(
     if short_bar is None or long_bar is None:
         return {"status": "pending_option_bars"}
 
-    spread_bar = estimate_spread_bar(short_bar, long_bar)
+    spread_bar = estimate_spread_bar(
+        short_bar,
+        long_bar,
+        strategy=str(candidate.get("strategy") or ""),
+    )
     entry_credit = candidate["midpoint_credit"]
     close_mark = spread_bar["close"]
+    premium_kind = net_premium_kind(candidate.get("strategy"))
     return {
         "status": "mark_only",
         "exit_date": target_date.isoformat(),
         "exit_reason": "entry_mark",
         "exit_mark": close_mark,
-        "estimated_pnl": (entry_credit - close_mark) * 100.0,
+        "estimated_pnl": (
+            (close_mark - entry_credit) * 100.0
+            if premium_kind == "debit"
+            else (entry_credit - close_mark) * 100.0
+        ),
         "spread_mark_close": close_mark,
         "spread_mark_low": None,
         "spread_mark_high": None,
@@ -3349,6 +3511,7 @@ def summarize_replay(
     generated_at = datetime.fromisoformat(run_payload["generated_at"].replace("Z", "+00:00"))
     run_date = generated_at.astimezone(NEW_YORK).date()
     strategy = run_payload.get("strategy") or run_payload["filters"].get("strategy", "call_credit")
+    option_type = strategy_option_type(strategy)
     latest_available_date = None if not bars else max(
         datetime.fromisoformat(bar.timestamp.replace("Z", "+00:00")).date() for bar in bars
     )
@@ -3419,7 +3582,7 @@ def summarize_replay(
             path_bars = horizon_bars
             path_high = max(bar.high for bar in path_bars) if path_bars else horizon_bar.high
             path_low = min(bar.low for bar in path_bars) if path_bars else horizon_bar.low
-            if strategy == "put_credit":
+            if option_type == "put":
                 touched_short = path_low <= candidate["short_strike"]
                 closed_beyond_short = horizon_bar.close <= candidate["short_strike"]
                 closed_beyond_breakeven = horizon_bar.close <= candidate["breakeven"]
@@ -3442,7 +3605,7 @@ def summarize_replay(
                     "expiration_date": candidate["expiration_date"],
                     "status": "available",
                     "spot_at_horizon": horizon_bar.close,
-                    "path_extreme_to_horizon": path_low if strategy == "put_credit" else path_high,
+                    "path_extreme_to_horizon": path_low if option_type == "put" else path_high,
                     "touched_short_strike": touched_short,
                     "closed_past_short_strike": closed_beyond_short,
                     "closed_past_breakeven": closed_beyond_breakeven,
@@ -3528,7 +3691,7 @@ def summarize_replay(
         path_bars = bars_through_date(bars, expiry_date)
         path_high = max(bar.high for bar in path_bars) if path_bars else horizon_bar.high
         path_low = min(bar.low for bar in path_bars) if path_bars else horizon_bar.low
-        if strategy == "put_credit":
+        if option_type == "put":
             touched_short = path_low <= candidate["short_strike"]
             closed_beyond_short = horizon_bar.close <= candidate["short_strike"]
             closed_beyond_breakeven = horizon_bar.close <= candidate["breakeven"]
@@ -3551,7 +3714,7 @@ def summarize_replay(
                 "expiration_date": candidate["expiration_date"],
                 "status": "available",
                 "spot_at_horizon": horizon_bar.close,
-                "path_extreme_to_horizon": path_low if strategy == "put_credit" else path_high,
+                "path_extreme_to_horizon": path_low if option_type == "put" else path_high,
                 "touched_short_strike": touched_short,
                 "closed_past_short_strike": closed_beyond_short,
                 "closed_past_breakeven": closed_beyond_breakeven,
@@ -3674,7 +3837,9 @@ def run_replay(
     history_store: RunHistoryRepository,
 ) -> int:
     if args.replay_latest and args.strategy == "combined":
-        raise SystemExit("Replay latest requires --strategy call_credit or --strategy put_credit")
+        raise SystemExit(
+            "Replay latest requires a concrete strategy such as call_credit, put_credit, call_debit, or put_debit"
+        )
     if args.replay_run_id:
         run_payload = history_store.get_run(args.replay_run_id)
     else:
@@ -3795,8 +3960,9 @@ def scan_symbol_live(
             symbol_args.feed,
         )
 
+    option_type = strategy_option_type(symbol_args.strategy)
     raw_option_snapshots_by_expiration = (
-        call_snapshots_by_expiration if symbol_args.strategy == "call_credit" else put_snapshots_by_expiration
+        call_snapshots_by_expiration if option_type == "call" else put_snapshots_by_expiration
     )
     quoted_contract_count, alpaca_delta_contract_count = count_snapshot_delta_coverage(raw_option_snapshots_by_expiration)
 
@@ -3831,15 +3997,15 @@ def scan_symbol_live(
     )
 
     option_contracts_by_expiration = (
-        contracts_by_expiration if symbol_args.strategy == "call_credit" else put_contracts_by_expiration
+        contracts_by_expiration if option_type == "call" else put_contracts_by_expiration
     )
     option_snapshots_by_expiration = (
-        call_snapshots_by_expiration if symbol_args.strategy == "call_credit" else put_snapshots_by_expiration
+        call_snapshots_by_expiration if option_type == "call" else put_snapshots_by_expiration
     )
     _, delta_contract_count = count_snapshot_delta_coverage(option_snapshots_by_expiration)
     local_delta_contract_count = count_local_greeks_coverage(option_snapshots_by_expiration)
 
-    all_candidates = build_credit_spreads(
+    all_candidates = build_vertical_spreads(
         symbol=symbol,
         strategy=symbol_args.strategy,
         spot_price=spot_price,
