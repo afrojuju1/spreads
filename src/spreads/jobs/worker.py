@@ -13,7 +13,11 @@ import redis.asyncio as redis_async
 from arq import create_pool
 
 from spreads.events.bus import publish_global_event_async
-from spreads.jobs.live_collector import LiveTickContext, build_collection_args, run_collection_tick
+from spreads.jobs.live_collector import (
+    LiveTickContext,
+    build_collection_args,
+    run_collection_tick,
+)
 from spreads.jobs.registry import (
     ALERT_DELIVERY_JOB_TYPE,
     ALERT_RECONCILE_JOB_TYPE,
@@ -24,9 +28,9 @@ from spreads.jobs.registry import (
     EXECUTION_SUBMIT_JOB_TYPE,
     LIVE_COLLECTOR_JOB_TYPE,
     MAIN_QUEUE_NAME,
+    POSITION_EXIT_MANAGER_JOB_TYPE,
     POST_CLOSE_ANALYSIS_JOB_TYPE,
     POST_MARKET_ANALYSIS_JOB_TYPE,
-    SESSION_EXIT_MANAGER_JOB_TYPE,
     get_job_spec,
 )
 from spreads.jobs.orchestration import (
@@ -46,7 +50,7 @@ from spreads.services.alert_delivery import (
     run_alert_delivery,
 )
 from spreads.services.broker_sync import run_broker_sync
-from spreads.services.exit_manager import run_session_exit_manager
+from spreads.services.exit_manager import run_position_exit_manager
 from spreads.services.execution import run_execution_submit
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
 from spreads.services.live_recovery import (
@@ -56,10 +60,17 @@ from spreads.services.live_recovery import (
     build_slot_details_from_cycle_result,
     run_collector_recovery,
 )
-from spreads.services.live_pipelines import build_live_session_catalog, build_live_session_id
+from spreads.services.live_pipelines import (
+    build_live_session_catalog,
+    build_live_session_id,
+)
 from spreads.services.post_market_analysis import parse_args as parse_post_market_args
 from spreads.services.post_market_analysis import run_post_market_analysis
-from spreads.storage.factory import build_job_repository, build_post_market_repository, build_storage_context
+from spreads.storage.factory import (
+    build_job_repository,
+    build_post_market_repository,
+    build_storage_context,
+)
 
 WORKER_HEARTBEAT_SECONDS = 30
 WORKER_LEASE_TTL_SECONDS = 90
@@ -149,7 +160,10 @@ def compact_post_market_result(result: dict[str, Any]) -> dict[str, Any]:
             "session_date": result["session_date"],
             "expected_labels": list(result.get("expected_labels") or []),
             "realized_labels": list(result.get("realized_labels") or []),
-            "runs": [_compact_single_post_market_result(item) for item in result.get("runs", [])],
+            "runs": [
+                _compact_single_post_market_result(item)
+                for item in result.get("runs", [])
+            ],
             "skipped_labels": [dict(item) for item in result.get("skipped_labels", [])],
             "failed_labels": [dict(item) for item in result.get("failed_labels", [])],
         }
@@ -194,7 +208,10 @@ async def _enqueue_startup_collector_recovery(ctx: dict[str, Any]) -> None:
         limit=1,
     )
     latest_run = latest_runs[0] if latest_runs else None
-    if latest_run is not None and str(latest_run.get("status") or "") in {"queued", "running"}:
+    if latest_run is not None and str(latest_run.get("status") or "") in {
+        "queued",
+        "running",
+    }:
         return
     spec = get_job_spec(COLLECTOR_RECOVERY_JOB_TYPE)
     if spec is None:
@@ -281,9 +298,13 @@ async def _publish_job_run_event(ctx: dict[str, Any], run_record: Any) -> None:
             entity_type="job_run",
             entity_id=run_record["job_run_id"],
             payload=payload,
-            timestamp=run_record.get("finished_at") or run_record.get("heartbeat_at") or run_record["scheduled_for"],
+            timestamp=run_record.get("finished_at")
+            or run_record.get("heartbeat_at")
+            or run_record["scheduled_for"],
             source="worker",
-            session_date=payload.get("session_date") if isinstance(payload.get("session_date"), str) else None,
+            session_date=payload.get("session_date")
+            if isinstance(payload.get("session_date"), str)
+            else None,
             correlation_id=str(run_record["job_key"]),
         )
     except Exception:
@@ -303,7 +324,12 @@ async def _publish_post_market_event(
     session_id = None
     label = payload.get("label")
     session_date = payload.get("session_date")
-    if isinstance(label, str) and label and isinstance(session_date, str) and session_date:
+    if (
+        isinstance(label, str)
+        and label
+        and isinstance(session_date, str)
+        and session_date
+    ):
         session_id = build_live_session_id(label, session_date)
     try:
         await publish_global_event_async(
@@ -325,7 +351,9 @@ async def _publish_post_market_event(
         pass
 
 
-async def _publish_post_market_planner_events(ctx: dict[str, Any], result: dict[str, Any]) -> None:
+async def _publish_post_market_planner_events(
+    ctx: dict[str, Any], result: dict[str, Any]
+) -> None:
     for run in result.get("runs", []):
         await _publish_post_market_event(
             ctx,
@@ -365,7 +393,9 @@ def _run_duration_seconds(run_payload: dict[str, Any]) -> float | None:
 def _slot_lag_slots(run_payload: dict[str, Any]) -> int:
     slot_at = _parse_utc(run_payload.get("slot_at"))
     finished_at = _parse_utc(run_payload.get("finished_at"))
-    interval_seconds = int((run_payload.get("payload") or {}).get("interval_seconds") or 0)
+    interval_seconds = int(
+        (run_payload.get("payload") or {}).get("interval_seconds") or 0
+    )
     if slot_at is None or finished_at is None or interval_seconds <= 0:
         return 0
     elapsed_seconds = max((finished_at - slot_at).total_seconds(), 0.0)
@@ -427,13 +457,19 @@ def _build_live_collector_log_payload(
         "trade_capture": trade_capture,
         "uoa_overview": dict(uoa_summary.get("overview") or {}),
         "uoa_quote_overview": dict(uoa_quote_summary.get("overview") or {}),
-        "uoa_top_roots": [dict(item) for item in (uoa_summary.get("top_roots") or [])[:3]],
-        "uoa_top_contracts": [dict(item) for item in (uoa_summary.get("top_contracts") or [])[:3]],
+        "uoa_top_roots": [
+            dict(item) for item in (uoa_summary.get("top_roots") or [])[:3]
+        ],
+        "uoa_top_contracts": [
+            dict(item) for item in (uoa_summary.get("top_contracts") or [])[:3]
+        ],
         "uoa_decision_overview": dict(uoa_decisions.get("overview") or {}),
         "uoa_promotable_roots": [
             dict(item) for item in (uoa_decisions.get("top_promotable_roots") or [])[:3]
         ],
-        "uoa_high_roots": [dict(item) for item in (uoa_decisions.get("top_high_roots") or [])[:3]],
+        "uoa_high_roots": [
+            dict(item) for item in (uoa_decisions.get("top_high_roots") or [])[:3]
+        ],
         "consecutive_stream_zero_slots": consecutive_stream_zero_slots,
         "slot_lag_slots": slot_lag_slots,
     }
@@ -446,14 +482,18 @@ def _build_live_collector_degradation(
     slot_lag_slots: int,
 ) -> dict[str, Any] | None:
     quote_capture = run_payload.get("quote_capture") or {}
-    expected_quote_symbol_count = int(quote_capture.get("expected_quote_symbol_count", 0) or 0)
+    expected_quote_symbol_count = int(
+        quote_capture.get("expected_quote_symbol_count", 0) or 0
+    )
     reasons: list[str] = []
-    if expected_quote_symbol_count > 0 and int(quote_capture.get("total_quote_events_saved", 0)) == 0:
+    if (
+        expected_quote_symbol_count > 0
+        and int(quote_capture.get("total_quote_events_saved", 0)) == 0
+    ):
         reasons.append("quote_capture_empty")
     if (
         expected_quote_symbol_count > 0
-        and
-        int(quote_capture.get("stream_quote_events_saved", 0)) == 0
+        and int(quote_capture.get("stream_quote_events_saved", 0)) == 0
         and consecutive_stream_zero_slots >= LIVE_COLLECTOR_STREAM_STALL_THRESHOLD
     ):
         reasons.append("stream_capture_stalled")
@@ -478,7 +518,9 @@ def _build_live_collector_degradation(
     }
 
 
-async def _emit_live_collector_observability(ctx: dict[str, Any], run_record: Any) -> None:
+async def _emit_live_collector_observability(
+    ctx: dict[str, Any], run_record: Any
+) -> None:
     run_payload = enrich_live_collector_job_run_payload(run_record)
     session_id = run_payload.get("session_id")
     if not isinstance(session_id, str) or not session_id:
@@ -526,14 +568,18 @@ async def _emit_live_collector_observability(ctx: dict[str, Any], run_record: An
             event_type="alert",
             timestamp=run_payload.get("finished_at") or run_payload.get("slot_at"),
             source="worker",
-            session_date=run_payload.get("session_date") if isinstance(run_payload.get("session_date"), str) else None,
+            session_date=run_payload.get("session_date")
+            if isinstance(run_payload.get("session_date"), str)
+            else None,
             correlation_id=session_id,
         )
     except Exception:
         pass
 
 
-async def _mark_running(job_store: Any, job_run_id: str, runtime_owner: str, arq_job_id: str) -> Any:
+async def _mark_running(
+    job_store: Any, job_run_id: str, runtime_owner: str, arq_job_id: str
+) -> Any:
     now = datetime.now(UTC)
     run_record = await asyncio.to_thread(
         job_store.update_job_run_status,
@@ -570,7 +616,10 @@ async def _update_live_slot_status(
     label = payload.get("label")
     slot_at = payload.get("slot_at")
     job_key = payload.get("job_key")
-    if not all(isinstance(value, str) and value for value in (session_id, session_date, label, slot_at, job_key)):
+    if not all(
+        isinstance(value, str) and value
+        for value in (session_id, session_date, label, slot_at, job_key)
+    ):
         return
     await asyncio.to_thread(
         recovery_store.upsert_live_session_slot,
@@ -623,7 +672,9 @@ def build_live_session_catalog_for_date(
     job_store: Any,
     session_date: str,
 ) -> dict[str, Any]:
-    definitions = job_store.list_job_definitions(enabled_only=True, job_type="live_collector")
+    definitions = job_store.list_job_definitions(
+        enabled_only=True, job_type="live_collector"
+    )
     base_catalog = build_live_session_catalog(definitions, realized_labels=[])
     realized_labels = [
         str(pipeline["label"])
@@ -837,7 +888,9 @@ async def _execute_managed_job(
             await _publish_job_run_event(ctx, skipped_record)
             return result
 
-    running_record = await _mark_running(job_store, job_run_id, runtime_owner, arq_job_id)
+    running_record = await _mark_running(
+        job_store, job_run_id, runtime_owner, arq_job_id
+    )
     await _publish_job_run_event(ctx, running_record)
     if on_running is not None:
         await on_running(running_record)
@@ -853,7 +906,11 @@ async def _execute_managed_job(
             ),
         )
         compact = compact_result(result)
-        final_status = "skipped" if isinstance(result, dict) and result.get("status") == "skipped" else "succeeded"
+        final_status = (
+            "skipped"
+            if isinstance(result, dict) and result.get("status") == "skipped"
+            else "succeeded"
+        )
         completed_record = await asyncio.to_thread(
             job_store.update_job_run_status,
             job_run_id=job_run_id,
@@ -865,7 +922,9 @@ async def _execute_managed_job(
             result=compact,
         )
         if completed_record is None:
-            raise SupersededJobRun(f"Job run {job_run_id} was superseded before completion.")
+            raise SupersededJobRun(
+                f"Job run {job_run_id} was superseded before completion."
+            )
         await _publish_job_run_event(ctx, completed_record)
         if on_completed is not None:
             await on_completed(completed_record, result)
@@ -893,7 +952,9 @@ async def _execute_managed_job(
         raise
     finally:
         if lease_key is not None:
-            await asyncio.to_thread(job_store.release_lease, lease_key, owner=job_run_id)
+            await asyncio.to_thread(
+                job_store.release_lease, lease_key, owner=job_run_id
+            )
 
 
 async def run_broker_sync_job(
@@ -985,7 +1046,7 @@ async def run_execution_submit_job(
     )
 
 
-async def run_session_exit_manager_job(
+async def run_position_exit_manager_job(
     ctx: dict[str, Any],
     job_key: str,
     job_run_id: str,
@@ -996,12 +1057,12 @@ async def run_session_exit_manager_job(
 
     def runner(heartbeat: Any) -> dict[str, Any]:
         heartbeat()
-        return run_session_exit_manager(
+        return run_position_exit_manager(
             db_target=database_url,
         )
 
     enriched_payload = dict(payload)
-    enriched_payload["job_type"] = SESSION_EXIT_MANAGER_JOB_TYPE
+    enriched_payload["job_type"] = POSITION_EXIT_MANAGER_JOB_TYPE
     return await _execute_managed_job(
         ctx,
         job_key=job_key,
@@ -1055,7 +1116,9 @@ async def run_alert_reconcile_job(
             alert_store=ctx["storage"].alerts,
             job_store=ctx["job_store"],
             limit=int(payload.get("limit", 200)),
-            stale_after_seconds=int(payload.get("stale_after_seconds", ALERT_DELIVERY_STALE_SECONDS)),
+            stale_after_seconds=int(
+                payload.get("stale_after_seconds", ALERT_DELIVERY_STALE_SECONDS)
+            ),
         )
 
     enriched_payload = dict(payload)
@@ -1088,20 +1151,30 @@ async def run_live_collector_job(
             started_at=run_record.get("started_at"),
         )
 
-    async def on_completed(run_record: Mapping[str, Any], result: Mapping[str, Any]) -> None:
+    async def on_completed(
+        run_record: Mapping[str, Any], result: Mapping[str, Any]
+    ) -> None:
         slot_status = LIVE_SLOT_STATUS_SUCCEEDED
         recovery_note = None
         capture_status = None
         slot_details = None
         if str(result.get("status") or "") == "completed":
-            capture_status = str((result.get("quote_capture") or {}).get("capture_status") or "")
+            capture_status = str(
+                (result.get("quote_capture") or {}).get("capture_status") or ""
+            )
             slot_details = build_slot_details_from_cycle_result(result)
         elif str(result.get("slot_status") or "") == LIVE_SLOT_STATUS_MISSED:
             slot_status = LIVE_SLOT_STATUS_MISSED
-            recovery_note = str(result.get("message") or result.get("reason") or "Live slot was skipped as stale.")
+            recovery_note = str(
+                result.get("message")
+                or result.get("reason")
+                or "Live slot was skipped as stale."
+            )
         else:
             slot_status = LIVE_SLOT_STATUS_MISSED
-            recovery_note = str(result.get("reason") or "Live slot did not complete successfully.")
+            recovery_note = str(
+                result.get("reason") or "Live slot did not complete successfully."
+            )
         await _update_live_slot_status(
             ctx,
             payload=payload,
@@ -1114,7 +1187,9 @@ async def run_live_collector_job(
             finished_at=run_record.get("finished_at"),
         )
 
-    async def on_failed(run_record: Mapping[str, Any], partial_result: Mapping[str, Any] | None) -> None:
+    async def on_failed(
+        run_record: Mapping[str, Any], partial_result: Mapping[str, Any] | None
+    ) -> None:
         await _update_live_slot_status(
             ctx,
             payload=payload,
@@ -1123,10 +1198,16 @@ async def run_live_collector_job(
             recovery_note=(
                 None
                 if partial_result is None
-                else str(partial_result.get("reason") or partial_result.get("message") or "Live slot failed.")
+                else str(
+                    partial_result.get("reason")
+                    or partial_result.get("message")
+                    or "Live slot failed."
+                )
             )
             or "Live slot failed before it could complete.",
-            slot_details=None if partial_result is None else build_slot_details_from_cycle_result(partial_result),
+            slot_details=None
+            if partial_result is None
+            else build_slot_details_from_cycle_result(partial_result),
             started_at=run_record.get("started_at"),
             finished_at=run_record.get("finished_at"),
         )
@@ -1277,7 +1358,9 @@ async def run_post_market_analysis_job(
         )
         return result
     except ManagedJobFailure as exc:
-        partial_result = compact_post_market_result(exc.result) if exc.result is not None else None
+        partial_result = (
+            compact_post_market_result(exc.result) if exc.result is not None else None
+        )
         if partial_result is not None and partial_result.get("mode") == "planner":
             await _publish_post_market_planner_events(ctx, partial_result)
         await _publish_post_market_event(
@@ -1287,7 +1370,9 @@ async def run_post_market_analysis_job(
                 "analysis_run_id": job_run_id,
                 "session_date": payload.get("date", "today"),
                 "status": "failed",
-                "failed_labels": [] if partial_result is None else partial_result.get("failed_labels", []),
+                "failed_labels": []
+                if partial_result is None
+                else partial_result.get("failed_labels", []),
             },
             timestamp=datetime.now(UTC),
         )
@@ -1314,7 +1399,7 @@ class MainWorkerSettings:
         run_execution_submit_job,
         run_alert_delivery_job,
         run_alert_reconcile_job,
-        run_session_exit_manager_job,
+        run_position_exit_manager_job,
         run_post_close_analysis_job,
         run_post_market_analysis_job,
     ]

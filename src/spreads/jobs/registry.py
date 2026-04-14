@@ -12,7 +12,7 @@ ALERT_RECONCILE_JOB_TYPE = "alert_reconcile"
 LIVE_COLLECTOR_JOB_TYPE = "live_collector"
 POST_CLOSE_ANALYSIS_JOB_TYPE = "post_close_analysis"
 POST_MARKET_ANALYSIS_JOB_TYPE = "post_market_analysis"
-SESSION_EXIT_MANAGER_JOB_TYPE = "session_exit_manager"
+POSITION_EXIT_MANAGER_JOB_TYPE = "position_exit_manager"
 COLLECTOR_RECOVERY_JOB_TYPE = "collector_recovery"
 
 EXECUTION_SUBMIT_ADHOC_JOB_KEY = "execution_submit:adhoc"
@@ -61,8 +61,8 @@ JOB_SPECS = {
             queue_name=MAIN_QUEUE_NAME,
         ),
         JobSpec(
-            job_type=SESSION_EXIT_MANAGER_JOB_TYPE,
-            task_name="run_session_exit_manager_job",
+            job_type=POSITION_EXIT_MANAGER_JOB_TYPE,
+            task_name="run_position_exit_manager_job",
             queue_name=MAIN_QUEUE_NAME,
         ),
         JobSpec(
@@ -97,7 +97,7 @@ WORKER_LANES = (
             JOB_SPECS[EXECUTION_SUBMIT_JOB_TYPE].task_name,
             JOB_SPECS[ALERT_DELIVERY_JOB_TYPE].task_name,
             JOB_SPECS[ALERT_RECONCILE_JOB_TYPE].task_name,
-            JOB_SPECS[SESSION_EXIT_MANAGER_JOB_TYPE].task_name,
+            JOB_SPECS[POSITION_EXIT_MANAGER_JOB_TYPE].task_name,
             JOB_SPECS[POST_CLOSE_ANALYSIS_JOB_TYPE].task_name,
             JOB_SPECS[POST_MARKET_ANALYSIS_JOB_TYPE].task_name,
             JOB_SPECS[COLLECTOR_RECOVERY_JOB_TYPE].task_name,

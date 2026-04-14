@@ -233,7 +233,7 @@ def _reconciliation_snapshot(portfolio: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(positions, list) or not positions:
         return {
             "status": "clear",
-            "note": "No session positions are open for reconciliation.",
+            "note": "No open positions require reconciliation.",
         }
 
     open_positions = [
@@ -245,7 +245,7 @@ def _reconciliation_snapshot(portfolio: Mapping[str, Any]) -> dict[str, Any]:
     if not open_positions:
         return {
             "status": "clear",
-            "note": "No session positions are open for reconciliation.",
+            "note": "No open positions require reconciliation.",
         }
 
     mismatch_positions = [

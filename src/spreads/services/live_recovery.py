@@ -901,10 +901,10 @@ def run_collector_recovery(
         }
 
     from spreads.services.broker_sync import run_broker_sync
-    from spreads.services.exit_manager import run_session_exit_manager
+    from spreads.services.exit_manager import run_position_exit_manager
 
     broker_sync = run_broker_sync(db_target=db_target, storage=storage)
-    exit_manager = run_session_exit_manager(db_target=db_target, storage=storage)
+    exit_manager = run_position_exit_manager(db_target=db_target, storage=storage)
     execution_targets = refresh_execution_capture_targets(storage=storage)
 
     definitions = {

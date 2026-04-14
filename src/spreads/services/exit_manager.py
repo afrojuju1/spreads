@@ -266,7 +266,7 @@ def _refresh_open_position_marks(
 
 
 @with_storage()
-def run_session_exit_manager(
+def run_position_exit_manager(
     *,
     db_target: str,
     storage: Any | None = None,

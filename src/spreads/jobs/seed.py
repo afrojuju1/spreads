@@ -14,7 +14,7 @@ from spreads.jobs.registry import (
     POST_CLOSE_ANALYSIS_ADHOC_JOB_KEY,
     POST_CLOSE_ANALYSIS_JOB_TYPE,
     POST_MARKET_ANALYSIS_JOB_TYPE,
-    SESSION_EXIT_MANAGER_JOB_TYPE,
+    POSITION_EXIT_MANAGER_JOB_TYPE,
 )
 from spreads.runtime.config import default_database_url
 from spreads.storage.factory import build_job_repository
@@ -52,12 +52,17 @@ DEFAULT_AUTO_EXIT_POLICY = {
 
 RETIRED_JOB_KEYS = (
     "generator:adhoc",
+    "session_exit_manager:live",
 )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Seed default ARQ-managed job definitions.")
-    parser.add_argument("--db", default=default_database_url(), help="Postgres database URL.")
+    parser = argparse.ArgumentParser(
+        description="Seed default ARQ-managed job definitions."
+    )
+    parser.add_argument(
+        "--db", default=default_database_url(), help="Postgres database URL."
+    )
     return parser.parse_args(argv)
 
 
@@ -107,8 +112,8 @@ def seed_definitions(db: str) -> list[str]:
                 "singleton_scope": "global",
             },
             {
-                "job_key": "session_exit_manager:live",
-                "job_type": SESSION_EXIT_MANAGER_JOB_TYPE,
+                "job_key": "position_exit_manager:live",
+                "job_type": POSITION_EXIT_MANAGER_JOB_TYPE,
                 "enabled": True,
                 "schedule_type": "interval_minutes",
                 "schedule": {"minutes": 1},

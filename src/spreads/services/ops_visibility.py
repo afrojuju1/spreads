@@ -1469,7 +1469,7 @@ def build_trading_health(
             _attention(
                 severity="high",
                 code="position_schema_unavailable",
-                message="Session positions storage is not available yet.",
+                message="Position storage is not available yet.",
             )
         )
 

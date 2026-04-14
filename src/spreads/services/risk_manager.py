@@ -524,7 +524,7 @@ def build_session_risk_snapshot(
         }
     return {
         "status": "ok",
-        "note": "Session can submit new executions under the current risk policy.",
+        "note": "Pipeline run can submit new executions under the current risk policy.",
         "policy": normalized_policy,
         "metrics": metrics,
     }
@@ -829,22 +829,18 @@ def validate_close_execution(
 ) -> dict[str, Any]:
     remaining_quantity = _coerce_float(position.get("remaining_quantity"))
     if remaining_quantity is None or remaining_quantity <= 0:
-        raise ValueError("Session position does not have remaining quantity to close.")
+        raise ValueError("Position does not have remaining quantity to close.")
     if quantity <= 0:
         raise ValueError("Close quantity must be positive.")
     if quantity > remaining_quantity:
-        raise ValueError(
-            "Close quantity exceeds the remaining session position quantity."
-        )
+        raise ValueError("Close quantity exceeds the remaining position quantity.")
     if limit_price is not None and limit_price <= 0:
         raise ValueError("Close execution requires a positive limit price.")
     if (
         _as_text(position.get("short_symbol")) is None
         or _as_text(position.get("long_symbol")) is None
     ):
-        raise ValueError(
-            "Session position is missing the broker symbols required to close."
-        )
+        raise ValueError("Position is missing the broker symbols required to close.")
     return {
         "status": "ok",
     }
