@@ -155,6 +155,9 @@ def _scored_candidate(
             "profile_score_components": scorecard["profile_score_components"],
             "profile_score_evidence": scorecard["profile_score_evidence"],
             "penalty": scorecard["penalty"],
+            "signal_bundle": scorecard["signal_bundle"],
+            "signal_thresholds": scorecard["signal_thresholds"],
+            "signal_gate": scorecard["signal_gate"],
         },
     }
 

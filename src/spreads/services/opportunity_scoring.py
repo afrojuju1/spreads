@@ -34,6 +34,52 @@ EARNINGS_PHASES = {
     "post_event_fresh",
     "post_event_settled",
 }
+ACTIVE_EARNINGS_PHASES = {
+    "pre_event_runup",
+    "through_event",
+    "post_event_fresh",
+}
+LONG_VOL_FAMILIES = {"long_straddle", "long_strangle"}
+DIRECTIONAL_DEBIT_FAMILIES = {"call_debit_spread", "put_debit_spread"}
+SHORT_PREMIUM_FAMILIES = {
+    "call_credit_spread",
+    "put_credit_spread",
+    "iron_condor",
+}
+SUPPORTED_EARNINGS_HORIZONS = {"next_daily", "near_term", "post_event"}
+EARNINGS_SIGNAL_FIELDS = (
+    "direction_signal",
+    "jump_risk_signal",
+    "pricing_signal",
+    "post_event_confirmation_signal",
+)
+SIGNAL_SCORE_ALIASES = {
+    "direction_signal": ("direction_signal", "earnings_direction_signal"),
+    "jump_risk_signal": ("jump_risk_signal", "earnings_jump_risk_signal"),
+    "pricing_signal": ("pricing_signal", "earnings_pricing_signal"),
+    "post_event_confirmation_signal": (
+        "post_event_confirmation_signal",
+        "earnings_post_event_confirmation_signal",
+    ),
+}
+SIGNAL_SUBSIGNAL_COUNT_ALIASES = {
+    "direction_signal": (
+        "direction_signal_subsignal_count",
+        "direction_signal_component_count",
+    ),
+    "jump_risk_signal": (
+        "jump_risk_signal_subsignal_count",
+        "jump_risk_signal_component_count",
+    ),
+    "pricing_signal": (
+        "pricing_signal_subsignal_count",
+        "pricing_signal_component_count",
+    ),
+    "post_event_confirmation_signal": (
+        "post_event_confirmation_signal_subsignal_count",
+        "post_event_confirmation_signal_component_count",
+    ),
+}
 
 
 def _clamp(value: float, lower: float, upper: float) -> float:
@@ -56,11 +102,53 @@ def _as_float(value: Any) -> float | None:
         return None
 
 
+def _as_int(value: Any) -> int | None:
+    parsed = _as_float(value)
+    if parsed is None:
+        return None
+    return int(parsed)
+
+
+def _as_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value in (None, ""):
+        return None
+    normalized = str(value).strip().lower()
+    if normalized in {"true", "1", "yes", "y", "on"}:
+        return True
+    if normalized in {"false", "0", "no", "n", "off"}:
+        return False
+    return None
+
+
 def _normalize_score(value: Any, *, default: float = 0.0) -> float:
     parsed = _as_float(value)
     if parsed is None:
         return default
     return _clamp(parsed / 100.0, 0.0, 1.0)
+
+
+def _normalize_unit_score(value: Any) -> float | None:
+    parsed = _as_float(value)
+    if parsed is None:
+        return None
+    if parsed > 1.0:
+        parsed = parsed / 100.0
+    return round(_clamp(parsed, 0.0, 1.0), 4)
+
+
+def _first_present_value(candidate: Mapping[str, Any], aliases: tuple[str, ...]) -> Any:
+    for alias in aliases:
+        if alias in candidate and candidate.get(alias) not in (None, ""):
+            return candidate.get(alias)
+    return None
+
+
+def _mean_score(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return round(sum(values) / float(len(values)), 4)
 
 
 def resolve_style_profile(
@@ -135,6 +223,561 @@ def candidate_event_timing_rule(candidate: Mapping[str, Any]) -> str:
         "post_event_fresh": "post_event",
         "post_event_settled": "normal_policy",
     }.get(phase, "none")
+
+
+def _is_friday_after_hours_event(candidate: Mapping[str, Any]) -> bool:
+    event_date = _as_text(candidate.get("earnings_event_date"))
+    session_timing = str(candidate.get("earnings_session_timing") or "").strip().lower()
+    if event_date is None or session_timing != "after_close":
+        return False
+    try:
+        return datetime.fromisoformat(event_date).weekday() == 4
+    except ValueError:
+        return False
+
+
+def _derived_direction_signal(candidate: Mapping[str, Any]) -> tuple[float | None, int | None]:
+    components: list[float] = []
+    setup_score = _normalize_unit_score(candidate.get("setup_score"))
+    intraday_score = _normalize_unit_score(candidate.get("setup_intraday_score"))
+    quality_score = _normalize_unit_score(candidate.get("quality_score"))
+    for item in (intraday_score, setup_score, quality_score):
+        if item is not None:
+            components.append(item)
+    score = _mean_score(components)
+    if score is None:
+        return None, None
+    setup_status = str(candidate.get("setup_status") or "").strip().lower()
+    score += {
+        "favorable": 0.08,
+        "neutral": 0.0,
+        "unfavorable": -0.12,
+    }.get(setup_status, 0.0)
+    alignment = _as_bool(candidate.get("options_bias_alignment"))
+    if alignment is True:
+        score += 0.05
+        return round(_clamp(score, 0.0, 1.0), 4), len(components) + 1
+    if alignment is False:
+        score -= 0.05
+        return round(_clamp(score, 0.0, 1.0), 4), len(components) + 1
+    return round(_clamp(score, 0.0, 1.0), 4), len(components)
+
+
+def _volume_oi_score(candidate: Mapping[str, Any]) -> float | None:
+    scores: list[float] = []
+    for volume_key, oi_key in (
+        ("short_volume", "short_open_interest"),
+        ("long_volume", "long_open_interest"),
+    ):
+        volume = _as_float(candidate.get(volume_key))
+        open_interest = _as_float(candidate.get(oi_key))
+        if volume is None or open_interest in (None, 0.0):
+            continue
+        scores.append(_clamp(volume / max(open_interest, 1.0), 0.0, 1.0))
+    return _mean_score(scores)
+
+
+def _derived_jump_risk_signal(candidate: Mapping[str, Any]) -> tuple[float | None, int | None]:
+    components: list[float] = []
+    expected_move_pct = _as_float(candidate.get("expected_move_pct"))
+    if expected_move_pct is not None:
+        components.append(_clamp((expected_move_pct - 0.01) / 0.025, 0.0, 1.0))
+    volume_oi_score = _volume_oi_score(candidate)
+    if volume_oi_score is not None:
+        components.append(volume_oi_score)
+    quality_score = _normalize_unit_score(candidate.get("quality_score"))
+    if quality_score is not None:
+        components.append(_clamp(quality_score * 0.9, 0.0, 1.0))
+    score = _mean_score(components)
+    if score is None:
+        return None, None
+    return round(score, 4), len(components)
+
+
+def _derived_pricing_signal(candidate: Mapping[str, Any]) -> tuple[float | None, int | None]:
+    components: list[float] = []
+    fill_ratio = _as_float(candidate.get("fill_ratio"))
+    if fill_ratio is not None:
+        components.append(_clamp((fill_ratio - 0.6) / 0.35, 0.0, 1.0))
+    debit_width_ratio = _as_float(candidate.get("debit_width_ratio"))
+    if debit_width_ratio is not None:
+        components.append(_clamp((0.70 - debit_width_ratio) / 0.25, 0.0, 1.0))
+    modeled_move_vs_implied_move = _as_float(candidate.get("modeled_move_vs_implied_move"))
+    if modeled_move_vs_implied_move is not None:
+        components.append(_clamp((modeled_move_vs_implied_move - 0.9) / 0.3, 0.0, 1.0))
+    modeled_move_vs_break_even_move = _as_float(
+        candidate.get("modeled_move_vs_break_even_move")
+    )
+    if modeled_move_vs_break_even_move is not None:
+        components.append(
+            _clamp((modeled_move_vs_break_even_move - 0.9) / 0.25, 0.0, 1.0)
+        )
+    score = _mean_score(components)
+    if score is None:
+        return None, None
+    return round(score, 4), len(components)
+
+
+def _derived_post_event_confirmation_signal(
+    candidate: Mapping[str, Any],
+) -> tuple[float | None, int | None]:
+    components: list[float] = []
+    intraday_score = _normalize_unit_score(candidate.get("setup_intraday_score"))
+    setup_score = _normalize_unit_score(candidate.get("setup_score"))
+    quality_score = _normalize_unit_score(candidate.get("quality_score"))
+    for item in (intraday_score, setup_score, quality_score):
+        if item is not None:
+            components.append(item)
+    score = _mean_score(components)
+    if score is None:
+        return None, None
+    setup_status = str(candidate.get("setup_status") or "").strip().lower()
+    score += {
+        "favorable": 0.08,
+        "neutral": 0.0,
+        "unfavorable": -0.12,
+    }.get(setup_status, 0.0)
+    return round(_clamp(score, 0.0, 1.0), 4), len(components)
+
+
+def _derived_signal(
+    field: str,
+    candidate: Mapping[str, Any],
+) -> tuple[float | None, int | None]:
+    if field == "direction_signal":
+        return _derived_direction_signal(candidate)
+    if field == "jump_risk_signal":
+        return _derived_jump_risk_signal(candidate)
+    if field == "pricing_signal":
+        return _derived_pricing_signal(candidate)
+    if field == "post_event_confirmation_signal":
+        return _derived_post_event_confirmation_signal(candidate)
+    return None, None
+
+
+def build_earnings_signal_bundle(candidate: Mapping[str, Any]) -> dict[str, Any]:
+    signals: dict[str, dict[str, Any]] = {}
+    for field in EARNINGS_SIGNAL_FIELDS:
+        explicit_score = _normalize_unit_score(
+            _first_present_value(candidate, SIGNAL_SCORE_ALIASES[field])
+        )
+        explicit_subsignal_count = _as_int(
+            _first_present_value(candidate, SIGNAL_SUBSIGNAL_COUNT_ALIASES[field])
+        )
+        derived_score, derived_subsignal_count = _derived_signal(field, candidate)
+        signals[field] = {
+            "score": explicit_score if explicit_score is not None else derived_score,
+            "subsignal_count": (
+                explicit_subsignal_count
+                if explicit_subsignal_count is not None
+                else derived_subsignal_count
+            ),
+            "source": (
+                "explicit"
+                if explicit_score is not None
+                else ("derived" if derived_score is not None else "missing")
+            ),
+        }
+    return {
+        "signals": signals,
+        "options_bias_alignment": _as_bool(candidate.get("options_bias_alignment")),
+        "debit_width_ratio": _as_float(candidate.get("debit_width_ratio")),
+        "modeled_move_vs_implied_move": _as_float(
+            candidate.get("modeled_move_vs_implied_move")
+        ),
+        "modeled_move_vs_break_even_move": _as_float(
+            candidate.get("modeled_move_vs_break_even_move")
+        ),
+        "neutral_regime_signal": _normalize_unit_score(
+            candidate.get("neutral_regime_signal")
+        ),
+        "residual_iv_richness": _normalize_unit_score(
+            candidate.get("residual_iv_richness")
+        ),
+        "friday_after_hours_event": _is_friday_after_hours_event(candidate),
+    }
+
+
+def earnings_signal_thresholds(
+    *,
+    family: str,
+    earnings_phase: str,
+    friday_after_hours_event: bool = False,
+) -> dict[str, Any]:
+    thresholds: dict[str, Any] = {
+        "active": False,
+        "lead_signal": None,
+        "lead_signal_min": None,
+        "lead_signal_subsignal_min": None,
+        "pricing_signal_min": None,
+        "pricing_signal_subsignal_min": None,
+        "dte_min": None,
+        "dte_max": None,
+        "dte_ideal_min": None,
+        "dte_ideal_max": None,
+        "options_bias_alignment_required": False,
+        "debit_width_ratio_max": None,
+        "modeled_move_vs_implied_move_min": None,
+        "modeled_move_vs_break_even_move_min": None,
+        "neutral_regime_signal_min": None,
+        "residual_iv_richness_min": None,
+    }
+    if earnings_phase == "pre_event_runup" and family in DIRECTIONAL_DEBIT_FAMILIES:
+        thresholds.update(
+            {
+                "active": True,
+                "lead_signal": "direction_signal",
+                "lead_signal_min": 0.65,
+                "lead_signal_subsignal_min": 2,
+                "pricing_signal_min": 0.55,
+                "pricing_signal_subsignal_min": 1,
+                "dte_min": 4,
+                "dte_max": 15,
+                "dte_ideal_min": 4,
+                "dte_ideal_max": 12,
+                "options_bias_alignment_required": True,
+                "debit_width_ratio_max": 0.60,
+            }
+        )
+    elif earnings_phase == "pre_event_runup" and family in LONG_VOL_FAMILIES:
+        thresholds.update(
+            {
+                "active": True,
+                "lead_signal": "jump_risk_signal",
+                "lead_signal_min": 0.70,
+                "lead_signal_subsignal_min": 2,
+                "pricing_signal_min": 0.60,
+                "pricing_signal_subsignal_min": 1,
+                "dte_min": 2,
+                "dte_max": 10,
+                "dte_ideal_min": 2,
+                "dte_ideal_max": 7,
+            }
+        )
+    elif earnings_phase == "through_event" and family in DIRECTIONAL_DEBIT_FAMILIES:
+        thresholds.update(
+            {
+                "active": True,
+                "lead_signal": "direction_signal",
+                "lead_signal_min": 0.70,
+                "lead_signal_subsignal_min": 2,
+                "pricing_signal_min": 0.60,
+                "pricing_signal_subsignal_min": 1,
+                "dte_min": 2,
+                "dte_max": 10,
+                "dte_ideal_min": 2,
+                "dte_ideal_max": 7,
+                "options_bias_alignment_required": True,
+                "debit_width_ratio_max": 0.60,
+            }
+        )
+    elif earnings_phase == "through_event" and family == "long_straddle":
+        thresholds.update(
+            {
+                "active": True,
+                "lead_signal": "jump_risk_signal",
+                "lead_signal_min": 0.70,
+                "lead_signal_subsignal_min": 2,
+                "pricing_signal_min": 0.60,
+                "pricing_signal_subsignal_min": 1,
+                "dte_min": 2,
+                "dte_max": 10,
+                "dte_ideal_min": 2,
+                "dte_ideal_max": 7,
+                "modeled_move_vs_implied_move_min": 1.10,
+            }
+        )
+    elif earnings_phase == "through_event" and family == "long_strangle":
+        thresholds.update(
+            {
+                "active": True,
+                "lead_signal": "jump_risk_signal",
+                "lead_signal_min": 0.70,
+                "lead_signal_subsignal_min": 2,
+                "pricing_signal_min": 0.60,
+                "pricing_signal_subsignal_min": 1,
+                "dte_min": 2,
+                "dte_max": 10,
+                "dte_ideal_min": 2,
+                "dte_ideal_max": 7,
+                "modeled_move_vs_break_even_move_min": 1.05,
+            }
+        )
+    elif earnings_phase == "post_event_fresh" and family in DIRECTIONAL_DEBIT_FAMILIES:
+        confirmation_min = 0.65 + (0.05 if friday_after_hours_event else 0.0)
+        thresholds.update(
+            {
+                "active": True,
+                "lead_signal": "post_event_confirmation_signal",
+                "lead_signal_min": round(min(confirmation_min, 0.99), 2),
+                "lead_signal_subsignal_min": 3,
+                "pricing_signal_min": 0.55,
+                "pricing_signal_subsignal_min": 1,
+                "dte_min": 2,
+                "dte_max": 15,
+                "dte_ideal_min": 2,
+                "dte_ideal_max": 10,
+            }
+        )
+    elif earnings_phase == "post_event_fresh" and family in {
+        "call_credit_spread",
+        "put_credit_spread",
+    }:
+        confirmation_min = 0.65 + (0.05 if friday_after_hours_event else 0.0)
+        thresholds.update(
+            {
+                "active": True,
+                "lead_signal": "post_event_confirmation_signal",
+                "lead_signal_min": round(min(confirmation_min, 0.99), 2),
+                "lead_signal_subsignal_min": 3,
+                "pricing_signal_min": 0.55,
+                "pricing_signal_subsignal_min": 1,
+                "dte_min": 2,
+                "dte_max": 15,
+                "dte_ideal_min": 2,
+                "dte_ideal_max": 10,
+            }
+        )
+    elif earnings_phase == "post_event_fresh" and family == "iron_condor":
+        confirmation_min = 0.70 + (0.05 if friday_after_hours_event else 0.0)
+        thresholds.update(
+            {
+                "active": True,
+                "lead_signal": "post_event_confirmation_signal",
+                "lead_signal_min": round(min(confirmation_min, 0.99), 2),
+                "lead_signal_subsignal_min": 3,
+                "pricing_signal_min": 0.60,
+                "pricing_signal_subsignal_min": 1,
+                "dte_min": 3,
+                "dte_max": 15,
+                "dte_ideal_min": 3,
+                "dte_ideal_max": 12,
+                "neutral_regime_signal_min": 0.60,
+                "residual_iv_richness_min": 0.60,
+            }
+        )
+    return thresholds
+
+
+def evaluate_earnings_signal_gate(
+    *,
+    candidate: Mapping[str, Any],
+    family: str,
+    earnings_phase: str,
+    days_to_expiration: int | None,
+) -> dict[str, Any]:
+    bundle = build_earnings_signal_bundle(candidate)
+    thresholds = earnings_signal_thresholds(
+        family=family,
+        earnings_phase=earnings_phase,
+        friday_after_hours_event=bool(bundle.get("friday_after_hours_event")),
+    )
+    blockers: list[str] = []
+    if not thresholds["active"]:
+        return {
+            "active": False,
+            "eligible": True,
+            "blockers": blockers,
+            "bundle": bundle,
+            "thresholds": thresholds,
+            "coverage_count": sum(
+                1
+                for field in EARNINGS_SIGNAL_FIELDS
+                if bundle["signals"][field]["score"] is not None
+            ),
+        }
+
+    lead_signal = str(thresholds.get("lead_signal") or "")
+    lead_entry = (
+        bundle["signals"].get(lead_signal, {})
+        if isinstance(bundle.get("signals"), Mapping)
+        else {}
+    )
+    lead_score = _as_float(lead_entry.get("score"))
+    lead_subsignal_count = _as_int(lead_entry.get("subsignal_count"))
+    pricing_entry = bundle["signals"].get("pricing_signal", {})
+    pricing_score = _as_float(pricing_entry.get("score"))
+    pricing_subsignal_count = _as_int(pricing_entry.get("subsignal_count"))
+
+    dte_min = _as_int(thresholds.get("dte_min"))
+    dte_max = _as_int(thresholds.get("dte_max"))
+    if days_to_expiration is not None and (
+        (dte_min is not None and days_to_expiration < dte_min)
+        or (dte_max is not None and days_to_expiration > dte_max)
+    ):
+        blockers.append("earnings_dte_out_of_range")
+
+    lead_signal_min = _as_float(thresholds.get("lead_signal_min"))
+    if lead_signal_min is not None:
+        if lead_score is None:
+            blockers.append(f"missing_{lead_signal}")
+        elif lead_score < lead_signal_min:
+            blockers.append(f"{lead_signal}_below_threshold")
+
+    lead_signal_subsignal_min = _as_int(thresholds.get("lead_signal_subsignal_min"))
+    if lead_signal_subsignal_min is not None:
+        if lead_subsignal_count is None:
+            blockers.append(f"missing_{lead_signal}_subsignal_count")
+        elif lead_subsignal_count < lead_signal_subsignal_min:
+            blockers.append(f"{lead_signal}_subsignal_count_too_low")
+
+    pricing_signal_min = _as_float(thresholds.get("pricing_signal_min"))
+    if pricing_signal_min is not None:
+        if pricing_score is None:
+            blockers.append("missing_pricing_signal")
+        elif pricing_score < pricing_signal_min:
+            blockers.append("pricing_signal_below_threshold")
+
+    pricing_signal_subsignal_min = _as_int(
+        thresholds.get("pricing_signal_subsignal_min")
+    )
+    if pricing_signal_subsignal_min is not None:
+        if pricing_subsignal_count is None:
+            blockers.append("missing_pricing_signal_subsignal_count")
+        elif pricing_subsignal_count < pricing_signal_subsignal_min:
+            blockers.append("pricing_signal_subsignal_count_too_low")
+
+    if thresholds.get("options_bias_alignment_required"):
+        options_bias_alignment = bundle.get("options_bias_alignment")
+        if options_bias_alignment is None:
+            blockers.append("missing_options_bias_alignment")
+        elif not bool(options_bias_alignment):
+            blockers.append("options_bias_alignment_not_confirmed")
+
+    debit_width_ratio_max = _as_float(thresholds.get("debit_width_ratio_max"))
+    if debit_width_ratio_max is not None:
+        debit_width_ratio = _as_float(bundle.get("debit_width_ratio"))
+        if debit_width_ratio is None:
+            blockers.append("missing_debit_width_ratio")
+        elif debit_width_ratio > debit_width_ratio_max:
+            blockers.append("debit_width_ratio_too_high")
+
+    modeled_move_vs_implied_move_min = _as_float(
+        thresholds.get("modeled_move_vs_implied_move_min")
+    )
+    if modeled_move_vs_implied_move_min is not None:
+        metric = _as_float(bundle.get("modeled_move_vs_implied_move"))
+        if metric is None:
+            blockers.append("missing_modeled_move_vs_implied_move")
+        elif metric < modeled_move_vs_implied_move_min:
+            blockers.append("modeled_move_vs_implied_move_too_low")
+
+    modeled_move_vs_break_even_move_min = _as_float(
+        thresholds.get("modeled_move_vs_break_even_move_min")
+    )
+    if modeled_move_vs_break_even_move_min is not None:
+        metric = _as_float(bundle.get("modeled_move_vs_break_even_move"))
+        if metric is None:
+            blockers.append("missing_modeled_move_vs_break_even_move")
+        elif metric < modeled_move_vs_break_even_move_min:
+            blockers.append("modeled_move_vs_break_even_move_too_low")
+
+    neutral_regime_signal_min = _as_float(
+        thresholds.get("neutral_regime_signal_min")
+    )
+    if neutral_regime_signal_min is not None:
+        metric = _as_float(bundle.get("neutral_regime_signal"))
+        if metric is None:
+            blockers.append("missing_neutral_regime_signal")
+        elif metric < neutral_regime_signal_min:
+            blockers.append("neutral_regime_signal_too_low")
+
+    residual_iv_richness_min = _as_float(
+        thresholds.get("residual_iv_richness_min")
+    )
+    if residual_iv_richness_min is not None:
+        metric = _as_float(bundle.get("residual_iv_richness"))
+        if metric is None:
+            blockers.append("missing_residual_iv_richness")
+        elif metric < residual_iv_richness_min:
+            blockers.append("residual_iv_richness_too_low")
+
+    return {
+        "active": True,
+        "eligible": not blockers,
+        "blockers": blockers,
+        "bundle": bundle,
+        "thresholds": thresholds,
+        "coverage_count": sum(
+            1
+            for field in EARNINGS_SIGNAL_FIELDS
+            if bundle["signals"][field]["score"] is not None
+        ),
+    }
+
+
+def earnings_phase_policy_preference(
+    *,
+    family: str,
+    earnings_phase: str,
+) -> str:
+    if earnings_phase in {"clean", "post_event_settled"}:
+        return "normal"
+    if earnings_phase == "pre_event_runup":
+        if family in DIRECTIONAL_DEBIT_FAMILIES:
+            return "preferred"
+        if family in LONG_VOL_FAMILIES:
+            return "allowed"
+        return "blocked"
+    if earnings_phase == "through_event":
+        if family in DIRECTIONAL_DEBIT_FAMILIES or family in LONG_VOL_FAMILIES:
+            return "preferred"
+        return "blocked"
+    if earnings_phase == "post_event_fresh":
+        if family in DIRECTIONAL_DEBIT_FAMILIES:
+            return "preferred"
+        if family in SHORT_PREMIUM_FAMILIES:
+            return "allowed"
+        return "blocked"
+    return "normal"
+
+
+def earnings_phase_policy_blockers(
+    *,
+    family: str,
+    earnings_phase: str,
+    product_class_value: str,
+    horizon_band_value: str,
+    earnings_timing_confidence: str,
+) -> list[str]:
+    blockers: list[str] = []
+    if earnings_phase not in ACTIVE_EARNINGS_PHASES:
+        return blockers
+    phase_preference = earnings_phase_policy_preference(
+        family=family,
+        earnings_phase=earnings_phase,
+    )
+    if horizon_band_value not in SUPPORTED_EARNINGS_HORIZONS:
+        blockers.append("earnings_horizon_band_blocked")
+    if earnings_phase == "through_event" and horizon_band_value == "same_day":
+        blockers.append("same_day_earnings_event_blocked")
+    if (
+        earnings_phase in {"through_event", "post_event_fresh"}
+        and earnings_timing_confidence not in {"medium", "high"}
+    ):
+        blockers.append("earnings_timing_confidence_too_low")
+    if earnings_phase == "pre_event_runup":
+        if family == "iron_condor":
+            blockers.append("pre_event_iron_condor_blocked")
+        elif (
+            product_class_value == "single_name_equity"
+            and family in SHORT_PREMIUM_FAMILIES
+        ):
+            blockers.append("pre_event_single_name_short_premium_blocked")
+    elif earnings_phase == "through_event":
+        if family == "iron_condor":
+            blockers.append("through_event_iron_condor_blocked")
+        elif (
+            product_class_value == "single_name_equity"
+            and family in SHORT_PREMIUM_FAMILIES
+        ):
+            blockers.append("through_event_single_name_short_premium_blocked")
+    elif earnings_phase == "post_event_fresh":
+        if family == "iron_condor" and horizon_band_value not in {"near_term", "post_event"}:
+            blockers.append("post_event_iron_condor_horizon_blocked")
+    if phase_preference == "blocked" and not blockers:
+        blockers.append("earnings_phase_family_blocked")
+    return blockers
 
 
 def style_score_thresholds(style_profile: str) -> dict[str, float]:
@@ -411,6 +1054,18 @@ def build_candidate_opportunity_score(
     )
     product_class_value = product_class(symbol)
     horizon_band_value, _, _, _ = horizon_band(days_to_expiration)
+    earnings_phase = candidate_earnings_phase(candidate)
+    event_timing_rule = candidate_event_timing_rule(candidate)
+    phase_policy_preference = earnings_phase_policy_preference(
+        family=family,
+        earnings_phase=earnings_phase,
+    )
+    signal_gate = evaluate_earnings_signal_gate(
+        candidate=candidate,
+        family=family,
+        earnings_phase=earnings_phase,
+        days_to_expiration=days_to_expiration,
+    )
 
     resolved_blockers = list(blockers or [])
     if not resolved_blockers:
@@ -422,6 +1077,18 @@ def build_candidate_opportunity_score(
                 horizon_band_value=horizon_band_value,
             )
         )
+        resolved_blockers.extend(
+            earnings_phase_policy_blockers(
+                family=family,
+                earnings_phase=earnings_phase,
+                product_class_value=product_class_value,
+                horizon_band_value=horizon_band_value,
+                earnings_timing_confidence=str(
+                    candidate.get("earnings_timing_confidence") or "unknown"
+                ).strip().lower(),
+            )
+        )
+        resolved_blockers.extend(list(signal_gate["blockers"]))
         resolved_blockers.extend(
             profile_specific_blockers(
                 candidate=candidate,
@@ -440,7 +1107,11 @@ def build_candidate_opportunity_score(
     resolved_policy_state = (
         str(policy_state or "").strip().lower()
         if _as_text(policy_state) is not None
-        else ("blocked" if resolved_blockers else "allowed")
+        else (
+            "blocked"
+            if resolved_blockers
+            else ("preferred" if phase_policy_preference == "preferred" else "allowed")
+        )
     )
 
     discovery_score = round(_as_float(candidate.get("quality_score")) or 0.0, 1)
@@ -529,17 +1200,23 @@ def build_candidate_opportunity_score(
         ),
         4,
     )
-    earnings_phase = candidate_earnings_phase(candidate)
-    event_timing_rule = candidate_event_timing_rule(candidate)
-
     return {
         "style_profile": resolved_style,
         "strategy_family": family,
         "product_class": product_class_value,
         "horizon_band": horizon_band_value,
         "earnings_phase": earnings_phase,
+        "phase_policy_preference": phase_policy_preference,
         "event_state": candidate_event_state(candidate),
         "event_timing_rule": event_timing_rule,
+        "signal_bundle": signal_gate["bundle"],
+        "signal_thresholds": signal_gate["thresholds"],
+        "signal_gate": {
+            "active": signal_gate["active"],
+            "eligible": signal_gate["eligible"],
+            "coverage_count": signal_gate["coverage_count"],
+            "blockers": list(signal_gate["blockers"]),
+        },
         "policy_state": resolved_policy_state,
         "blockers": resolved_blockers,
         "discovery_score": discovery_score,
@@ -583,9 +1260,14 @@ def score_candidate_opportunity(
 
 __all__ = [
     "build_candidate_opportunity_score",
+    "build_earnings_signal_bundle",
     "candidate_earnings_phase",
     "candidate_event_state",
     "candidate_event_timing_rule",
+    "earnings_signal_thresholds",
+    "evaluate_earnings_signal_gate",
+    "earnings_phase_policy_blockers",
+    "earnings_phase_policy_preference",
     "product_class",
     "resolve_style_profile",
     "score_candidate_opportunity",

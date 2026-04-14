@@ -42,6 +42,9 @@ from spreads.services.opportunity_scoring import (
     candidate_earnings_phase,
     candidate_event_state,
     candidate_event_timing_rule,
+    earnings_phase_policy_blockers,
+    earnings_phase_policy_preference,
+    evaluate_earnings_signal_gate,
 )
 
 TOP_TIER_ETF_SYMBOLS = {"SPY", "QQQ", "IWM", "DIA", "GLD", "TLT"}
@@ -906,12 +909,35 @@ def _build_strategy_intents(
         dte = int(_as_float(candidate.get("days_to_expiration")) or 0)
         horizon_band, _, _, _ = _horizon_band(dte)
         product_class = _product_class(symbol)
+        earnings_phase = candidate_earnings_phase(candidate)
+        phase_policy_preference = earnings_phase_policy_preference(
+            family=family,
+            earnings_phase=earnings_phase,
+        )
+        signal_gate = evaluate_earnings_signal_gate(
+            candidate=candidate,
+            family=family,
+            earnings_phase=earnings_phase,
+            days_to_expiration=dte,
+        )
         blockers = _product_policy_blockers(
             family=family,
             style_profile=snapshot.style_profile,
             product_class=product_class,
             horizon_band=horizon_band,
         )
+        blockers.extend(
+            earnings_phase_policy_blockers(
+                family=family,
+                earnings_phase=earnings_phase,
+                product_class_value=product_class,
+                horizon_band_value=horizon_band,
+                earnings_timing_confidence=str(
+                    candidate.get("earnings_timing_confidence") or "unknown"
+                ).strip().lower(),
+            )
+        )
+        blockers.extend(list(signal_gate["blockers"]))
         blockers.extend(
             _profile_specific_blockers(
                 candidate=candidate,
@@ -921,7 +947,6 @@ def _build_strategy_intents(
         if str(candidate.get("data_status") or "") != "clean":
             blockers.append("data_quality_not_clean")
         calendar_status = str(candidate.get("calendar_status") or "")
-        earnings_phase = candidate_earnings_phase(candidate)
         if _calendar_blocks_strategy(
             calendar_status=calendar_status,
             style_profile=snapshot.style_profile,
@@ -947,7 +972,11 @@ def _build_strategy_intents(
         policy_state = (
             "blocked"
             if blockers
-            else ("preferred" if desirability >= 0.7 else "allowed")
+            else (
+                "preferred"
+                if phase_policy_preference == "preferred"
+                else "allowed"
+            )
         )
         intents.append(
             StrategyIntent(
@@ -973,7 +1002,16 @@ def _build_strategy_intents(
                     "product_class": product_class,
                     "legacy_strategy": _as_text(candidate.get("strategy")),
                     "earnings_phase": earnings_phase,
+                    "phase_policy_preference": phase_policy_preference,
                     "event_timing_rule": candidate_event_timing_rule(candidate),
+                    "signal_bundle": signal_gate["bundle"],
+                    "signal_thresholds": signal_gate["thresholds"],
+                    "signal_gate": {
+                        "active": signal_gate["active"],
+                        "eligible": signal_gate["eligible"],
+                        "coverage_count": signal_gate["coverage_count"],
+                        "blockers": list(signal_gate["blockers"]),
+                    },
                 },
             )
         )
@@ -1156,6 +1194,9 @@ def _build_opportunities(
                 "calendar_status": _as_text(candidate.get("calendar_status")),
                 "earnings_phase": candidate_earnings_phase(candidate),
                 "event_timing_rule": candidate_event_timing_rule(candidate),
+                "signal_bundle": scorecard["signal_bundle"],
+                "signal_thresholds": scorecard["signal_thresholds"],
+                "signal_gate": scorecard["signal_gate"],
                 "days_to_expiration": candidate.get("days_to_expiration"),
                 "width": _as_float(candidate.get("width")),
                 "midpoint_credit": _as_float(candidate.get("midpoint_credit")),
@@ -2078,6 +2119,35 @@ def _flatten_opportunity_rows(
                 "legacy_strategy": opportunity.legacy_strategy,
                 "event_state": opportunity.evidence.get("earnings_phase"),
                 "event_timing_rule": opportunity.evidence.get("event_timing_rule"),
+                "direction_signal": _as_float(
+                    ((opportunity.evidence.get("signal_bundle") or {}).get("signals") or {})
+                    .get("direction_signal", {})
+                    .get("score")
+                ),
+                "jump_risk_signal": _as_float(
+                    ((opportunity.evidence.get("signal_bundle") or {}).get("signals") or {})
+                    .get("jump_risk_signal", {})
+                    .get("score")
+                ),
+                "pricing_signal": _as_float(
+                    ((opportunity.evidence.get("signal_bundle") or {}).get("signals") or {})
+                    .get("pricing_signal", {})
+                    .get("score")
+                ),
+                "post_event_confirmation_signal": _as_float(
+                    ((opportunity.evidence.get("signal_bundle") or {}).get("signals") or {})
+                    .get("post_event_confirmation_signal", {})
+                    .get("score")
+                ),
+                "signal_gate_active": bool(
+                    (opportunity.evidence.get("signal_gate") or {}).get("active")
+                ),
+                "signal_gate_eligible": bool(
+                    (opportunity.evidence.get("signal_gate") or {}).get("eligible")
+                ),
+                "signal_gate_blockers": (opportunity.evidence.get("signal_gate") or {}).get(
+                    "blockers"
+                ),
                 "expiration_date": opportunity.expiration_date,
                 "short_symbol": opportunity.short_symbol,
                 "long_symbol": opportunity.long_symbol,
