@@ -217,6 +217,38 @@ export function TradeabilityBadge({
   );
 }
 
+function autoExecutionTone(value: string): string {
+  switch (value) {
+    case "submitted":
+      return "border-emerald-200 bg-emerald-100 text-emerald-900 dark:border-emerald-900/80 dark:bg-emerald-950/55 dark:text-emerald-100";
+    case "skipped":
+      return "border-amber-200 bg-amber-100 text-amber-900 dark:border-amber-900/80 dark:bg-amber-950/55 dark:text-amber-100";
+    case "blocked":
+      return "border-rose-200 bg-rose-100 text-rose-900 dark:border-rose-900/80 dark:bg-rose-950/55 dark:text-rose-100";
+    default:
+      return "border-border/70 bg-card text-foreground";
+  }
+}
+
+export function AutoExecutionStatusBadge({
+  value,
+}: {
+  value: string | null | undefined;
+}) {
+  const resolved = readString(value, "unknown");
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "rounded-full border px-2.5 py-1 text-[11px] uppercase tracking-[0.16em]",
+        autoExecutionTone(resolved),
+      )}
+    >
+      {resolved.replaceAll("_", " ")}
+    </Badge>
+  );
+}
+
 function executionTone(value: string): string {
   switch (value) {
     case "filled":

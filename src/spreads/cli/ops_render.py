@@ -64,12 +64,16 @@ def _render_duration(value: Any) -> str:
 
 def _stream_quote_count(mapping: dict[str, Any] | None) -> Any:
     payload = {} if mapping is None else mapping
-    return payload.get("stream_quote_events_saved", payload.get("websocket_quote_events_saved"))
+    return payload.get(
+        "stream_quote_events_saved", payload.get("websocket_quote_events_saved")
+    )
 
 
 def _stream_trade_count(mapping: dict[str, Any] | None) -> Any:
     payload = {} if mapping is None else mapping
-    return payload.get("stream_trade_events_saved", payload.get("websocket_trade_events_saved"))
+    return payload.get(
+        "stream_trade_events_saved", payload.get("websocket_trade_events_saved")
+    )
 
 
 def _truncate(value: Any, *, length: int = 48) -> str:
@@ -77,6 +81,26 @@ def _truncate(value: Any, *, length: int = 48) -> str:
     if len(text) <= length:
         return text
     return text[: max(length - 1, 0)].rstrip() + "…"
+
+
+def _render_auto_execution_summary(value: Any) -> str:
+    payload = value if isinstance(value, dict) else {}
+    status = str(payload.get("status") or "-")
+    symbol = payload.get("selected_symbol")
+    allocation_score = payload.get("allocation_score")
+    reason = payload.get("reason") or payload.get("decision_reason")
+    blockers = payload.get("execution_blockers") or []
+    if symbol and allocation_score is not None:
+        return f"{status} {symbol} @{_render_value(allocation_score)}"
+    if symbol:
+        return f"{status} {symbol}"
+    if blockers:
+        return _truncate(
+            f"{status} {', '.join(str(item) for item in blockers)}", length=40
+        )
+    if reason:
+        return _truncate(f"{status} {reason}", length=40)
+    return status
 
 
 def _job_run_status_text(status: str | None) -> Text:
@@ -188,6 +212,7 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Job Key")
         table.add_column("Status")
         table.add_column("Capture")
+        table.add_column("Auto Exec")
         table.add_column("Quote Stream/Base", justify="right")
         table.add_column("Last Slot")
         for row in collector_rows:
@@ -195,6 +220,7 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
                 str(row.get("job_key") or "-"),
                 str(row.get("status") or "-"),
                 str(row.get("capture_status") or "-"),
+                _render_auto_execution_summary(row.get("auto_execution_summary")),
                 f"{_render_value(row.get('stream_quote_events_saved'))}/{_render_value(row.get('baseline_quote_events_saved'))}",
                 str(row.get("last_slot_at") or "-"),
             )
@@ -432,9 +458,7 @@ def _render_session_detail(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row("Control", _render_value(summary.get("control_mode")))
     overview.add_row("Alerts", _render_value(summary.get("alert_count")))
     overview.add_row("Executions", _render_value(summary.get("execution_count")))
-    overview.add_row(
-        "Open Execs", _render_value(summary.get("open_execution_count"))
-    )
+    overview.add_row("Open Execs", _render_value(summary.get("open_execution_count")))
     overview.add_row(
         "Stale Execs", _render_value(summary.get("stale_open_execution_count"))
     )

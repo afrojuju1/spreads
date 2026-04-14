@@ -339,7 +339,9 @@ def _definition_requires_attention(
     *,
     now: datetime,
 ) -> bool:
-    operator_status = str(definition.get("operator_status") or "unknown").strip().lower()
+    operator_status = (
+        str(definition.get("operator_status") or "unknown").strip().lower()
+    )
     if operator_status not in {"degraded", "blocked"}:
         return False
     latest_run_at = definition.get("latest_run_at")
@@ -367,7 +369,9 @@ def _broker_sync_payload(
             },
         )
     payload = dict(state)
-    summary = payload.get("summary") if isinstance(payload.get("summary"), Mapping) else {}
+    summary = (
+        payload.get("summary") if isinstance(payload.get("summary"), Mapping) else {}
+    )
     age_seconds = _seconds_since(payload.get("updated_at"), now=now)
     status = str(payload.get("status") or "unknown")
     normalized = "unknown"
@@ -711,7 +715,10 @@ def _job_run_operator_status(
                     "healthy",
                     "Job run was skipped because another singleton run already covered the slot.",
                 )
-            if reason == "stale_slot" and str(run.get("job_type") or "") == "live_collector":
+            if (
+                reason == "stale_slot"
+                and str(run.get("job_type") or "") == "live_collector"
+            ):
                 return (
                     "healthy",
                     "Stale live slot was intentionally marked missed instead of replayed.",
@@ -1063,6 +1070,9 @@ def build_system_status(
                     "live_action_gate": None
                     if run is None
                     else dict(run.get("live_action_gate") or {}),
+                    "auto_execution_summary": None
+                    if run is None
+                    else run.get("auto_execution_summary"),
                     "last_slot_at": None
                     if run is None
                     else run.get("slot_at") or run.get("scheduled_for"),
@@ -1372,9 +1382,7 @@ def build_trading_health(
             and _as_text(row.get("underlying_symbol"))
         }
     )
-    capacity_blocked_underlying_count = len(
-        capacity_blocked_underlyings
-    )
+    capacity_blocked_underlying_count = len(capacity_blocked_underlyings)
     execution_health_status = (
         "degraded"
         if stale_open_execution_count or submit_unknown_execution_count
@@ -1681,7 +1689,9 @@ def build_sessions_view(
             attention.append(
                 _attention(
                     severity="high",
-                    code=str(live_action_gate.get("reason_code") or "live_action_blocked"),
+                    code=str(
+                        live_action_gate.get("reason_code") or "live_action_blocked"
+                    ),
                     message=_as_text(live_action_gate.get("message"))
                     or "Live session actions are blocked.",
                 )
@@ -1945,7 +1955,9 @@ def build_sessions_view(
         )
         if str(live_action_gate.get("status") or "") == "blocked":
             operator_status = "blocked"
-        elif bool(row.get("gap_active")) or str(row.get("recovery_state") or "") not in {
+        elif bool(row.get("gap_active")) or str(
+            row.get("recovery_state") or ""
+        ) not in {
             "",
             "clear",
         }:
@@ -3017,7 +3029,9 @@ def _build_uoa_payload(
     ]
     top_promotable_roots = [
         _summarize_uoa_root(row)
-        for row in list(uoa_decisions.get("top_promotable_roots") or [])[:UOA_ROOT_LIMIT]
+        for row in list(uoa_decisions.get("top_promotable_roots") or [])[
+            :UOA_ROOT_LIMIT
+        ]
         if isinstance(row, Mapping)
     ]
     top_high_roots = [
@@ -3122,9 +3136,7 @@ def _build_uoa_payload(
                 or 0
             ),
             "selected_monitor_count": int(
-                dict(state.get("selection_counts") or {}).get(
-                    MONITOR_SELECTION_STATE
-                )
+                dict(state.get("selection_counts") or {}).get(MONITOR_SELECTION_STATE)
                 or 0
             ),
             "event_count": len(list(state.get("cycle_events") or [])),

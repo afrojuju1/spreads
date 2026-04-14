@@ -241,6 +241,8 @@ def list_existing_sessions(
                 "latest_slot_at": row.get("latest_slot_at"),
                 "latest_slot_status": row.get("latest_slot_status"),
                 "latest_capture_status": row.get("latest_capture_status"),
+                "latest_auto_execution": row.get("latest_auto_execution"),
+                "latest_auto_execution_status": row.get("latest_auto_execution_status"),
                 **_quote_capture_counts(latest_run),
                 "promotable_count": _coerce_int(row.get("promotable_count")),
                 "monitor_count": _coerce_int(row.get("monitor_count")),

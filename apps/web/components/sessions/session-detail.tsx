@@ -40,6 +40,7 @@ import {
   SelectTrigger,
 } from "@/components/ui/select";
 import {
+  AutoExecutionStatusBadge,
   CaptureStatusBadge,
   ExecutionStatusBadge,
   formatCurrency,
@@ -231,8 +232,34 @@ function buildSessionPortfolioPositionRows(
     maxLoss: position.max_loss,
     openedAt: position.opened_at,
     closedAt: position.closed_at,
-    raw: position,
+  raw: position,
   }));
+}
+
+function autoExecutionTarget(summary: Record<string, unknown> | null | undefined): string {
+  const symbol = readString(summary?.selected_symbol, "");
+  if (symbol) {
+    return symbol;
+  }
+  return readString(summary?.selected_opportunity_id ?? summary?.top_opportunity_id, "—");
+}
+
+function autoExecutionTargetNote(summary: Record<string, unknown> | null | undefined): string {
+  const strategy = readString(summary?.selected_strategy_family, "");
+  if (strategy) {
+    return strategy.replaceAll("_", " ");
+  }
+  return readString(summary?.decision_reason ?? summary?.reason, "No opportunity selected");
+}
+
+function autoExecutionBlockers(summary: Record<string, unknown> | null | undefined): string {
+  const blockers = Array.isArray(summary?.execution_blockers)
+    ? summary.execution_blockers.map((value) => String(value)).filter(Boolean)
+    : [];
+  if (!blockers.length) {
+    return readString(summary?.message, "No blockers recorded.");
+  }
+  return blockers.join(", ");
 }
 
 function isWorkingExecutionAttempt(attempt: ExecutionAttempt): boolean {
@@ -1416,6 +1443,9 @@ export function SessionDetailPageContent({
               {session ? (
                 <TradeabilityBadge value={session.tradeability_state} />
               ) : null}
+              {session?.latest_auto_execution ? (
+                <AutoExecutionStatusBadge value={session.latest_auto_execution.status} />
+              ) : null}
             </div>
             <div className="mt-4 flex flex-col gap-3">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -1508,6 +1538,52 @@ export function SessionDetailPageContent({
                 <div className="mt-1 text-sm text-foreground/70">
                   {operatorFocus.detail}
                 </div>
+              </div>
+              <div className="rounded-2xl border border-border/70 bg-background/80 px-4 py-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                    Latest auto execution
+                  </div>
+                  {session?.latest_auto_execution ? (
+                    <AutoExecutionStatusBadge value={session.latest_auto_execution.status} />
+                  ) : null}
+                </div>
+                {session?.latest_auto_execution ? (
+                  <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                    <MetricTile
+                      label="Target"
+                      value={autoExecutionTarget(session.latest_auto_execution)}
+                      note={autoExecutionTargetNote(session.latest_auto_execution)}
+                    />
+                    <MetricTile
+                      label="Allocation"
+                      value={
+                        session.latest_auto_execution.allocation_score == null
+                          ? "—"
+                          : formatQuantity(session.latest_auto_execution.allocation_score)
+                      }
+                      note="portfolio-adjusted score"
+                    />
+                    <MetricTile
+                      label="Planner"
+                      value={`${readNumber(session.latest_auto_execution.candidate_count)}/${readNumber(session.latest_auto_execution.allocation_count)}/${readNumber(session.latest_auto_execution.execution_intent_count)}`}
+                      note="candidates / allocations / intents"
+                    />
+                    <div className="sm:col-span-3 text-sm text-foreground/80">
+                      {readString(session.latest_auto_execution.message, "No auto execution result has been recorded yet.")}
+                    </div>
+                    <div className="sm:col-span-3 rounded-2xl border border-border/70 bg-background/70 px-4 py-3 text-sm text-foreground/80">
+                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                        Execution blockers
+                      </div>
+                      <div className="mt-2">{autoExecutionBlockers(session.latest_auto_execution)}</div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-3 text-sm text-muted-foreground">
+                    No auto execution decision has been recorded for the latest slot yet.
+                  </div>
+                )}
               </div>
             </div>
           </div>

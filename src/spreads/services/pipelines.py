@@ -117,6 +117,23 @@ def _session_live_action_gate(
     return dict(gate)
 
 
+def _latest_auto_execution(
+    latest_run: Mapping[str, Any] | None,
+    *,
+    slot_runs: Iterable[Mapping[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    candidates: list[Mapping[str, Any]] = []
+    if latest_run is not None:
+        candidates.append(latest_run)
+    if slot_runs is not None:
+        candidates.extend(slot_runs)
+    for run in candidates:
+        summary = run.get("auto_execution_summary")
+        if isinstance(summary, Mapping):
+            return dict(summary)
+    return None
+
+
 def _tradeability_fields(
     *,
     latest_run: Mapping[str, Any] | None,
@@ -358,6 +375,7 @@ def _serialize_pipeline_summary(
             or int(candidate_counts.get("monitor") or 0)
         ),
     )
+    latest_auto_execution = _latest_auto_execution(latest_run)
     return {
         "pipeline_id": str(pipeline["pipeline_id"]),
         "label": str(pipeline["label"]),
@@ -376,6 +394,10 @@ def _serialize_pipeline_summary(
         "latest_capture_status": None
         if latest_run is None
         else latest_run.get("capture_status"),
+        "latest_auto_execution": latest_auto_execution,
+        "latest_auto_execution_status": None
+        if latest_auto_execution is None
+        else latest_auto_execution.get("status"),
         "promotable_count": int(candidate_counts.get("promotable") or 0),
         "monitor_count": int(candidate_counts.get("monitor") or 0),
         "alert_count": int(alert_count or 0),
@@ -711,6 +733,7 @@ def get_pipeline_detail(
         has_live_opportunities=bool(live_opportunities),
         has_analysis_only_opportunities=bool(analysis_only_opportunities),
     )
+    latest_auto_execution = _latest_auto_execution(latest_run, slot_runs=slot_runs)
 
     return {
         "pipeline_id": pipeline_id,
@@ -733,6 +756,7 @@ def get_pipeline_detail(
         "slot_health": slot_health,
         "recovery_slots": recovery_slots,
         "live_action_gate": live_action_gate,
+        "latest_auto_execution": latest_auto_execution,
         **tradeability_fields,
         "pipeline": dict(pipeline),
         "current_cycle": current_cycle,

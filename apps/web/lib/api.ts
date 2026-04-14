@@ -429,6 +429,26 @@ const pipelineReplaySchema = z
   })
   .passthrough();
 
+const autoExecutionSummarySchema = z
+  .object({
+    status: z.string(),
+    changed: z.boolean().optional(),
+    reason: z.string().nullable().optional(),
+    message: z.string().nullable().optional(),
+    selected_opportunity_id: z.string().nullable().optional(),
+    selected_candidate_id: z.number().nullable().optional(),
+    selected_symbol: z.string().nullable().optional(),
+    selected_strategy_family: z.string().nullable().optional(),
+    allocation_score: z.number().nullable().optional(),
+    decision_reason: z.string().nullable().optional(),
+    execution_blockers: z.array(z.string()).default([]),
+    candidate_count: z.number().optional(),
+    allocation_count: z.number().optional(),
+    execution_intent_count: z.number().optional(),
+    top_opportunity_id: z.string().nullable().optional(),
+  })
+  .passthrough();
+
 const sessionListItemSchema = z
   .object({
     session_id: z.string(),
@@ -439,6 +459,8 @@ const sessionListItemSchema = z
     latest_slot_at: z.string().nullable().optional(),
     latest_slot_status: z.string().nullable().optional(),
     latest_capture_status: z.string().nullable().optional(),
+    latest_auto_execution: autoExecutionSummarySchema.nullable().optional(),
+    latest_auto_execution_status: z.string().nullable().optional(),
     tradeability_state: z.string().nullable().optional(),
     tradeability_reason: z.string().nullable().optional(),
     tradeability_message: z.string().nullable().optional(),
@@ -468,6 +490,8 @@ const pipelineListItemSchema = z
     latest_slot_at: z.string().nullable().optional(),
     latest_slot_status: z.string().nullable().optional(),
     latest_capture_status: z.string().nullable().optional(),
+    latest_auto_execution: autoExecutionSummarySchema.nullable().optional(),
+    latest_auto_execution_status: z.string().nullable().optional(),
     tradeability_state: z.string().nullable().optional(),
     tradeability_reason: z.string().nullable().optional(),
     tradeability_message: z.string().nullable().optional(),
@@ -694,6 +718,7 @@ const sessionDetailSchema = z
     tradeability_state: z.string().nullable().optional(),
     tradeability_reason: z.string().nullable().optional(),
     tradeability_message: z.string().nullable().optional(),
+    latest_auto_execution: autoExecutionSummarySchema.nullable().optional(),
     latest_slot: jobRunSchema.nullable().optional(),
     current_cycle: liveResponseSchema.nullable().optional(),
     opportunities: z.array(liveCandidateSchema),
@@ -831,6 +856,7 @@ export type ReplayGroup = z.infer<typeof replayGroupSchema>;
 export type ReplayDeploymentSlice = z.infer<typeof replayDeploymentSliceSchema>;
 export type ReplayDeploymentQuality = z.infer<typeof replayDeploymentQualitySchema>;
 export type PipelineReplay = z.infer<typeof pipelineReplaySchema>;
+export type AutoExecutionSummary = z.infer<typeof autoExecutionSummarySchema>;
 export type SessionExecutionActionResponse = z.infer<typeof sessionExecutionActionResponseSchema>;
 export type GlobalRealtimeEvent = z.infer<typeof globalRealtimeEventSchema>;
 export type OpportunityExecutionRequest = {

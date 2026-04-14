@@ -3140,6 +3140,12 @@ def submit_auto_session_execution(
         "top_opportunity_id": (
             None if not ranked_opportunities else ranked_opportunities[0].opportunity_id
         ),
+        "top_symbol": None
+        if not ranked_opportunities
+        else ranked_opportunities[0].symbol,
+        "top_strategy_family": None
+        if not ranked_opportunities
+        else ranked_opportunities[0].strategy_family,
     }
     if not ranked_opportunities:
         return {

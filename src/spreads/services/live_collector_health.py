@@ -36,6 +36,53 @@ def _read_int(mapping: Mapping[str, Any] | None, key: str) -> int:
     return 0
 
 
+def _read_float(mapping: Mapping[str, Any] | None, key: str) -> float | None:
+    if mapping is None:
+        return None
+    value = mapping.get(key)
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _read_text(value: Any) -> str | None:
+    rendered = str(value or "").strip()
+    return rendered or None
+
+
+def _normalize_text_list(value: Any) -> list[str]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return []
+    return [item for item in (_read_text(entry) for entry in value) if item is not None]
+
+
+def _symbol_from_opportunity_id(value: Any) -> str | None:
+    text = _read_text(value)
+    if text is None:
+        return None
+    parts = text.split(":")
+    if len(parts) < 5 or parts[0] != "opportunity":
+        return None
+    return _read_text(parts[3])
+
+
+def _strategy_from_opportunity_id(value: Any) -> str | None:
+    text = _read_text(value)
+    if text is None:
+        return None
+    parts = text.split(":")
+    if len(parts) < 6 or parts[0] != "opportunity":
+        return None
+    return _read_text(parts[4])
+
+
 def normalize_expected_symbols(value: Any) -> list[str]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
         return []
@@ -383,6 +430,108 @@ def build_tradeability_summary(
     }
 
 
+AUTO_EXECUTION_SKIPPED_REASONS = frozenset(
+    {
+        "execution_disabled",
+        "no_live_opportunity",
+        "no_allocated_opportunity",
+        "live_opportunity_store_unavailable",
+        "selected_opportunity_missing",
+        "selected_opportunity_missing_candidate",
+    }
+)
+
+
+def build_auto_execution_summary(
+    auto_execution: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(auto_execution, Mapping):
+        return None
+    execution_plan = (
+        auto_execution.get("execution_plan")
+        if isinstance(auto_execution.get("execution_plan"), Mapping)
+        else {}
+    )
+    selected_intent = (
+        execution_plan.get("selected_execution_intent")
+        if isinstance(execution_plan.get("selected_execution_intent"), Mapping)
+        else {}
+    )
+    selected_decision = (
+        execution_plan.get("selected_allocation_decision")
+        if isinstance(execution_plan.get("selected_allocation_decision"), Mapping)
+        else {}
+    )
+    top_decision = (
+        execution_plan.get("top_allocation_decision")
+        if isinstance(execution_plan.get("top_allocation_decision"), Mapping)
+        else {}
+    )
+    reason = _read_text(auto_execution.get("reason"))
+    changed = bool(auto_execution.get("changed"))
+    if changed:
+        status = "submitted"
+    elif reason is None:
+        status = "skipped"
+    elif reason in AUTO_EXECUTION_SKIPPED_REASONS:
+        status = "skipped"
+    else:
+        status = "blocked"
+    decision = selected_decision or top_decision
+    execution_blockers = _normalize_text_list(
+        decision.get("rejection_codes") if isinstance(decision, Mapping) else None
+    )
+    if not execution_blockers and reason is not None and not changed:
+        execution_blockers = [reason]
+    return _with_auto_execution_target_fallbacks(
+        {
+            "status": status,
+            "changed": changed,
+            "reason": reason,
+            "message": _read_text(auto_execution.get("message")),
+            "selected_opportunity_id": _read_text(
+                auto_execution.get("selected_opportunity_id")
+            ),
+            "selected_candidate_id": _read_int(auto_execution, "selected_candidate_id")
+            or None,
+            "selected_symbol": _read_text(selected_intent.get("symbol"))
+            or _read_text(execution_plan.get("top_symbol")),
+            "selected_strategy_family": _read_text(
+                selected_intent.get("strategy_family")
+            )
+            or _read_text(execution_plan.get("top_strategy_family")),
+            "allocation_score": _read_float(decision, "allocation_score"),
+            "decision_reason": _read_text(
+                decision.get("allocation_reason")
+                if isinstance(decision, Mapping)
+                else None
+            ),
+            "execution_blockers": execution_blockers,
+            "candidate_count": _read_int(execution_plan, "candidate_count"),
+            "allocation_count": _read_int(execution_plan, "allocation_count"),
+            "execution_intent_count": _read_int(
+                execution_plan, "execution_intent_count"
+            ),
+            "top_opportunity_id": _read_text(execution_plan.get("top_opportunity_id")),
+        }
+    )
+
+
+def _with_auto_execution_target_fallbacks(summary: dict[str, Any]) -> dict[str, Any]:
+    selected_opportunity_id = summary.get("selected_opportunity_id") or summary.get(
+        "top_opportunity_id"
+    )
+    if summary.get("selected_symbol") in (None, ""):
+        summary["selected_symbol"] = _symbol_from_opportunity_id(
+            selected_opportunity_id
+        )
+    if summary.get("selected_strategy_family") in (None, ""):
+        summary["selected_strategy_family"] = _strategy_from_opportunity_id(
+            selected_opportunity_id
+        )
+    return summary
+
+
 def _normalize_uoa_root(row: Mapping[str, Any]) -> dict[str, Any]:
     payload = dict(row)
     decision_state = normalize_uoa_decision_state(payload.get("decision_state"))
@@ -489,6 +638,11 @@ def enrich_live_collector_result(
         if isinstance(enriched.get("uoa_decisions"), Mapping)
         else None
     )
+    enriched["auto_execution_summary"] = build_auto_execution_summary(
+        enriched.get("auto_execution")
+        if isinstance(enriched.get("auto_execution"), Mapping)
+        else None
+    )
     enriched["live_action_gate"] = dict(
         enriched.get("live_action_gate")
         or build_live_action_gate(
@@ -515,6 +669,7 @@ def enrich_live_collector_job_run_payload(payload: Mapping[str, Any]) -> dict[st
     enriched["uoa_summary"] = result.get("uoa_summary") or {}
     enriched["uoa_quote_summary"] = result.get("uoa_quote_summary") or {}
     enriched["uoa_decisions"] = result.get("uoa_decisions") or {}
+    enriched["auto_execution_summary"] = result.get("auto_execution_summary")
     enriched["capture_status"] = result["quote_capture"]["capture_status"]
     run_payload = (
         enriched.get("payload") if isinstance(enriched.get("payload"), Mapping) else {}

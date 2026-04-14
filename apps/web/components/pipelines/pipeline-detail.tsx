@@ -37,6 +37,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  AutoExecutionStatusBadge,
   CaptureStatusBadge,
   ExecutionStatusBadge,
   formatDate,
@@ -148,6 +149,32 @@ const deploymentBucketDefinitions: Array<{
 
 function formatReturnOnRisk(value: number | null | undefined): string {
   return value == null ? "—" : `${(value * 100).toFixed(1)}%`;
+}
+
+function autoExecutionTarget(summary: Record<string, unknown> | null | undefined): string {
+  const symbol = readString(summary?.selected_symbol, "");
+  if (symbol) {
+    return symbol;
+  }
+  return readString(summary?.selected_opportunity_id ?? summary?.top_opportunity_id, "—");
+}
+
+function autoExecutionTargetNote(summary: Record<string, unknown> | null | undefined): string {
+  const strategy = readString(summary?.selected_strategy_family, "");
+  if (strategy) {
+    return strategy.replaceAll("_", " ");
+  }
+  return readString(summary?.decision_reason ?? summary?.reason, "No opportunity selected");
+}
+
+function autoExecutionBlockers(summary: Record<string, unknown> | null | undefined): string {
+  const blockers = Array.isArray(summary?.execution_blockers)
+    ? summary.execution_blockers.map((value) => String(value)).filter(Boolean)
+    : [];
+  if (!blockers.length) {
+    return readString(summary?.message, "No blockers recorded.");
+  }
+  return blockers.join(", ");
 }
 
 function deploymentSliceCount(slice: ReplayDeploymentSlice | null | undefined): number {
@@ -653,6 +680,9 @@ export function PipelineDetailPageContent({
               <SessionStatusBadge value={detail.status} />
               <CaptureStatusBadge value={detail.latest_slot?.capture_status} />
               <TradeabilityBadge value={detail.tradeability_state} />
+              {detail.latest_auto_execution ? (
+                <AutoExecutionStatusBadge value={detail.latest_auto_execution.status} />
+              ) : null}
             </div>
             <div className="mt-4 text-3xl font-semibold tracking-[0.02em]">
               {detail.label}
@@ -706,6 +736,64 @@ export function PipelineDetailPageContent({
           note={readString(detail.risk_note)}
         />
       </div>
+
+      <SectionSurface
+        title="Latest Auto Execution"
+        description="Most recent planner decision recorded by the live collector for this pipeline."
+      >
+        {detail.latest_auto_execution ? (
+          <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+            <div className="rounded-2xl border border-border/70 bg-background/75 p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <AutoExecutionStatusBadge value={detail.latest_auto_execution.status} />
+                <span className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                  {readString(detail.latest_auto_execution.reason, "latest decision")}
+                </span>
+              </div>
+              <div className="mt-3 text-lg font-medium">
+                {autoExecutionTarget(detail.latest_auto_execution)}
+              </div>
+              <div className="mt-1 text-sm text-muted-foreground">
+                {autoExecutionTargetNote(detail.latest_auto_execution)}
+              </div>
+              <div className="mt-3 text-sm text-foreground/80">
+                {readString(detail.latest_auto_execution.message, "No auto execution result has been recorded yet.")}
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <MetricTile
+                label="Allocation"
+                value={
+                  detail.latest_auto_execution.allocation_score == null
+                    ? "—"
+                    : formatQuantity(detail.latest_auto_execution.allocation_score)
+                }
+                note="portfolio-adjusted score"
+              />
+              <MetricTile
+                label="Planner"
+                value={`${readNumber(detail.latest_auto_execution.candidate_count)}/${readNumber(detail.latest_auto_execution.allocation_count)}/${readNumber(detail.latest_auto_execution.execution_intent_count)}`}
+                note="candidates / allocations / intents"
+              />
+              <MetricTile
+                label="Selected"
+                value={readString(detail.latest_auto_execution.selected_opportunity_id, "—")}
+                note="canonical opportunity id"
+              />
+              <div className="sm:col-span-3 rounded-2xl border border-border/70 bg-background/75 p-4 text-sm text-foreground/80">
+                <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                  Execution blockers
+                </div>
+                <div className="mt-2">{autoExecutionBlockers(detail.latest_auto_execution)}</div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-dashed border-border/70 bg-background/60 px-4 py-3 text-sm text-muted-foreground">
+            No auto execution decision has been recorded for the latest slot yet.
+          </div>
+        )}
+      </SectionSurface>
 
       <SectionSurface
         title="Deployment Quality"
