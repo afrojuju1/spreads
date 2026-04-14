@@ -2,13 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  Activity,
-  BellRing,
-  BriefcaseBusiness,
-  CandlestickChart,
-  Sparkles,
-} from "lucide-react";
+import { Activity, CandlestickChart } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -16,7 +10,7 @@ export const LAYOUT_NAV_ITEMS = [
   {
     href: "/sessions",
     label: "Sessions",
-    caption: "live workflow",
+    caption: "runtime workspace",
     icon: CandlestickChart,
   },
   {
@@ -24,24 +18,6 @@ export const LAYOUT_NAV_ITEMS = [
     label: "Account",
     caption: "broker state",
     icon: Activity,
-  },
-  {
-    href: "/generator",
-    label: "Generator",
-    caption: "single-symbol ideas",
-    icon: Sparkles,
-  },
-  {
-    href: "/alerts",
-    label: "Alerts",
-    caption: "delivery history",
-    icon: BellRing,
-  },
-  {
-    href: "/jobs",
-    label: "Jobs",
-    caption: "runtime health",
-    icon: BriefcaseBusiness,
   },
 ];
 

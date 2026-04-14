@@ -83,32 +83,6 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
   const payload = event.payload;
 
   switch (event.topic) {
-    case "generator.job.updated": {
-      const status = readText(payload.status);
-      const symbol = readText(payload.symbol) ?? "generator";
-      if (!status || !["succeeded", "no_play", "failed"].includes(status)) {
-        return null;
-      }
-      return {
-        id: `${event.topic}:${event.entity_id}:${status}`,
-        title:
-          status === "succeeded"
-            ? `Generator ready for ${symbol}`
-            : status === "no_play"
-              ? `No play for ${symbol}`
-              : `Generator failed for ${symbol}`,
-        body:
-          status === "failed"
-            ? readText(payload.error_text) ?? "The generator job failed before it produced a result."
-            : status === "no_play"
-              ? "The job completed, but no spread survived the requested filters."
-              : "A ranked generator result is ready for review.",
-        href: `/generator/jobs/${event.entity_id}`,
-        summary: `Generator ${symbol} ${humanizeToken(status)}`,
-        timestamp: event.timestamp,
-        tone: status === "succeeded" ? "success" : status === "no_play" ? "warning" : "error",
-      };
-    }
     case "alert.event.created":
     case "alert.event.updated": {
       const symbol = readText(payload.symbol) ?? "alert";
@@ -119,7 +93,7 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
         id: `${event.topic}:${event.entity_id}`,
         title: `Alert ${humanizeToken(status)}`,
         body: `${symbol} ${alertType} was recorded in the alert feed.`,
-        href: sessionId ? buildSessionHref(sessionId) : "/alerts",
+        href: sessionId ? buildSessionHref(sessionId) : "/sessions",
         summary: `Alert ${symbol} ${humanizeToken(status)}`,
         timestamp: event.timestamp,
         tone:
@@ -167,7 +141,7 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
         body:
           readText(payload.error_text) ??
           `${jobType} ${status === "skipped" ? "did not run" : "reported a failure"} for ${jobKey}.`,
-        href: sessionId ? buildSessionHref(sessionId) : "/jobs",
+        href: sessionId ? buildSessionHref(sessionId) : "/sessions",
         summary: `Job ${jobType} ${humanizeToken(status)}`,
         timestamp: event.timestamp,
         tone: status === "failed" ? "error" : "warning",
@@ -185,7 +159,7 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
         id: `${event.topic}:${event.entity_id}:${reasonText}`,
         title: `Live collector degraded for ${label}`,
         body: `${captureStatus}. ${reasonText}.`,
-        href: sessionId ? buildSessionHref(sessionId) : "/jobs",
+        href: sessionId ? buildSessionHref(sessionId) : "/sessions",
         summary: `Live ${label} degraded`,
         timestamp: event.timestamp,
         tone: "warning",
@@ -287,13 +261,8 @@ function GlobalRealtimeBridge({
     const realtimeEvent = parseGlobalRealtimeEvent(payload);
     const sessionId = readText(realtimeEvent.payload.session_id);
     switch (realtimeEvent.topic) {
-      case "generator.job.updated":
-        queryClient.invalidateQueries({ queryKey: ["generator-jobs"] });
-        queryClient.invalidateQueries({ queryKey: ["generator-job", realtimeEvent.entity_id] });
-        break;
       case "alert.event.created":
       case "alert.event.updated":
-        queryClient.invalidateQueries({ queryKey: ["alerts-latest"] });
         queryClient.invalidateQueries({ queryKey: ["sessions"] });
         if (sessionId) {
           queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
@@ -306,17 +275,12 @@ function GlobalRealtimeBridge({
         }
         break;
       case "job.run.updated":
-        queryClient.invalidateQueries({ queryKey: ["jobs"] });
-        queryClient.invalidateQueries({ queryKey: ["job-runs"] });
-        queryClient.invalidateQueries({ queryKey: ["jobs-health"] });
         queryClient.invalidateQueries({ queryKey: ["sessions"] });
         if (sessionId) {
           queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
         }
         break;
       case "live.collector.degraded":
-        queryClient.invalidateQueries({ queryKey: ["job-runs"] });
-        queryClient.invalidateQueries({ queryKey: ["jobs-health"] });
         queryClient.invalidateQueries({ queryKey: ["sessions"] });
         if (sessionId) {
           queryClient.invalidateQueries({ queryKey: ["session", sessionId] });

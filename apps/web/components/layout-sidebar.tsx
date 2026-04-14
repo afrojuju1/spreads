@@ -72,7 +72,7 @@ export function LayoutSidebar() {
               Operator
             </div>
             <div className="mt-1 text-sm text-foreground/70">
-              Sessions, execution, alerts, and runtime.
+              Sessions, execution, and broker state.
             </div>
           </div>
         </div>
@@ -112,7 +112,7 @@ export function LayoutSidebar() {
           <SheetHeader className="border-b border-border/70 px-5 py-5">
             <SheetTitle>Navigation</SheetTitle>
             <SheetDescription>
-              Sessions, generator, alerts, and runtime diagnostics.
+              Sessions, execution, and broker state.
             </SheetDescription>
           </SheetHeader>
           <div className="flex h-full flex-col px-5 py-5">
@@ -128,7 +128,7 @@ export function LayoutSidebar() {
                   Operator
                 </div>
                 <div className="mt-1 text-sm text-foreground/70">
-                  One layout for sessions, execution, alerts, and jobs.
+                  One layout for sessions, execution, and broker state.
                 </div>
               </div>
             </div>

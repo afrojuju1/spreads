@@ -1,7 +1,5 @@
 import { z } from "zod";
 
-import type { GeneratorJobRequestPayload } from "@/lib/generator-request";
-
 const candidateDetailSchema = z
   .object({
     run_id: z.string().optional(),
@@ -88,10 +86,6 @@ const liveEventSchema = z
   })
   .passthrough();
 
-const liveEventsResponseSchema = z.object({
-  events: z.array(liveEventSchema),
-});
-
 const alertSchema = z
   .object({
     alert_id: z.number(),
@@ -122,43 +116,6 @@ const alertSchema = z
   })
   .passthrough();
 
-const alertsResponseSchema = z.object({
-  alerts: z.array(alertSchema),
-});
-
-const jobDefinitionSchema = z
-  .object({
-    job_key: z.string(),
-    job_type: z.string(),
-    enabled: z.boolean(),
-    schedule_type: z.string(),
-    schedule: z.record(z.string(), z.unknown()),
-    payload: z.record(z.string(), z.unknown()),
-    market_calendar: z.string().nullable().optional(),
-    singleton_scope: z.string().nullable().optional(),
-    created_at: z.string(),
-    updated_at: z.string(),
-  })
-  .passthrough();
-
-const jobsResponseSchema = z.object({
-  jobs: z.array(jobDefinitionSchema),
-});
-
-const universesResponseSchema = z.record(z.string(), z.array(z.string()));
-
-const generatorSymbolSuggestionSchema = z.object({
-  symbol: z.string(),
-  name: z.string().nullable().optional(),
-  in_curated_universe: z.boolean(),
-});
-
-const generatorSymbolsResponseSchema = z.object({
-  query: z.string(),
-  source_status: z.enum(["alpaca", "fallback"]),
-  symbols: z.array(generatorSymbolSuggestionSchema),
-});
-
 const jobRunSchema = z
   .object({
     job_run_id: z.string(),
@@ -173,20 +130,6 @@ const jobRunSchema = z
     payload: z.record(z.string(), z.unknown()).nullable().optional(),
     result: z.record(z.string(), z.unknown()).nullable().optional(),
     error_text: z.string().nullable().optional(),
-  })
-  .passthrough();
-
-const jobRunsResponseSchema = z.object({
-  job_runs: z.array(jobRunSchema),
-});
-
-const jobsHealthSchema = z
-  .object({
-    scheduler: z.record(z.string(), z.unknown()).nullable().optional(),
-    workers: z.array(z.record(z.string(), z.unknown())).optional(),
-    running_jobs: z.array(jobRunSchema).optional(),
-    queued_jobs: z.array(jobRunSchema).optional(),
-    latest_successful_collectors: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough();
 
@@ -630,171 +573,6 @@ const sessionDetailSchema = z
   })
   .passthrough();
 
-const generatorReasonSchema = z
-  .object({
-    code: z.string(),
-    message: z.string(),
-    strategy: z.string().optional(),
-    severity: z.string().optional(),
-    details: z.record(z.string(), z.unknown()).optional(),
-  })
-  .passthrough();
-
-const generatorDiagnosticGroupSchema = z
-  .object({
-    bucket: z.string(),
-    reason_count: z.number(),
-    reasons: z.array(generatorReasonSchema),
-  })
-  .passthrough();
-
-const generatorRecommendationSchema = z
-  .object({
-    code: z.string(),
-    title: z.string(),
-    action: z.string(),
-    reason: z.string(),
-    priority: z.string().optional(),
-  })
-  .passthrough();
-
-const generatorPreferredPlayExplanationSchema = z
-  .object({
-    summary: z.string(),
-    strategy: z.string().optional(),
-    short_symbol: z.string().optional(),
-    long_symbol: z.string().optional(),
-    short_strike: z.number().optional(),
-    long_strike: z.number().optional(),
-    quality_score: z.number().optional(),
-    score_margin_vs_runner_up: z.number().nullable().optional(),
-    setup_status: z.string().nullable().optional(),
-    calendar_status: z.string().nullable().optional(),
-    midpoint_credit: z.number().optional(),
-    return_on_risk: z.number().nullable().optional(),
-  })
-  .passthrough();
-
-const generatorDiagnosticsSchema = z
-  .object({
-    overview: z
-      .object({
-        status: z.string(),
-        symbol: z.string(),
-        profile: z.string(),
-        strategy: z.string(),
-        playability_verdict: z.string(),
-      })
-      .passthrough(),
-    groups: z.array(generatorDiagnosticGroupSchema),
-  })
-  .passthrough();
-
-const generatorStrategyComparisonSchema = z
-  .object({
-    strategy: z.string(),
-    run_id: z.string(),
-    setup_status: z.string().nullable().optional(),
-    candidate_count: z.number(),
-    quoted_contract_count: z.number(),
-    alpaca_delta_contract_count: z.number(),
-    delta_contract_count: z.number(),
-    local_delta_contract_count: z.number(),
-    blocker_codes: z.array(z.string()),
-    blocker_summary: z.array(generatorReasonSchema),
-  })
-  .passthrough();
-
-const generatorStrategyRunSchema = z
-  .object({
-    strategy: z.string(),
-    run_id: z.string(),
-    setup: z.record(z.string(), z.unknown()).nullable().optional(),
-    candidate_count: z.number(),
-    quoted_contract_count: z.number(),
-    alpaca_delta_contract_count: z.number(),
-    delta_contract_count: z.number(),
-    local_delta_contract_count: z.number(),
-    top_candidate: candidateDetailSchema.nullable().optional(),
-    no_play_reasons: z.array(generatorReasonSchema),
-  })
-  .passthrough();
-
-const generatorResponseSchema = z
-  .object({
-    status: z.enum(["ok", "no_play"]),
-    generated_at: z.string(),
-    symbol: z.string(),
-    profile: z.string(),
-    strategy: z.string(),
-    greeks_source: z.string(),
-    filters: z.record(z.string(), z.unknown()).optional(),
-    preferred_play: candidateDetailSchema.nullable().optional(),
-    top_candidates: z.array(candidateDetailSchema),
-    strategy_runs: z.array(generatorStrategyRunSchema),
-    rejection_summary: z.array(generatorReasonSchema),
-    diagnostics: generatorDiagnosticsSchema,
-    strategy_comparison: z.array(generatorStrategyComparisonSchema),
-    preferred_play_explanation: generatorPreferredPlayExplanationSchema.nullable().optional(),
-    recommendations: z.array(generatorRecommendationSchema),
-    failures: z.array(z.record(z.string(), z.string())).optional(),
-    request: z.record(z.string(), z.unknown()).optional(),
-  })
-  .passthrough();
-
-const generatorJobSummarySchema = z
-  .object({
-    preferred_strategy: z.string().nullable().optional(),
-    preferred_strikes: z.string().nullable().optional(),
-    top_score: z.number().nullable().optional(),
-    candidate_count: z.number(),
-    rejection_count: z.number(),
-  })
-  .passthrough();
-
-const generatorJobSchema = z
-  .object({
-    generator_job_id: z.string(),
-    arq_job_id: z.string().nullable().optional(),
-    symbol: z.string(),
-    status: z.enum(["queued", "running", "succeeded", "no_play", "failed"]),
-    created_at: z.string(),
-    started_at: z.string().nullable().optional(),
-    finished_at: z.string().nullable().optional(),
-    request: z.record(z.string(), z.unknown()),
-    result: generatorResponseSchema.nullable().optional(),
-    summary: generatorJobSummarySchema,
-    error_text: z.string().nullable().optional(),
-  })
-  .passthrough();
-
-const generatorJobsResponseSchema = z.object({
-  jobs: z.array(generatorJobSchema),
-});
-
-const generatorJobActionResponseSchema = z
-  .object({
-    action: z.enum(["create_alert", "promote_live"]),
-    changed: z.boolean(),
-    message: z.string(),
-    live_label: z.string().nullable().optional(),
-    target_state: z.enum(["promotable", "monitor"]).nullable().optional(),
-    cycle_id: z.string().nullable().optional(),
-    event_type: z.string().nullable().optional(),
-    symbol: z.string().nullable().optional(),
-    generated_at: z.string().nullable().optional(),
-    promotable_count: z.number().optional(),
-    monitor_count: z.number().optional(),
-    alert: alertSchema.nullable().optional(),
-  })
-  .passthrough();
-
-const generatorJobEventSchema = z.object({
-  type: z.enum(["snapshot", "running", "completed", "failed", "error"]),
-  detail: z.string().optional(),
-  job: generatorJobSchema.optional(),
-});
-
 const globalRealtimeEventSchema = z.object({
   type: z.string(),
   topic: z.string(),
@@ -808,9 +586,7 @@ export type CandidateDetail = z.infer<typeof candidateDetailSchema>;
 export type LiveCandidate = z.infer<typeof liveCandidateSchema>;
 export type LiveEvent = z.infer<typeof liveEventSchema>;
 export type AlertRecord = z.infer<typeof alertSchema>;
-export type JobDefinition = z.infer<typeof jobDefinitionSchema>;
 export type JobRun = z.infer<typeof jobRunSchema>;
-export type LiveResponse = z.infer<typeof liveResponseSchema>;
 export type AccountSnapshot = z.infer<typeof accountSnapshotSchema>;
 export type AccountPnl = z.infer<typeof accountPnlSchema>;
 export type AccountHistoryPoint = z.infer<typeof accountHistoryPointSchema>;
@@ -831,26 +607,8 @@ export type SessionPortfolioSummary = z.infer<typeof sessionPortfolioSummarySche
 export type SessionPortfolio = z.infer<typeof sessionPortfolioSchema>;
 export type SessionDetail = z.infer<typeof sessionDetailSchema>;
 export type TuningBucket = z.infer<typeof tuningBucketSchema>;
-export type GeneratorResponse = z.infer<typeof generatorResponseSchema>;
-export type GeneratorJob = z.infer<typeof generatorJobSchema>;
-export type GeneratorJobActionResponse = z.infer<typeof generatorJobActionResponseSchema>;
 export type SessionExecutionActionResponse = z.infer<typeof sessionExecutionActionResponseSchema>;
-export type GeneratorJobEvent = z.infer<typeof generatorJobEventSchema>;
-export type GeneratorDiagnostics = z.infer<typeof generatorDiagnosticsSchema>;
-export type GeneratorStrategyComparison = z.infer<typeof generatorStrategyComparisonSchema>;
-export type GeneratorRecommendation = z.infer<typeof generatorRecommendationSchema>;
 export type GlobalRealtimeEvent = z.infer<typeof globalRealtimeEventSchema>;
-export type UniversesResponse = z.infer<typeof universesResponseSchema>;
-export type GeneratorSymbolSuggestion = z.infer<typeof generatorSymbolSuggestionSchema>;
-export type GeneratorSymbolsResponse = z.infer<typeof generatorSymbolsResponseSchema>;
-export type GeneratorCandidateActionRequest = {
-  action: "create_alert" | "promote_live";
-  strategy: string;
-  short_symbol: string;
-  long_symbol: string;
-  live_label?: string;
-  target_state?: "promotable" | "monitor";
-};
 export type SessionExecutionRequest = {
   candidate_id: number;
   quantity?: number;
@@ -935,38 +693,6 @@ async function postApi<TRequest, TResponse>(
   return schema.parse(payload);
 }
 
-export function getLive(label: string) {
-  return fetchApi(`live/${label}`, liveResponseSchema);
-}
-
-export function getUniverses() {
-  return fetchApi("universes", universesResponseSchema);
-}
-
-export function getGeneratorSymbols(query: string, limit = 40) {
-  return fetchApi("generator/symbols", generatorSymbolsResponseSchema, { query, limit });
-}
-
-export function getLiveEvents(label: string, limit = 10) {
-  return fetchApi(`live/${label}/events`, liveEventsResponseSchema, { limit });
-}
-
-export function getAlerts(limit = 12) {
-  return fetchApi("alerts/latest", alertsResponseSchema, { limit });
-}
-
-export function getJobs() {
-  return fetchApi("jobs", jobsResponseSchema);
-}
-
-export function getJobRuns(limit = 8) {
-  return fetchApi("jobs/runs", jobRunsResponseSchema, { limit });
-}
-
-export function getJobsHealth() {
-  return fetchApi("jobs/health", jobsHealthSchema);
-}
-
 export function getAccountOverview(historyRange: AccountHistoryRange = "1D") {
   return fetchApi("account/overview", accountOverviewSchema, {
     history_range: historyRange,
@@ -1019,51 +745,6 @@ export function refreshSessionExecution(
     sessionExecutionActionResponseSchema,
     {},
   );
-}
-
-export function generateIdeas(payload: GeneratorJobRequestPayload) {
-  return postApi("generator/ideas", generatorResponseSchema, payload);
-}
-
-export function createGeneratorJob(payload: GeneratorJobRequestPayload) {
-  return postApi("generator/jobs", generatorJobSchema, payload);
-}
-
-export function getGeneratorJobs(filters?: {
-  symbol?: string;
-  status?: string;
-  limit?: number;
-}) {
-  return fetchApi("generator/jobs", generatorJobsResponseSchema, filters);
-}
-
-export function getGeneratorJob(generatorJobId: string) {
-  return fetchApi(`generator/jobs/${generatorJobId}`, generatorJobSchema);
-}
-
-export function createGeneratorCandidateAction(
-  generatorJobId: string,
-  payload: GeneratorCandidateActionRequest,
-) {
-  return postApi(
-    `generator/jobs/${generatorJobId}/actions`,
-    generatorJobActionResponseSchema,
-    payload,
-  );
-}
-
-export function parseGeneratorJobEvent(payload: string) {
-  return generatorJobEventSchema.parse(JSON.parse(payload));
-}
-
-export function buildGeneratorJobWebSocketUrl(generatorJobId: string) {
-  const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-  const host = window.location.hostname;
-  const backendPort =
-    process.env.NEXT_PUBLIC_SPREADS_API_WS_PORT?.trim() ||
-    process.env.NEXT_PUBLIC_SPREADS_API_PORT?.trim() ||
-    "58080";
-  return `${protocol}://${host}:${backendPort}/ws/generator/${generatorJobId}`;
 }
 
 export function parseGlobalRealtimeEvent(payload: string) {

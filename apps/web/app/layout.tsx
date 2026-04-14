@@ -19,7 +19,7 @@ const mono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: "Spreads Operator",
-  description: "Sessions, generator, alerts, and runtime diagnostics for spreads.",
+  description: "Session and account runtime console for spreads.",
 };
 
 export default function RootLayout({
