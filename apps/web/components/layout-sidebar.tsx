@@ -27,8 +27,8 @@ function ConnectionBadge({
       className={cn(
         "rounded-full border px-2.5 py-1 text-[11px] uppercase tracking-[0.16em]",
         connected
-          ? "border-emerald-200 bg-emerald-100 text-emerald-900"
-          : "border-amber-200 bg-amber-100 text-amber-900",
+          ? "border-emerald-200 bg-emerald-100 text-emerald-900 dark:border-emerald-900/80 dark:bg-emerald-950/55 dark:text-emerald-100"
+          : "border-amber-200 bg-amber-100 text-amber-900 dark:border-amber-900/80 dark:bg-amber-950/55 dark:text-amber-100",
       )}
     >
       {label}
@@ -54,7 +54,7 @@ export function LayoutSidebar() {
         )}
       >
         <div className={cn("flex items-start gap-3", layoutNavOpen ? "" : "justify-center")}>
-          <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-stone-900 text-stone-50 shadow-[0_18px_44px_-30px_rgba(28,25,23,0.85)]">
+          <div className="brand-mark flex size-11 shrink-0 items-center justify-center">
             <Activity />
           </div>
           <div
@@ -117,7 +117,7 @@ export function LayoutSidebar() {
           </SheetHeader>
           <div className="flex h-full flex-col px-5 py-5">
             <div className="flex items-start gap-3">
-              <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-stone-900 text-stone-50 shadow-[0_18px_44px_-30px_rgba(28,25,23,0.85)]">
+              <div className="brand-mark flex size-11 shrink-0 items-center justify-center">
                 <Activity />
               </div>
               <div className="min-w-0">

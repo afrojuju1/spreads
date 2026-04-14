@@ -242,12 +242,22 @@ function AccountHistoryChart({ history }: { history: AccountHistory }) {
           <MetricTile label="low" value={formatNullableCurrency(chart.min)} />
         </div>
       </div>
-      <div className="mt-4 overflow-hidden rounded-2xl border border-border/70 bg-gradient-to-b from-stone-100/80 to-background">
+      <div className="mt-4 overflow-hidden rounded-2xl border border-border/70 bg-gradient-to-b from-muted/70 to-background">
         <svg viewBox={`0 0 ${width} ${height}`} className="h-56 w-full">
           <defs>
             <linearGradient id="account-history-fill" x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0%" stopColor="rgb(41 37 36 / 0.22)" />
-              <stop offset="100%" stopColor="rgb(41 37 36 / 0.02)" />
+              <stop
+                offset="0%"
+                style={{
+                  stopColor: "color-mix(in oklab, var(--primary) 26%, transparent)",
+                }}
+              />
+              <stop
+                offset="100%"
+                style={{
+                  stopColor: "color-mix(in oklab, var(--primary) 3%, transparent)",
+                }}
+              />
             </linearGradient>
           </defs>
           <polyline
@@ -258,7 +268,7 @@ function AccountHistoryChart({ history }: { history: AccountHistory }) {
           <polyline
             points={chart.line}
             fill="none"
-            stroke="rgb(68 64 60)"
+            stroke="var(--primary)"
             strokeWidth="3"
             strokeLinejoin="round"
             strokeLinecap="round"
@@ -414,7 +424,7 @@ function AccountOverviewSection({
           </div>
         </div>
       ) : error ? (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+        <div className="app-tone-error rounded-2xl border px-4 py-3 text-sm">
           {error}
         </div>
       ) : (
@@ -446,7 +456,7 @@ export function AccountPageContent() {
   return (
     <main className="mx-auto max-w-[1680px] px-4 py-6 lg:px-6">
       <div className="flex flex-col gap-4">
-        <div className="rounded-[32px] border border-border/70 bg-[radial-gradient(circle_at_top_left,rgba(120,113,108,0.16),transparent_34%),linear-gradient(145deg,rgba(255,255,255,0.97),rgba(245,245,244,0.9))] px-5 py-5 shadow-[0_40px_120px_-72px_rgba(15,23,42,0.7)] lg:px-6">
+        <div className="app-hero">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">

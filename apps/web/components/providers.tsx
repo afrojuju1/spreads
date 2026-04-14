@@ -25,6 +25,13 @@ import {
   type GlobalRealtimeEvent,
 } from "@/lib/api";
 import { formatLocalTime } from "@/lib/date";
+import {
+  applyThemePreference,
+  DEFAULT_THEME_PREFERENCE,
+  parseThemePreference,
+  THEME_STORAGE_KEY,
+  type ThemePreference,
+} from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
 type RealtimeConnectionState = "connecting" | "connected" | "reconnecting";
@@ -54,6 +61,13 @@ type LayoutChromeContextValue = {
   toggleLayoutNav: () => void;
 };
 
+type ThemeContextValue = {
+  themePreference: ThemePreference;
+  isThemeReady: boolean;
+  setThemePreference: (themePreference: ThemePreference) => void;
+  toggleThemePreference: () => void;
+};
+
 const NOTICE_TTL_MS = 6_000;
 const MAX_NOTICES = 4;
 
@@ -69,6 +83,13 @@ const LayoutChromeContext = createContext<LayoutChromeContextValue>({
   mobileLayoutNavOpen: false,
   setMobileLayoutNavOpen: () => {},
   toggleLayoutNav: () => {},
+});
+
+const ThemeContext = createContext<ThemeContextValue>({
+  themePreference: "light",
+  isThemeReady: false,
+  setThemePreference: () => {},
+  toggleThemePreference: () => {},
 });
 
 function readText(value: unknown): string | undefined {
@@ -220,13 +241,13 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
 function noticeToneClasses(tone: RealtimeNoticeTone): string {
   switch (tone) {
     case "success":
-      return "border-emerald-200 bg-emerald-50 text-emerald-950";
+      return "border-emerald-200 bg-emerald-50 text-emerald-950 dark:border-emerald-900/80 dark:bg-emerald-950/60 dark:text-emerald-100";
     case "warning":
-      return "border-amber-200 bg-amber-50 text-amber-950";
+      return "border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900/80 dark:bg-amber-950/55 dark:text-amber-100";
     case "error":
-      return "border-rose-200 bg-rose-50 text-rose-950";
+      return "border-rose-200 bg-rose-50 text-rose-950 dark:border-rose-900/80 dark:bg-rose-950/55 dark:text-rose-100";
     default:
-      return "border-stone-200 bg-stone-50 text-stone-950";
+      return "border-stone-200 bg-stone-50 text-stone-950 dark:border-stone-800 dark:bg-stone-900/80 dark:text-stone-100";
   }
 }
 
@@ -411,6 +432,10 @@ export function useLayoutChrome() {
   return useContext(LayoutChromeContext);
 }
 
+export function useThemePreference() {
+  return useContext(ThemeContext);
+}
+
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
     () =>
@@ -429,8 +454,21 @@ export function Providers({ children }: { children: React.ReactNode }) {
   const [notices, setNotices] = useState<RealtimeNotice[]>([]);
   const [layoutNavOpen, setLayoutNavOpen] = useState(true);
   const [mobileLayoutNavOpen, setMobileLayoutNavOpen] = useState(false);
+  const [themePreference, setThemePreferenceState] =
+    useState<ThemePreference>(DEFAULT_THEME_PREFERENCE);
+  const [isThemeReady, setIsThemeReady] = useState(false);
   const seenNoticeIdsRef = useRef<Set<string>>(new Set());
   const noticeTimersRef = useRef<Map<string, number>>(new Map());
+
+  useEffect(() => {
+    const stored = parseThemePreference(
+      window.localStorage.getItem(THEME_STORAGE_KEY),
+    );
+    const nextThemePreference = stored ?? DEFAULT_THEME_PREFERENCE;
+    applyThemePreference(nextThemePreference, document.documentElement);
+    setThemePreferenceState(nextThemePreference);
+    setIsThemeReady(true);
+  }, []);
 
   const dismissNotice = (noticeId: string) => {
     const timer = noticeTimersRef.current.get(noticeId);
@@ -462,32 +500,48 @@ export function Providers({ children }: { children: React.ReactNode }) {
     noticeTimersRef.current.set(notice.id, timer);
   };
 
+  const setThemePreference = (nextThemePreference: ThemePreference) => {
+    setThemePreferenceState(nextThemePreference);
+    applyThemePreference(nextThemePreference, document.documentElement);
+    window.localStorage.setItem(THEME_STORAGE_KEY, nextThemePreference);
+  };
+
   return (
     <QueryClientProvider client={queryClient}>
-      <LayoutChromeContext.Provider
+      <ThemeContext.Provider
         value={{
-          layoutNavOpen,
-          mobileLayoutNavOpen,
-          setMobileLayoutNavOpen,
-          toggleLayoutNav: () => setLayoutNavOpen((current) => !current),
+          themePreference,
+          isThemeReady,
+          setThemePreference,
+          toggleThemePreference: () =>
+            setThemePreference(themePreference === "dark" ? "light" : "dark"),
         }}
       >
-        <RealtimeActivityContext.Provider
+        <LayoutChromeContext.Provider
           value={{
-            connectionState,
-            latestSummary,
-            notices,
-            dismissNotice,
+            layoutNavOpen,
+            mobileLayoutNavOpen,
+            setMobileLayoutNavOpen,
+            toggleLayoutNav: () => setLayoutNavOpen((current) => !current),
           }}
         >
-          <GlobalRealtimeBridge
-            onConnectionStateChange={setConnectionState}
-            onNotice={pushNotice}
-          />
-          {children}
-          <ShellActivityToasts />
-        </RealtimeActivityContext.Provider>
-      </LayoutChromeContext.Provider>
+          <RealtimeActivityContext.Provider
+            value={{
+              connectionState,
+              latestSummary,
+              notices,
+              dismissNotice,
+            }}
+          >
+            <GlobalRealtimeBridge
+              onConnectionStateChange={setConnectionState}
+              onNotice={pushNotice}
+            />
+            {children}
+            <ShellActivityToasts />
+          </RealtimeActivityContext.Provider>
+        </LayoutChromeContext.Provider>
+      </ThemeContext.Provider>
     </QueryClientProvider>
   );
 }

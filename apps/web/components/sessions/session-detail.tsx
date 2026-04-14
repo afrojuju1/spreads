@@ -482,7 +482,7 @@ function buildSessionPortfolioPositionColumns({
           </div>
           {row.original.reconciliationStatus === "mismatch" &&
           row.original.reconciliationNote ? (
-            <div className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-900">
+            <div className="app-tone-error rounded-lg border px-2 py-1 text-[11px]">
               {row.original.reconciliationNote}
             </div>
           ) : null}
@@ -679,14 +679,14 @@ function SessionPortfolioSection({
             />
           </div>
           {summary.mark_error ? (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+            <div className="app-tone-warning rounded-2xl border px-4 py-3 text-sm">
               Quote enrichment was partial: {summary.mark_error}
             </div>
           ) : null}
           {mismatchRows.map((row) => (
             <div
               key={`mismatch-${row.id}`}
-              className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900"
+              className="app-tone-error rounded-2xl border px-4 py-3 text-sm"
             >
               {row.symbol} {row.strategy.replaceAll("_", " ")} mismatch:{" "}
               {readString(
@@ -699,7 +699,7 @@ function SessionPortfolioSection({
             </div>
           ))}
           {closeError ? (
-            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+            <div className="app-tone-error rounded-2xl border px-4 py-3 text-sm">
               {closeError}
             </div>
           ) : null}
@@ -1385,7 +1385,7 @@ export function SessionDetailPageContent({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="rounded-[32px] border border-border/70 bg-[radial-gradient(circle_at_top_left,rgba(120,113,108,0.16),transparent_34%),linear-gradient(145deg,rgba(255,255,255,0.97),rgba(245,245,244,0.9))] px-5 py-5 shadow-[0_40px_120px_-72px_rgba(15,23,42,0.7)] lg:px-6">
+      <div className="app-hero">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
@@ -1540,7 +1540,7 @@ export function SessionDetailPageContent({
           </div>
         ) : null}
         {sessionDetailQuery.isError ? (
-          <div className="mt-5 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+          <div className="app-tone-error mt-5 rounded-2xl border px-4 py-3 text-sm">
             Session detail could not be loaded.
           </div>
         ) : null}

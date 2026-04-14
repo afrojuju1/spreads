@@ -1,10 +1,20 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { Activity, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import {
+  Activity,
+  MoonStar,
+  PanelLeftClose,
+  PanelLeftOpen,
+  SunMedium,
+} from "lucide-react";
 
 import { resolveActiveLayoutItem } from "@/components/layout-nav";
-import { useLayoutChrome, useRealtimeActivity } from "@/components/providers";
+import {
+  useLayoutChrome,
+  useRealtimeActivity,
+  useThemePreference,
+} from "@/components/providers";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -17,6 +27,13 @@ export function LayoutHeader() {
     toggleLayoutNav,
     setMobileLayoutNavOpen,
   } = useLayoutChrome();
+  const { themePreference, isThemeReady, toggleThemePreference } =
+    useThemePreference();
+  const themeToggleLabel = !isThemeReady
+    ? "Toggle theme"
+    : themePreference === "dark"
+      ? "Switch to light mode"
+      : "Switch to dark mode";
 
   return (
     <header className="sticky top-0 z-40 border-b border-border/70 bg-background/82 backdrop-blur-xl">
@@ -52,6 +69,20 @@ export function LayoutHeader() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon-sm"
+            aria-label={themeToggleLabel}
+            title={themeToggleLabel}
+            onClick={toggleThemePreference}
+          >
+            {!isThemeReady || themePreference !== "dark" ? (
+              <MoonStar />
+            ) : (
+              <SunMedium />
+            )}
+          </Button>
           <Badge
             variant="outline"
             className="rounded-full border px-2.5 py-1 text-[11px] uppercase tracking-[0.16em]"

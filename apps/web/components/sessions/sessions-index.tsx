@@ -130,7 +130,7 @@ export function SessionsIndexPageContent() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="rounded-[32px] border border-border/70 bg-[radial-gradient(circle_at_top_left,rgba(120,113,108,0.16),transparent_34%),linear-gradient(145deg,rgba(255,255,255,0.97),rgba(245,245,244,0.9))] px-5 py-5 shadow-[0_40px_120px_-72px_rgba(15,23,42,0.7)] lg:px-6">
+      <div className="app-hero">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
@@ -168,7 +168,7 @@ export function SessionsIndexPageContent() {
       </div>
 
       {sessionsQuery.isError ? (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+        <div className="app-tone-error rounded-2xl border px-4 py-3 text-sm">
           Session list could not be loaded.
         </div>
       ) : null}

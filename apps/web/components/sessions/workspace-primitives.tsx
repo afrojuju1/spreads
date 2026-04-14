@@ -102,16 +102,16 @@ export function formatDuration(raw: {
 function statusTone(value: string): string {
   switch (value) {
     case "running":
-      return "border-sky-200 bg-sky-100 text-sky-900";
+      return "border-sky-200 bg-sky-100 text-sky-900 dark:border-sky-900/80 dark:bg-sky-950/55 dark:text-sky-100";
     case "healthy":
     case "succeeded":
-      return "border-emerald-200 bg-emerald-100 text-emerald-900";
+      return "border-emerald-200 bg-emerald-100 text-emerald-900 dark:border-emerald-900/80 dark:bg-emerald-950/55 dark:text-emerald-100";
     case "degraded":
     case "skipped":
-      return "border-amber-200 bg-amber-100 text-amber-900";
+      return "border-amber-200 bg-amber-100 text-amber-900 dark:border-amber-900/80 dark:bg-amber-950/55 dark:text-amber-100";
     case "failed":
     case "empty":
-      return "border-rose-200 bg-rose-100 text-rose-900";
+      return "border-rose-200 bg-rose-100 text-rose-900 dark:border-rose-900/80 dark:bg-rose-950/55 dark:text-rose-100";
     default:
       return "border-border/70 bg-card text-foreground";
   }
@@ -120,13 +120,13 @@ function statusTone(value: string): string {
 function captureTone(value: string): string {
   switch (value) {
     case "healthy":
-      return "border-emerald-200 bg-emerald-100 text-emerald-900";
+      return "border-emerald-200 bg-emerald-100 text-emerald-900 dark:border-emerald-900/80 dark:bg-emerald-950/55 dark:text-emerald-100";
     case "baseline_only":
-      return "border-amber-200 bg-amber-100 text-amber-900";
+      return "border-amber-200 bg-amber-100 text-amber-900 dark:border-amber-900/80 dark:bg-amber-950/55 dark:text-amber-100";
     case "recovery_only":
-      return "border-orange-200 bg-orange-100 text-orange-900";
+      return "border-orange-200 bg-orange-100 text-orange-900 dark:border-orange-900/80 dark:bg-orange-950/55 dark:text-orange-100";
     case "empty":
-      return "border-rose-200 bg-rose-100 text-rose-900";
+      return "border-rose-200 bg-rose-100 text-rose-900 dark:border-rose-900/80 dark:bg-rose-950/55 dark:text-rose-100";
     default:
       return "border-border/70 bg-card text-foreground";
   }
@@ -137,10 +137,10 @@ export function valueTone(value: number | null | undefined): string {
     return "text-muted-foreground";
   }
   if (value > 0) {
-    return "text-emerald-700";
+    return "text-emerald-700 dark:text-emerald-300";
   }
   if (value < 0) {
-    return "text-rose-700";
+    return "text-rose-700 dark:text-rose-300";
   }
   return "text-foreground/80";
 }
@@ -186,16 +186,16 @@ export function CaptureStatusBadge({
 function executionTone(value: string): string {
   switch (value) {
     case "filled":
-      return "border-emerald-200 bg-emerald-100 text-emerald-900";
+      return "border-emerald-200 bg-emerald-100 text-emerald-900 dark:border-emerald-900/80 dark:bg-emerald-950/55 dark:text-emerald-100";
     case "partially_filled":
-      return "border-sky-200 bg-sky-100 text-sky-900";
+      return "border-sky-200 bg-sky-100 text-sky-900 dark:border-sky-900/80 dark:bg-sky-950/55 dark:text-sky-100";
     case "canceled":
     case "done_for_day":
     case "expired":
-      return "border-amber-200 bg-amber-100 text-amber-900";
+      return "border-amber-200 bg-amber-100 text-amber-900 dark:border-amber-900/80 dark:bg-amber-950/55 dark:text-amber-100";
     case "failed":
     case "rejected":
-      return "border-rose-200 bg-rose-100 text-rose-900";
+      return "border-rose-200 bg-rose-100 text-rose-900 dark:border-rose-900/80 dark:bg-rose-950/55 dark:text-rose-100";
     default:
       return "border-border/70 bg-card text-foreground";
   }
@@ -223,12 +223,12 @@ export function ExecutionStatusBadge({
 function portfolioTone(value: string): string {
   switch (value) {
     case "open":
-      return "border-emerald-200 bg-emerald-100 text-emerald-900";
+      return "border-emerald-200 bg-emerald-100 text-emerald-900 dark:border-emerald-900/80 dark:bg-emerald-950/55 dark:text-emerald-100";
     case "partial_close":
     case "partial_open":
-      return "border-sky-200 bg-sky-100 text-sky-900";
+      return "border-sky-200 bg-sky-100 text-sky-900 dark:border-sky-900/80 dark:bg-sky-950/55 dark:text-sky-100";
     case "closed":
-      return "border-stone-200 bg-stone-100 text-stone-900";
+      return "border-stone-200 bg-stone-100 text-stone-900 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-100";
     default:
       return "border-border/70 bg-card text-foreground";
   }
@@ -256,12 +256,12 @@ export function PortfolioStatusBadge({
 function riskTone(value: string): string {
   switch (value) {
     case "ok":
-      return "border-emerald-200 bg-emerald-100 text-emerald-900";
+      return "border-emerald-200 bg-emerald-100 text-emerald-900 dark:border-emerald-900/80 dark:bg-emerald-950/55 dark:text-emerald-100";
     case "disabled":
-      return "border-amber-200 bg-amber-100 text-amber-900";
+      return "border-amber-200 bg-amber-100 text-amber-900 dark:border-amber-900/80 dark:bg-amber-950/55 dark:text-amber-100";
     case "breach":
     case "blocked":
-      return "border-rose-200 bg-rose-100 text-rose-900";
+      return "border-rose-200 bg-rose-100 text-rose-900 dark:border-rose-900/80 dark:bg-rose-950/55 dark:text-rose-100";
     default:
       return "border-border/70 bg-card text-foreground";
   }
@@ -289,13 +289,13 @@ export function RiskStatusBadge({
 function reconciliationTone(value: string): string {
   switch (value) {
     case "matched":
-      return "border-emerald-200 bg-emerald-100 text-emerald-900";
+      return "border-emerald-200 bg-emerald-100 text-emerald-900 dark:border-emerald-900/80 dark:bg-emerald-950/55 dark:text-emerald-100";
     case "pending":
-      return "border-amber-200 bg-amber-100 text-amber-900";
+      return "border-amber-200 bg-amber-100 text-amber-900 dark:border-amber-900/80 dark:bg-amber-950/55 dark:text-amber-100";
     case "mismatch":
-      return "border-rose-200 bg-rose-100 text-rose-900";
+      return "border-rose-200 bg-rose-100 text-rose-900 dark:border-rose-900/80 dark:bg-rose-950/55 dark:text-rose-100";
     case "clear":
-      return "border-stone-200 bg-stone-100 text-stone-900";
+      return "border-stone-200 bg-stone-100 text-stone-900 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-100";
     default:
       return "border-border/70 bg-card text-foreground";
   }
@@ -328,9 +328,9 @@ export function AccountEnvironmentBadge({
   const resolved = readString(value, "custom");
   const tone =
     resolved === "paper"
-      ? "border-sky-200 bg-sky-100 text-sky-900"
+      ? "border-sky-200 bg-sky-100 text-sky-900 dark:border-sky-900/80 dark:bg-sky-950/55 dark:text-sky-100"
       : resolved === "live"
-        ? "border-amber-200 bg-amber-100 text-amber-900"
+        ? "border-amber-200 bg-amber-100 text-amber-900 dark:border-amber-900/80 dark:bg-amber-950/55 dark:text-amber-100"
         : "border-border/70 bg-card text-foreground";
   return (
     <Badge

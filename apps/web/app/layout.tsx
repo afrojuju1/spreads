@@ -4,6 +4,7 @@ import { IBM_Plex_Mono, Space_Grotesk } from "next/font/google";
 import { LayoutHeader } from "@/components/layout-header";
 import { LayoutSidebar } from "@/components/layout-sidebar";
 import { Providers } from "@/components/providers";
+import { buildThemeInitScript, DEFAULT_THEME_PREFERENCE } from "@/lib/theme";
 import "./globals.css";
 
 const sans = Space_Grotesk({
@@ -22,6 +23,8 @@ export const metadata: Metadata = {
   description: "Session and account runtime console for spreads.",
 };
 
+const themeInitScript = buildThemeInitScript();
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -30,9 +33,13 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${sans.variable} ${mono.variable} h-full antialiased`}
+      className={`${sans.variable} ${mono.variable} h-full antialiased dark`}
+      data-theme={DEFAULT_THEME_PREFERENCE}
+      style={{ colorScheme: DEFAULT_THEME_PREFERENCE }}
+      suppressHydrationWarning
     >
       <body className="min-h-full font-sans">
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         <Providers>
           <div className="min-h-dvh lg:flex">
             <LayoutSidebar />
