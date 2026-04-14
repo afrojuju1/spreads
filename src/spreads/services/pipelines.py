@@ -8,7 +8,10 @@ from spreads.services.analysis import build_session_summary
 from spreads.services.control_plane import get_control_state_snapshot
 from spreads.services.execution import list_session_execution_attempts
 from spreads.services.execution_portfolio import build_session_execution_portfolio
-from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
+from spreads.services.live_collector_health import (
+    build_tradeability_summary,
+    enrich_live_collector_job_run_payload,
+)
 from spreads.services.opportunity_replay import (
     OpportunityReplayLookupError,
     build_opportunity_replay,
@@ -18,7 +21,10 @@ from spreads.services.live_recovery import (
     list_session_slot_health_by_session_id,
     load_session_slot_health,
 )
-from spreads.services.risk_manager import build_session_risk_snapshot, normalize_risk_policy
+from spreads.services.risk_manager import (
+    build_session_risk_snapshot,
+    normalize_risk_policy,
+)
 from spreads.services.runtime_identity import build_live_session_id, parse_pipeline_id
 from spreads.storage.serializers import parse_datetime
 
@@ -111,13 +117,34 @@ def _session_live_action_gate(
     return dict(gate)
 
 
+def _tradeability_fields(
+    *,
+    latest_run: Mapping[str, Any] | None,
+    slot_health: Mapping[str, Any] | None,
+    has_live_opportunities: bool,
+    has_analysis_only_opportunities: bool = False,
+) -> dict[str, Any]:
+    tradeability = build_tradeability_summary(
+        capture_status=None if latest_run is None else latest_run.get("capture_status"),
+        live_action_gate=_session_live_action_gate(latest_run),
+        slot_health=slot_health,
+        has_live_opportunities=has_live_opportunities,
+        has_analysis_only_opportunities=has_analysis_only_opportunities,
+    )
+    return {
+        "tradeability": tradeability,
+        "tradeability_state": tradeability["state"],
+        "tradeability_reason": tradeability.get("reason_code"),
+        "tradeability_message": tradeability.get("message"),
+    }
+
+
 def _cycle_opportunity_payloads(
     collector_store: Any,
     cycle_id: str,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     opportunities = [
-        dict(candidate)
-        for candidate in collector_store.list_cycle_candidates(cycle_id)
+        dict(candidate) for candidate in collector_store.list_cycle_candidates(cycle_id)
     ]
     live_counts = {
         "promotable": 0,
@@ -323,6 +350,14 @@ def _serialize_pipeline_summary(
         str(latest_cycle["label"]),
         str(latest_cycle["market_date"]),
     )
+    tradeability_fields = _tradeability_fields(
+        latest_run=latest_run,
+        slot_health=slot_health,
+        has_live_opportunities=bool(
+            int(candidate_counts.get("promotable") or 0)
+            or int(candidate_counts.get("monitor") or 0)
+        ),
+    )
     return {
         "pipeline_id": str(pipeline["pipeline_id"]),
         "label": str(pipeline["label"]),
@@ -338,7 +373,9 @@ def _serialize_pipeline_summary(
         or (None if latest_run is None else latest_run.get("slot_at")),
         "latest_slot_status": slot_health.get("latest_slot_status")
         or (None if latest_run is None else latest_run.get("status")),
-        "latest_capture_status": None if latest_run is None else latest_run.get("capture_status"),
+        "latest_capture_status": None
+        if latest_run is None
+        else latest_run.get("capture_status"),
         "promotable_count": int(candidate_counts.get("promotable") or 0),
         "monitor_count": int(candidate_counts.get("monitor") or 0),
         "alert_count": int(alert_count or 0),
@@ -346,9 +383,12 @@ def _serialize_pipeline_summary(
         "gap_active": bool(slot_health.get("gap_active")),
         "recovery_state": slot_health.get("recovery_state"),
         "missed_slot_count": int(slot_health.get("missed_slot_count") or 0),
-        "unrecoverable_slot_count": int(slot_health.get("unrecoverable_slot_count") or 0),
+        "unrecoverable_slot_count": int(
+            slot_health.get("unrecoverable_slot_count") or 0
+        ),
         "latest_fresh_slot_at": slot_health.get("latest_fresh_slot_at"),
         "latest_resume_slot_at": slot_health.get("latest_resume_slot_at"),
+        **tradeability_fields,
         "updated_at": updated_at,
         "style_profile": pipeline.get("style_profile"),
         "horizon_intent": pipeline.get("default_horizon_intent"),
@@ -372,8 +412,7 @@ def list_pipelines(
     job_store = storage.jobs
     alert_store = storage.alerts
     pipeline_rows = [
-        dict(row)
-        for row in collector_store.list_pipelines(limit=max(limit * 5, limit))
+        dict(row) for row in collector_store.list_pipelines(limit=max(limit * 5, limit))
     ]
     latest_cycles = _latest_cycles_for_market_date(
         collector_store=collector_store,
@@ -381,8 +420,7 @@ def list_pipelines(
         market_date=market_date,
     )
     latest_cycle_by_pipeline_id = {
-        str(row["pipeline_id"]): row
-        for row in latest_cycles
+        str(row["pipeline_id"]): row for row in latest_cycles
     }
     session_ids = [
         build_live_session_id(str(row["label"]), str(row["market_date"]))
@@ -401,18 +439,13 @@ def list_pipelines(
         )
     ]
     latest_runs_by_session_id = {
-        str(row["session_id"]): row
-        for row in latest_runs
-        if row.get("session_id")
+        str(row["session_id"]): row for row in latest_runs if row.get("session_id")
     }
     candidate_counts_by_cycle_id = collector_store.count_cycle_candidates_by_cycle_ids(
         [str(row["cycle_id"]) for row in latest_cycles]
     )
     alert_counts = alert_store.count_alert_events_by_session_keys(
-        [
-            (str(row["market_date"]), str(row["label"]))
-            for row in latest_cycles
-        ]
+        [(str(row["market_date"]), str(row["label"])) for row in latest_cycles]
     )
 
     summaries: list[dict[str, Any]] = []
@@ -429,7 +462,9 @@ def list_pipelines(
                 pipeline=pipeline,
                 latest_cycle=latest_cycle,
                 latest_run=latest_runs_by_session_id.get(legacy_session_id),
-                slot_health=dict(slot_health_by_session_id.get(legacy_session_id) or {}),
+                slot_health=dict(
+                    slot_health_by_session_id.get(legacy_session_id) or {}
+                ),
                 candidate_counts=candidate_counts_by_cycle_id.get(
                     str(latest_cycle["cycle_id"]),
                     {},
@@ -507,9 +542,9 @@ def get_pipeline_detail(
     latest_run = slot_runs[0] if slot_runs else None
 
     current_cycle = None
-    opportunities: list[dict[str, Any]] = []
+    all_opportunities: list[dict[str, Any]] = []
     selection_counts = {"promotable": 0, "monitor": 0}
-    opportunities, selection_counts = _cycle_opportunity_payloads(
+    all_opportunities, selection_counts = _cycle_opportunity_payloads(
         collector_store,
         str(latest_cycle["cycle_id"]),
     )
@@ -523,24 +558,36 @@ def get_pipeline_detail(
             )
             if row.get("source_candidate_id") not in (None, "")
         }
-        opportunities = [
+        all_opportunities = [
             {
                 **row,
                 "opportunity_id": (
                     None
                     if row.get("candidate_id") in (None, "")
-                    else (
-                        active_opportunities.get(int(row["candidate_id"])) or {}
-                    ).get("opportunity_id")
+                    else (active_opportunities.get(int(row["candidate_id"])) or {}).get(
+                        "opportunity_id"
+                    )
                 ),
                 "pipeline_id": pipeline_id,
                 "market_date": resolved_market_date,
             }
-            for row in opportunities
+            for row in all_opportunities
         ]
+    live_opportunities = [
+        row
+        for row in all_opportunities
+        if str(row.get("eligibility") or "live") == "live"
+    ]
+    analysis_only_opportunities = [
+        row
+        for row in all_opportunities
+        if str(row.get("eligibility") or "live") != "live"
+    ]
     current_cycle = {
         **dict(latest_cycle),
-        "opportunities": opportunities,
+        "opportunities": all_opportunities,
+        "live_opportunities": live_opportunities,
+        "analysis_only_opportunities": analysis_only_opportunities,
         "selection_counts": selection_counts,
         "legacy_session_id": legacy_session_id,
     }
@@ -658,6 +705,12 @@ def get_pipeline_detail(
             limit=50,
         )
     ]
+    tradeability_fields = _tradeability_fields(
+        latest_run=latest_run,
+        slot_health=slot_health,
+        has_live_opportunities=bool(live_opportunities),
+        has_analysis_only_opportunities=bool(analysis_only_opportunities),
+    )
 
     return {
         "pipeline_id": pipeline_id,
@@ -680,10 +733,12 @@ def get_pipeline_detail(
         "slot_health": slot_health,
         "recovery_slots": recovery_slots,
         "live_action_gate": live_action_gate,
+        **tradeability_fields,
         "pipeline": dict(pipeline),
         "current_cycle": current_cycle,
         "cycles": cycles,
-        "opportunities": opportunities,
+        "opportunities": live_opportunities,
+        "analysis_only_opportunities": analysis_only_opportunities,
         "selection_counts": selection_counts,
         "slot_runs": slot_runs,
         "alerts": alerts,

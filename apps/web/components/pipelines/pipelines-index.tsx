@@ -23,6 +23,7 @@ import {
   readString,
   SectionSurface,
   SessionStatusBadge,
+  TradeabilityBadge,
 } from "@/components/sessions/workspace-primitives";
 
 type PipelineListRow = {
@@ -31,6 +32,7 @@ type PipelineListRow = {
   marketDate: string;
   status: string;
   captureStatus: string;
+  tradeabilityState: string;
   latestSlotAt: string;
   promotableCount: number;
   monitorCount: number;
@@ -44,6 +46,10 @@ function buildPipelineRows(pipelines: PipelineListItem[]): PipelineListRow[] {
     marketDate: pipeline.latest_market_date,
     status: pipeline.status,
     captureStatus: readString(pipeline.latest_capture_status, "unknown"),
+    tradeabilityState: readString(
+      pipeline.tradeability_state,
+      "research_only",
+    ),
     latestSlotAt: readString(pipeline.latest_slot_at, ""),
     promotableCount: pipeline.promotable_count,
     monitorCount: pipeline.monitor_count,
@@ -75,6 +81,11 @@ const PIPELINE_COLUMNS: ColumnDef<PipelineListRow>[] = [
     accessorKey: "captureStatus",
     header: "Capture",
     cell: ({ getValue }) => <CaptureStatusBadge value={String(getValue())} />,
+  },
+  {
+    accessorKey: "tradeabilityState",
+    header: "Tradeability",
+    cell: ({ getValue }) => <TradeabilityBadge value={String(getValue())} />,
   },
   {
     accessorKey: "latestSlotAt",
@@ -146,6 +157,9 @@ export function PipelinesIndexPageContent() {
               ) : null}
               {latestPipeline ? (
                 <CaptureStatusBadge value={latestPipeline.latest_capture_status} />
+              ) : null}
+              {latestPipeline ? (
+                <TradeabilityBadge value={latestPipeline.tradeability_state} />
               ) : null}
             </div>
             <div className="mt-4 text-3xl font-semibold tracking-[0.02em]">

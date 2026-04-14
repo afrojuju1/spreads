@@ -21,7 +21,8 @@ def _serialize_opportunity(row: dict[str, Any]) -> dict[str, Any]:
         "legacy_session_id": build_live_session_id(label, market_date)
         if label and market_date
         else None,
-        "order_payload": row.get("order_payload_json") or row.get("execution_shape_json", {}).get("order_payload"),
+        "order_payload": row.get("order_payload_json")
+        or row.get("execution_shape_json", {}).get("order_payload"),
         "legs": row.get("legs_json") or [],
         "economics": row.get("economics_json") or {},
         "strategy_metrics": row.get("strategy_metrics_json") or {},
@@ -36,6 +37,7 @@ def list_opportunities(
     pipeline_id: str | None = None,
     market_date: str | None = None,
     lifecycle_state: str | None = None,
+    include_analysis_only: bool = False,
     limit: int = 200,
     storage: Any | None = None,
 ) -> dict[str, Any]:
@@ -46,6 +48,7 @@ def list_opportunities(
             pipeline_id=pipeline_id,
             market_date=market_date,
             lifecycle_state=lifecycle_state,
+            eligibility_state=None if include_analysis_only else "live",
             limit=limit,
         )
     ]

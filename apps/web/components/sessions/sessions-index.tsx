@@ -24,6 +24,7 @@ import {
   readString,
   SectionSurface,
   SessionStatusBadge,
+  TradeabilityBadge,
 } from "@/components/sessions/workspace-primitives";
 
 type SessionListRow = {
@@ -33,6 +34,7 @@ type SessionListRow = {
   sessionDate: string;
   status: string;
   captureStatus: string;
+  tradeabilityState: string;
   latestSlotAt: string;
   promotableCount: number;
   monitorCount: number;
@@ -47,6 +49,7 @@ function buildSessionListRows(sessions: SessionListItem[]): SessionListRow[] {
     sessionDate: session.session_date,
     status: session.status,
     captureStatus: readString(session.latest_capture_status, "unknown"),
+    tradeabilityState: readString(session.tradeability_state, "research_only"),
     latestSlotAt: readString(session.latest_slot_at, ""),
     promotableCount: session.promotable_count,
     monitorCount: session.monitor_count,
@@ -78,6 +81,11 @@ const SESSION_LIST_COLUMNS: ColumnDef<SessionListRow>[] = [
     accessorKey: "captureStatus",
     header: "Capture",
     cell: ({ getValue }) => <CaptureStatusBadge value={String(getValue())} />,
+  },
+  {
+    accessorKey: "tradeabilityState",
+    header: "Tradeability",
+    cell: ({ getValue }) => <TradeabilityBadge value={String(getValue())} />,
   },
   {
     accessorKey: "latestSlotAt",
@@ -162,6 +170,9 @@ export function SessionsIndexPageContent() {
               ) : null}
               {latestSession ? (
                 <CaptureStatusBadge value={latestSession.latest_capture_status} />
+              ) : null}
+              {latestSession ? (
+                <TradeabilityBadge value={latestSession.tradeability_state} />
               ) : null}
             </div>
             <div className="mt-4 text-3xl font-semibold tracking-[0.02em]">

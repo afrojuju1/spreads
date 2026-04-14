@@ -7,9 +7,17 @@ from sqlalchemy import select
 
 from spreads.services.runtime_identity import build_pipeline_id
 from spreads.storage.base import RepositoryBase
-from spreads.storage.records import OpportunityRecord, SignalStateRecord, SignalStateTransitionRecord
+from spreads.storage.records import (
+    OpportunityRecord,
+    SignalStateRecord,
+    SignalStateTransitionRecord,
+)
 from spreads.storage.serializers import parse_date, parse_datetime
-from spreads.storage.signal_models import OpportunityModel, SignalStateModel, SignalStateTransitionModel
+from spreads.storage.signal_models import (
+    OpportunityModel,
+    SignalStateModel,
+    SignalStateTransitionModel,
+)
 
 
 def _optional_date(value: str | date | None) -> date | None:
@@ -256,7 +264,9 @@ class SignalRepository(RepositoryBase):
                         "opportunity_id": opportunity_id,
                         "session_date": session_date_value,
                         "market_session": market_session,
-                        "expires_at": None if expires_at_dt is None else expires_at_dt.isoformat(),
+                        "expires_at": None
+                        if expires_at_dt is None
+                        else expires_at_dt.isoformat(),
                     }
                 )
                 row.label = label
@@ -329,12 +339,18 @@ class SignalRepository(RepositoryBase):
         if label:
             statement = statement.where(SignalStateModel.label == label)
         if session_date:
-            statement = statement.where(SignalStateModel.session_date == date.fromisoformat(session_date))
+            statement = statement.where(
+                SignalStateModel.session_date == date.fromisoformat(session_date)
+            )
         if state:
             statement = statement.where(SignalStateModel.state == state)
         if underlying_symbol:
-            statement = statement.where(SignalStateModel.underlying_symbol == underlying_symbol.upper())
-        statement = statement.order_by(SignalStateModel.updated_at.desc(), SignalStateModel.signal_state_id.asc()).limit(limit)
+            statement = statement.where(
+                SignalStateModel.underlying_symbol == underlying_symbol.upper()
+            )
+        statement = statement.order_by(
+            SignalStateModel.updated_at.desc(), SignalStateModel.signal_state_id.asc()
+        ).limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
         return self.rows(rows)
@@ -353,13 +369,17 @@ class SignalRepository(RepositoryBase):
             statement = statement.where(SignalStateTransitionModel.label == label)
         if session_date:
             statement = statement.where(
-                SignalStateTransitionModel.session_date == date.fromisoformat(session_date)
+                SignalStateTransitionModel.session_date
+                == date.fromisoformat(session_date)
             )
         if signal_state_id:
-            statement = statement.where(SignalStateTransitionModel.signal_state_id == signal_state_id)
+            statement = statement.where(
+                SignalStateTransitionModel.signal_state_id == signal_state_id
+            )
         if underlying_symbol:
             statement = statement.where(
-                SignalStateTransitionModel.underlying_symbol == underlying_symbol.upper()
+                SignalStateTransitionModel.underlying_symbol
+                == underlying_symbol.upper()
             )
         statement = statement.order_by(
             SignalStateTransitionModel.occurred_at.desc(),
@@ -490,7 +510,9 @@ class SignalRepository(RepositoryBase):
                 )
                 session.add(row)
             else:
-                semantic_changed = _opportunity_model_snapshot(row) != _opportunity_snapshot(
+                semantic_changed = _opportunity_model_snapshot(
+                    row
+                ) != _opportunity_snapshot(
                     {
                         "pipeline_id": pipeline_id or build_pipeline_id(label),
                         "label": label,
@@ -503,7 +525,9 @@ class SignalRepository(RepositoryBase):
                         "style_profile": style_profile,
                         "horizon_intent": horizon_intent,
                         "product_class": product_class,
-                        "expiration_date": None if expiration_date_value is None else expiration_date_value.isoformat(),
+                        "expiration_date": None
+                        if expiration_date_value is None
+                        else expiration_date_value.isoformat(),
                         "entity_type": entity_type,
                         "entity_key": entity_key,
                         "underlying_symbol": underlying_symbol,
@@ -520,7 +544,9 @@ class SignalRepository(RepositoryBase):
                         "confidence": confidence,
                         "signal_state_ref": signal_state_ref,
                         "lifecycle_state": lifecycle_state,
-                        "expires_at": None if expires_at_dt is None else expires_at_dt.isoformat(),
+                        "expires_at": None
+                        if expires_at_dt is None
+                        else expires_at_dt.isoformat(),
                         "reason_codes": reason_codes,
                         "blockers": blockers,
                         "legs": list(legs or []),
@@ -596,6 +622,7 @@ class SignalRepository(RepositoryBase):
         market_date: str | None = None,
         session_date: str | None = None,
         lifecycle_state: str | None = None,
+        eligibility_state: str | None = None,
         underlying_symbol: str | None = None,
         strategy_family: str | None = None,
         limit: int = 200,
@@ -606,16 +633,32 @@ class SignalRepository(RepositoryBase):
         if label:
             statement = statement.where(OpportunityModel.label == label)
         if market_date:
-            statement = statement.where(OpportunityModel.market_date == date.fromisoformat(market_date))
+            statement = statement.where(
+                OpportunityModel.market_date == date.fromisoformat(market_date)
+            )
         if session_date:
-            statement = statement.where(OpportunityModel.session_date == date.fromisoformat(session_date))
+            statement = statement.where(
+                OpportunityModel.session_date == date.fromisoformat(session_date)
+            )
         if lifecycle_state:
-            statement = statement.where(OpportunityModel.lifecycle_state == lifecycle_state)
+            statement = statement.where(
+                OpportunityModel.lifecycle_state == lifecycle_state
+            )
+        if eligibility_state:
+            statement = statement.where(
+                OpportunityModel.eligibility_state == eligibility_state
+            )
         if underlying_symbol:
-            statement = statement.where(OpportunityModel.underlying_symbol == underlying_symbol.upper())
+            statement = statement.where(
+                OpportunityModel.underlying_symbol == underlying_symbol.upper()
+            )
         if strategy_family:
-            statement = statement.where(OpportunityModel.strategy_family == strategy_family)
-        statement = statement.order_by(OpportunityModel.updated_at.desc(), OpportunityModel.opportunity_id.asc()).limit(limit)
+            statement = statement.where(
+                OpportunityModel.strategy_family == strategy_family
+            )
+        statement = statement.order_by(
+            OpportunityModel.updated_at.desc(), OpportunityModel.opportunity_id.asc()
+        ).limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
         return self.rows(rows)
@@ -638,7 +681,9 @@ class SignalRepository(RepositoryBase):
             OpportunityModel.lifecycle_state.in_(("candidate", "ready", "blocked")),
         )
         if active_opportunity_ids:
-            statement = statement.where(OpportunityModel.opportunity_id.not_in(active_opportunity_ids))
+            statement = statement.where(
+                OpportunityModel.opportunity_id.not_in(active_opportunity_ids)
+            )
         with self.session_scope() as session:
             rows = session.scalars(statement).all()
             expired_rows: list[OpportunityModel] = []
@@ -656,12 +701,19 @@ class SignalRepository(RepositoryBase):
                 session.refresh(row)
             return self.rows(expired_rows)
 
-    def find_active_opportunity_by_candidate_id(self, candidate_id: int) -> OpportunityRecord | None:
+    def find_active_opportunity_by_candidate_id(
+        self, candidate_id: int
+    ) -> OpportunityRecord | None:
         statement = (
             select(OpportunityModel)
             .where(OpportunityModel.source_candidate_id == candidate_id)
-            .where(OpportunityModel.lifecycle_state.in_(("candidate", "ready", "blocked")))
-            .order_by(OpportunityModel.updated_at.desc(), OpportunityModel.opportunity_id.asc())
+            .where(
+                OpportunityModel.lifecycle_state.in_(("candidate", "ready", "blocked"))
+            )
+            .order_by(
+                OpportunityModel.updated_at.desc(),
+                OpportunityModel.opportunity_id.asc(),
+            )
             .limit(1)
         )
         with self.session_factory() as session:

@@ -21,11 +21,14 @@ def list_opportunities_route(
     pipeline_id: str | None = None,
     market_date: str | None = None,
     lifecycle_state: str | None = None,
+    include_analysis_only: bool = False,
     limit: int = Query(default=200, ge=1, le=500),
     db: str | None = None,
 ) -> dict[str, object]:
     try:
-        resolved_market_date = None if market_date is None else resolve_date(market_date)
+        resolved_market_date = (
+            None if market_date is None else resolve_date(market_date)
+        )
     except ValueError as exc:
         raise bad_request_error(exc) from exc
     return list_opportunities(
@@ -33,6 +36,7 @@ def list_opportunities_route(
         pipeline_id=pipeline_id,
         market_date=resolved_market_date,
         lifecycle_state=lifecycle_state,
+        include_analysis_only=include_analysis_only,
         limit=limit,
     )
 

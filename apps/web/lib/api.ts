@@ -439,6 +439,9 @@ const sessionListItemSchema = z
     latest_slot_at: z.string().nullable().optional(),
     latest_slot_status: z.string().nullable().optional(),
     latest_capture_status: z.string().nullable().optional(),
+    tradeability_state: z.string().nullable().optional(),
+    tradeability_reason: z.string().nullable().optional(),
+    tradeability_message: z.string().nullable().optional(),
     stream_quote_events_saved: z.number().optional(),
     websocket_quote_events_saved: z.number().optional(),
     baseline_quote_events_saved: z.number(),
@@ -465,6 +468,9 @@ const pipelineListItemSchema = z
     latest_slot_at: z.string().nullable().optional(),
     latest_slot_status: z.string().nullable().optional(),
     latest_capture_status: z.string().nullable().optional(),
+    tradeability_state: z.string().nullable().optional(),
+    tradeability_reason: z.string().nullable().optional(),
+    tradeability_message: z.string().nullable().optional(),
     promotable_count: z.number(),
     monitor_count: z.number(),
     alert_count: z.number(),
@@ -685,9 +691,13 @@ const sessionDetailSchema = z
     risk_note: z.string().nullable().optional(),
     reconciliation_status: z.string().nullable().optional(),
     reconciliation_note: z.string().nullable().optional(),
+    tradeability_state: z.string().nullable().optional(),
+    tradeability_reason: z.string().nullable().optional(),
+    tradeability_message: z.string().nullable().optional(),
     latest_slot: jobRunSchema.nullable().optional(),
     current_cycle: liveResponseSchema.nullable().optional(),
     opportunities: z.array(liveCandidateSchema),
+    analysis_only_opportunities: z.array(liveCandidateSchema).optional(),
     selection_counts: z
       .object({
         promotable: z.number(),
@@ -944,12 +954,14 @@ export function getOpportunities(filters?: {
   pipelineId?: string;
   marketDate?: string;
   lifecycleState?: string;
+  includeAnalysisOnly?: boolean;
   limit?: number;
 }) {
   return fetchApi("opportunities", opportunityListResponseSchema, {
     pipeline_id: filters?.pipelineId,
     market_date: filters?.marketDate,
     lifecycle_state: filters?.lifecycleState,
+    include_analysis_only: filters?.includeAnalysisOnly,
     limit: filters?.limit,
   });
 }

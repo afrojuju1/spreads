@@ -183,6 +183,40 @@ export function CaptureStatusBadge({
   );
 }
 
+function tradeabilityTone(value: string): string {
+  switch (value) {
+    case "live_ready":
+      return "border-emerald-200 bg-emerald-100 text-emerald-900 dark:border-emerald-900/80 dark:bg-emerald-950/55 dark:text-emerald-100";
+    case "degraded_quotes":
+      return "border-amber-200 bg-amber-100 text-amber-900 dark:border-amber-900/80 dark:bg-amber-950/55 dark:text-amber-100";
+    case "recovery_only":
+      return "border-sky-200 bg-sky-100 text-sky-900 dark:border-sky-900/80 dark:bg-sky-950/55 dark:text-sky-100";
+    case "research_only":
+      return "border-stone-200 bg-stone-100 text-stone-900 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-100";
+    default:
+      return "border-border/70 bg-card text-foreground";
+  }
+}
+
+export function TradeabilityBadge({
+  value,
+}: {
+  value: string | null | undefined;
+}) {
+  const resolved = readString(value, "unknown");
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "rounded-full border px-2.5 py-1 text-[11px] uppercase tracking-[0.16em]",
+        tradeabilityTone(resolved),
+      )}
+    >
+      {resolved.replaceAll("_", " ")}
+    </Badge>
+  );
+}
+
 function executionTone(value: string): string {
   switch (value) {
     case "filled":

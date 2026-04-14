@@ -60,6 +60,7 @@ import {
   RiskStatusBadge,
   SectionSurface,
   SessionStatusBadge,
+  TradeabilityBadge,
   valueTone,
 } from "@/components/sessions/workspace-primitives";
 import { cn } from "@/lib/utils";
@@ -1406,6 +1407,9 @@ export function SessionDetailPageContent({
               ) : null}
               {selectedSession ? (
                 <CaptureStatusBadge value={selectedSession.latest_capture_status} />
+              ) : null}
+              {session ? (
+                <TradeabilityBadge value={session.tradeability_state} />
               ) : null}
             </div>
             <div className="mt-4 flex flex-col gap-3">

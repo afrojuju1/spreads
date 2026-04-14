@@ -20,9 +20,12 @@ from spreads.services.live_selection import (
     select_live_opportunities,
 )
 from spreads.services.live_collector_health import (
+    CAPTURE_HISTORY_BLOCK_THRESHOLD,
+    build_capture_history_gate,
     build_live_action_gate,
     build_quote_capture_summary,
     build_trade_capture_summary,
+    enrich_live_collector_job_run_payload,
 )
 from spreads.services.live_recovery import (
     LIVE_SLOT_STATUS_MISSED,
@@ -433,13 +436,17 @@ def collect_recorded_market_data_records(
             "quote_complete": True,
         }
 
-    deadline = datetime.now(UTC) + timedelta(seconds=max(float(wait_timeout_seconds), 0.0))
+    deadline = datetime.now(UTC) + timedelta(
+        seconds=max(float(wait_timeout_seconds), 0.0)
+    )
     quote_records: list[dict[str, Any]] = []
     trade_records: list[dict[str, Any]] = []
     missing_quote_symbols = list(normalized_quote_symbols)
 
     while True:
-        captured_to = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+        captured_to = (
+            datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+        )
         if normalized_quote_symbols:
             quote_records = history_store.list_option_quote_events_window(
                 option_symbols=normalized_quote_symbols,
@@ -464,7 +471,9 @@ def collect_recorded_market_data_records(
             if str(row.get("option_symbol") or "").strip()
         }
         missing_quote_symbols = [
-            symbol for symbol in normalized_quote_symbols if symbol not in covered_quote_symbols
+            symbol
+            for symbol in normalized_quote_symbols
+            if symbol not in covered_quote_symbols
         ]
         if not missing_quote_symbols or datetime.now(UTC) >= deadline:
             break
@@ -1020,7 +1029,9 @@ def _run_collection_cycle(
     }
     recorder_capture_requested_at: str | None = None
     if tick_context is not None and recovery_store is not None:
-        requested_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+        requested_at = (
+            datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+        )
         try:
             target_refresh = refresh_live_session_capture_targets(
                 recovery_store=recovery_store,
@@ -1032,15 +1043,15 @@ def _run_collection_cycle(
                 monitor_candidates=monitor_payloads,
                 capture_candidates=quote_candidates,
                 data_base_url=getattr(scanner_args, "data_base_url", None),
-                session_end_offset_minutes=int(getattr(args, "session_end_offset_minutes", 0)),
+                session_end_offset_minutes=int(
+                    getattr(args, "session_end_offset_minutes", 0)
+                ),
             )
             capture_targets = {
-                str(reason): [
-                    dict(row)
-                    for row in rows
-                    if isinstance(row, dict)
-                ]
-                for reason, rows in dict(target_refresh.get("capture_targets") or {}).items()
+                str(reason): [dict(row) for row in rows if isinstance(row, dict)]
+                for reason, rows in dict(
+                    target_refresh.get("capture_targets") or {}
+                ).items()
             }
             recorder_capture_requested_at = requested_at
         except Exception as exc:
@@ -1148,11 +1159,13 @@ def _run_collection_cycle(
                         if bool(capture_response.get("quote_complete", True)):
                             stream_quote_event_count = len(stream_quote_records)
                     else:
-                        stream_quote_event_count = history_store.save_option_quote_events(
-                            cycle_id=cycle_id,
-                            label=label,
-                            profile=args.profile,
-                            quotes=stream_quote_records,
+                        stream_quote_event_count = (
+                            history_store.save_option_quote_events(
+                                cycle_id=cycle_id,
+                                label=label,
+                                profile=args.profile,
+                                quotes=stream_quote_records,
+                            )
                         )
                     quote_event_count += stream_quote_event_count
                     try:
@@ -1178,11 +1191,13 @@ def _run_collection_cycle(
                     if using_market_recorder:
                         stream_trade_event_count = len(stream_trade_records)
                     else:
-                        stream_trade_event_count = history_store.save_option_trade_events(
-                            cycle_id=cycle_id,
-                            label=label,
-                            profile=args.profile,
-                            trades=stream_trade_records,
+                        stream_trade_event_count = (
+                            history_store.save_option_trade_events(
+                                cycle_id=cycle_id,
+                                label=label,
+                                profile=args.profile,
+                                trades=stream_trade_records,
+                            )
                         )
                     trade_event_count += stream_trade_event_count
                     try:
@@ -1283,6 +1298,32 @@ def _run_collection_cycle(
                 live_action_gate = merged_gate
         except Exception as exc:
             print(f"Live recovery gate unavailable: {exc}")
+    if tick_context is not None:
+        try:
+            recent_runs = [
+                enrich_live_collector_job_run_payload(row)
+                for row in job_store.list_job_runs(
+                    job_type="live_collector",
+                    session_id=tick_context.session_id,
+                    limit=CAPTURE_HISTORY_BLOCK_THRESHOLD + 3,
+                )
+            ]
+            recent_capture_statuses = [quote_capture["capture_status"]]
+            recent_capture_statuses.extend(
+                str(row.get("capture_status") or "").strip().lower()
+                for row in recent_runs
+                if str(row.get("job_run_id") or "") != tick_context.job_run_id
+                and str(row.get("status") or "") == "succeeded"
+                and str(row.get("capture_status") or "").strip()
+            )
+            history_gate = build_capture_history_gate(recent_capture_statuses)
+            if (
+                history_gate is not None
+                and str(live_action_gate.get("status") or "") != "blocked"
+            ):
+                live_action_gate = history_gate
+        except Exception as exc:
+            print(f"Live capture history gate unavailable: {exc}")
     uoa_summary = build_uoa_trade_summary(
         as_of=generated_at,
         expected_trade_symbols=expected_trade_symbols,
@@ -1342,10 +1383,7 @@ def _run_collection_cycle(
     if heartbeat is not None:
         heartbeat()
     auto_execution: dict[str, Any] | None = None
-    if (
-        tick_context is not None
-        and bool(live_action_gate.get("allow_auto_execution"))
-    ):
+    if tick_context is not None and bool(live_action_gate.get("allow_auto_execution")):
         try:
             auto_execution = submit_auto_session_execution(
                 db_target=args.history_db,
@@ -1481,7 +1519,8 @@ def run_collection_tick(
         slot_at = _resolve_collection_reference_time(tick_context.slot_at)
         if now > slot_at + timedelta(seconds=stale_after_seconds):
             session_date = str(
-                getattr(args, "session_date", "") or _session_date_for_generated_at(tick_context.slot_at)
+                getattr(args, "session_date", "")
+                or _session_date_for_generated_at(tick_context.slot_at)
             )
             label = str(
                 getattr(args, "label", "")
@@ -1522,7 +1561,9 @@ def run_collection_tick(
         client = AlpacaClient(
             key_id=key_id,
             secret_key=secret_key,
-            trading_base_url=infer_trading_base_url(key_id, scanner_args.trading_base_url),
+            trading_base_url=infer_trading_base_url(
+                key_id, scanner_args.trading_base_url
+            ),
             data_base_url=scanner_args.data_base_url,
         )
         calendar_resolver = build_calendar_event_resolver(

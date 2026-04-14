@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from spreads.jobs.orchestration import NEW_YORK, _market_schedule
+from spreads.services.live_collector_health import TRADEABILITY_STATE_RECOVERY_ONLY
 from spreads.services.control_plane import get_control_state_snapshot, set_control_mode
 from spreads.services.option_quote_records import build_quote_symbol_metadata
 from spreads.services.option_trade_records import build_trade_symbol_metadata
@@ -48,7 +49,12 @@ RECOVERY_TRACKED_REASONS = {
     CAPTURE_TARGET_REASON_PENDING_EXECUTION,
     CAPTURE_TARGET_REASON_OPEN_POSITION,
 }
-OPEN_POSITION_CAPTURE_STATUSES = ["pending_open", "partial_open", "open", "partial_close"]
+OPEN_POSITION_CAPTURE_STATUSES = [
+    "pending_open",
+    "partial_open",
+    "open",
+    "partial_close",
+]
 
 
 def _utc_now() -> str:
@@ -57,8 +63,10 @@ def _utc_now() -> str:
 
 def _future_utc(minutes: int) -> str:
     return (
-        datetime.now(UTC) + timedelta(minutes=max(int(minutes), 1))
-    ).isoformat(timespec="seconds").replace("+00:00", "Z")
+        (datetime.now(UTC) + timedelta(minutes=max(int(minutes), 1)))
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def _as_text(value: Any) -> str | None:
@@ -124,11 +132,15 @@ def _session_expiry_at(
     session_end_offset_minutes: int = 0,
     grace_minutes: int = 60,
 ) -> str:
-    resolved_date = parse_date(session_date or datetime.now(NEW_YORK).date().isoformat())
+    resolved_date = parse_date(
+        session_date or datetime.now(NEW_YORK).date().isoformat()
+    )
     market_window = _market_schedule("NYSE", resolved_date)
     if market_window is None:
         expiry = datetime.now(NEW_YORK) + timedelta(hours=12)
-        return expiry.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+        return (
+            expiry.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+        )
     _, market_close = market_window
     expiry = market_close + timedelta(
         minutes=max(int(session_end_offset_minutes), 0) + max(int(grace_minutes), 0)
@@ -136,7 +148,9 @@ def _session_expiry_at(
     return expiry.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def summarize_session_slot_health(slot_rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+def summarize_session_slot_health(
+    slot_rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
     ordered_rows = sorted(
         [dict(row) for row in slot_rows],
         key=lambda row: _slot_timestamp(row) or datetime.fromtimestamp(0, UTC),
@@ -263,10 +277,13 @@ def merge_live_action_gate_with_recovery(
         ),
         "allow_alerts": False,
         "allow_auto_execution": False,
+        "tradeability_state": TRADEABILITY_STATE_RECOVERY_ONLY,
         "recovery_state": recovery_state,
         "gap_active": bool(slot_health.get("gap_active")),
         "missed_slot_count": int(slot_health.get("missed_slot_count") or 0),
-        "unrecoverable_slot_count": int(slot_health.get("unrecoverable_slot_count") or 0),
+        "unrecoverable_slot_count": int(
+            slot_health.get("unrecoverable_slot_count") or 0
+        ),
     }
 
 
@@ -376,9 +393,7 @@ def refresh_live_session_capture_targets(
         expires_at=expiry,
     )
     monitor_source_candidates = (
-        monitor_candidates
-        if capture_candidates is None
-        else capture_candidates
+        monitor_candidates if capture_candidates is None else capture_candidates
     )
     monitor_rows = build_capture_target_rows_for_candidates(
         candidates=monitor_source_candidates,
@@ -417,9 +432,14 @@ def refresh_live_session_capture_targets(
     }
 
 
-def _execution_attempt_capture_rows(attempt: Mapping[str, Any], *, expires_at: str) -> list[dict[str, Any]]:
+def _execution_attempt_capture_rows(
+    attempt: Mapping[str, Any], *, expires_at: str
+) -> list[dict[str, Any]]:
     rows = []
-    for leg_role, option_symbol in (("short", attempt.get("short_symbol")), ("long", attempt.get("long_symbol"))):
+    for leg_role, option_symbol in (
+        ("short", attempt.get("short_symbol")),
+        ("long", attempt.get("long_symbol")),
+    ):
         rendered_symbol = _as_text(option_symbol)
         if rendered_symbol is None:
             continue
@@ -443,9 +463,14 @@ def _execution_attempt_capture_rows(attempt: Mapping[str, Any], *, expires_at: s
     return rows
 
 
-def _session_position_capture_rows(position: Mapping[str, Any], *, expires_at: str) -> list[dict[str, Any]]:
+def _session_position_capture_rows(
+    position: Mapping[str, Any], *, expires_at: str
+) -> list[dict[str, Any]]:
     rows = []
-    for leg_role, option_symbol in (("short", position.get("short_symbol")), ("long", position.get("long_symbol"))):
+    for leg_role, option_symbol in (
+        ("short", position.get("short_symbol")),
+        ("long", position.get("long_symbol")),
+    ):
         rendered_symbol = _as_text(option_symbol)
         if rendered_symbol is None:
             continue
@@ -572,7 +597,10 @@ def refresh_recovery_session_capture_targets(
     recovery_store = storage.recovery
     if not recovery_store.schema_ready():
         return {"status": "skipped", "reason": "recovery_schema_unavailable"}
-    if str(slot_health.get("recovery_state") or RECOVERY_STATE_CLEAR) == RECOVERY_STATE_CLEAR:
+    if (
+        str(slot_health.get("recovery_state") or RECOVERY_STATE_CLEAR)
+        == RECOVERY_STATE_CLEAR
+    ):
         recovery_store.delete_capture_targets(
             owner_kind=CAPTURE_OWNER_RECOVERY_SESSION,
             owner_key=session_id,
@@ -580,7 +608,11 @@ def refresh_recovery_session_capture_targets(
         return {"status": "cleared", "target_count": 0}
 
     latest_success = None
-    for row in sorted(slot_rows, key=lambda item: _slot_timestamp(item) or datetime.fromtimestamp(0, UTC), reverse=True):
+    for row in sorted(
+        slot_rows,
+        key=lambda item: _slot_timestamp(item) or datetime.fromtimestamp(0, UTC),
+        reverse=True,
+    ):
         if str(row.get("status") or "") == LIVE_SLOT_STATUS_SUCCEEDED:
             latest_success = dict(row)
             break
@@ -751,8 +783,12 @@ def _continuity_rows_for_slot(
         rows_by_symbol[option_symbol] = {
             **existing,
             **dict(row),
-            "quote_enabled": bool(existing.get("quote_enabled", False) or row.get("quote_enabled", False)),
-            "trade_enabled": bool(existing.get("trade_enabled", False) or row.get("trade_enabled", False)),
+            "quote_enabled": bool(
+                existing.get("quote_enabled", False) or row.get("quote_enabled", False)
+            ),
+            "trade_enabled": bool(
+                existing.get("trade_enabled", False) or row.get("trade_enabled", False)
+            ),
         }
     return sorted(rows_by_symbol.values(), key=_option_sort_key)
 
@@ -784,7 +820,9 @@ def _slot_should_be_marked_missed(
             or parse_datetime(_as_text(run_record.get("started_at")))
             or parse_datetime(_as_text(run_record.get("scheduled_for")))
         )
-        if last_seen is not None and now <= last_seen + timedelta(seconds=max(stale_after_seconds, 1)):
+        if last_seen is not None and now <= last_seen + timedelta(
+            seconds=max(stale_after_seconds, 1)
+        ):
             return False
     return True
 
@@ -804,9 +842,7 @@ def _set_recovery_control_mode(
             reason_code == RECOVERY_CONTROL_REASON_CODE
             and configured_source_kind == "recovery_manager"
         ):
-            note = (
-                f"{len(blocked_sessions)} live session(s) are blocked by collector gap recovery."
-            )
+            note = f"{len(blocked_sessions)} live session(s) are blocked by collector gap recovery."
             return set_control_mode(
                 db_target=db_target,
                 mode="degraded",
@@ -1054,7 +1090,10 @@ def run_collector_recovery(
             slot_rows=refreshed_rows,
             slot_health=slot_health,
         )
-        if str(slot_health.get("recovery_state") or RECOVERY_STATE_CLEAR) != RECOVERY_STATE_CLEAR:
+        if (
+            str(slot_health.get("recovery_state") or RECOVERY_STATE_CLEAR)
+            != RECOVERY_STATE_CLEAR
+        ):
             blocked_sessions[session_id] = slot_health
 
     control_action = _set_recovery_control_mode(

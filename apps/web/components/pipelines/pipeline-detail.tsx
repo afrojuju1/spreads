@@ -50,6 +50,7 @@ import {
   readString,
   SectionSurface,
   SessionStatusBadge,
+  TradeabilityBadge,
 } from "@/components/sessions/workspace-primitives";
 
 type PipelineDetailPageContentProps = {
@@ -651,6 +652,7 @@ export function PipelineDetailPageContent({
               </Badge>
               <SessionStatusBadge value={detail.status} />
               <CaptureStatusBadge value={detail.latest_slot?.capture_status} />
+              <TradeabilityBadge value={detail.tradeability_state} />
             </div>
             <div className="mt-4 text-3xl font-semibold tracking-[0.02em]">
               {detail.label}

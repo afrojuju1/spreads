@@ -158,8 +158,7 @@ def list_existing_sessions(
         return {"sessions": []}
 
     pipeline_rows = [
-        dict(row)
-        for row in collector_store.list_pipelines(limit=max(limit * 5, limit))
+        dict(row) for row in collector_store.list_pipelines(limit=max(limit * 5, limit))
     ]
     latest_cycles = _latest_pipeline_cycles(
         collector_store=collector_store,
@@ -167,10 +166,7 @@ def list_existing_sessions(
         market_date=session_date,
         limit=limit,
     )
-    pipeline_by_id = {
-        str(row["pipeline_id"]): row
-        for row in pipeline_rows
-    }
+    pipeline_by_id = {str(row["pipeline_id"]): row for row in pipeline_rows}
     session_ids = [
         build_live_session_id(str(row["label"]), str(row["market_date"]))
         for row in latest_cycles
@@ -187,10 +183,7 @@ def list_existing_sessions(
         [str(row["cycle_id"]) for row in latest_cycles]
     )
     alert_counts = storage.alerts.count_alert_events_by_session_keys(
-        [
-            (str(row["market_date"]), str(row["label"]))
-            for row in latest_cycles
-        ]
+        [(str(row["market_date"]), str(row["label"])) for row in latest_cycles]
     )
 
     slot_health_by_session_id = list_session_slot_health_by_session_id(
@@ -213,7 +206,9 @@ def list_existing_sessions(
                 pipeline=pipeline,
                 latest_cycle=row,
                 latest_run=latest_runs_by_session_id.get(legacy_session_id),
-                slot_health=dict(slot_health_by_session_id.get(legacy_session_id) or {}),
+                slot_health=dict(
+                    slot_health_by_session_id.get(legacy_session_id) or {}
+                ),
                 candidate_counts=candidate_counts_by_cycle_id.get(
                     str(row["cycle_id"]),
                     {},
@@ -251,6 +246,10 @@ def list_existing_sessions(
                 "monitor_count": _coerce_int(row.get("monitor_count")),
                 "alert_count": _coerce_int(row.get("alert_count")),
                 "live_action_gate": row.get("live_action_gate"),
+                "tradeability": row.get("tradeability"),
+                "tradeability_state": row.get("tradeability_state"),
+                "tradeability_reason": row.get("tradeability_reason"),
+                "tradeability_message": row.get("tradeability_message"),
                 "gap_active": bool(row.get("gap_active")),
                 "recovery_state": row.get("recovery_state"),
                 "missed_slot_count": _coerce_int(row.get("missed_slot_count")),
