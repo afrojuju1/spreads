@@ -3,13 +3,15 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Any, Mapping
+from typing import Any
 from uuid import uuid4
 
 from arq import create_pool
 
 from spreads.db.decorators import with_storage
+from spreads.domain.opportunity_models import Opportunity, OpportunityLeg
 from spreads.events.bus import publish_global_event_sync
 from spreads.integrations.alpaca.client import AlpacaClient, AlpacaRequestError
 from spreads.jobs.registry import (
@@ -49,6 +51,7 @@ from spreads.services.execution_lifecycle import (
     resolve_execution_attempt_source_job,
 )
 from spreads.services.execution_portfolio import build_credit_spread_quote_snapshot
+from spreads.services.opportunity_execution_plan import build_execution_plan
 from spreads.services.runtime_identity import (
     build_live_session_id,
     build_pipeline_id,
@@ -221,12 +224,8 @@ def _execution_submit_job_run(
     storage: Any, execution_attempt_id: str
 ) -> Mapping[str, Any] | None:
     job_store = getattr(storage, "jobs", None)
-    if (
-        job_store is None
-        or (
-            hasattr(job_store, "schema_ready")
-            and not job_store.schema_ready()
-        )
+    if job_store is None or (
+        hasattr(job_store, "schema_ready") and not job_store.schema_ready()
     ):
         return None
     try:
@@ -246,10 +245,7 @@ def _source_job_definition(
     if (
         source_job_key is None
         or job_store is None
-        or (
-            hasattr(job_store, "schema_ready")
-            and not job_store.schema_ready()
-        )
+        or (hasattr(job_store, "schema_ready") and not job_store.schema_ready())
     ):
         return None
     try:
@@ -340,9 +336,7 @@ def _guard_intervention_message(
         age_seconds = _coerce_float(guard_decision.get("age_seconds"))
         stale_after_seconds = _coerce_int(guard_decision.get("stale_after_seconds"))
         age_fragment = (
-            ""
-            if age_seconds is None
-            else f" after {int(round(age_seconds))}s"
+            "" if age_seconds is None else f" after {int(round(age_seconds))}s"
         )
         threshold_fragment = (
             ""
@@ -481,6 +475,241 @@ def _candidate_with_payload(candidate: dict[str, Any]) -> dict[str, Any]:
             **dict(payload),
         }
     return dict(candidate)
+
+
+def _opportunity_legs_from_row(opportunity: Mapping[str, Any]) -> list[OpportunityLeg]:
+    legs_payload = opportunity.get("legs")
+    if not isinstance(legs_payload, list):
+        execution_shape = opportunity.get("execution_shape")
+        if isinstance(execution_shape, Mapping):
+            order_payload = execution_shape.get("order_payload")
+            if isinstance(order_payload, Mapping):
+                legs_payload = order_payload.get("legs")
+    if not isinstance(legs_payload, list):
+        return []
+    built: list[OpportunityLeg] = []
+    for index, leg in enumerate(legs_payload, start=1):
+        if not isinstance(leg, Mapping):
+            continue
+        symbol = _as_text(leg.get("symbol"))
+        side = _as_text(leg.get("side"))
+        if symbol is None or side is None:
+            continue
+        built.append(
+            OpportunityLeg(
+                leg_index=index,
+                symbol=symbol,
+                side=side,
+                position_intent=_as_text(leg.get("position_intent")),
+                ratio_qty=_as_text(leg.get("ratio_qty")),
+            )
+        )
+    return built
+
+
+def _opportunity_execution_blockers_from_row(
+    opportunity: Mapping[str, Any],
+) -> list[str]:
+    candidate = opportunity.get("candidate")
+    if isinstance(candidate, Mapping):
+        blockers = candidate.get("execution_blockers")
+        if isinstance(blockers, list):
+            rendered = [str(value) for value in blockers if str(value or "").strip()]
+            if rendered:
+                return rendered
+        score_evidence = candidate.get("score_evidence")
+        if isinstance(score_evidence, Mapping):
+            blockers = score_evidence.get("execution_blockers")
+            if isinstance(blockers, list):
+                rendered = [
+                    str(value) for value in blockers if str(value or "").strip()
+                ]
+                if rendered:
+                    return rendered
+    evidence = opportunity.get("evidence")
+    if isinstance(evidence, Mapping):
+        blockers = evidence.get("execution_blockers")
+        if isinstance(blockers, list):
+            return [str(value) for value in blockers if str(value or "").strip()]
+    return []
+
+
+def _plan_opportunity_from_signal_row(
+    opportunity: Mapping[str, Any],
+) -> Opportunity | None:
+    opportunity_id = _as_text(opportunity.get("opportunity_id"))
+    cycle_id = _as_text(opportunity.get("cycle_id")) or _as_text(
+        opportunity.get("source_cycle_id")
+    )
+    label = _as_text(opportunity.get("label"))
+    market_date = _as_text(opportunity.get("market_date")) or _as_text(
+        opportunity.get("session_date")
+    )
+    candidate_id = _coerce_int(opportunity.get("source_candidate_id"))
+    if (
+        opportunity_id is None
+        or cycle_id is None
+        or label is None
+        or market_date is None
+        or candidate_id is None
+    ):
+        return None
+
+    candidate = (
+        dict(opportunity.get("candidate") or {})
+        if isinstance(opportunity.get("candidate"), Mapping)
+        else {}
+    )
+    policy_fields = resolve_pipeline_policy_fields(
+        profile=candidate.get("profile") or opportunity.get("profile"),
+        root_symbol=str(
+            candidate.get("underlying_symbol")
+            or opportunity.get("underlying_symbol")
+            or ""
+        ),
+    )
+    execution_blockers = _opportunity_execution_blockers_from_row(opportunity)
+    scoring_state = _as_text(candidate.get("scoring_state"))
+    if execution_blockers:
+        state = "blocked"
+        state_reason = "Execution blockers are present on the live opportunity."
+    elif scoring_state in {"promotable", "monitor", "blocked"}:
+        state = str(scoring_state)
+        state_reason = (
+            _as_text(candidate.get("scoring_state_reason"))
+            or _as_text(opportunity.get("state_reason"))
+            or "selected"
+        )
+    elif _as_text(opportunity.get("selection_state")) == "promotable":
+        state = "promotable"
+        state_reason = (
+            _as_text(opportunity.get("state_reason")) or "selected_promotable"
+        )
+    else:
+        state = "monitor"
+        state_reason = _as_text(opportunity.get("state_reason")) or "selected_monitor"
+
+    evidence = (
+        dict(opportunity.get("evidence") or {})
+        if isinstance(opportunity.get("evidence"), Mapping)
+        else {}
+    )
+    score_evidence = candidate.get("score_evidence")
+    if isinstance(score_evidence, Mapping):
+        profile_score_evidence = score_evidence.get("profile_score_evidence")
+        if isinstance(profile_score_evidence, Mapping):
+            evidence["profile_score_evidence"] = dict(profile_score_evidence)
+    execution_score = _coerce_float(opportunity.get("execution_score"))
+    if execution_score is None:
+        execution_score = _coerce_float(candidate.get("execution_score"))
+    if execution_score is not None:
+        evidence["execution_score"] = execution_score
+    evidence["execution_blockers"] = execution_blockers
+    evidence["selection_state"] = opportunity.get("selection_state")
+    evidence["candidate_id"] = candidate_id
+
+    risk_hints = (
+        dict(opportunity.get("risk_hints") or {})
+        if isinstance(opportunity.get("risk_hints"), Mapping)
+        else {}
+    )
+    style_profile = (
+        _as_text(candidate.get("score_style_profile"))
+        or _as_text(opportunity.get("style_profile"))
+        or str(policy_fields["style_profile"])
+    )
+    if style_profile not in {"reactive", "tactical", "carry"}:
+        style_profile = str(policy_fields["style_profile"])
+    if style_profile not in {"reactive", "tactical", "carry"}:
+        style_profile = "tactical"
+    return Opportunity(
+        opportunity_id=opportunity_id,
+        cycle_id=cycle_id,
+        session_id=build_live_session_id(label, market_date),
+        candidate_id=candidate_id,
+        symbol=str(
+            opportunity.get("underlying_symbol")
+            or candidate.get("underlying_symbol")
+            or ""
+        ),
+        legacy_strategy=str(
+            candidate.get("strategy") or opportunity.get("strategy_family") or "unknown"
+        ),
+        expiration_date=str(
+            opportunity.get("expiration_date") or candidate.get("expiration_date") or ""
+        ),
+        short_symbol=str(candidate.get("short_symbol") or ""),
+        long_symbol=str(candidate.get("long_symbol") or ""),
+        style_profile=style_profile,
+        strategy_family=str(
+            opportunity.get("strategy_family") or candidate.get("strategy") or "unknown"
+        ),
+        regime_snapshot_id=f"live_regime:{opportunity_id}",
+        strategy_intent_id=f"live_strategy_intent:{opportunity_id}",
+        horizon_intent_id=f"live_horizon_intent:{opportunity_id}",
+        discovery_score=_coerce_float(opportunity.get("discovery_score"))
+        or _coerce_float(candidate.get("discovery_score"))
+        or _coerce_float(candidate.get("quality_score"))
+        or 0.0,
+        promotion_score=_coerce_float(opportunity.get("promotion_score"))
+        or _coerce_float(candidate.get("promotion_score"))
+        or _coerce_float(candidate.get("quality_score"))
+        or 0.0,
+        rank=_coerce_int(opportunity.get("selection_rank")) or 0,
+        state=state,
+        state_reason=state_reason,
+        expected_edge_value=_coerce_float(risk_hints.get("return_on_risk"))
+        or _coerce_float(candidate.get("return_on_risk")),
+        max_loss=_coerce_float(risk_hints.get("max_loss"))
+        or _coerce_float(candidate.get("max_loss")),
+        capital_usage=_coerce_float(risk_hints.get("max_loss"))
+        or _coerce_float(candidate.get("max_loss")),
+        execution_complexity=None,
+        product_class=_as_text(opportunity.get("product_class"))
+        or str(policy_fields["product_class"]),
+        legacy_selection_state=_as_text(opportunity.get("selection_state")),
+        evidence=evidence,
+        legs=_opportunity_legs_from_row(opportunity),
+    )
+
+
+def _resolve_auto_execution_plan(
+    *,
+    signal_store: Any,
+    cycle_id: str,
+) -> dict[str, Any]:
+    if signal_store is None or not signal_store.schema_ready():
+        return {
+            "available": False,
+            "opportunities": [],
+            "allocation_decisions": [],
+            "execution_intents": [],
+            "opportunity_rows_by_id": {},
+        }
+    opportunity_rows = signal_store.list_active_cycle_opportunities(
+        cycle_id,
+        eligibility_state="live",
+        exclude_consumed=True,
+        limit=200,
+    )
+    opportunities: list[Opportunity] = []
+    rows_by_id: dict[str, dict[str, Any]] = {}
+    skipped: list[dict[str, Any]] = []
+    for row in opportunity_rows:
+        payload = dict(row)
+        plan_item = _plan_opportunity_from_signal_row(payload)
+        if plan_item is None:
+            skipped.append(payload)
+            continue
+        opportunities.append(plan_item)
+        rows_by_id[plan_item.opportunity_id] = payload
+    plan = build_execution_plan(opportunities)
+    return {
+        "available": True,
+        **plan,
+        "opportunity_rows_by_id": rows_by_id,
+        "skipped_rows": skipped,
+    }
 
 
 def _validate_auto_execution_candidate(
@@ -894,7 +1123,10 @@ def _classify_auto_execution_block(exc: Exception) -> dict[str, Any] | None:
             "message": message,
             "block_category": "deployment_quality",
         }
-    if message == "Open execution is blocked because the live spread quotes were not executable.":
+    if (
+        message
+        == "Open execution is blocked because the live spread quotes were not executable."
+    ):
         return {
             "reason": "live_quotes_not_executable",
             "message": message,
@@ -1069,9 +1301,7 @@ def _attach_attempt_details(
                 "orders": orders_by_attempt.get(
                     str(attempt["execution_attempt_id"]), []
                 ),
-                "fills": fills_by_attempt.get(
-                    str(attempt["execution_attempt_id"]), []
-                ),
+                "fills": fills_by_attempt.get(str(attempt["execution_attempt_id"]), []),
             }
         )
     return payloads
@@ -1199,9 +1429,7 @@ def run_open_execution_guard(
                     "status": str(uncertain_attempt.get("status") or ""),
                     "reason": str(guard_decision["reason"] or ""),
                     "age_seconds": guard_decision.get("age_seconds"),
-                    "stale_after_seconds": guard_decision.get(
-                        "stale_after_seconds"
-                    ),
+                    "stale_after_seconds": guard_decision.get("stale_after_seconds"),
                     "submit_job_status": guard_decision.get("submit_job_status"),
                 }
             )
@@ -1232,9 +1460,7 @@ def run_open_execution_guard(
                     "status": str(failed_attempt.get("status") or ""),
                     "reason": str(guard_decision["reason"] or ""),
                     "age_seconds": guard_decision.get("age_seconds"),
-                    "stale_after_seconds": guard_decision.get(
-                        "stale_after_seconds"
-                    ),
+                    "stale_after_seconds": guard_decision.get("stale_after_seconds"),
                 }
             )
             continue
@@ -1317,9 +1543,7 @@ def run_open_execution_guard(
                     "status": current_status,
                     "reason": str(guard_decision["reason"] or ""),
                     "age_seconds": guard_decision.get("age_seconds"),
-                    "stale_after_seconds": guard_decision.get(
-                        "stale_after_seconds"
-                    ),
+                    "stale_after_seconds": guard_decision.get("stale_after_seconds"),
                 }
             )
         except Exception as exc:
@@ -1969,9 +2193,23 @@ def submit_live_session_execution(
             and hasattr(signal_store, "schema_ready")
             and signal_store.schema_ready()
         ):
-            opportunity = signal_store.find_active_opportunity_by_candidate_id(
-                candidate_id
-            )
+            requested_opportunity_id = None
+            if isinstance(request_metadata, Mapping):
+                requested_opportunity_id = _as_text(
+                    request_metadata.get("opportunity_id")
+                )
+            if requested_opportunity_id is not None:
+                requested_opportunity = signal_store.get_opportunity(
+                    requested_opportunity_id
+                )
+                if requested_opportunity is not None and str(
+                    requested_opportunity.get("lifecycle_state") or ""
+                ) in {"candidate", "ready", "blocked"}:
+                    opportunity = requested_opportunity
+            if opportunity is None:
+                opportunity = signal_store.find_active_opportunity_by_candidate_id(
+                    candidate_id
+                )
         opportunity_ref = (
             None
             if opportunity is None
@@ -2369,7 +2607,9 @@ def submit_session_position_close(
             long_symbol=str(position["long_symbol"]),
             trade_intent=trade_intent,
             session_position_id=session_position_id,
-            position_id=None if portfolio_position is None else str(portfolio_position["position_id"]),
+            position_id=None
+            if portfolio_position is None
+            else str(portfolio_position["position_id"]),
             root_symbol=str(position["underlying_symbol"]),
             strategy_family=str(position["strategy"]),
             style_profile=str(pipeline_policy_fields["style_profile"]),
@@ -2533,11 +2773,21 @@ def submit_opportunity_execution(
     opportunity = signal_store.get_opportunity(opportunity_id)
     if opportunity is None:
         raise ValueError(f"Unknown opportunity_id: {opportunity_id}")
+    lifecycle_state = _as_text(opportunity.get("lifecycle_state")) or ""
+    if lifecycle_state not in {"candidate", "ready", "blocked"}:
+        raise ValueError("Opportunity is no longer active for execution")
+    eligibility_state = _as_text(opportunity.get("eligibility_state")) or _as_text(
+        opportunity.get("eligibility")
+    )
+    if eligibility_state not in {None, "live"}:
+        raise ValueError("Opportunity is not live-executable")
     candidate_id = _coerce_int(opportunity.get("source_candidate_id"))
     if candidate_id is None:
         raise ValueError("Opportunity is missing a source candidate id")
     label = _as_text(opportunity.get("label"))
-    market_date = _as_text(opportunity.get("market_date")) or _as_text(opportunity.get("session_date"))
+    market_date = _as_text(opportunity.get("market_date")) or _as_text(
+        opportunity.get("session_date")
+    )
     if label is None or market_date is None:
         raise ValueError("Opportunity is missing label or market_date")
     return submit_live_session_execution(
@@ -2611,9 +2861,13 @@ def refresh_execution_attempt(
     session_id = _as_text(attempt.get("session_id"))
     if session_id is None:
         label = _as_text(attempt.get("label"))
-        market_date = _as_text(attempt.get("market_date")) or _as_text(attempt.get("session_date"))
+        market_date = _as_text(attempt.get("market_date")) or _as_text(
+            attempt.get("session_date")
+        )
         if label is None or market_date is None:
-            raise ValueError("Execution attempt is missing session compatibility fields")
+            raise ValueError(
+                "Execution attempt is missing session compatibility fields"
+            )
         session_id = build_live_session_id(label, market_date)
     return refresh_live_session_execution(
         db_target=db_target,
@@ -2859,28 +3113,119 @@ def submit_auto_session_execution(
             "control": dict(gate["control"]),
         }
 
-    collector_store = storage.collector
     execution_store = storage.execution
+    signal_store = getattr(storage, "signals", None)
     _require_execution_schema(execution_store)
     _require_position_schema(execution_store)
-    promotable_candidates = collector_store.list_cycle_candidates(
-        cycle_id,
-        selection_state="promotable",
-        eligibility="live",
+    execution_plan = _resolve_auto_execution_plan(
+        signal_store=signal_store,
+        cycle_id=cycle_id,
     )
-    if not promotable_candidates:
+    if not bool(execution_plan.get("available", False)):
         return {
             "action": "auto_submit",
             "changed": False,
-            "reason": "no_promotable_opportunity",
-            "message": "Automatic execution skipped because the cycle does not have a promotable opportunity.",
+            "reason": "live_opportunity_store_unavailable",
+            "message": "Automatic execution skipped because the live opportunity store is unavailable.",
             "policy": normalized_policy,
         }
+    ranked_opportunities = list(execution_plan.get("opportunities") or [])
+    allocation_decisions = list(execution_plan.get("allocation_decisions") or [])
+    execution_intents = list(execution_plan.get("execution_intents") or [])
+    opportunity_rows_by_id = dict(execution_plan.get("opportunity_rows_by_id") or {})
+    plan_summary = {
+        "candidate_count": len(ranked_opportunities),
+        "allocation_count": len(allocation_decisions),
+        "execution_intent_count": len(execution_intents),
+        "top_opportunity_id": (
+            None if not ranked_opportunities else ranked_opportunities[0].opportunity_id
+        ),
+    }
+    if not ranked_opportunities:
+        return {
+            "action": "auto_submit",
+            "changed": False,
+            "reason": "no_live_opportunity",
+            "message": "Automatic execution skipped because the cycle does not have an active live opportunity.",
+            "policy": normalized_policy,
+            "execution_plan": plan_summary,
+        }
 
-    top_candidate = min(
-        promotable_candidates, key=lambda candidate: int(candidate["selection_rank"])
+    selected_intent = execution_intents[0] if execution_intents else None
+    selected_decision = (
+        None
+        if selected_intent is None
+        else next(
+            (
+                decision
+                for decision in allocation_decisions
+                if decision.opportunity_id == selected_intent.opportunity_id
+            ),
+            None,
+        )
     )
-    selected_candidate = _candidate_with_payload(top_candidate)
+    if selected_intent is None:
+        top_decision = allocation_decisions[0] if allocation_decisions else None
+        top_opportunity = ranked_opportunities[0] if ranked_opportunities else None
+        top_row = (
+            None
+            if top_opportunity is None
+            else opportunity_rows_by_id.get(top_opportunity.opportunity_id)
+        )
+        selected_candidate_id = None
+        if isinstance(top_row, Mapping):
+            selected_candidate_id = _coerce_int(top_row.get("source_candidate_id"))
+        reason_code = (
+            None
+            if top_decision is None or not top_decision.rejection_codes
+            else str(top_decision.rejection_codes[0])
+        )
+        return {
+            "action": "auto_submit",
+            "changed": False,
+            "reason": reason_code or "no_allocated_opportunity",
+            "message": (
+                "Automatic execution skipped because no live opportunity cleared the "
+                "execution planner."
+                if top_decision is None
+                else top_decision.allocation_reason
+            ),
+            "policy": normalized_policy,
+            "selected_candidate_id": selected_candidate_id,
+            "selected_opportunity_id": None
+            if top_opportunity is None
+            else top_opportunity.opportunity_id,
+            "execution_plan": {
+                **plan_summary,
+                "top_allocation_decision": (
+                    None if top_decision is None else top_decision.to_payload()
+                ),
+            },
+        }
+
+    selected_opportunity = opportunity_rows_by_id.get(selected_intent.opportunity_id)
+    if not isinstance(selected_opportunity, Mapping):
+        return {
+            "action": "auto_submit",
+            "changed": False,
+            "reason": "selected_opportunity_missing",
+            "message": "Automatic execution skipped because the selected live opportunity could not be reloaded.",
+            "policy": normalized_policy,
+            "selected_opportunity_id": selected_intent.opportunity_id,
+            "execution_plan": plan_summary,
+        }
+    selected_candidate_id = _coerce_int(selected_opportunity.get("source_candidate_id"))
+    if selected_candidate_id is None:
+        return {
+            "action": "auto_submit",
+            "changed": False,
+            "reason": "selected_opportunity_missing_candidate",
+            "message": "Automatic execution skipped because the selected live opportunity is missing its source candidate id.",
+            "policy": normalized_policy,
+            "selected_opportunity_id": selected_intent.opportunity_id,
+            "execution_plan": plan_summary,
+        }
+    selected_candidate = _candidate_with_payload(dict(selected_opportunity))
     blocked_reason, blocked_message = _validate_auto_execution_candidate(
         selected_candidate
     )
@@ -2891,7 +3236,17 @@ def submit_auto_session_execution(
             "reason": blocked_reason,
             "message": blocked_message,
             "policy": normalized_policy,
-            "selected_candidate_id": int(top_candidate["candidate_id"]),
+            "selected_candidate_id": selected_candidate_id,
+            "selected_opportunity_id": selected_intent.opportunity_id,
+            "execution_plan": {
+                **plan_summary,
+                "selected_execution_intent": selected_intent.to_payload(),
+                "selected_allocation_decision": (
+                    None
+                    if selected_decision is None
+                    else selected_decision.to_payload()
+                ),
+            },
         }
 
     reactive_quote: dict[str, Any] | None = None
@@ -2909,8 +3264,18 @@ def submit_auto_session_execution(
                 "reason": str(reactive_resolution["reason"]),
                 "message": str(reactive_resolution["message"]),
                 "policy": normalized_policy,
-                "selected_candidate_id": int(top_candidate["candidate_id"]),
+                "selected_candidate_id": selected_candidate_id,
+                "selected_opportunity_id": selected_intent.opportunity_id,
                 "reactive_quote": reactive_resolution.get("reactive_quote"),
+                "execution_plan": {
+                    **plan_summary,
+                    "selected_execution_intent": selected_intent.to_payload(),
+                    "selected_allocation_decision": (
+                        None
+                        if selected_decision is None
+                        else selected_decision.to_payload()
+                    ),
+                },
             }
         limit_price = _coerce_float(reactive_resolution.get("limit_price"))
         reactive_quote = (
@@ -2920,19 +3285,31 @@ def submit_auto_session_execution(
         )
 
     try:
-        result = submit_live_session_execution(
+        result = submit_opportunity_execution(
             db_target=db_target,
-            session_id=session_id,
-            candidate_id=int(top_candidate["candidate_id"]),
+            opportunity_id=selected_intent.opportunity_id,
             quantity=int(normalized_policy["quantity"]),
             limit_price=limit_price,
             request_metadata={
                 "source": {
-                    "kind": "auto_session_execution",
+                    "kind": "auto_opportunity_execution",
                     "mode": normalized_policy["mode"],
                     "cycle_id": cycle_id,
                     "job_run_id": job_run_id,
-                    "candidate_id": int(top_candidate["candidate_id"]),
+                    "candidate_id": selected_candidate_id,
+                    "opportunity_id": selected_intent.opportunity_id,
+                    "reason": "allocator_selected",
+                },
+                "opportunity_id": selected_intent.opportunity_id,
+                "allocation_decision": (
+                    None
+                    if selected_decision is None
+                    else selected_decision.to_payload()
+                ),
+                "execution_intent": selected_intent.to_payload(),
+                "auto_execution_plan": {
+                    **plan_summary,
+                    "selected_execution_intent": selected_intent.to_payload(),
                 },
                 "execution_policy": normalized_policy,
                 **(
@@ -2948,15 +3325,33 @@ def submit_auto_session_execution(
             "action": "auto_submit",
             "changed": False,
             "policy": normalized_policy,
-            "selected_candidate_id": int(top_candidate["candidate_id"]),
+            "selected_candidate_id": selected_candidate_id,
+            "selected_opportunity_id": selected_intent.opportunity_id,
             **blocked,
             **({} if reactive_quote is None else {"reactive_quote": reactive_quote}),
+            "execution_plan": {
+                **plan_summary,
+                "selected_execution_intent": selected_intent.to_payload(),
+                "selected_allocation_decision": (
+                    None
+                    if selected_decision is None
+                    else selected_decision.to_payload()
+                ),
+            },
         }
     return {
         **result,
         "action": "auto_submit",
         "reason": None,
         "policy": normalized_policy,
-        "selected_candidate_id": int(top_candidate["candidate_id"]),
+        "selected_candidate_id": selected_candidate_id,
+        "selected_opportunity_id": selected_intent.opportunity_id,
         **({} if reactive_quote is None else {"reactive_quote": reactive_quote}),
+        "execution_plan": {
+            **plan_summary,
+            "selected_execution_intent": selected_intent.to_payload(),
+            "selected_allocation_decision": (
+                None if selected_decision is None else selected_decision.to_payload()
+            ),
+        },
     }

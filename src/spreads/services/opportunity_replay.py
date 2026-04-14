@@ -30,6 +30,12 @@ from spreads.services.candidate_history_recovery import (
 )
 from spreads.services.execution import list_session_execution_attempts
 from spreads.services.live_pipelines import parse_live_session_id
+from spreads.services.opportunity_execution_plan import (
+    build_allocation_decisions,
+    build_execution_intents,
+    execution_complexity,
+    rank_opportunities,
+)
 from spreads.services.opportunity_scoring import build_candidate_opportunity_score
 
 TOP_TIER_ETF_SYMBOLS = {"SPY", "QQQ", "IWM", "DIA", "GLD", "TLT"}
@@ -51,13 +57,6 @@ HORIZON_BANDS = (
     ("carry", 46, 120, "monthly"),
 )
 
-SLOT_LIMITS = {
-    "reactive": {"slot_limit": 2, "risk_budget": 500.0},
-    "tactical": {"slot_limit": 3, "risk_budget": 1000.0},
-    "carry": {"slot_limit": 2, "risk_budget": 2000.0},
-}
-CARRY_SAME_SYMBOL_OVERRIDE_MARGIN = 5.0
-CARRY_MAX_POSITIONS_PER_SYMBOL = 2
 RECOVERY_TOP = 12
 RECOVERY_PER_STRATEGY = 3
 
@@ -690,21 +689,6 @@ def _regime_confidence(candidate: Mapping[str, Any]) -> float:
     )
 
 
-def _execution_complexity(family: str) -> float:
-    if family in {"long_call", "long_put"}:
-        return 0.2
-    if family in {
-        "call_credit_spread",
-        "put_credit_spread",
-        "call_debit_spread",
-        "put_debit_spread",
-    }:
-        return 0.4
-    if family == "iron_condor":
-        return 0.8
-    return 0.5
-
-
 def _carry_buffer_ratio(candidate: Mapping[str, Any] | None) -> float | None:
     if not isinstance(candidate, Mapping):
         return None
@@ -713,28 +697,6 @@ def _carry_buffer_ratio(candidate: Mapping[str, Any] | None) -> float | None:
     if short_vs_expected_move is None or expected_move in (None, 0.0):
         return None
     return _clamp(short_vs_expected_move / expected_move, 0.0, 1.5)
-
-
-def _opportunity_buffer_ratio(opportunity: Opportunity) -> float | None:
-    evidence = opportunity.evidence
-    if not isinstance(evidence, Mapping):
-        return None
-    profile_evidence = evidence.get("profile_score_evidence")
-    if not isinstance(profile_evidence, Mapping):
-        return None
-    value = _as_float(profile_evidence.get("buffer_ratio"))
-    if value is None:
-        return None
-    return _clamp(value, 0.0, 1.5)
-
-
-def _opportunity_rank_score(opportunity: Opportunity) -> float:
-    if opportunity.style_profile != "carry":
-        return opportunity.promotion_score
-    buffer_ratio = _opportunity_buffer_ratio(opportunity)
-    if buffer_ratio is None:
-        return opportunity.promotion_score
-    return round(opportunity.promotion_score + min(buffer_ratio * 2.0, 2.5), 4)
 
 
 def _build_legs(candidate: Mapping[str, Any]) -> list[OpportunityLeg]:
@@ -1162,7 +1124,7 @@ def _build_opportunities(
             expected_edge_value=_as_float(candidate.get("return_on_risk")),
             max_loss=_as_float(candidate.get("max_loss")),
             capital_usage=_as_float(candidate.get("max_loss")),
-            execution_complexity=_execution_complexity(family),
+            execution_complexity=execution_complexity(family),
             product_class=_product_class(symbol),
             legacy_selection_state=_legacy_selection_state_from_row(row),
             evidence={
@@ -1190,259 +1152,7 @@ def _build_opportunities(
         )
         built.append(opportunity)
 
-    ranked = sorted(
-        built,
-        key=lambda item: (
-            _opportunity_rank_score(item),
-            item.promotion_score,
-            item.discovery_score,
-            -(item.execution_complexity or 0.0),
-        ),
-        reverse=True,
-    )
-    return [
-        Opportunity(
-            **{
-                **item.to_payload(),
-                "legs": item.legs,
-                "rank": index,
-            }
-        )
-        for index, item in enumerate(ranked, start=1)
-    ]
-
-
-def _allocation_score(
-    *,
-    opportunity: Opportunity,
-    style_profile: str,
-) -> float:
-    policy = SLOT_LIMITS[style_profile]
-    desirability = opportunity.promotion_score / 100.0
-    edge_value = _clamp(opportunity.expected_edge_value or 0.0, 0.0, 0.25) / 0.25
-    readiness = 1.0 if opportunity.state == "promotable" else 0.5
-    max_loss = opportunity.max_loss or policy["risk_budget"]
-    capital_efficiency = 1.0 - _clamp(max_loss / policy["risk_budget"], 0.0, 1.0)
-    if style_profile == "carry":
-        buffer_ratio = _opportunity_buffer_ratio(opportunity) or 0.0
-        structure_quality = _clamp((buffer_ratio - 0.15) / 0.20, 0.0, 1.0)
-        return round(
-            100.0
-            * (
-                0.40 * desirability
-                + 0.25 * edge_value
-                + 0.10 * readiness
-                + 0.15 * capital_efficiency
-                + 0.10 * structure_quality
-            ),
-            1,
-        )
-    return round(
-        100.0
-        * (
-            0.45 * desirability
-            + 0.25 * edge_value
-            + 0.15 * readiness
-            + 0.15 * capital_efficiency
-        ),
-        1,
-    )
-
-
-def _build_allocation_decisions(
-    opportunities: list[Opportunity],
-) -> list[AllocationDecision]:
-    if not opportunities:
-        return []
-    style_profile = opportunities[0].style_profile
-    policy = SLOT_LIMITS.get(style_profile, SLOT_LIMITS["tactical"])
-    remaining_budget = float(policy["risk_budget"])
-    remaining_slots = int(policy["slot_limit"])
-    taken_symbol_counts: dict[str, int] = defaultdict(int)
-    ranked = sorted(
-        opportunities,
-        key=lambda item: (
-            _allocation_score(opportunity=item, style_profile=style_profile),
-            -item.rank,
-        ),
-        reverse=True,
-    )
-
-    decisions: list[AllocationDecision] = []
-    for opportunity in ranked:
-        allocation_score = _allocation_score(
-            opportunity=opportunity, style_profile=style_profile
-        )
-        rejection_codes: list[str] = []
-        allocation_state = "not_allocated"
-        allocation_reason = "Not selected."
-        max_loss = opportunity.max_loss or 0.0
-        budget_before = remaining_budget
-        slots_before = remaining_slots
-        symbol_taken_count = int(taken_symbol_counts.get(opportunity.symbol) or 0)
-        carry_override = False
-
-        best_remaining_other_symbol_score = None
-        if style_profile == "carry" and symbol_taken_count > 0:
-            other_symbol_scores = [
-                _allocation_score(opportunity=item, style_profile=style_profile)
-                for item in ranked
-                if item.symbol != opportunity.symbol
-                and int(taken_symbol_counts.get(item.symbol) or 0) == 0
-                and item.state == "promotable"
-            ]
-            if other_symbol_scores:
-                best_remaining_other_symbol_score = max(other_symbol_scores)
-            carry_override = (
-                symbol_taken_count < CARRY_MAX_POSITIONS_PER_SYMBOL
-                and best_remaining_other_symbol_score is not None
-                and allocation_score
-                >= best_remaining_other_symbol_score + CARRY_SAME_SYMBOL_OVERRIDE_MARGIN
-            )
-
-        if opportunity.state != "promotable":
-            rejection_codes.append("not_promotable")
-            allocation_reason = "Opportunity did not clear the promotion floor."
-        elif symbol_taken_count > 0 and not carry_override:
-            rejection_codes.append("same_symbol_conflict")
-            allocation_reason = (
-                "A higher-ranked opportunity already consumed the symbol slot."
-            )
-        elif remaining_slots <= 0:
-            rejection_codes.append("slot_full")
-            allocation_reason = "The style slot budget is already full."
-        elif max_loss > remaining_budget:
-            rejection_codes.append("budget_exhausted")
-            allocation_reason = "Remaining downside budget is too small."
-        elif allocation_score < 55.0:
-            rejection_codes.append("allocation_score_too_low")
-            allocation_reason = (
-                "Portfolio-adjusted score is below the allocation floor."
-            )
-        else:
-            allocation_state = "allocated"
-            allocation_reason = (
-                "Selected by the provisional portfolio allocator after clearing the "
-                "carry same-symbol override."
-                if carry_override
-                else "Selected by the provisional portfolio allocator."
-            )
-        if allocation_state == "allocated":
-            taken_symbol_counts[opportunity.symbol] = symbol_taken_count + 1
-            remaining_slots -= 1
-            remaining_budget -= max_loss
-
-        decisions.append(
-            AllocationDecision(
-                allocation_id=f"allocation:{opportunity.opportunity_id}",
-                opportunity_id=opportunity.opportunity_id,
-                cycle_id=opportunity.cycle_id,
-                session_id=opportunity.session_id,
-                allocation_state=allocation_state,
-                allocation_score=allocation_score,
-                slot_class=style_profile,
-                allocation_reason=allocation_reason,
-                rejection_codes=rejection_codes,
-                budget_impact={
-                    "max_loss": max_loss,
-                    "risk_budget_before": round(budget_before, 2),
-                    "risk_budget_after": round(remaining_budget, 2),
-                    "slots_before": slots_before,
-                    "slots_after": remaining_slots,
-                },
-                evidence={
-                    "rank": opportunity.rank,
-                    "promotion_score": opportunity.promotion_score,
-                    "legacy_selection_state": opportunity.legacy_selection_state,
-                    "product_class": opportunity.product_class,
-                },
-            )
-        )
-    return decisions
-
-
-def _execution_template(opportunity: Opportunity) -> dict[str, str]:
-    family = opportunity.strategy_family
-    style = opportunity.style_profile
-    if family in {"long_call", "long_put"}:
-        return {
-            "order_structure": "single_leg",
-            "entry_policy": "passive_then_small_escalation"
-            if style == "reactive"
-            else "patient_single_leg_entry",
-            "price_policy": "tight_debit_cap",
-            "timeout_policy": "short"
-            if style == "reactive"
-            else ("medium" if style == "tactical" else "long"),
-            "replace_policy": "1_step" if style == "reactive" else "2_step",
-            "exit_policy": "defined_risk_directional_exit",
-        }
-    if family in {"call_debit_spread", "put_debit_spread"}:
-        return {
-            "order_structure": "vertical",
-            "entry_policy": "passive_then_midpoint",
-            "price_policy": "tight_debit_cap",
-            "timeout_policy": "short" if style == "reactive" else "medium",
-            "replace_policy": "1_step" if style == "reactive" else "2_step",
-            "exit_policy": "defined_risk_debit_spread_exit",
-        }
-    if family in {"call_credit_spread", "put_credit_spread"}:
-        return {
-            "order_structure": "vertical",
-            "entry_policy": "passive_credit_entry",
-            "price_policy": "credit_floor_from_scanned_midpoint",
-            "timeout_policy": "short"
-            if style == "reactive"
-            else ("medium" if style == "tactical" else "long"),
-            "replace_policy": "1_step" if style == "reactive" else "2_step",
-            "exit_policy": "defined_risk_credit_spread_exit",
-        }
-    return {
-        "order_structure": "condor",
-        "entry_policy": "passive_complex_entry",
-        "price_policy": "complex_credit_floor",
-        "timeout_policy": "medium",
-        "replace_policy": "2_step",
-        "exit_policy": "defined_risk_condor_exit",
-    }
-
-
-def _build_execution_intents(
-    *,
-    opportunities: list[Opportunity],
-    allocation_decisions: list[AllocationDecision],
-) -> list[ExecutionIntent]:
-    opportunity_by_id = {item.opportunity_id: item for item in opportunities}
-    intents: list[ExecutionIntent] = []
-    for decision in allocation_decisions:
-        if decision.allocation_state != "allocated":
-            continue
-        opportunity = opportunity_by_id[decision.opportunity_id]
-        template = _execution_template(opportunity)
-        intents.append(
-            ExecutionIntent(
-                execution_intent_id=f"execution_intent:{opportunity.opportunity_id}",
-                opportunity_id=opportunity.opportunity_id,
-                cycle_id=opportunity.cycle_id,
-                session_id=opportunity.session_id,
-                symbol=opportunity.symbol,
-                strategy_family=opportunity.strategy_family,
-                order_structure=template["order_structure"],
-                entry_policy=template["entry_policy"],
-                price_policy=template["price_policy"],
-                timeout_policy=template["timeout_policy"],
-                replace_policy=template["replace_policy"],
-                exit_policy=template["exit_policy"],
-                validation_state="provisional_offline",
-                evidence={
-                    "allocation_score": decision.allocation_score,
-                    "legacy_selection_state": opportunity.legacy_selection_state,
-                    "rank": opportunity.rank,
-                    "legs": [leg.to_payload() for leg in opportunity.legs],
-                },
-            )
-        )
-    return intents
+    return rank_opportunities(built)
 
 
 def _opportunity_identity(opportunity: Opportunity) -> tuple[str, str, str, str, str]:
@@ -3076,14 +2786,14 @@ def build_opportunity_replay(
         horizon_intents=horizon_intents,
         dimension_lookup=calibration_lookup,
     )
-    allocation_decisions = _build_allocation_decisions(opportunities)
+    allocation_decisions = build_allocation_decisions(opportunities)
     outcome_matches = _build_outcome_matches(
         opportunities=opportunities,
         analysis_run=analysis_run,
         storage=storage,
         session_id=_as_text(cycle.get("session_id")),
     )
-    execution_intents = _build_execution_intents(
+    execution_intents = build_execution_intents(
         opportunities=opportunities,
         allocation_decisions=allocation_decisions,
     )

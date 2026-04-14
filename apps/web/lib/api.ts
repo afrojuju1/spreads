@@ -833,12 +833,11 @@ export type ReplayDeploymentQuality = z.infer<typeof replayDeploymentQualitySche
 export type PipelineReplay = z.infer<typeof pipelineReplaySchema>;
 export type SessionExecutionActionResponse = z.infer<typeof sessionExecutionActionResponseSchema>;
 export type GlobalRealtimeEvent = z.infer<typeof globalRealtimeEventSchema>;
-export type SessionExecutionRequest = {
-  candidate_id: number;
+export type OpportunityExecutionRequest = {
   quantity?: number;
   limit_price?: number;
 };
-export type SessionPositionCloseRequest = {
+export type PositionCloseRequest = {
   quantity?: number;
   limit_price?: number;
 };
@@ -975,7 +974,7 @@ export function getOpportunityDetail(opportunityId: string) {
 
 export function executeOpportunity(
   opportunityId: string,
-  payload: Omit<SessionExecutionRequest, "candidate_id">,
+  payload: OpportunityExecutionRequest,
 ) {
   return postApi(
     `opportunities/${encodeURIComponent(opportunityId)}/execute`,
@@ -1002,7 +1001,7 @@ export function getPositionDetail(positionId: string) {
 
 export function closePosition(
   positionId: string,
-  payload: SessionPositionCloseRequest = {},
+  payload: PositionCloseRequest = {},
 ) {
   return postApi(
     `positions/${encodeURIComponent(positionId)}/close`,
@@ -1031,40 +1030,6 @@ export function getSessions(filters?: {
 
 export function getSessionDetail(sessionId: string) {
   return fetchApi(`sessions/${encodeURIComponent(sessionId)}`, sessionDetailSchema);
-}
-
-export function createSessionExecution(
-  sessionId: string,
-  payload: SessionExecutionRequest,
-) {
-  return postApi(
-    `sessions/${encodeURIComponent(sessionId)}/executions`,
-    sessionExecutionActionResponseSchema,
-    payload,
-  );
-}
-
-export function closeSessionPosition(
-  sessionId: string,
-  sessionPositionId: string,
-  payload: SessionPositionCloseRequest = {},
-) {
-  return postApi(
-    `sessions/${encodeURIComponent(sessionId)}/positions/${encodeURIComponent(sessionPositionId)}/close`,
-    sessionExecutionActionResponseSchema,
-    payload,
-  );
-}
-
-export function refreshSessionExecution(
-  sessionId: string,
-  executionAttemptId: string,
-) {
-  return postApi(
-    `sessions/${encodeURIComponent(sessionId)}/executions/${encodeURIComponent(executionAttemptId)}/refresh`,
-    sessionExecutionActionResponseSchema,
-    {},
-  );
 }
 
 export function parseGlobalRealtimeEvent(payload: string) {

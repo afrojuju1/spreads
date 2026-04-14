@@ -663,6 +663,35 @@ class SignalRepository(RepositoryBase):
             rows = session.scalars(statement).all()
         return self.rows(rows)
 
+    def list_active_cycle_opportunities(
+        self,
+        cycle_id: str,
+        *,
+        eligibility_state: str | None = None,
+        exclude_consumed: bool = True,
+        limit: int = 200,
+    ) -> list[OpportunityRecord]:
+        statement = select(OpportunityModel).where(
+            OpportunityModel.cycle_id == cycle_id
+        )
+        statement = statement.where(
+            OpportunityModel.lifecycle_state.in_(("candidate", "ready", "blocked"))
+        )
+        if eligibility_state:
+            statement = statement.where(
+                OpportunityModel.eligibility_state == eligibility_state
+            )
+        if exclude_consumed:
+            statement = statement.where(
+                OpportunityModel.consumed_by_execution_attempt_id.is_(None)
+            )
+        statement = statement.order_by(
+            OpportunityModel.updated_at.desc(), OpportunityModel.opportunity_id.asc()
+        ).limit(limit)
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return self.rows(rows)
+
     def expire_absent_opportunities(
         self,
         *,

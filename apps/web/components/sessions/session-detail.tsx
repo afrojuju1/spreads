@@ -18,16 +18,16 @@ import { DataTable } from "@/components/data-table";
 import {
   buildPipelineHref,
   buildSessionHref,
-  closeSessionPosition,
-  createSessionExecution,
   type AlertRecord,
   type ExecutionAttempt,
+  closePosition,
+  executeOpportunity,
   type JobRun,
   type LiveCandidate,
   type LiveEvent,
   getSessionDetail,
   getSessions,
-  refreshSessionExecution,
+  refreshExecution,
   type SessionDetail,
   type SessionPortfolioPosition,
 } from "@/lib/api";
@@ -824,7 +824,7 @@ function SessionActionDesk({
                   <Button
                     type="button"
                     variant="secondary"
-                    disabled={submitPending}
+                    disabled={submitPending || !selectedPromotable.opportunity_id}
                     onClick={() => onExecuteSelected(selectedPromotable)}
                   >
                     {submitPending ? (
@@ -1339,22 +1339,27 @@ export function SessionDetailPageContent({
   const invalidateSessionQueries = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["account-overview"] }),
+      queryClient.invalidateQueries({ queryKey: ["opportunities"] }),
+      queryClient.invalidateQueries({ queryKey: ["pipelines"] }),
+      queryClient.invalidateQueries({ queryKey: ["positions"] }),
       queryClient.invalidateQueries({ queryKey: ["sessions"] }),
       queryClient.invalidateQueries({ queryKey: ["session", selectedSessionId] }),
     ]);
   };
 
   const submitExecutionMutation = useMutation({
-    mutationFn: (candidate: LiveCandidate) =>
-      createSessionExecution(selectedSessionId ?? "", {
-        candidate_id: candidate.candidate_id,
-      }),
+    mutationFn: (candidate: LiveCandidate) => {
+      const opportunityId = readString(candidate.opportunity_id, "");
+      if (!opportunityId) {
+        throw new Error("Selected opportunity is missing its canonical id.");
+      }
+      return executeOpportunity(opportunityId, {});
+    },
     onSuccess: invalidateSessionQueries,
   });
 
   const refreshExecutionMutation = useMutation({
-    mutationFn: (executionAttemptId: string) =>
-      refreshSessionExecution(selectedSessionId ?? "", executionAttemptId),
+    mutationFn: (executionAttemptId: string) => refreshExecution(executionAttemptId),
     onMutate: (executionAttemptId) => {
       setRefreshingAttemptId(executionAttemptId);
     },
@@ -1366,7 +1371,7 @@ export function SessionDetailPageContent({
 
   const closePositionMutation = useMutation({
     mutationFn: (position: SessionPortfolioPosition) =>
-      closeSessionPosition(selectedSessionId ?? "", position.position_id),
+      closePosition(position.position_id),
     onMutate: (position) => {
       setClosingPositionId(position.position_id);
     },

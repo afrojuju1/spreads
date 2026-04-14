@@ -321,6 +321,9 @@ def _build_opportunity_payload(
         universe_label=label.split("_", 1)[0] if label else None,
         root_symbol=str(candidate.get("underlying_symbol") or ""),
     )
+    resolved_style_profile = str(
+        candidate.get("score_style_profile") or policy_fields["style_profile"]
+    )
     return {
         "opportunity_id": build_opportunity_id(label, session_date, candidate),
         "pipeline_id": build_pipeline_id(label),
@@ -331,7 +334,7 @@ def _build_opportunity_payload(
         "root_symbol": str(candidate["underlying_symbol"]),
         "strategy_family": strategy_family,
         "profile": profile,
-        "style_profile": str(policy_fields["style_profile"]),
+        "style_profile": resolved_style_profile,
         "horizon_intent": str(policy_fields["horizon_intent"]),
         "product_class": str(policy_fields["product_class"]),
         "expiration_date": candidate.get("expiration_date"),
