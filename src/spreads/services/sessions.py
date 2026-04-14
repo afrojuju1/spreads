@@ -13,7 +13,7 @@ from spreads.services.live_recovery import (
     list_session_slot_health_by_session_id,
     load_session_slot_health,
 )
-from spreads.services.live_pipelines import parse_live_session_id
+from spreads.services.runtime_identity import build_pipeline_id, parse_live_session_id
 from spreads.services.risk_manager import build_session_risk_snapshot, normalize_risk_policy
 from spreads.storage.serializers import parse_datetime
 
@@ -425,6 +425,7 @@ def get_session_detail(
     execution_store = storage.execution
     recovery_store = storage.recovery
     risk_store = getattr(storage, "risk", None)
+    signal_store = storage.signals
     identity = _resolve_session_identity(
         session_id,
         collector_store=collector_store,
@@ -452,6 +453,31 @@ def get_session_detail(
         opportunities, selection_counts = _cycle_opportunity_payloads(
             collector_store, str(latest_cycle["cycle_id"])
         )
+        if signal_store.schema_ready():
+            active_opportunities = {
+                int(row["source_candidate_id"]): dict(row)
+                for row in signal_store.list_opportunities(
+                    pipeline_id=build_pipeline_id(identity["label"]),
+                    market_date=identity["session_date"],
+                    limit=500,
+                )
+                if row.get("source_candidate_id") not in (None, "")
+            }
+            opportunities = [
+                {
+                    **row,
+                    "opportunity_id": (
+                        None
+                        if row.get("candidate_id") in (None, "")
+                        else (
+                            active_opportunities.get(int(row["candidate_id"])) or {}
+                        ).get("opportunity_id")
+                    ),
+                    "pipeline_id": build_pipeline_id(identity["label"]),
+                    "market_date": identity["session_date"],
+                }
+                for row in opportunities
+            ]
         current_cycle = {
             **latest_cycle,
             "opportunities": opportunities,

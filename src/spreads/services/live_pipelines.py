@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from datetime import date
 from types import SimpleNamespace
 from typing import Any
 
+from spreads.services.runtime_identity import (
+    build_live_session_id,
+    build_pipeline_id,
+    parse_live_session_id,
+    parse_pipeline_id,
+    resolve_horizon_intent,
+    resolve_pipeline_policy_fields,
+    resolve_product_class,
+    resolve_style_profile,
+)
 from spreads.services.scanner import resolve_symbols
 
 
@@ -16,31 +25,6 @@ def build_live_snapshot_label(
     greeks_source: str,
 ) -> str:
     return f"{universe_label}_{strategy}_{profile}_{greeks_source}".lower()
-
-
-def build_live_session_id(label: str, session_date: str | date) -> str:
-    rendered = session_date.isoformat() if isinstance(session_date, date) else str(session_date)
-    return f"live:{label}:{rendered}"
-
-
-def parse_live_session_id(session_id: str) -> dict[str, str] | None:
-    if not session_id:
-        return None
-    prefix, separator, remainder = session_id.partition(":")
-    if prefix != "live" or not separator:
-        return None
-    label, separator, session_date = remainder.rpartition(":")
-    if not separator or not label or not session_date:
-        return None
-    try:
-        resolved_session_date = date.fromisoformat(session_date).isoformat()
-    except ValueError:
-        return None
-    return {
-        "session_id": session_id,
-        "label": label,
-        "session_date": resolved_session_date,
-    }
 
 
 def _payload_namespace(payload: Mapping[str, Any]) -> SimpleNamespace:
@@ -82,6 +66,7 @@ def list_enabled_live_collector_pipelines(
         if existing is None:
             pipelines_by_label[label] = {
                 "label": label,
+                "pipeline_id": build_pipeline_id(label),
                 "job_key": str(definition["job_key"]),
                 "job_keys": [str(definition["job_key"])],
                 "payload": payload,

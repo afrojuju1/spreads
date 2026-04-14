@@ -46,7 +46,11 @@ from spreads.services.execution_lifecycle import (
     resolve_execution_submit_job_run_id,
     resolve_execution_attempt_source_job,
 )
-from spreads.services.live_pipelines import build_live_session_id
+from spreads.services.runtime_identity import (
+    build_live_session_id,
+    build_pipeline_id,
+    resolve_pipeline_policy_fields,
+)
 from spreads.services.risk_manager import (
     evaluate_open_execution,
     normalize_risk_policy,
@@ -1933,12 +1937,18 @@ def submit_live_session_execution(
                 _publish_risk_decision_event(risk_decision)
             raise ValueError(str(risk_evaluation["note"]))
 
+        pipeline_policy_fields = resolve_pipeline_policy_fields(
+            profile=(candidate.get("candidate") or {}).get("profile"),
+            root_symbol=str(candidate["underlying_symbol"]),
+        )
         attempt_id = _execution_attempt_id()
         attempt = execution_store.create_attempt(
             execution_attempt_id=attempt_id,
             session_id=session_id,
             session_date=str(cycle["session_date"]),
             label=str(cycle["label"]),
+            pipeline_id=build_pipeline_id(str(cycle["label"])),
+            market_date=str(cycle["session_date"]),
             cycle_id=_as_text(cycle.get("cycle_id")),
             opportunity_id=None
             if opportunity_ref is None
@@ -1960,6 +1970,12 @@ def submit_live_session_execution(
             long_symbol=str(candidate["long_symbol"]),
             trade_intent=OPEN_TRADE_INTENT,
             session_position_id=None,
+            position_id=None,
+            root_symbol=str(candidate["underlying_symbol"]),
+            strategy_family=str(candidate["strategy"]),
+            style_profile=str(pipeline_policy_fields["style_profile"]),
+            horizon_intent=str(pipeline_policy_fields["horizon_intent"]),
+            product_class=str(pipeline_policy_fields["product_class"]),
             quantity=resolved_quantity,
             limit_price=resolved_limit_price,
             requested_at=requested_at,
@@ -2116,6 +2132,15 @@ def submit_session_position_close(
             limit_price=resolved_limit_price,
         )
         trade_intent = resolve_trade_intent(CLOSE_TRADE_INTENT)
+        pipeline_policy_fields = resolve_pipeline_policy_fields(
+            profile=(position.get("risk_policy_json") or {}).get("profile"),
+            root_symbol=str(position["underlying_symbol"]),
+        )
+        portfolio_position = (
+            None
+            if not execution_store.portfolio_schema_ready()
+            else execution_store.get_position(session_position_id)
+        )
 
         attempt_id = _execution_attempt_id()
         attempt = execution_store.create_attempt(
@@ -2123,6 +2148,8 @@ def submit_session_position_close(
             session_id=session_id,
             session_date=str(position["session_date"]),
             label=str(position["label"]),
+            pipeline_id=build_pipeline_id(str(position["label"])),
+            market_date=str(position["session_date"]),
             cycle_id=None,
             opportunity_id=None,
             risk_decision_id=None,
@@ -2138,6 +2165,12 @@ def submit_session_position_close(
             long_symbol=str(position["long_symbol"]),
             trade_intent=trade_intent,
             session_position_id=session_position_id,
+            position_id=None if portfolio_position is None else str(portfolio_position["position_id"]),
+            root_symbol=str(position["underlying_symbol"]),
+            strategy_family=str(position["strategy"]),
+            style_profile=str(pipeline_policy_fields["style_profile"]),
+            horizon_intent=str(pipeline_policy_fields["horizon_intent"]),
+            product_class=str(pipeline_policy_fields["product_class"]),
             quantity=resolved_quantity,
             limit_price=resolved_limit_price,
             requested_at=requested_at,
@@ -2280,6 +2313,110 @@ def refresh_live_session_execution(
         "message": message,
         "attempt": payload,
     }
+
+
+@with_storage()
+def submit_opportunity_execution(
+    *,
+    db_target: str,
+    opportunity_id: str,
+    quantity: int | None = None,
+    limit_price: float | None = None,
+    request_metadata: dict[str, Any] | None = None,
+    storage: Any | None = None,
+) -> dict[str, Any]:
+    signal_store = storage.signals
+    opportunity = signal_store.get_opportunity(opportunity_id)
+    if opportunity is None:
+        raise ValueError(f"Unknown opportunity_id: {opportunity_id}")
+    candidate_id = _coerce_int(opportunity.get("source_candidate_id"))
+    if candidate_id is None:
+        raise ValueError("Opportunity is missing a source candidate id")
+    label = _as_text(opportunity.get("label"))
+    market_date = _as_text(opportunity.get("market_date")) or _as_text(opportunity.get("session_date"))
+    if label is None or market_date is None:
+        raise ValueError("Opportunity is missing label or market_date")
+    return submit_live_session_execution(
+        db_target=db_target,
+        session_id=build_live_session_id(label, market_date),
+        candidate_id=candidate_id,
+        quantity=quantity,
+        limit_price=limit_price,
+        request_metadata={
+            **({} if request_metadata is None else request_metadata),
+            "opportunity_id": opportunity_id,
+            "pipeline_id": opportunity.get("pipeline_id"),
+            "market_date": market_date,
+        },
+        storage=storage,
+    )
+
+
+@with_storage()
+def submit_position_close_by_id(
+    *,
+    db_target: str,
+    position_id: str,
+    quantity: int | None = None,
+    limit_price: float | None = None,
+    request_metadata: dict[str, Any] | None = None,
+    storage: Any | None = None,
+) -> dict[str, Any]:
+    execution_store = storage.execution
+    if not execution_store.portfolio_schema_ready():
+        raise ValueError(f"Unknown position_id: {position_id}")
+    position = execution_store.get_position(position_id)
+    if position is None:
+        raise ValueError(f"Unknown position_id: {position_id}")
+    legacy_session_position_id = _as_text(position.get("legacy_session_position_id"))
+    if legacy_session_position_id is None:
+        raise ValueError("Position is missing a legacy session position id")
+    pipeline_id = _as_text(position.get("pipeline_id"))
+    pipeline_label = None if pipeline_id is None else pipeline_id.partition(":")[2]
+    market_date = _as_text(position.get("market_date_opened"))
+    if pipeline_label is None or market_date is None:
+        raise ValueError("Position is missing pipeline or market_date")
+    return submit_session_position_close(
+        db_target=db_target,
+        session_id=build_live_session_id(pipeline_label, market_date),
+        session_position_id=legacy_session_position_id,
+        quantity=quantity,
+        limit_price=limit_price,
+        request_metadata={
+            **({} if request_metadata is None else request_metadata),
+            "position_id": position_id,
+            "pipeline_id": pipeline_id,
+            "market_date": market_date,
+        },
+        storage=storage,
+    )
+
+
+@with_storage()
+def refresh_execution_attempt(
+    *,
+    db_target: str,
+    execution_attempt_id: str,
+    storage: Any | None = None,
+) -> dict[str, Any]:
+    execution_store = storage.execution
+    _require_execution_schema(execution_store)
+    attempt = execution_store.get_attempt(execution_attempt_id)
+    if attempt is None:
+        raise ValueError(f"Unknown execution_attempt_id: {execution_attempt_id}")
+    session_id = _as_text(attempt.get("session_id"))
+    if session_id is None:
+        label = _as_text(attempt.get("label"))
+        market_date = _as_text(attempt.get("market_date")) or _as_text(attempt.get("session_date"))
+        if label is None or market_date is None:
+            raise ValueError("Execution attempt is missing session compatibility fields")
+        session_id = build_live_session_id(label, market_date)
+    return refresh_live_session_execution(
+        db_target=db_target,
+        session_id=session_id,
+        execution_attempt_id=execution_attempt_id,
+        storage=storage,
+    )
 
 
 @with_storage()

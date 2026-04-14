@@ -22,6 +22,8 @@ OptionTradeEventRecord = StorageRow
 CollectorCycleRecord = StorageRow
 CollectorCycleCandidateRecord = StorageRow
 CollectorCycleEventRecord = StorageRow
+PipelineRecord = StorageRow
+PipelineCycleRecord = StorageRow
 AlertEventRecord = StorageRow
 AlertStateRecord = StorageRow
 JobDefinitionRecord = StorageRow
@@ -43,6 +45,8 @@ ExecutionOrderRecord = StorageRow
 ExecutionFillRecord = StorageRow
 SessionPositionRecord = StorageRow
 SessionPositionCloseRecord = StorageRow
+PortfolioPositionRecord = StorageRow
+PositionCloseRecord = StorageRow
 LiveSessionSlotRecord = StorageRow
 MarketRecorderTargetRecord = StorageRow
 
@@ -59,6 +63,8 @@ __all__ = [
     "CollectorCycleRecord",
     "CollectorCycleCandidateRecord",
     "CollectorCycleEventRecord",
+    "PipelineRecord",
+    "PipelineCycleRecord",
     "AlertEventRecord",
     "AlertStateRecord",
     "JobDefinitionRecord",
@@ -80,6 +86,8 @@ __all__ = [
     "ExecutionFillRecord",
     "SessionPositionRecord",
     "SessionPositionCloseRecord",
+    "PortfolioPositionRecord",
+    "PositionCloseRecord",
     "LiveSessionSlotRecord",
     "MarketRecorderTargetRecord",
 ]

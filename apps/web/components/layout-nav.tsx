@@ -2,16 +2,28 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, CandlestickChart } from "lucide-react";
+import { Activity, BriefcaseBusiness, CandlestickChart, Radar } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
 export const LAYOUT_NAV_ITEMS = [
   {
-    href: "/sessions",
-    label: "Sessions",
-    caption: "runtime workspace",
+    href: "/pipelines",
+    label: "Pipelines",
+    caption: "runtime control",
     icon: CandlestickChart,
+  },
+  {
+    href: "/opportunities",
+    label: "Opportunities",
+    caption: "trade ideas",
+    icon: Radar,
+  },
+  {
+    href: "/positions",
+    label: "Positions",
+    caption: "open risk",
+    icon: BriefcaseBusiness,
   },
   {
     href: "/account",

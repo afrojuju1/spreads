@@ -8,6 +8,10 @@ from spreads.services.candidate_policy import (
     candidate_has_intraday_setup_context,
     candidate_requires_favorable_setup,
 )
+from spreads.services.runtime_identity import (
+    build_pipeline_id,
+    resolve_pipeline_policy_fields,
+)
 from spreads.storage.signal_repository import SignalRepository
 
 PROMOTABLE_SCORE_FLOOR = 65.0
@@ -231,6 +235,52 @@ def _execution_shape(candidate: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _candidate_legs(candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    legs: list[dict[str, Any]] = []
+    short_symbol = candidate.get("short_symbol")
+    long_symbol = candidate.get("long_symbol")
+    if short_symbol:
+        legs.append(
+            {
+                "symbol": str(short_symbol),
+                "role": "short",
+                "strike": candidate.get("short_strike"),
+                "expiration_date": candidate.get("expiration_date"),
+            }
+        )
+    if long_symbol:
+        legs.append(
+            {
+                "symbol": str(long_symbol),
+                "role": "long",
+                "strike": candidate.get("long_strike"),
+                "expiration_date": candidate.get("expiration_date"),
+            }
+        )
+    return legs
+
+
+def _candidate_economics(candidate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "midpoint_credit": candidate.get("midpoint_credit"),
+        "natural_credit": candidate.get("natural_credit"),
+        "max_profit": candidate.get("max_profit"),
+        "max_loss": candidate.get("max_loss"),
+        "return_on_risk": candidate.get("return_on_risk"),
+        "fill_ratio": candidate.get("fill_ratio"),
+    }
+
+
+def _candidate_strategy_metrics(candidate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "width": candidate.get("width"),
+        "short_strike": candidate.get("short_strike"),
+        "long_strike": candidate.get("long_strike"),
+        "expected_move": candidate.get("expected_move"),
+        "underlying_price": candidate.get("underlying_price"),
+    }
+
+
 def _build_opportunity_payload(
     *,
     label: str,
@@ -244,16 +294,30 @@ def _build_opportunity_payload(
     candidate = _candidate_with_payload(row)
     profile = str(candidate.get("profile") or default_profile)
     strategy_family = str(candidate.get("strategy") or default_strategy)
+    policy_fields = resolve_pipeline_policy_fields(
+        profile=profile,
+        universe_label=label.split("_", 1)[0] if label else None,
+        root_symbol=str(candidate.get("underlying_symbol") or ""),
+    )
     return {
         "opportunity_id": build_opportunity_id(label, session_date, candidate),
+        "pipeline_id": build_pipeline_id(label),
         "label": label,
+        "market_date": session_date,
         "session_date": session_date,
+        "cycle_id": cycle_id,
+        "root_symbol": str(candidate["underlying_symbol"]),
         "strategy_family": strategy_family,
         "profile": profile,
+        "style_profile": str(policy_fields["style_profile"]),
+        "horizon_intent": str(policy_fields["horizon_intent"]),
+        "product_class": str(policy_fields["product_class"]),
+        "expiration_date": candidate.get("expiration_date"),
         "entity_type": "signal_subject",
         "entity_key": _signal_subject_key(label, str(candidate["underlying_symbol"])),
         "underlying_symbol": str(candidate["underlying_symbol"]),
         "side": _opportunity_side(candidate),
+        "side_bias": _opportunity_side(candidate),
         "selection_state": str(row["selection_state"]),
         "selection_rank": (
             None
@@ -263,6 +327,9 @@ def _build_opportunity_payload(
         "state_reason": str(row.get("state_reason") or "selected"),
         "origin": str(row.get("origin") or "live_scan"),
         "eligibility": str(row.get("eligibility") or "live"),
+        "eligibility_state": str(row.get("eligibility") or "live"),
+        "promotion_score": candidate.get("quality_score"),
+        "execution_score": candidate.get("quality_score"),
         "confidence": _candidate_confidence(candidate),
         "signal_state_ref": build_signal_state_id(label, str(candidate["underlying_symbol"])),
         "lifecycle_state": (
@@ -275,6 +342,17 @@ def _build_opportunity_payload(
         "expires_at": _expires_at(generated_at, profile),
         "reason_codes": [str(row.get("state_reason") or "selected")],
         "blockers": [] if str(row.get("eligibility") or "live") == "live" else ["analysis_only"],
+        "legs": _candidate_legs(candidate),
+        "economics": _candidate_economics(candidate),
+        "strategy_metrics": _candidate_strategy_metrics(candidate),
+        "order_payload": dict(candidate.get("order_payload") or {}),
+        "evidence": {
+            "selection_state": row.get("selection_state"),
+            "selection_rank": row.get("selection_rank"),
+            "origin": row.get("origin"),
+            "eligibility": row.get("eligibility"),
+            "generated_at": generated_at,
+        },
         "execution_shape": _execution_shape(candidate),
         "risk_hints": _risk_hints(candidate),
         "source_cycle_id": cycle_id,

@@ -12,6 +12,11 @@ from spreads.cli.ops import (
     trading_command,
     uoa_app,
 )
+from spreads.cli.runtime import (
+    opportunities_command,
+    pipelines_command,
+    positions_command,
+)
 from spreads.cli.replay import replay_app
 from spreads.jobs.live_collector import main as collect_main
 from spreads.jobs.scheduler import main as scheduler_main
@@ -57,6 +62,15 @@ app.command("status", help="Show system and runtime health.")(status_command)
 app.command("trading", help="Show live trading safety and readiness.")(trading_command)
 app.command("sessions", help="List live sessions or inspect one session.")(
     sessions_command
+)
+app.command("pipelines", help="List runtime pipelines or inspect one pipeline.")(
+    pipelines_command
+)
+app.command("opportunities", help="List opportunities or inspect one opportunity.")(
+    opportunities_command
+)
+app.command("positions", help="List positions or inspect one position.")(
+    positions_command
 )
 app.command("audit", help="Replay one session for operator investigation.")(
     audit_command

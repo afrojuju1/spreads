@@ -20,7 +20,7 @@ const mono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: "Spreads Operator",
-  description: "Session and account runtime console for spreads.",
+  description: "Pipeline, opportunity, position, and account runtime console for spreads.",
 };
 
 const themeInitScript = buildThemeInitScript();

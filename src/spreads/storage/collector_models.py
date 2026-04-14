@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, Date, DateTime, Float, ForeignKey, Index, Integer, Text
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -45,6 +45,59 @@ class CollectorCycleModel(Base):
         cascade="all, delete-orphan",
         order_by="CollectorCycleEventModel.generated_at",
     )
+
+
+class PipelineModel(Base):
+    __tablename__ = "pipelines"
+    __table_args__ = (
+        Index("ux_pipelines_label", "label", unique=True),
+        Index("idx_pipelines_enabled_updated", "enabled", "updated_at"),
+    )
+
+    pipeline_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    source_job_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    universe_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    style_profile: Mapped[str | None] = mapped_column(Text, nullable=True)
+    default_horizon_intent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    strategy_families_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    product_scope_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    policy_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PipelineCycleModel(Base):
+    __tablename__ = "pipeline_cycles"
+    __table_args__ = (
+        Index("idx_pipeline_cycles_pipeline_generated", "pipeline_id", "generated_at"),
+        Index("idx_pipeline_cycles_pipeline_market_date", "pipeline_id", "market_date"),
+    )
+
+    cycle_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    pipeline_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("pipelines.pipeline_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    market_date: Mapped[date] = mapped_column(Date, nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    job_run_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("job_runs.job_run_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    universe_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    strategy_mode: Mapped[str | None] = mapped_column(Text, nullable=True)
+    legacy_profile: Mapped[str | None] = mapped_column(Text, nullable=True)
+    greeks_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    symbols_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    failures_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    selection_memory_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
 
 class CollectorCycleCandidateModel(Base):

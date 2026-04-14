@@ -11,11 +11,19 @@ from spreads.storage.collector_models import (
     CollectorCycleCandidateModel,
     CollectorCycleEventModel,
     CollectorCycleModel,
+    PipelineCycleModel,
+    PipelineModel,
+)
+from spreads.services.runtime_identity import (
+    build_pipeline_id,
+    resolve_pipeline_policy_fields,
 )
 from spreads.storage.records import (
     CollectorCycleCandidateRecord,
     CollectorCycleEventRecord,
     CollectorCycleRecord,
+    PipelineCycleRecord,
+    PipelineRecord,
 )
 from spreads.storage.serializers import parse_date, parse_datetime
 
@@ -29,6 +37,9 @@ class CollectorRepository(RepositoryBase):
             "collector_cycle_candidates",
             "collector_cycle_events",
         )
+
+    def pipeline_schema_ready(self) -> bool:
+        return self.schema_has_tables("pipelines", "pipeline_cycles")
 
     def _cycle_candidate_row(
         self,
@@ -69,6 +80,11 @@ class CollectorRepository(RepositoryBase):
         if generated_at_dt is None:
             raise ValueError("generated_at is required")
         session_date = generated_at_dt.astimezone(NEW_YORK).date()
+        pipeline_id = build_pipeline_id(label)
+        policy_fields = resolve_pipeline_policy_fields(
+            profile=profile,
+            universe_label=universe_label,
+        )
 
         def build_candidate_models(
             payloads: list[dict[str, Any]],
@@ -146,9 +162,62 @@ class CollectorRepository(RepositoryBase):
                 for event in events
             ],
         )
+        pipeline = PipelineModel(
+            pipeline_id=pipeline_id,
+            label=label,
+            name=label,
+            enabled=True,
+            universe_label=universe_label,
+            style_profile=str(policy_fields["style_profile"]),
+            default_horizon_intent=str(policy_fields["horizon_intent"]),
+            strategy_families_json=[strategy],
+            product_scope_json={
+                "product_class": str(policy_fields["product_class"]),
+                "legacy_labels": [label],
+            },
+            policy_json={
+                "legacy_profile": profile,
+                "strategy_mode": strategy,
+                "greeks_source": greeks_source,
+            },
+            created_at=generated_at_dt,
+            updated_at=generated_at_dt,
+        )
+        pipeline_cycle = PipelineCycleModel(
+            cycle_id=cycle_id,
+            pipeline_id=pipeline_id,
+            label=label,
+            market_date=session_date,
+            generated_at=generated_at_dt,
+            job_run_id=job_run_id,
+            universe_label=universe_label,
+            strategy_mode=strategy,
+            legacy_profile=profile,
+            greeks_source=greeks_source,
+            symbols_json=symbols,
+            failures_json=failures,
+            selection_memory_json=selection_memory,
+            summary_json={
+                "candidate_count": len(opportunities),
+                "promotable_count": sum(
+                    1
+                    for payload in opportunities
+                    if str(payload.get("selection_state") or "") == "promotable"
+                ),
+                "monitor_count": sum(
+                    1
+                    for payload in opportunities
+                    if str(payload.get("selection_state") or "") == "monitor"
+                ),
+                "failure_count": len(failures),
+                "event_count": len(events),
+            },
+        )
 
         with self.session_scope() as session:
+            session.merge(pipeline)
             session.merge(cycle)
+            session.merge(pipeline_cycle)
 
     def get_cycle(self, cycle_id: str) -> CollectorCycleRecord | None:
         with self.session_factory() as session:
@@ -248,6 +317,92 @@ class CollectorRepository(RepositoryBase):
         if cycle is None:
             return None
         return self.row(cycle)
+
+    def get_pipeline(self, pipeline_id: str) -> PipelineRecord | None:
+        with self.session_factory() as session:
+            row = session.get(PipelineModel, pipeline_id)
+        if row is None:
+            return None
+        return self.row(row)
+
+    def list_pipelines(
+        self,
+        *,
+        limit: int = 100,
+        enabled_only: bool = False,
+    ) -> list[PipelineRecord]:
+        statement = select(PipelineModel)
+        if enabled_only:
+            statement = statement.where(PipelineModel.enabled.is_(True))
+        statement = statement.order_by(PipelineModel.updated_at.desc(), PipelineModel.pipeline_id.asc()).limit(limit)
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return self.rows(rows)
+
+    def get_latest_pipeline_cycle(
+        self,
+        pipeline_id: str,
+        *,
+        market_date: str | None = None,
+    ) -> PipelineCycleRecord | None:
+        statement = select(PipelineCycleModel).where(PipelineCycleModel.pipeline_id == pipeline_id)
+        if market_date:
+            statement = statement.where(PipelineCycleModel.market_date == date.fromisoformat(market_date))
+        statement = statement.order_by(
+            PipelineCycleModel.generated_at.desc(),
+            PipelineCycleModel.cycle_id.desc(),
+        ).limit(1)
+        with self.session_factory() as session:
+            row = session.scalar(statement)
+        if row is None:
+            return None
+        return self.row(row)
+
+    def list_pipeline_cycles(
+        self,
+        *,
+        pipeline_id: str,
+        market_date: str | None = None,
+        limit: int = 100,
+    ) -> list[PipelineCycleRecord]:
+        statement = select(PipelineCycleModel).where(PipelineCycleModel.pipeline_id == pipeline_id)
+        if market_date:
+            statement = statement.where(PipelineCycleModel.market_date == date.fromisoformat(market_date))
+        statement = statement.order_by(PipelineCycleModel.generated_at.desc(), PipelineCycleModel.cycle_id.desc()).limit(limit)
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return self.rows(rows)
+
+    def list_latest_cycles_by_pipeline_ids(
+        self,
+        pipeline_ids: list[str],
+    ) -> list[PipelineCycleRecord]:
+        if not pipeline_ids:
+            return []
+        ranked_cycles = (
+            select(
+                PipelineCycleModel.cycle_id.label("cycle_id"),
+                func.row_number()
+                .over(
+                    partition_by=PipelineCycleModel.pipeline_id,
+                    order_by=(
+                        PipelineCycleModel.generated_at.desc(),
+                        PipelineCycleModel.cycle_id.desc(),
+                    ),
+                )
+                .label("cycle_rank"),
+            )
+            .where(PipelineCycleModel.pipeline_id.in_(pipeline_ids))
+            .subquery()
+        )
+        statement = (
+            select(PipelineCycleModel)
+            .join(ranked_cycles, PipelineCycleModel.cycle_id == ranked_cycles.c.cycle_id)
+            .where(ranked_cycles.c.cycle_rank == 1)
+        )
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return self.rows(rows)
 
     def list_latest_cycles_by_session_ids(
         self,

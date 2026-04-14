@@ -33,6 +33,9 @@ const liveCandidateSchema = z
     cycle_id: z.string(),
     label: z.string(),
     session_date: z.string(),
+    market_date: z.string().optional(),
+    pipeline_id: z.string().nullable().optional(),
+    opportunity_id: z.string().nullable().optional(),
     generated_at: z.string(),
     selection_state: z.enum(["promotable", "monitor"]),
     selection_rank: z.number(),
@@ -354,6 +357,32 @@ const sessionListResponseSchema = z.object({
   sessions: z.array(sessionListItemSchema),
 });
 
+const pipelineListItemSchema = z
+  .object({
+    pipeline_id: z.string(),
+    label: z.string(),
+    name: z.string().nullable().optional(),
+    status: z.string(),
+    latest_market_date: z.string(),
+    legacy_session_id: z.string(),
+    latest_slot_at: z.string().nullable().optional(),
+    latest_slot_status: z.string().nullable().optional(),
+    latest_capture_status: z.string().nullable().optional(),
+    promotable_count: z.number(),
+    monitor_count: z.number(),
+    alert_count: z.number(),
+    updated_at: z.string().nullable().optional(),
+    style_profile: z.string().nullable().optional(),
+    horizon_intent: z.string().nullable().optional(),
+    product_scope: z.record(z.string(), z.unknown()).nullable().optional(),
+    policy: z.record(z.string(), z.unknown()).nullable().optional(),
+  })
+  .passthrough();
+
+const pipelineListResponseSchema = z.object({
+  pipelines: z.array(pipelineListItemSchema),
+});
+
 const sessionAnalysisSchema = sessionSummarySchema
   .extend({
     analysis_run: z.record(z.string(), z.unknown()),
@@ -411,6 +440,8 @@ const executionAttemptSchema = z
   .object({
     execution_attempt_id: z.string(),
     session_id: z.string(),
+    pipeline_id: z.string().nullable().optional(),
+    market_date: z.string().nullable().optional(),
     session_date: z.string(),
     label: z.string(),
     cycle_id: z.string().nullable().optional(),
@@ -426,6 +457,7 @@ const executionAttemptSchema = z
     long_symbol: z.string(),
     trade_intent: z.string(),
     session_position_id: z.string().nullable().optional(),
+    position_id: z.string().nullable().optional(),
     quantity: z.number(),
     limit_price: z.number(),
     requested_at: z.string(),
@@ -573,6 +605,81 @@ const sessionDetailSchema = z
   })
   .passthrough();
 
+const pipelineDetailSchema = sessionDetailSchema
+  .extend({
+    pipeline_id: z.string(),
+    market_date: z.string(),
+    legacy_session_id: z.string(),
+    pipeline: z.record(z.string(), z.unknown()).nullable().optional(),
+    cycles: z.array(z.record(z.string(), z.unknown())).default([]),
+  })
+  .passthrough();
+
+const opportunitySchema = z
+  .object({
+    opportunity_id: z.string(),
+    pipeline_id: z.string().nullable().optional(),
+    market_date: z.string(),
+    label: z.string(),
+    root_symbol: z.string().nullable().optional(),
+    underlying_symbol: z.string(),
+    strategy_family: z.string(),
+    style_profile: z.string().nullable().optional(),
+    horizon_intent: z.string().nullable().optional(),
+    product_class: z.string().nullable().optional(),
+    lifecycle_state: z.string(),
+    selection_state: z.string(),
+    selection_rank: z.number().nullable().optional(),
+    confidence: z.number().nullable().optional(),
+    promotion_score: z.number().nullable().optional(),
+    execution_score: z.number().nullable().optional(),
+    legacy_session_id: z.string().nullable().optional(),
+    order_payload: z.record(z.string(), z.unknown()).nullable().optional(),
+    legs: z.array(z.record(z.string(), z.unknown())).default([]),
+    economics: z.record(z.string(), z.unknown()).default({}),
+    strategy_metrics: z.record(z.string(), z.unknown()).default({}),
+    evidence: z.record(z.string(), z.unknown()).default({}),
+  })
+  .passthrough();
+
+const opportunityListResponseSchema = z.object({
+  opportunities: z.array(opportunitySchema),
+});
+
+const positionSchema = z
+  .object({
+    position_id: z.string(),
+    pipeline_id: z.string(),
+    market_date: z.string().nullable().optional(),
+    position_status: z.string(),
+    root_symbol: z.string(),
+    strategy_family: z.string(),
+    style_profile: z.string().nullable().optional(),
+    horizon_intent: z.string().nullable().optional(),
+    product_class: z.string().nullable().optional(),
+    requested_quantity: z.number().optional(),
+    opened_quantity: z.number().optional(),
+    remaining_quantity: z.number().optional(),
+    closed_quantity: z.number().nullable().optional(),
+    entry_value: z.number().nullable().optional(),
+    realized_pnl: z.number().nullable().optional(),
+    unrealized_pnl: z.number().nullable().optional(),
+    net_pnl: z.number().nullable().optional(),
+    open_execution_attempt_id: z.string(),
+    legacy_session_position_id: z.string().nullable().optional(),
+    legs_json: z.array(z.record(z.string(), z.unknown())).default([]),
+    economics_json: z.record(z.string(), z.unknown()).default({}),
+    strategy_metrics_json: z.record(z.string(), z.unknown()).default({}),
+    open_execution_attempt: executionAttemptSchema.nullable().optional(),
+    closes: z.array(z.record(z.string(), z.unknown())).default([]),
+  })
+  .passthrough();
+
+const positionListResponseSchema = z.object({
+  summary: z.record(z.string(), z.unknown()),
+  positions: z.array(positionSchema),
+});
+
 const globalRealtimeEventSchema = z.object({
   type: z.string(),
   topic: z.string(),
@@ -598,6 +705,7 @@ export type SessionIdea = z.infer<typeof sessionIdeaSchema>;
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 export type SessionTuning = z.infer<typeof sessionTuningSchema>;
 export type SessionListItem = z.infer<typeof sessionListItemSchema>;
+export type PipelineListItem = z.infer<typeof pipelineListItemSchema>;
 export type ExecutionOrder = z.infer<typeof executionOrderSchema>;
 export type ExecutionFill = z.infer<typeof executionFillSchema>;
 export type ExecutionAttempt = z.infer<typeof executionAttemptSchema>;
@@ -606,6 +714,9 @@ export type SessionPortfolioPosition = z.infer<typeof sessionPortfolioPositionSc
 export type SessionPortfolioSummary = z.infer<typeof sessionPortfolioSummarySchema>;
 export type SessionPortfolio = z.infer<typeof sessionPortfolioSchema>;
 export type SessionDetail = z.infer<typeof sessionDetailSchema>;
+export type PipelineDetail = z.infer<typeof pipelineDetailSchema>;
+export type Opportunity = z.infer<typeof opportunitySchema>;
+export type Position = z.infer<typeof positionSchema>;
 export type TuningBucket = z.infer<typeof tuningBucketSchema>;
 export type SessionExecutionActionResponse = z.infer<typeof sessionExecutionActionResponseSchema>;
 export type GlobalRealtimeEvent = z.infer<typeof globalRealtimeEventSchema>;
@@ -699,6 +810,98 @@ export function getAccountOverview(historyRange: AccountHistoryRange = "1D") {
   });
 }
 
+export function getPipelines(filters?: {
+  marketDate?: string;
+  limit?: number;
+}) {
+  return fetchApi("pipelines", pipelineListResponseSchema, {
+    market_date: filters?.marketDate,
+    limit: filters?.limit,
+  });
+}
+
+export function getPipelineDetail(
+  pipelineId: string,
+  filters?: {
+    marketDate?: string;
+  },
+) {
+  return fetchApi(
+    `pipelines/${encodeURIComponent(pipelineId)}`,
+    pipelineDetailSchema,
+    {
+      market_date: filters?.marketDate,
+    },
+  );
+}
+
+export function getOpportunities(filters?: {
+  pipelineId?: string;
+  marketDate?: string;
+  lifecycleState?: string;
+  limit?: number;
+}) {
+  return fetchApi("opportunities", opportunityListResponseSchema, {
+    pipeline_id: filters?.pipelineId,
+    market_date: filters?.marketDate,
+    lifecycle_state: filters?.lifecycleState,
+    limit: filters?.limit,
+  });
+}
+
+export function getOpportunityDetail(opportunityId: string) {
+  return fetchApi(
+    `opportunities/${encodeURIComponent(opportunityId)}`,
+    opportunitySchema,
+  );
+}
+
+export function executeOpportunity(
+  opportunityId: string,
+  payload: Omit<SessionExecutionRequest, "candidate_id">,
+) {
+  return postApi(
+    `opportunities/${encodeURIComponent(opportunityId)}/execute`,
+    sessionExecutionActionResponseSchema,
+    payload,
+  );
+}
+
+export function getPositions(filters?: {
+  pipelineId?: string;
+  marketDate?: string;
+  limit?: number;
+}) {
+  return fetchApi("positions", positionListResponseSchema, {
+    pipeline_id: filters?.pipelineId,
+    market_date: filters?.marketDate,
+    limit: filters?.limit,
+  });
+}
+
+export function getPositionDetail(positionId: string) {
+  return fetchApi(`positions/${encodeURIComponent(positionId)}`, positionSchema);
+}
+
+export function closePosition(
+  positionId: string,
+  payload: SessionPositionCloseRequest = {},
+) {
+  return postApi(
+    `positions/${encodeURIComponent(positionId)}/close`,
+    sessionExecutionActionResponseSchema,
+    payload,
+  );
+}
+
+export function refreshExecution(executionAttemptId: string) {
+  return postApi(
+    `executions/${encodeURIComponent(executionAttemptId)}/refresh`,
+    sessionExecutionActionResponseSchema,
+    {},
+  );
+}
+
 export function getSessions(filters?: {
   sessionDate?: string;
   limit?: number;
@@ -756,6 +959,16 @@ export function buildSessionHref(sessionId?: string | null) {
     return "/sessions";
   }
   return `/sessions/${encodeURIComponent(sessionId)}`;
+}
+
+export function buildPipelineHref(pipelineId?: string | null, marketDate?: string | null) {
+  if (!pipelineId) {
+    return "/pipelines";
+  }
+  if (!marketDate) {
+    return `/pipelines/${encodeURIComponent(pipelineId)}`;
+  }
+  return `/pipelines/${encodeURIComponent(pipelineId)}?marketDate=${encodeURIComponent(marketDate)}`;
 }
 
 export function buildGlobalEventsWebSocketUrl() {
