@@ -13,6 +13,13 @@ EarningsEventPhase = Literal[
     "post_event_settled",
 ]
 EventSessionTiming = Literal["before_open", "after_close", "during_market", "unknown"]
+EarningsConsensusStatus = Literal[
+    "consensus",
+    "date_only",
+    "single_source",
+    "conflict",
+    "missing",
+]
 
 
 @dataclass(frozen=True)
@@ -70,6 +77,9 @@ class CalendarEventContext:
     earnings_days_since_event: int | None = None
     earnings_timing_confidence: SourceConfidence = "unknown"
     earnings_horizon_crosses_report: bool = False
+    earnings_primary_source: str | None = None
+    earnings_supporting_sources: tuple[str, ...] = field(default_factory=tuple)
+    earnings_consensus_status: EarningsConsensusStatus = "missing"
 
 
 @dataclass(frozen=True)
@@ -91,3 +101,6 @@ class CalendarPolicyDecision:
     earnings_days_since_event: int | None = None
     earnings_timing_confidence: SourceConfidence = "unknown"
     earnings_horizon_crosses_report: bool = False
+    earnings_primary_source: str | None = None
+    earnings_supporting_sources: tuple[str, ...] = field(default_factory=tuple)
+    earnings_consensus_status: EarningsConsensusStatus = "missing"

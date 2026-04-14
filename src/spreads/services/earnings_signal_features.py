@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
+from spreads.services.earnings_signal_evidence import build_earnings_signal_evidence
+
 EARNINGS_SIGNAL_FIELDS = (
     "direction_signal",
     "jump_risk_signal",
@@ -354,14 +356,119 @@ def _dominant_flow_score(candidate: Mapping[str, Any], *, family: str) -> float 
     return 0.45
 
 
+def _evidence_root_decision(evidence: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    payload = {} if not isinstance(evidence, Mapping) else dict(evidence)
+    root = payload.get("uoa_root_decision")
+    return root if isinstance(root, Mapping) else {}
+
+
+def _evidence_quote_root(evidence: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    payload = {} if not isinstance(evidence, Mapping) else dict(evidence)
+    root = payload.get("uoa_quote_root_summary")
+    return root if isinstance(root, Mapping) else {}
+
+
+def _candidate_quote_quality(evidence: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    payload = {} if not isinstance(evidence, Mapping) else dict(evidence)
+    quality = payload.get("candidate_quote_quality")
+    return quality if isinstance(quality, Mapping) else {}
+
+
+def _evidence_quote_quality_score(evidence: Mapping[str, Any] | None) -> float | None:
+    candidate_quality = _normalize_unit_score(
+        _candidate_quote_quality(evidence).get("quality_score")
+    )
+    if candidate_quality is not None:
+        return candidate_quality
+    return _normalize_unit_score(_evidence_quote_root(evidence).get("average_quality_score"))
+
+
+def _evidence_dominant_flow(evidence: Mapping[str, Any] | None) -> tuple[str | None, float | None]:
+    root = _evidence_root_decision(evidence)
+    current = root.get("current") if isinstance(root.get("current"), Mapping) else {}
+    dominant_flow = _as_text(current.get("dominant_flow")) or _as_text(root.get("dominant_flow"))
+    dominant_flow_ratio = _as_float(current.get("dominant_flow_ratio"))
+    if dominant_flow_ratio is None:
+        dominant_flow_ratio = _as_float(root.get("dominant_flow_ratio"))
+    return (
+        None if dominant_flow is None else dominant_flow.lower(),
+        dominant_flow_ratio,
+    )
+
+
+def _evidence_flow_score(*, evidence: Mapping[str, Any] | None, family: str) -> float | None:
+    dominant_flow, dominant_flow_ratio = _evidence_dominant_flow(evidence)
+    direction = _family_direction(family)
+    if dominant_flow is None and dominant_flow_ratio is None:
+        return None
+    if direction == "neutral":
+        if dominant_flow == "mixed":
+            return 1.0
+        if dominant_flow_ratio is None:
+            return 0.6
+        if dominant_flow_ratio <= 0.6:
+            return 0.9
+        if dominant_flow_ratio >= 0.8:
+            return 0.1
+        return 0.45
+    if dominant_flow == "mixed":
+        return 0.5
+    if direction == "bullish":
+        if dominant_flow == "call":
+            return 1.0 if dominant_flow_ratio is None or dominant_flow_ratio >= 0.55 else 0.75
+        if dominant_flow == "put":
+            return 0.0 if dominant_flow_ratio is None or dominant_flow_ratio >= 0.55 else 0.25
+    if direction == "bearish":
+        if dominant_flow == "put":
+            return 1.0 if dominant_flow_ratio is None or dominant_flow_ratio >= 0.55 else 0.75
+        if dominant_flow == "call":
+            return 0.0 if dominant_flow_ratio is None or dominant_flow_ratio >= 0.55 else 0.25
+    return 0.5
+
+
+def _evidence_intensity_score(evidence: Mapping[str, Any] | None) -> float | None:
+    root = _evidence_root_decision(evidence)
+    deltas = root.get("deltas") if isinstance(root.get("deltas"), Mapping) else {}
+    current = root.get("current") if isinstance(root.get("current"), Mapping) else {}
+    values = [
+        _as_float(deltas.get("max_premium_rate_ratio")),
+        _as_float(deltas.get("max_trade_rate_ratio")),
+        _as_float(current.get("max_volume_oi_ratio")),
+        _as_float(current.get("supporting_volume_oi_ratio")),
+    ]
+    components = [
+        _clamp((value - 1.0) / 2.0, 0.0, 1.0)
+        for value in values
+        if value is not None
+    ]
+    return _mean_score(components)
+
+
 def _resolve_options_bias_alignment(
     candidate: Mapping[str, Any],
     *,
     family: str,
+    evidence: Mapping[str, Any] | None = None,
 ) -> tuple[bool | None, str]:
     explicit = _as_bool(candidate.get("options_bias_alignment"))
     if explicit is not None:
         return explicit, "explicit"
+    evidence_components = [
+        value
+        for value in (
+            _evidence_flow_score(evidence=evidence, family=family),
+            _evidence_quote_quality_score(evidence),
+        )
+        if value is not None
+    ]
+    if evidence_components:
+        score = _mean_score(evidence_components)
+        if score is not None:
+            if score >= 0.6:
+                return True, "evidence"
+            if score <= 0.4:
+                return False, "evidence"
+            return None, "evidence"
     components = [
         value
         for value in (
@@ -377,16 +484,36 @@ def _resolve_options_bias_alignment(
     if score is None:
         return None, "missing"
     if score >= 0.6:
-        return True, "derived"
+        return True, "fallback"
     if score <= 0.4:
-        return False, "derived"
-    return None, "derived"
+        return False, "fallback"
+    return None, "fallback"
 
 
-def _resolve_neutral_regime_signal(candidate: Mapping[str, Any]) -> tuple[float | None, int | None, str]:
+def _resolve_neutral_regime_signal(
+    candidate: Mapping[str, Any],
+    *,
+    evidence: Mapping[str, Any] | None = None,
+) -> tuple[float | None, int | None, str]:
     explicit = _normalize_unit_score(candidate.get("neutral_regime_signal"))
     if explicit is not None:
         return explicit, _as_int(candidate.get("neutral_regime_signal_component_count")), "explicit"
+    evidence_components = [
+        value
+        for value in (
+            _evidence_flow_score(evidence=evidence, family="iron_condor"),
+            _evidence_quote_quality_score(evidence),
+            _status_score(candidate, family="iron_condor"),
+            _vwap_alignment_score(candidate, family="iron_condor"),
+            _trend_alignment_score(candidate, family="iron_condor"),
+            _opening_range_alignment_score(candidate, family="iron_condor"),
+        )
+        if value is not None
+    ]
+    if evidence_components:
+        score = _mean_score(evidence_components)
+        if score is not None:
+            return score, len(evidence_components), "evidence"
     components = [
         value
         for value in (
@@ -402,11 +529,13 @@ def _resolve_neutral_regime_signal(candidate: Mapping[str, Any]) -> tuple[float 
     score = _mean_score(components)
     if score is None:
         return None, None, "missing"
-    return score, len(components), "derived"
+    return score, len(components), "fallback"
 
 
 def _resolve_residual_iv_richness(
     candidate: Mapping[str, Any],
+    *,
+    evidence: Mapping[str, Any] | None = None,
 ) -> tuple[float | None, int | None, str]:
     explicit = _normalize_unit_score(candidate.get("residual_iv_richness"))
     if explicit is not None:
@@ -421,10 +550,18 @@ def _resolve_residual_iv_richness(
     volume_oi_score = _volume_oi_score(candidate)
     if volume_oi_score is not None:
         components.append(volume_oi_score)
+    evidence_quote_quality = _evidence_quote_quality_score(evidence)
+    if evidence_quote_quality is not None:
+        components.append(evidence_quote_quality)
+    evidence_intensity = _evidence_intensity_score(evidence)
+    if evidence_intensity is not None:
+        components.append(evidence_intensity)
     score = _mean_score(components)
     if score is None:
         return None, None, "missing"
-    return score, len(components), "derived"
+    if evidence_quote_quality is not None or evidence_intensity is not None:
+        return score, len(components), "evidence"
+    return score, len(components), "fallback"
 
 
 def _resolve_modeled_move_vs_implied_move(candidate: Mapping[str, Any]) -> float | None:
@@ -446,8 +583,16 @@ def _derived_direction_signal(
     *,
     family: str,
     options_bias_alignment: bool | None,
+    evidence: Mapping[str, Any] | None = None,
 ) -> tuple[float | None, int | None]:
     components: list[float] = []
+    for item in (
+        _evidence_flow_score(evidence=evidence, family=family),
+        _evidence_quote_quality_score(evidence),
+        _evidence_intensity_score(evidence),
+    ):
+        if item is not None:
+            components.append(item)
     for item in (
         _normalize_unit_score(candidate.get("setup_intraday_score")),
         _normalize_unit_score(candidate.get("setup_score")),
@@ -469,8 +614,16 @@ def _derived_direction_signal(
 
 def _derived_jump_risk_signal(
     candidate: Mapping[str, Any],
+    *,
+    evidence: Mapping[str, Any] | None = None,
 ) -> tuple[float | None, int | None]:
     components: list[float] = []
+    for item in (
+        _evidence_intensity_score(evidence),
+        _evidence_quote_quality_score(evidence),
+    ):
+        if item is not None:
+            components.append(item)
     expected_move_pct = _as_float(candidate.get("expected_move_pct"))
     if expected_move_pct is not None:
         components.append(_clamp((expected_move_pct - 0.01) / 0.025, 0.0, 1.0))
@@ -491,8 +644,13 @@ def _derived_jump_risk_signal(
 
 def _derived_pricing_signal(
     candidate: Mapping[str, Any],
+    *,
+    evidence: Mapping[str, Any] | None = None,
 ) -> tuple[float | None, int | None]:
     components: list[float] = []
+    evidence_quote_quality = _evidence_quote_quality_score(evidence)
+    if evidence_quote_quality is not None:
+        components.append(evidence_quote_quality)
     fill_ratio = _as_float(candidate.get("fill_ratio"))
     if fill_ratio is not None:
         components.append(_clamp((fill_ratio - 0.6) / 0.35, 0.0, 1.0))
@@ -519,8 +677,15 @@ def _derived_post_event_confirmation_signal(
     family: str,
     neutral_regime_signal: float | None,
     options_bias_alignment: bool | None,
+    evidence: Mapping[str, Any] | None = None,
 ) -> tuple[float | None, int | None]:
     components: list[float] = []
+    for item in (
+        _evidence_flow_score(evidence=evidence, family=family),
+        _evidence_quote_quality_score(evidence),
+    ):
+        if item is not None:
+            components.append(item)
     for item in (
         _normalize_unit_score(candidate.get("setup_intraday_score")),
         _normalize_unit_score(candidate.get("setup_score")),
@@ -549,23 +714,26 @@ def _derived_signal(
     family: str,
     options_bias_alignment: bool | None,
     neutral_regime_signal: float | None,
+    evidence: Mapping[str, Any] | None = None,
 ) -> tuple[float | None, int | None]:
     if field == "direction_signal":
         return _derived_direction_signal(
             candidate,
             family=family,
             options_bias_alignment=options_bias_alignment,
+            evidence=evidence,
         )
     if field == "jump_risk_signal":
-        return _derived_jump_risk_signal(candidate)
+        return _derived_jump_risk_signal(candidate, evidence=evidence)
     if field == "pricing_signal":
-        return _derived_pricing_signal(candidate)
+        return _derived_pricing_signal(candidate, evidence=evidence)
     if field == "post_event_confirmation_signal":
         return _derived_post_event_confirmation_signal(
             candidate,
             family=family,
             neutral_regime_signal=neutral_regime_signal,
             options_bias_alignment=options_bias_alignment,
+            evidence=evidence,
         )
     return None, None
 
@@ -574,17 +742,26 @@ def build_earnings_signal_bundle(
     candidate: Mapping[str, Any],
     *,
     family: str | None = None,
+    cycle: Mapping[str, Any] | None = None,
+    evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     resolved_family = _resolve_family(candidate, family)
+    signal_evidence = build_earnings_signal_evidence(
+        candidate,
+        family=resolved_family,
+        cycle=cycle,
+        evidence=evidence,
+    )
     options_bias_alignment, options_bias_source = _resolve_options_bias_alignment(
         candidate,
         family=resolved_family,
+        evidence=signal_evidence,
     )
     neutral_regime_signal, neutral_regime_components, neutral_regime_source = (
-        _resolve_neutral_regime_signal(candidate)
+        _resolve_neutral_regime_signal(candidate, evidence=signal_evidence)
     )
     residual_iv_richness, residual_iv_components, residual_iv_source = (
-        _resolve_residual_iv_richness(candidate)
+        _resolve_residual_iv_richness(candidate, evidence=signal_evidence)
     )
 
     signals: dict[str, dict[str, Any]] = {}
@@ -601,6 +778,7 @@ def build_earnings_signal_bundle(
             family=resolved_family,
             options_bias_alignment=options_bias_alignment,
             neutral_regime_signal=neutral_regime_signal,
+            evidence=signal_evidence,
         )
         signals[field] = {
             "score": explicit_score if explicit_score is not None else derived_score,
@@ -612,12 +790,23 @@ def build_earnings_signal_bundle(
             "source": (
                 "explicit"
                 if explicit_score is not None
-                else ("derived" if derived_score is not None else "missing")
+                else (
+                    "evidence"
+                    if derived_score is not None
+                    and (
+                        _evidence_flow_score(evidence=signal_evidence, family=resolved_family)
+                        is not None
+                        or _evidence_quote_quality_score(signal_evidence) is not None
+                        or _evidence_intensity_score(signal_evidence) is not None
+                    )
+                    else ("fallback" if derived_score is not None else "missing")
+                )
             ),
         }
 
     return {
         "signals": signals,
+        "evidence": signal_evidence,
         "options_bias_alignment": options_bias_alignment,
         "options_bias_alignment_source": options_bias_source,
         "debit_width_ratio": _as_float(candidate.get("debit_width_ratio")),

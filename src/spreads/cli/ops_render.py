@@ -83,6 +83,28 @@ def _truncate(value: Any, *, length: int = 48) -> str:
     return text[: max(length - 1, 0)].rstrip() + "…"
 
 
+def _render_count_map(
+    value: Any,
+    *,
+    limit: int = 4,
+    item_length: int = 56,
+) -> str:
+    if not isinstance(value, dict) or not value:
+        return "-"
+    ranked = sorted(
+        (
+            (str(key), int(raw_value))
+            for key, raw_value in value.items()
+            if str(key or "").strip()
+        ),
+        key=lambda item: (-item[1], item[0]),
+    )
+    rendered = ", ".join(f"{name} {_render_value(count)}" for name, count in ranked[:limit])
+    if len(ranked) > limit:
+        rendered += ", …"
+    return _truncate(rendered, length=item_length)
+
+
 def _render_auto_execution_summary(value: Any) -> str:
     payload = value if isinstance(value, dict) else {}
     status = str(payload.get("status") or "-")
@@ -101,6 +123,45 @@ def _render_auto_execution_summary(value: Any) -> str:
     if reason:
         return _truncate(f"{status} {reason}", length=40)
     return status
+
+
+def _render_selection_summary(
+    console: Console,
+    *,
+    title: str,
+    value: Any,
+) -> None:
+    payload = value if isinstance(value, dict) else {}
+    if not payload:
+        return
+    table = Table(title=title, show_edge=False, header_style="bold")
+    table.add_column("Metric", style="bold")
+    table.add_column("Value")
+    table.add_row("Opportunities", _render_value(payload.get("opportunity_count")))
+    table.add_row("Auto Live Eligible", _render_value(payload.get("auto_live_eligible_count")))
+    table.add_row("Shadow Only", _render_value(payload.get("shadow_only_count")))
+    table.add_row("Families", _render_count_map(payload.get("strategy_family_counts")))
+    table.add_row("Phases", _render_count_map(payload.get("earnings_phase_counts")))
+    table.add_row("States", _render_count_map(payload.get("selection_state_counts")))
+    table.add_row(
+        "Timing Confidence",
+        _render_count_map(payload.get("timing_confidence_counts")),
+    )
+    blocker_counts = payload.get("blocker_counts") if isinstance(payload.get("blocker_counts"), dict) else {}
+    table.add_row("Policy Blockers", _render_count_map(blocker_counts.get("policy")))
+    table.add_row(
+        "Signal Blockers",
+        _render_count_map(blocker_counts.get("signal_gate")),
+    )
+    table.add_row(
+        "Quote/Liquidity",
+        _render_count_map(blocker_counts.get("quote_liquidity")),
+    )
+    table.add_row(
+        "Execution Blockers",
+        _render_count_map(blocker_counts.get("execution_gate")),
+    )
+    console.print(table)
 
 
 def _job_run_status_text(status: str | None) -> Text:
@@ -188,6 +249,13 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
         f"running {_render_value(summary.get('running_job_count'))} | queued {_render_value(summary.get('queued_job_count'))}",
     )
     overview.add_row(
+        "Collector Opps",
+        (
+            f"total {_render_value(summary.get('collector_opportunity_count'))} | "
+            f"live-ready {_render_value(summary.get('collector_auto_live_eligible_count'))}"
+        ),
+    )
+    overview.add_row(
         "Broker Sync",
         f"{_render_value(broker_sync.get('status'))} @ {_render_value(broker_sync.get('updated_at'))}",
     )
@@ -213,18 +281,29 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Status")
         table.add_column("Capture")
         table.add_column("Auto Exec")
+        table.add_column("Opps/Live", justify="right")
         table.add_column("Quote Stream/Base", justify="right")
         table.add_column("Last Slot")
         for row in collector_rows:
+            selection_summary = (
+                row.get("selection_summary") if isinstance(row.get("selection_summary"), dict) else {}
+            )
             table.add_row(
                 str(row.get("job_key") or "-"),
                 str(row.get("status") or "-"),
                 str(row.get("capture_status") or "-"),
                 _render_auto_execution_summary(row.get("auto_execution_summary")),
+                f"{_render_value(selection_summary.get('opportunity_count'))}/{_render_value(selection_summary.get('auto_live_eligible_count'))}",
                 f"{_render_value(row.get('stream_quote_events_saved'))}/{_render_value(row.get('baseline_quote_events_saved'))}",
                 str(row.get("last_slot_at") or "-"),
             )
         console.print(table)
+
+    _render_selection_summary(
+        console,
+        title="Collector Selection",
+        value=details.get("collector_selection") or {},
+    )
 
     failure_rows = list(details.get("recent_failures") or [])
     if failure_rows:
@@ -290,6 +369,14 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row(
         "Execution Health", _render_value(summary.get("execution_health_status"))
     )
+    overview.add_row("Collectors", _render_value(summary.get("collector_count")))
+    overview.add_row(
+        "Collector Opps",
+        (
+            f"total {_render_value(summary.get('collector_opportunity_count'))} | "
+            f"live-ready {_render_value(summary.get('collector_auto_live_eligible_count'))}"
+        ),
+    )
     overview.add_row(
         "Broker Sync",
         f"{_render_value(broker_sync.get('status'))} @ {_render_value(broker_sync.get('updated_at'))}",
@@ -303,6 +390,12 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
     )
 
     _render_attention(console, payload)
+
+    _render_selection_summary(
+        console,
+        title="Collector Selection",
+        value=details.get("collector_selection") or {},
+    )
 
     top_positions = list(details.get("top_positions") or [])
     if top_positions:
@@ -490,6 +583,10 @@ def _render_job_run_detail(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row("Worker", _render_value(summary.get("worker_name")))
     overview.add_row("Retry", _render_value(summary.get("retry_count")))
     overview.add_row("Capture", _render_value(summary.get("capture_status")))
+    overview.add_row(
+        "Opportunities",
+        _render_value(summary.get("collector_opportunity_count")),
+    )
     console.print(
         Panel(
             overview,
@@ -524,6 +621,12 @@ def _render_job_run_detail(console: Console, payload: dict[str, Any]) -> None:
             f"{_render_value(run.get('stream_trade_events_saved'))}/{_render_value(run.get('total_trade_events_saved'))}",
         )
         console.print(table)
+
+    _render_selection_summary(
+        console,
+        title="Selection Summary",
+        value=details.get("selection_summary") or {},
+    )
 
     error_text = run.get("error_text")
     if error_text:

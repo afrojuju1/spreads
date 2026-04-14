@@ -727,6 +727,9 @@ class SpreadCandidate:
     earnings_days_since_event: int | None = None
     earnings_timing_confidence: str = "unknown"
     earnings_horizon_crosses_report: bool = False
+    earnings_primary_source: str | None = None
+    earnings_supporting_sources: tuple[str, ...] = ()
+    earnings_consensus_status: str = "missing"
     setup_status: str = "unknown"
     setup_score: float | None = None
     setup_reasons: tuple[str, ...] = ()
@@ -3340,6 +3343,9 @@ def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
         "earnings_days_since_event",
         "earnings_timing_confidence",
         "earnings_horizon_crosses_report",
+        "earnings_primary_source",
+        "earnings_supporting_sources",
+        "earnings_consensus_status",
         "setup_status",
         "setup_score",
         "setup_reasons",
@@ -3681,6 +3687,9 @@ def attach_calendar_decisions(
                 earnings_days_since_event=decision.earnings_days_since_event,
                 earnings_timing_confidence=decision.earnings_timing_confidence,
                 earnings_horizon_crosses_report=decision.earnings_horizon_crosses_report,
+                earnings_primary_source=decision.earnings_primary_source,
+                earnings_supporting_sources=decision.earnings_supporting_sources,
+                earnings_consensus_status=decision.earnings_consensus_status,
             )
         )
     return filtered_candidates

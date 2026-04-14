@@ -5,6 +5,7 @@ from typing import Any
 
 from spreads.db.decorators import with_storage
 from spreads.services.live_collector_health import (
+    build_selection_summary,
     enrich_live_collector_job_run_payload,
     normalize_uoa_decisions_payload,
 )
@@ -77,6 +78,11 @@ def _build_uoa_state_payload(
         "uoa_quote_summary": dict(run_payload.get("uoa_quote_summary") or {}),
         "uoa_decisions": normalize_uoa_decisions_payload(
             run_payload.get("uoa_decisions")
+        ),
+        "selection_summary": (
+            dict(run_payload.get("selection_summary") or {})
+            if run_payload.get("selection_summary")
+            else build_selection_summary(opportunities)
         ),
         "opportunities": [dict(item) for item in opportunities],
         "selection_counts": selection_counts,

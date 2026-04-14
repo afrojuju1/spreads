@@ -328,8 +328,15 @@ def evaluate_earnings_signal_gate(
     family: str,
     earnings_phase: str,
     days_to_expiration: int | None,
+    cycle: Mapping[str, Any] | None = None,
+    evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    bundle = build_earnings_signal_bundle(candidate, family=family)
+    bundle = build_earnings_signal_bundle(
+        candidate,
+        family=family,
+        cycle=cycle,
+        evidence=evidence,
+    )
     thresholds = earnings_signal_thresholds(
         family=family,
         earnings_phase=earnings_phase,
@@ -828,6 +835,7 @@ def build_candidate_opportunity_score(
         family=family,
         earnings_phase=earnings_phase,
         days_to_expiration=days_to_expiration,
+        cycle=cycle,
     )
 
     resolved_blockers = list(blockers or [])

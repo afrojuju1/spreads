@@ -18,6 +18,7 @@ from apps.api.routes.events_ws import router as events_ws_router
 from apps.api.routes.executions import router as executions_router
 from apps.api.routes.health import router as health_router
 from apps.api.routes.internal_market_data import router as internal_market_data_router
+from apps.api.routes.internal_ops import router as internal_ops_router
 from apps.api.routes.opportunities import router as opportunities_router
 from apps.api.routes.pipelines import router as pipelines_router
 from apps.api.routes.positions import router as positions_router
@@ -35,6 +36,7 @@ def create_app() -> FastAPI:
     app.include_router(positions_router)
     app.include_router(executions_router)
     app.include_router(internal_market_data_router)
+    app.include_router(internal_ops_router)
     app.include_router(uoa_router)
     app.include_router(events_ws_router)
     return app

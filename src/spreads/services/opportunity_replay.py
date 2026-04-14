@@ -919,6 +919,7 @@ def _build_strategy_intents(
             family=family,
             earnings_phase=earnings_phase,
             days_to_expiration=dte,
+            cycle=cycle,
         )
         blockers = _product_policy_blockers(
             family=family,

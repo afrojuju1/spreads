@@ -98,12 +98,14 @@ def _scored_candidate(
     thresholds: dict[str, Any],
     profile: str | None,
     generated_at: str,
+    signal_cycle_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     scorecard = build_candidate_opportunity_score(
         candidate,
         cycle={
             "generated_at": generated_at,
             "profile": profile,
+            **dict(signal_cycle_context or {}),
         },
     )
     execution_blockers: list[str] = []
@@ -610,6 +612,7 @@ def select_live_opportunities(
     top_monitor: int,
     profile: str | None = None,
     recovered_candidates: list[dict[str, Any]] | None = None,
+    signal_cycle_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     thresholds = _selection_thresholds(profile)
     scored_symbol_candidates = {
@@ -619,6 +622,7 @@ def select_live_opportunities(
                 thresholds=thresholds,
                 profile=profile,
                 generated_at=generated_at,
+                signal_cycle_context=signal_cycle_context,
             )
             for candidate in rows
         ]
@@ -630,6 +634,7 @@ def select_live_opportunities(
             thresholds=thresholds,
             profile=profile,
             generated_at=generated_at,
+            signal_cycle_context=signal_cycle_context,
         )
         for candidate in list(recovered_candidates or [])
     ]

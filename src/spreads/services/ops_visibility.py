@@ -178,6 +178,85 @@ def _attention(*, severity: str, code: str, message: str) -> dict[str, str]:
     }
 
 
+def _counter_map(value: Any) -> dict[str, int]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        str(key): _coerce_int(raw_value) or 0
+        for key, raw_value in value.items()
+        if _as_text(key) is not None
+    }
+
+
+def _selection_summary_payload(value: Any) -> dict[str, Any]:
+    payload = value if isinstance(value, Mapping) else {}
+    blocker_counts = (
+        payload.get("blocker_counts")
+        if isinstance(payload.get("blocker_counts"), Mapping)
+        else {}
+    )
+    return {
+        "opportunity_count": _coerce_int(payload.get("opportunity_count")) or 0,
+        "strategy_family_counts": _counter_map(payload.get("strategy_family_counts")),
+        "earnings_phase_counts": _counter_map(payload.get("earnings_phase_counts")),
+        "selection_state_counts": _counter_map(payload.get("selection_state_counts")),
+        "blocker_counts": {
+            str(category): _counter_map(counts)
+            for category, counts in blocker_counts.items()
+            if _as_text(category) is not None
+        },
+        "timing_confidence_counts": _counter_map(
+            payload.get("timing_confidence_counts")
+        ),
+        "shadow_only_count": _coerce_int(payload.get("shadow_only_count")) or 0,
+        "auto_live_eligible_count": _coerce_int(
+            payload.get("auto_live_eligible_count")
+        )
+        or 0,
+    }
+
+
+def _aggregate_selection_summaries(
+    summaries: Sequence[Mapping[str, Any]] | None,
+) -> dict[str, Any]:
+    strategy_family_counts: Counter[str] = Counter()
+    earnings_phase_counts: Counter[str] = Counter()
+    selection_state_counts: Counter[str] = Counter()
+    timing_confidence_counts: Counter[str] = Counter()
+    blocker_counts: dict[str, Counter[str]] = {
+        "policy": Counter(),
+        "signal_gate": Counter(),
+        "quote_liquidity": Counter(),
+        "execution_gate": Counter(),
+    }
+    opportunity_count = 0
+    shadow_only_count = 0
+    auto_live_eligible_count = 0
+    for summary in list(summaries or []):
+        payload = _selection_summary_payload(summary)
+        opportunity_count += int(payload["opportunity_count"])
+        shadow_only_count += int(payload["shadow_only_count"])
+        auto_live_eligible_count += int(payload["auto_live_eligible_count"])
+        strategy_family_counts.update(payload["strategy_family_counts"])
+        earnings_phase_counts.update(payload["earnings_phase_counts"])
+        selection_state_counts.update(payload["selection_state_counts"])
+        timing_confidence_counts.update(payload["timing_confidence_counts"])
+        for category, counts in payload["blocker_counts"].items():
+            blocker_counts.setdefault(str(category), Counter()).update(counts)
+    return {
+        "opportunity_count": opportunity_count,
+        "strategy_family_counts": dict(strategy_family_counts),
+        "earnings_phase_counts": dict(earnings_phase_counts),
+        "selection_state_counts": dict(selection_state_counts),
+        "blocker_counts": {
+            category: dict(counter) for category, counter in blocker_counts.items()
+        },
+        "timing_confidence_counts": dict(timing_confidence_counts),
+        "shadow_only_count": shadow_only_count,
+        "auto_live_eligible_count": auto_live_eligible_count,
+    }
+
+
 def _control_status(control: Mapping[str, Any]) -> str:
     mode = str(control.get("mode") or "unknown")
     if mode == "halted":
@@ -271,6 +350,64 @@ def _collector_requires_attention(
         or run.get("started_at"),
         now=now,
     )
+
+
+def _latest_live_collectors(
+    *,
+    job_store: Any,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    collector_definitions = [
+        dict(row)
+        for row in job_store.list_job_definitions(
+            enabled_only=True, job_type="live_collector"
+        )
+    ]
+    if not collector_definitions:
+        return []
+    latest_run_by_key = {
+        str(row["job_key"]): enrich_live_collector_job_run_payload(row)
+        for row in job_store.list_latest_runs_by_job_keys(
+            job_keys=[str(row["job_key"]) for row in collector_definitions],
+            statuses=["succeeded"],
+        )
+    }
+    latest_collectors: list[dict[str, Any]] = []
+    for definition in collector_definitions:
+        job_key = str(definition["job_key"])
+        run = latest_run_by_key.get(job_key)
+        quote_capture = {} if run is None else dict(run.get("quote_capture") or {})
+        collector_status = _collector_status(run)
+        needs_attention = _collector_requires_attention(run, now=now)
+        stream_quote_events_saved = _stream_quote_events_saved(quote_capture)
+        latest_collectors.append(
+            {
+                "job_key": job_key,
+                "status": collector_status,
+                "needs_attention": needs_attention,
+                "capture_status": None if run is None else run.get("capture_status"),
+                "live_action_gate": None
+                if run is None
+                else dict(run.get("live_action_gate") or {}),
+                "auto_execution_summary": None
+                if run is None
+                else run.get("auto_execution_summary"),
+                "selection_summary": None
+                if run is None
+                else _selection_summary_payload(run.get("selection_summary")),
+                "last_slot_at": None
+                if run is None
+                else run.get("slot_at") or run.get("scheduled_for"),
+                "stream_quote_events_saved": stream_quote_events_saved,
+                "websocket_quote_events_saved": stream_quote_events_saved,
+                "baseline_quote_events_saved": _coerce_int(
+                    quote_capture.get("baseline_quote_events_saved")
+                )
+                or 0,
+                "session_id": None if run is None else run.get("session_id"),
+            }
+        )
+    return latest_collectors
 
 
 def _market_session_context(
@@ -1035,59 +1172,17 @@ def build_system_status(
                 )
             )
 
-        collector_definitions = [
-            dict(row)
-            for row in job_store.list_job_definitions(
-                enabled_only=True, job_type="live_collector"
-            )
-        ]
-        latest_run_by_key = {
-            str(row["job_key"]): enrich_live_collector_job_run_payload(row)
-            for row in job_store.list_latest_runs_by_job_keys(
-                job_keys=[str(row["job_key"]) for row in collector_definitions],
-                statuses=["succeeded"],
-            )
-        }
-        latest_collectors = []
-        for definition in collector_definitions:
-            job_key = str(definition["job_key"])
-            run = latest_run_by_key.get(job_key)
-            quote_capture = {} if run is None else dict(run.get("quote_capture") or {})
-            collector_status = _collector_status(run)
-            needs_attention = _collector_requires_attention(run, now=now)
-            stream_quote_events_saved = _stream_quote_events_saved(quote_capture)
-            latest_collectors.append(
-                {
-                    "job_key": job_key,
-                    "status": collector_status,
-                    "needs_attention": needs_attention,
-                    "capture_status": None
-                    if run is None
-                    else run.get("capture_status"),
-                    "live_action_gate": None
-                    if run is None
-                    else dict(run.get("live_action_gate") or {}),
-                    "auto_execution_summary": None
-                    if run is None
-                    else run.get("auto_execution_summary"),
-                    "last_slot_at": None
-                    if run is None
-                    else run.get("slot_at") or run.get("scheduled_for"),
-                    "stream_quote_events_saved": stream_quote_events_saved,
-                    "websocket_quote_events_saved": stream_quote_events_saved,
-                    "baseline_quote_events_saved": _coerce_int(
-                        quote_capture.get("baseline_quote_events_saved")
-                    )
-                    or 0,
-                    "session_id": None if run is None else run.get("session_id"),
-                }
-            )
-            if needs_attention:
+        latest_collectors = _latest_live_collectors(job_store=job_store, now=now)
+        for row in latest_collectors:
+            job_key = str(row.get("job_key") or "")
+            if bool(row.get("needs_attention")):
                 attention.append(
                     _attention(
                         severity="medium",
                         code="collector_unhealthy",
-                        message=f"Collector {job_key} is {collector_status}.",
+                        message=(
+                            f"Collector {job_key} is {str(row.get('status') or 'unknown')}."
+                        ),
                     )
                 )
 
@@ -1176,11 +1271,15 @@ def build_system_status(
                 for row in actionable_recent_failures
             ],
             "latest_collectors": latest_collectors,
+            "collector_selection": _aggregate_selection_summaries(
+                [row.get("selection_summary") for row in latest_collectors]
+            ),
             "broker_sync": broker_sync,
             "alert_delivery": alert_delivery,
         }
     )
 
+    collector_selection = dict(details.get("collector_selection") or {})
     summary = {
         "control_mode": control.get("mode"),
         "worker_count": len(workers),
@@ -1197,6 +1296,18 @@ def build_system_status(
         "collector_degraded_count": sum(
             1 for row in latest_collectors if row["needs_attention"]
         ),
+        "collector_opportunity_count": _coerce_int(
+            collector_selection.get("opportunity_count")
+        )
+        or 0,
+        "collector_shadow_only_count": _coerce_int(
+            collector_selection.get("shadow_only_count")
+        )
+        or 0,
+        "collector_auto_live_eligible_count": _coerce_int(
+            collector_selection.get("auto_live_eligible_count")
+        )
+        or 0,
         "broker_sync_status": broker_sync.get("status"),
         "alert_delivery_status": alert_delivery.get("status"),
         "market_session_status": market_session.get("status"),
@@ -1327,6 +1438,19 @@ def build_trading_health(
 
     execution_store = storage.execution
     job_store = getattr(storage, "jobs", None)
+    if (
+        job_store is not None
+        and hasattr(job_store, "schema_ready")
+        and job_store.schema_ready()
+    ):
+        latest_collectors = _latest_live_collectors(job_store=job_store, now=now)
+    else:
+        latest_collectors = []
+    collector_selection = _aggregate_selection_summaries(
+        [row.get("selection_summary") for row in latest_collectors]
+    )
+    details["latest_collectors"] = latest_collectors
+    details["collector_selection"] = collector_selection
     open_execution_attempts: list[dict[str, Any]]
     if execution_store.schema_ready():
         open_execution_attempts = [
@@ -1555,6 +1679,19 @@ def build_trading_health(
         "risk_breach_count": risk_breach_count,
         "reconciliation_mismatch_count": reconciliation_mismatch_count,
         "mark_health_status": mark_health_status,
+        "collector_count": len(latest_collectors),
+        "collector_opportunity_count": _coerce_int(
+            collector_selection.get("opportunity_count")
+        )
+        or 0,
+        "collector_shadow_only_count": _coerce_int(
+            collector_selection.get("shadow_only_count")
+        )
+        or 0,
+        "collector_auto_live_eligible_count": _coerce_int(
+            collector_selection.get("auto_live_eligible_count")
+        )
+        or 0,
         "account_error": account_error,
     }
 
@@ -1970,6 +2107,10 @@ def build_job_run_view(
             "worker_name": run_summary.get("worker_name"),
             "retry_count": run_summary.get("retry_count"),
             "capture_status": run_summary.get("capture_status"),
+            "collector_opportunity_count": _coerce_int(
+                (run.get("selection_summary") or {}).get("opportunity_count")
+            )
+            or 0,
         },
         "attention": attention,
         "details": {
@@ -1983,6 +2124,9 @@ def build_job_run_view(
             "uoa_summary": dict(run.get("uoa_summary") or {}),
             "uoa_quote_summary": dict(run.get("uoa_quote_summary") or {}),
             "uoa_decisions": dict(run.get("uoa_decisions") or {}),
+            "selection_summary": _selection_summary_payload(
+                run.get("selection_summary")
+            ),
             "singleton_lease": None
             if singleton_lease is None
             else dict(singleton_lease),

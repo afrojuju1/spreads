@@ -24,6 +24,7 @@ from spreads.services.live_collector_health import (
     build_capture_history_gate,
     build_live_action_gate,
     build_quote_capture_summary,
+    build_selection_summary,
     build_trade_capture_summary,
     enrich_live_collector_job_run_payload,
 )
@@ -921,6 +922,22 @@ def _run_collection_cycle(
         greeks_source=args.greeks_source,
     )
     cycle_id = build_cycle_id(label)
+    latest_live_collector_run = job_store.get_latest_live_collector_run(
+        label=label,
+        status="succeeded",
+    )
+    signal_cycle_context = {}
+    if latest_live_collector_run is not None:
+        latest_run_payload = enrich_live_collector_job_run_payload(latest_live_collector_run)
+        signal_cycle_context = {
+            "uoa_decisions": dict(latest_run_payload.get("uoa_decisions") or {}),
+            "uoa_quote_summary": dict(
+                latest_run_payload.get("uoa_quote_summary") or {}
+            ),
+            "selection_summary": dict(
+                latest_run_payload.get("selection_summary") or {}
+            ),
+        }
     run_ids = {
         (result.symbol, result.args.strategy): result.run_id for result in scan_results
     }
@@ -943,6 +960,7 @@ def _run_collection_cycle(
         top_promotable=args.top,
         top_monitor=WATCHLIST_TOP,
         profile=args.profile,
+        signal_cycle_context=signal_cycle_context,
     )
     symbol_strategy_candidates = dict(selection.get("symbol_candidates") or {})
     promotable_payloads = list(selection["promotable_candidates"])
@@ -967,6 +985,7 @@ def _run_collection_cycle(
             top_monitor=WATCHLIST_TOP,
             profile=args.profile,
             recovered_candidates=recovered_payloads,
+            signal_cycle_context=signal_cycle_context,
         )
         symbol_strategy_candidates = dict(selection.get("symbol_candidates") or {})
         promotable_payloads = list(selection["promotable_candidates"])
@@ -974,6 +993,7 @@ def _run_collection_cycle(
     opportunities = list(selection["opportunities"])
     selection_memory = dict(selection["selection_memory"])
     events = list(selection["events"])
+    selection_summary = build_selection_summary(opportunities)
     collector_store.save_cycle(
         cycle_id=cycle_id,
         label=label,
@@ -1501,6 +1521,7 @@ def _run_collection_cycle(
         "uoa_summary": uoa_summary,
         "uoa_quote_summary": uoa_quote_summary,
         "uoa_decisions": uoa_decisions,
+        "selection_summary": selection_summary,
         "auto_execution": auto_execution,
     }
 
@@ -1642,6 +1663,7 @@ def run_collection_tick(
         "uoa_summary": dict(cycle_result["uoa_summary"]),
         "uoa_quote_summary": dict(cycle_result["uoa_quote_summary"]),
         "uoa_decisions": dict(cycle_result["uoa_decisions"]),
+        "selection_summary": dict(cycle_result["selection_summary"]),
         "auto_execution": cycle_result["auto_execution"],
         "label": cycle_result["label"],
         "session_id": tick_context.session_id,
@@ -1710,6 +1732,7 @@ def run_collection(
                 quote_summary={},
                 capture_window_seconds=0,
             ),
+            "selection_summary": build_selection_summary([]),
         }
 
     key_id = env_or_die("APCA_API_KEY_ID", "ALPACA_API_KEY")
@@ -1752,6 +1775,7 @@ def run_collection(
         quote_summary={},
         capture_window_seconds=0,
     )
+    last_selection_summary = build_selection_summary([])
     iterations_completed = 0
     try:
         with build_storage_context(args.history_db) as storage:
@@ -1817,6 +1841,7 @@ def run_collection(
                 last_uoa_summary = dict(cycle_result["uoa_summary"])
                 last_uoa_quote_summary = dict(cycle_result["uoa_quote_summary"])
                 last_uoa_decisions = dict(cycle_result["uoa_decisions"])
+                last_selection_summary = dict(cycle_result["selection_summary"])
                 if iteration < args.iterations - 1:
                     elapsed_seconds = time_module.monotonic() - iteration_started_at
                     sleep_seconds = max(
@@ -1861,6 +1886,7 @@ def run_collection(
         "uoa_summary": last_uoa_summary,
         "uoa_quote_summary": last_uoa_quote_summary,
         "uoa_decisions": last_uoa_decisions,
+        "selection_summary": last_selection_summary,
         "label": last_label,
     }
 

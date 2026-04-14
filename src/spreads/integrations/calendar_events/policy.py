@@ -67,6 +67,9 @@ def apply_strategy_calendar_policy(
         earnings_days_since_event=context.earnings_days_since_event,
         earnings_timing_confidence=context.earnings_timing_confidence,
         earnings_horizon_crosses_report=context.earnings_horizon_crosses_report,
+        earnings_primary_source=context.earnings_primary_source,
+        earnings_supporting_sources=context.earnings_supporting_sources,
+        earnings_consensus_status=context.earnings_consensus_status,
     )
 
 

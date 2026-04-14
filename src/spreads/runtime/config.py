@@ -23,3 +23,7 @@ def default_database_url() -> str:
 
 def default_redis_url() -> str:
     return os.environ.get("REDIS_URL") or DEFAULT_REDIS_URL
+
+
+def default_alpha_vantage_api_key() -> str | None:
+    return os.environ.get("ALPHAVANTAGE_API_KEY") or os.environ.get("ALPHA_VANTAGE_API_KEY")
