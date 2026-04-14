@@ -35,6 +35,7 @@ from spreads.services.live_recovery import (
     resolve_live_slot_stale_after_seconds,
 )
 from spreads.services.live_pipelines import build_live_snapshot_label
+from spreads.services.option_structures import candidate_legs, legs_identity_key
 from spreads.services.option_market_data_capture import (
     request_option_market_data_capture,
 )
@@ -103,7 +104,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--strategy",
         default="combined",
-        choices=("call_credit", "put_credit", "combined"),
+        choices=("call_credit", "put_credit", "call_debit", "put_debit", "iron_condor", "combined"),
         help="Strategy mode. Default: combined",
     )
     parser.add_argument(
@@ -311,9 +312,12 @@ def build_symbol_strategy_candidates(
 
 def _capture_candidate_identity(candidate: dict[str, Any]) -> tuple[str, str, str]:
     return (
-        str(candidate.get("strategy") or ""),
-        str(candidate.get("short_symbol") or ""),
-        str(candidate.get("long_symbol") or ""),
+        legs_identity_key(
+            strategy=candidate.get("strategy"),
+            legs=candidate_legs(candidate),
+        ),
+        str(candidate.get("underlying_symbol") or ""),
+        str(candidate.get("expiration_date") or ""),
     )
 
 

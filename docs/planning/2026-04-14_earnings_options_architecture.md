@@ -1128,6 +1128,27 @@ Only a few details remain intentionally open:
 - exact quantitative liquidity thresholds for post-event condors versus directional families
 - whether post-event credit spreads should ship in the same wave as condors or one wave earlier
 
+## Live Iron Condor TODO
+
+- [x] audit live collector, persistence, and scheduler seams for `iron_condor`
+- [x] implement `iron_condor` scanner origination and candidate metrics
+- [x] implement condor quote/mark/economics and execution validation on the shared multi-leg path
+- [x] add condor e2e coverage across scanner, scoring, execution, and session-position sync
+- [x] expose condors in live scheduling/shadow flow without bypassing existing policy gates
+
+## Live Notes
+
+- The seeded weekly condor collector job is `live_collector:explore_10_iron_condor_weekly_auto`.
+- Condors stay restricted to `post_event_fresh` and still flow through the normal earnings policy and signal gates.
+- `combined` still means call/put credit spreads only. Condors run on their own collector job.
+- The seeded condor job is shadow-only until `risk_policy.allow_live` is enabled deliberately.
+- When condor job definitions change, run `uv run spreads jobs seed`.
+- When worker- or scheduler-imported condor code changes, restart `worker-main`, `worker-collector`, and `scheduler`.
+- Minimum verification for condor changes:
+  - `uv run python -m unittest discover -s tests -p 'test_*e2e.py'`
+  - `docker compose ps worker-main worker-collector scheduler`
+  - `docker compose logs --since=2m worker-main worker-collector scheduler`
+
 ## Success Criteria
 
 The architecture is working when:

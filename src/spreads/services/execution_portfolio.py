@@ -8,6 +8,7 @@ from spreads.services.alpaca import create_alpaca_client_from_env
 from spreads.services.option_structures import (
     net_premium_kind,
     normalize_strategy_family,
+    structure_quote_snapshot,
     position_legs,
     primary_short_long_symbols,
     unique_leg_symbols,
@@ -138,51 +139,39 @@ def build_vertical_spread_quote_snapshot(
     client: Any | None = None,
     feeds: tuple[str, ...] = QUOTE_FEEDS,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    quotes, sources, error_text = fetch_latest_option_quotes(
-        [short_symbol, long_symbol],
+    return build_structure_quote_snapshot(
+        legs=[
+            {"symbol": short_symbol, "role": "short"},
+            {"symbol": long_symbol, "role": "long"},
+        ],
+        strategy_family=strategy_family,
         client=client,
         feeds=feeds,
     )
-    short_quote = quotes.get(short_symbol)
-    long_quote = quotes.get(long_symbol)
-    if short_quote is None or long_quote is None:
-        return None, error_text
 
-    family = normalize_strategy_family(strategy_family)
-    premium_kind = net_premium_kind(family)
-    if premium_kind == "debit":
-        midpoint_value = round(long_quote.midpoint - short_quote.midpoint, 4)
-        natural_value = round(long_quote.ask - short_quote.bid, 4)
-        close_mark = round(max(long_quote.bid - short_quote.ask, 0.0), 4)
-    else:
-        midpoint_value = round(short_quote.midpoint - long_quote.midpoint, 4)
-        natural_value = round(short_quote.bid - long_quote.ask, 4)
-        close_mark = round(max(short_quote.ask - long_quote.bid, 0.0), 4)
 
-    return (
-        {
-            "short_symbol": short_symbol,
-            "long_symbol": long_symbol,
-            "strategy_family": family,
-            "premium_kind": premium_kind,
-            "midpoint_value": midpoint_value,
-            "natural_value": natural_value,
-            "close_mark": close_mark,
-            "midpoint_credit": midpoint_value,
-            "natural_credit": natural_value,
-            "short_bid": short_quote.bid,
-            "short_ask": short_quote.ask,
-            "long_bid": long_quote.bid,
-            "long_ask": long_quote.ask,
-            "captured_at": _max_timestamp(short_quote.timestamp, long_quote.timestamp),
-            "quote_source": resolve_quote_source_for_symbols(
-                sources,
-                short_symbol,
-                long_symbol,
-            ),
-        },
-        error_text,
+def build_structure_quote_snapshot(
+    *,
+    legs: list[dict[str, Any]],
+    strategy_family: str,
+    client: Any | None = None,
+    feeds: tuple[str, ...] = QUOTE_FEEDS,
+) -> tuple[dict[str, Any] | None, str | None]:
+    quote_symbols = unique_leg_symbols(legs)
+    quotes, sources, error_text = fetch_latest_option_quotes(
+        quote_symbols,
+        client=client,
+        feeds=feeds,
     )
+    snapshot = structure_quote_snapshot(
+        legs=legs,
+        strategy_family=strategy_family,
+        quotes_by_symbol=quotes,
+        sources_by_symbol=sources,
+    )
+    if snapshot is None:
+        return None, error_text
+    return snapshot, error_text
 
 
 def build_credit_spread_quote_snapshot(
@@ -303,37 +292,32 @@ def refresh_session_position_marks(
 
     for position in open_positions:
         remaining_quantity = _coerce_float(position.get("remaining_quantity")) or 0.0
-        entry_credit = _coerce_float(position.get("entry_credit"))
+        entry_value = _coerce_float(position.get("entry_value")) or _coerce_float(
+            position.get("entry_credit")
+        )
         strategy_family = str(position.get("strategy") or position.get("strategy_family") or "")
         legs = position_legs(position)
-        short_symbol, long_symbol = primary_short_long_symbols(legs)
-        if short_symbol is None or long_symbol is None:
-            continue
-        short_quote = quotes.get(short_symbol)
-        long_quote = quotes.get(long_symbol)
-        if (
-            remaining_quantity <= 0
-            or entry_credit is None
-            or short_quote is None
-            or long_quote is None
-        ):
+        live_snapshot = structure_quote_snapshot(
+            legs=legs,
+            strategy_family=strategy_family,
+            quotes_by_symbol=quotes,
+            sources_by_symbol=sources,
+        )
+        if remaining_quantity <= 0 or entry_value is None or live_snapshot is None:
             continue
         premium_kind = net_premium_kind(strategy_family)
+        spread_mark_close = _coerce_float(live_snapshot.get("close_mark"))
+        if spread_mark_close is None:
+            continue
         if premium_kind == "debit":
-            spread_mark_close = max(long_quote.bid - short_quote.ask, 0.0)
-            unrealized_pnl = (spread_mark_close - entry_credit) * 100.0 * remaining_quantity
+            unrealized_pnl = (spread_mark_close - entry_value) * 100.0 * remaining_quantity
         else:
-            spread_mark_close = max(short_quote.ask - long_quote.bid, 0.0)
-            unrealized_pnl = (entry_credit - spread_mark_close) * 100.0 * remaining_quantity
+            unrealized_pnl = (entry_value - spread_mark_close) * 100.0 * remaining_quantity
         execution_store.update_position(
             position_id=str(position["position_id"]),
             close_mark=_round_money(spread_mark_close),
-            close_mark_source=resolve_quote_source_for_symbols(
-                sources,
-                short_symbol,
-                long_symbol,
-            ),
-            close_marked_at=_max_timestamp(short_quote.timestamp, long_quote.timestamp),
+            close_mark_source=_as_text(live_snapshot.get("quote_source")),
+            close_marked_at=_as_text(live_snapshot.get("captured_at")),
             unrealized_pnl=_round_money(unrealized_pnl),
             updated_at=retrieved_at,
         )

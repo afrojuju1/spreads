@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Any, Mapping
 
+from spreads.services.option_structures import candidate_legs, legs_identity_key
+
 
 def _as_float(value: Any) -> float | None:
     if value in (None, ""):
@@ -44,9 +46,12 @@ def _fill_ratio(candidate: Mapping[str, Any]) -> float | None:
 
 def _candidate_identity(candidate: Mapping[str, Any]) -> tuple[str, str, str]:
     return (
-        str(candidate.get("strategy") or ""),
-        str(candidate.get("short_symbol") or ""),
-        str(candidate.get("long_symbol") or ""),
+        legs_identity_key(
+            strategy=candidate.get("strategy"),
+            legs=candidate_legs(candidate),
+        ),
+        str(candidate.get("underlying_symbol") or ""),
+        str(candidate.get("expiration_date") or ""),
     )
 
 

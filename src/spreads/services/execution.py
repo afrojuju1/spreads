@@ -50,7 +50,7 @@ from spreads.services.execution_lifecycle import (
     resolve_execution_submit_job_run_id,
     resolve_execution_attempt_source_job,
 )
-from spreads.services.execution_portfolio import build_vertical_spread_quote_snapshot
+from spreads.services.execution_portfolio import build_structure_quote_snapshot
 from spreads.services.option_structures import (
     build_multileg_order_payload,
     candidate_legs,
@@ -60,6 +60,7 @@ from spreads.services.option_structures import (
     normalize_legs,
     normalize_strategy_family,
     primary_short_long_symbols,
+    structure_quote_snapshot,
 )
 from spreads.services.opportunity_execution_plan import build_execution_plan
 from spreads.services.positions import enrich_position_row
@@ -843,61 +844,19 @@ def _resolve_reactive_quote_snapshot(
     latest_quotes = _latest_quote_records_by_symbol(quote_records)
     candidate_payload = _candidate_with_payload(candidate)
     strategy_family = _strategy_family_from_payload(candidate_payload)
-    premium_kind = net_premium_kind(strategy_family)
     legs = candidate_legs(candidate_payload)
-    short_symbol, long_symbol = primary_short_long_symbols(legs)
-    if short_symbol is None or long_symbol is None:
-        return None
-    short_quote = latest_quotes.get(short_symbol)
-    long_quote = latest_quotes.get(long_symbol)
-    if short_quote is None or long_quote is None:
-        return None
-
-    short_midpoint = _coerce_float(short_quote.get("midpoint"))
-    long_midpoint = _coerce_float(long_quote.get("midpoint"))
-    short_bid = _coerce_float(short_quote.get("bid"))
-    short_ask = _coerce_float(short_quote.get("ask"))
-    long_bid = _coerce_float(long_quote.get("bid"))
-    long_ask = _coerce_float(long_quote.get("ask"))
-    if (
-        short_midpoint is None
-        or long_midpoint is None
-        or short_bid is None
-        or short_ask is None
-        or long_bid is None
-        or long_ask is None
-    ):
-        return None
-
-    if premium_kind == "debit":
-        midpoint_value = round(long_midpoint - short_midpoint, 4)
-        natural_value = round(long_ask - short_bid, 4)
-    else:
-        midpoint_value = round(short_midpoint - long_midpoint, 4)
-        natural_value = round(short_bid - long_ask, 4)
-    captured_at = max(
-        _as_text(short_quote.get("quote_timestamp"))
-        or _as_text(short_quote.get("captured_at"))
-        or "",
-        _as_text(long_quote.get("quote_timestamp"))
-        or _as_text(long_quote.get("captured_at"))
-        or "",
-    )
-    return {
-        "captured_at": captured_at or None,
-        "short_symbol": short_symbol,
-        "long_symbol": long_symbol,
-        "strategy_family": strategy_family,
-        "premium_kind": premium_kind,
-        "midpoint_value": midpoint_value,
-        "natural_value": natural_value,
-        "midpoint_credit": midpoint_value,
-        "natural_credit": natural_value,
-        "short_bid": short_bid,
-        "short_ask": short_ask,
-        "long_bid": long_bid,
-        "long_ask": long_ask,
+    sources = {
+        str(record.get("option_symbol")): str(record.get("source"))
+        for record in quote_records
+        if str(record.get("option_symbol") or "").strip()
+        and str(record.get("source") or "").strip()
     }
+    return structure_quote_snapshot(
+        legs=legs,
+        strategy_family=strategy_family,
+        quotes_by_symbol=latest_quotes,
+        sources_by_symbol=sources,
+    )
 
 
 def _resolve_reactive_auto_execution(
@@ -1036,11 +995,9 @@ def _validate_live_deployment_quality(
 
     strategy_family = _strategy_family_from_payload(candidate_payload)
     premium_kind = net_premium_kind(strategy_family)
-    short_symbol, long_symbol = primary_short_long_symbols(
-        candidate_legs(candidate_payload)
-    )
+    legs = candidate_legs(candidate_payload)
     width = _coerce_float(candidate_payload.get("width"))
-    if short_symbol is None or long_symbol is None or width is None or width <= 0:
+    if not legs or width is None or width <= 0:
         return {
             "ok": False,
             "reason": "live_deployment_quality_unavailable",
@@ -1051,9 +1008,8 @@ def _validate_live_deployment_quality(
             "profile": profile,
         }
 
-    live_snapshot, error_text = build_vertical_spread_quote_snapshot(
-        short_symbol=short_symbol,
-        long_symbol=long_symbol,
+    live_snapshot, error_text = build_structure_quote_snapshot(
+        legs=legs,
         strategy_family=strategy_family,
         client=client,
     )

@@ -228,27 +228,26 @@ def _resolve_spread_amount(
             legs = candidate_legs(candidate)
     if not legs:
         legs = canonical_position_legs(attempt)
-    short_symbol = next(
-        (
-            _as_text(leg.get("symbol"))
-            for leg in legs
-            if _as_text(leg.get("role")) == "short"
-        ),
-        None,
-    )
-    long_symbol = next(
-        (
-            _as_text(leg.get("symbol"))
-            for leg in legs
-            if _as_text(leg.get("role")) == "long"
-        ),
-        None,
-    )
-    if short_symbol and long_symbol:
-        short_price = _resolve_leg_average_price(attempt, short_symbol)
-        long_price = _resolve_leg_average_price(attempt, long_symbol)
-        if short_price is not None and long_price is not None:
-            return round(abs(short_price - long_price), 4)
+    short_total = 0.0
+    long_total = 0.0
+    resolved_leg_count = 0
+    for leg in legs:
+        symbol = _as_text(leg.get("symbol"))
+        role = _as_text(leg.get("role"))
+        ratio_qty = _coerce_float(leg.get("ratio_qty")) or 1.0
+        if symbol is None or role not in {"short", "long"}:
+            continue
+        leg_price = _resolve_leg_average_price(attempt, symbol)
+        if leg_price is None:
+            resolved_leg_count = 0
+            break
+        if role == "short":
+            short_total += leg_price * ratio_qty
+        else:
+            long_total += leg_price * ratio_qty
+        resolved_leg_count += 1
+    if resolved_leg_count == len(legs) and resolved_leg_count > 0:
+        return round(abs(short_total - long_total), 4)
 
     # Alpaca returns parent multi-leg fills as a signed net price:
     # credit opens are negative, debit closes are positive. Session

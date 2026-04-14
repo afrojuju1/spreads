@@ -42,8 +42,11 @@ from spreads.integrations.greeks import build_local_greeks_provider
 from spreads.runtime.config import default_database_url
 from spreads.services.option_structures import (
     build_multileg_order_payload,
+    candidate_legs,
+    iron_condor_opening_legs,
     net_premium_kind,
     normalize_strategy_family,
+    structure_quote_snapshot,
     vertical_opening_legs,
 )
 from spreads.storage.factory import build_history_store
@@ -114,9 +117,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--strategy",
         default="call_credit",
-        choices=("call_credit", "put_credit", "call_debit", "put_debit", "combined"),
+        choices=(
+            "call_credit",
+            "put_credit",
+            "call_debit",
+            "put_debit",
+            "iron_condor",
+            "combined",
+        ),
         help=(
-            "Vertical spread strategy. Use combined to evaluate both call and put credit spreads. "
+            "Options structure strategy. Use combined to evaluate both call and put credit spreads. "
             "Default: call_credit"
         ),
     )
@@ -397,6 +407,7 @@ def strategy_display_label(strategy: str) -> str:
         "put_credit": "Put Credit",
         "call_debit": "Call Debit",
         "put_debit": "Put Debit",
+        "iron_condor": "Iron Condor",
         "combined": "Combined",
     }.get(strategy, strategy)
 
@@ -742,6 +753,14 @@ class SpreadCandidate:
     long_implied_volatility: float | None = None
     short_volume: int | None = None
     long_volume: int | None = None
+    secondary_short_symbol: str | None = None
+    secondary_long_symbol: str | None = None
+    secondary_short_strike: float | None = None
+    secondary_long_strike: float | None = None
+    lower_breakeven: float | None = None
+    upper_breakeven: float | None = None
+    side_balance_score: float | None = None
+    wing_symmetry_ratio: float | None = None
 
 
 @dataclass(frozen=True)
@@ -1551,6 +1570,15 @@ def relative_spread(snapshot: OptionSnapshot) -> float:
     return (snapshot.ask - snapshot.bid) / snapshot.midpoint
 
 
+def relative_spread_exceeds(
+    snapshot: OptionSnapshot,
+    maximum: float,
+    *,
+    tolerance: float = 1e-9,
+) -> bool:
+    return relative_spread(snapshot) > float(maximum) + tolerance
+
+
 def log_scaled_score(value: int, floor: int, ceiling: int) -> float:
     if value <= floor:
         return 0.0
@@ -2307,6 +2335,27 @@ def make_order_payload(
     )
 
 
+def make_iron_condor_order_payload(
+    *,
+    short_put_symbol: str,
+    long_put_symbol: str,
+    short_call_symbol: str,
+    long_call_symbol: str,
+    limit_price: float,
+) -> dict[str, Any]:
+    return build_multileg_order_payload(
+        legs=iron_condor_opening_legs(
+            short_put_symbol=short_put_symbol,
+            long_put_symbol=long_put_symbol,
+            short_call_symbol=short_call_symbol,
+            long_call_symbol=long_call_symbol,
+        ),
+        limit_price=limit_price,
+        strategy_family="iron_condor",
+        trade_intent="open",
+    )
+
+
 def infer_trading_base_url(key_id: str, explicit_base_url: str | None) -> str:
     if explicit_base_url:
         return explicit_base_url.rstrip("/")
@@ -2322,6 +2371,7 @@ def default_output_path(symbol: str, strategy: str, output_format: str) -> str:
         "put_credit": "put_credit_spreads",
         "call_debit": "call_debit_spreads",
         "put_debit": "put_debit_spreads",
+        "iron_condor": "iron_condors",
         "combined": "combined_credit_spreads",
     }.get(strategy, "call_credit_spreads")
     return str(Path("outputs") / directory / f"{symbol.lower()}_{timestamp}.{output_format}")
@@ -2453,7 +2503,7 @@ def build_vertical_spreads(
             if short_contract.open_interest < args.min_open_interest:
                 continue
             short_leg_relative_spread = relative_spread(short_snapshot)
-            if short_leg_relative_spread > args.max_relative_spread:
+            if relative_spread_exceeds(short_snapshot, args.max_relative_spread):
                 continue
             if short_snapshot.bid_size <= 0:
                 continue
@@ -2504,7 +2554,7 @@ def build_vertical_spreads(
                 if long_contract.open_interest < args.min_open_interest:
                     continue
                 long_leg_relative_spread = relative_spread(long_snapshot)
-                if long_leg_relative_spread > args.max_relative_spread:
+                if relative_spread_exceeds(long_snapshot, args.max_relative_spread):
                     continue
                 if long_snapshot.ask_size <= 0:
                     continue
@@ -2642,6 +2692,350 @@ def build_vertical_spreads(
                         long_volume=long_snapshot.daily_volume,
                     )
                 )
+
+    return candidates
+
+
+def build_iron_condors(
+    *,
+    symbol: str,
+    spot_price: float,
+    call_contracts_by_expiration: dict[str, list[OptionContract]],
+    put_contracts_by_expiration: dict[str, list[OptionContract]],
+    call_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
+    put_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
+    expected_moves_by_expiration: dict[str, ExpectedMoveEstimate],
+    args: argparse.Namespace,
+) -> list[SpreadCandidate]:
+    candidates: list[SpreadCandidate] = []
+    common_expirations = sorted(
+        set(call_contracts_by_expiration).intersection(put_contracts_by_expiration)
+    )
+    delta_window = max(args.short_delta_max - args.short_delta_min, 0.08)
+
+    for expiration_date in common_expirations:
+        days_to_expiration = days_from_today(expiration_date)
+        if days_to_expiration <= 0:
+            continue
+
+        call_contracts = sorted(
+            call_contracts_by_expiration.get(expiration_date, []),
+            key=lambda contract: contract.strike_price,
+        )
+        put_contracts = sorted(
+            put_contracts_by_expiration.get(expiration_date, []),
+            key=lambda contract: contract.strike_price,
+        )
+        call_snapshots = call_snapshots_by_expiration.get(expiration_date, {})
+        put_snapshots = put_snapshots_by_expiration.get(expiration_date, {})
+        expected_move = expected_moves_by_expiration.get(expiration_date)
+
+        call_contract_by_strike = {
+            round(contract.strike_price, 4): contract for contract in call_contracts
+        }
+
+        short_calls = [
+            contract for contract in call_contracts if contract.strike_price > spot_price
+        ]
+        short_puts = list(
+            reversed(
+                [contract for contract in put_contracts if contract.strike_price < spot_price]
+            )
+        )
+
+        for short_put in short_puts:
+            short_put_snapshot = put_snapshots.get(short_put.symbol)
+            if short_put_snapshot is None:
+                continue
+            short_put_delta = abs(short_put_snapshot.delta or 0.0)
+            if (
+                short_put.open_interest < args.min_open_interest
+                or short_put_snapshot.bid_size <= 0
+                or short_put_snapshot.ask_size <= 0
+                or short_put_delta <= 0
+                or relative_spread_exceeds(short_put_snapshot, args.max_relative_spread)
+                or not (args.short_delta_min <= short_put_delta <= args.short_delta_max)
+            ):
+                continue
+            short_put_index = put_contracts.index(short_put)
+
+            for long_put in reversed(put_contracts[:short_put_index]):
+                width = short_put.strike_price - long_put.strike_price
+                if width < args.min_width or width > args.max_width:
+                    continue
+                long_put_snapshot = put_snapshots.get(long_put.symbol)
+                if long_put_snapshot is None:
+                    continue
+                if (
+                    long_put.open_interest < args.min_open_interest
+                    or long_put_snapshot.bid_size <= 0
+                    or long_put_snapshot.ask_size <= 0
+                    or relative_spread_exceeds(long_put_snapshot, args.max_relative_spread)
+                ):
+                    continue
+
+                for short_call in short_calls:
+                    short_call_snapshot = call_snapshots.get(short_call.symbol)
+                    if short_call_snapshot is None:
+                        continue
+                    short_call_delta = abs(short_call_snapshot.delta or 0.0)
+                    if (
+                        short_call.open_interest < args.min_open_interest
+                        or short_call_snapshot.bid_size <= 0
+                        or short_call_snapshot.ask_size <= 0
+                        or short_call_delta <= 0
+                        or relative_spread_exceeds(
+                            short_call_snapshot,
+                            args.max_relative_spread,
+                        )
+                        or not (
+                            args.short_delta_min
+                            <= short_call_delta
+                            <= args.short_delta_max
+                        )
+                    ):
+                        continue
+                    if abs(short_put_delta - short_call_delta) > delta_window:
+                        continue
+
+                    long_call = call_contract_by_strike.get(
+                        round(short_call.strike_price + width, 4)
+                    )
+                    if long_call is None:
+                        continue
+                    long_call_snapshot = call_snapshots.get(long_call.symbol)
+                    if long_call_snapshot is None:
+                        continue
+                    if (
+                        long_call.open_interest < args.min_open_interest
+                        or long_call_snapshot.bid_size <= 0
+                        or long_call_snapshot.ask_size <= 0
+                        or relative_spread_exceeds(
+                            long_call_snapshot,
+                            args.max_relative_spread,
+                        )
+                    ):
+                        continue
+
+                    midpoint_credit = round(
+                        short_put_snapshot.midpoint
+                        + short_call_snapshot.midpoint
+                        - long_put_snapshot.midpoint
+                        - long_call_snapshot.midpoint,
+                        4,
+                    )
+                    natural_credit = round(
+                        short_put_snapshot.bid
+                        + short_call_snapshot.bid
+                        - long_put_snapshot.ask
+                        - long_call_snapshot.ask,
+                        4,
+                    )
+                    if midpoint_credit < effective_min_credit(width, args):
+                        continue
+                    if midpoint_credit >= width or natural_credit <= 0:
+                        continue
+
+                    max_profit = midpoint_credit * 100.0
+                    max_loss = (width - midpoint_credit) * 100.0
+                    if max_profit <= 0 or max_loss <= 0:
+                        continue
+                    return_on_risk = midpoint_credit / (width - midpoint_credit)
+                    if return_on_risk < args.min_return_on_risk:
+                        continue
+
+                    lower_breakeven = short_put.strike_price - midpoint_credit
+                    upper_breakeven = short_call.strike_price + midpoint_credit
+                    lower_cushion_pct = (spot_price - lower_breakeven) / spot_price
+                    upper_cushion_pct = (upper_breakeven - spot_price) / spot_price
+                    short_otm_pct = min(
+                        (spot_price - short_put.strike_price) / spot_price,
+                        (short_call.strike_price - spot_price) / spot_price,
+                    )
+                    breakeven_cushion_pct = min(
+                        lower_cushion_pct,
+                        upper_cushion_pct,
+                    )
+                    fill_ratio = clamp(natural_credit / midpoint_credit, 0.0, 1.25)
+                    short_vs_expected_move = None
+                    breakeven_vs_expected_move = None
+                    expected_move_amount = None
+                    expected_move_pct = None
+                    expected_move_source_strike = None
+                    if expected_move is not None:
+                        expected_move_amount = expected_move.amount
+                        expected_move_pct = expected_move.percent_of_spot
+                        expected_move_source_strike = expected_move.reference_strike
+                        lower_boundary = spot_price - expected_move.amount
+                        upper_boundary = spot_price + expected_move.amount
+                        short_vs_expected_move = min(
+                            lower_boundary - short_put.strike_price,
+                            short_call.strike_price - upper_boundary,
+                        )
+                        breakeven_vs_expected_move = min(
+                            lower_boundary - lower_breakeven,
+                            upper_breakeven - upper_boundary,
+                        )
+
+                    average_short_delta = round(
+                        (short_put_delta + short_call_delta) / 2.0,
+                        4,
+                    )
+                    long_put_delta = abs(long_put_snapshot.delta or 0.0)
+                    long_call_delta = abs(long_call_snapshot.delta or 0.0)
+                    average_long_delta = round(
+                        (long_put_delta + long_call_delta) / 2.0,
+                        4,
+                    )
+                    side_balance_score = round(
+                        clamp(1.0 - abs(short_put_delta - short_call_delta) / delta_window),
+                        4,
+                    )
+                    leg_quote_size = min(
+                        short_put_snapshot.bid_size,
+                        short_put_snapshot.ask_size,
+                        long_put_snapshot.bid_size,
+                        long_put_snapshot.ask_size,
+                        short_call_snapshot.bid_size,
+                        short_call_snapshot.ask_size,
+                        long_call_snapshot.bid_size,
+                        long_call_snapshot.ask_size,
+                    )
+
+                    candidates.append(
+                        SpreadCandidate(
+                            underlying_symbol=symbol,
+                            strategy="iron_condor",
+                            profile=args.profile,
+                            expiration_date=expiration_date,
+                            days_to_expiration=days_to_expiration,
+                            underlying_price=spot_price,
+                            short_symbol=short_put.symbol,
+                            long_symbol=long_put.symbol,
+                            short_strike=short_put.strike_price,
+                            long_strike=long_put.strike_price,
+                            width=width,
+                            short_delta=average_short_delta,
+                            long_delta=average_long_delta,
+                            greeks_source=(
+                                short_put_snapshot.greeks_source
+                                if {
+                                    short_put_snapshot.greeks_source,
+                                    long_put_snapshot.greeks_source,
+                                    short_call_snapshot.greeks_source,
+                                    long_call_snapshot.greeks_source,
+                                }
+                                == {short_put_snapshot.greeks_source}
+                                else "mixed"
+                            ),
+                            short_midpoint=round(
+                                short_put_snapshot.midpoint + short_call_snapshot.midpoint,
+                                4,
+                            ),
+                            long_midpoint=round(
+                                long_put_snapshot.midpoint + long_call_snapshot.midpoint,
+                                4,
+                            ),
+                            short_bid=round(
+                                short_put_snapshot.bid + short_call_snapshot.bid,
+                                4,
+                            ),
+                            short_ask=round(
+                                short_put_snapshot.ask + short_call_snapshot.ask,
+                                4,
+                            ),
+                            long_bid=round(
+                                long_put_snapshot.bid + long_call_snapshot.bid,
+                                4,
+                            ),
+                            long_ask=round(
+                                long_put_snapshot.ask + long_call_snapshot.ask,
+                                4,
+                            ),
+                            midpoint_credit=midpoint_credit,
+                            natural_credit=natural_credit,
+                            max_profit=max_profit,
+                            max_loss=max_loss,
+                            return_on_risk=return_on_risk,
+                            breakeven=spot_price,
+                            breakeven_cushion_pct=breakeven_cushion_pct,
+                            short_otm_pct=short_otm_pct,
+                            short_open_interest=min(
+                                short_put.open_interest,
+                                short_call.open_interest,
+                            ),
+                            long_open_interest=min(
+                                long_put.open_interest,
+                                long_call.open_interest,
+                            ),
+                            short_relative_spread=max(
+                                relative_spread(short_put_snapshot),
+                                relative_spread(short_call_snapshot),
+                            ),
+                            long_relative_spread=max(
+                                relative_spread(long_put_snapshot),
+                                relative_spread(long_call_snapshot),
+                            ),
+                            fill_ratio=fill_ratio,
+                            min_quote_size=leg_quote_size,
+                            expected_move=expected_move_amount,
+                            expected_move_pct=expected_move_pct,
+                            expected_move_source_strike=expected_move_source_strike,
+                            short_vs_expected_move=short_vs_expected_move,
+                            breakeven_vs_expected_move=breakeven_vs_expected_move,
+                            order_payload=make_iron_condor_order_payload(
+                                short_put_symbol=short_put.symbol,
+                                long_put_symbol=long_put.symbol,
+                                short_call_symbol=short_call.symbol,
+                                long_call_symbol=long_call.symbol,
+                                limit_price=midpoint_credit,
+                            ),
+                            short_bid_size=min(
+                                short_put_snapshot.bid_size,
+                                short_call_snapshot.bid_size,
+                            ),
+                            short_ask_size=min(
+                                short_put_snapshot.ask_size,
+                                short_call_snapshot.ask_size,
+                            ),
+                            long_bid_size=min(
+                                long_put_snapshot.bid_size,
+                                long_call_snapshot.bid_size,
+                            ),
+                            long_ask_size=min(
+                                long_put_snapshot.ask_size,
+                                long_call_snapshot.ask_size,
+                            ),
+                            short_implied_volatility=round(
+                                (
+                                    (short_put_snapshot.implied_volatility or 0.0)
+                                    + (short_call_snapshot.implied_volatility or 0.0)
+                                )
+                                / 2.0,
+                                4,
+                            ),
+                            long_implied_volatility=round(
+                                (
+                                    (long_put_snapshot.implied_volatility or 0.0)
+                                    + (long_call_snapshot.implied_volatility or 0.0)
+                                )
+                                / 2.0,
+                                4,
+                            ),
+                            short_volume=(short_put_snapshot.daily_volume or 0)
+                            + (short_call_snapshot.daily_volume or 0),
+                            long_volume=(long_put_snapshot.daily_volume or 0)
+                            + (long_call_snapshot.daily_volume or 0),
+                            secondary_short_symbol=short_call.symbol,
+                            secondary_long_symbol=long_call.symbol,
+                            secondary_short_strike=short_call.strike_price,
+                            secondary_long_strike=long_call.strike_price,
+                            lower_breakeven=lower_breakeven,
+                            upper_breakeven=upper_breakeven,
+                            side_balance_score=side_balance_score,
+                            wing_symmetry_ratio=1.0,
+                        )
+                    )
 
     return candidates
 
@@ -3140,7 +3534,8 @@ def build_stream_symbols(candidates: list[SpreadCandidate], *, max_symbols: int 
     symbols: list[str] = []
     seen: set[str] = set()
     for candidate in candidates:
-        for symbol in (candidate.short_symbol, candidate.long_symbol):
+        for leg in candidate_legs(asdict(candidate)):
+            symbol = str(leg.get("symbol") or "").strip()
             if symbol in seen:
                 continue
             seen.add(symbol)
@@ -3156,23 +3551,32 @@ def build_live_spread_rows(
 ) -> list[list[str]]:
     rows: list[list[str]] = []
     for candidate in candidates:
-        short_quote = live_quotes.get(candidate.short_symbol)
-        long_quote = live_quotes.get(candidate.long_symbol)
-        if short_quote is None or long_quote is None:
+        payload = asdict(candidate)
+        live_snapshot = structure_quote_snapshot(
+            legs=candidate_legs(payload),
+            strategy_family=payload.get("strategy"),
+            quotes_by_symbol=live_quotes,
+        )
+        if live_snapshot is None:
             continue
-        live_mid_credit = short_quote.midpoint - long_quote.midpoint
-        live_natural_credit = short_quote.bid - long_quote.ask
+        primary_label = f"{candidate.short_strike:.2f}/{candidate.long_strike:.2f}"
+        if candidate.secondary_short_strike is not None and candidate.secondary_long_strike is not None:
+            primary_label = (
+                f"{candidate.long_strike:.2f}-{candidate.short_strike:.2f}"
+                f" / {candidate.secondary_short_strike:.2f}-{candidate.secondary_long_strike:.2f}"
+            )
         rows.append(
             [
                 strategy_display_label(candidate.strategy),
                 candidate.expiration_date,
-                f"{candidate.short_strike:.2f}",
-                f"{candidate.long_strike:.2f}",
-                f"{live_mid_credit:.2f}",
-                f"{live_natural_credit:.2f}",
-                f"{short_quote.bid:.2f}/{short_quote.ask:.2f}",
-                f"{long_quote.bid:.2f}/{long_quote.ask:.2f}",
-                "n/a" if short_quote.timestamp is None else str(short_quote.timestamp),
+                primary_label,
+                f"{candidate.width:.2f}",
+                f"{float(live_snapshot['midpoint_value']):.2f}",
+                f"{float(live_snapshot['natural_value']):.2f}",
+                str(len(live_snapshot.get("legs") or [])),
+                "n/a"
+                if live_snapshot.get("captured_at") is None
+                else str(live_snapshot["captured_at"]),
             ]
         )
     return rows
@@ -3214,7 +3618,7 @@ def maybe_stream_live_quotes(
         print("Live quote stream did not return both legs for the displayed spreads.")
         return
 
-    headers = ["Side", "Expiry", "Short", "Long", "LiveMid", "LiveNat", "ShortQ", "LongQ", "Time"]
+    headers = ["Side", "Expiry", "Strikes", "Width", "LiveMid", "LiveNat", "Legs", "Time"]
     print(format_table(headers, rows))
     print()
 
@@ -3329,6 +3733,57 @@ def estimate_spread_bar(
     }
 
 
+def estimate_structure_bar(
+    *,
+    legs: list[dict[str, Any]],
+    bars_by_symbol: dict[str, DailyBar],
+    strategy: str,
+) -> dict[str, float] | None:
+    premium_kind = net_premium_kind(strategy)
+    if premium_kind is None or not legs:
+        return None
+
+    open_short = 0.0
+    high_short = 0.0
+    low_short = 0.0
+    close_short = 0.0
+    open_long = 0.0
+    high_long = 0.0
+    low_long = 0.0
+    close_long = 0.0
+
+    for leg in legs:
+        symbol = str(leg.get("symbol") or "").strip()
+        role = str(leg.get("role") or "").strip().lower()
+        bar = bars_by_symbol.get(symbol)
+        if not symbol or role not in {"short", "long"} or bar is None:
+            return None
+        if role == "short":
+            open_short += bar.open
+            high_short += bar.high
+            low_short += bar.low
+            close_short += bar.close
+        else:
+            open_long += bar.open
+            high_long += bar.high
+            low_long += bar.low
+            close_long += bar.close
+
+    if premium_kind == "debit":
+        return {
+            "open": max(open_long - open_short, 0.0),
+            "high": max(high_long - low_short, 0.0),
+            "low": max(low_long - high_short, 0.0),
+            "close": max(close_long - close_short, 0.0),
+        }
+    return {
+        "open": max(open_short - open_long, 0.0),
+        "high": max(high_short - low_long, 0.0),
+        "low": max(low_short - high_long, 0.0),
+        "close": max(close_short - close_long, 0.0),
+    }
+
+
 def option_bar_available_for_target(
     bars_by_symbol: dict[str, list[DailyBar]],
     short_symbol: str,
@@ -3360,8 +3815,14 @@ def simulate_exit_until_date(
     profit_target: float,
     stop_multiple: float,
 ) -> dict[str, Any]:
-    short_bars = option_bars_by_date(option_bars.get(candidate["short_symbol"], []))
-    long_bars = option_bars_by_date(option_bars.get(candidate["long_symbol"], []))
+    legs = candidate_legs(candidate)
+    leg_bars = {
+        str(leg.get("symbol") or ""): option_bars_by_date(
+            option_bars.get(str(leg.get("symbol") or ""), [])
+        )
+        for leg in legs
+        if str(leg.get("symbol") or "").strip()
+    }
     entry_credit = candidate["midpoint_credit"]
     premium_kind = net_premium_kind(candidate.get("strategy"))
     if premium_kind == "debit":
@@ -3371,17 +3832,30 @@ def simulate_exit_until_date(
         target_mark = max(entry_credit * (1.0 - profit_target), 0.0)
         stop_mark = entry_credit * stop_multiple
 
-    path_dates = sorted(d for d in short_bars if start_date <= d <= target_date and d in long_bars)
+    path_date_sets = [set(bars_by_date) for bars_by_date in leg_bars.values()]
+    if not path_date_sets:
+        return {"status": "pending_option_bars"}
+    path_dates = sorted(
+        d
+        for d in set.intersection(*path_date_sets)
+        if start_date <= d <= target_date
+    )
     if not path_dates:
         return {"status": "pending_option_bars"}
 
     last_mark = None
     for path_date in path_dates:
-        spread_bar = estimate_spread_bar(
-            short_bars[path_date],
-            long_bars[path_date],
+        spread_bar = estimate_structure_bar(
+            legs=legs,
+            bars_by_symbol={
+                symbol: bars_by_date[path_date]
+                for symbol, bars_by_date in leg_bars.items()
+                if path_date in bars_by_date
+            },
             strategy=str(candidate.get("strategy") or ""),
         )
+        if spread_bar is None:
+            return {"status": "pending_option_bars"}
         last_mark = spread_bar["close"]
         if premium_kind == "debit":
             hit_target = spread_bar["high"] >= target_mark
@@ -3468,16 +3942,26 @@ def mark_spread_on_date(
     option_bars: dict[str, list[DailyBar]],
     target_date: date,
 ) -> dict[str, Any]:
-    short_bar = latest_option_bar_on_or_before(option_bars, candidate["short_symbol"], target_date)
-    long_bar = latest_option_bar_on_or_before(option_bars, candidate["long_symbol"], target_date)
-    if short_bar is None or long_bar is None:
+    legs = candidate_legs(candidate)
+    bars_by_symbol: dict[str, DailyBar] = {}
+    for leg in legs:
+        symbol = str(leg.get("symbol") or "").strip()
+        if not symbol:
+            continue
+        bar = latest_option_bar_on_or_before(option_bars, symbol, target_date)
+        if bar is None:
+            return {"status": "pending_option_bars"}
+        bars_by_symbol[symbol] = bar
+    if not bars_by_symbol:
         return {"status": "pending_option_bars"}
 
-    spread_bar = estimate_spread_bar(
-        short_bar,
-        long_bar,
+    spread_bar = estimate_structure_bar(
+        legs=legs,
+        bars_by_symbol=bars_by_symbol,
         strategy=str(candidate.get("strategy") or ""),
     )
+    if spread_bar is None:
+        return {"status": "pending_option_bars"}
     entry_credit = candidate["midpoint_credit"]
     close_mark = spread_bar["close"]
     premium_kind = net_premium_kind(candidate.get("strategy"))
@@ -3838,7 +4322,7 @@ def run_replay(
 ) -> int:
     if args.replay_latest and args.strategy == "combined":
         raise SystemExit(
-            "Replay latest requires a concrete strategy such as call_credit, put_credit, call_debit, or put_debit"
+            "Replay latest requires a concrete strategy such as call_credit, put_credit, call_debit, put_debit, or iron_condor"
         )
     if args.replay_run_id:
         run_payload = history_store.get_run(args.replay_run_id)
@@ -3961,10 +4445,22 @@ def scan_symbol_live(
         )
 
     option_type = strategy_option_type(symbol_args.strategy)
-    raw_option_snapshots_by_expiration = (
-        call_snapshots_by_expiration if option_type == "call" else put_snapshots_by_expiration
-    )
-    quoted_contract_count, alpaca_delta_contract_count = count_snapshot_delta_coverage(raw_option_snapshots_by_expiration)
+    if symbol_args.strategy == "iron_condor":
+        call_quoted_count, call_alpaca_delta_count = count_snapshot_delta_coverage(
+            call_snapshots_by_expiration
+        )
+        put_quoted_count, put_alpaca_delta_count = count_snapshot_delta_coverage(
+            put_snapshots_by_expiration
+        )
+        quoted_contract_count = call_quoted_count + put_quoted_count
+        alpaca_delta_contract_count = call_alpaca_delta_count + put_alpaca_delta_count
+    else:
+        raw_option_snapshots_by_expiration = (
+            call_snapshots_by_expiration if option_type == "call" else put_snapshots_by_expiration
+        )
+        quoted_contract_count, alpaca_delta_contract_count = count_snapshot_delta_coverage(
+            raw_option_snapshots_by_expiration
+        )
 
     snapshot_timestamp = datetime.now(UTC)
     call_snapshots_by_expiration = enrich_missing_greeks(
@@ -3996,24 +4492,47 @@ def scan_symbol_live(
         put_snapshots_by_expiration=put_snapshots_by_expiration,
     )
 
-    option_contracts_by_expiration = (
-        contracts_by_expiration if option_type == "call" else put_contracts_by_expiration
-    )
-    option_snapshots_by_expiration = (
-        call_snapshots_by_expiration if option_type == "call" else put_snapshots_by_expiration
-    )
-    _, delta_contract_count = count_snapshot_delta_coverage(option_snapshots_by_expiration)
-    local_delta_contract_count = count_local_greeks_coverage(option_snapshots_by_expiration)
-
-    all_candidates = build_vertical_spreads(
-        symbol=symbol,
-        strategy=symbol_args.strategy,
-        spot_price=spot_price,
-        contracts_by_expiration=option_contracts_by_expiration,
-        snapshots_by_expiration=option_snapshots_by_expiration,
-        expected_moves_by_expiration=expected_moves_by_expiration,
-        args=symbol_args,
-    )
+    if symbol_args.strategy == "iron_condor":
+        call_delta_count, put_delta_count = (
+            count_snapshot_delta_coverage(call_snapshots_by_expiration)[1],
+            count_snapshot_delta_coverage(put_snapshots_by_expiration)[1],
+        )
+        delta_contract_count = call_delta_count + put_delta_count
+        local_delta_contract_count = count_local_greeks_coverage(
+            call_snapshots_by_expiration
+        ) + count_local_greeks_coverage(put_snapshots_by_expiration)
+        all_candidates = build_iron_condors(
+            symbol=symbol,
+            spot_price=spot_price,
+            call_contracts_by_expiration=contracts_by_expiration,
+            put_contracts_by_expiration=put_contracts_by_expiration,
+            call_snapshots_by_expiration=call_snapshots_by_expiration,
+            put_snapshots_by_expiration=put_snapshots_by_expiration,
+            expected_moves_by_expiration=expected_moves_by_expiration,
+            args=symbol_args,
+        )
+    else:
+        option_contracts_by_expiration = (
+            contracts_by_expiration if option_type == "call" else put_contracts_by_expiration
+        )
+        option_snapshots_by_expiration = (
+            call_snapshots_by_expiration if option_type == "call" else put_snapshots_by_expiration
+        )
+        _, delta_contract_count = count_snapshot_delta_coverage(
+            option_snapshots_by_expiration
+        )
+        local_delta_contract_count = count_local_greeks_coverage(
+            option_snapshots_by_expiration
+        )
+        all_candidates = build_vertical_spreads(
+            symbol=symbol,
+            strategy=symbol_args.strategy,
+            spot_price=spot_price,
+            contracts_by_expiration=option_contracts_by_expiration,
+            snapshots_by_expiration=option_snapshots_by_expiration,
+            expected_moves_by_expiration=expected_moves_by_expiration,
+            args=symbol_args,
+        )
     all_candidates = attach_underlying_setup(all_candidates, setup_context)
     all_candidates = attach_calendar_decisions(
         symbol=symbol,
