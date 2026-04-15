@@ -6,6 +6,7 @@
 - Keep module boundaries clear: `services/` owns business logic, `storage/` owns persistence and query shapes, `jobs/` owns scheduling and worker entrypoints, and `apps/api` stays a thin adapter over services.
 - Favor one canonical backend path per responsibility. If logic is already repeated, extract the shared behavior before adding more.
 - For multi-leg options work, keep `legs[]` canonical end to end. Do not add new 3+ leg special cases around `short_symbol` / `long_symbol`, and route quote/mark math through the shared structure snapshot path.
+- For long-vol families such as `long_straddle` and `long_strangle`, do not force them through vertical-only live validation or exposure math. If they remain shadow-only in live trading, document that explicitly in the plan/runbook and in seeded job policy instead of relying on implicit execution failure.
 - Prefer small composable helpers when they remove duplication, but do not add abstraction layers with only one caller and no clear reuse value.
 - If a requested change pushes against a bad boundary, call it out and propose the boundary fix first. Unless the user explicitly wants the smallest patch only, prefer the boundary fix.
 - When changing architecture, explain the tradeoff in terms of:

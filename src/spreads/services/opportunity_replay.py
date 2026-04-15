@@ -244,6 +244,8 @@ def _strategy_family(strategy: str | None) -> str:
         "put_credit": "put_credit_spread",
         "call_debit": "call_debit_spread",
         "put_debit": "put_debit_spread",
+        "long_straddle": "long_straddle",
+        "long_strangle": "long_strangle",
         "long_call": "long_call",
         "long_put": "long_put",
         "iron_condor": "iron_condor",

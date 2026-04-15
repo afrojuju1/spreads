@@ -40,6 +40,8 @@ def _normalized_strategy_family(value: str | None) -> str:
         "put_credit": "put_credit_spread",
         "call_debit": "call_debit_spread",
         "put_debit": "put_debit_spread",
+        "long_straddle": "long_straddle",
+        "long_strangle": "long_strangle",
     }.get(normalized, normalized)
 
 
@@ -47,6 +49,8 @@ def execution_complexity(strategy_family: str) -> float:
     family = _normalized_strategy_family(strategy_family)
     if family in {"long_call", "long_put"}:
         return 0.2
+    if family in {"long_straddle", "long_strangle"}:
+        return 0.6
     if family in {
         "call_credit_spread",
         "put_credit_spread",
@@ -288,6 +292,15 @@ def _execution_template(opportunity: Opportunity) -> dict[str, str]:
             else ("medium" if style == "tactical" else "long"),
             "replace_policy": "1_step" if style == "reactive" else "2_step",
             "exit_policy": "defined_risk_directional_exit",
+        }
+    if family in {"long_straddle", "long_strangle"}:
+        return {
+            "order_structure": "long_vol",
+            "entry_policy": "passive_then_midpoint",
+            "price_policy": "tight_debit_cap",
+            "timeout_policy": "short" if style == "reactive" else "medium",
+            "replace_policy": "1_step" if style == "reactive" else "2_step",
+            "exit_policy": "defined_risk_long_vol_exit",
         }
     if family in {"call_debit_spread", "put_debit_spread"}:
         return {

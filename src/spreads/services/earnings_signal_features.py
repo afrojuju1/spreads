@@ -129,6 +129,8 @@ def _strategy_family(strategy: str | None) -> str:
         "put_credit": "put_credit_spread",
         "call_debit": "call_debit_spread",
         "put_debit": "put_debit_spread",
+        "long_straddle": "long_straddle",
+        "long_strangle": "long_strangle",
         "long_call": "long_call",
         "long_put": "long_put",
         "iron_condor": "iron_condor",
@@ -140,6 +142,8 @@ def _family_direction(family: str) -> str:
         return "bullish"
     if family in {"call_credit_spread", "put_debit_spread", "long_put"}:
         return "bearish"
+    if family in {"long_straddle", "long_strangle"}:
+        return "neutral"
     if family == "iron_condor":
         return "neutral"
     return "unknown"

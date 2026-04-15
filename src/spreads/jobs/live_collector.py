@@ -105,7 +105,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--strategy",
         default="combined",
-        choices=("call_credit", "put_credit", "call_debit", "put_debit", "iron_condor", "combined"),
+        choices=(
+            "call_credit",
+            "put_credit",
+            "call_debit",
+            "put_debit",
+            "long_straddle",
+            "long_strangle",
+            "iron_condor",
+            "combined",
+        ),
         help="Strategy mode. Default: combined",
     )
     parser.add_argument(

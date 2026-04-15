@@ -1004,6 +1004,8 @@ Phase 5  later extensions
 - add `put_debit_spread`
 - add `long_straddle`
 - add `long_strangle`
+- seeded weekly live collectors now exist for `call_debit`, `put_debit`, `long_straddle`, and `long_strangle`
+- `long_straddle` and `long_strangle` are currently live-observed but shadow-only
 - evaluate with replay before live promotion
 
 ### Phase 4: Post-Event Neutral Premium
@@ -1138,13 +1140,16 @@ Only a few details remain intentionally open:
 
 ## Live Notes
 
+- The seeded weekly debit collector jobs are `live_collector:explore_10_call_debit_weekly_auto` and `live_collector:explore_10_put_debit_weekly_auto`.
+- The seeded weekly long-vol collector jobs are `live_collector:explore_10_long_straddle_weekly_auto` and `live_collector:explore_10_long_strangle_weekly_auto`.
 - The seeded weekly condor collector job is `live_collector:explore_10_iron_condor_weekly_auto`.
+- Debit spreads are live-capable on the shared path. Long-vol families currently stay shadow-only by seeded execution policy and explicit live-execution gating.
 - Condors stay restricted to `post_event_fresh` and still flow through the normal earnings policy and signal gates.
-- `combined` still means call/put credit spreads only. Condors run on their own collector job.
-- The seeded condor job is shadow-only until `risk_policy.allow_live` is enabled deliberately.
-- When condor job definitions change, run `uv run spreads jobs seed`.
-- When worker- or scheduler-imported condor code changes, restart `worker-main`, `worker-collector`, and `scheduler`.
-- Minimum verification for condor changes:
+- `combined` still means call/put credit spreads only. Debit, long-vol, and condor families run on their own collector jobs.
+- The seeded condor and long-vol jobs are shadow-only until live policy is enabled deliberately.
+- When live collector job definitions change, run `uv run spreads jobs seed`.
+- When worker- or scheduler-imported scanner/shared runtime code changes, restart `worker-main`, `worker-collector`, and `scheduler`.
+- Minimum verification for live family changes:
   - `uv run python -m unittest discover -s tests -p 'test_*e2e.py'`
   - `docker compose ps worker-main worker-collector scheduler`
   - `docker compose logs --since=2m worker-main worker-collector scheduler`

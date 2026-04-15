@@ -91,6 +91,8 @@ def _strategy_family(strategy: Any) -> str:
         "put_credit": "put_credit_spread",
         "call_debit": "call_debit_spread",
         "put_debit": "put_debit_spread",
+        "long_straddle": "long_straddle",
+        "long_strangle": "long_strangle",
         "iron_condor": "iron_condor",
     }.get(normalized, normalized or "unknown")
 

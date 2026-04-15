@@ -995,6 +995,16 @@ def _validate_live_deployment_quality(
 
     strategy_family = _strategy_family_from_payload(candidate_payload)
     premium_kind = net_premium_kind(strategy_family)
+    if strategy_family in {"long_straddle", "long_strangle"}:
+        return {
+            "ok": False,
+            "reason": "long_vol_live_execution_disabled",
+            "message": (
+                "Open execution is blocked because long-vol earnings structures "
+                "are still shadow-only in the live path."
+            ),
+            "profile": profile,
+        }
     legs = candidate_legs(candidate_payload)
     width = _coerce_float(candidate_payload.get("width"))
     if not legs or width is None or width <= 0:

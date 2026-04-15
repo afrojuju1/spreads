@@ -321,6 +321,29 @@ def vertical_opening_legs(
     return built
 
 
+def long_only_opening_legs(
+    *symbols: Any,
+    expiration_date: Any = None,
+) -> list[dict[str, Any]]:
+    built: list[dict[str, Any]] = []
+    rendered_expiration = _as_text(expiration_date)
+    for symbol in symbols:
+        resolved_symbol = _as_text(symbol)
+        if resolved_symbol is None:
+            continue
+        built.append(
+            {
+                "symbol": resolved_symbol,
+                "side": "buy",
+                "position_intent": "buy_to_open",
+                "ratio_qty": "1",
+                "role": "long",
+                "expiration_date": rendered_expiration,
+            }
+        )
+    return built
+
+
 def iron_condor_opening_legs(
     *,
     short_put_symbol: Any,
@@ -574,6 +597,7 @@ __all__ = [
     "iron_condor_opening_legs",
     "legs_identity_key",
     "leg_role",
+    "long_only_opening_legs",
     "net_premium_kind",
     "normalize_legs",
     "normalize_position_intent",

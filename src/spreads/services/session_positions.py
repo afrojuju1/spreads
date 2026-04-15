@@ -80,6 +80,12 @@ def _derive_live_exposure(
         if entry_value is None
         else round(entry_value * 100.0 * normalized_quantity, 2)
     )
+    if str(strategy_family or "").strip().lower() in {"long_straddle", "long_strangle"}:
+        return {
+            "entry_notional": entry_notional,
+            "max_profit": None,
+            "max_loss": entry_notional,
+        }
     premium_kind = net_premium_kind(strategy_family)
     max_profit = entry_notional
     max_loss = None
