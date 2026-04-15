@@ -10,6 +10,7 @@ from spreads.services.live_collector_health import (
     normalize_uoa_decisions_payload,
 )
 from spreads.services.opportunities import list_active_cycle_opportunity_rows
+from spreads.services.selection_summary import live_selection_counts
 
 
 def _cycle_id_from_run_payload(run_payload: Mapping[str, Any]) -> str | None:
@@ -65,16 +66,7 @@ def _build_uoa_state_payload(
     )
     if not opportunities and not signal_schema_ready:
         opportunities = [dict(item) for item in collector_store.list_cycle_candidates(cycle_id)]
-    selection_counts = {
-        "promotable": 0,
-        "monitor": 0,
-    }
-    for row in opportunities:
-        if str(row.get("eligibility") or "live") != "live":
-            continue
-        selection_state = str(row.get("selection_state") or "")
-        if selection_state in selection_counts:
-            selection_counts[selection_state] += 1
+    selection_counts = live_selection_counts(opportunities)
     cycle_events = collector_store.list_cycle_events(cycle_id)
     return {
         "job_run": {

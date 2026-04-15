@@ -17,6 +17,7 @@ from spreads.services.analysis_helpers import (
     resolved_estimated_pnl,
     score_bucket_label,
 )
+from spreads.services.selection_summary import live_selection_counts
 from spreads.services.selection_terms import (
     MONITOR_SELECTION_STATE,
     PROMOTABLE_SELECTION_STATE,
@@ -814,17 +815,10 @@ def build_session_summary(
         latest_cycle_payload = None
         if latest_cycle is not None:
             opportunities = collector_store.list_cycle_candidates(latest_cycle["cycle_id"])
-            selection_counts = {"promotable": 0, "monitor": 0}
-            for row in opportunities:
-                if str(row.get("eligibility") or "live") != "live":
-                    continue
-                selection_state = str(row.get("selection_state") or "")
-                if selection_state in selection_counts:
-                    selection_counts[selection_state] += 1
             latest_cycle_payload = {
                 **latest_cycle,
                 "opportunities": list(opportunities),
-                "selection_counts": selection_counts,
+                "selection_counts": live_selection_counts(opportunities),
             }
         outcomes = build_session_outcomes(
             history_store=history_store,

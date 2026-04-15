@@ -31,6 +31,10 @@ from spreads.services.execution_lifecycle import (
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
 from spreads.services.positions import enrich_position_row
 from spreads.services.risk_manager import assess_position_risk
+from spreads.services.selection_summary import (
+    aggregate_selection_summaries as _aggregate_selection_summaries,
+    selection_summary_payload as _selection_summary_payload,
+)
 from spreads.services.selection_terms import (
     MONITOR_SELECTION_STATE,
     PROMOTABLE_SELECTION_STATE,
@@ -38,6 +42,12 @@ from spreads.services.selection_terms import (
     promotable_monitor_pnl_spread,
 )
 from spreads.services.uoa_state import get_latest_uoa_state, get_uoa_state_for_cycle
+from spreads.services.value_coercion import (
+    as_text as _as_text,
+    coerce_float as _coerce_float,
+    coerce_int as _coerce_int,
+    utc_now_iso as _utc_now,
+)
 from spreads.storage.serializers import parse_datetime
 
 OPEN_POSITION_STATUSES = ["open", "partial_close"]
@@ -67,36 +77,6 @@ STATUS_RANK = {
 
 class OpsLookupError(LookupError):
     pass
-
-
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
-
-
-def _coerce_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _coerce_int(value: Any) -> int | None:
-    if value in (None, ""):
-        return None
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return None
-
 
 def _stream_quote_events_saved(capture: Mapping[str, Any] | None) -> int:
     if not isinstance(capture, Mapping):
@@ -176,86 +156,6 @@ def _attention(*, severity: str, code: str, message: str) -> dict[str, str]:
         "code": code,
         "message": message,
     }
-
-
-def _counter_map(value: Any) -> dict[str, int]:
-    if not isinstance(value, Mapping):
-        return {}
-    return {
-        str(key): _coerce_int(raw_value) or 0
-        for key, raw_value in value.items()
-        if _as_text(key) is not None
-    }
-
-
-def _selection_summary_payload(value: Any) -> dict[str, Any]:
-    payload = value if isinstance(value, Mapping) else {}
-    blocker_counts = (
-        payload.get("blocker_counts")
-        if isinstance(payload.get("blocker_counts"), Mapping)
-        else {}
-    )
-    return {
-        "opportunity_count": _coerce_int(payload.get("opportunity_count")) or 0,
-        "strategy_family_counts": _counter_map(payload.get("strategy_family_counts")),
-        "earnings_phase_counts": _counter_map(payload.get("earnings_phase_counts")),
-        "selection_state_counts": _counter_map(payload.get("selection_state_counts")),
-        "blocker_counts": {
-            str(category): _counter_map(counts)
-            for category, counts in blocker_counts.items()
-            if _as_text(category) is not None
-        },
-        "timing_confidence_counts": _counter_map(
-            payload.get("timing_confidence_counts")
-        ),
-        "shadow_only_count": _coerce_int(payload.get("shadow_only_count")) or 0,
-        "auto_live_eligible_count": _coerce_int(
-            payload.get("auto_live_eligible_count")
-        )
-        or 0,
-    }
-
-
-def _aggregate_selection_summaries(
-    summaries: Sequence[Mapping[str, Any]] | None,
-) -> dict[str, Any]:
-    strategy_family_counts: Counter[str] = Counter()
-    earnings_phase_counts: Counter[str] = Counter()
-    selection_state_counts: Counter[str] = Counter()
-    timing_confidence_counts: Counter[str] = Counter()
-    blocker_counts: dict[str, Counter[str]] = {
-        "policy": Counter(),
-        "signal_gate": Counter(),
-        "quote_liquidity": Counter(),
-        "execution_gate": Counter(),
-    }
-    opportunity_count = 0
-    shadow_only_count = 0
-    auto_live_eligible_count = 0
-    for summary in list(summaries or []):
-        payload = _selection_summary_payload(summary)
-        opportunity_count += int(payload["opportunity_count"])
-        shadow_only_count += int(payload["shadow_only_count"])
-        auto_live_eligible_count += int(payload["auto_live_eligible_count"])
-        strategy_family_counts.update(payload["strategy_family_counts"])
-        earnings_phase_counts.update(payload["earnings_phase_counts"])
-        selection_state_counts.update(payload["selection_state_counts"])
-        timing_confidence_counts.update(payload["timing_confidence_counts"])
-        for category, counts in payload["blocker_counts"].items():
-            blocker_counts.setdefault(str(category), Counter()).update(counts)
-    return {
-        "opportunity_count": opportunity_count,
-        "strategy_family_counts": dict(strategy_family_counts),
-        "earnings_phase_counts": dict(earnings_phase_counts),
-        "selection_state_counts": dict(selection_state_counts),
-        "blocker_counts": {
-            category: dict(counter) for category, counter in blocker_counts.items()
-        },
-        "timing_confidence_counts": dict(timing_confidence_counts),
-        "shadow_only_count": shadow_only_count,
-        "auto_live_eligible_count": auto_live_eligible_count,
-    }
-
 
 def _control_status(control: Mapping[str, Any]) -> str:
     mode = str(control.get("mode") or "unknown")

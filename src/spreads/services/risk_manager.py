@@ -21,6 +21,11 @@ from spreads.services.execution_lifecycle import (
 from spreads.services.option_structures import position_legs
 from spreads.services.positions import enrich_position_row
 from spreads.services.runtime_identity import parse_live_run_scope_id
+from spreads.services.value_coercion import (
+    as_text as _as_text,
+    coerce_float as _coerce_float,
+    coerce_int as _coerce_int,
+)
 from spreads.storage.serializers import parse_datetime
 
 OPEN_POSITION_STATUSES = ["open", "partial_close"]
@@ -56,32 +61,6 @@ INT_POLICY_KEYS = {
 }
 FLOAT_POLICY_KEYS = OPTIONAL_FLOAT_POLICY_KEYS
 BOOL_POLICY_KEYS = {"enabled", "allow_live"}
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
-
-
-def _coerce_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _coerce_int(value: Any) -> int | None:
-    if value in (None, ""):
-        return None
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return None
-
 
 def _coerce_bool(value: Any) -> bool:
     if isinstance(value, bool):

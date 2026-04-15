@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -10,6 +9,10 @@ from spreads.db.decorators import with_storage
 from spreads.events.bus import publish_global_event_sync
 from spreads.services.exit_manager import normalize_exit_policy
 from spreads.services.risk_manager import normalize_risk_policy, resolve_execution_kill_switch_reason
+from spreads.services.value_coercion import (
+    as_text as _as_text,
+    utc_now_iso as _utc_now,
+)
 
 CONTROL_SCHEMA_MESSAGE = "Control plane storage is not available. Run database migrations."
 CONTROL_STATE_ID = "global"
@@ -29,18 +32,6 @@ POLICY_FAMILIES = {
     "execution_policy",
     "exit_policy",
 }
-
-
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
-
 
 def _operator_action_id() -> str:
     return f"operator_action:{uuid4().hex}"

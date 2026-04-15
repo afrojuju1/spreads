@@ -7,10 +7,16 @@ from typing import Any
 
 from spreads.jobs.orchestration import NEW_YORK, _market_schedule
 from spreads.services.live_collector_health import TRADEABILITY_STATE_RECOVERY_ONLY
+from spreads.services.live_slot_updates import update_live_session_slot_from_row
 from spreads.services.positions import enrich_position_row
 from spreads.services.control_plane import get_control_state_snapshot, set_control_mode
 from spreads.services.option_quote_records import build_quote_symbol_metadata
 from spreads.services.option_trade_records import build_trade_symbol_metadata
+from spreads.services.value_coercion import (
+    as_text as _as_text,
+    coerce_int as _coerce_int,
+    utc_now_iso as _utc_now,
+)
 from spreads.storage.serializers import parse_date, parse_datetime
 
 LIVE_SLOT_STATUS_EXPECTED = "expected"
@@ -57,34 +63,12 @@ OPEN_POSITION_CAPTURE_STATUSES = [
     "partial_close",
 ]
 
-
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
 def _future_utc(minutes: int) -> str:
     return (
         (datetime.now(UTC) + timedelta(minutes=max(int(minutes), 1)))
         .isoformat(timespec="seconds")
         .replace("+00:00", "Z")
     )
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
-
-
-def _coerce_int(value: Any) -> int | None:
-    if value in (None, ""):
-        return None
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return None
-
 
 def _option_sort_key(row: Mapping[str, Any]) -> tuple[str, str, str]:
     return (
@@ -969,20 +953,12 @@ def run_collector_recovery(
                 stale_after_seconds=stale_after_seconds,
             ):
                 continue
-            updated = recovery_store.upsert_live_session_slot(
-                job_key=str(slot_row["job_key"]),
-                session_id=session_id,
-                session_date=str(slot_row["session_date"]),
-                label=str(slot_row["label"]),
-                slot_at=str(slot_row["slot_at"]),
-                scheduled_for=_as_text(slot_row.get("scheduled_for")),
+            updated = update_live_session_slot_from_row(
+                recovery_store,
+                slot_row=slot_row,
                 status=LIVE_SLOT_STATUS_MISSED,
-                job_run_id=_as_text(slot_row.get("job_run_id")),
-                capture_status=_as_text(slot_row.get("capture_status")),
                 recovery_note="Live slot aged past its freshness window before completing.",
                 slot_details=_slot_details(slot_row),
-                queued_at=_as_text(slot_row.get("queued_at")),
-                started_at=_as_text(slot_row.get("started_at")),
                 finished_at=_utc_now(),
                 updated_at=_utc_now(),
             )
@@ -999,23 +975,15 @@ def run_collector_recovery(
                 slot_at=str(slot_row["slot_at"]),
             )
             if not continuity_rows:
-                updated = recovery_store.upsert_live_session_slot(
-                    job_key=str(slot_row["job_key"]),
-                    session_id=session_id,
-                    session_date=str(slot_row["session_date"]),
-                    label=str(slot_row["label"]),
-                    slot_at=str(slot_row["slot_at"]),
-                    scheduled_for=_as_text(slot_row.get("scheduled_for")),
+                updated = update_live_session_slot_from_row(
+                    recovery_store,
+                    slot_row=slot_row,
                     status=LIVE_SLOT_STATUS_UNRECOVERABLE,
-                    job_run_id=_as_text(slot_row.get("job_run_id")),
-                    capture_status=_as_text(slot_row.get("capture_status")),
                     recovery_note="Gap is unrecoverable because no continuity capture targets existed before the missed slot.",
                     slot_details={
                         **_slot_details(slot_row),
                         "continuity_target_count": 0,
                     },
-                    queued_at=_as_text(slot_row.get("queued_at")),
-                    started_at=_as_text(slot_row.get("started_at")),
                     finished_at=_utc_now(),
                     updated_at=_utc_now(),
                 )
@@ -1029,48 +997,32 @@ def run_collector_recovery(
                 interval_seconds=interval_seconds,
             )
             if bool(coverage["coverage_sufficient"]):
-                updated = recovery_store.upsert_live_session_slot(
-                    job_key=str(slot_row["job_key"]),
-                    session_id=session_id,
-                    session_date=str(slot_row["session_date"]),
-                    label=str(slot_row["label"]),
-                    slot_at=str(slot_row["slot_at"]),
-                    scheduled_for=_as_text(slot_row.get("scheduled_for")),
+                updated = update_live_session_slot_from_row(
+                    recovery_store,
+                    slot_row=slot_row,
                     status=LIVE_SLOT_STATUS_RECOVERED,
-                    job_run_id=_as_text(slot_row.get("job_run_id")),
-                    capture_status=_as_text(slot_row.get("capture_status")),
                     recovery_note="Continuity quotes were present for all tracked symbols during the missed slot window.",
                     slot_details={
                         **_slot_details(slot_row),
                         "recovery_coverage": coverage,
                         "continuity_targets": continuity_rows,
                     },
-                    queued_at=_as_text(slot_row.get("queued_at")),
-                    started_at=_as_text(slot_row.get("started_at")),
                     finished_at=_utc_now(),
                     updated_at=_utc_now(),
                 )
                 slot_row.update(updated)
                 recovered_slot_count += 1
             else:
-                updated = recovery_store.upsert_live_session_slot(
-                    job_key=str(slot_row["job_key"]),
-                    session_id=session_id,
-                    session_date=str(slot_row["session_date"]),
-                    label=str(slot_row["label"]),
-                    slot_at=str(slot_row["slot_at"]),
-                    scheduled_for=_as_text(slot_row.get("scheduled_for")),
+                updated = update_live_session_slot_from_row(
+                    recovery_store,
+                    slot_row=slot_row,
                     status=LIVE_SLOT_STATUS_UNRECOVERABLE,
-                    job_run_id=_as_text(slot_row.get("job_run_id")),
-                    capture_status=_as_text(slot_row.get("capture_status")),
                     recovery_note="Gap is unrecoverable because recorder coverage was incomplete for tracked continuity symbols.",
                     slot_details={
                         **_slot_details(slot_row),
                         "recovery_coverage": coverage,
                         "continuity_targets": continuity_rows,
                     },
-                    queued_at=_as_text(slot_row.get("queued_at")),
-                    started_at=_as_text(slot_row.get("started_at")),
                     finished_at=_utc_now(),
                     updated_at=_utc_now(),
                 )

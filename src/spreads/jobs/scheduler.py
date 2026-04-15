@@ -27,11 +27,13 @@ from spreads.jobs.orchestration import (
 )
 from spreads.runtime.config import default_database_url, default_redis_url
 from spreads.runtime.redis import build_redis_settings
+from spreads.services.live_slot_updates import write_live_session_slot
 from spreads.services.live_recovery import (
     LIVE_SLOT_STATUS_MISSED,
     LIVE_SLOT_STATUS_QUEUED,
     LIVE_SLOT_TERMINAL_STATUSES,
 )
+from spreads.services.value_coercion import as_text as _as_text
 from spreads.storage.factory import build_storage_context
 from spreads.storage.serializers import parse_datetime
 
@@ -47,14 +49,6 @@ def _log_scheduler_event(event: str, **payload: Any) -> None:
         **payload,
     }
     print(json.dumps(record, separators=(",", ":"), sort_keys=True), flush=True)
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
-
 
 async def _publish_job_run_update(redis: Any, run_record: Any) -> None:
     try:
@@ -206,7 +200,8 @@ async def _supersede_queued_live_run(
     slot_iso = isoformat_utc(slot_at) if slot_at is not None else _as_text(run_record.get("slot_at"))
     if slot_iso:
         await asyncio.to_thread(
-            recovery_store.upsert_live_session_slot,
+            write_live_session_slot,
+            recovery_store,
             job_key=str(run_record["job_key"]),
             session_id=session_id,
             session_date=session_date,
@@ -354,7 +349,8 @@ async def _reconcile_live_collector_jobs(
             ):
                 continue
             await asyncio.to_thread(
-                recovery_store.upsert_live_session_slot,
+                write_live_session_slot,
+                recovery_store,
                 job_key=str(definition["job_key"]),
                 session_id=session_id,
                 session_date=session_date,
@@ -453,7 +449,8 @@ async def _reconcile_live_collector_jobs(
             )
             if created:
                 await asyncio.to_thread(
-                    recovery_store.upsert_live_session_slot,
+                    write_live_session_slot,
+                    recovery_store,
                     job_key=str(definition["job_key"]),
                     session_id=session_id,
                     session_date=session_date,
@@ -477,7 +474,8 @@ async def _reconcile_live_collector_jobs(
             latest_session_run = run_record
         elif run_record["status"] == "failed" and int(run_record.get("retry_count", 0)) >= max_retries:
             await asyncio.to_thread(
-                recovery_store.upsert_live_session_slot,
+                write_live_session_slot,
+                recovery_store,
                 job_key=str(definition["job_key"]),
                 session_id=session_id,
                 session_date=session_date,
@@ -502,7 +500,8 @@ async def _reconcile_live_collector_jobs(
             next_retry_count = int(run_record.get("retry_count", 0)) + 1
             if run_record["status"] in {"failed", "skipped"} and next_retry_count > max_retries:
                 await asyncio.to_thread(
-                    recovery_store.upsert_live_session_slot,
+                    write_live_session_slot,
+                    recovery_store,
                     job_key=str(definition["job_key"]),
                     session_id=session_id,
                     session_date=session_date,
@@ -526,7 +525,8 @@ async def _reconcile_live_collector_jobs(
                     payload=dict(run_record["payload"]),
                 )
                 await asyncio.to_thread(
-                    recovery_store.upsert_live_session_slot,
+                    write_live_session_slot,
+                    recovery_store,
                     job_key=str(definition["job_key"]),
                     session_id=session_id,
                     session_date=session_date,

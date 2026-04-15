@@ -35,6 +35,7 @@ from spreads.services.runtime_identity import (
     parse_pipeline_id,
     resolve_pipeline_policy_fields,
 )
+from spreads.services.selection_summary import live_selection_counts
 from spreads.storage.serializers import parse_datetime
 
 DEFAULT_ANALYSIS_PROFIT_TARGET = 0.5
@@ -206,17 +207,7 @@ def _cycle_opportunity_payloads(
         opportunities = [
             dict(candidate) for candidate in collector_store.list_cycle_candidates(cycle_id)
         ]
-    live_counts = {
-        "promotable": 0,
-        "monitor": 0,
-    }
-    for row in opportunities:
-        if str(row.get("eligibility") or "live") != "live":
-            continue
-        selection_state = str(row.get("selection_state") or "")
-        if selection_state in live_counts:
-            live_counts[selection_state] += 1
-    return opportunities, live_counts
+    return opportunities, live_selection_counts(opportunities)
 
 
 def _normalize_pipeline_replay_mode(value: str | None) -> str:

@@ -85,6 +85,12 @@ from spreads.services.session_positions import (
     resolve_trade_intent,
     sync_session_position_from_attempt,
 )
+from spreads.services.value_coercion import (
+    as_text as _as_text,
+    coerce_float as _coerce_float,
+    coerce_int as _coerce_int,
+    utc_now_iso as _utc_now,
+)
 from spreads.storage.factory import build_job_repository
 from spreads.storage.serializers import parse_datetime
 
@@ -102,38 +108,6 @@ ATTEMPT_CONTEXT_BUCKET_MIRROR = {
     "open_monitor": "monitor",
     "position_close": "position_close",
 }
-
-
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
-def _coerce_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        return None
-    return parsed
-
-
-def _coerce_int(value: Any) -> int | None:
-    if value in (None, ""):
-        return None
-    try:
-        parsed = int(float(value))
-    except (TypeError, ValueError):
-        return None
-    return parsed
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
-
 
 def _normalize_attempt_context(value: Any) -> str | None:
     normalized = _as_text(value)

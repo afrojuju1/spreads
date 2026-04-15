@@ -10,6 +10,12 @@ from sqlalchemy.orm import Session
 from spreads.db.core import first_model_row
 from spreads.db.decorators import with_session
 from spreads.services.alpaca import create_alpaca_client_from_env, resolve_trading_environment
+from spreads.services.value_coercion import (
+    as_text as _as_text,
+    coerce_float as _coerce_float,
+    coerce_int as _coerce_int,
+    utc_now_iso as _utc_now,
+)
 from spreads.storage.broker_models import AccountSnapshotModel, BrokerSyncStateModel
 from spreads.storage.capabilities import StorageCapabilities
 
@@ -33,36 +39,6 @@ HISTORY_RANGE_REQUESTS: dict[AccountHistoryRange, dict[str, str | None]] = {
     },
 }
 ACCOUNT_OVERVIEW_LIVE_TIMEOUT_SECONDS = 5.0
-
-
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
-def _as_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    rendered = str(value).strip()
-    return rendered or None
-
-
-def _coerce_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _coerce_int(value: Any) -> int | None:
-    if value in (None, ""):
-        return None
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return None
-
 
 def _coerce_bool(value: Any) -> bool | None:
     if isinstance(value, bool):
