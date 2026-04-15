@@ -4,6 +4,7 @@
 
 - Prefer extending existing service entrypoints instead of adding parallel aggregators.
 - Keep module boundaries clear: `services/` owns business logic, `storage/` owns persistence and query shapes, `jobs/` owns scheduling and worker entrypoints, and `apps/api` stays a thin adapter over services.
+- `services/market_recorder.py` is the sole owner of the Alpaca option websocket connection in the normal runtime. Do not add API-owned or collector-owned reactive option stream capture paths; collectors and APIs should consume recorder-backed persisted rows or shared services over that state unless an explicit architecture change is being made.
 - Favor one canonical backend path per responsibility. If logic is already repeated, extract the shared behavior before adding more.
 - For multi-leg options work, keep `legs[]` canonical end to end. Do not add new 3+ leg special cases around `short_symbol` / `long_symbol`, and route quote/mark math through the shared structure snapshot path.
 - For long-vol families such as `long_straddle` and `long_strangle`, do not force them through vertical-only live validation or exposure math. If they remain shadow-only in live trading, document that explicitly in the plan/runbook and in seeded job policy instead of relying on implicit execution failure.

@@ -4,12 +4,17 @@ import unittest
 from argparse import Namespace
 from unittest.mock import patch
 
-from spreads.jobs.live_collector import LiveCaptureSnapshot, _run_collection_cycle
+from spreads.jobs.live_collector import (
+    LiveCaptureSnapshot,
+    LiveTickContext,
+    _run_collection_cycle,
+    capture_live_option_market_state,
+)
 from spreads.services.live_collector_health import (
     build_quote_capture_summary,
     build_trade_capture_summary,
 )
-from spreads.services.pipelines import get_pipeline_detail
+from spreads.services.pipelines import get_pipeline_detail, list_pipelines
 from spreads.services.uoa_state import get_latest_uoa_state
 from spreads.storage.collector_repository import CollectorRepository
 
@@ -190,7 +195,41 @@ class _AlertStore:
 
 
 class _HistoryStore:
-    pass
+    def __init__(self) -> None:
+        self.saved_quote_batches: list[list[dict[str, object]]] = []
+        self.saved_trade_batches: list[list[dict[str, object]]] = []
+
+    def schema_has_tables(self, *_: object) -> bool:
+        return True
+
+    def save_option_quote_events(
+        self,
+        *,
+        cycle_id: str,
+        label: str,
+        profile: str,
+        quotes: list[dict[str, object]],
+    ) -> int:
+        del cycle_id, label, profile
+        self.saved_quote_batches.append([dict(row) for row in quotes])
+        return len(quotes)
+
+    def save_option_trade_events(
+        self,
+        *,
+        cycle_id: str,
+        label: str,
+        profile: str,
+        trades: list[dict[str, object]],
+    ) -> int:
+        del cycle_id, label, profile
+        self.saved_trade_batches.append([dict(row) for row in trades])
+        return len(trades)
+
+
+class _RecoveryStore:
+    def schema_ready(self) -> bool:
+        return True
 
 
 class _JobStoreThatMustNotServeStaleContext:
@@ -326,30 +365,7 @@ class _PipelineSignalStore:
 
 
 class _PipelineJobStore:
-    def list_job_definitions(self, **_: object) -> list[dict[str, object]]:
-        return [
-            {
-                "job_key": "live_collector:explore_10_call_debit_weekly_auto",
-                "job_type": "live_collector",
-                "enabled": True,
-                "payload": {
-                    "universe": "explore_10",
-                    "strategy": "call_debit",
-                    "profile": "weekly",
-                    "greeks_source": "auto",
-                    "execution_policy": {
-                        "enabled": True,
-                        "deployment_mode": "paper_auto",
-                        "mode": "top_promotable",
-                    },
-                },
-            }
-        ]
-
-    def list_job_runs(self, **_: object) -> list[dict[str, object]]:
-        return []
-
-    def get_latest_live_collector_run(self, **_: object) -> dict[str, object] | None:
+    def _latest_run(self) -> dict[str, object]:
         return {
             "job_run_id": "job-run-live",
             "job_key": "live_collector:explore_10_call_debit_weekly_auto",
@@ -376,8 +392,63 @@ class _PipelineJobStore:
             },
         }
 
+    def list_job_definitions(self, **_: object) -> list[dict[str, object]]:
+        return [
+            {
+                "job_key": "live_collector:explore_10_call_debit_weekly_auto",
+                "job_type": "live_collector",
+                "enabled": True,
+                "payload": {
+                    "universe": "explore_10",
+                    "strategy": "call_debit",
+                    "profile": "weekly",
+                    "greeks_source": "auto",
+                    "execution_policy": {
+                        "enabled": True,
+                        "deployment_mode": "paper_auto",
+                        "mode": "top_promotable",
+                    },
+                },
+            }
+        ]
+
+    def list_job_runs(self, **_: object) -> list[dict[str, object]]:
+        return [self._latest_run()]
+
+    def get_latest_live_collector_run(self, **_: object) -> dict[str, object] | None:
+        return self._latest_run()
+
+    def list_latest_runs_by_session_ids(
+        self,
+        *,
+        session_ids: list[str],
+        job_type: str | None = None,
+        statuses: list[str] | None = None,
+    ) -> list[dict[str, object]]:
+        del job_type, statuses
+        run = self._latest_run()
+        return [run] if str(run["session_id"]) in session_ids else []
+
+    def get_live_collector_run_by_cycle_id(
+        self,
+        *,
+        cycle_id: str,
+        label: str | None = None,
+        status: str | None = "succeeded",
+    ) -> dict[str, object] | None:
+        del label
+        if cycle_id != "cycle-live" or status not in {"succeeded", None}:
+            return None
+        return self._latest_run()
+
 
 class _PipelineAlertStore:
+    def count_alert_events_by_session_keys(
+        self, session_keys: list[tuple[str, str]]
+    ) -> dict[tuple[str, str], int]:
+        del session_keys
+        return {}
+
     def list_alert_events(self, **_: object) -> list[dict[str, object]]:
         return []
 
@@ -508,6 +579,105 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         self.assertEqual(signal_bundle["signals"]["direction_signal"]["source"], "evidence")
         self.assertTrue(saved_opportunity["score_evidence"]["signal_gate"]["eligible"])
 
+    def test_capture_live_market_state_uses_market_recorder_rows(self) -> None:
+        history_store = _HistoryStore()
+        args = Namespace(
+            profile="weekly",
+            quote_capture_seconds=20,
+            trade_capture_seconds=20,
+            session_end_offset_minutes=0,
+        )
+        scanner_args = Namespace(feed="opra", data_base_url="https://data.example")
+        tick_context = LiveTickContext(
+            job_run_id="job-run-1",
+            session_id="live:earnings:2026-04-15",
+            slot_at="2026-04-15T14:35:00Z",
+        )
+        capture_candidates = [_candidate_payload()]
+        order: list[str] = []
+        recorder_quotes = [
+            {
+                "option_symbol": "AAPL260424C210",
+                "captured_at": "2026-04-15T14:35:21Z",
+                "bid_price": 1.9,
+                "ask_price": 2.0,
+                "source": "market_recorder",
+            }
+        ]
+        recorder_trades = [
+            {
+                "option_symbol": "AAPL260424C205",
+                "captured_at": "2026-04-15T14:35:21Z",
+                "price": 3.6,
+                "size": 10,
+                "conditions": [],
+                "source": "market_recorder",
+            }
+        ]
+
+        with patch(
+            "spreads.jobs.live_collector.refresh_live_session_capture_targets",
+            side_effect=lambda **_: order.append("targets")
+            or {"status": "ok", "capture_targets": {}},
+        ), patch(
+            "spreads.jobs.live_collector.collect_latest_quote_records",
+            side_effect=lambda **_: order.append("baseline")
+            or [
+                {
+                    "option_symbol": "AAPL260424C210",
+                    "captured_at": "2026-04-15T14:35:00Z",
+                    "bid_price": 1.8,
+                    "ask_price": 2.0,
+                    "source": "alpaca_latest_quote",
+                }
+            ],
+        ), patch(
+            "spreads.jobs.live_collector.collect_recorded_market_data_records",
+            side_effect=lambda **_: order.append("recorded")
+            or {
+                "quotes": recorder_quotes,
+                "trades": recorder_trades,
+                "quote_error": None,
+                "trade_error": None,
+                "quote_complete": True,
+            },
+        ), patch(
+            "spreads.jobs.live_collector.build_uoa_trade_summary",
+            return_value={"overview": {"scoreable_trade_count": 1}},
+        ), patch(
+            "spreads.jobs.live_collector.build_uoa_quote_summary",
+            return_value={"overview": {"observed_contract_count": 1}},
+        ), patch(
+            "spreads.jobs.live_collector.build_uoa_trade_baselines",
+            return_value={},
+        ), patch(
+            "spreads.jobs.live_collector.build_uoa_root_decisions",
+            return_value={"overview": {"root_count": 1}},
+        ):
+            snapshot = capture_live_option_market_state(
+                args=args,
+                scanner_args=scanner_args,
+                client=object(),
+                history_store=history_store,
+                event_store=_EventStore(),
+                recovery_store=_RecoveryStore(),
+                label="earnings",
+                cycle_id="cycle-live",
+                generated_at="2026-04-15T14:35:00Z",
+                session_date="2026-04-15",
+                tick_context=tick_context,
+                capture_candidates=capture_candidates,
+            )
+
+        self.assertEqual(order[:3], ["targets", "baseline", "recorded"])
+        self.assertEqual(snapshot.stream_quote_event_count, 1)
+        self.assertEqual(snapshot.stream_trade_event_count, 1)
+        self.assertEqual(snapshot.quote_event_count, 2)
+        self.assertEqual(snapshot.trade_event_count, 1)
+        self.assertEqual(len(history_store.saved_quote_batches), 1)
+        self.assertEqual(history_store.saved_quote_batches[0][0]["source"], "alpaca_latest_quote")
+        self.assertEqual(history_store.saved_trade_batches, [])
+
     def test_pipeline_detail_prefers_canonical_signal_opportunities(self) -> None:
         storage = _PipelineStorage()
         with patch(
@@ -519,9 +689,6 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         ), patch(
             "spreads.services.pipelines.get_control_state_snapshot",
             return_value={"mode": "normal"},
-        ), patch(
-            "spreads.services.pipelines.load_session_slot_health",
-            return_value={},
         ), patch(
             "spreads.services.pipelines.list_session_execution_attempts",
             return_value=[],
@@ -540,6 +707,21 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         self.assertEqual(current_opportunity["opportunity_id"], "opp-live")
         self.assertEqual(current_opportunity["candidate"]["underlying_symbol"], "MSFT")
         self.assertEqual(storage.collector.list_cycle_candidates_calls, 0)
+
+    def test_list_pipelines_uses_canonical_live_runtime_session_loader(self) -> None:
+        storage = _PipelineStorage()
+
+        listing = list_pipelines(
+            db_target="postgresql://example",
+            market_date="2026-04-15",
+            storage=storage,
+        )
+
+        self.assertEqual(len(listing["pipelines"]), 1)
+        pipeline = listing["pipelines"][0]
+        self.assertEqual(pipeline["pipeline_id"], "pipeline:explore_10_call_debit_weekly_auto")
+        self.assertEqual(pipeline["promotable_count"], 1)
+        self.assertEqual(pipeline["monitor_count"], 0)
 
     def test_uoa_state_prefers_canonical_signal_opportunities(self) -> None:
         storage = _PipelineStorage()

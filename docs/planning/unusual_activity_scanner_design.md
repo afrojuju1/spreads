@@ -28,8 +28,13 @@ Use Alpaca for:
 
 - stock movers, most actives, snapshots, bars, statuses, LULDs, imbalances
 - option contracts, chain snapshots, latest trades, latest quotes, historical trades, bars
-- targeted option quote and trade WebSocket monitoring
+- targeted recorder-backed option quote and trade monitoring
 - news context
+
+Runtime note:
+
+- `services/market_recorder.py` should remain the sole Alpaca option websocket owner
+- downstream live monitoring should read persisted quote/trade rows instead of opening its own reactive option stream path
 
 Do not design around:
 
@@ -94,7 +99,7 @@ This keeps the system inside Alpaca's practical limits and avoids trying to inge
                       v                   v
    +-------------------------------------------------------+
    | 3. Live Confirmation                                  |
-   | targeted option quotes + targeted option trades       |
+   | targeted recorder-backed option quotes + trades       |
    | plus live stock context                               |
    +-------------------------------------------------------+
                            |
@@ -120,7 +125,9 @@ This keeps the system inside Alpaca's practical limits and avoids trying to inge
  |-------------------|        |----------------------------------|
  | Stocks REST/WS    |------->| uoa_underlying_collector         |
  | Options REST      |------->|   - pulls stock/news context     |
- | Options WS        |------->|   - builds symbol shortlist      |
+ | Options WS        |------->| market_recorder                  |
+ |                   |        |   - sole Alpaca option WS owner  |
+ |                   |        |   - records quote/trade rows     |
  | News REST/WS      |------->+-------------------+--------------+
  +-------------------+                            |
                                                   v
@@ -161,8 +168,8 @@ This keeps the system inside Alpaca's practical limits and avoids trying to inge
                              v                                         v
                                   +---------------+---------------+
                                   | uoa_live_monitor              |
-                                  | - targeted option quote WS    |
-                                  | - targeted option trade WS    |
+                                  | - recorder-backed quote reads |
+                                  | - recorder-backed trade reads |
                                   | - live stock confirmation     |
                                   +---------------+---------------+
                                                   |
@@ -202,7 +209,7 @@ Use full scanner behavior.
 
 - run stock prefilter
 - run option enrichment
-- run targeted live option quote and trade monitoring
+- run targeted recorder-backed option quote and trade monitoring
 - allow full UOA alerts
 
 ### premarket

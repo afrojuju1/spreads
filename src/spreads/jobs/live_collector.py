@@ -37,13 +37,11 @@ from spreads.services.live_recovery import (
 )
 from spreads.services.live_pipelines import build_live_snapshot_label
 from spreads.services.option_structures import candidate_legs, legs_identity_key
-from spreads.services.option_market_data_capture import (
-    request_option_market_data_capture,
-)
 from spreads.services.option_quote_records import (
     build_quote_records,
     build_quote_symbol_metadata,
 )
+from spreads.services.runtime_identity import build_live_run_scope_id
 from spreads.services.uoa_quote_summary import build_uoa_quote_summary
 from spreads.services.uoa_root_decisions import build_uoa_root_decisions
 from spreads.services.candidate_history_recovery import (
@@ -453,6 +451,7 @@ def capture_live_option_market_state(
     client: AlpacaClient,
     history_store: RunHistoryRepository,
     event_store: EventRepository,
+    recovery_store: Any | None,
     label: str,
     cycle_id: str,
     generated_at: str,
@@ -483,6 +482,29 @@ def capture_live_option_market_state(
         }
     )
     if capture_candidates:
+        if recovery_store is not None:
+            try:
+                refresh_live_session_capture_targets(
+                    recovery_store=recovery_store,
+                    session_id=(
+                        tick_context.session_id
+                        if tick_context is not None
+                        else build_live_run_scope_id(label, session_date)
+                    ),
+                    session_date=session_date,
+                    label=label,
+                    profile=args.profile,
+                    promotable_candidates=[],
+                    monitor_candidates=[],
+                    capture_candidates=capture_candidates,
+                    feed=scanner_args.feed,
+                    data_base_url=getattr(scanner_args, "data_base_url", None),
+                    session_end_offset_minutes=int(
+                        getattr(args, "session_end_offset_minutes", 0)
+                    ),
+                )
+            except Exception as exc:
+                print(f"Preselection capture target refresh unavailable: {exc}")
         try:
             latest_quote_records = collect_latest_quote_records(
                 client=client,
@@ -521,14 +543,31 @@ def capture_live_option_market_state(
             float(args.trade_capture_seconds) if trade_storage_ready else 0.0
         )
         if stream_quote_duration_seconds > 0 or stream_trade_duration_seconds > 0:
-            try:
-                capture_args = argparse.Namespace(**vars(args))
-                capture_args.quote_capture_seconds = stream_quote_duration_seconds
-                capture_args.trade_capture_seconds = stream_trade_duration_seconds
-                capture_response = collect_websocket_market_data_records(
-                    args=capture_args,
-                    candidates=capture_candidates,
-                    feed=scanner_args.feed,
+            if recovery_store is None or not recovery_store.schema_ready():
+                stream_quote_error = (
+                    "Market recorder capture unavailable: recovery schema is not ready."
+                )
+                stream_trade_error = stream_quote_error
+                print(
+                    "Live stream market-data capture unavailable: "
+                    f"{stream_quote_error}"
+                )
+            else:
+                capture_response = collect_recorded_market_data_records(
+                    history_store=history_store,
+                    label=label,
+                    profile=args.profile,
+                    expected_quote_symbols=expected_quote_symbols,
+                    expected_trade_symbols=expected_trade_symbols,
+                    captured_from=generated_at,
+                    wait_timeout_seconds=(
+                        MARKET_RECORDER_POLL_SECONDS
+                        + max(
+                            float(stream_quote_duration_seconds),
+                            float(stream_trade_duration_seconds),
+                        )
+                        + MARKET_RECORDER_WAIT_GRACE_SECONDS
+                    ),
                 )
                 stream_quote_records = [
                     dict(item)
@@ -561,12 +600,7 @@ def capture_live_option_market_state(
                         f"{stream_trade_error}"
                     )
                 if stream_quote_records:
-                    stream_quote_event_count = history_store.save_option_quote_events(
-                        cycle_id=cycle_id,
-                        label=label,
-                        profile=args.profile,
-                        quotes=stream_quote_records,
-                    )
+                    stream_quote_event_count = len(stream_quote_records)
                     quote_event_count += stream_quote_event_count
                     try:
                         _record_quote_market_events(
@@ -589,12 +623,7 @@ def capture_live_option_market_state(
                             f"{exc}"
                         )
                 if stream_trade_records:
-                    stream_trade_event_count = history_store.save_option_trade_events(
-                        cycle_id=cycle_id,
-                        label=label,
-                        profile=args.profile,
-                        trades=stream_trade_records,
-                    )
+                    stream_trade_event_count = len(stream_trade_records)
                     trade_event_count += stream_trade_event_count
                     try:
                         _record_trade_market_events(
@@ -616,8 +645,6 @@ def capture_live_option_market_state(
                             "Live stream trade event normalization unavailable: "
                             f"{exc}"
                         )
-            except Exception as exc:
-                print(f"Live stream market-data capture unavailable: {exc}")
         if quote_event_count == 0:
             try:
                 recovery_quote_records = collect_latest_quote_records(
@@ -874,30 +901,6 @@ def collect_recorded_market_data_records(
         "trade_error": None,
         "quote_complete": quote_complete,
     }
-
-
-def collect_websocket_market_data_records(
-    *,
-    args: argparse.Namespace,
-    candidates: list[dict[str, Any]],
-    feed: str,
-) -> dict[str, Any]:
-    quote_duration_seconds = float(max(getattr(args, "quote_capture_seconds", 0), 0))
-    trade_duration_seconds = float(max(getattr(args, "trade_capture_seconds", 0), 0))
-    if not candidates or (quote_duration_seconds <= 0 and trade_duration_seconds <= 0):
-        return {
-            "quotes": [],
-            "trades": [],
-            "quote_error": None,
-            "trade_error": None,
-        }
-    return request_option_market_data_capture(
-        candidates=candidates,
-        feed=feed,
-        quote_duration_seconds=quote_duration_seconds,
-        trade_duration_seconds=trade_duration_seconds,
-        data_base_url=getattr(args, "data_base_url", None),
-    )
 
 
 def print_cycle_summary(
@@ -1298,6 +1301,7 @@ def _run_collection_cycle(
         client=client,
         history_store=history_store,
         event_store=event_store,
+        recovery_store=recovery_store,
         label=label,
         cycle_id=cycle_id,
         generated_at=generated_at,

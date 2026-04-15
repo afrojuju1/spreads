@@ -1,8 +1,20 @@
 # Unified Option Stream Broker Architecture
 
-Status: implemented
+Status: historical reference (superseded on 2026-04-15)
 
-Last updated: April 10, 2026
+Last updated: April 15, 2026
+
+This document records the intermediate API-owned unified broker design.
+
+It is no longer the current runtime architecture.
+
+Current runtime rule:
+
+- `services/market_recorder.py` is the sole Alpaca option websocket owner
+- `jobs/live_collector.py` refreshes recorder targets and reads persisted quote/trade rows
+- `/internal/market-data/options/capture` has been removed
+
+Keep this document only as background on why the system must maintain a single upstream option-stream owner.
 
 ## Why This Exists
 
@@ -305,20 +317,12 @@ Expected module layout:
 
 ## Current Status
 
-Implemented on April 10, 2026:
+Superseded on April 15, 2026.
 
-- new shared broker in [option_stream_broker.py](../../src/spreads/services/option_stream_broker.py)
-- thin quote and trade adapters now reuse that broker in [option_quote_capture.py](../../src/spreads/services/option_quote_capture.py) and [option_trade_capture.py](../../src/spreads/services/option_trade_capture.py)
-- combined internal endpoint and broker-backed adapter in [option_market_data_capture.py](../../src/spreads/services/option_market_data_capture.py) and [main.py](../../apps/api/main.py)
-- live collector cut over to one internal combined capture request in [live_collector.py](../../src/spreads/jobs/live_collector.py)
-- broker health metrics and internal visibility endpoint in [option_stream_broker.py](../../src/spreads/services/option_stream_broker.py) and [main.py](../../apps/api/main.py)
+Current runtime behavior:
 
-Verified runtime behavior after cutover:
+- [market_recorder.py](../../src/spreads/services/market_recorder.py) owns the single Alpaca option websocket
+- [live_collector.py](../../src/spreads/jobs/live_collector.py) refreshes recorder targets and consumes recorder-backed quote/trade rows
+- the API no longer owns option-stream broker lifecycle or a combined internal capture route
 
-- scheduled collector traffic now hits `POST /internal/market-data/options/capture`
-- concurrent quote and trade adapter requests return `200 OK` without fresh `406 connection limit exceeded` errors in the post-fix verification window
-- restart-time capture cancellations now map to controlled `503` responses instead of raw `500`
-
-Remaining work:
-
-- cross-process or third-party ownership of Alpaca's single stream budget can still produce legitimate `406` degradation outside this API process
+The reasoning in this document still matters, but the API-owned implementation path described below is historical only.

@@ -13,13 +13,15 @@ The web app still assumes the older broad API surface. The backend is now intent
 - `POST /sessions/{session_id}/executions`
 - `POST /sessions/{session_id}/positions/{session_position_id}/close`
 - `POST /sessions/{session_id}/executions/{execution_attempt_id}/refresh`
-- `POST /internal/market-data/options/capture`
-- `GET /internal/market-data/options/stream-health`
 - `GET /internal/uoa/state`
 - `GET /internal/uoa/cycles/{cycle_id}`
 - `WS /ws/events`
 
 The frontend should be refactored to match that runtime contract instead of preserving legacy generator, alerts, jobs, and other debug views that no longer exist in the main API.
+
+Note:
+
+- the old internal option-stream capture routes were removed when option-stream ownership moved fully into `services/market_recorder.py`
 
 ## Current Mismatch
 

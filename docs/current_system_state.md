@@ -4,7 +4,7 @@ This document describes the current runtime shape of the application as it exist
 
 It is meant to be a working architecture map, not a target-state proposal.
 
-Last updated: 2026-04-13
+Last updated: 2026-04-15
 
 ## Runtime Stack
 
@@ -27,8 +27,13 @@ FastAPI
   |
   +--> Postgres reads and writes
   +--> Redis pub/sub subscription and event publishing
-  +--> Alpaca account / trading / market-data calls
-  +--> internal option stream + combined market-data capture broker
+  +--> Alpaca account / trading / market-data REST calls
+  +--> serves runtime/session/UOA reads over persisted state
+
+Market Recorder
+  |
+  +--> owns the Alpaca option websocket connection
+  +--> records option quote/trade rows into Postgres
 
 Scheduler
   |
@@ -40,7 +45,7 @@ ARQ workers
   +--> read and write Postgres
   +--> consume Redis queues
   +--> publish global events to Redis
-  +--> call Alpaca REST and option websocket flows
+  +--> call Alpaca REST and recorder-backed market-data reads
   +--> deliver alerts to Discord when configured
 
 Postgres = source of truth
@@ -50,60 +55,67 @@ Redis = transport, queueing, leases, and pub/sub fanout
 ## High-Level System Diagram
 
 ```text
-                              +------------------------------+
-                              |           Operator           |
-                              |  Browser + `uv run spreads`  |
-                              +---------------+--------------+
-                                              |
-                     +------------------------+------------------------+
-                     |                                                 |
-                     v                                                 v
-          +----------+-----------+                         +-----------+----------+
-          |   Web UI (Next.js)   |                         |   CLI entrypoints    |
-          |     apps/web         |                         | scan / collect / ops |
-          +----------+-----------+                         | replay / research    |
-                     |                                     +-----------+----------+
-                     | HTTP + WS                                      |
-                     v                                                 |
-          +----------+-------------------------------------------------+----------+
-          |                         API (FastAPI)                                  |
-          |                        apps/api/app                                    |
-          | account | control | sessions | internal capture | UOA | ws/events     |
-          +----------+-------------------------------+----------------+------------+
-                     |                               |                |
-                     | SQL reads / writes            | publish / sub  | Alpaca REST
-                     v                               v                v
-          +----------+-----------+        +----------+-----------+   +------------+
-          |       Postgres       |        |         Redis        |   |   Alpaca   |
-          | source of truth      |        | queues + leases      |   | trading +  |
-          | jobs/events/state    |        | + spreads:events     |   | market data|
-          +----------+-----------+        +----------+-----------+   +------------+
-                     ^                               ^                ^
-                     |                               |                |
-          +----------+-----------+                   |                |
-          |      Scheduler       |-------------------+                |
-          |   `spreads scheduler`|   enqueue due jobs                 |
-          +----------+-----------+                                    |
-                     |                                                |
-                     v                                                |
-   +-----------------+------------------+               +-------------+--------------+
-   |      Main workers (2 replicas)     |               | Collector workers (3 repl.)|
-   | broker_sync                         |               | live_collector             |
-   | execution_submit                    |               | scanner + selection        |
-   | alert_delivery / alert_reconcile    |               | quote/trade capture        |
-   | session_exit_manager                |               | UOA + signal persistence   |
-   | post_close_analysis                 |               | live_action_gate           |
-   | post_market_analysis                |               +-------------+--------------+
-   +-----------------+------------------+                             |
-                     |                                                |
-                     +-------------------+----------------------------+
-                                         |
-                                         v
-                              +----------+-----------+
-                              |   External sinks     |
-                              | Discord webhook      |
-                              | published events     |
-                              +----------------------+
+                               +------------------------------+
+                               |           Operator           |
+                               |  Browser + `uv run spreads`  |
+                               +---------------+--------------+
+                                               |
+                      +------------------------+------------------------+
+                      |                                                 |
+                      v                                                 v
+           +----------+-----------+                         +-----------+----------+
+           |   Web UI (Next.js)   |                         |   CLI entrypoints    |
+           |     apps/web         |                         | scan / collect / ops |
+           +----------+-----------+                         | replay / research    |
+                      |                                     +-----------+----------+
+                      | HTTP + WS                                      |
+                      v                                                 |
+           +----------+-------------------------------------------------+----------+
+           |                         API (FastAPI)                                  |
+           |                        apps/api/app                                    |
+           | account | control | sessions | UOA | ws/events                        |
+           +----------+-------------------------------+----------------+------------+
+                      |                               |                |
+                      | SQL reads / writes            | publish / sub  | Alpaca REST
+                      v                               v                v
+           +----------+-----------+        +----------+-----------+   +------------+
+           |       Postgres       |        |         Redis        |   |   Alpaca   |
+           | source of truth      |        | queues + leases      |   | trading +  |
+           | jobs/events/state    |        | + spreads:events     |   | market data|
+           +----+-------------+---+        +----------+-----------+   +------+-----+
+                ^             ^                        ^                     ^
+                |             |                        |                     |
+   writes quote/trade rows    |             +----------+-----------+         |
+                |             |             |      Scheduler       |---------+
+                |             |             |   `spreads scheduler`| enqueue due jobs
+                |             |             +----------+-----------+
+                |             |                        |
+                |             |                        v
+        +-------+--------+    |     +------------------+------------------+
+        | market-recorder|    |     |               Redis                 |
+        | sole Alpaca    |    |     | arq:queue:fast | arq:queue:collector|
+        | option WS owner|    |     +--------+-------------------+--------+
+        +-------+--------+    |              |                   |
+                |             |              v                   v
+                +-------------+   +----------+----------+   +----+----------------------+
+                                  | MainWorkerSettings  |   | CollectorWorkerSettings   |
+                                  | queue: arq:queue:fast|  | queue: arq:queue:collector|
+                                  +----------+----------+   +----+----------------------+
+                                             |                   |
+                                             | runs              | runs
+                                             |                   |
+                                             | broker_sync       | live_collector
+                                             | execution_submit  | scanner + selection
+                                             | alert_delivery    | recorder-backed quote/trade reads
+                                             | alert_reconcile   | UOA + signal persistence
+                                             | session_exit_mgr  | live_action_gate
+                                             | post_close        |
+                                             | post_market       |
+                                             v                   v
+                                  +----------+-------------------+----------+
+                                  |   External sinks / persisted state      |
+                                  | Discord webhook | Postgres | Redis      |
+                                  +-----------------------------------------+
 ```
 
 ## Service And Queue Diagram

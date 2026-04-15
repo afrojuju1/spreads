@@ -29,6 +29,8 @@ from spreads.services.execution_lifecycle import (
     resolve_execution_submit_job_run_id,
 )
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
+from spreads.services.live_pipelines import list_enabled_live_collector_pipelines
+from spreads.services.live_runtime import list_latest_live_sessions
 from spreads.services.positions import enrich_position_row
 from spreads.services.risk_manager import assess_position_risk
 from spreads.services.selection_summary import (
@@ -254,38 +256,58 @@ def _collector_requires_attention(
 
 def _latest_live_collectors(
     *,
-    job_store: Any,
+    storage: Any,
     now: datetime,
 ) -> list[dict[str, Any]]:
-    collector_definitions = [
-        dict(row)
-        for row in job_store.list_job_definitions(
-            enabled_only=True, job_type="live_collector"
-        )
-    ]
+    job_store = storage.jobs
+    collector_definitions = list_enabled_live_collector_pipelines(
+        job_store.list_job_definitions(enabled_only=True, job_type="live_collector")
+    )
     if not collector_definitions:
         return []
-    latest_run_by_key = {
-        str(row["job_key"]): enrich_live_collector_job_run_payload(row)
-        for row in job_store.list_latest_runs_by_job_keys(
-            job_keys=[str(row["job_key"]) for row in collector_definitions],
-            statuses=["succeeded"],
+    latest_session_by_pipeline_id = {
+        str(session["pipeline"]["pipeline_id"]): session
+        for session in list_latest_live_sessions(
+            storage=storage,
+            limit=max(len(collector_definitions), 1),
         )
+        if isinstance(session.get("pipeline"), Mapping)
+        and session["pipeline"].get("pipeline_id")
     }
     latest_collectors: list[dict[str, Any]] = []
     for definition in collector_definitions:
-        job_key = str(definition["job_key"])
-        run = latest_run_by_key.get(job_key)
-        quote_capture = {} if run is None else dict(run.get("quote_capture") or {})
+        session = latest_session_by_pipeline_id.get(str(definition["pipeline_id"]))
+        run = (
+            None
+            if session is None or not isinstance(session.get("latest_run"), Mapping)
+            else dict(session["latest_run"])
+        )
+        job_run = (
+            {}
+            if session is None or not isinstance(session.get("job_run"), Mapping)
+            else dict(session.get("job_run") or {})
+        )
+        quote_capture = (
+            {}
+            if session is None or not isinstance(session.get("quote_capture"), Mapping)
+            else dict(session.get("quote_capture") or {})
+        )
+        capture_status = (
+            None
+            if run is None
+            else run.get("capture_status")
+        )
+        if capture_status is None:
+            capture_status = quote_capture.get("capture_status")
         collector_status = _collector_status(run)
         needs_attention = _collector_requires_attention(run, now=now)
         stream_quote_events_saved = _stream_quote_events_saved(quote_capture)
         latest_collectors.append(
             {
-                "job_key": job_key,
+                "job_key": str(definition["job_key"]),
                 "status": collector_status,
                 "needs_attention": needs_attention,
-                "capture_status": None if run is None else run.get("capture_status"),
+                "capture_status": capture_status,
                 "live_action_gate": None
                 if run is None
                 else dict(run.get("live_action_gate") or {}),
@@ -293,18 +315,24 @@ def _latest_live_collectors(
                 if run is None
                 else run.get("auto_execution_summary"),
                 "selection_summary": None
-                if run is None
-                else _selection_summary_payload(run.get("selection_summary")),
-                "last_slot_at": None
-                if run is None
-                else run.get("slot_at") or run.get("scheduled_for"),
+                if session is None
+                else _selection_summary_payload(session.get("selection_summary")),
+                "last_slot_at": (
+                    None
+                    if run is None
+                    else run.get("slot_at") or run.get("scheduled_for")
+                )
+                or job_run.get("slot_at")
+                or job_run.get("scheduled_for"),
                 "stream_quote_events_saved": stream_quote_events_saved,
                 "websocket_quote_events_saved": stream_quote_events_saved,
                 "baseline_quote_events_saved": _coerce_int(
                     quote_capture.get("baseline_quote_events_saved")
                 )
                 or 0,
-                "session_id": None if run is None else run.get("session_id"),
+                "session_id": None
+                if session is None
+                else session.get("session_id") or job_run.get("session_id"),
             }
         )
     return latest_collectors
@@ -1072,7 +1100,7 @@ def build_system_status(
                 )
             )
 
-        latest_collectors = _latest_live_collectors(job_store=job_store, now=now)
+        latest_collectors = _latest_live_collectors(storage=storage, now=now)
         for row in latest_collectors:
             job_key = str(row.get("job_key") or "")
             if bool(row.get("needs_attention")):
@@ -1343,7 +1371,7 @@ def build_trading_health(
         and hasattr(job_store, "schema_ready")
         and job_store.schema_ready()
     ):
-        latest_collectors = _latest_live_collectors(job_store=job_store, now=now)
+        latest_collectors = _latest_live_collectors(storage=storage, now=now)
     else:
         latest_collectors = []
     collector_selection = _aggregate_selection_summaries(

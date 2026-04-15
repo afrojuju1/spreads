@@ -14,6 +14,7 @@ from spreads.integrations.calendar_events.resolver import (
     build_calendar_event_resolver,
 )
 from spreads.services.live_collector_health import build_selection_summary
+from spreads.services.live_runtime import list_latest_live_sessions as _list_latest_live_sessions
 from spreads.services.live_selection import select_live_opportunities
 from spreads.services.ops_visibility import (
     build_job_run_view,
@@ -268,6 +269,12 @@ class _FakeJobStore:
             "schedule": {},
             "singleton_scope": "earnings",
             "market_calendar": "NYSE",
+            "payload": {
+                "symbol": "AAPL",
+                "strategy": "call_debit",
+                "profile": "weekly",
+                "greeks_source": "auto",
+            },
         }
 
     def schema_ready(self) -> bool:
@@ -304,6 +311,14 @@ class _FakeJobStore:
     def list_latest_runs_by_job_keys(self, *, job_keys: list[str], **_: object) -> list[dict[str, object]]:
         return [dict(self.run_record)] if self.definition["job_key"] in job_keys else []
 
+    def list_latest_runs_by_session_ids(
+        self,
+        *,
+        session_ids: list[str],
+        **_: object,
+    ) -> list[dict[str, object]]:
+        return [dict(self.run_record)] if session_ids else []
+
     def get_job_run(self, job_run_id: str) -> dict[str, object] | None:
         return dict(self.run_record) if job_run_id == self.run_record["job_run_id"] else None
 
@@ -311,9 +326,57 @@ class _FakeJobStore:
         return dict(self.definition) if job_key == self.definition["job_key"] else None
 
     def get_latest_live_collector_run(self, *, label: str | None = None, status: str | None = "succeeded") -> dict[str, object] | None:
-        if label == "earnings" and status == "succeeded":
+        if status == "succeeded":
             return dict(self.run_record)
         return None
+
+    def get_live_collector_run_by_cycle_id(
+        self,
+        *,
+        cycle_id: str,
+        label: str,
+        status: str | None = "succeeded",
+    ) -> dict[str, object] | None:
+        if cycle_id == "cycle-1" and status == "succeeded":
+            return dict(self.run_record)
+        return None
+
+
+class _FakeCollectorStore:
+    def schema_ready(self) -> bool:
+        return True
+
+    def get_latest_cycle(self, label: str) -> dict[str, object]:
+        return {
+            "cycle_id": "cycle-1",
+            "label": label,
+            "market_date": "2026-04-15",
+            "session_date": "2026-04-15",
+            "selection_memory": {},
+        }
+
+    def count_cycle_candidates_by_cycle_ids(
+        self,
+        cycle_ids: list[str],
+    ) -> dict[str, dict[str, int]]:
+        return {
+            cycle_id: {
+                "candidate_count": 2,
+                "promotable": 1,
+                "monitor": 1,
+            }
+            for cycle_id in cycle_ids
+        }
+
+
+class _FakeRecoveryStore:
+    def schema_ready(self) -> bool:
+        return False
+
+
+class _FakeSignalStore:
+    def schema_ready(self) -> bool:
+        return False
 
 
 class _FakeBrokerStore:
@@ -350,6 +413,9 @@ class _FakeExecutionStore:
 class _FakeStorage:
     def __init__(self, run_record: dict[str, object]) -> None:
         self.jobs = _FakeJobStore(run_record)
+        self.collector = _FakeCollectorStore()
+        self.recovery = _FakeRecoveryStore()
+        self.signals = _FakeSignalStore()
         self.broker = _FakeBrokerStore()
         self.alerts = _FakeAlertStore()
         self.execution = _FakeExecutionStore()
@@ -422,11 +488,15 @@ class EarningsRoiE2ETests(unittest.TestCase):
                 "pnl": {"day_change": 0.0, "day_change_percent": 0.0},
                 "sync": {},
             },
-        ):
+        ), patch(
+            "spreads.services.ops_visibility.list_latest_live_sessions",
+            wraps=_list_latest_live_sessions,
+        ) as live_sessions_loader:
             system_status = build_system_status(storage=storage)
             trading_health = build_trading_health(storage=storage)
             job_view = build_job_run_view(storage=storage, job_run_id="run-1")
 
+        self.assertGreaterEqual(live_sessions_loader.call_count, 2)
         self.assertEqual(system_status["summary"]["collector_opportunity_count"], 2)
         self.assertEqual(system_status["summary"]["collector_shadow_only_count"], 1)
         self.assertEqual(system_status["summary"]["collector_auto_live_eligible_count"], 1)
