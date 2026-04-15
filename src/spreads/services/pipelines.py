@@ -6,8 +6,12 @@ from typing import Any
 from spreads.db.decorators import with_storage
 from spreads.services.analysis import build_session_summary
 from spreads.services.control_plane import get_control_state_snapshot
-from spreads.services.execution import list_session_execution_attempts
+from spreads.services.execution import (
+    list_session_execution_attempts,
+    normalize_execution_policy,
+)
 from spreads.services.execution_portfolio import build_session_execution_portfolio
+from spreads.services.live_pipelines import list_enabled_live_collector_pipelines
 from spreads.services.live_collector_health import (
     build_tradeability_summary,
     enrich_live_collector_job_run_payload,
@@ -17,6 +21,7 @@ from spreads.services.opportunity_replay import (
     build_opportunity_replay,
     build_recent_opportunity_replay_batch,
 )
+from spreads.services.opportunities import list_active_cycle_opportunity_rows
 from spreads.services.live_recovery import (
     list_session_slot_health_by_session_id,
     load_session_slot_health,
@@ -25,7 +30,11 @@ from spreads.services.risk_manager import (
     build_session_risk_snapshot,
     normalize_risk_policy,
 )
-from spreads.services.runtime_identity import build_live_run_scope_id, parse_pipeline_id
+from spreads.services.runtime_identity import (
+    build_live_run_scope_id,
+    parse_pipeline_id,
+    resolve_pipeline_policy_fields,
+)
 from spreads.storage.serializers import parse_datetime
 
 DEFAULT_ANALYSIS_PROFIT_TARGET = 0.5
@@ -109,6 +118,20 @@ def _session_risk_policy(latest_run: Mapping[str, Any] | None) -> dict[str, Any]
     return normalize_risk_policy(raw_policy if isinstance(raw_policy, dict) else None)
 
 
+def _session_execution_policy(latest_run: Mapping[str, Any] | None) -> dict[str, Any]:
+    if latest_run is None:
+        return normalize_execution_policy(None)
+    payload = latest_run.get("payload")
+    if not isinstance(payload, Mapping):
+        return normalize_execution_policy(None)
+    return normalize_execution_policy(
+        {
+            "execution_policy": payload.get("execution_policy"),
+            "risk_policy": payload.get("risk_policy"),
+        }
+    )
+
+
 def _session_live_action_gate(
     latest_run: Mapping[str, Any] | None,
 ) -> dict[str, Any] | None:
@@ -167,32 +190,19 @@ def _cycle_opportunity_payloads(
     market_date: str,
     cycle_id: str,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    opportunities: list[dict[str, Any]] = []
-    if signal_store.schema_ready():
-        active_rows = [
-            dict(row)
-            for row in signal_store.list_active_cycle_opportunities(cycle_id, limit=500)
-            if str(row.get("pipeline_id") or "") == pipeline_id
-            and str(row.get("market_date") or row.get("session_date") or "") == market_date
-        ]
-        if active_rows:
-            opportunities = [
-                {
-                    **row,
-                    "eligibility": row.get("eligibility_state") or row.get("eligibility"),
-                    "candidate": dict(row.get("candidate") or {}),
-                    "candidate_id": row.get("source_candidate_id"),
-                }
-                for row in active_rows
-            ]
-            opportunities.sort(
-                key=lambda row: (
-                    0 if str(row.get("selection_state") or "") == "promotable" else 1,
-                    int(row.get("selection_rank") or 999_999),
-                    str(row.get("opportunity_id") or ""),
-                )
-            )
-    if not opportunities:
+    signal_schema_ready = bool(
+        signal_store is not None
+        and hasattr(signal_store, "schema_ready")
+        and signal_store.schema_ready()
+    )
+    opportunities = list_active_cycle_opportunity_rows(
+        signal_store,
+        cycle_id=cycle_id,
+        pipeline_id=pipeline_id,
+        market_date=market_date,
+        limit=500,
+    )
+    if not opportunities and not signal_schema_ready:
         opportunities = [
             dict(candidate) for candidate in collector_store.list_cycle_candidates(cycle_id)
         ]
@@ -359,22 +369,125 @@ def _latest_cycles_for_market_date(
     pipeline_rows: list[Mapping[str, Any]],
     market_date: str | None,
 ) -> list[dict[str, Any]]:
-    if market_date is None:
-        pipeline_ids = [str(row["pipeline_id"]) for row in pipeline_rows]
-        return [
-            dict(row)
-            for row in collector_store.list_latest_cycles_by_pipeline_ids(pipeline_ids)
-        ]
-
     resolved_cycles: list[dict[str, Any]] = []
     for row in pipeline_rows:
-        latest_cycle = collector_store.get_latest_pipeline_cycle(
-            str(row["pipeline_id"]),
-            market_date=market_date,
+        label = str(row.get("label") or "")
+        if not label:
+            continue
+        if market_date is None:
+            latest_cycle = collector_store.get_latest_cycle(label)
+        else:
+            cycles = collector_store.list_cycles(
+                label,
+                session_date=market_date,
+                limit=1,
+            )
+            latest_cycle = None if not cycles else cycles[0]
+        if latest_cycle is None:
+            continue
+        cycle_payload = dict(latest_cycle)
+        cycle_payload.setdefault("pipeline_id", str(row["pipeline_id"]))
+        cycle_payload["market_date"] = str(
+            cycle_payload.get("market_date") or cycle_payload.get("session_date") or ""
         )
-        if latest_cycle is not None:
-            resolved_cycles.append(dict(latest_cycle))
+        resolved_cycles.append(cycle_payload)
     return resolved_cycles
+
+
+def _collector_schema_ready(collector_store: Any) -> bool:
+    if hasattr(collector_store, "schema_ready"):
+        return bool(collector_store.schema_ready())
+    return bool(collector_store.pipeline_schema_ready())
+
+
+def _runtime_pipeline_row(catalog_entry: Mapping[str, Any]) -> dict[str, Any]:
+    payload = dict(catalog_entry.get("payload") or {})
+    universe_label = str(payload.get("universe") or "")
+    policy_fields = resolve_pipeline_policy_fields(
+        profile=payload.get("profile"),
+        universe_label=universe_label,
+    )
+    execution_policy = normalize_execution_policy(
+        {
+            "execution_policy": payload.get("execution_policy"),
+            "risk_policy": payload.get("risk_policy"),
+        }
+    )
+    return {
+        "pipeline_id": str(catalog_entry["pipeline_id"]),
+        "label": str(catalog_entry["label"]),
+        "name": str(catalog_entry.get("label") or catalog_entry["pipeline_id"]),
+        "source_job_key": catalog_entry.get("job_key"),
+        "enabled": True,
+        "universe_label": universe_label,
+        "style_profile": str(policy_fields["style_profile"]),
+        "default_horizon_intent": str(policy_fields["horizon_intent"]),
+        "product_scope_json": {
+            "product_class": str(policy_fields["product_class"]),
+            "legacy_labels": [str(catalog_entry["label"])],
+        },
+        "policy_json": {
+            "legacy_profile": payload.get("profile"),
+            "strategy_mode": payload.get("strategy"),
+            "greeks_source": payload.get("greeks_source"),
+            "deployment_mode": execution_policy.get("deployment_mode"),
+        },
+        "updated_at": None,
+    }
+
+
+def _list_runtime_pipelines(job_store: Any) -> list[dict[str, Any]]:
+    if not hasattr(job_store, "list_job_definitions"):
+        return []
+    definitions = job_store.list_job_definitions(
+        enabled_only=True,
+        job_type="live_collector",
+    )
+    return [
+        _runtime_pipeline_row(row)
+        for row in list_enabled_live_collector_pipelines(definitions)
+    ]
+
+
+def _candidate_counts_by_cycle_id(
+    *,
+    collector_store: Any,
+    signal_store: Any,
+    cycle_ids: list[str],
+) -> dict[str, dict[str, int]]:
+    if (
+        signal_store is not None
+        and hasattr(signal_store, "schema_ready")
+        and signal_store.schema_ready()
+        and hasattr(signal_store, "count_active_cycle_opportunities_by_cycle_ids")
+    ):
+        return signal_store.count_active_cycle_opportunities_by_cycle_ids(cycle_ids)
+    return collector_store.count_cycle_candidates_by_cycle_ids(cycle_ids)
+
+
+def _build_cycle_payload(
+    *,
+    pipeline_id: str,
+    cycle: Mapping[str, Any],
+    candidate_counts: Mapping[str, int] | None = None,
+) -> dict[str, Any]:
+    counts = dict(candidate_counts or {})
+    summary = {
+        "candidate_count": int(counts.get("candidate_count") or 0),
+        "promotable_count": int(counts.get("promotable") or 0),
+        "monitor_count": int(counts.get("monitor") or 0),
+        "failure_count": len(cycle.get("failures") or []),
+        "event_count": 0,
+    }
+    return {
+        **dict(cycle),
+        "pipeline_id": pipeline_id,
+        "market_date": str(cycle.get("market_date") or cycle.get("session_date") or ""),
+        "strategy_mode": cycle.get("strategy_mode") or cycle.get("strategy"),
+        "legacy_profile": cycle.get("legacy_profile") or cycle.get("profile"),
+        "summary": summary,
+        "summary_json": summary,
+    }
 
 
 def _serialize_pipeline_summary(
@@ -456,14 +569,18 @@ def list_pipelines(
     storage: Any | None = None,
 ) -> dict[str, Any]:
     collector_store = storage.collector
-    if not collector_store.pipeline_schema_ready():
+    if not _collector_schema_ready(collector_store):
         return {"pipelines": []}
 
     job_store = storage.jobs
     alert_store = storage.alerts
-    pipeline_rows = [
-        dict(row) for row in collector_store.list_pipelines(limit=max(limit * 5, limit))
-    ]
+    signal_store = storage.signals
+    pipeline_rows = _list_runtime_pipelines(job_store)
+    if not pipeline_rows:
+        pipeline_rows = [
+            dict(row)
+            for row in collector_store.list_pipelines(limit=max(limit * 5, limit))
+        ]
     latest_cycles = _latest_cycles_for_market_date(
         collector_store=collector_store,
         pipeline_rows=pipeline_rows,
@@ -491,8 +608,10 @@ def list_pipelines(
     latest_runs_by_session_id = {
         str(row["session_id"]): row for row in latest_runs if row.get("session_id")
     }
-    candidate_counts_by_cycle_id = collector_store.count_cycle_candidates_by_cycle_ids(
-        [str(row["cycle_id"]) for row in latest_cycles]
+    candidate_counts_by_cycle_id = _candidate_counts_by_cycle_id(
+        collector_store=collector_store,
+        signal_store=signal_store,
+        cycle_ids=[str(row["cycle_id"]) for row in latest_cycles],
     )
     alert_counts = alert_store.count_alert_events_by_session_keys(
         [(str(row["market_date"]), str(row["label"])) for row in latest_cycles]
@@ -561,21 +680,38 @@ def get_pipeline_detail(
     risk_store = getattr(storage, "risk", None)
     signal_store = storage.signals
 
-    if not collector_store.pipeline_schema_ready():
+    if not _collector_schema_ready(collector_store):
         raise ValueError(f"Unknown pipeline_id: {pipeline_id}")
 
-    pipeline = collector_store.get_pipeline(pipeline_id)
+    pipeline = next(
+        (
+            row
+            for row in _list_runtime_pipelines(job_store)
+            if str(row["pipeline_id"]) == pipeline_id
+        ),
+        None,
+    )
+    if pipeline is None and hasattr(collector_store, "get_pipeline"):
+        pipeline = collector_store.get_pipeline(pipeline_id)
     if pipeline is None:
         raise ValueError(f"Unknown pipeline_id: {pipeline_id}")
 
-    latest_cycle = collector_store.get_latest_pipeline_cycle(
-        pipeline_id,
-        market_date=market_date,
-    )
+    label = str(pipeline["label"])
+    if market_date is None:
+        latest_cycle = collector_store.get_latest_cycle(label)
+    else:
+        cycles_for_date = collector_store.list_cycles(
+            label,
+            session_date=market_date,
+            limit=1,
+        )
+        latest_cycle = None if not cycles_for_date else cycles_for_date[0]
     if latest_cycle is None:
         raise ValueError(f"Unknown pipeline_id: {pipeline_id}")
 
-    resolved_market_date = str(latest_cycle["market_date"])
+    resolved_market_date = str(
+        latest_cycle.get("market_date") or latest_cycle.get("session_date") or ""
+    )
     legacy_session_id = build_live_run_scope_id(
         str(latest_cycle["label"]),
         resolved_market_date,
@@ -601,33 +737,6 @@ def get_pipeline_detail(
         market_date=resolved_market_date,
         cycle_id=str(latest_cycle["cycle_id"]),
     )
-    if signal_store.schema_ready() and all_opportunities and not all_opportunities[0].get(
-        "opportunity_id"
-    ):
-        active_opportunities = {
-            int(row["source_candidate_id"]): dict(row)
-            for row in signal_store.list_opportunities(
-                pipeline_id=pipeline_id,
-                market_date=resolved_market_date,
-                limit=500,
-            )
-            if row.get("source_candidate_id") not in (None, "")
-        }
-        all_opportunities = [
-            {
-                **row,
-                "opportunity_id": (
-                    None
-                    if row.get("candidate_id") in (None, "")
-                    else (active_opportunities.get(int(row["candidate_id"])) or {}).get(
-                        "opportunity_id"
-                    )
-                ),
-                "pipeline_id": pipeline_id,
-                "market_date": resolved_market_date,
-            }
-            for row in all_opportunities
-        ]
     live_opportunities = [
         row
         for row in all_opportunities
@@ -639,11 +748,21 @@ def get_pipeline_detail(
         if str(row.get("eligibility") or "live") != "live"
     ]
     current_cycle = {
-        **dict(latest_cycle),
+        **_build_cycle_payload(
+            pipeline_id=pipeline_id,
+            cycle=dict(latest_cycle),
+            candidate_counts={
+                "candidate_count": len(all_opportunities),
+                "promotable": int(selection_counts.get("promotable") or 0),
+                "monitor": int(selection_counts.get("monitor") or 0),
+            },
+        ),
         "opportunities": all_opportunities,
         "live_opportunities": live_opportunities,
         "analysis_only_opportunities": analysis_only_opportunities,
         "selection_counts": selection_counts,
+        "promotable_count": int(selection_counts.get("promotable") or 0),
+        "monitor_count": int(selection_counts.get("monitor") or 0),
         "legacy_session_id": legacy_session_id,
     }
 
@@ -717,6 +836,7 @@ def get_pipeline_detail(
         execution_store=execution_store,
         session_id=legacy_session_id,
         risk_policy=_session_risk_policy(latest_run),
+        execution_policy=_session_execution_policy(latest_run),
     )
     risk_decisions = (
         []
@@ -747,18 +867,25 @@ def get_pipeline_detail(
             )
         ]
     )
+    cycle_rows = [dict(row) for row in collector_store.list_cycles(label, limit=50)]
+    cycle_counts_by_cycle_id = _candidate_counts_by_cycle_id(
+        collector_store=collector_store,
+        signal_store=signal_store,
+        cycle_ids=[str(row["cycle_id"]) for row in cycle_rows],
+    )
     cycles = [
         {
-            **dict(row),
+            **_build_cycle_payload(
+                pipeline_id=pipeline_id,
+                cycle=row,
+                candidate_counts=cycle_counts_by_cycle_id.get(str(row["cycle_id"])),
+            ),
             "legacy_session_id": build_live_run_scope_id(
                 str(row["label"]),
-                str(row["market_date"]),
+                str(row.get("session_date") or row.get("market_date")),
             ),
         }
-        for row in collector_store.list_pipeline_cycles(
-            pipeline_id=pipeline_id,
-            limit=50,
-        )
+        for row in cycle_rows
     ]
     tradeability_fields = _tradeability_fields(
         latest_run=latest_run,
@@ -816,14 +943,33 @@ def list_pipeline_cycles(
     storage: Any | None = None,
 ) -> dict[str, Any]:
     collector_store = storage.collector
-    if not collector_store.pipeline_schema_ready():
+    if not _collector_schema_ready(collector_store):
         return {"cycles": []}
+    parsed = parse_pipeline_id(pipeline_id)
+    if parsed is None:
+        return {"cycles": []}
+    signal_store = storage.signals
     rows = [
         dict(row)
-        for row in collector_store.list_pipeline_cycles(
-            pipeline_id=pipeline_id,
-            market_date=market_date,
+        for row in collector_store.list_cycles(
+            parsed["label"],
+            session_date=market_date,
             limit=limit,
         )
     ]
-    return {"cycles": rows}
+    cycle_ids = [str(row["cycle_id"]) for row in rows]
+    candidate_counts_by_cycle_id = _candidate_counts_by_cycle_id(
+        collector_store=collector_store,
+        signal_store=signal_store,
+        cycle_ids=cycle_ids,
+    )
+    return {
+        "cycles": [
+            _build_cycle_payload(
+                pipeline_id=pipeline_id,
+                cycle=row,
+                candidate_counts=candidate_counts_by_cycle_id.get(str(row["cycle_id"])),
+            )
+            for row in rows
+        ]
+    }

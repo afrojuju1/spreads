@@ -1,16 +1,30 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from spreads.db.decorators import with_storage
 from spreads.services.runtime_identity import build_live_run_scope_id
 
 
-def _serialize_opportunity(row: dict[str, Any]) -> dict[str, Any]:
+def serialize_opportunity_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    payload = dict(row)
     market_date = str(row.get("market_date") or row.get("session_date") or "")
     label = str(row.get("label") or "")
+    candidate = payload.get("candidate")
+    candidate_payload = (
+        dict(candidate)
+        if isinstance(candidate, Mapping)
+        else dict(payload.get("candidate_json") or {})
+    )
+    execution_shape = payload.get("execution_shape_json")
+    if not isinstance(execution_shape, Mapping):
+        execution_shape = payload.get("execution_shape")
+    order_payload = payload.get("order_payload_json") or payload.get("order_payload")
+    if order_payload is None and isinstance(execution_shape, Mapping):
+        order_payload = execution_shape.get("order_payload")
     return {
-        **row,
+        **payload,
         "market_date": market_date,
         "pipeline_id": row.get("pipeline_id"),
         "cycle_id": row.get("cycle_id") or row.get("source_cycle_id"),
@@ -21,13 +35,51 @@ def _serialize_opportunity(row: dict[str, Any]) -> dict[str, Any]:
         "legacy_session_id": build_live_run_scope_id(label, market_date)
         if label and market_date
         else None,
-        "order_payload": row.get("order_payload_json")
-        or row.get("execution_shape_json", {}).get("order_payload"),
-        "legs": row.get("legs_json") or [],
-        "economics": row.get("economics_json") or {},
-        "strategy_metrics": row.get("strategy_metrics_json") or {},
-        "evidence": row.get("evidence_json") or {},
+        "candidate": candidate_payload,
+        "candidate_id": row.get("source_candidate_id"),
+        "eligibility": row.get("eligibility_state") or row.get("eligibility"),
+        "order_payload": order_payload,
+        "legs": row.get("legs_json") or row.get("legs") or [],
+        "economics": row.get("economics_json") or row.get("economics") or {},
+        "strategy_metrics": row.get("strategy_metrics_json")
+        or row.get("strategy_metrics")
+        or {},
+        "evidence": row.get("evidence_json") or row.get("evidence") or {},
     }
+
+
+def list_active_cycle_opportunity_rows(
+    signal_store: Any,
+    *,
+    cycle_id: str,
+    pipeline_id: str | None = None,
+    market_date: str | None = None,
+    limit: int = 500,
+) -> list[dict[str, Any]]:
+    if signal_store is None or not signal_store.schema_ready():
+        return []
+    rows = [
+        serialize_opportunity_row(dict(row))
+        for row in signal_store.list_active_cycle_opportunities(cycle_id, limit=limit)
+    ]
+    filtered = [
+        row
+        for row in rows
+        if (pipeline_id is None or str(row.get("pipeline_id") or "") == pipeline_id)
+        and (
+            market_date is None
+            or str(row.get("market_date") or row.get("session_date") or "")
+            == market_date
+        )
+    ]
+    filtered.sort(
+        key=lambda row: (
+            0 if str(row.get("selection_state") or "") == "promotable" else 1,
+            int(row.get("selection_rank") or 999_999),
+            str(row.get("opportunity_id") or ""),
+        )
+    )
+    return filtered
 
 
 @with_storage()
@@ -43,7 +95,7 @@ def list_opportunities(
 ) -> dict[str, Any]:
     signal_store = storage.signals
     rows = [
-        _serialize_opportunity(dict(row))
+        serialize_opportunity_row(dict(row))
         for row in signal_store.list_opportunities(
             pipeline_id=pipeline_id,
             market_date=market_date,
@@ -66,4 +118,4 @@ def get_opportunity_detail(
     row = signal_store.get_opportunity(opportunity_id)
     if row is None:
         raise ValueError(f"Unknown opportunity_id: {opportunity_id}")
-    return _serialize_opportunity(dict(row))
+    return serialize_opportunity_row(dict(row))

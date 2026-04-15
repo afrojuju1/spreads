@@ -167,6 +167,62 @@ def _slot_is_terminal(slot_record: Any) -> bool:
     return str(slot_record.get("status") or "") in LIVE_SLOT_TERMINAL_STATUSES
 
 
+def _run_slot_at(run_record: Any) -> datetime | None:
+    return parse_datetime(run_record.get("slot_at") or run_record.get("scheduled_for"))
+
+
+async def _supersede_queued_live_run(
+    *,
+    job_store: Any,
+    recovery_store: Any,
+    redis: Any,
+    run_record: Any,
+    session_id: str,
+    session_date: str,
+    label: str,
+    now: datetime,
+) -> Any:
+    next_arq_job_id = build_job_attempt_id(
+        str(run_record["job_run_id"]),
+        int(run_record.get("retry_count", 0)) + 1,
+    )
+    await asyncio.to_thread(
+        job_store.requeue_job_run,
+        job_run_id=run_record["job_run_id"],
+        arq_job_id=next_arq_job_id,
+        payload=dict(run_record.get("payload") or {}),
+    )
+    superseded_record = await asyncio.to_thread(
+        job_store.update_job_run_status,
+        job_run_id=run_record["job_run_id"],
+        status="skipped",
+        expected_arq_job_id=next_arq_job_id,
+        finished_at=now,
+        error_text="Superseded by a newer live slot under scheduler coalescing.",
+    )
+    if superseded_record is not None:
+        await _publish_job_run_update(redis, superseded_record)
+    slot_at = _run_slot_at(run_record)
+    slot_iso = isoformat_utc(slot_at) if slot_at is not None else _as_text(run_record.get("slot_at"))
+    if slot_iso:
+        await asyncio.to_thread(
+            recovery_store.upsert_live_session_slot,
+            job_key=str(run_record["job_key"]),
+            session_id=session_id,
+            session_date=session_date,
+            label=label,
+            slot_at=slot_iso,
+            scheduled_for=slot_iso,
+            status=LIVE_SLOT_STATUS_MISSED,
+            job_run_id=str(run_record["job_run_id"]),
+            capture_status=_as_text(run_record.get("capture_status")),
+            recovery_note="Scheduler coalesced this stale queued slot in favor of the latest pending slot.",
+            finished_at=isoformat_utc(now),
+            updated_at=isoformat_utc(now),
+        )
+    return superseded_record
+
+
 async def _enqueue_collector_recovery_if_needed(
     *,
     job_store: Any,
@@ -326,6 +382,28 @@ async def _reconcile_live_collector_jobs(
         )
         slot_iso = isoformat_utc(slot_at)
         if run_record is None:
+            latest_slot_at = (
+                None
+                if latest_session_run is None
+                else _run_slot_at(latest_session_run)
+            )
+            if (
+                latest_session_run is not None
+                and str(latest_session_run.get("status") or "") == "queued"
+                and latest_slot_at is not None
+                and latest_slot_at < slot_at
+            ):
+                latest_session_run = await _supersede_queued_live_run(
+                    job_store=job_store,
+                    recovery_store=recovery_store,
+                    redis=redis,
+                    run_record=latest_session_run,
+                    session_id=session_id,
+                    session_date=session_date,
+                    label=label,
+                    now=now,
+                )
+                gap_detected = True
             if latest_session_run is not None and latest_session_run["status"] in {"queued", "running"} and _live_run_active(
                 latest_session_run,
                 now=now,

@@ -10,6 +10,7 @@ from spreads.services.live_collector_health import (
     build_trade_capture_summary,
 )
 from spreads.services.pipelines import get_pipeline_detail
+from spreads.services.uoa_state import get_latest_uoa_state
 from spreads.storage.collector_repository import CollectorRepository
 
 
@@ -204,6 +205,10 @@ class _PipelineCollectorStore:
     def pipeline_schema_ready(self) -> bool:
         return True
 
+    def get_cycle(self, cycle_id: str) -> dict[str, object] | None:
+        del cycle_id
+        return self.get_latest_cycle("explore_10_call_debit_weekly_auto")
+
     def get_pipeline(self, pipeline_id: str) -> dict[str, object] | None:
         return {
             "pipeline_id": pipeline_id,
@@ -216,22 +221,39 @@ class _PipelineCollectorStore:
             "updated_at": "2026-04-15T08:00:00Z",
         }
 
-    def get_latest_pipeline_cycle(
-        self, pipeline_id: str, *, market_date: str | None = None
-    ) -> dict[str, object] | None:
+    def get_latest_cycle(self, label: str) -> dict[str, object] | None:
+        del label
         return {
             "cycle_id": "cycle-live",
-            "pipeline_id": pipeline_id,
             "label": "explore_10_call_debit_weekly_auto",
-            "market_date": market_date or "2026-04-15",
+            "session_date": "2026-04-15",
             "generated_at": "2026-04-15T14:35:00Z",
+            "universe_label": "explore_10",
+            "strategy": "call_debit",
+            "profile": "weekly",
+            "greeks_source": "auto",
+            "symbols": ["MSFT"],
+            "failures": [],
+            "selection_memory": {},
         }
+
+    def list_cycles(
+        self, label: str, session_date: str | None = None, limit: int = 100
+    ) -> list[dict[str, object]]:
+        del label, limit
+        if session_date not in {None, "2026-04-15"}:
+            return []
+        return [self.get_latest_cycle("explore_10_call_debit_weekly_auto")]
 
     def list_pipeline_cycles(
         self, *, pipeline_id: str, market_date: str | None = None, limit: int = 100
     ) -> list[dict[str, object]]:
         del limit
-        row = self.get_latest_pipeline_cycle(pipeline_id, market_date=market_date)
+        row = self.get_latest_cycle("explore_10_call_debit_weekly_auto")
+        if row is not None and market_date not in {None, str(row["session_date"])}:
+            return []
+        if row is not None:
+            row = {**row, "pipeline_id": pipeline_id, "market_date": row["session_date"]}
         return [] if row is None else [row]
 
     def list_cycle_candidates(self, cycle_id: str) -> list[dict[str, object]]:
@@ -251,6 +273,10 @@ class _PipelineCollectorStore:
         ]
 
     def list_events(self, **_: object) -> list[dict[str, object]]:
+        return []
+
+    def list_cycle_events(self, cycle_id: str) -> list[dict[str, object]]:
+        del cycle_id
         return []
 
 
@@ -284,10 +310,71 @@ class _PipelineSignalStore:
     def list_opportunities(self, **_: object) -> list[dict[str, object]]:
         return []
 
+    def count_active_cycle_opportunities_by_cycle_ids(
+        self, cycle_ids: list[str], *, exclude_consumed: bool = True
+    ) -> dict[str, dict[str, int]]:
+        del exclude_consumed
+        if cycle_ids != ["cycle-live"]:
+            return {}
+        return {
+            "cycle-live": {
+                "candidate_count": 1,
+                "promotable": 1,
+                "monitor": 0,
+            }
+        }
+
 
 class _PipelineJobStore:
+    def list_job_definitions(self, **_: object) -> list[dict[str, object]]:
+        return [
+            {
+                "job_key": "live_collector:explore_10_call_debit_weekly_auto",
+                "job_type": "live_collector",
+                "enabled": True,
+                "payload": {
+                    "universe": "explore_10",
+                    "strategy": "call_debit",
+                    "profile": "weekly",
+                    "greeks_source": "auto",
+                    "execution_policy": {
+                        "enabled": True,
+                        "deployment_mode": "paper_auto",
+                        "mode": "top_promotable",
+                    },
+                },
+            }
+        ]
+
     def list_job_runs(self, **_: object) -> list[dict[str, object]]:
         return []
+
+    def get_latest_live_collector_run(self, **_: object) -> dict[str, object] | None:
+        return {
+            "job_run_id": "job-run-live",
+            "job_key": "live_collector:explore_10_call_debit_weekly_auto",
+            "job_type": "live_collector",
+            "status": "succeeded",
+            "scheduled_for": "2026-04-15T14:35:00Z",
+            "started_at": "2026-04-15T14:35:01Z",
+            "finished_at": "2026-04-15T14:35:15Z",
+            "session_id": "live:explore_10_call_debit_weekly_auto:2026-04-15",
+            "slot_at": "2026-04-15T14:35:00Z",
+            "worker_name": "worker",
+            "payload": {
+                "label": "explore_10_call_debit_weekly_auto",
+                "session_date": "2026-04-15",
+            },
+            "result": {
+                "cycle_id": "cycle-live",
+                "quote_capture": {},
+                "trade_capture": {},
+                "uoa_summary": {},
+                "uoa_quote_summary": {},
+                "uoa_decisions": {},
+                "selection_summary": {"promotable_count": 1, "monitor_count": 0},
+            },
+        }
 
 
 class _PipelineAlertStore:
@@ -452,6 +539,15 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         current_opportunity = detail["current_cycle"]["opportunities"][0]
         self.assertEqual(current_opportunity["opportunity_id"], "opp-live")
         self.assertEqual(current_opportunity["candidate"]["underlying_symbol"], "MSFT")
+        self.assertEqual(storage.collector.list_cycle_candidates_calls, 0)
+
+    def test_uoa_state_prefers_canonical_signal_opportunities(self) -> None:
+        storage = _PipelineStorage()
+
+        detail = get_latest_uoa_state(storage=storage)
+
+        self.assertEqual(detail["opportunities"][0]["opportunity_id"], "opp-live")
+        self.assertEqual(detail["opportunities"][0]["candidate"]["underlying_symbol"], "MSFT")
         self.assertEqual(storage.collector.list_cycle_candidates_calls, 0)
 
 

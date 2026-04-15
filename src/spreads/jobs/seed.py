@@ -21,6 +21,7 @@ from spreads.storage.factory import build_job_repository
 
 DEFAULT_AUTO_EXECUTION_POLICY = {
     "enabled": True,
+    "deployment_mode": "live_auto",
     "mode": "top_promotable",
     "quantity": 1,
     "pricing_mode": "adaptive_credit",
@@ -30,6 +31,7 @@ DEFAULT_AUTO_EXECUTION_POLICY = {
 DEFAULT_SHADOW_EXECUTION_POLICY = {
     **DEFAULT_AUTO_EXECUTION_POLICY,
     "enabled": False,
+    "deployment_mode": "shadow",
 }
 
 DEFAULT_AUTO_RISK_POLICY = {

@@ -34,6 +34,10 @@ from spreads.services.control_plane import (
     get_active_policy_rollout_map,
     publish_control_gate_event,
 )
+from spreads.services.deployment_policy import (
+    deployment_mode_auto_executes,
+    resolve_execution_deployment_mode,
+)
 from spreads.services.exit_manager import (
     normalize_exit_policy,
     resolve_exit_policy_snapshot,
@@ -1296,6 +1300,7 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
     raw_policy = source.get("execution_policy")
     if not isinstance(raw_policy, dict) and {
         "enabled",
+        "deployment_mode",
         "mode",
         "quantity",
         "pricing_mode",
@@ -1318,13 +1323,21 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
             _coerce_float(raw_policy.get("max_credit_concession"))
             or DEFAULT_MAX_CREDIT_CONCESSION
         )
+        deployment_mode = resolve_execution_deployment_mode(
+            raw_policy,
+            risk_policy=(
+                source.get("risk_policy")
+                if isinstance(source.get("risk_policy"), Mapping)
+                else None
+            ),
+        )
     else:
-        enabled = False
-        mode = "disabled"
+        deployment_mode = "shadow"
         quantity = 1
         pricing_mode = DEFAULT_ENTRY_PRICING_MODE
         min_credit_retention_pct = DEFAULT_MIN_CREDIT_RETENTION_PCT
         max_credit_concession = DEFAULT_MAX_CREDIT_CONCESSION
+    enabled = deployment_mode_auto_executes(deployment_mode)
     if pricing_mode not in {"midpoint", "adaptive_credit", "adaptive_debit", "adaptive"}:
         raise ValueError(f"Unsupported execution pricing mode: {pricing_mode}")
     min_credit_retention_pct = _clamp_fraction(
@@ -1334,16 +1347,20 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
     if not enabled:
         return {
             "enabled": False,
+            "deployment_mode": deployment_mode,
             "mode": "disabled",
             "quantity": quantity,
             "pricing_mode": pricing_mode,
             "min_credit_retention_pct": min_credit_retention_pct,
             "max_credit_concession": max_credit_concession,
         }
+    mode = _as_text(raw_policy.get("mode")) if isinstance(raw_policy, dict) else None
+    mode = mode or "top_promotable"
     if mode != "top_promotable":
         raise ValueError(f"Unsupported execution policy mode: {mode}")
     return {
         "enabled": True,
+        "deployment_mode": deployment_mode,
         "mode": "top_promotable",
         "quantity": max(quantity, 1),
         "pricing_mode": pricing_mode,
@@ -1745,7 +1762,12 @@ def _resolve_source_policies(
         else _as_text(job_run.get("job_type")),
         "source_job_key": None if job_run is None else _as_text(job_run.get("job_key")),
         "source_job_run_id": job_run_id,
-        "execution_policy": normalize_execution_policy(payload.get("execution_policy")),
+        "execution_policy": normalize_execution_policy(
+            {
+                "execution_policy": payload.get("execution_policy"),
+                "risk_policy": payload.get("risk_policy"),
+            }
+        ),
         "risk_policy": normalize_risk_policy(payload.get("risk_policy")),
         "exit_policy": normalize_exit_policy(payload.get("exit_policy")),
     }
@@ -2375,8 +2397,17 @@ def submit_live_session_execution(
             source_policies=source_policies,
             active_policy_rollouts=active_policy_rollouts,
         )
+        requested_risk_policy = _requested_policy_payload(
+            request_metadata=request_metadata,
+            policy_name="risk_policy",
+            source_policies=source_policies,
+            active_policy_rollouts=active_policy_rollouts,
+        )
         resolved_execution_policy = normalize_execution_policy(
-            requested_execution_policy
+            {
+                "execution_policy": requested_execution_policy,
+                "risk_policy": requested_risk_policy,
+            }
         )
         order_request, resolved_quantity, resolved_limit_price = _build_order_request(
             candidate=candidate,
@@ -2390,12 +2421,6 @@ def submit_live_session_execution(
         )
         if not live_deployment_quality["ok"]:
             raise ValueError(str(live_deployment_quality["message"]))
-        requested_risk_policy = _requested_policy_payload(
-            request_metadata=request_metadata,
-            policy_name="risk_policy",
-            source_policies=source_policies,
-            active_policy_rollouts=active_policy_rollouts,
-        )
         requested_exit_policy = _requested_policy_payload(
             request_metadata=request_metadata,
             policy_name="exit_policy",
@@ -2421,6 +2446,7 @@ def submit_live_session_execution(
             quantity=resolved_quantity,
             limit_price=resolved_limit_price,
             risk_policy=requested_risk_policy,
+            execution_policy=resolved_execution_policy,
         )
         resolved_risk_policy = dict(risk_evaluation["policy"])
         policy_refs = _build_policy_refs(
@@ -3164,14 +3190,35 @@ def submit_auto_session_execution(
 ) -> dict[str, Any]:
     active_policy_rollouts = get_active_policy_rollout_map(storage=storage)
     execution_rollout = active_policy_rollouts.get("execution_policy")
+    collector_store = storage.collector
+    cycle = collector_store.get_cycle(cycle_id)
+    source_policies = (
+        {
+            "execution_policy": normalize_execution_policy(None),
+            "risk_policy": normalize_risk_policy(None),
+        }
+        if cycle is None
+        else _resolve_source_policies(cycle=dict(cycle), job_store=storage.jobs)
+    )
     requested_policy = (
         dict(execution_rollout["policy"])
         if execution_rollout is not None
         and isinstance(execution_rollout.get("policy"), dict)
         else policy
     )
-    normalized_policy = normalize_execution_policy(requested_policy)
-    if not normalized_policy["enabled"]:
+    requested_risk_policy = _requested_policy_payload(
+        request_metadata=None,
+        policy_name="risk_policy",
+        source_policies=source_policies,
+        active_policy_rollouts=active_policy_rollouts,
+    )
+    normalized_policy = normalize_execution_policy(
+        {
+            "execution_policy": requested_policy,
+            "risk_policy": requested_risk_policy,
+        }
+    )
+    if not deployment_mode_auto_executes(str(normalized_policy["deployment_mode"])):
         return {
             "action": "auto_submit",
             "changed": False,

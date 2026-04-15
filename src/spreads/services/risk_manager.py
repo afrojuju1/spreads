@@ -9,6 +9,10 @@ from spreads.services.alpaca import (
     create_alpaca_client_from_env,
     resolve_trading_environment,
 )
+from spreads.services.deployment_policy import (
+    live_deployment_block_reason,
+    resolve_execution_deployment_mode,
+)
 from spreads.services.execution_lifecycle import (
     OPEN_ATTEMPT_STATUS_LIST,
     is_open_execution_attempt_status,
@@ -350,17 +354,21 @@ def resolve_execution_kill_switch_reason() -> str | None:
     return _kill_switch_reason()
 
 
-def _environment_reason(normalized_policy: dict[str, Any]) -> str | None:
+def _environment_reason(
+    normalized_policy: dict[str, Any],
+    *,
+    execution_policy: dict[str, Any] | None = None,
+) -> str | None:
     environment = _current_trading_environment()
-    allow_live_env = _coerce_bool(os.environ.get("SPREADS_ALLOW_LIVE_TRADING"))
-    if environment == "live" and not (
-        normalized_policy["allow_live"] and allow_live_env
-    ):
-        return (
-            "Open execution is blocked on a live Alpaca account. "
-            "Set SPREADS_ALLOW_LIVE_TRADING=true and allow_live=true to enable it."
-        )
-    return None
+    deployment_mode = resolve_execution_deployment_mode(
+        execution_policy,
+        risk_policy=normalized_policy,
+    )
+    return live_deployment_block_reason(
+        deployment_mode=deployment_mode,
+        environment=environment,
+        allow_live_env=_coerce_bool(os.environ.get("SPREADS_ALLOW_LIVE_TRADING")),
+    )
 
 
 def _candidate_timestamp(
@@ -444,6 +452,7 @@ def build_session_risk_snapshot(
     execution_store: Any,
     session_id: str,
     risk_policy: dict[str, Any] | None,
+    execution_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalized_policy = normalize_risk_policy(risk_policy)
 
@@ -466,7 +475,10 @@ def build_session_risk_snapshot(
         }
 
     try:
-        environment_reason = _environment_reason(normalized_policy)
+        environment_reason = _environment_reason(
+            normalized_policy,
+            execution_policy=execution_policy,
+        )
     except Exception as exc:
         return {
             "status": "unknown",
@@ -540,6 +552,7 @@ def evaluate_open_execution(
     quantity: int,
     limit_price: float | None,
     risk_policy: dict[str, Any] | None,
+    execution_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalized_policy = normalize_risk_policy(risk_policy)
     open_positions = _open_positions(execution_store, session_id=session_id)
@@ -618,7 +631,10 @@ def evaluate_open_execution(
         }
 
     try:
-        environment_reason = _environment_reason(normalized_policy)
+        environment_reason = _environment_reason(
+            normalized_policy,
+            execution_policy=execution_policy,
+        )
     except Exception as exc:
         return {
             "status": "unknown",
@@ -807,6 +823,7 @@ def validate_open_execution(
     quantity: int,
     limit_price: float | None,
     risk_policy: dict[str, Any] | None,
+    execution_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     decision = evaluate_open_execution(
         execution_store=execution_store,
@@ -816,6 +833,7 @@ def validate_open_execution(
         quantity=quantity,
         limit_price=limit_price,
         risk_policy=risk_policy,
+        execution_policy=execution_policy,
     )
     if decision["status"] in {"blocked", "unknown"}:
         raise ValueError(str(decision["note"]))

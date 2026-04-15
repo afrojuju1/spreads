@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from spreads.services.runtime_identity import build_pipeline_id
 from spreads.storage.base import RepositoryBase
@@ -750,6 +750,52 @@ class SignalRepository(RepositoryBase):
         if row is None:
             return None
         return self.row(row)
+
+    def count_active_cycle_opportunities_by_cycle_ids(
+        self,
+        cycle_ids: list[str],
+        *,
+        exclude_consumed: bool = True,
+    ) -> dict[str, dict[str, int]]:
+        if not cycle_ids:
+            return {}
+        statement = (
+            select(
+                OpportunityModel.cycle_id,
+                OpportunityModel.selection_state,
+                func.count().label("row_count"),
+            )
+            .where(OpportunityModel.cycle_id.in_(cycle_ids))
+            .where(
+                OpportunityModel.lifecycle_state.in_(("candidate", "ready", "blocked"))
+            )
+        )
+        if exclude_consumed:
+            statement = statement.where(
+                OpportunityModel.consumed_by_execution_attempt_id.is_(None)
+            )
+        statement = statement.group_by(
+            OpportunityModel.cycle_id,
+            OpportunityModel.selection_state,
+        )
+        counts: dict[str, dict[str, int]] = {}
+        with self.session_factory() as session:
+            rows = session.execute(statement).all()
+        for cycle_id, selection_state, row_count in rows:
+            cycle_counts = counts.setdefault(
+                str(cycle_id),
+                {
+                    "candidate_count": 0,
+                    "promotable": 0,
+                    "monitor": 0,
+                },
+            )
+            count = int(row_count or 0)
+            cycle_counts["candidate_count"] += count
+            normalized_state = str(selection_state or "")
+            if normalized_state in {"promotable", "monitor"}:
+                cycle_counts[normalized_state] += count
+        return counts
 
     def mark_opportunity_consumed(
         self,

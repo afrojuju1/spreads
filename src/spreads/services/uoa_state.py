@@ -9,6 +9,7 @@ from spreads.services.live_collector_health import (
     enrich_live_collector_job_run_payload,
     normalize_uoa_decisions_payload,
 )
+from spreads.services.opportunities import list_active_cycle_opportunity_rows
 
 
 def _cycle_id_from_run_payload(run_payload: Mapping[str, Any]) -> str | None:
@@ -38,6 +39,7 @@ def _build_uoa_state_payload(
     *,
     run_record: Mapping[str, Any],
     collector_store: Any,
+    signal_store: Any,
 ) -> dict[str, Any]:
     run_payload = enrich_live_collector_job_run_payload(run_record)
     if run_payload is None:
@@ -46,7 +48,23 @@ def _build_uoa_state_payload(
     if cycle_id is None:
         raise ValueError("Live collector run is missing cycle_id")
     cycle = _collector_cycle_payload(collector_store, cycle_id=cycle_id)
-    opportunities = collector_store.list_cycle_candidates(cycle_id)
+    opportunities = list_active_cycle_opportunity_rows(
+        signal_store,
+        cycle_id=cycle_id,
+        pipeline_id=(
+            None
+            if cycle is None
+            else str(cycle.get("pipeline_id") or f"pipeline:{str(cycle['label']).lower()}")
+        ),
+        market_date=None if cycle is None else str(cycle.get("session_date") or ""),
+    )
+    signal_schema_ready = bool(
+        signal_store is not None
+        and hasattr(signal_store, "schema_ready")
+        and signal_store.schema_ready()
+    )
+    if not opportunities and not signal_schema_ready:
+        opportunities = [dict(item) for item in collector_store.list_cycle_candidates(cycle_id)]
     selection_counts = {
         "promotable": 0,
         "monitor": 0,
@@ -103,7 +121,9 @@ def get_latest_uoa_state(
     if run_record is None:
         raise ValueError("No completed live collector run was found")
     return _build_uoa_state_payload(
-        run_record=run_record, collector_store=storage.collector
+        run_record=run_record,
+        collector_store=storage.collector,
+        signal_store=storage.signals,
     )
 
 
@@ -125,5 +145,7 @@ def get_uoa_state_for_cycle(
             f"No completed live collector run was found for cycle_id={cycle_id}"
         )
     return _build_uoa_state_payload(
-        run_record=run_record, collector_store=storage.collector
+        run_record=run_record,
+        collector_store=storage.collector,
+        signal_store=storage.signals,
     )
