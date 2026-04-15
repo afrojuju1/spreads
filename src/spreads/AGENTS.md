@@ -18,7 +18,7 @@
 
 ## Canonical Ownership
 
-- session list/detail: `services/sessions.py`
+- pipeline/session runtime list/detail: `services/pipelines.py`
 - actual account and trading health: `services/account_state.py`
 - closed-session verdicts and recommendations: `services/post_market_analysis.py` and `storage/post_market_repository.py`
 - alert delivery state: `storage/alert_repository.py`
@@ -27,29 +27,16 @@
 ## Operator Visibility
 
 - For operator visibility work, reuse these modules with thin adapters instead of introducing parallel API-only logic.
-- Prefer the shipped ops CLI for first-pass checks before dropping to raw storage or HTTP:
-  - `uv run spreads status`
-  - `uv run spreads trading`
-  - `uv run spreads sessions`
-  - `uv run spreads jobs`
-  - `uv run spreads uoa`
-  - `uv run spreads audit <session-id>`
-- For offline opportunity-selection research or threshold tuning, use the canonical replay CLI:
-  - `uv run spreads replay`
-  - `uv run spreads replay --label <label> --date <YYYY-MM-DD>`
-  - `uv run spreads replay recent --limit <N>`
-- Treat `uv run spreads replay` as the canonical decision-evaluation path.
-- Treat `uv run spreads analyze` / `services.analysis.py` as legacy post-close reporting, not the canonical decision-replay path.
-- `uv run spreads doctor` is not a current command; do not rely on it in investigations or automations.
+- For first-pass ops/runtime checks and replay workflows, follow the repo-level CLI guidance in [../../AGENTS.md](../../AGENTS.md). Keep the canonical command list there instead of repeating it in backend-specific instructions.
+- Treat `services.analysis.py` as legacy post-close reporting, not the canonical decision-replay path.
 - For closed-session investigations, check post-market analysis before tuning strategy thresholds from raw session counts alone.
 
 ## End-Of-Day And Ops Queries
 
 - For questions about "how did we do today", market-close summaries, collector health, or live ops status, prefer the running Docker-backed system state before code inspection.
-- For the covered visibility surfaces, use the shipped `spreads` ops commands before ad hoc curls or direct repository reads.
 - Use the existing stack and narrow live reads first:
   - account and trading health: `services/account_state.py` or `http://localhost:58080/account/overview?history_range=1D`
-  - session health: `services/sessions.py` or `http://localhost:58080/sessions?limit=...`
+  - pipeline/session runtime health: `services/pipelines.py` or `uv run spreads pipelines`
   - closed-session analysis: `storage/post_market_repository.py` / `services/post_market_analysis.py` or `http://localhost:58080/post-market/{session_date}/{label}`
 - Always distinguish actual account PnL from modeled post-market outcomes. Do not present modeled idea outcomes as realized account performance.
 - Replay output now includes modeled close/final PnL and actual traded-position PnL. Treat modeled and actual metrics as separate evaluation planes.

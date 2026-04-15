@@ -27,7 +27,7 @@
 - For operator visibility or runtime triage, prefer the shipped ops CLI first when it fits the question:
   - `uv run spreads status`
   - `uv run spreads trading`
-  - `uv run spreads sessions`
+  - `uv run spreads pipelines`
   - `uv run spreads jobs`
   - `uv run spreads uoa`
   - `uv run spreads audit <session-id>`
