@@ -89,6 +89,33 @@ class LiveTickContext:
     slot_at: str
 
 
+@dataclass(frozen=True)
+class LiveCaptureSnapshot:
+    candidates: list[dict[str, Any]]
+    contract_metadata_by_symbol: dict[str, dict[str, Any]]
+    expected_quote_symbols: list[str]
+    expected_trade_symbols: list[str]
+    expected_uoa_roots: list[str]
+    quote_event_count: int
+    baseline_quote_event_count: int
+    stream_quote_event_count: int
+    recovery_quote_event_count: int
+    trade_event_count: int
+    stream_trade_event_count: int
+    latest_quote_records: list[dict[str, Any]]
+    stream_quote_records: list[dict[str, Any]]
+    recovery_quote_records: list[dict[str, Any]]
+    stream_trade_records: list[dict[str, Any]]
+    reactive_quote_records: list[dict[str, Any]]
+    quote_capture: dict[str, Any]
+    trade_capture: dict[str, Any]
+    uoa_summary: dict[str, Any]
+    uoa_quote_summary: dict[str, Any]
+    uoa_decisions: dict[str, Any]
+    stream_quote_error: str | None
+    stream_trade_error: str | None
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Poll the options scanner intraday and persist live opportunity cycles, selection state, and quote events to Postgres."
@@ -396,6 +423,332 @@ def build_capture_candidates(
             break
 
     return capture_candidates
+
+
+def build_preselection_capture_candidates(
+    symbol_candidates: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    capture_candidates: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for rows in symbol_candidates.values():
+        for candidate in rows:
+            if not isinstance(candidate, dict):
+                continue
+            identity = _capture_candidate_identity(candidate)
+            if not all(identity) or identity in seen:
+                continue
+            seen.add(identity)
+            capture_candidates.append(dict(candidate))
+    capture_candidates.sort(
+        key=lambda candidate: float(candidate.get("quality_score") or 0.0),
+        reverse=True,
+    )
+    return capture_candidates
+
+
+def capture_live_option_market_state(
+    *,
+    args: argparse.Namespace,
+    scanner_args: argparse.Namespace,
+    client: AlpacaClient,
+    history_store: RunHistoryRepository,
+    event_store: EventRepository,
+    label: str,
+    cycle_id: str,
+    generated_at: str,
+    session_date: str,
+    tick_context: LiveTickContext | None,
+    capture_candidates: list[dict[str, Any]],
+) -> LiveCaptureSnapshot:
+    quote_event_count = 0
+    baseline_quote_event_count = 0
+    stream_quote_event_count = 0
+    recovery_quote_event_count = 0
+    trade_event_count = 0
+    stream_trade_event_count = 0
+    latest_quote_records: list[dict[str, Any]] = []
+    stream_quote_records: list[dict[str, Any]] = []
+    recovery_quote_records: list[dict[str, Any]] = []
+    stream_trade_records: list[dict[str, Any]] = []
+    stream_quote_error: str | None = None
+    stream_trade_error: str | None = None
+    contract_metadata_by_symbol = build_quote_symbol_metadata(capture_candidates)
+    expected_quote_symbols = list(contract_metadata_by_symbol.keys())
+    expected_trade_symbols = list(build_trade_symbol_metadata(capture_candidates).keys())
+    expected_uoa_roots = sorted(
+        {
+            str(candidate.get("underlying_symbol") or "").strip()
+            for candidate in capture_candidates
+            if str(candidate.get("underlying_symbol") or "").strip()
+        }
+    )
+    if capture_candidates:
+        try:
+            latest_quote_records = collect_latest_quote_records(
+                client=client,
+                candidates=capture_candidates,
+                feed=scanner_args.feed,
+            )
+            baseline_quote_event_count = history_store.save_option_quote_events(
+                cycle_id=cycle_id,
+                label=label,
+                profile=args.profile,
+                quotes=latest_quote_records,
+            )
+            quote_event_count += baseline_quote_event_count
+            try:
+                _record_quote_market_events(
+                    event_store=event_store,
+                    cycle_id=cycle_id,
+                    label=label,
+                    profile=args.profile,
+                    session_date=session_date,
+                    session_id=None if tick_context is None else tick_context.session_id,
+                    job_run_id=None if tick_context is None else tick_context.job_run_id,
+                    quotes=latest_quote_records,
+                )
+            except Exception as exc:
+                print(f"Live latest quote event normalization unavailable: {exc}")
+        except Exception as exc:
+            print(f"Live latest quote capture unavailable: {exc}")
+        trade_storage_ready = history_store.schema_has_tables("option_trade_events")
+        if args.trade_capture_seconds > 0 and not trade_storage_ready:
+            print(
+                "Option trade capture unavailable: option_trade_events table is missing."
+            )
+        stream_quote_duration_seconds = float(max(args.quote_capture_seconds, 0))
+        stream_trade_duration_seconds = (
+            float(args.trade_capture_seconds) if trade_storage_ready else 0.0
+        )
+        if stream_quote_duration_seconds > 0 or stream_trade_duration_seconds > 0:
+            try:
+                capture_args = argparse.Namespace(**vars(args))
+                capture_args.quote_capture_seconds = stream_quote_duration_seconds
+                capture_args.trade_capture_seconds = stream_trade_duration_seconds
+                capture_response = collect_websocket_market_data_records(
+                    args=capture_args,
+                    candidates=capture_candidates,
+                    feed=scanner_args.feed,
+                )
+                stream_quote_records = [
+                    dict(item)
+                    for item in (capture_response.get("quotes") or [])
+                    if isinstance(item, dict)
+                ]
+                stream_trade_records = [
+                    dict(item)
+                    for item in (capture_response.get("trades") or [])
+                    if isinstance(item, dict)
+                ]
+                stream_quote_error = (
+                    None
+                    if capture_response.get("quote_error") in (None, "")
+                    else str(capture_response.get("quote_error"))
+                )
+                stream_trade_error = (
+                    None
+                    if capture_response.get("trade_error") in (None, "")
+                    else str(capture_response.get("trade_error"))
+                )
+                if stream_quote_error:
+                    print(
+                        "Live stream quote capture unavailable: "
+                        f"{stream_quote_error}"
+                    )
+                if stream_trade_error:
+                    print(
+                        "Live stream trade capture unavailable: "
+                        f"{stream_trade_error}"
+                    )
+                if stream_quote_records:
+                    stream_quote_event_count = history_store.save_option_quote_events(
+                        cycle_id=cycle_id,
+                        label=label,
+                        profile=args.profile,
+                        quotes=stream_quote_records,
+                    )
+                    quote_event_count += stream_quote_event_count
+                    try:
+                        _record_quote_market_events(
+                            event_store=event_store,
+                            cycle_id=cycle_id,
+                            label=label,
+                            profile=args.profile,
+                            session_date=session_date,
+                            session_id=None
+                            if tick_context is None
+                            else tick_context.session_id,
+                            job_run_id=None
+                            if tick_context is None
+                            else tick_context.job_run_id,
+                            quotes=stream_quote_records,
+                        )
+                    except Exception as exc:
+                        print(
+                            "Live stream quote event normalization unavailable: "
+                            f"{exc}"
+                        )
+                if stream_trade_records:
+                    stream_trade_event_count = history_store.save_option_trade_events(
+                        cycle_id=cycle_id,
+                        label=label,
+                        profile=args.profile,
+                        trades=stream_trade_records,
+                    )
+                    trade_event_count += stream_trade_event_count
+                    try:
+                        _record_trade_market_events(
+                            event_store=event_store,
+                            cycle_id=cycle_id,
+                            label=label,
+                            profile=args.profile,
+                            session_date=session_date,
+                            session_id=None
+                            if tick_context is None
+                            else tick_context.session_id,
+                            job_run_id=None
+                            if tick_context is None
+                            else tick_context.job_run_id,
+                            trades=stream_trade_records,
+                        )
+                    except Exception as exc:
+                        print(
+                            "Live stream trade event normalization unavailable: "
+                            f"{exc}"
+                        )
+            except Exception as exc:
+                print(f"Live stream market-data capture unavailable: {exc}")
+        if quote_event_count == 0:
+            try:
+                recovery_quote_records = collect_latest_quote_records(
+                    client=client,
+                    candidates=capture_candidates,
+                    feed=scanner_args.feed,
+                    attempts=3,
+                    retry_delay_seconds=2.0,
+                    source="alpaca_latest_quote_recovery",
+                )
+                recovered_quote_event_count = history_store.save_option_quote_events(
+                    cycle_id=cycle_id,
+                    label=label,
+                    profile=args.profile,
+                    quotes=recovery_quote_records,
+                )
+                quote_event_count += recovered_quote_event_count
+                try:
+                    _record_quote_market_events(
+                        event_store=event_store,
+                        cycle_id=cycle_id,
+                        label=label,
+                        profile=args.profile,
+                        session_date=session_date,
+                        session_id=None if tick_context is None else tick_context.session_id,
+                        job_run_id=None if tick_context is None else tick_context.job_run_id,
+                        quotes=recovery_quote_records,
+                    )
+                except Exception as exc:
+                    print(f"Live recovery quote event normalization unavailable: {exc}")
+                recovery_quote_event_count = recovered_quote_event_count
+            except Exception as exc:
+                print(f"Live quote recovery unavailable: {exc}")
+    quote_capture = build_quote_capture_summary(
+        expected_quote_symbols=expected_quote_symbols,
+        total_quote_events_saved=quote_event_count,
+        baseline_quote_events_saved=baseline_quote_event_count,
+        stream_quote_events_saved=stream_quote_event_count,
+        recovery_quote_events_saved=recovery_quote_event_count,
+    )
+    trade_capture = build_trade_capture_summary(
+        expected_trade_symbols=expected_trade_symbols,
+        total_trade_events_saved=trade_event_count,
+        stream_trade_events_saved=stream_trade_event_count,
+    )
+    reactive_quote_records = [
+        *latest_quote_records,
+        *stream_quote_records,
+        *recovery_quote_records,
+    ]
+    uoa_summary = build_uoa_trade_summary(
+        as_of=generated_at,
+        expected_trade_symbols=expected_trade_symbols,
+        contract_metadata_by_symbol=contract_metadata_by_symbol,
+        trades=stream_trade_records,
+        top_contracts_limit=max(len(expected_trade_symbols), 10),
+        top_roots_limit=max(len(expected_uoa_roots), 10),
+    )
+    uoa_quote_summary = build_uoa_quote_summary(
+        as_of=generated_at,
+        expected_quote_symbols=expected_quote_symbols,
+        contract_metadata_by_symbol=contract_metadata_by_symbol,
+        quotes=reactive_quote_records,
+    )
+    uoa_baselines = build_uoa_trade_baselines(
+        history_store=history_store,
+        label=label,
+        session_date=session_date,
+        as_of=generated_at,
+        underlyings=expected_uoa_roots,
+    )
+    uoa_decisions = build_uoa_root_decisions(
+        uoa_summary=uoa_summary,
+        baselines_by_symbol=uoa_baselines,
+        quote_summary=uoa_quote_summary,
+        capture_window_seconds=float(max(args.trade_capture_seconds, 1)),
+    )
+    if expected_trade_symbols or stream_trade_records:
+        try:
+            _record_uoa_summary_event(
+                event_store=event_store,
+                cycle_id=cycle_id,
+                generated_at=generated_at,
+                label=label,
+                profile=args.profile,
+                session_date=session_date,
+                session_id=None if tick_context is None else tick_context.session_id,
+                job_run_id=None if tick_context is None else tick_context.job_run_id,
+                summary=uoa_summary,
+            )
+        except Exception as exc:
+            print(f"UOA summary event publish unavailable: {exc}")
+        try:
+            _record_uoa_decision_event(
+                event_store=event_store,
+                cycle_id=cycle_id,
+                generated_at=generated_at,
+                label=label,
+                profile=args.profile,
+                session_date=session_date,
+                session_id=None if tick_context is None else tick_context.session_id,
+                job_run_id=None if tick_context is None else tick_context.job_run_id,
+                decisions=uoa_decisions,
+            )
+        except Exception as exc:
+            print(f"UOA decision event publish unavailable: {exc}")
+    return LiveCaptureSnapshot(
+        candidates=list(capture_candidates),
+        contract_metadata_by_symbol=contract_metadata_by_symbol,
+        expected_quote_symbols=expected_quote_symbols,
+        expected_trade_symbols=expected_trade_symbols,
+        expected_uoa_roots=expected_uoa_roots,
+        quote_event_count=quote_event_count,
+        baseline_quote_event_count=baseline_quote_event_count,
+        stream_quote_event_count=stream_quote_event_count,
+        recovery_quote_event_count=recovery_quote_event_count,
+        trade_event_count=trade_event_count,
+        stream_trade_event_count=stream_trade_event_count,
+        latest_quote_records=latest_quote_records,
+        stream_quote_records=stream_quote_records,
+        recovery_quote_records=recovery_quote_records,
+        stream_trade_records=stream_trade_records,
+        reactive_quote_records=reactive_quote_records,
+        quote_capture=quote_capture,
+        trade_capture=trade_capture,
+        uoa_summary=uoa_summary,
+        uoa_quote_summary=uoa_quote_summary,
+        uoa_decisions=uoa_decisions,
+        stream_quote_error=stream_quote_error,
+        stream_trade_error=stream_trade_error,
+    )
 
 
 def collect_latest_quote_records(
@@ -931,22 +1284,6 @@ def _run_collection_cycle(
         greeks_source=args.greeks_source,
     )
     cycle_id = build_cycle_id(label)
-    latest_live_collector_run = job_store.get_latest_live_collector_run(
-        label=label,
-        status="succeeded",
-    )
-    signal_cycle_context = {}
-    if latest_live_collector_run is not None:
-        latest_run_payload = enrich_live_collector_job_run_payload(latest_live_collector_run)
-        signal_cycle_context = {
-            "uoa_decisions": dict(latest_run_payload.get("uoa_decisions") or {}),
-            "uoa_quote_summary": dict(
-                latest_run_payload.get("uoa_quote_summary") or {}
-            ),
-            "selection_summary": dict(
-                latest_run_payload.get("selection_summary") or {}
-            ),
-        }
     run_ids = {
         (result.symbol, result.args.strategy): result.run_id for result in scan_results
     }
@@ -955,6 +1292,25 @@ def _run_collection_cycle(
         run_ids,
         max_per_strategy=WATCHLIST_PER_STRATEGY,
     )
+    capture_snapshot = capture_live_option_market_state(
+        args=args,
+        scanner_args=scanner_args,
+        client=client,
+        history_store=history_store,
+        event_store=event_store,
+        label=label,
+        cycle_id=cycle_id,
+        generated_at=generated_at,
+        session_date=session_date,
+        tick_context=tick_context,
+        capture_candidates=build_preselection_capture_candidates(
+            symbol_strategy_candidates
+        ),
+    )
+    signal_cycle_context = {
+        "uoa_decisions": dict(capture_snapshot.uoa_decisions),
+        "uoa_quote_summary": dict(capture_snapshot.uoa_quote_summary),
+    }
     previous_promotable, previous_selection_memory = read_previous_selection(
         collector_store, label
     )
@@ -1003,7 +1359,7 @@ def _run_collection_cycle(
     selection_memory = dict(selection["selection_memory"])
     events = list(selection["events"])
     selection_summary = build_selection_summary(opportunities)
-    collector_store.save_cycle(
+    persisted_opportunities = collector_store.save_cycle(
         cycle_id=cycle_id,
         label=label,
         generated_at=generated_at,
@@ -1038,49 +1394,23 @@ def _run_collection_cycle(
             symbol_candidates=symbol_strategy_candidates,
             selection_memory=selection_memory,
             failures=[asdict(failure) for failure in failures],
-            persisted_opportunities=collector_store.list_cycle_candidates(cycle_id),
+            persisted_opportunities=persisted_opportunities,
         )
     except Exception as exc:
         print(f"Signal-state sync unavailable: {exc}")
     if heartbeat is not None:
         heartbeat()
-    quote_event_count = 0
-    baseline_quote_event_count = 0
-    stream_quote_event_count = 0
-    recovery_quote_event_count = 0
-    trade_event_count = 0
-    stream_trade_event_count = 0
-    latest_quote_records: list[dict[str, Any]] = []
-    stream_quote_records: list[dict[str, Any]] = []
-    recovery_quote_records: list[dict[str, Any]] = []
-    stream_trade_records: list[dict[str, Any]] = []
-    stream_quote_error: str | None = None
-    stream_trade_error: str | None = None
     quote_candidates = build_capture_candidates(
         promotable_candidates=promotable_payloads,
         monitor_candidates=monitor_payloads,
         opportunities=opportunities,
         monitor_limit=WATCHLIST_QUOTE_CAPTURE_TOP,
     )
-    contract_metadata_by_symbol = build_quote_symbol_metadata(quote_candidates)
-    expected_quote_symbols = list(contract_metadata_by_symbol.keys())
-    expected_trade_symbols = list(build_trade_symbol_metadata(quote_candidates).keys())
-    expected_uoa_roots = sorted(
-        {
-            str(candidate.get("underlying_symbol") or "").strip()
-            for candidate in quote_candidates
-            if str(candidate.get("underlying_symbol") or "").strip()
-        }
-    )
     capture_targets: dict[str, list[dict[str, Any]]] = {
         "promotable": [],
         "monitor": [],
     }
-    recorder_capture_requested_at: str | None = None
     if tick_context is not None and recovery_store is not None:
-        requested_at = (
-            datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-        )
         try:
             target_refresh = refresh_live_session_capture_targets(
                 recovery_store=recovery_store,
@@ -1102,232 +1432,21 @@ def _run_collection_cycle(
                     target_refresh.get("capture_targets") or {}
                 ).items()
             }
-            recorder_capture_requested_at = requested_at
         except Exception as exc:
             print(f"Capture target refresh unavailable: {exc}")
-    if quote_candidates:
-        try:
-            latest_quote_records = collect_latest_quote_records(
-                client=client,
-                candidates=quote_candidates,
-                feed=scanner_args.feed,
-            )
-            baseline_quote_event_count = history_store.save_option_quote_events(
-                cycle_id=cycle_id,
-                label=label,
-                profile=args.profile,
-                quotes=latest_quote_records,
-            )
-            quote_event_count += baseline_quote_event_count
-            try:
-                _record_quote_market_events(
-                    event_store=event_store,
-                    cycle_id=cycle_id,
-                    label=label,
-                    profile=args.profile,
-                    session_date=session_date,
-                    session_id=None
-                    if tick_context is None
-                    else tick_context.session_id,
-                    job_run_id=None
-                    if tick_context is None
-                    else tick_context.job_run_id,
-                    quotes=latest_quote_records,
-                )
-            except Exception as exc:
-                print(f"Live latest quote event normalization unavailable: {exc}")
-        except Exception as exc:
-            print(f"Live latest quote capture unavailable: {exc}")
-        trade_storage_ready = history_store.schema_has_tables("option_trade_events")
-        if args.trade_capture_seconds > 0 and not trade_storage_ready:
-            print(
-                "Option trade capture unavailable: option_trade_events table is missing."
-            )
-        stream_quote_duration_seconds = float(max(args.quote_capture_seconds, 0))
-        stream_trade_duration_seconds = (
-            float(args.trade_capture_seconds) if trade_storage_ready else 0.0
-        )
-        if stream_quote_duration_seconds > 0 or stream_trade_duration_seconds > 0:
-            try:
-                using_market_recorder = recorder_capture_requested_at is not None
-                if using_market_recorder:
-                    capture_response = collect_recorded_market_data_records(
-                        history_store=history_store,
-                        label=label,
-                        profile=args.profile,
-                        expected_quote_symbols=expected_quote_symbols,
-                        expected_trade_symbols=expected_trade_symbols,
-                        captured_from=recorder_capture_requested_at,
-                        wait_timeout_seconds=max(
-                            stream_quote_duration_seconds,
-                            stream_trade_duration_seconds,
-                            1.0,
-                        )
-                        + MARKET_RECORDER_POLL_SECONDS
-                        + MARKET_RECORDER_WAIT_GRACE_SECONDS,
-                    )
-                else:
-                    capture_args = argparse.Namespace(**vars(args))
-                    capture_args.quote_capture_seconds = stream_quote_duration_seconds
-                    capture_args.trade_capture_seconds = stream_trade_duration_seconds
-                    capture_response = collect_websocket_market_data_records(
-                        args=capture_args,
-                        candidates=quote_candidates,
-                        feed=scanner_args.feed,
-                    )
-                stream_quote_records = [
-                    dict(item)
-                    for item in (capture_response.get("quotes") or [])
-                    if isinstance(item, dict)
-                ]
-                stream_trade_records = [
-                    dict(item)
-                    for item in (capture_response.get("trades") or [])
-                    if isinstance(item, dict)
-                ]
-                stream_quote_error = (
-                    None
-                    if capture_response.get("quote_error") in (None, "")
-                    else str(capture_response.get("quote_error"))
-                )
-                stream_trade_error = (
-                    None
-                    if capture_response.get("trade_error") in (None, "")
-                    else str(capture_response.get("trade_error"))
-                )
-                if stream_quote_error:
-                    print(
-                        f"Live {'recorder' if using_market_recorder else 'stream'} quote capture unavailable: {stream_quote_error}"
-                    )
-                if stream_trade_error:
-                    print(
-                        f"Live {'recorder' if using_market_recorder else 'stream'} trade capture unavailable: {stream_trade_error}"
-                    )
-                if stream_quote_records:
-                    if using_market_recorder:
-                        if bool(capture_response.get("quote_complete", True)):
-                            stream_quote_event_count = len(stream_quote_records)
-                    else:
-                        stream_quote_event_count = (
-                            history_store.save_option_quote_events(
-                                cycle_id=cycle_id,
-                                label=label,
-                                profile=args.profile,
-                                quotes=stream_quote_records,
-                            )
-                        )
-                    quote_event_count += stream_quote_event_count
-                    try:
-                        _record_quote_market_events(
-                            event_store=event_store,
-                            cycle_id=cycle_id,
-                            label=label,
-                            profile=args.profile,
-                            session_date=session_date,
-                            session_id=None
-                            if tick_context is None
-                            else tick_context.session_id,
-                            job_run_id=None
-                            if tick_context is None
-                            else tick_context.job_run_id,
-                            quotes=stream_quote_records,
-                        )
-                    except Exception as exc:
-                        print(
-                            f"Live {'recorder' if using_market_recorder else 'stream'} quote event normalization unavailable: {exc}"
-                        )
-                if stream_trade_records:
-                    if using_market_recorder:
-                        stream_trade_event_count = len(stream_trade_records)
-                    else:
-                        stream_trade_event_count = (
-                            history_store.save_option_trade_events(
-                                cycle_id=cycle_id,
-                                label=label,
-                                profile=args.profile,
-                                trades=stream_trade_records,
-                            )
-                        )
-                    trade_event_count += stream_trade_event_count
-                    try:
-                        _record_trade_market_events(
-                            event_store=event_store,
-                            cycle_id=cycle_id,
-                            label=label,
-                            profile=args.profile,
-                            session_date=session_date,
-                            session_id=None
-                            if tick_context is None
-                            else tick_context.session_id,
-                            job_run_id=None
-                            if tick_context is None
-                            else tick_context.job_run_id,
-                            trades=stream_trade_records,
-                        )
-                    except Exception as exc:
-                        print(
-                            f"Live {'recorder' if using_market_recorder else 'stream'} trade event normalization unavailable: {exc}"
-                        )
-            except Exception as exc:
-                print(
-                    "Live "
-                    f"{'recorder' if recorder_capture_requested_at is not None else 'stream'} "
-                    f"market-data capture unavailable: {exc}"
-                )
-        if quote_event_count == 0:
-            try:
-                recovery_quote_records = collect_latest_quote_records(
-                    client=client,
-                    candidates=quote_candidates,
-                    feed=scanner_args.feed,
-                    attempts=3,
-                    retry_delay_seconds=2.0,
-                    source="alpaca_latest_quote_recovery",
-                )
-                recovered_quote_event_count = history_store.save_option_quote_events(
-                    cycle_id=cycle_id,
-                    label=label,
-                    profile=args.profile,
-                    quotes=recovery_quote_records,
-                )
-                quote_event_count += recovered_quote_event_count
-                try:
-                    _record_quote_market_events(
-                        event_store=event_store,
-                        cycle_id=cycle_id,
-                        label=label,
-                        profile=args.profile,
-                        session_date=session_date,
-                        session_id=None
-                        if tick_context is None
-                        else tick_context.session_id,
-                        job_run_id=None
-                        if tick_context is None
-                        else tick_context.job_run_id,
-                        quotes=recovery_quote_records,
-                    )
-                except Exception as exc:
-                    print(f"Live recovery quote event normalization unavailable: {exc}")
-                recovery_quote_event_count = recovered_quote_event_count
-            except Exception as exc:
-                print(f"Live quote recovery unavailable: {exc}")
-    quote_capture = build_quote_capture_summary(
-        expected_quote_symbols=expected_quote_symbols,
-        total_quote_events_saved=quote_event_count,
-        baseline_quote_events_saved=baseline_quote_event_count,
-        stream_quote_events_saved=stream_quote_event_count,
-        recovery_quote_events_saved=recovery_quote_event_count,
-    )
-    trade_capture = build_trade_capture_summary(
-        expected_trade_symbols=expected_trade_symbols,
-        total_trade_events_saved=trade_event_count,
-        stream_trade_events_saved=stream_trade_event_count,
-    )
-    reactive_quote_records = [
-        *latest_quote_records,
-        *stream_quote_records,
-        *recovery_quote_records,
-    ]
+    quote_event_count = capture_snapshot.quote_event_count
+    baseline_quote_event_count = capture_snapshot.baseline_quote_event_count
+    stream_quote_event_count = capture_snapshot.stream_quote_event_count
+    recovery_quote_event_count = capture_snapshot.recovery_quote_event_count
+    trade_event_count = capture_snapshot.trade_event_count
+    stream_trade_event_count = capture_snapshot.stream_trade_event_count
+    expected_quote_symbols = list(capture_snapshot.expected_quote_symbols)
+    expected_trade_symbols = list(capture_snapshot.expected_trade_symbols)
+    stream_quote_error = capture_snapshot.stream_quote_error
+    stream_trade_error = capture_snapshot.stream_trade_error
+    quote_capture = dict(capture_snapshot.quote_capture)
+    trade_capture = dict(capture_snapshot.trade_capture)
+    reactive_quote_records = list(capture_snapshot.reactive_quote_records)
     live_action_gate = build_live_action_gate(
         profile=args.profile,
         quote_capture=quote_capture,
@@ -1373,62 +1492,9 @@ def _run_collection_cycle(
                 live_action_gate = history_gate
         except Exception as exc:
             print(f"Live capture history gate unavailable: {exc}")
-    uoa_summary = build_uoa_trade_summary(
-        as_of=generated_at,
-        expected_trade_symbols=expected_trade_symbols,
-        contract_metadata_by_symbol=contract_metadata_by_symbol,
-        trades=stream_trade_records,
-        top_contracts_limit=max(len(expected_trade_symbols), 10),
-        top_roots_limit=max(len(expected_uoa_roots), 10),
-    )
-    uoa_quote_summary = build_uoa_quote_summary(
-        as_of=generated_at,
-        expected_quote_symbols=expected_quote_symbols,
-        contract_metadata_by_symbol=contract_metadata_by_symbol,
-        quotes=reactive_quote_records,
-    )
-    uoa_baselines = build_uoa_trade_baselines(
-        history_store=history_store,
-        label=label,
-        session_date=session_date,
-        as_of=generated_at,
-        underlyings=expected_uoa_roots,
-    )
-    uoa_decisions = build_uoa_root_decisions(
-        uoa_summary=uoa_summary,
-        baselines_by_symbol=uoa_baselines,
-        quote_summary=uoa_quote_summary,
-        capture_window_seconds=float(max(args.trade_capture_seconds, 1)),
-    )
-    if expected_trade_symbols or stream_trade_records:
-        try:
-            _record_uoa_summary_event(
-                event_store=event_store,
-                cycle_id=cycle_id,
-                generated_at=generated_at,
-                label=label,
-                profile=args.profile,
-                session_date=session_date,
-                session_id=None if tick_context is None else tick_context.session_id,
-                job_run_id=None if tick_context is None else tick_context.job_run_id,
-                summary=uoa_summary,
-            )
-        except Exception as exc:
-            print(f"UOA summary event publish unavailable: {exc}")
-        try:
-            _record_uoa_decision_event(
-                event_store=event_store,
-                cycle_id=cycle_id,
-                generated_at=generated_at,
-                label=label,
-                profile=args.profile,
-                session_date=session_date,
-                session_id=None if tick_context is None else tick_context.session_id,
-                job_run_id=None if tick_context is None else tick_context.job_run_id,
-                decisions=uoa_decisions,
-            )
-        except Exception as exc:
-            print(f"UOA decision event publish unavailable: {exc}")
+    uoa_summary = dict(capture_snapshot.uoa_summary)
+    uoa_quote_summary = dict(capture_snapshot.uoa_quote_summary)
+    uoa_decisions = dict(capture_snapshot.uoa_decisions)
     if heartbeat is not None:
         heartbeat()
     auto_execution: dict[str, Any] | None = None

@@ -4,18 +4,17 @@ from datetime import date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import Integer, and_, delete, func, select
 
 from spreads.storage.base import RepositoryBase
 from spreads.storage.collector_models import (
     CollectorCycleCandidateModel,
     CollectorCycleEventModel,
     CollectorCycleModel,
-    PipelineCycleModel,
-    PipelineModel,
 )
 from spreads.services.runtime_identity import (
     build_pipeline_id,
+    parse_pipeline_id,
     resolve_pipeline_policy_fields,
 )
 from spreads.storage.records import (
@@ -39,7 +38,7 @@ class CollectorRepository(RepositoryBase):
         )
 
     def pipeline_schema_ready(self) -> bool:
-        return self.schema_has_tables("pipelines", "pipeline_cycles")
+        return self.schema_ready()
 
     def _cycle_candidate_row(
         self,
@@ -75,16 +74,11 @@ class CollectorRepository(RepositoryBase):
         selection_memory: dict[str, Any],
         opportunities: list[dict[str, Any]],
         events: list[dict[str, Any]],
-    ) -> None:
+    ) -> list[CollectorCycleCandidateRecord]:
         generated_at_dt = parse_datetime(generated_at)
         if generated_at_dt is None:
             raise ValueError("generated_at is required")
         session_date = generated_at_dt.astimezone(NEW_YORK).date()
-        pipeline_id = build_pipeline_id(label)
-        policy_fields = resolve_pipeline_policy_fields(
-            profile=profile,
-            universe_label=universe_label,
-        )
 
         def build_candidate_models(
             payloads: list[dict[str, Any]],
@@ -162,62 +156,187 @@ class CollectorRepository(RepositoryBase):
                 for event in events
             ],
         )
-        pipeline = PipelineModel(
-            pipeline_id=pipeline_id,
-            label=label,
-            name=label,
-            enabled=True,
+
+        with self.session_scope() as session:
+            session.merge(cycle)
+        return self.list_cycle_candidates(cycle_id)
+
+    def _build_pipeline_row(
+        self,
+        *,
+        label: str,
+        universe_label: str,
+        strategy: str,
+        profile: str,
+        greeks_source: str,
+        created_at: datetime,
+        updated_at: datetime,
+    ) -> PipelineRecord:
+        policy_fields = resolve_pipeline_policy_fields(
+            profile=profile,
             universe_label=universe_label,
-            style_profile=str(policy_fields["style_profile"]),
-            default_horizon_intent=str(policy_fields["horizon_intent"]),
-            strategy_families_json=[strategy],
-            product_scope_json={
+        )
+        return {
+            "pipeline_id": build_pipeline_id(label),
+            "label": label,
+            "name": label,
+            "source_job_key": None,
+            "enabled": True,
+            "universe_label": universe_label,
+            "style_profile": str(policy_fields["style_profile"]),
+            "default_horizon_intent": str(policy_fields["horizon_intent"]),
+            "strategy_families": [strategy],
+            "strategy_families_json": [strategy],
+            "product_scope": {
                 "product_class": str(policy_fields["product_class"]),
                 "legacy_labels": [label],
             },
-            policy_json={
+            "product_scope_json": {
+                "product_class": str(policy_fields["product_class"]),
+                "legacy_labels": [label],
+            },
+            "policy": {
                 "legacy_profile": profile,
                 "strategy_mode": strategy,
                 "greeks_source": greeks_source,
             },
-            created_at=generated_at_dt,
-            updated_at=generated_at_dt,
-        )
-        pipeline_cycle = PipelineCycleModel(
-            cycle_id=cycle_id,
-            pipeline_id=pipeline_id,
-            label=label,
-            market_date=session_date,
-            generated_at=generated_at_dt,
-            job_run_id=job_run_id,
-            universe_label=universe_label,
-            strategy_mode=strategy,
-            legacy_profile=profile,
-            greeks_source=greeks_source,
-            symbols_json=symbols,
-            failures_json=failures,
-            selection_memory_json=selection_memory,
-            summary_json={
-                "candidate_count": len(opportunities),
-                "promotable_count": sum(
-                    1
-                    for payload in opportunities
-                    if str(payload.get("selection_state") or "") == "promotable"
-                ),
-                "monitor_count": sum(
-                    1
-                    for payload in opportunities
-                    if str(payload.get("selection_state") or "") == "monitor"
-                ),
-                "failure_count": len(failures),
-                "event_count": len(events),
+            "policy_json": {
+                "legacy_profile": profile,
+                "strategy_mode": strategy,
+                "greeks_source": greeks_source,
             },
-        )
+            "created_at": created_at,
+            "updated_at": updated_at,
+        }
 
-        with self.session_scope() as session:
-            session.merge(pipeline)
-            session.merge(cycle)
-            session.merge(pipeline_cycle)
+    def _build_pipeline_cycle_row(
+        self,
+        cycle: CollectorCycleModel,
+        *,
+        candidate_count: int = 0,
+        promotable_count: int = 0,
+        monitor_count: int = 0,
+        event_count: int = 0,
+    ) -> PipelineCycleRecord:
+        return {
+            "cycle_id": cycle.cycle_id,
+            "pipeline_id": build_pipeline_id(str(cycle.label)),
+            "label": cycle.label,
+            "market_date": cycle.session_date,
+            "generated_at": cycle.generated_at,
+            "job_run_id": cycle.job_run_id,
+            "universe_label": cycle.universe_label,
+            "strategy_mode": cycle.strategy,
+            "legacy_profile": cycle.profile,
+            "greeks_source": cycle.greeks_source,
+            "symbols": list(cycle.symbols_json or []),
+            "failures": list(cycle.failures_json or []),
+            "selection_memory": dict(cycle.selection_memory_json or {}),
+            "summary": {
+                "candidate_count": candidate_count,
+                "promotable_count": promotable_count,
+                "monitor_count": monitor_count,
+                "failure_count": len(cycle.failures_json or []),
+                "event_count": event_count,
+            },
+        }
+
+    def _resolve_pipeline_label(self, pipeline_id: str) -> str | None:
+        parsed = parse_pipeline_id(pipeline_id)
+        if parsed is None:
+            return None
+        return str(parsed["label"])
+
+    def _latest_pipeline_cycles_by_label(
+        self,
+        labels: list[str] | None = None,
+        *,
+        limit: int | None = None,
+    ) -> list[CollectorCycleModel]:
+        ranked_cycles = (
+            select(
+                CollectorCycleModel.cycle_id.label("cycle_id"),
+                func.row_number()
+                .over(
+                    partition_by=CollectorCycleModel.label,
+                    order_by=(
+                        CollectorCycleModel.generated_at.desc(),
+                        CollectorCycleModel.cycle_id.desc(),
+                    ),
+                )
+                .label("cycle_rank"),
+            )
+            .subquery()
+        )
+        statement = (
+            select(CollectorCycleModel)
+            .join(
+                ranked_cycles,
+                CollectorCycleModel.cycle_id == ranked_cycles.c.cycle_id,
+            )
+            .where(ranked_cycles.c.cycle_rank == 1)
+        )
+        if labels:
+            statement = statement.where(CollectorCycleModel.label.in_(labels))
+        statement = statement.order_by(
+            CollectorCycleModel.generated_at.desc(),
+            CollectorCycleModel.label.asc(),
+        )
+        if limit is not None:
+            statement = statement.limit(limit)
+        with self.session_factory() as session:
+            return session.scalars(statement).all()
+
+    def _cycle_summary_by_cycle_ids(
+        self,
+        cycle_ids: list[str],
+    ) -> dict[str, dict[str, int]]:
+        if not cycle_ids:
+            return {}
+        candidate_rows = (
+            select(
+                CollectorCycleCandidateModel.cycle_id,
+                func.count().label("candidate_count"),
+                func.sum(
+                    func.cast(
+                        CollectorCycleCandidateModel.selection_state == "promotable",
+                        Integer,
+                    )
+                ).label("promotable_count"),
+                func.sum(
+                    func.cast(
+                        CollectorCycleCandidateModel.selection_state == "monitor",
+                        Integer,
+                    )
+                ).label("monitor_count"),
+            )
+            .where(CollectorCycleCandidateModel.cycle_id.in_(cycle_ids))
+            .group_by(CollectorCycleCandidateModel.cycle_id)
+        )
+        event_rows = (
+            select(
+                CollectorCycleEventModel.cycle_id,
+                func.count().label("event_count"),
+            )
+            .where(CollectorCycleEventModel.cycle_id.in_(cycle_ids))
+            .group_by(CollectorCycleEventModel.cycle_id)
+        )
+        summary: dict[str, dict[str, int]] = {}
+        with self.session_factory() as session:
+            for cycle_id, candidate_count, promotable_count, monitor_count in session.execute(
+                candidate_rows
+            ):
+                summary[str(cycle_id)] = {
+                    "candidate_count": int(candidate_count or 0),
+                    "promotable_count": int(promotable_count or 0),
+                    "monitor_count": int(monitor_count or 0),
+                    "event_count": 0,
+                }
+            for cycle_id, event_count in session.execute(event_rows):
+                summary.setdefault(str(cycle_id), {}).update(
+                    {"event_count": int(event_count or 0)}
+                )
+        return summary
 
     def get_cycle(self, cycle_id: str) -> CollectorCycleRecord | None:
         with self.session_factory() as session:
@@ -319,11 +438,24 @@ class CollectorRepository(RepositoryBase):
         return self.row(cycle)
 
     def get_pipeline(self, pipeline_id: str) -> PipelineRecord | None:
-        with self.session_factory() as session:
-            row = session.get(PipelineModel, pipeline_id)
-        if row is None:
+        label = self._resolve_pipeline_label(pipeline_id)
+        if label is None:
             return None
-        return self.row(row)
+        latest_cycle = self.get_latest_cycle(label)
+        if latest_cycle is None:
+            return None
+        generated_at = parse_datetime(str(latest_cycle["generated_at"]))
+        if generated_at is None:
+            return None
+        return self._build_pipeline_row(
+            label=str(latest_cycle["label"]),
+            universe_label=str(latest_cycle["universe_label"]),
+            strategy=str(latest_cycle["strategy"]),
+            profile=str(latest_cycle["profile"]),
+            greeks_source=str(latest_cycle["greeks_source"]),
+            created_at=generated_at,
+            updated_at=generated_at,
+        )
 
     def list_pipelines(
         self,
@@ -331,13 +463,22 @@ class CollectorRepository(RepositoryBase):
         limit: int = 100,
         enabled_only: bool = False,
     ) -> list[PipelineRecord]:
-        statement = select(PipelineModel)
-        if enabled_only:
-            statement = statement.where(PipelineModel.enabled.is_(True))
-        statement = statement.order_by(PipelineModel.updated_at.desc(), PipelineModel.pipeline_id.asc()).limit(limit)
-        with self.session_factory() as session:
-            rows = session.scalars(statement).all()
-        return self.rows(rows)
+        del enabled_only
+        rows = self._latest_pipeline_cycles_by_label(limit=limit)
+        output: list[PipelineRecord] = []
+        for cycle in rows:
+            output.append(
+                self._build_pipeline_row(
+                    label=str(cycle.label),
+                    universe_label=str(cycle.universe_label),
+                    strategy=str(cycle.strategy),
+                    profile=str(cycle.profile),
+                    greeks_source=str(cycle.greeks_source),
+                    created_at=cycle.generated_at,
+                    updated_at=cycle.generated_at,
+                )
+            )
+        return output
 
     def get_latest_pipeline_cycle(
         self,
@@ -345,18 +486,33 @@ class CollectorRepository(RepositoryBase):
         *,
         market_date: str | None = None,
     ) -> PipelineCycleRecord | None:
-        statement = select(PipelineCycleModel).where(PipelineCycleModel.pipeline_id == pipeline_id)
+        label = self._resolve_pipeline_label(pipeline_id)
+        if label is None:
+            return None
+        statement = select(CollectorCycleModel).where(CollectorCycleModel.label == label)
         if market_date:
-            statement = statement.where(PipelineCycleModel.market_date == date.fromisoformat(market_date))
+            statement = statement.where(
+                CollectorCycleModel.session_date == date.fromisoformat(market_date)
+            )
         statement = statement.order_by(
-            PipelineCycleModel.generated_at.desc(),
-            PipelineCycleModel.cycle_id.desc(),
+            CollectorCycleModel.generated_at.desc(),
+            CollectorCycleModel.cycle_id.desc(),
         ).limit(1)
         with self.session_factory() as session:
             row = session.scalar(statement)
         if row is None:
             return None
-        return self.row(row)
+        summary = self._cycle_summary_by_cycle_ids([str(row.cycle_id)]).get(
+            str(row.cycle_id),
+            {},
+        )
+        return self._build_pipeline_cycle_row(
+            row,
+            candidate_count=int(summary.get("candidate_count") or 0),
+            promotable_count=int(summary.get("promotable_count") or 0),
+            monitor_count=int(summary.get("monitor_count") or 0),
+            event_count=int(summary.get("event_count") or 0),
+        )
 
     def list_pipeline_cycles(
         self,
@@ -365,13 +521,46 @@ class CollectorRepository(RepositoryBase):
         market_date: str | None = None,
         limit: int = 100,
     ) -> list[PipelineCycleRecord]:
-        statement = select(PipelineCycleModel).where(PipelineCycleModel.pipeline_id == pipeline_id)
+        label = self._resolve_pipeline_label(pipeline_id)
+        if label is None:
+            return []
+        statement = select(CollectorCycleModel).where(CollectorCycleModel.label == label)
         if market_date:
-            statement = statement.where(PipelineCycleModel.market_date == date.fromisoformat(market_date))
-        statement = statement.order_by(PipelineCycleModel.generated_at.desc(), PipelineCycleModel.cycle_id.desc()).limit(limit)
+            statement = statement.where(
+                CollectorCycleModel.session_date == date.fromisoformat(market_date)
+            )
+        statement = statement.order_by(
+            CollectorCycleModel.generated_at.desc(),
+            CollectorCycleModel.cycle_id.desc(),
+        ).limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return self.rows(rows)
+        cycle_ids = [str(row.cycle_id) for row in rows]
+        summary_by_cycle = self._cycle_summary_by_cycle_ids(cycle_ids)
+        return [
+            self._build_pipeline_cycle_row(
+                row,
+                candidate_count=int(
+                    summary_by_cycle.get(str(row.cycle_id), {}).get("candidate_count")
+                    or 0
+                ),
+                promotable_count=int(
+                    summary_by_cycle.get(str(row.cycle_id), {}).get(
+                        "promotable_count"
+                    )
+                    or 0
+                ),
+                monitor_count=int(
+                    summary_by_cycle.get(str(row.cycle_id), {}).get("monitor_count")
+                    or 0
+                ),
+                event_count=int(
+                    summary_by_cycle.get(str(row.cycle_id), {}).get("event_count")
+                    or 0
+                ),
+            )
+            for row in rows
+        ]
 
     def list_latest_cycles_by_pipeline_ids(
         self,
@@ -379,30 +568,40 @@ class CollectorRepository(RepositoryBase):
     ) -> list[PipelineCycleRecord]:
         if not pipeline_ids:
             return []
-        ranked_cycles = (
-            select(
-                PipelineCycleModel.cycle_id.label("cycle_id"),
-                func.row_number()
-                .over(
-                    partition_by=PipelineCycleModel.pipeline_id,
-                    order_by=(
-                        PipelineCycleModel.generated_at.desc(),
-                        PipelineCycleModel.cycle_id.desc(),
-                    ),
-                )
-                .label("cycle_rank"),
+        labels = [
+            resolved
+            for pipeline_id in pipeline_ids
+            if (resolved := self._resolve_pipeline_label(pipeline_id)) is not None
+        ]
+        if not labels:
+            return []
+        rows = self._latest_pipeline_cycles_by_label(labels)
+        cycle_ids = [str(row.cycle_id) for row in rows]
+        summary_by_cycle = self._cycle_summary_by_cycle_ids(cycle_ids)
+        return [
+            self._build_pipeline_cycle_row(
+                row,
+                candidate_count=int(
+                    summary_by_cycle.get(str(row.cycle_id), {}).get("candidate_count")
+                    or 0
+                ),
+                promotable_count=int(
+                    summary_by_cycle.get(str(row.cycle_id), {}).get(
+                        "promotable_count"
+                    )
+                    or 0
+                ),
+                monitor_count=int(
+                    summary_by_cycle.get(str(row.cycle_id), {}).get("monitor_count")
+                    or 0
+                ),
+                event_count=int(
+                    summary_by_cycle.get(str(row.cycle_id), {}).get("event_count")
+                    or 0
+                ),
             )
-            .where(PipelineCycleModel.pipeline_id.in_(pipeline_ids))
-            .subquery()
-        )
-        statement = (
-            select(PipelineCycleModel)
-            .join(ranked_cycles, PipelineCycleModel.cycle_id == ranked_cycles.c.cycle_id)
-            .where(ranked_cycles.c.cycle_rank == 1)
-        )
-        with self.session_factory() as session:
-            rows = session.scalars(statement).all()
-        return self.rows(rows)
+            for row in rows
+        ]
 
     def list_latest_cycles_by_session_ids(
         self,

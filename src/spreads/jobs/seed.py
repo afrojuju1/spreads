@@ -34,7 +34,7 @@ DEFAULT_SHADOW_EXECUTION_POLICY = {
 
 DEFAULT_AUTO_RISK_POLICY = {
     "enabled": True,
-    "allow_live": False,
+    "allow_live": True,
     "max_open_positions_per_session": 20,
     "max_open_positions_per_underlying": 1,
     "max_open_positions_per_underlying_strategy": 1,

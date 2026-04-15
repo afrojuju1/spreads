@@ -161,11 +161,41 @@ def _tradeability_fields(
 
 def _cycle_opportunity_payloads(
     collector_store: Any,
+    signal_store: Any,
+    *,
+    pipeline_id: str,
+    market_date: str,
     cycle_id: str,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    opportunities = [
-        dict(candidate) for candidate in collector_store.list_cycle_candidates(cycle_id)
-    ]
+    opportunities: list[dict[str, Any]] = []
+    if signal_store.schema_ready():
+        active_rows = [
+            dict(row)
+            for row in signal_store.list_active_cycle_opportunities(cycle_id, limit=500)
+            if str(row.get("pipeline_id") or "") == pipeline_id
+            and str(row.get("market_date") or row.get("session_date") or "") == market_date
+        ]
+        if active_rows:
+            opportunities = [
+                {
+                    **row,
+                    "eligibility": row.get("eligibility_state") or row.get("eligibility"),
+                    "candidate": dict(row.get("candidate") or {}),
+                    "candidate_id": row.get("source_candidate_id"),
+                }
+                for row in active_rows
+            ]
+            opportunities.sort(
+                key=lambda row: (
+                    0 if str(row.get("selection_state") or "") == "promotable" else 1,
+                    int(row.get("selection_rank") or 999_999),
+                    str(row.get("opportunity_id") or ""),
+                )
+            )
+    if not opportunities:
+        opportunities = [
+            dict(candidate) for candidate in collector_store.list_cycle_candidates(cycle_id)
+        ]
     live_counts = {
         "promotable": 0,
         "monitor": 0,
@@ -566,9 +596,14 @@ def get_pipeline_detail(
     selection_counts = {"promotable": 0, "monitor": 0}
     all_opportunities, selection_counts = _cycle_opportunity_payloads(
         collector_store,
-        str(latest_cycle["cycle_id"]),
+        signal_store,
+        pipeline_id=pipeline_id,
+        market_date=resolved_market_date,
+        cycle_id=str(latest_cycle["cycle_id"]),
     )
-    if signal_store.schema_ready():
+    if signal_store.schema_ready() and all_opportunities and not all_opportunities[0].get(
+        "opportunity_id"
+    ):
         active_opportunities = {
             int(row["source_candidate_id"]): dict(row)
             for row in signal_store.list_opportunities(
