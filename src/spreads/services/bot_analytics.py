@@ -10,8 +10,8 @@ from sqlalchemy import func, select
 from spreads.services.bots import BotConfig, load_active_bots
 from spreads.services.positions import enrich_position_row
 from spreads.storage.execution_models import (
+    ExecutionAttemptModel,
     ExecutionIntentModel,
-    PortfolioPositionModel,
 )
 from spreads.storage.signal_models import OpportunityDecisionModel
 
@@ -32,6 +32,234 @@ def _coerce_float(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _average(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return round(sum(values) / float(len(values)), 2)
+
+
+def _strategy_name_from_payload(
+    *,
+    policy_ref: Mapping[str, Any] | None,
+    payload: Mapping[str, Any] | None,
+) -> str:
+    if isinstance(policy_ref, Mapping):
+        strategy_id = _as_text(policy_ref.get("strategy_id"))
+        if strategy_id is not None:
+            return strategy_id
+    if isinstance(payload, Mapping):
+        opportunity = payload.get("opportunity")
+        if isinstance(opportunity, Mapping):
+            strategy_family = _as_text(opportunity.get("strategy_family"))
+            if strategy_family is not None:
+                return strategy_family
+    return "unknown"
+
+
+def _increment_counts(target: dict[str, int], key: str, amount: int = 1) -> None:
+    target[key] = int(target.get(key) or 0) + int(amount)
+
+
+def _funnel_row(name: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "considered": 0,
+        "selected": 0,
+        "rejected": 0,
+        "blocked": 0,
+        "intents_created": 0,
+        "submitted": 0,
+        "repriced": 0,
+        "canceled": 0,
+        "failed": 0,
+        "filled": 0,
+        "blocker_reasons": {},
+        "avg_decision_to_intent_seconds": None,
+        "avg_intent_to_submit_seconds": None,
+        "avg_submit_to_fill_seconds": None,
+    }
+
+
+def _finalize_funnel(
+    row: dict[str, Any], *, timings: dict[str, list[float]]
+) -> dict[str, Any]:
+    considered = int(row.get("considered") or 0)
+    selected = int(row.get("selected") or 0)
+    intents_created = int(row.get("intents_created") or 0)
+    filled = int(row.get("filled") or 0)
+    row["selection_rate"] = (
+        None if considered <= 0 else round(selected / float(considered), 4)
+    )
+    row["intent_rate"] = (
+        None if selected <= 0 else round(intents_created / float(selected), 4)
+    )
+    row["fill_rate"] = (
+        None if intents_created <= 0 else round(filled / float(intents_created), 4)
+    )
+    row["avg_decision_to_intent_seconds"] = _average(
+        timings.get("decision_to_intent") or []
+    )
+    row["avg_intent_to_submit_seconds"] = _average(
+        timings.get("intent_to_submit") or []
+    )
+    row["avg_submit_to_fill_seconds"] = _average(timings.get("submit_to_fill") or [])
+    row["blocker_reasons"] = dict(sorted((row.get("blocker_reasons") or {}).items()))
+    return row
+
+
+def _build_entry_funnel(
+    *,
+    signal_store: Any,
+    execution_store: Any,
+    bot_id: str,
+    window_start: datetime,
+    window_end: datetime,
+) -> dict[str, Any]:
+    overall = _funnel_row("overall")
+    overall_timings: dict[str, list[float]] = defaultdict(list)
+    strategy_rows: dict[str, dict[str, Any]] = {}
+    strategy_timings: dict[str, dict[str, list[float]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+
+    decisions_by_id: dict[str, OpportunityDecisionModel] = {}
+    if signal_store.schema_ready():
+        with signal_store.session_factory() as session:
+            decisions = list(
+                session.scalars(
+                    select(OpportunityDecisionModel)
+                    .where(OpportunityDecisionModel.bot_id == bot_id)
+                    .where(OpportunityDecisionModel.decided_at >= window_start)
+                    .where(OpportunityDecisionModel.decided_at < window_end)
+                ).all()
+            )
+        for decision in decisions:
+            strategy_name = _strategy_name_from_payload(
+                policy_ref=decision.policy_ref_json,
+                payload=decision.payload_json,
+            )
+            decisions_by_id[str(decision.opportunity_decision_id)] = decision
+            row = strategy_rows.setdefault(strategy_name, _funnel_row(strategy_name))
+            state = str(decision.state or "")
+            _increment_counts(overall, "considered")
+            _increment_counts(row, "considered")
+            if state in {"selected", "rejected", "blocked"}:
+                _increment_counts(overall, state)
+                _increment_counts(row, state)
+            for reason in list(decision.reason_codes_json or []):
+                if state != "selected":
+                    _increment_counts(overall["blocker_reasons"], str(reason))
+                    _increment_counts(row["blocker_reasons"], str(reason))
+
+    if execution_store.intent_schema_ready():
+        with execution_store.session_factory() as session:
+            intents = list(
+                session.scalars(
+                    select(ExecutionIntentModel)
+                    .where(ExecutionIntentModel.bot_id == bot_id)
+                    .where(ExecutionIntentModel.created_at >= window_start)
+                    .where(ExecutionIntentModel.created_at < window_end)
+                    .where(ExecutionIntentModel.action_type == "open")
+                ).all()
+            )
+            attempts = {
+                str(row.execution_attempt_id): row
+                for row in session.scalars(
+                    select(ExecutionAttemptModel).where(
+                        ExecutionAttemptModel.execution_attempt_id.in_(
+                            [
+                                intent.execution_attempt_id
+                                for intent in intents
+                                if intent.execution_attempt_id is not None
+                            ]
+                        )
+                    )
+                ).all()
+            }
+        for intent in intents:
+            strategy_name = _strategy_name_from_payload(
+                policy_ref=intent.policy_ref_json,
+                payload=intent.payload_json,
+            )
+            row = strategy_rows.setdefault(strategy_name, _funnel_row(strategy_name))
+            _increment_counts(overall, "intents_created")
+            _increment_counts(row, "intents_created")
+
+            state = str(intent.state or "")
+            if state in {"submitted", "filled", "canceled", "failed"}:
+                _increment_counts(overall, "submitted")
+                _increment_counts(row, "submitted")
+            if state in {"canceled"}:
+                _increment_counts(overall, "canceled")
+                _increment_counts(row, "canceled")
+            if state in {"failed"}:
+                _increment_counts(overall, "failed")
+                _increment_counts(row, "failed")
+            if state == "filled":
+                _increment_counts(overall, "filled")
+                _increment_counts(row, "filled")
+            reprice_count = int((intent.payload_json or {}).get("reprice_count") or 0)
+            if reprice_count > 0:
+                _increment_counts(overall, "repriced")
+                _increment_counts(row, "repriced")
+            payload = dict(intent.payload_json or {})
+            for key in ("revoke_reason", "error"):
+                reason = _as_text(payload.get(key))
+                if reason:
+                    _increment_counts(overall["blocker_reasons"], reason)
+                    _increment_counts(row["blocker_reasons"], reason)
+
+            decision = None
+            if intent.opportunity_decision_id is not None:
+                decision = decisions_by_id.get(str(intent.opportunity_decision_id))
+            if decision is not None:
+                overall_timings["decision_to_intent"].append(
+                    max((intent.created_at - decision.decided_at).total_seconds(), 0.0)
+                )
+                strategy_timings[strategy_name]["decision_to_intent"].append(
+                    max((intent.created_at - decision.decided_at).total_seconds(), 0.0)
+                )
+            attempt = (
+                None
+                if intent.execution_attempt_id is None
+                else attempts.get(str(intent.execution_attempt_id))
+            )
+            if attempt is not None and attempt.submitted_at is not None:
+                overall_timings["intent_to_submit"].append(
+                    max((attempt.submitted_at - intent.created_at).total_seconds(), 0.0)
+                )
+                strategy_timings[strategy_name]["intent_to_submit"].append(
+                    max((attempt.submitted_at - intent.created_at).total_seconds(), 0.0)
+                )
+            if (
+                attempt is not None
+                and attempt.submitted_at is not None
+                and attempt.completed_at is not None
+                and str(attempt.status or "") == "filled"
+            ):
+                overall_timings["submit_to_fill"].append(
+                    max(
+                        (attempt.completed_at - attempt.submitted_at).total_seconds(),
+                        0.0,
+                    )
+                )
+                strategy_timings[strategy_name]["submit_to_fill"].append(
+                    max(
+                        (attempt.completed_at - attempt.submitted_at).total_seconds(),
+                        0.0,
+                    )
+                )
+
+    finalized_strategies = [
+        _finalize_funnel(row, timings=strategy_timings.get(name, {}))
+        for name, row in sorted(strategy_rows.items())
+    ]
+    return {
+        "overall": _finalize_funnel(overall, timings=overall_timings),
+        "strategies": finalized_strategies,
+    }
 
 
 def _window_bounds(market_date: str | None) -> tuple[str, date, datetime, datetime]:
@@ -216,6 +444,14 @@ def build_bot_metrics(
             + symbol_stats[symbol]["unrealized_pnl"]
         )
 
+    entry_funnel = _build_entry_funnel(
+        signal_store=signal_store,
+        execution_store=execution_store,
+        bot_id=bot_id,
+        window_start=window_start,
+        window_end=window_end,
+    )
+
     return {
         "bot_id": bot_id,
         "market_date": resolved_market_date,
@@ -238,6 +474,7 @@ def build_bot_metrics(
         "closed_loss_count": closed_loss_count,
         "closed_win_rate": closed_win_rate,
         "symbol_stats": dict(sorted(symbol_stats.items())),
+        "entry_funnel": entry_funnel,
     }
 
 
@@ -274,6 +511,107 @@ def build_automation_performance_summary(
         "daily_close_fill_count": int(
             sum(int(row.get("daily_close_fill_count") or 0) for row in bot_rows)
         ),
+        "entry_funnel": {
+            "overall": _finalize_funnel(
+                {
+                    **_funnel_row("overall"),
+                    **{
+                        key: sum(
+                            int(
+                                (
+                                    (row.get("entry_funnel") or {}).get("overall") or {}
+                                ).get(key)
+                                or 0
+                            )
+                            for row in bot_rows
+                        )
+                        for key in [
+                            "considered",
+                            "selected",
+                            "rejected",
+                            "blocked",
+                            "intents_created",
+                            "submitted",
+                            "repriced",
+                            "canceled",
+                            "failed",
+                            "filled",
+                        ]
+                    },
+                    "blocker_reasons": dict(
+                        Counter(
+                            reason
+                            for row in bot_rows
+                            for reason, count in (
+                                (
+                                    (row.get("entry_funnel") or {}).get("overall") or {}
+                                ).get("blocker_reasons")
+                                or {}
+                            ).items()
+                            for _ in range(int(count))
+                        )
+                    ),
+                },
+                timings={
+                    "decision_to_intent": [
+                        float(value)
+                        for row in bot_rows
+                        for value in (
+                            [
+                                (
+                                    (row.get("entry_funnel") or {}).get("overall") or {}
+                                ).get("avg_decision_to_intent_seconds")
+                            ]
+                            if (
+                                (row.get("entry_funnel") or {}).get("overall") or {}
+                            ).get("avg_decision_to_intent_seconds")
+                            is not None
+                            else []
+                        )
+                    ],
+                    "intent_to_submit": [
+                        float(value)
+                        for row in bot_rows
+                        for value in (
+                            [
+                                (
+                                    (row.get("entry_funnel") or {}).get("overall") or {}
+                                ).get("avg_intent_to_submit_seconds")
+                            ]
+                            if (
+                                (row.get("entry_funnel") or {}).get("overall") or {}
+                            ).get("avg_intent_to_submit_seconds")
+                            is not None
+                            else []
+                        )
+                    ],
+                    "submit_to_fill": [
+                        float(value)
+                        for row in bot_rows
+                        for value in (
+                            [
+                                (
+                                    (row.get("entry_funnel") or {}).get("overall") or {}
+                                ).get("avg_submit_to_fill_seconds")
+                            ]
+                            if (
+                                (row.get("entry_funnel") or {}).get("overall") or {}
+                            ).get("avg_submit_to_fill_seconds")
+                            is not None
+                            else []
+                        )
+                    ],
+                },
+            ),
+            "bots": [
+                {
+                    "bot_id": row.get("bot_id"),
+                    "bot_name": row.get("bot_name"),
+                    **dict(row.get("entry_funnel") or {}),
+                }
+                for row in bot_rows
+            ],
+        },
         "bots": bot_rows,
     }
 

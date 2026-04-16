@@ -291,6 +291,103 @@ def _render_automation_performance(
         )
     console.print(table)
 
+    entry_funnel = (
+        payload.get("entry_funnel")
+        if isinstance(payload.get("entry_funnel"), dict)
+        else {}
+    )
+    overall_funnel = (
+        entry_funnel.get("overall")
+        if isinstance(entry_funnel.get("overall"), dict)
+        else {}
+    )
+    if overall_funnel:
+        overview = Table(
+            title="Entry Funnel Overview", show_edge=False, header_style="bold"
+        )
+        overview.add_column("Metric", style="bold")
+        overview.add_column("Value")
+        overview.add_row("Considered", _render_value(overall_funnel.get("considered")))
+        overview.add_row("Selected", _render_value(overall_funnel.get("selected")))
+        overview.add_row("Blocked", _render_value(overall_funnel.get("blocked")))
+        overview.add_row("Rejected", _render_value(overall_funnel.get("rejected")))
+        overview.add_row(
+            "Intents", _render_value(overall_funnel.get("intents_created"))
+        )
+        overview.add_row("Submitted", _render_value(overall_funnel.get("submitted")))
+        overview.add_row("Repriced", _render_value(overall_funnel.get("repriced")))
+        overview.add_row("Canceled", _render_value(overall_funnel.get("canceled")))
+        overview.add_row("Failed", _render_value(overall_funnel.get("failed")))
+        overview.add_row("Filled", _render_value(overall_funnel.get("filled")))
+        overview.add_row("Fill Rate", _render_percent(overall_funnel.get("fill_rate")))
+        overview.add_row(
+            "Decision -> Intent",
+            _render_duration(overall_funnel.get("avg_decision_to_intent_seconds")),
+        )
+        overview.add_row(
+            "Intent -> Submit",
+            _render_duration(overall_funnel.get("avg_intent_to_submit_seconds")),
+        )
+        overview.add_row(
+            "Submit -> Fill",
+            _render_duration(overall_funnel.get("avg_submit_to_fill_seconds")),
+        )
+        overview.add_row(
+            "Blockers",
+            _render_count_map(
+                overall_funnel.get("blocker_reasons"), limit=6, item_length=80
+            ),
+        )
+        console.print(overview)
+
+    funnel_bots = (
+        entry_funnel.get("bots") if isinstance(entry_funnel.get("bots"), list) else []
+    )
+    strategy_rows: list[dict[str, Any]] = []
+    for bot_row in funnel_bots:
+        bot_name = str(bot_row.get("bot_name") or bot_row.get("bot_id") or "-")
+        funnel = (
+            bot_row.get("strategies")
+            if isinstance(bot_row.get("strategies"), list)
+            else []
+        )
+        for strategy in funnel:
+            strategy_rows.append(
+                {
+                    "bot_name": bot_name,
+                    "strategy": strategy.get("name"),
+                    **dict(strategy),
+                }
+            )
+    if strategy_rows:
+        table = Table(title="Entry Funnel By Strategy", header_style="bold")
+        table.add_column("Bot")
+        table.add_column("Strategy")
+        table.add_column("Considered", justify="right")
+        table.add_column("Selected", justify="right")
+        table.add_column("Blocked", justify="right")
+        table.add_column("Intents", justify="right")
+        table.add_column("Submitted", justify="right")
+        table.add_column("Repriced", justify="right")
+        table.add_column("Filled", justify="right")
+        table.add_column("Fill Rate", justify="right")
+        table.add_column("Blockers")
+        for row in strategy_rows:
+            table.add_row(
+                str(row.get("bot_name") or "-"),
+                str(row.get("strategy") or "-"),
+                _render_value(row.get("considered")),
+                _render_value(row.get("selected")),
+                _render_value(row.get("blocked")),
+                _render_value(row.get("intents_created")),
+                _render_value(row.get("submitted")),
+                _render_value(row.get("repriced")),
+                _render_value(row.get("filled")),
+                _render_percent(row.get("fill_rate")),
+                _render_count_map(row.get("blocker_reasons"), limit=3, item_length=48),
+            )
+        console.print(table)
+
 
 def _job_run_status_text(status: str | None) -> Text:
     normalized = str(status or "unknown").strip().lower()
