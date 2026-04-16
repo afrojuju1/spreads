@@ -6,6 +6,7 @@ from core.db.decorators import with_storage
 from core.services.automation_runtime import resolve_entry_runtime
 from core.services.bot_analytics import evaluate_entry_controls
 from core.services.entry_planner import plan_entry_selection, score_opportunity
+from core.services.management_recipes import build_exit_policy_from_recipe_refs
 
 
 def _scope_key(bot_id: str, automation_id: str, session_date: str) -> str:
@@ -31,6 +32,112 @@ def _sorted_opportunities(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         )
     )
     return sorted_rows
+
+
+def _opportunity_economics(opportunity: dict[str, Any]) -> dict[str, Any]:
+    economics = opportunity.get("economics")
+    return dict(economics) if isinstance(economics, dict) else dict(opportunity)
+
+
+def _simulate_entry_execution(
+    *,
+    runtime: Any,
+    opportunity: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if opportunity is None:
+        return None
+    economics = _opportunity_economics(opportunity)
+    midpoint_credit = _coerce_float(economics.get("midpoint_credit"))
+    natural_credit = _coerce_float(economics.get("natural_credit"))
+    fill_ratio = _coerce_float(economics.get("fill_ratio"))
+    width = _coerce_float(economics.get("width") or opportunity.get("width"))
+    if midpoint_credit <= 0 and natural_credit <= 0:
+        return {
+            "intent_state": "rejected",
+            "fill_state": "no_price",
+            "filled": False,
+            "position": None,
+        }
+    if fill_ratio >= 0.7 and midpoint_credit > 0:
+        fill_price = midpoint_credit
+        fill_source = "midpoint"
+        fill_state = "filled"
+    elif fill_ratio >= 0.5 and natural_credit > 0:
+        fill_price = natural_credit
+        fill_source = "natural"
+        fill_state = "filled"
+    else:
+        fill_price = 0.0
+        fill_source = None
+        fill_state = "unfilled"
+    if fill_state != "filled":
+        return {
+            "intent_state": "submitted",
+            "fill_state": fill_state,
+            "filled": False,
+            "position": None,
+        }
+    max_loss = _coerce_float(economics.get("max_loss"))
+    return {
+        "intent_state": "filled",
+        "fill_state": fill_state,
+        "filled": True,
+        "fill_price": round(fill_price, 4),
+        "fill_source": fill_source,
+        "position": {
+            "underlying_symbol": opportunity.get("underlying_symbol"),
+            "strategy_family": opportunity.get("strategy_family"),
+            "entry_credit": round(fill_price, 4),
+            "width": None if width <= 0 else width,
+            "max_loss": None if max_loss <= 0 else round(max_loss, 2),
+            "exit_policy": build_exit_policy_from_recipe_refs(
+                tuple(runtime.automation.strategy_config.management_recipe_refs)
+            ),
+        },
+    }
+
+
+def compare_bootstrap_backtests(
+    *,
+    left_payload: dict[str, Any],
+    right_payload: dict[str, Any],
+) -> dict[str, Any]:
+    left_target = dict(left_payload.get("target") or {})
+    right_target = dict(right_payload.get("target") or {})
+    left_aggregate = dict(left_payload.get("aggregate") or {})
+    right_aggregate = dict(right_payload.get("aggregate") or {})
+    metric_keys = [
+        "session_count",
+        "modeled_selected_count",
+        "modeled_fill_count",
+        "modeled_position_count",
+        "actual_selected_count",
+        "matched_selection_count",
+        "selection_match_rate",
+        "modeled_fill_rate",
+        "actual_fill_rate",
+        "position_count",
+        "realized_pnl",
+        "unrealized_pnl",
+    ]
+    metrics: dict[str, dict[str, Any]] = {}
+    for key in metric_keys:
+        left_value = left_aggregate.get(key)
+        right_value = right_aggregate.get(key)
+        metrics[key] = {
+            "left": left_value,
+            "right": right_value,
+            "delta": (
+                None
+                if left_value is None or right_value is None
+                else round(_coerce_float(left_value) - _coerce_float(right_value), 4)
+            ),
+        }
+    return {
+        "left": left_target,
+        "right": right_target,
+        "metrics": metrics,
+    }
 
 
 def _latest_runs_by_session(
@@ -81,6 +188,9 @@ def build_bootstrap_backtest(
     matched_selection_count = 0
     modeled_selected_count = 0
     actual_selected_count = 0
+    modeled_fill_count = 0
+    modeled_position_count = 0
+    actual_fill_count = 0
     total_position_count = 0
     total_realized_pnl = 0.0
     total_unrealized_pnl = 0.0
@@ -119,6 +229,13 @@ def build_bootstrap_backtest(
         )
         if modeled_selected_id is not None:
             modeled_selected_count += 1
+        modeled_execution = _simulate_entry_execution(
+            runtime=runtime,
+            opportunity=modeled_selected,
+        )
+        if modeled_execution and modeled_execution.get("filled"):
+            modeled_fill_count += 1
+            modeled_position_count += 1
 
         actual_decisions = [
             dict(row)
@@ -165,6 +282,15 @@ def build_bootstrap_backtest(
                     limit=50,
                 )
             ]
+        if selected_intents:
+            actual_fill_count += len(
+                [
+                    row
+                    for row in selected_intents
+                    if str(row.get("state") or "")
+                    in {"submitted", "filled", "completed", "partially_filled"}
+                ]
+            )
 
         positions = [
             dict(row)
@@ -195,6 +321,18 @@ def build_bootstrap_backtest(
                 else None,
                 "controls_allowed": controls_allowed,
                 "controls_reason": controls_reason,
+                "modeled_intent_state": None
+                if modeled_execution is None
+                else modeled_execution.get("intent_state"),
+                "modeled_fill_state": None
+                if modeled_execution is None
+                else modeled_execution.get("fill_state"),
+                "modeled_fill_price": None
+                if modeled_execution is None
+                else modeled_execution.get("fill_price"),
+                "modeled_position": None
+                if modeled_execution is None
+                else modeled_execution.get("position"),
                 "selected_intent_count": len(selected_intents),
                 "position_count": len(positions),
                 "realized_pnl": round(realized_pnl, 2),
@@ -228,11 +366,19 @@ def build_bootstrap_backtest(
         "aggregate": {
             "session_count": len(sessions),
             "modeled_selected_count": modeled_selected_count,
+            "modeled_fill_count": modeled_fill_count,
+            "modeled_position_count": modeled_position_count,
             "actual_selected_count": actual_selected_count,
             "matched_selection_count": matched_selection_count,
             "selection_match_rate": None
             if actual_selected_count == 0
             else round(matched_selection_count / actual_selected_count, 4),
+            "modeled_fill_rate": None
+            if modeled_selected_count == 0
+            else round(modeled_fill_count / modeled_selected_count, 4),
+            "actual_fill_rate": None
+            if actual_selected_count == 0
+            else round(actual_fill_count / actual_selected_count, 4),
             "position_count": total_position_count,
             "realized_pnl": round(total_realized_pnl, 2),
             "unrealized_pnl": round(total_unrealized_pnl, 2),
@@ -241,4 +387,4 @@ def build_bootstrap_backtest(
     }
 
 
-__all__ = ["build_bootstrap_backtest"]
+__all__ = ["build_bootstrap_backtest", "compare_bootstrap_backtests"]

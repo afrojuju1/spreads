@@ -344,6 +344,27 @@ def _filter_scope_rows(
     return filtered
 
 
+def _merge_runtime_candidate_rows(
+    runtime_candidate_rows_by_owner: dict[
+        tuple[str, str], dict[str, list[dict[str, Any]]]
+    ],
+) -> dict[str, list[dict[str, Any]]]:
+    merged: dict[str, list[dict[str, Any]]] = {}
+    for owner_rows in runtime_candidate_rows_by_owner.values():
+        for symbol, rows in owner_rows.items():
+            merged.setdefault(str(symbol), []).extend(dict(row) for row in rows)
+    for symbol, rows in merged.items():
+        rows.sort(
+            key=lambda row: (
+                float(row.get("quality_score") or 0.0),
+                float(row.get("return_on_risk") or 0.0),
+                str(row.get("underlying_symbol") or symbol),
+            ),
+            reverse=True,
+        )
+    return merged
+
+
 def collection_window_is_open(
     *,
     now: datetime | None = None,
@@ -1463,6 +1484,13 @@ def _run_collection_cycle(
         (result.symbol, result.args.strategy): result.run_id for result in scan_results
     }
     options_scope = getattr(args, "options_automation_scope", {"enabled": False})
+    entry_runtimes = [
+        build_entry_runtime(bot, automation)
+        for bot, automation in list(options_scope.get("entry_runtimes") or [])
+    ]
+    runtime_candidate_rows_by_owner: dict[
+        tuple[str, str], dict[str, list[dict[str, Any]]]
+    ] = {}
     symbol_strategy_candidates = build_symbol_strategy_candidates(
         scan_results,
         run_ids,
@@ -1472,6 +1500,23 @@ def _run_collection_cycle(
         symbol_strategy_candidates,
         scope=options_scope,
     )
+    if bool(options_scope.get("enabled")) and entry_runtimes:
+        try:
+            runtime_candidate_rows_by_owner = build_entry_runtime_candidates(
+                entry_runtimes=entry_runtimes,
+                base_scanner_args=scanner_args,
+                client=client,
+                calendar_resolver=calendar_resolver,
+                greeks_provider=greeks_provider,
+                per_runtime_limit=max(args.top, 1),
+            )
+            merged_runtime_candidates = _merge_runtime_candidate_rows(
+                runtime_candidate_rows_by_owner
+            )
+            if merged_runtime_candidates:
+                symbol_strategy_candidates = merged_runtime_candidates
+        except Exception as exc:
+            print(f"Exact runtime builder unavailable: {exc}")
     capture_snapshot = capture_live_option_market_state(
         args=args,
         scanner_args=scanner_args,
@@ -1602,18 +1647,6 @@ def _run_collection_cycle(
     }
     if bool(options_scope.get("enabled")):
         try:
-            entry_runtimes = [
-                build_entry_runtime(bot, automation)
-                for bot, automation in list(options_scope.get("entry_runtimes") or [])
-            ]
-            runtime_candidate_rows_by_owner = build_entry_runtime_candidates(
-                entry_runtimes=entry_runtimes,
-                base_scanner_args=scanner_args,
-                client=client,
-                calendar_resolver=calendar_resolver,
-                greeks_provider=greeks_provider,
-                per_runtime_limit=max(args.top, 1),
-            )
             automation_sync = sync_entry_runtime_opportunities(
                 signal_store=signal_store,
                 label=label,

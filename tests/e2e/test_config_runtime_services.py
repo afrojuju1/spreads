@@ -9,7 +9,10 @@ from core.services.automation_runtime import (
     resolve_entry_runtime,
     resolve_management_runtime,
 )
-from core.services.bootstrap_backtest import build_bootstrap_backtest
+from core.services.bootstrap_backtest import (
+    build_bootstrap_backtest,
+    compare_bootstrap_backtests,
+)
 from core.services.management_planner import plan_position_management
 from core.services.scanner import parse_args as parse_scanner_args
 from core.services.strategy_builders import build_entry_runtime_candidates
@@ -110,6 +113,13 @@ class BootstrapBacktestTests(unittest.TestCase):
                         "strategy_family": runtime.strategy_family,
                         "execution_score": 88.0,
                         "selection_rank": 1,
+                        "economics": {
+                            "midpoint_credit": 1.0,
+                            "natural_credit": 0.95,
+                            "fill_ratio": 0.8,
+                            "max_loss": 100.0,
+                        },
+                        "width": 2.0,
                     }
                 ]
 
@@ -156,10 +166,27 @@ class BootstrapBacktestTests(unittest.TestCase):
 
         self.assertEqual(payload["aggregate"]["session_count"], 1)
         self.assertEqual(payload["aggregate"]["matched_selection_count"], 1)
+        self.assertEqual(payload["aggregate"]["modeled_fill_count"], 1)
         self.assertEqual(payload["aggregate"]["realized_pnl"], 12.5)
         self.assertEqual(
             payload["sessions"][0]["actual_selected_opportunity_id"], "opp-1"
         )
+        self.assertEqual(payload["sessions"][0]["modeled_fill_state"], "filled")
+
+    def test_compare_bootstrap_backtests_reports_metric_deltas(self) -> None:
+        comparison = compare_bootstrap_backtests(
+            left_payload={
+                "target": {"automation_id": "left"},
+                "aggregate": {"session_count": 3, "realized_pnl": 12.5},
+            },
+            right_payload={
+                "target": {"automation_id": "right"},
+                "aggregate": {"session_count": 2, "realized_pnl": 7.5},
+            },
+        )
+
+        self.assertEqual(comparison["metrics"]["session_count"]["delta"], 1.0)
+        self.assertEqual(comparison["metrics"]["realized_pnl"]["delta"], 5.0)
 
 
 if __name__ == "__main__":
