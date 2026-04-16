@@ -6,7 +6,7 @@ Use these entrypoints:
 
 - [Current System State](../current_system_state.md) for the runtime topology that exists in code today
 - [Current-System Options Automation Implementation Approach](./2026-04-15_current_system_options_automation_implementation_approach.md) for the refactor path that uses the existing backend instead of starting clean-sheet
-- [Workspace Packages Restructure Plan](./2026-04-16_workspace_packages_restructure_plan.md) for the completed move from `src/spreads`, `apps/api`, and `apps/web` into `packages/core`, `packages/api`, `packages/web`, and `packages/config`
+- [Workspace Packages Restructure Plan](./2026-04-16_workspace_packages_restructure_plan.md) for the completed workspace move into `packages/core`, `packages/api`, `packages/web`, and `packages/config`
 - [Fresh Spread Opportunity System Design](./2026-04-11_fresh_spread_system_design.md) for the current clean-sheet architecture
 - [Spread Selection Review And Refactor Plan](./2026-04-11_spread_selection_refactor_plan.md) for the diagnosis of the current selection path
 - [Ops CLI Visibility Plan](./ops_cli_visibility_plan.md) for shipped and deferred operator tooling
