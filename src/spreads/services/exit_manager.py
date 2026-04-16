@@ -255,6 +255,27 @@ def _has_open_close_attempt(execution_store: Any, position_id: str) -> bool:
     )
 
 
+def _is_bot_managed_position(execution_store: Any, position: dict[str, Any]) -> bool:
+    if not execution_store.intent_schema_ready():
+        return False
+    open_execution_attempt_id = _as_text(position.get("open_execution_attempt_id"))
+    if open_execution_attempt_id is None:
+        return False
+    attempt = execution_store.get_attempt(open_execution_attempt_id)
+    if attempt is None:
+        return False
+    request = attempt.get("request")
+    if not isinstance(request, dict):
+        return False
+    execution_intent_id = _as_text(request.get("execution_intent_id"))
+    if execution_intent_id is None:
+        return False
+    intent = execution_store.get_execution_intent(execution_intent_id)
+    if intent is None:
+        return False
+    return _as_text(intent.get("bot_id")) is not None
+
+
 def _refresh_open_position_marks(
     *, db_target: str, session_ids: list[str], storage: Any | None = None
 ) -> None:
@@ -340,6 +361,23 @@ def run_position_exit_manager(
     now = datetime.now(UTC)
     for position in refreshed_positions:
         position_id = str(position["position_id"])
+        if _is_bot_managed_position(execution_store, position):
+            evaluated += 1
+            skipped += 1
+            execution_store.update_position(
+                position_id=position_id,
+                last_exit_evaluated_at=_utc_now(),
+                last_exit_reason="bot_runtime_managed",
+                updated_at=_utc_now(),
+            )
+            decisions.append(
+                {
+                    "position_id": position_id,
+                    "reason": "bot_runtime_managed",
+                    "should_close": False,
+                }
+            )
+            continue
         if _has_open_close_attempt(execution_store, position_id):
             evaluated += 1
             skipped += 1

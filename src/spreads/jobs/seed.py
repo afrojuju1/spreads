@@ -177,6 +177,16 @@ def _options_automation_job_definitions() -> list[dict[str, object]]:
     return definitions
 
 
+def _disable_legacy_live_collectors(definitions: list[dict[str, object]]) -> None:
+    for definition in definitions:
+        if definition.get("job_type") != LIVE_COLLECTOR_JOB_TYPE:
+            continue
+        job_key = str(definition.get("job_key") or "")
+        if job_key.startswith("live_collector:options_automation_"):
+            continue
+        definition["enabled"] = False
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Seed default ARQ-managed job definitions."
@@ -561,6 +571,7 @@ def seed_definitions(db: str) -> list[str]:
             },
         ]
         definitions.extend(_options_automation_job_definitions())
+        _disable_legacy_live_collectors(definitions)
         for definition in definitions:
             repo.upsert_job_definition(
                 job_key=definition["job_key"],
