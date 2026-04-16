@@ -14,6 +14,10 @@ from core.services.bootstrap_backtest import (
 )
 
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+BACKTEST_OUTPUT_ROOT = REPO_ROOT / "outputs" / "backtests"
+
+
 def _write_json_export(path: str, payload: dict[str, Any]) -> None:
     output_path = Path(path).expanduser()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -61,14 +65,66 @@ def _read_json_payload(path: str) -> dict[str, Any]:
     return dict(json.loads(Path(path).expanduser().read_text()))
 
 
+def _bootstrap_output_dir(*, bot_id: str, automation_id: str) -> Path:
+    return BACKTEST_OUTPUT_ROOT / "bootstrap" / bot_id / automation_id
+
+
+def _compare_output_path() -> Path:
+    return BACKTEST_OUTPUT_ROOT / "compare" / "latest.json"
+
+
+def _write_bootstrap_artifacts(
+    *,
+    output_dir: Path,
+    payload: dict[str, Any],
+    export_json: str | None,
+    export_csv: str | None,
+) -> dict[str, str]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = output_dir / "summary.json"
+    sessions_path = output_dir / "sessions.csv"
+    _write_json_export(str(summary_path), payload)
+    _write_csv_export(str(sessions_path), _flatten_sessions(payload))
+    if export_json:
+        _write_json_export(export_json, payload)
+    if export_csv:
+        _write_csv_export(export_csv, _flatten_sessions(payload))
+    return {
+        "output_dir": str(output_dir),
+        "summary_json": str(summary_path),
+        "sessions_csv": str(sessions_path),
+        **(
+            {}
+            if export_json is None
+            else {"export_json": str(Path(export_json).expanduser())}
+        ),
+        **(
+            {}
+            if export_csv is None
+            else {"export_csv": str(Path(export_csv).expanduser())}
+        ),
+    }
+
+
 def _render_bootstrap_text(payload: dict[str, Any]) -> str:
     target = dict(payload.get("target") or {})
     aggregate = dict(payload.get("aggregate") or {})
+    artifacts = dict(payload.get("artifacts") or {})
     sessions = list(payload.get("sessions") or [])
     lines = [
         f"Bootstrap backtest: {target.get('bot_id')} / {target.get('automation_id')} / {target.get('strategy_id')}",
         f"Sessions {aggregate.get('session_count')} | modeled selections {aggregate.get('modeled_selected_count')} | actual selections {aggregate.get('actual_selected_count')} | match rate {aggregate.get('selection_match_rate')}",
-        f"Positions {aggregate.get('position_count')} | realized pnl {aggregate.get('realized_pnl')} | unrealized pnl {aggregate.get('unrealized_pnl')}",
+        f"Modeled fills {aggregate.get('modeled_fill_count')} | modeled closed {aggregate.get('modeled_closed_count')} | modeled realized pnl {aggregate.get('modeled_realized_pnl')} | modeled unrealized pnl {aggregate.get('modeled_unrealized_pnl')}",
+        f"Actual positions {aggregate.get('position_count')} | realized pnl {aggregate.get('realized_pnl')} | unrealized pnl {aggregate.get('unrealized_pnl')}",
+        *(
+            []
+            if not artifacts
+            else [
+                f"Artifacts: {artifacts.get('output_dir')}",
+                f"- summary {artifacts.get('summary_json')}",
+                f"- sessions {artifacts.get('sessions_csv')}",
+            ]
+        ),
         "",
         "Sessions:",
     ]
@@ -81,8 +137,14 @@ def _render_bootstrap_text(payload: dict[str, Any]) -> str:
 
 
 def _render_compare_text(payload: dict[str, Any]) -> str:
+    artifacts = dict(payload.get("artifacts") or {})
     lines = [
         f"Compare: {payload.get('left', {}).get('automation_id')} vs {payload.get('right', {}).get('automation_id')}",
+        *(
+            []
+            if not artifacts.get("comparison_json")
+            else [f"Artifact: {artifacts.get('comparison_json')}"]
+        ),
         "",
         "Metrics:",
     ]
@@ -132,15 +194,18 @@ def bootstrap_backtest_command(
         end_date=end_date,
         limit=limit,
     )
-    if export_json:
-        _write_json_export(export_json, payload)
-    if export_csv:
-        _write_csv_export(export_csv, _flatten_sessions(payload))
+    artifacts = _write_bootstrap_artifacts(
+        output_dir=_bootstrap_output_dir(bot_id=bot_id, automation_id=automation_id),
+        payload=payload,
+        export_json=export_json,
+        export_csv=export_csv,
+    )
+    rendered_payload = {**payload, "artifacts": artifacts}
     if json_output:
-        render_json_payload(build_console(no_color=no_color), payload)
+        render_json_payload(build_console(no_color=no_color), rendered_payload)
         return
     console = build_console(no_color=no_color)
-    console.print(_render_bootstrap_text(payload))
+    console.print(_render_bootstrap_text(rendered_payload))
 
 
 @backtest_app.command(
@@ -160,11 +225,17 @@ def compare_backtest_command(
         left_payload=_read_json_payload(left_json),
         right_payload=_read_json_payload(right_json),
     )
+    comparison_output_path = _compare_output_path()
+    _write_json_export(str(comparison_output_path), payload)
+    rendered_payload = {
+        **payload,
+        "artifacts": {"comparison_json": str(comparison_output_path)},
+    }
     if json_output:
-        render_json_payload(build_console(no_color=no_color), payload)
+        render_json_payload(build_console(no_color=no_color), rendered_payload)
         return
     console = build_console(no_color=no_color)
-    console.print(_render_compare_text(payload))
+    console.print(_render_compare_text(rendered_payload))
 
 
 def main() -> None:

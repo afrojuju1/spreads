@@ -111,6 +111,9 @@ class BootstrapBacktestTests(unittest.TestCase):
                         "opportunity_id": "opp-1",
                         "underlying_symbol": runtime.symbols[0],
                         "strategy_family": runtime.strategy_family,
+                        "short_symbol": "SPY240416P500",
+                        "long_symbol": "SPY240416P498",
+                        "expiration_date": "2026-04-16",
                         "execution_score": 88.0,
                         "selection_rank": 1,
                         "economics": {
@@ -136,7 +139,7 @@ class BootstrapBacktestTests(unittest.TestCase):
 
         class _ExecutionStore:
             def list_execution_intents(self, **_: object) -> list[dict[str, object]]:
-                return [{"execution_intent_id": "intent-1"}]
+                return [{"execution_intent_id": "intent-1", "state": "submitted"}]
 
             def list_positions(self, **_: object) -> list[dict[str, object]]:
                 return [
@@ -147,10 +150,34 @@ class BootstrapBacktestTests(unittest.TestCase):
                     }
                 ]
 
+        class _HistoryStore:
+            def list_option_quote_events_window(
+                self, **_: object
+            ) -> list[dict[str, object]]:
+                return [
+                    {
+                        "option_symbol": "SPY240416P500",
+                        "bid": 0.95,
+                        "ask": 1.00,
+                        "midpoint": 0.975,
+                        "captured_at": "2026-04-16T14:40:00Z",
+                        "source": "test_quote",
+                    },
+                    {
+                        "option_symbol": "SPY240416P498",
+                        "bid": 0.55,
+                        "ask": 0.60,
+                        "midpoint": 0.575,
+                        "captured_at": "2026-04-16T14:40:00Z",
+                        "source": "test_quote",
+                    },
+                ]
+
         class _Storage:
             def __init__(self) -> None:
                 self.signals = _SignalStore()
                 self.execution = _ExecutionStore()
+                self.history = _HistoryStore()
 
         with patch(
             "core.services.bootstrap_backtest.evaluate_entry_controls",
@@ -167,11 +194,15 @@ class BootstrapBacktestTests(unittest.TestCase):
         self.assertEqual(payload["aggregate"]["session_count"], 1)
         self.assertEqual(payload["aggregate"]["matched_selection_count"], 1)
         self.assertEqual(payload["aggregate"]["modeled_fill_count"], 1)
+        self.assertEqual(payload["aggregate"]["modeled_closed_count"], 1)
+        self.assertEqual(payload["aggregate"]["modeled_realized_pnl"], 55.0)
         self.assertEqual(payload["aggregate"]["realized_pnl"], 12.5)
         self.assertEqual(
             payload["sessions"][0]["actual_selected_opportunity_id"], "opp-1"
         )
         self.assertEqual(payload["sessions"][0]["modeled_fill_state"], "filled")
+        self.assertEqual(payload["sessions"][0]["modeled_exit_state"], "closed")
+        self.assertEqual(payload["sessions"][0]["modeled_exit_reason"], "profit_target")
 
     def test_compare_bootstrap_backtests_reports_metric_deltas(self) -> None:
         comparison = compare_bootstrap_backtests(
