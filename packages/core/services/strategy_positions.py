@@ -14,6 +14,7 @@ from core.services.exit_manager import (
 )
 from core.services.option_structures import normalize_strategy_family
 from core.services.positions import enrich_position_row
+from core.services.automation_runtime import resolve_management_runtime
 
 ACTIVE_INTENT_STATES = ["pending", "claimed", "submitted", "partially_filled"]
 
@@ -103,28 +104,13 @@ def run_management_automation_decision(
     ):
         return {"status": "skipped", "reason": "position_or_intent_schema_unavailable"}
 
-    bots = load_active_bots()
-    bot = bots.get(bot_id)
-    if bot is None:
-        raise ValueError(f"Unknown or paused bot_id: {bot_id}")
-    automation = next(
-        (
-            item
-            for item in bot.automations
-            if item.automation.automation_id == automation_id
-        ),
-        None,
-    )
-    if automation is None:
-        raise ValueError(f"Unknown automation_id for bot {bot_id}: {automation_id}")
-    if not automation.automation.is_management:
-        raise ValueError(f"Automation {automation_id} is not a management automation")
-    if not automation_should_run_now(automation.automation):
+    runtime = resolve_management_runtime(bot_id=bot_id, automation_id=automation_id)
+    if not automation_should_run_now(runtime.automation.automation):
         return {
             "status": "skipped",
             "reason": "outside_schedule_window",
-            "bot_id": bot_id,
-            "automation_id": automation_id,
+            "bot_id": runtime.bot_id,
+            "automation_id": runtime.automation_id,
         }
 
     positions = [
@@ -134,13 +120,21 @@ def run_management_automation_decision(
             limit=500,
         )
     ]
-    strategy_family = automation.strategy_config.strategy_family
-    allowed_symbols = set(automation.symbols)
+    strategy_family = runtime.strategy_family
+    allowed_symbols = set(runtime.symbols)
     managed_positions: list[dict[str, Any]] = []
     for position in positions:
-        owner_intent = _position_owner_intent(execution_store, position)
-        if owner_intent is None or str(owner_intent.get("bot_id") or "") != bot_id:
-            continue
+        owner_bot_id = _as_text(position.get("bot_id"))
+        owner_strategy_config_id = _as_text(position.get("strategy_config_id"))
+        if owner_bot_id is None or owner_strategy_config_id is None:
+            owner_intent = _position_owner_intent(execution_store, position)
+            if owner_intent is None or str(owner_intent.get("bot_id") or "") != bot_id:
+                continue
+        else:
+            if owner_bot_id != runtime.bot_id:
+                continue
+            if owner_strategy_config_id != runtime.strategy_config_id:
+                continue
         if (
             normalize_strategy_family(position.get("strategy_family"))
             != strategy_family
@@ -166,8 +160,8 @@ def run_management_automation_decision(
         }
 
     flatten_due = bot_time_reached(
-        bot.bot,
-        time_value=bot.bot.flatten_positions_at_et,
+        runtime.bot.bot,
+        time_value=runtime.bot.bot.flatten_positions_at_et,
     )
 
     refresh_session_position_marks(
@@ -268,8 +262,8 @@ def run_management_automation_decision(
 
         execution_intent = execution_store.upsert_execution_intent(
             execution_intent_id=_intent_id(position_id, automation_id),
-            bot_id=bot.bot.bot_id,
-            automation_id=automation.automation.automation_id,
+            bot_id=runtime.bot_id,
+            automation_id=runtime.automation_id,
             opportunity_decision_id=None,
             strategy_position_id=position_id,
             execution_attempt_id=None,
@@ -277,12 +271,12 @@ def run_management_automation_decision(
             slot_key=slot_key,
             claim_token=None,
             policy_ref={
-                "bot_id": bot.bot.bot_id,
-                "automation_id": automation.automation.automation_id,
-                "strategy_config_id": automation.strategy_config.strategy_config_id,
-                "strategy_id": automation.strategy_config.strategy_id,
+                "bot_id": runtime.bot_id,
+                "automation_id": runtime.automation_id,
+                "strategy_config_id": runtime.strategy_config_id,
+                "strategy_id": runtime.strategy_id,
             },
-            config_hash=bot.config_hash,
+            config_hash=runtime.config_hash,
             state="pending",
             expires_at=_expires_in(5),
             superseded_by_id=None,
@@ -291,8 +285,8 @@ def run_management_automation_decision(
                 "limit_price": decision.get("limit_price"),
                 "limit_price_source": decision.get("limit_price_source"),
                 "reason": decision.get("reason"),
-                "execution_mode": automation.automation.execution_mode,
-                "approval_mode": automation.automation.approval_mode,
+                "execution_mode": runtime.automation.automation.execution_mode,
+                "approval_mode": runtime.automation.automation.approval_mode,
             },
             created_at=_utc_now(),
             updated_at=_utc_now(),
@@ -311,8 +305,8 @@ def run_management_automation_decision(
 
     return {
         "status": "ok",
-        "bot_id": bot.bot.bot_id,
-        "automation_id": automation.automation.automation_id,
+        "bot_id": runtime.bot_id,
+        "automation_id": runtime.automation_id,
         "position_count": len(managed_positions),
         "evaluated": evaluated,
         "created_intents": created_intents,

@@ -6,6 +6,8 @@ Use these entrypoints:
 
 - [Current System State](../current_system_state.md) for the runtime topology that exists in code today
 - [Current-System Options Automation Implementation Approach](./2026-04-15_current_system_options_automation_implementation_approach.md) for the refactor path that uses the existing backend instead of starting clean-sheet
+- [Backtest System Recommendation](./2026-04-16_backtest_system_recommendation.md) for the recommended split between replay and a new config-driven backtest engine
+- [Config-Driven Runtime Prerequisite Plan](./2026-04-16_config_driven_runtime_prerequisite_plan.md) for the implementation architecture needed before the improved backtest is meaningful
 - [Workspace Packages Restructure Plan](./2026-04-16_workspace_packages_restructure_plan.md) for the completed workspace move into `packages/core`, `packages/api`, `packages/web`, and `packages/config`
 - [Fresh Spread Opportunity System Design](./2026-04-11_fresh_spread_system_design.md) for the current clean-sheet architecture
 - [Spread Selection Review And Refactor Plan](./2026-04-11_spread_selection_refactor_plan.md) for the diagnosis of the current selection path

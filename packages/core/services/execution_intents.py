@@ -570,6 +570,12 @@ def _intent_execution_policy(intent: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def _intent_exit_policy(intent: dict[str, Any]) -> dict[str, Any] | None:
+    payload = _intent_payload(intent)
+    exit_policy = payload.get("exit_policy")
+    return dict(exit_policy) if isinstance(exit_policy, dict) else None
+
+
 def _resolve_intent_opportunity_id(
     signal_store: Any,
     intent: dict[str, Any],
@@ -832,7 +838,9 @@ def _cleanup_stale_automation_opportunities(
     opportunities = [
         dict(row)
         for row in signal_store.list_opportunities(
-            market_date=market_date, limit=max(int(limit), 1) * 50
+            market_date=market_date,
+            runtime_owned=True,
+            limit=max(int(limit), 1) * 50,
         )
     ]
     for opportunity in opportunities:
@@ -929,6 +937,7 @@ def submit_execution_intent(
                 raise ValueError(
                     f"Missing opportunity decision for execution intent {execution_intent_id}"
                 )
+            policy_ref = dict(intent.get("policy_ref") or {})
             result = submit_opportunity_execution(
                 db_target=db_target,
                 opportunity_id=str(decision["opportunity_id"]),
@@ -941,16 +950,25 @@ def submit_execution_intent(
                     "execution_intent_id": execution_intent_id,
                     "bot_id": intent.get("bot_id"),
                     "automation_id": intent.get("automation_id"),
+                    "strategy_config_id": policy_ref.get("strategy_config_id"),
+                    "strategy_id": policy_ref.get("strategy_id"),
+                    "config_hash": intent.get("config_hash"),
                     **(
                         {}
                         if _intent_execution_policy(intent) is None
                         else {"execution_policy": _intent_execution_policy(intent)}
+                    ),
+                    **(
+                        {}
+                        if _intent_exit_policy(intent) is None
+                        else {"exit_policy": _intent_exit_policy(intent)}
                     ),
                 },
                 storage=storage,
             )
         elif intent.get("strategy_position_id"):
             payload = _intent_payload(intent)
+            policy_ref = dict(intent.get("policy_ref") or {})
             result = submit_position_close_by_id(
                 db_target=db_target,
                 position_id=str(intent["strategy_position_id"]),
@@ -963,6 +981,9 @@ def submit_execution_intent(
                     "execution_intent_id": execution_intent_id,
                     "bot_id": intent.get("bot_id"),
                     "automation_id": intent.get("automation_id"),
+                    "strategy_config_id": policy_ref.get("strategy_config_id"),
+                    "strategy_id": policy_ref.get("strategy_id"),
+                    "config_hash": intent.get("config_hash"),
                 },
                 storage=storage,
             )

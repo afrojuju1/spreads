@@ -54,6 +54,8 @@ from core.services.candidate_history_recovery import (
 )
 from core.services.uoa_trade_baselines import build_uoa_trade_baselines
 from core.services.option_trade_records import build_trade_symbol_metadata
+from core.services.automation_runtime import build_entry_runtime
+from core.services.opportunity_generation import sync_entry_runtime_opportunities
 from core.services.signal_state import sync_live_collector_signal_layer
 from core.services.target_planner import refresh_options_automation_capture_targets
 from core.services.uoa_trade_summary import build_uoa_trade_summary
@@ -1591,6 +1593,33 @@ def _run_collection_cycle(
         )
     except Exception as exc:
         print(f"Signal-state sync unavailable: {exc}")
+    automation_sync = {
+        "automation_runs_upserted": 0,
+        "runtime_opportunities_upserted": 0,
+        "runtime_opportunities_expired": 0,
+        "opportunities": [],
+    }
+    if bool(options_scope.get("enabled")):
+        try:
+            entry_runtimes = [
+                build_entry_runtime(bot, automation)
+                for bot, automation in list(options_scope.get("entry_runtimes") or [])
+            ]
+            automation_sync = sync_entry_runtime_opportunities(
+                signal_store=signal_store,
+                label=label,
+                session_date=session_date,
+                generated_at=generated_at,
+                cycle_id=cycle_id,
+                entry_runtimes=entry_runtimes,
+                symbol_candidates=symbol_strategy_candidates,
+                persisted_opportunities=persisted_opportunities,
+                job_run_id=None if tick_context is None else tick_context.job_run_id,
+                top_promotable=args.top,
+                top_monitor=WATCHLIST_TOP,
+            )
+        except Exception as exc:
+            print(f"Options automation runtime sync unavailable: {exc}")
     if heartbeat is not None:
         heartbeat()
     quote_candidates = build_capture_candidates(
@@ -1606,12 +1635,15 @@ def _run_collection_cycle(
     if tick_context is not None and recovery_store is not None:
         try:
             if bool(options_scope.get("enabled")):
+                runtime_capture_opportunities = list(
+                    automation_sync.get("opportunities") or []
+                )
                 target_refresh = refresh_options_automation_capture_targets(
                     recovery_store=recovery_store,
                     session_id=tick_context.session_id,
                     session_date=session_date,
                     entry_runtimes=list(options_scope.get("entry_runtimes") or []),
-                    opportunities=opportunities,
+                    opportunities=runtime_capture_opportunities or opportunities,
                     label=label,
                     data_base_url=getattr(scanner_args, "data_base_url", None),
                 )
@@ -1807,6 +1839,13 @@ def _run_collection_cycle(
         "signal_transitions_recorded": int(signal_sync["signal_transitions_recorded"]),
         "opportunities_upserted": int(signal_sync["opportunities_upserted"]),
         "opportunities_expired": int(signal_sync["opportunities_expired"]),
+        "automation_runs_upserted": int(automation_sync["automation_runs_upserted"]),
+        "runtime_opportunities_upserted": int(
+            automation_sync["runtime_opportunities_upserted"]
+        ),
+        "runtime_opportunities_expired": int(
+            automation_sync["runtime_opportunities_expired"]
+        ),
         "quote_capture": quote_capture,
         "trade_capture": trade_capture,
         "live_action_gate": live_action_gate,

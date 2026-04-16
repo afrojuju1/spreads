@@ -642,6 +642,9 @@ class ExecutionRepository(RepositoryBase):
         *,
         pipeline_id: str | None = None,
         market_date: str | None = None,
+        bot_id: str | None = None,
+        automation_id: str | None = None,
+        strategy_config_id: str | None = None,
         statuses: list[str] | None = None,
         limit: int | None = None,
     ) -> list[PortfolioPositionRecord]:
@@ -654,6 +657,16 @@ class ExecutionRepository(RepositoryBase):
             market_date_value = parse_date(market_date)
             statement = statement.where(
                 PortfolioPositionModel.market_date_opened == market_date_value
+            )
+        if bot_id is not None:
+            statement = statement.where(PortfolioPositionModel.bot_id == bot_id)
+        if automation_id is not None:
+            statement = statement.where(
+                PortfolioPositionModel.automation_id == automation_id
+            )
+        if strategy_config_id is not None:
+            statement = statement.where(
+                PortfolioPositionModel.strategy_config_id == strategy_config_id
             )
         if statuses:
             statement = statement.where(PortfolioPositionModel.status.in_(statuses))
@@ -672,7 +685,12 @@ class ExecutionRepository(RepositoryBase):
         *,
         position_id: str,
         pipeline_id: str,
+        bot_id: str | None,
+        automation_id: str | None,
+        strategy_config_id: str | None,
+        strategy_id: str | None,
         source_opportunity_id: str | None,
+        opening_execution_intent_id: str | None,
         open_execution_attempt_id: str,
         root_symbol: str,
         strategy_family: str,
@@ -697,6 +715,7 @@ class ExecutionRepository(RepositoryBase):
         last_broker_status: str | None,
         exit_policy: dict[str, Any],
         risk_policy: dict[str, Any],
+        config_hash: str | None,
         source_job_type: str | None,
         source_job_key: str | None,
         source_job_run_id: str | None,
@@ -714,7 +733,12 @@ class ExecutionRepository(RepositoryBase):
             row = PortfolioPositionModel(
                 position_id=position_id,
                 pipeline_id=pipeline_id,
+                bot_id=bot_id,
+                automation_id=automation_id,
+                strategy_config_id=strategy_config_id,
+                strategy_id=strategy_id,
                 source_opportunity_id=source_opportunity_id,
+                opening_execution_intent_id=opening_execution_intent_id,
                 open_execution_attempt_id=open_execution_attempt_id,
                 root_symbol=root_symbol,
                 strategy_family=strategy_family,
@@ -739,6 +763,7 @@ class ExecutionRepository(RepositoryBase):
                 last_broker_status=last_broker_status,
                 exit_policy_json=dict(exit_policy),
                 risk_policy_json=dict(risk_policy),
+                config_hash=config_hash,
                 source_job_type=source_job_type,
                 source_job_key=source_job_key,
                 source_job_run_id=source_job_run_id,
@@ -762,7 +787,12 @@ class ExecutionRepository(RepositoryBase):
         *,
         position_id: str,
         pipeline_id: str | None = None,
+        bot_id: str | None = None,
+        automation_id: str | None = None,
+        strategy_config_id: str | None = None,
+        strategy_id: str | None = None,
         source_opportunity_id: str | None = None,
+        opening_execution_intent_id: str | None = None,
         root_symbol: str | None = None,
         strategy_family: str | None = None,
         style_profile: str | None = None,
@@ -786,6 +816,7 @@ class ExecutionRepository(RepositoryBase):
         last_broker_status: str | None = None,
         exit_policy: dict[str, Any] | None = None,
         risk_policy: dict[str, Any] | None = None,
+        config_hash: str | None = None,
         source_job_type: str | None = None,
         source_job_key: str | None = None,
         source_job_run_id: str | None = None,
@@ -804,8 +835,18 @@ class ExecutionRepository(RepositoryBase):
                 raise ValueError(f"Unknown position_id: {position_id}")
             if pipeline_id is not None:
                 row.pipeline_id = pipeline_id
+            if bot_id is not None:
+                row.bot_id = bot_id
+            if automation_id is not None:
+                row.automation_id = automation_id
+            if strategy_config_id is not None:
+                row.strategy_config_id = strategy_config_id
+            if strategy_id is not None:
+                row.strategy_id = strategy_id
             if source_opportunity_id is not None:
                 row.source_opportunity_id = source_opportunity_id
+            if opening_execution_intent_id is not None:
+                row.opening_execution_intent_id = opening_execution_intent_id
             if root_symbol is not None:
                 row.root_symbol = root_symbol
             if strategy_family is not None:
@@ -857,6 +898,8 @@ class ExecutionRepository(RepositoryBase):
                 row.exit_policy_json = dict(exit_policy)
             if risk_policy is not None:
                 row.risk_policy_json = dict(risk_policy)
+            if config_hash is not None:
+                row.config_hash = config_hash
             if source_job_type is not None:
                 row.source_job_type = source_job_type
             if source_job_key is not None:

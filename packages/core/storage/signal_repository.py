@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from core.services.runtime_identity import build_pipeline_id
 from core.storage.base import RepositoryBase
 from core.storage.records import (
+    AutomationRunRecord,
     OpportunityRecord,
     OpportunityDecisionRecord,
     SignalStateRecord,
@@ -15,6 +16,7 @@ from core.storage.records import (
 )
 from core.storage.serializers import parse_date, parse_datetime
 from core.storage.signal_models import (
+    AutomationRunModel,
     OpportunityDecisionModel,
     OpportunityModel,
     SignalStateModel,
@@ -82,6 +84,13 @@ def _opportunity_snapshot(payload: dict[str, Any]) -> tuple[Any, ...]:
         str(payload["session_date"]),
         payload.get("cycle_id"),
         payload.get("root_symbol"),
+        payload.get("bot_id"),
+        payload.get("automation_id"),
+        payload.get("automation_run_id"),
+        payload.get("strategy_config_id"),
+        payload.get("strategy_id"),
+        payload.get("config_hash"),
+        dict(payload.get("policy_ref") or {}),
         payload["strategy_family"],
         payload["profile"],
         payload.get("style_profile"),
@@ -131,6 +140,13 @@ def _opportunity_model_snapshot(row: OpportunityModel) -> tuple[Any, ...]:
         str(row.session_date),
         row.cycle_id,
         row.root_symbol,
+        row.bot_id,
+        row.automation_id,
+        row.automation_run_id,
+        row.strategy_config_id,
+        row.strategy_id,
+        row.config_hash,
+        dict(row.policy_ref_json or {}),
         row.strategy_family,
         row.profile,
         row.style_profile,
@@ -182,6 +198,100 @@ class SignalRepository(RepositoryBase):
 
     def decision_schema_ready(self) -> bool:
         return self.schema_has_tables("opportunities", "opportunity_decisions")
+
+    def automation_runtime_schema_ready(self) -> bool:
+        return self.schema_has_tables("opportunities", "automation_runs")
+
+    def upsert_automation_run(
+        self,
+        *,
+        automation_run_id: str,
+        bot_id: str,
+        automation_id: str,
+        strategy_config_id: str,
+        trigger_type: str,
+        job_run_id: str | None,
+        cycle_id: str | None,
+        label: str | None,
+        session_date: str | date,
+        started_at: str,
+        completed_at: str | None,
+        status: str,
+        result: dict[str, Any] | None,
+        config_hash: str,
+    ) -> AutomationRunRecord:
+        started_at_dt = parse_datetime(started_at)
+        completed_at_dt = parse_datetime(completed_at)
+        session_date_value = parse_date(session_date)
+        if started_at_dt is None:
+            raise ValueError("started_at is required")
+        with self.session_scope() as session:
+            row = session.get(AutomationRunModel, automation_run_id)
+            if row is None:
+                row = AutomationRunModel(
+                    automation_run_id=automation_run_id,
+                    bot_id=bot_id,
+                    automation_id=automation_id,
+                    strategy_config_id=strategy_config_id,
+                    trigger_type=trigger_type,
+                    job_run_id=job_run_id,
+                    cycle_id=cycle_id,
+                    label=label,
+                    session_date=session_date_value,
+                    started_at=started_at_dt,
+                    completed_at=completed_at_dt,
+                    status=status,
+                    result_json=dict(result or {}),
+                    config_hash=config_hash,
+                )
+                session.add(row)
+            else:
+                row.bot_id = bot_id
+                row.automation_id = automation_id
+                row.strategy_config_id = strategy_config_id
+                row.trigger_type = trigger_type
+                row.job_run_id = job_run_id
+                row.cycle_id = cycle_id
+                row.label = label
+                row.session_date = session_date_value
+                row.started_at = started_at_dt
+                row.completed_at = completed_at_dt
+                row.status = status
+                row.result_json = dict(result or {})
+                row.config_hash = config_hash
+            session.flush()
+            session.refresh(row)
+            return self.row(row)
+
+    def list_automation_runs(
+        self,
+        *,
+        bot_id: str | None = None,
+        automation_id: str | None = None,
+        session_date: str | None = None,
+        cycle_id: str | None = None,
+        limit: int = 200,
+    ) -> list[AutomationRunRecord]:
+        statement = select(AutomationRunModel)
+        if bot_id:
+            statement = statement.where(AutomationRunModel.bot_id == bot_id)
+        if automation_id:
+            statement = statement.where(
+                AutomationRunModel.automation_id == automation_id
+            )
+        if session_date:
+            statement = statement.where(
+                AutomationRunModel.session_date == date.fromisoformat(session_date)
+            )
+        if cycle_id:
+            statement = statement.where(AutomationRunModel.cycle_id == cycle_id)
+        statement = statement.order_by(
+            AutomationRunModel.started_at.desc(),
+            AutomationRunModel.automation_run_id.asc(),
+        ).limit(limit)
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return self.rows(rows)
 
     def get_signal_state(self, signal_state_id: str) -> SignalStateRecord | None:
         with self.session_factory() as session:
@@ -419,6 +529,13 @@ class SignalRepository(RepositoryBase):
         session_date: str | date,
         cycle_id: str | None = None,
         root_symbol: str | None = None,
+        bot_id: str | None = None,
+        automation_id: str | None = None,
+        automation_run_id: str | None = None,
+        strategy_config_id: str | None = None,
+        strategy_id: str | None = None,
+        config_hash: str | None = None,
+        policy_ref: dict[str, Any] | None = None,
         strategy_family: str,
         profile: str,
         style_profile: str | None = None,
@@ -480,6 +597,13 @@ class SignalRepository(RepositoryBase):
                     session_date=session_date_value,
                     cycle_id=cycle_id or source_cycle_id,
                     root_symbol=root_symbol or underlying_symbol,
+                    bot_id=bot_id,
+                    automation_id=automation_id,
+                    automation_run_id=automation_run_id,
+                    strategy_config_id=strategy_config_id,
+                    strategy_id=strategy_id,
+                    config_hash=config_hash,
+                    policy_ref_json=dict(policy_ref or {}),
                     strategy_family=strategy_family,
                     profile=profile,
                     style_profile=style_profile,
@@ -533,6 +657,13 @@ class SignalRepository(RepositoryBase):
                         "session_date": session_date_value,
                         "cycle_id": cycle_id or source_cycle_id,
                         "root_symbol": root_symbol or underlying_symbol,
+                        "bot_id": bot_id,
+                        "automation_id": automation_id,
+                        "automation_run_id": automation_run_id,
+                        "strategy_config_id": strategy_config_id,
+                        "strategy_id": strategy_id,
+                        "config_hash": config_hash,
+                        "policy_ref": dict(policy_ref or {}),
                         "strategy_family": strategy_family,
                         "profile": profile,
                         "style_profile": style_profile,
@@ -583,6 +714,13 @@ class SignalRepository(RepositoryBase):
                 row.session_date = session_date_value
                 row.cycle_id = cycle_id or source_cycle_id
                 row.root_symbol = root_symbol or underlying_symbol
+                row.bot_id = bot_id
+                row.automation_id = automation_id
+                row.automation_run_id = automation_run_id
+                row.strategy_config_id = strategy_config_id
+                row.strategy_id = strategy_id
+                row.config_hash = config_hash
+                row.policy_ref_json = dict(policy_ref or {})
                 row.strategy_family = strategy_family
                 row.profile = profile
                 row.style_profile = style_profile
@@ -638,9 +776,22 @@ class SignalRepository(RepositoryBase):
         eligibility_state: str | None = None,
         underlying_symbol: str | None = None,
         strategy_family: str | None = None,
+        bot_id: str | None = None,
+        automation_id: str | None = None,
+        strategy_config_id: str | None = None,
+        automation_run_id: str | None = None,
+        runtime_owned: bool | None = False,
         limit: int = 200,
     ) -> list[OpportunityRecord]:
         statement = select(OpportunityModel)
+        if runtime_owned is False and not any(
+            [bot_id, automation_id, strategy_config_id, automation_run_id]
+        ):
+            statement = statement.where(OpportunityModel.bot_id.is_(None))
+        elif runtime_owned is True or any(
+            [bot_id, automation_id, strategy_config_id, automation_run_id]
+        ):
+            statement = statement.where(OpportunityModel.bot_id.is_not(None))
         if pipeline_id:
             statement = statement.where(OpportunityModel.pipeline_id == pipeline_id)
         if label:
@@ -669,6 +820,18 @@ class SignalRepository(RepositoryBase):
             statement = statement.where(
                 OpportunityModel.strategy_family == strategy_family
             )
+        if bot_id:
+            statement = statement.where(OpportunityModel.bot_id == bot_id)
+        if automation_id:
+            statement = statement.where(OpportunityModel.automation_id == automation_id)
+        if strategy_config_id:
+            statement = statement.where(
+                OpportunityModel.strategy_config_id == strategy_config_id
+            )
+        if automation_run_id:
+            statement = statement.where(
+                OpportunityModel.automation_run_id == automation_run_id
+            )
         statement = statement.order_by(
             OpportunityModel.updated_at.desc(), OpportunityModel.opportunity_id.asc()
         ).limit(limit)
@@ -682,11 +845,21 @@ class SignalRepository(RepositoryBase):
         *,
         eligibility_state: str | None = None,
         exclude_consumed: bool = True,
+        bot_id: str | None = None,
+        automation_id: str | None = None,
+        strategy_config_id: str | None = None,
+        runtime_owned: bool | None = False,
         limit: int = 200,
     ) -> list[OpportunityRecord]:
         statement = select(OpportunityModel).where(
             OpportunityModel.cycle_id == cycle_id
         )
+        if runtime_owned is False and not any(
+            [bot_id, automation_id, strategy_config_id]
+        ):
+            statement = statement.where(OpportunityModel.bot_id.is_(None))
+        elif runtime_owned is True or any([bot_id, automation_id, strategy_config_id]):
+            statement = statement.where(OpportunityModel.bot_id.is_not(None))
         statement = statement.where(
             OpportunityModel.lifecycle_state.in_(("candidate", "ready", "blocked"))
         )
@@ -697,6 +870,14 @@ class SignalRepository(RepositoryBase):
         if exclude_consumed:
             statement = statement.where(
                 OpportunityModel.consumed_by_execution_attempt_id.is_(None)
+            )
+        if bot_id:
+            statement = statement.where(OpportunityModel.bot_id == bot_id)
+        if automation_id:
+            statement = statement.where(OpportunityModel.automation_id == automation_id)
+        if strategy_config_id:
+            statement = statement.where(
+                OpportunityModel.strategy_config_id == strategy_config_id
             )
         statement = statement.order_by(
             OpportunityModel.updated_at.desc(), OpportunityModel.opportunity_id.asc()
@@ -712,6 +893,10 @@ class SignalRepository(RepositoryBase):
         session_date: str | date,
         active_opportunity_ids: list[str],
         expired_at: str,
+        bot_id: str | None = None,
+        automation_id: str | None = None,
+        strategy_config_id: str | None = None,
+        runtime_owned: bool | None = False,
     ) -> list[OpportunityRecord]:
         session_date_value = parse_date(session_date)
         expired_at_dt = parse_datetime(expired_at)
@@ -722,6 +907,20 @@ class SignalRepository(RepositoryBase):
             OpportunityModel.session_date == session_date_value,
             OpportunityModel.lifecycle_state.in_(("candidate", "ready", "blocked")),
         )
+        if runtime_owned is False and not any(
+            [bot_id, automation_id, strategy_config_id]
+        ):
+            statement = statement.where(OpportunityModel.bot_id.is_(None))
+        elif runtime_owned is True or any([bot_id, automation_id, strategy_config_id]):
+            statement = statement.where(OpportunityModel.bot_id.is_not(None))
+        if bot_id:
+            statement = statement.where(OpportunityModel.bot_id == bot_id)
+        if automation_id:
+            statement = statement.where(OpportunityModel.automation_id == automation_id)
+        if strategy_config_id:
+            statement = statement.where(
+                OpportunityModel.strategy_config_id == strategy_config_id
+            )
         if active_opportunity_ids:
             statement = statement.where(
                 OpportunityModel.opportunity_id.not_in(active_opportunity_ids)
@@ -744,13 +943,21 @@ class SignalRepository(RepositoryBase):
             return self.rows(expired_rows)
 
     def find_active_opportunity_by_candidate_id(
-        self, candidate_id: int
+        self,
+        candidate_id: int,
+        *,
+        runtime_owned: bool | None = False,
     ) -> OpportunityRecord | None:
         statement = (
             select(OpportunityModel)
             .where(OpportunityModel.source_candidate_id == candidate_id)
             .where(
                 OpportunityModel.lifecycle_state.in_(("candidate", "ready", "blocked"))
+            )
+            .where(
+                OpportunityModel.bot_id.is_not(None)
+                if runtime_owned
+                else OpportunityModel.bot_id.is_(None)
             )
             .order_by(
                 OpportunityModel.updated_at.desc(),
@@ -769,6 +976,7 @@ class SignalRepository(RepositoryBase):
         cycle_ids: list[str],
         *,
         exclude_consumed: bool = True,
+        runtime_owned: bool | None = False,
     ) -> dict[str, dict[str, int]]:
         if not cycle_ids:
             return {}
@@ -782,6 +990,11 @@ class SignalRepository(RepositoryBase):
             .where(
                 OpportunityModel.lifecycle_state.in_(("candidate", "ready", "blocked"))
             )
+        )
+        statement = statement.where(
+            OpportunityModel.bot_id.is_not(None)
+            if runtime_owned
+            else OpportunityModel.bot_id.is_(None)
         )
         if exclude_consumed:
             statement = statement.where(

@@ -39,6 +39,7 @@ OperatorActionRecord = StorageRow
 PolicyRolloutRecord = StorageRow
 SignalStateRecord = StorageRow
 SignalStateTransitionRecord = StorageRow
+AutomationRunRecord = StorageRow
 OpportunityRecord = StorageRow
 OpportunityDecisionRecord = StorageRow
 RiskDecisionRecord = StorageRow
@@ -81,6 +82,7 @@ __all__ = [
     "PolicyRolloutRecord",
     "SignalStateRecord",
     "SignalStateTransitionRecord",
+    "AutomationRunRecord",
     "OpportunityRecord",
     "OpportunityDecisionRecord",
     "RiskDecisionRecord",

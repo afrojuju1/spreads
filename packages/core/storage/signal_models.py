@@ -137,6 +137,49 @@ class SignalStateTransitionModel(Base):
     signal_state: Mapped[SignalStateModel] = relationship(back_populates="transitions")
 
 
+class AutomationRunModel(Base):
+    __tablename__ = "automation_runs"
+    __table_args__ = (
+        Index(
+            "idx_automation_runs_bot_automation_started",
+            "bot_id",
+            "automation_id",
+            "started_at",
+        ),
+        Index(
+            "idx_automation_runs_session_started",
+            "session_date",
+            "started_at",
+        ),
+        Index(
+            "idx_automation_runs_cycle_automation",
+            "cycle_id",
+            "automation_id",
+        ),
+    )
+
+    automation_run_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    bot_id: Mapped[str] = mapped_column(Text, nullable=False)
+    automation_id: Mapped[str] = mapped_column(Text, nullable=False)
+    strategy_config_id: Mapped[str] = mapped_column(Text, nullable=False)
+    trigger_type: Mapped[str] = mapped_column(Text, nullable=False)
+    job_run_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cycle_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    result_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    config_hash: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class OpportunityModel(Base):
     __tablename__ = "opportunities"
     __table_args__ = (
@@ -160,6 +203,14 @@ class OpportunityModel(Base):
         ),
         Index("idx_opportunities_source_candidate", "source_candidate_id"),
         Index("idx_opportunities_updated_at", "updated_at"),
+        Index(
+            "idx_opportunities_bot_automation_session",
+            "bot_id",
+            "automation_id",
+            "session_date",
+            "updated_at",
+        ),
+        Index("idx_opportunities_automation_run", "automation_run_id"),
     )
 
     opportunity_id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -169,6 +220,19 @@ class OpportunityModel(Base):
     session_date: Mapped[date] = mapped_column(Date, nullable=False)
     cycle_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     root_symbol: Mapped[str | None] = mapped_column(Text, nullable=True)
+    bot_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    automation_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    automation_run_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("automation_runs.automation_run_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    strategy_config_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    strategy_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    config_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    policy_ref_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
     strategy_family: Mapped[str] = mapped_column(Text, nullable=False)
     profile: Mapped[str] = mapped_column(Text, nullable=False)
     style_profile: Mapped[str | None] = mapped_column(Text, nullable=True)

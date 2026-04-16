@@ -565,14 +565,39 @@ def _position_common_payload(
     existing_legs = canonical_position_legs(existing or {})
     persisted_legs = attempt_legs or existing_legs
     source_job = _attempt_source_job(attempt)
+    bot_id = _as_text(request.get("bot_id")) or _as_text(
+        existing.get("bot_id") if isinstance(existing, Mapping) else None
+    )
+    automation_id = _as_text(request.get("automation_id")) or _as_text(
+        existing.get("automation_id") if isinstance(existing, Mapping) else None
+    )
+    strategy_config_id = _as_text(request.get("strategy_config_id")) or _as_text(
+        existing.get("strategy_config_id") if isinstance(existing, Mapping) else None
+    )
+    strategy_id = _as_text(request.get("strategy_id")) or _as_text(
+        existing.get("strategy_id") if isinstance(existing, Mapping) else None
+    )
+    config_hash = _as_text(request.get("config_hash")) or _as_text(
+        existing.get("config_hash") if isinstance(existing, Mapping) else None
+    )
+    opening_execution_intent_id = _attempt_execution_intent_id(attempt) or _as_text(
+        existing.get("opening_execution_intent_id")
+        if isinstance(existing, Mapping)
+        else None
+    )
     return {
         "pipeline_id": pipeline_id,
+        "bot_id": bot_id,
+        "automation_id": automation_id,
+        "strategy_config_id": strategy_config_id,
+        "strategy_id": strategy_id,
         "source_opportunity_id": _as_text(attempt.get("opportunity_id"))
         or _as_text(
             existing.get("source_opportunity_id")
             if isinstance(existing, Mapping)
             else None
         ),
+        "opening_execution_intent_id": opening_execution_intent_id,
         "root_symbol": root_symbol,
         "strategy_family": strategy_family or str(attempt.get("strategy") or "unknown"),
         "style_profile": _as_text(attempt.get("style_profile"))
@@ -625,6 +650,7 @@ def _position_common_payload(
         "last_broker_status": last_broker_status,
         "exit_policy": exit_policy,
         "risk_policy": risk_policy,
+        "config_hash": config_hash,
         "source_job_type": _as_text(source_job.get("job_type"))
         or _as_text(
             existing.get("source_job_type") if isinstance(existing, Mapping) else None

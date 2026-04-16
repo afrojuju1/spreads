@@ -15,6 +15,8 @@ from core.jobs.live_collector import (
 )
 from core.jobs.orchestration import isoformat_utc
 from core.jobs.scheduler import _reconcile_live_collector_jobs
+from core.services.bots import load_active_bots
+from core.services.decision_engine import run_entry_automation_decision
 from core.services.live_collector_health import (
     build_quote_capture_summary,
     build_trade_capture_summary,
@@ -149,6 +151,91 @@ class _CollectorStore:
 
 class _SignalStore:
     pass
+
+
+class _AutomationRuntimeSignalStore:
+    def __init__(self) -> None:
+        self.automation_runs: list[dict[str, object]] = []
+        self.opportunities: list[dict[str, object]] = []
+        self.expire_calls: list[dict[str, object]] = []
+
+    def automation_runtime_schema_ready(self) -> bool:
+        return True
+
+    def upsert_automation_run(self, **kwargs: object) -> dict[str, object]:
+        row = dict(kwargs)
+        self.automation_runs.append(row)
+        return row
+
+    def upsert_opportunity(self, **kwargs: object) -> tuple[dict[str, object], bool]:
+        row = dict(kwargs)
+        self.opportunities.append(row)
+        return row, True
+
+    def expire_absent_opportunities(self, **kwargs: object) -> list[dict[str, object]]:
+        self.expire_calls.append(dict(kwargs))
+        return []
+
+
+class _DecisionSignalStore:
+    def __init__(
+        self, *, scoped_row: dict[str, object], generic_row: dict[str, object]
+    ) -> None:
+        self.scoped_row = dict(scoped_row)
+        self.generic_row = dict(generic_row)
+        self.list_calls: list[dict[str, object]] = []
+        self.decisions: list[dict[str, object]] = []
+
+    def schema_ready(self) -> bool:
+        return True
+
+    def decision_schema_ready(self) -> bool:
+        return True
+
+    def list_opportunities(self, **kwargs: object) -> list[dict[str, object]]:
+        self.list_calls.append(dict(kwargs))
+        if bool(kwargs.get("runtime_owned")):
+            return [dict(self.scoped_row)]
+        return [dict(self.generic_row)]
+
+    def upsert_opportunity_decision(self, **kwargs: object) -> dict[str, object]:
+        row = dict(kwargs)
+        self.decisions.append(row)
+        return row
+
+
+class _DecisionExecutionStore:
+    def __init__(self) -> None:
+        self.upserted_intents: list[dict[str, object]] = []
+        self.intent_events: list[dict[str, object]] = []
+
+    def intent_schema_ready(self) -> bool:
+        return True
+
+    def list_execution_intents(self, **_: object) -> list[dict[str, object]]:
+        return []
+
+    def upsert_execution_intent(self, **kwargs: object) -> dict[str, object]:
+        row = dict(kwargs)
+        self.upserted_intents.append(row)
+        return row
+
+    def append_execution_intent_event(self, **kwargs: object) -> dict[str, object]:
+        row = dict(kwargs)
+        self.intent_events.append(row)
+        return row
+
+
+class _DecisionJobStore:
+    def list_job_definitions(self, **_: object) -> list[dict[str, object]]:
+        return []
+
+
+class _DecisionStorage:
+    def __init__(self, *, signals: object, execution: object, jobs: object) -> None:
+        self.signals = signals
+        self.execution = execution
+        self.jobs = jobs
 
 
 class _RepositoryCapabilities:
@@ -299,7 +386,11 @@ class _PipelineCollectorStore:
         if row is not None and market_date not in {None, str(row["session_date"])}:
             return []
         if row is not None:
-            row = {**row, "pipeline_id": pipeline_id, "market_date": row["session_date"]}
+            row = {
+                **row,
+                "pipeline_id": pipeline_id,
+                "market_date": row["session_date"],
+            }
         return [] if row is None else [row]
 
     def list_cycle_candidates(self, cycle_id: str) -> list[dict[str, object]]:
@@ -331,7 +422,12 @@ class _PipelineSignalStore:
         return True
 
     def list_active_cycle_opportunities(
-        self, cycle_id: str, *, eligibility_state: str | None = None, exclude_consumed: bool = True, limit: int = 200
+        self,
+        cycle_id: str,
+        *,
+        eligibility_state: str | None = None,
+        exclude_consumed: bool = True,
+        limit: int = 200,
     ) -> list[dict[str, object]]:
         del cycle_id, eligibility_state, exclude_consumed, limit
         return [
@@ -487,6 +583,134 @@ class _PipelineStorage:
 
 
 class LiveCollectorArchitectureE2ETests(unittest.TestCase):
+    def test_collection_cycle_writes_automation_scoped_runtime_opportunities(
+        self,
+    ) -> None:
+        collector_store = _CollectorStore()
+        signal_store = _AutomationRuntimeSignalStore()
+        bot = load_active_bots()["short_dated_index_credit_bot"]
+        runtime = next(
+            item
+            for item in bot.automations
+            if item.automation.automation_id == "index_put_credit_entry"
+        )
+        symbol = runtime.symbols[0]
+        candidate = {
+            **_candidate_payload(symbol),
+            "strategy": "put_credit",
+            "profile": "weekly",
+            "short_delta": 0.22,
+            "width": 2.0,
+            "short_open_interest": 1200,
+            "long_open_interest": 1100,
+            "short_relative_spread": 0.05,
+            "long_relative_spread": 0.04,
+        }
+        args = Namespace(
+            strategy="put_credit",
+            profile="weekly",
+            greeks_source="local",
+            top=5,
+            history_db="postgresql://example",
+            execution_policy=None,
+            quote_capture_seconds=0,
+            trade_capture_seconds=0,
+            session_end_offset_minutes=0,
+            options_automation_scope={
+                "enabled": True,
+                "symbols": tuple(runtime.symbols),
+                "entry_runtimes": [(bot, runtime)],
+            },
+        )
+        scanner_args = Namespace(feed="opra", data_base_url="https://data.example")
+        selection_payload = {
+            "symbol_candidates": {symbol: [dict(candidate)]},
+            "promotable_candidates": [dict(candidate)],
+            "monitor_candidates": [],
+            "opportunities": [
+                {
+                    **candidate,
+                    "selection_state": "promotable",
+                    "selection_rank": 1,
+                    "state_reason": "selected_promotable",
+                    "origin": "live_scan",
+                    "eligibility": "live",
+                    "candidate": dict(candidate),
+                }
+            ],
+            "selection_memory": {},
+            "events": [],
+        }
+
+        with (
+            patch(
+                "core.jobs.live_collector.run_universe_cycle",
+                return_value=([symbol], "liquid_index_etfs", [], [], []),
+            ),
+            patch(
+                "core.jobs.live_collector.build_symbol_strategy_candidates",
+                return_value={symbol: [candidate]},
+            ),
+            patch(
+                "core.jobs.live_collector.capture_live_option_market_state",
+                return_value=_same_slot_capture_snapshot(symbol),
+            ),
+            patch(
+                "core.jobs.live_collector.read_previous_selection",
+                return_value=({}, {}),
+            ),
+            patch(
+                "core.jobs.live_collector.select_live_opportunities",
+                return_value=selection_payload,
+            ),
+            patch(
+                "core.services.opportunity_generation.select_live_opportunities",
+                return_value=selection_payload,
+            ),
+            patch(
+                "core.jobs.live_collector.sync_live_collector_signal_layer",
+                return_value={
+                    "signal_states_upserted": 0,
+                    "signal_transitions_recorded": 0,
+                    "opportunities_upserted": 0,
+                    "opportunities_expired": 0,
+                },
+            ),
+            patch(
+                "core.jobs.live_collector.dispatch_cycle_alerts",
+                return_value=[],
+            ),
+        ):
+            result = _run_collection_cycle(
+                args,
+                tick_context=None,
+                scanner_args=scanner_args,
+                client=object(),
+                storage=object(),
+                history_store=_HistoryStore(),
+                alert_store=_AlertStore(),
+                job_store=_JobStoreThatMustNotServeStaleContext(),
+                collector_store=collector_store,
+                event_store=_EventStore(),
+                signal_store=signal_store,
+                recovery_store=None,
+                calendar_resolver=object(),
+                greeks_provider=object(),
+                emit_output=False,
+            )
+
+        self.assertEqual(result["automation_runs_upserted"], 1)
+        self.assertGreaterEqual(result["runtime_opportunities_upserted"], 1)
+        self.assertEqual(signal_store.automation_runs[0]["bot_id"], bot.bot.bot_id)
+        self.assertEqual(
+            signal_store.opportunities[0]["automation_id"],
+            runtime.automation.automation_id,
+        )
+        self.assertEqual(
+            signal_store.opportunities[0]["strategy_config_id"],
+            runtime.strategy_config.strategy_config_id,
+        )
+
     def test_save_cycle_does_not_materialize_legacy_pipeline_rows(self) -> None:
         tracking_session = _TrackingSession()
         repo = _CollectorRepositoryWithoutLegacyPipelineWrites(tracking_session)
@@ -537,35 +761,43 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         )
         scanner_args = Namespace(feed="opra", data_base_url="https://data.example")
 
-        with patch(
-            "core.jobs.live_collector.run_universe_cycle",
-            return_value=(["AAPL"], "earnings", [], [], []),
-        ), patch(
-            "core.jobs.live_collector.build_symbol_strategy_candidates",
-            return_value={"AAPL": [_candidate_payload()]},
-        ), patch(
-            "core.jobs.live_collector.capture_live_option_market_state",
-            return_value=_same_slot_capture_snapshot(),
-        ), patch(
-            "core.jobs.live_collector.read_previous_selection",
-            return_value=({}, {}),
-        ), patch(
-            "core.jobs.live_collector.sync_live_collector_signal_layer",
-            return_value={
-                "signal_states_upserted": 0,
-                "signal_transitions_recorded": 0,
-                "opportunities_upserted": 0,
-                "opportunities_expired": 0,
-            },
-        ), patch(
-            "core.jobs.live_collector.dispatch_cycle_alerts",
-            return_value=[],
+        with (
+            patch(
+                "core.jobs.live_collector.run_universe_cycle",
+                return_value=(["AAPL"], "earnings", [], [], []),
+            ),
+            patch(
+                "core.jobs.live_collector.build_symbol_strategy_candidates",
+                return_value={"AAPL": [_candidate_payload()]},
+            ),
+            patch(
+                "core.jobs.live_collector.capture_live_option_market_state",
+                return_value=_same_slot_capture_snapshot(),
+            ),
+            patch(
+                "core.jobs.live_collector.read_previous_selection",
+                return_value=({}, {}),
+            ),
+            patch(
+                "core.jobs.live_collector.sync_live_collector_signal_layer",
+                return_value={
+                    "signal_states_upserted": 0,
+                    "signal_transitions_recorded": 0,
+                    "opportunities_upserted": 0,
+                    "opportunities_expired": 0,
+                },
+            ),
+            patch(
+                "core.jobs.live_collector.dispatch_cycle_alerts",
+                return_value=[],
+            ),
         ):
             result = _run_collection_cycle(
                 args,
                 tick_context=None,
                 scanner_args=scanner_args,
                 client=object(),
+                storage=object(),
                 history_store=_HistoryStore(),
                 alert_store=_AlertStore(),
                 job_store=_JobStoreThatMustNotServeStaleContext(),
@@ -583,7 +815,9 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         saved_opportunity = collector_store.saved_cycle["opportunities"][0]
         signal_bundle = saved_opportunity["score_evidence"]["signal_bundle"]
         self.assertEqual(signal_bundle["options_bias_alignment_source"], "evidence")
-        self.assertEqual(signal_bundle["signals"]["direction_signal"]["source"], "evidence")
+        self.assertEqual(
+            signal_bundle["signals"]["direction_signal"]["source"], "evidence"
+        )
         self.assertTrue(saved_opportunity["score_evidence"]["signal_gate"]["eligible"])
 
     def test_capture_live_market_state_uses_market_recorder_rows(self) -> None:
@@ -622,44 +856,52 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
             }
         ]
 
-        with patch(
-            "core.jobs.live_collector.refresh_live_session_capture_targets",
-            side_effect=lambda **_: order.append("targets")
-            or {"status": "ok", "capture_targets": {}},
-        ), patch(
-            "core.jobs.live_collector.collect_latest_quote_records",
-            side_effect=lambda **_: order.append("baseline")
-            or [
-                {
-                    "option_symbol": "AAPL260424C210",
-                    "captured_at": "2026-04-15T14:35:00Z",
-                    "bid_price": 1.8,
-                    "ask_price": 2.0,
-                    "source": "alpaca_latest_quote",
-                }
-            ],
-        ), patch(
-            "core.jobs.live_collector.collect_recorded_market_data_records",
-            side_effect=lambda **_: order.append("recorded")
-            or {
-                "quotes": recorder_quotes,
-                "trades": recorder_trades,
-                "quote_error": None,
-                "trade_error": None,
-                "quote_complete": True,
-            },
-        ), patch(
-            "core.jobs.live_collector.build_uoa_trade_summary",
-            return_value={"overview": {"scoreable_trade_count": 1}},
-        ), patch(
-            "core.jobs.live_collector.build_uoa_quote_summary",
-            return_value={"overview": {"observed_contract_count": 1}},
-        ), patch(
-            "core.jobs.live_collector.build_uoa_trade_baselines",
-            return_value={},
-        ), patch(
-            "core.jobs.live_collector.build_uoa_root_decisions",
-            return_value={"overview": {"root_count": 1}},
+        with (
+            patch(
+                "core.jobs.live_collector.refresh_live_session_capture_targets",
+                side_effect=lambda **_: order.append("targets")
+                or {"status": "ok", "capture_targets": {}},
+            ),
+            patch(
+                "core.jobs.live_collector.collect_latest_quote_records",
+                side_effect=lambda **_: order.append("baseline")
+                or [
+                    {
+                        "option_symbol": "AAPL260424C210",
+                        "captured_at": "2026-04-15T14:35:00Z",
+                        "bid_price": 1.8,
+                        "ask_price": 2.0,
+                        "source": "alpaca_latest_quote",
+                    }
+                ],
+            ),
+            patch(
+                "core.jobs.live_collector.collect_recorded_market_data_records",
+                side_effect=lambda **_: order.append("recorded")
+                or {
+                    "quotes": recorder_quotes,
+                    "trades": recorder_trades,
+                    "quote_error": None,
+                    "trade_error": None,
+                    "quote_complete": True,
+                },
+            ),
+            patch(
+                "core.jobs.live_collector.build_uoa_trade_summary",
+                return_value={"overview": {"scoreable_trade_count": 1}},
+            ),
+            patch(
+                "core.jobs.live_collector.build_uoa_quote_summary",
+                return_value={"overview": {"observed_contract_count": 1}},
+            ),
+            patch(
+                "core.jobs.live_collector.build_uoa_trade_baselines",
+                return_value={},
+            ),
+            patch(
+                "core.jobs.live_collector.build_uoa_root_decisions",
+                return_value={"overview": {"root_count": 1}},
+            ),
         ):
             snapshot = capture_live_option_market_state(
                 args=args,
@@ -682,23 +924,30 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         self.assertEqual(snapshot.quote_event_count, 2)
         self.assertEqual(snapshot.trade_event_count, 1)
         self.assertEqual(len(history_store.saved_quote_batches), 1)
-        self.assertEqual(history_store.saved_quote_batches[0][0]["source"], "alpaca_latest_quote")
+        self.assertEqual(
+            history_store.saved_quote_batches[0][0]["source"], "alpaca_latest_quote"
+        )
         self.assertEqual(history_store.saved_trade_batches, [])
 
     def test_pipeline_detail_prefers_canonical_signal_opportunities(self) -> None:
         storage = _PipelineStorage()
-        with patch(
-            "core.services.pipelines.build_session_execution_portfolio",
-            return_value={"positions": []},
-        ), patch(
-            "core.services.pipelines.build_session_risk_snapshot",
-            return_value={"status": "healthy", "note": "ok"},
-        ), patch(
-            "core.services.pipelines.get_control_state_snapshot",
-            return_value={"mode": "normal"},
-        ), patch(
-            "core.services.pipelines.list_session_execution_attempts",
-            return_value=[],
+        with (
+            patch(
+                "core.services.pipelines.build_session_execution_portfolio",
+                return_value={"positions": []},
+            ),
+            patch(
+                "core.services.pipelines.build_session_risk_snapshot",
+                return_value={"status": "healthy", "note": "ok"},
+            ),
+            patch(
+                "core.services.pipelines.get_control_state_snapshot",
+                return_value={"mode": "normal"},
+            ),
+            patch(
+                "core.services.pipelines.list_session_execution_attempts",
+                return_value=[],
+            ),
         ):
             detail = get_pipeline_detail(
                 db_target="postgresql://example",
@@ -726,7 +975,9 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
 
         self.assertEqual(len(listing["pipelines"]), 1)
         pipeline = listing["pipelines"][0]
-        self.assertEqual(pipeline["pipeline_id"], "pipeline:explore_10_call_debit_weekly_auto")
+        self.assertEqual(
+            pipeline["pipeline_id"], "pipeline:explore_10_call_debit_weekly_auto"
+        )
         self.assertEqual(pipeline["promotable_count"], 1)
         self.assertEqual(pipeline["monitor_count"], 0)
 
@@ -736,7 +987,9 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         detail = get_latest_uoa_state(storage=storage)
 
         self.assertEqual(detail["opportunities"][0]["opportunity_id"], "opp-live")
-        self.assertEqual(detail["opportunities"][0]["candidate"]["underlying_symbol"], "MSFT")
+        self.assertEqual(
+            detail["opportunities"][0]["candidate"]["underlying_symbol"], "MSFT"
+        )
         self.assertEqual(storage.collector.list_cycle_candidates_calls, 0)
 
     def test_scheduler_coalesces_stale_queued_slot_to_latest_slot(self) -> None:
@@ -892,29 +1145,35 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         recovery_store = _SchedulerRecoveryStore()
 
         async def run_test() -> dict[str, object]:
-            with patch(
-                "core.jobs.scheduler.resolve_live_tick_plan",
-                return_value={
-                    "label": "test",
-                    "session_id": "live:test:2026-04-15",
-                    "session_date": "2026-04-15",
-                    "interval_seconds": 60,
-                    "slots": [old_slot, current_slot],
-                    "current_slot": current_slot,
-                    "payload": {"interval_seconds": 60},
-                },
-            ), patch(
-                "core.jobs.scheduler._live_run_active",
-                return_value=True,
-            ), patch(
-                "core.jobs.scheduler._enqueue_job_run",
-                return_value=True,
-            ), patch(
-                "core.jobs.scheduler._enqueue_collector_recovery_if_needed",
-                return_value=None,
-            ), patch(
-                "core.jobs.scheduler._publish_job_run_update",
-                return_value=None,
+            with (
+                patch(
+                    "core.jobs.scheduler.resolve_live_tick_plan",
+                    return_value={
+                        "label": "test",
+                        "session_id": "live:test:2026-04-15",
+                        "session_date": "2026-04-15",
+                        "interval_seconds": 60,
+                        "slots": [old_slot, current_slot],
+                        "current_slot": current_slot,
+                        "payload": {"interval_seconds": 60},
+                    },
+                ),
+                patch(
+                    "core.jobs.scheduler._live_run_active",
+                    return_value=True,
+                ),
+                patch(
+                    "core.jobs.scheduler._enqueue_job_run",
+                    return_value=True,
+                ),
+                patch(
+                    "core.jobs.scheduler._enqueue_collector_recovery_if_needed",
+                    return_value=None,
+                ),
+                patch(
+                    "core.jobs.scheduler._publish_job_run_update",
+                    return_value=None,
+                ),
             ):
                 return await _reconcile_live_collector_jobs(
                     job_store,
@@ -941,6 +1200,76 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         self.assertEqual(old_slot_record["status"], LIVE_SLOT_STATUS_MISSED)
         self.assertIn(str(current_run["job_run_id"]), result["enqueued"])
 
+    def test_entry_decision_prefers_automation_scoped_opportunities(self) -> None:
+        bot = load_active_bots()["short_dated_index_credit_bot"]
+        runtime = next(
+            item
+            for item in bot.automations
+            if item.automation.automation_id == "index_put_credit_entry"
+        )
+        symbol = runtime.symbols[0]
+        scoped_row = {
+            "opportunity_id": "opp-scoped",
+            "underlying_symbol": symbol,
+            "strategy_family": runtime.strategy_config.strategy_family,
+            "lifecycle_state": "ready",
+            "consumed_by_execution_attempt_id": None,
+            "execution_score": 91.0,
+            "selection_rank": 1,
+            "label": "runtime_label",
+            "expires_at": "2026-04-15T15:30:00Z",
+        }
+        generic_row = {
+            "opportunity_id": "opp-generic",
+            "underlying_symbol": symbol,
+            "strategy_family": runtime.strategy_config.strategy_family,
+            "lifecycle_state": "ready",
+            "consumed_by_execution_attempt_id": None,
+            "execution_score": 75.0,
+            "selection_rank": 1,
+            "label": "generic_label",
+            "expires_at": "2026-04-15T15:30:00Z",
+        }
+        signals = _DecisionSignalStore(scoped_row=scoped_row, generic_row=generic_row)
+        execution = _DecisionExecutionStore()
+        storage = _DecisionStorage(
+            signals=signals,
+            execution=execution,
+            jobs=_DecisionJobStore(),
+        )
+
+        with (
+            patch(
+                "core.services.decision_engine.automation_should_run_now",
+                return_value=True,
+            ),
+            patch(
+                "core.services.decision_engine.evaluate_entry_controls",
+                return_value=(True, None, {"open_positions": 0}),
+            ),
+        ):
+            result = run_entry_automation_decision(
+                db_target="postgresql://example",
+                bot_id=bot.bot.bot_id,
+                automation_id=runtime.automation.automation_id,
+                market_date="2026-04-15",
+                storage=storage,
+            )
+
+        self.assertEqual(result["selected_opportunity_id"], "opp-scoped")
+        self.assertTrue(signals.list_calls[0]["runtime_owned"])
+        self.assertEqual(signals.list_calls[0]["bot_id"], bot.bot.bot_id)
+        self.assertEqual(
+            signals.list_calls[0]["automation_id"],
+            runtime.automation.automation_id,
+        )
+        self.assertEqual(
+            execution.upserted_intents[0]["payload"]["exit_policy"][
+                "profit_target_pct"
+            ],
+            0.5,
+        )
+
     def test_runtime_deployment_mode_controls_live_approval_with_legacy_backcompat(
         self,
     ) -> None:
@@ -966,13 +1295,16 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
             "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         }
 
-        with patch(
-            "core.services.risk_manager._current_trading_environment",
-            return_value="live",
-        ), patch.dict(
-            os.environ,
-            {"SPREADS_ALLOW_LIVE_TRADING": "true"},
-            clear=False,
+        with (
+            patch(
+                "core.services.risk_manager._current_trading_environment",
+                return_value="live",
+            ),
+            patch.dict(
+                os.environ,
+                {"SPREADS_ALLOW_LIVE_TRADING": "true"},
+                clear=False,
+            ),
         ):
             paper_auto_decision = evaluate_open_execution(
                 execution_store=_ExecutionStore(),

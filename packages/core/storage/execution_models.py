@@ -285,6 +285,12 @@ class PortfolioPositionModel(Base):
     __table_args__ = (
         Index("idx_portfolio_positions_pipeline_updated", "pipeline_id", "updated_at"),
         Index("idx_portfolio_positions_pipeline_status", "pipeline_id", "status"),
+        Index("idx_portfolio_positions_bot_status", "bot_id", "status"),
+        Index(
+            "idx_portfolio_positions_strategy_config_status",
+            "strategy_config_id",
+            "status",
+        ),
         Index(
             "ux_portfolio_positions_open_attempt",
             "open_execution_attempt_id",
@@ -294,9 +300,18 @@ class PortfolioPositionModel(Base):
 
     position_id: Mapped[str] = mapped_column(Text, primary_key=True)
     pipeline_id: Mapped[str] = mapped_column(Text, nullable=False)
+    bot_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    automation_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    strategy_config_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    strategy_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_opportunity_id: Mapped[str | None] = mapped_column(
         Text,
         ForeignKey("opportunities.opportunity_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    opening_execution_intent_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("execution_intents.execution_intent_id", ondelete="SET NULL"),
         nullable=True,
     )
     open_execution_attempt_id: Mapped[str] = mapped_column(
@@ -339,6 +354,7 @@ class PortfolioPositionModel(Base):
     risk_policy_json: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, default=dict
     )
+    config_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_job_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_job_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_job_run_id: Mapped[str | None] = mapped_column(Text, nullable=True)

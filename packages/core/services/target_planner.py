@@ -50,15 +50,27 @@ def _candidate_payload(opportunity: Mapping[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def _runtime_owner_key(bot: ResolvedBot, runtime: ResolvedAutomation) -> str:
+    return f"{bot.bot.bot_id}:{runtime.automation.automation_id}"
+
+
 def _matching_candidates(
     *,
     opportunities: list[dict[str, Any]],
+    bot: ResolvedBot,
     runtime: ResolvedAutomation,
 ) -> list[dict[str, Any]]:
     strategy_family = runtime.strategy_config.strategy_family
     symbols = set(runtime.symbols)
     filtered: list[dict[str, Any]] = []
     for opportunity in opportunities:
+        opportunity_bot_id = str(opportunity.get("bot_id") or "")
+        opportunity_automation_id = str(opportunity.get("automation_id") or "")
+        if opportunity_bot_id or opportunity_automation_id:
+            if opportunity_bot_id != bot.bot.bot_id:
+                continue
+            if opportunity_automation_id != runtime.automation.automation_id:
+                continue
         underlying_symbol = str(opportunity.get("underlying_symbol") or "").upper()
         if symbols and underlying_symbol not in symbols:
             continue
@@ -103,10 +115,10 @@ def refresh_options_automation_capture_targets(
         CAPTURE_TARGET_REASON_BOT_HOT: [],
     }
     for bot, automation in entry_runtimes:
-        owner_key = bot.bot.bot_id
+        owner_key = _runtime_owner_key(bot, automation)
         active_owner_keys.append(owner_key)
         candidates = _matching_candidates(
-            opportunities=opportunities, runtime=automation
+            opportunities=opportunities, bot=bot, runtime=automation
         )
         warm_candidates = candidates[:6]
         hot_threshold = float(

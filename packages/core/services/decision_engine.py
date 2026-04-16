@@ -9,7 +9,10 @@ from core.services.automations import automation_should_run_now
 from core.services.bot_analytics import evaluate_entry_controls
 from core.services.bots import load_active_bots
 from core.services.live_pipelines import resolve_live_collector_label
+from core.services.management_recipes import build_exit_policy_from_recipe_refs
 from core.services.option_structures import normalize_strategy_family
+from core.services.runtime_policy import build_runtime_policy_ref
+from core.services.automation_runtime import resolve_entry_runtime
 
 ACTIVE_INTENT_STATES = ["pending", "claimed", "submitted", "partially_filled"]
 
@@ -54,24 +57,38 @@ def _matching_opportunities(
     *,
     signal_store: Any,
     market_date: str,
-    symbols: tuple[str, ...],
-    strategy_family: str,
+    symbols: tuple[str, ...] | None = None,
+    strategy_family: str | None = None,
     allowed_labels: set[str] | None = None,
+    bot_id: str | None = None,
+    automation_id: str | None = None,
+    strategy_config_id: str | None = None,
+    runtime_owned: bool | None = None,
 ) -> list[dict[str, Any]]:
     rows = [
         dict(row)
         for row in signal_store.list_opportunities(
             market_date=market_date,
             eligibility_state="live",
+            bot_id=bot_id,
+            automation_id=automation_id,
+            strategy_config_id=strategy_config_id,
+            runtime_owned=runtime_owned,
             limit=500,
         )
     ]
-    allowed_symbols = set(symbols)
+    allowed_symbols = set(symbols or ())
     filtered = [
         row
         for row in rows
-        if normalize_strategy_family(row.get("strategy_family")) == strategy_family
-        and str(row.get("underlying_symbol") or "").upper() in allowed_symbols
+        if (
+            strategy_family is None
+            or normalize_strategy_family(row.get("strategy_family")) == strategy_family
+        )
+        and (
+            not allowed_symbols
+            or str(row.get("underlying_symbol") or "").upper() in allowed_symbols
+        )
         and (not allowed_labels or str(row.get("label") or "") in allowed_labels)
         and str(row.get("lifecycle_state") or "") in {"candidate", "ready", "blocked"}
         and row.get("consumed_by_execution_attempt_id") in (None, "")
@@ -116,55 +133,46 @@ def run_entry_automation_decision(
     if not execution_store.intent_schema_ready():
         return {"status": "skipped", "reason": "execution_intent_schema_unavailable"}
 
-    bots = load_active_bots()
-    bot = bots.get(bot_id)
-    if bot is None:
-        raise ValueError(f"Unknown or paused bot_id: {bot_id}")
-    automation = next(
-        (
-            item
-            for item in bot.automations
-            if item.automation.automation_id == automation_id
-        ),
-        None,
-    )
-    if automation is None:
-        raise ValueError(f"Unknown automation_id for bot {bot_id}: {automation_id}")
-    if not automation.automation.is_entry:
-        raise ValueError(f"Automation {automation_id} is not an entry automation")
-    if not automation_should_run_now(automation.automation):
+    runtime = resolve_entry_runtime(bot_id=bot_id, automation_id=automation_id)
+    if not automation_should_run_now(runtime.automation.automation):
         return {
             "status": "skipped",
             "reason": "outside_schedule_window",
-            "bot_id": bot_id,
-            "automation_id": automation_id,
+            "bot_id": runtime.bot_id,
+            "automation_id": runtime.automation_id,
         }
 
     resolved_market_date = market_date or _market_date_today()
-    run_key = f"decision:{bot_id}:{automation_id}:{_utc_now()}"
-    scope_key = f"entry:{bot_id}:{automation_id}:{resolved_market_date}"
-    policy_ref = {
-        "bot_id": bot.bot.bot_id,
-        "automation_id": automation.automation.automation_id,
-        "strategy_config_id": automation.strategy_config.strategy_config_id,
-        "strategy_id": automation.strategy_config.strategy_id,
-        "market_date": resolved_market_date,
-    }
+    run_key = f"decision:{runtime.bot_id}:{runtime.automation_id}:{_utc_now()}"
+    scope_key = f"entry:{runtime.bot_id}:{runtime.automation_id}:{resolved_market_date}"
+    policy_ref = build_runtime_policy_ref(
+        bot_id=runtime.bot_id,
+        automation_id=runtime.automation_id,
+        strategy_config_id=runtime.strategy_config_id,
+        strategy_id=runtime.strategy_id,
+        market_date=resolved_market_date,
+    )
     opportunities = _matching_opportunities(
         signal_store=signal_store,
         market_date=resolved_market_date,
-        symbols=automation.symbols,
-        strategy_family=normalize_strategy_family(
-            automation.strategy_config.strategy_id
-        ),
-        allowed_labels=_active_options_automation_labels(job_store),
+        bot_id=runtime.bot_id,
+        automation_id=runtime.automation_id,
+        strategy_config_id=runtime.strategy_config_id,
+        runtime_owned=True,
     )
-    min_score = float(
-        automation.automation.trigger_policy.get("min_opportunity_score") or 0.0
-    )
+    if not opportunities:
+        opportunities = _matching_opportunities(
+            signal_store=signal_store,
+            market_date=resolved_market_date,
+            symbols=runtime.symbols,
+            strategy_family=runtime.strategy_family,
+            allowed_labels=_active_options_automation_labels(job_store),
+            runtime_owned=False,
+        )
+    min_score = float(runtime.trigger_policy.get("min_opportunity_score") or 0.0)
     controls_allowed, controls_reason, bot_metrics = evaluate_entry_controls(
         storage=storage,
-        bot=bot.bot,
+        bot=runtime.bot.bot,
         market_date=resolved_market_date,
     )
     selected: dict[str, Any] | None = None
@@ -192,12 +200,12 @@ def run_entry_automation_decision(
         decision = signal_store.upsert_opportunity_decision(
             opportunity_decision_id=_decision_id(run_key, opportunity_id),
             opportunity_id=opportunity_id,
-            bot_id=bot.bot.bot_id,
-            automation_id=automation.automation.automation_id,
+            bot_id=runtime.bot_id,
+            automation_id=runtime.automation_id,
             run_key=run_key,
             scope_key=scope_key,
             policy_ref=policy_ref,
-            config_hash=bot.config_hash,
+            config_hash=runtime.config_hash,
             state=state,
             score=_score(opportunity),
             rank=rank,
@@ -222,8 +230,8 @@ def run_entry_automation_decision(
         if state != "selected":
             continue
         slot_key = _slot_key(
-            bot.bot.bot_id,
-            automation.strategy_config.strategy_config_id,
+            runtime.bot_id,
+            runtime.strategy_config_id,
             str(opportunity.get("underlying_symbol") or ""),
         )
         existing_active = execution_store.list_execution_intents(
@@ -235,12 +243,12 @@ def run_entry_automation_decision(
             signal_store.upsert_opportunity_decision(
                 opportunity_decision_id=str(decision["opportunity_decision_id"]),
                 opportunity_id=opportunity_id,
-                bot_id=bot.bot.bot_id,
-                automation_id=automation.automation.automation_id,
+                bot_id=runtime.bot_id,
+                automation_id=runtime.automation_id,
                 run_key=run_key,
                 scope_key=scope_key,
                 policy_ref=policy_ref,
-                config_hash=bot.config_hash,
+                config_hash=runtime.config_hash,
                 state="blocked",
                 score=_score(opportunity),
                 rank=rank,
@@ -252,8 +260,8 @@ def run_entry_automation_decision(
             continue
         selected_intent = execution_store.upsert_execution_intent(
             execution_intent_id=_intent_id(str(decision["opportunity_decision_id"])),
-            bot_id=bot.bot.bot_id,
-            automation_id=automation.automation.automation_id,
+            bot_id=runtime.bot_id,
+            automation_id=runtime.automation_id,
             opportunity_decision_id=str(decision["opportunity_decision_id"]),
             strategy_position_id=None,
             execution_attempt_id=None,
@@ -261,15 +269,18 @@ def run_entry_automation_decision(
             slot_key=slot_key,
             claim_token=None,
             policy_ref=policy_ref,
-            config_hash=bot.config_hash,
+            config_hash=runtime.config_hash,
             state="pending",
             expires_at=str(opportunity.get("expires_at") or _utc_now()),
             superseded_by_id=None,
             payload={
                 "opportunity_id": opportunity_id,
                 "underlying_symbol": opportunity.get("underlying_symbol"),
-                "execution_mode": automation.automation.execution_mode,
-                "approval_mode": automation.automation.approval_mode,
+                "execution_mode": runtime.automation.automation.execution_mode,
+                "approval_mode": runtime.automation.automation.approval_mode,
+                "exit_policy": build_exit_policy_from_recipe_refs(
+                    tuple(runtime.automation.strategy_config.management_recipe_refs)
+                ),
             },
             created_at=_utc_now(),
             updated_at=_utc_now(),
@@ -283,8 +294,8 @@ def run_entry_automation_decision(
 
     return {
         "status": "ok",
-        "bot_id": bot.bot.bot_id,
-        "automation_id": automation.automation.automation_id,
+        "bot_id": runtime.bot_id,
+        "automation_id": runtime.automation_id,
         "market_date": resolved_market_date,
         "run_key": run_key,
         "opportunity_count": len(opportunities),
