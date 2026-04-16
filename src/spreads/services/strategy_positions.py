@@ -5,7 +5,7 @@ from typing import Any
 
 from spreads.db.decorators import with_storage
 from spreads.services.automations import automation_should_run_now
-from spreads.services.bots import load_active_bots
+from spreads.services.bots import bot_time_reached, load_active_bots
 from spreads.services.execution_portfolio import refresh_session_position_marks
 from spreads.services.exit_manager import (
     OPEN_CLOSE_ATTEMPT_STATUSES,
@@ -44,6 +44,18 @@ def _coerce_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _resolve_management_limit_price(
+    position: dict[str, Any],
+) -> tuple[float | None, str | None]:
+    mark = _coerce_float(position.get("close_mark"))
+    if mark is not None and mark > 0:
+        return round(max(mark, 0.01), 2), "mark"
+    width = _coerce_float(position.get("width"))
+    if width is not None and width > 0:
+        return round(max(width, 0.01), 2), "width"
+    return None, None
 
 
 def _intent_id(position_id: str, automation_id: str) -> str:
@@ -153,6 +165,11 @@ def run_management_automation_decision(
             "skipped": 0,
         }
 
+    flatten_due = bot_time_reached(
+        bot.bot,
+        time_value=bot.bot.flatten_positions_at_et,
+    )
+
     refresh_session_position_marks(
         db_target=db_target,
         session_ids=sorted(
@@ -204,11 +221,24 @@ def run_management_automation_decision(
             )
             continue
 
-        decision = evaluate_exit_policy(
-            position=position,
-            mark=_coerce_float(position.get("close_mark")),
-            now=datetime.now(UTC),
-        )
+        if flatten_due:
+            limit_price, limit_price_source = _resolve_management_limit_price(position)
+            decision = (
+                {"should_close": False, "reason": "awaiting_flatten_price"}
+                if limit_price is None
+                else {
+                    "should_close": True,
+                    "reason": "bot_flatten",
+                    "limit_price": limit_price,
+                    "limit_price_source": limit_price_source,
+                }
+            )
+        else:
+            decision = evaluate_exit_policy(
+                position=position,
+                mark=_coerce_float(position.get("close_mark")),
+                now=datetime.now(UTC),
+            )
         execution_store.update_position(
             position_id=position_id,
             last_exit_evaluated_at=_utc_now(),

@@ -1,0 +1,15 @@
+automation_id: index_call_credit_entry
+strategy_config_id: short_dated_index_call_credit
+automation_type: entry
+schedule:
+  cadence: 5m
+  market_hours_only: true
+  start_time_et: "09:45"
+  end_time_et: "14:30"
+universe_ref: liquid_index_etfs
+trigger_policy:
+  min_opportunity_score: 60
+  replan_on_new_cycle: true
+approval_mode: auto
+execution_mode: paper
+enabled: true

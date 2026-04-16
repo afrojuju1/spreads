@@ -3,10 +3,10 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid4
 
 from spreads.db.decorators import with_storage
 from spreads.services.automations import automation_should_run_now
+from spreads.services.bot_analytics import evaluate_entry_controls
 from spreads.services.bots import load_active_bots
 from spreads.services.live_pipelines import resolve_live_collector_label
 from spreads.services.option_structures import normalize_strategy_family
@@ -33,6 +33,10 @@ def _intent_id(opportunity_decision_id: str) -> str:
 
 def _slot_key(bot_id: str, strategy_config_id: str, underlying_symbol: str) -> str:
     return f"entry:{bot_id}:{strategy_config_id}:{underlying_symbol}"
+
+
+def _blocked_reason_codes(reason: str | None) -> list[str]:
+    return [reason or "bot_entry_blocked"]
 
 
 def _score(row: dict[str, Any]) -> float:
@@ -158,24 +162,33 @@ def run_entry_automation_decision(
     min_score = float(
         automation.automation.trigger_policy.get("min_opportunity_score") or 0.0
     )
+    controls_allowed, controls_reason, bot_metrics = evaluate_entry_controls(
+        storage=storage,
+        bot=bot.bot,
+        market_date=resolved_market_date,
+    )
     selected: dict[str, Any] | None = None
-    if opportunities and _score(opportunities[0]) >= min_score:
+    if controls_allowed and opportunities and _score(opportunities[0]) >= min_score:
         selected = opportunities[0]
 
     decisions: list[dict[str, Any]] = []
     selected_intent: dict[str, Any] | None = None
     for rank, opportunity in enumerate(opportunities, start=1):
         opportunity_id = str(opportunity["opportunity_id"])
-        state = (
-            "selected"
-            if selected is not None and opportunity_id == selected["opportunity_id"]
-            else "rejected"
-        )
-        reason_codes = [
-            "selected_for_entry"
-            if state == "selected"
-            else "lower_ranked_than_selected_opportunity"
-        ]
+        if not controls_allowed:
+            state = "blocked"
+            reason_codes = _blocked_reason_codes(controls_reason)
+        else:
+            state = (
+                "selected"
+                if selected is not None and opportunity_id == selected["opportunity_id"]
+                else "rejected"
+            )
+            reason_codes = [
+                "selected_for_entry"
+                if state == "selected"
+                else "lower_ranked_than_selected_opportunity"
+            ]
         decision = signal_store.upsert_opportunity_decision(
             opportunity_decision_id=_decision_id(run_key, opportunity_id),
             opportunity_id=opportunity_id,
@@ -196,7 +209,13 @@ def run_entry_automation_decision(
                     "opportunity_id": opportunity_id,
                     "underlying_symbol": opportunity.get("underlying_symbol"),
                     "strategy_family": opportunity.get("strategy_family"),
-                }
+                },
+                **(
+                    {}
+                    if controls_reason is None
+                    else {"control_reason": controls_reason}
+                ),
+                "bot_metrics": bot_metrics,
             },
         )
         decisions.append(decision)

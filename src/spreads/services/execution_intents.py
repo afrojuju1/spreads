@@ -9,6 +9,7 @@ from spreads.services.alpaca import (
     create_alpaca_client_from_env,
     resolve_trading_environment,
 )
+from spreads.services.bots import bot_time_reached, load_bots
 from spreads.services.deployment_policy import (
     DEPLOYMENT_MODE_LIVE_AUTO,
     DEPLOYMENT_MODE_PAPER_AUTO,
@@ -536,10 +537,21 @@ def _auto_execution_gate(
     payload = _intent_payload(intent)
     approval_mode = str(payload.get("approval_mode") or "manual").strip().lower()
     execution_mode = str(payload.get("execution_mode") or "paper").strip().lower()
+    action_type = _intent_action_type(intent)
+    bot_id = _as_text(intent.get("bot_id"))
+    bot = None if bot_id is None else load_bots().get(bot_id)
     if approval_mode != "auto":
         return False, "manual_approval_required"
     if execution_mode not in AUTO_EXECUTION_MODES:
         return False, "unsupported_execution_mode"
+    if action_type == "open" and bot is not None:
+        if bot.cancel_pending_entries_after_et and bot_time_reached(
+            bot,
+            time_value=bot.cancel_pending_entries_after_et,
+        ):
+            return False, "bot_entry_cutoff_reached"
+        if execution_mode == "live" and not bot.live_enabled:
+            return False, "bot_live_disabled"
     if execution_mode == "paper" and trading_environment != "paper":
         return False, "paper_execution_requires_paper_environment"
     return True, None
@@ -1109,7 +1121,32 @@ def dispatch_pending_execution_intents(
             trading_environment=trading_environment,
         )
         if not allowed:
-            if reason == "paper_execution_requires_paper_environment":
+            if reason in {"bot_entry_cutoff_reached", "bot_live_disabled"}:
+                updated = _update_intent(
+                    execution_store,
+                    intent,
+                    state="revoked",
+                    payload_updates={
+                        "dispatch_status": "revoked",
+                        "revoke_reason": reason,
+                    },
+                    updated_at=_utc_now(),
+                )
+                _append_event(
+                    execution_store,
+                    execution_intent_id=execution_intent_id,
+                    event_type="revoked",
+                    payload={"reason": reason},
+                )
+                skipped += 1
+                results.append(
+                    {
+                        "execution_intent_id": execution_intent_id,
+                        "status": "revoked",
+                        "intent": updated,
+                    }
+                )
+            elif reason == "paper_execution_requires_paper_environment":
                 updated = _update_intent(
                     execution_store,
                     intent,

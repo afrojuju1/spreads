@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from spreads.services.automations import (
     ResolvedAutomation,
@@ -17,6 +19,8 @@ from spreads.services.strategy_configs import (
     default_config_root,
 )
 
+NEW_YORK = ZoneInfo("America/New_York")
+
 
 @dataclass(frozen=True)
 class BotConfig:
@@ -25,6 +29,11 @@ class BotConfig:
     capital_limit: float
     max_open_positions: int
     max_daily_actions: int
+    max_new_entries_per_day: int | None
+    daily_loss_limit: float | None
+    live_enabled: bool
+    cancel_pending_entries_after_et: str | None
+    flatten_positions_at_et: str | None
     automation_ids: tuple[str, ...]
     paused: bool
     config_path: Path
@@ -36,6 +45,45 @@ class ResolvedBot:
     bot: BotConfig
     automations: tuple[ResolvedAutomation, ...]
     config_hash: str
+
+
+def _optional_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    return float(value)
+
+
+def _optional_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    return int(value)
+
+
+def _optional_text(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    rendered = str(value).strip()
+    return rendered or None
+
+
+def _parse_hhmm(value: str) -> tuple[int, int]:
+    hour_text, _, minute_text = str(value).partition(":")
+    if not _:
+        raise ValueError(f"Invalid HH:MM time: {value}")
+    return int(hour_text), int(minute_text)
+
+
+def bot_time_reached(
+    bot: BotConfig,
+    *,
+    time_value: str | None,
+    now: datetime | None = None,
+) -> bool:
+    if time_value is None:
+        return False
+    current = (now or datetime.now(NEW_YORK)).astimezone(NEW_YORK)
+    hour, minute = _parse_hhmm(time_value)
+    return (current.hour, current.minute) >= (hour, minute)
 
 
 def load_bots(config_root: str | Path | None = None) -> dict[str, BotConfig]:
@@ -51,6 +99,17 @@ def load_bots(config_root: str | Path | None = None) -> dict[str, BotConfig]:
             capital_limit=float(payload.get("capital_limit") or 0.0),
             max_open_positions=int(payload.get("max_open_positions") or 0),
             max_daily_actions=int(payload.get("max_daily_actions") or 0),
+            max_new_entries_per_day=_optional_int(
+                payload.get("max_new_entries_per_day")
+            ),
+            daily_loss_limit=_optional_float(payload.get("daily_loss_limit")),
+            live_enabled=bool(payload.get("live_enabled", False)),
+            cancel_pending_entries_after_et=_optional_text(
+                payload.get("cancel_pending_entries_after_et")
+            ),
+            flatten_positions_at_et=_optional_text(
+                payload.get("flatten_positions_at_et")
+            ),
             automation_ids=_as_list(
                 payload.get("automation_ids"), field_name="automation_ids"
             ),
@@ -114,19 +173,39 @@ def load_active_bots(
 
 def active_entry_automations(
     config_root: str | Path | None = None,
+    *,
+    scanner_strategy: str | None = None,
+    scanner_profile: str | None = None,
 ) -> list[tuple[ResolvedBot, ResolvedAutomation]]:
     entries: list[tuple[ResolvedBot, ResolvedAutomation]] = []
     for bot in load_active_bots(config_root).values():
         for automation in bot.automations:
             if automation.automation.is_entry:
+                if (
+                    scanner_strategy is not None
+                    and automation.strategy_config.scanner_strategy != scanner_strategy
+                ):
+                    continue
+                if (
+                    scanner_profile is not None
+                    and automation.strategy_config.scanner_profile != scanner_profile
+                ):
+                    continue
                 entries.append((bot, automation))
     return entries
 
 
 def build_collector_scope(
     config_root: str | Path | None = None,
+    *,
+    scanner_strategy: str | None = None,
+    scanner_profile: str | None = None,
 ) -> dict[str, Any]:
-    entries = active_entry_automations(config_root)
+    entries = active_entry_automations(
+        config_root,
+        scanner_strategy=scanner_strategy,
+        scanner_profile=scanner_profile,
+    )
     if not entries:
         return {
             "enabled": False,
@@ -157,11 +236,37 @@ def build_collector_scope(
     }
 
 
+def build_collector_scopes(
+    config_root: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str], list[tuple[ResolvedBot, ResolvedAutomation]]] = {}
+    for item in active_entry_automations(config_root):
+        bot, automation = item
+        key = (
+            automation.strategy_config.scanner_strategy,
+            automation.strategy_config.scanner_profile,
+        )
+        groups.setdefault(key, []).append((bot, automation))
+
+    scopes: list[dict[str, Any]] = []
+    for (scanner_strategy, scanner_profile), entries in sorted(groups.items()):
+        scope = build_collector_scope(
+            config_root,
+            scanner_strategy=scanner_strategy,
+            scanner_profile=scanner_profile,
+        )
+        if scope.get("enabled"):
+            scopes.append(scope)
+    return scopes
+
+
 __all__ = [
     "BotConfig",
     "ResolvedBot",
     "active_entry_automations",
     "build_collector_scope",
+    "build_collector_scopes",
+    "bot_time_reached",
     "load_active_bots",
     "load_bots",
     "resolve_bot",

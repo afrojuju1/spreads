@@ -1,0 +1,22 @@
+strategy_config_id: short_dated_index_call_credit
+strategy_id: call_credit_spread
+enabled: true
+builder_params:
+  dte_min: 5
+  dte_max: 10
+  short_delta_min: 0.18
+  short_delta_max: 0.28
+  width_points: [2, 3, 5]
+entry_recipe_refs:
+  - trend_resistance
+management_recipe_refs:
+  - take_profit_50pct
+  - max_loss_2x_credit
+  - expiry_day_exit
+liquidity_rules:
+  min_open_interest: 200
+  max_leg_spread_pct_mid: 0.15
+  max_quote_age_seconds: 30
+risk_defaults:
+  max_risk_per_trade: 500
+  max_credit_slippage_pct: 0.25

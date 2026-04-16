@@ -1,0 +1,14 @@
+automation_id: index_call_credit_manage
+strategy_config_id: short_dated_index_call_credit
+automation_type: management
+schedule:
+  cadence: 1m
+  market_hours_only: true
+  start_time_et: "09:45"
+  end_time_et: "15:45"
+universe_ref: liquid_index_etfs
+trigger_policy:
+  replan_on_new_cycle: false
+approval_mode: auto
+execution_mode: paper
+enabled: true

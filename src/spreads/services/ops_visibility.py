@@ -18,6 +18,7 @@ from spreads.jobs.orchestration import (
 )
 from spreads.services.account_state import get_account_overview
 from spreads.services.audit_replay import DEFAULT_EVENT_SCAN_LIMIT, build_audit_replay
+from spreads.services.bot_analytics import build_automation_performance_summary
 from spreads.services.bots import load_active_bots
 from spreads.services.broker_sync import BROKER_SYNC_KEY
 from spreads.services.control_plane import (
@@ -1354,6 +1355,10 @@ def build_system_status(
                 storage=storage,
                 market_date=market_date,
             ),
+            "automation_performance": build_automation_performance_summary(
+                storage=storage,
+                market_date=market_date,
+            ),
             "broker_sync": broker_sync,
             "alert_delivery": alert_delivery,
         }
@@ -1361,6 +1366,7 @@ def build_system_status(
 
     collector_selection = dict(details.get("collector_selection") or {})
     automation_runtime = dict(details.get("automation_runtime") or {})
+    automation_performance = dict(details.get("automation_performance") or {})
     summary = {
         "control_mode": control.get("mode"),
         "worker_count": len(workers),
@@ -1403,6 +1409,9 @@ def build_system_status(
             automation_runtime.get("open_position_count")
         )
         or 0,
+        "automation_daily_pnl": _coerce_float(
+            automation_performance.get("daily_total_pnl")
+        ),
         "broker_sync_status": broker_sync.get("status"),
         "alert_delivery_status": alert_delivery.get("status"),
         "market_session_status": market_session.get("status"),
@@ -1548,6 +1557,10 @@ def build_trading_health(
     details["latest_collectors"] = latest_collectors
     details["collector_selection"] = collector_selection
     details["automation_runtime"] = _bot_runtime_summary(
+        storage=storage,
+        market_date=market_date,
+    )
+    details["automation_performance"] = build_automation_performance_summary(
         storage=storage,
         market_date=market_date,
     )
@@ -1811,6 +1824,9 @@ def build_trading_health(
             (details.get("automation_runtime") or {}).get("open_position_count")
         )
         or 0,
+        "automation_daily_pnl": _coerce_float(
+            (details.get("automation_performance") or {}).get("daily_total_pnl")
+        ),
         "account_error": account_error,
     }
 

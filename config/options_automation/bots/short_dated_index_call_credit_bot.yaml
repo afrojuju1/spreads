@@ -1,5 +1,5 @@
-bot_id: short_dated_index_credit_bot
-name: Short-Dated Index Credit Bot
+bot_id: short_dated_index_call_credit_bot
+name: Short-Dated Index Call Credit Bot
 capital_limit: 5000
 max_open_positions: 3
 max_daily_actions: 6
@@ -9,6 +9,6 @@ live_enabled: false
 cancel_pending_entries_after_et: "15:30"
 flatten_positions_at_et: "15:45"
 automation_ids:
-  - index_put_credit_entry
-  - index_put_credit_manage
+  - index_call_credit_entry
+  - index_call_credit_manage
 paused: false

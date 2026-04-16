@@ -24,7 +24,8 @@ from spreads.jobs.registry import (
 )
 from spreads.runtime.config import default_database_url
 from spreads.services.automations import cadence_minutes
-from spreads.services.bots import load_active_bots
+from spreads.services.bots import build_collector_scopes, load_active_bots
+from spreads.services.live_pipelines import build_live_snapshot_label
 from spreads.storage.factory import build_job_repository
 
 DEFAULT_AUTO_EXECUTION_POLICY = {
@@ -100,34 +101,6 @@ def _options_automation_job_definitions() -> list[dict[str, object]]:
             "singleton_scope": None,
         },
         {
-            "job_key": "live_collector:options_automation_short_dated_index_put_credit",
-            "job_type": LIVE_COLLECTOR_JOB_TYPE,
-            "enabled": True,
-            "schedule_type": "market_open_plus_minutes",
-            "schedule": {"minutes": -5},
-            "payload": {
-                "universe": "explore_10",
-                "strategy": "put_credit",
-                "profile": "weekly",
-                "greeks_source": "auto",
-                "top": 10,
-                "per_symbol_top": 1,
-                "interval_seconds": 300,
-                "backfill_missed_slots": False,
-                "max_slot_retries": 3,
-                "quote_capture_seconds": 20,
-                "trade_capture_seconds": 30,
-                "allow_off_hours": False,
-                "session_start_offset_minutes": -5,
-                "session_end_offset_minutes": 5,
-                "options_automation_enabled": True,
-                "execution_policy": dict(DEFAULT_SHADOW_EXECUTION_POLICY),
-                "risk_policy": dict(DEFAULT_AUTO_RISK_POLICY),
-                "exit_policy": dict(DEFAULT_AUTO_EXIT_POLICY),
-            },
-            "singleton_scope": "options_automation_short_dated_index_put_credit",
-        },
-        {
             "job_key": "options_automation_execute:global",
             "job_type": OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE,
             "enabled": True,
@@ -140,6 +113,54 @@ def _options_automation_job_definitions() -> list[dict[str, object]]:
             "singleton_scope": "global",
         },
     ]
+    for scope in build_collector_scopes():
+        scanner_strategy = str(scope["scanner_strategy"])
+        scanner_profile = str(scope["scanner_profile"])
+        if scanner_strategy == "put_credit" and scanner_profile == "weekly":
+            job_key = "live_collector:options_automation_short_dated_index_put_credit"
+            singleton_scope = "options_automation_short_dated_index_put_credit"
+        elif scanner_strategy == "call_credit" and scanner_profile == "weekly":
+            job_key = "live_collector:options_automation_short_dated_index_call_credit"
+            singleton_scope = "options_automation_short_dated_index_call_credit"
+        else:
+            job_key = f"live_collector:options_automation:{scanner_strategy}:{scanner_profile}"
+            singleton_scope = f"options_automation:{scanner_strategy}:{scanner_profile}"
+        definitions.append(
+            {
+                "job_key": job_key,
+                "job_type": LIVE_COLLECTOR_JOB_TYPE,
+                "enabled": True,
+                "schedule_type": "market_open_plus_minutes",
+                "schedule": {"minutes": -5},
+                "payload": {
+                    "label": build_live_snapshot_label(
+                        universe_label="explore_10",
+                        strategy=scanner_strategy,
+                        profile=scanner_profile,
+                        greeks_source="auto",
+                    ),
+                    "universe": "explore_10",
+                    "strategy": scanner_strategy,
+                    "profile": scanner_profile,
+                    "greeks_source": "auto",
+                    "top": 10,
+                    "per_symbol_top": 1,
+                    "interval_seconds": 300,
+                    "backfill_missed_slots": False,
+                    "max_slot_retries": 3,
+                    "quote_capture_seconds": 20,
+                    "trade_capture_seconds": 30,
+                    "allow_off_hours": False,
+                    "session_start_offset_minutes": -5,
+                    "session_end_offset_minutes": 5,
+                    "options_automation_enabled": True,
+                    "execution_policy": dict(DEFAULT_SHADOW_EXECUTION_POLICY),
+                    "risk_policy": dict(DEFAULT_AUTO_RISK_POLICY),
+                    "exit_policy": dict(DEFAULT_AUTO_EXIT_POLICY),
+                },
+                "singleton_scope": singleton_scope,
+            }
+        )
     for bot in load_active_bots().values():
         for automation in bot.automations:
             cadence = cadence_minutes(automation.automation.schedule)

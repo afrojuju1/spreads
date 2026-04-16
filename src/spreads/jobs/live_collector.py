@@ -230,9 +230,14 @@ def build_collection_args(
     return args
 
 
-def _options_automation_scope() -> dict[str, Any]:
+def _options_automation_scope(args: argparse.Namespace) -> dict[str, Any]:
     try:
-        return build_collector_scope()
+        strategy = str(getattr(args, "strategy", "") or "").strip() or None
+        profile = str(getattr(args, "profile", "") or "").strip() or None
+        return build_collector_scope(
+            scanner_strategy=strategy,
+            scanner_profile=profile,
+        )
     except Exception as exc:
         print(f"Options automation config unavailable: {exc}")
         return {
@@ -255,7 +260,7 @@ def _apply_options_automation_overrides(args: argparse.Namespace) -> argparse.Na
             profile=str(getattr(args, "profile", "0dte") or "0dte"),
             greeks_source=str(getattr(args, "greeks_source", "auto") or "auto"),
         )
-    scope = _options_automation_scope()
+    scope = _options_automation_scope(args)
     setattr(args, "options_automation_scope", scope)
     if not bool(scope.get("enabled")):
         return args

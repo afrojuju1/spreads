@@ -214,6 +214,84 @@ def _render_automation_runtime_summary(
     console.print(table)
 
 
+def _render_automation_performance(
+    console: Console,
+    *,
+    title: str,
+    value: Any,
+) -> None:
+    payload = value if isinstance(value, dict) else {}
+    if not payload:
+        return
+    overview = Table(title=title, show_edge=False, header_style="bold")
+    overview.add_column("Metric", style="bold")
+    overview.add_column("Value")
+    overview.add_row("Bots", _render_value(payload.get("bot_count")))
+    overview.add_row("Daily PnL", _render_money(payload.get("daily_total_pnl")))
+    overview.add_row(
+        "Open Unrealized",
+        _render_money(payload.get("open_unrealized_pnl")),
+    )
+    overview.add_row(
+        "Total Realized",
+        _render_money(payload.get("total_realized_pnl")),
+    )
+    overview.add_row(
+        "Entry Fills Today",
+        _render_value(payload.get("daily_entry_fill_count")),
+    )
+    overview.add_row(
+        "Close Fills Today",
+        _render_value(payload.get("daily_close_fill_count")),
+    )
+    console.print(overview)
+
+    def render_symbol_stats(value: Any) -> str:
+        if not isinstance(value, dict) or not value:
+            return "-"
+        ranked = sorted(
+            (
+                (
+                    str(symbol),
+                    stats if isinstance(stats, dict) else {},
+                )
+                for symbol, stats in value.items()
+            ),
+            key=lambda item: (-int(item[1].get("open_positions") or 0), item[0]),
+        )
+        parts: list[str] = []
+        for symbol, stats in ranked[:4]:
+            parts.append(
+                f"{symbol} open {_render_value(stats.get('open_positions'))} net {_render_money(stats.get('net_pnl'))}"
+            )
+        return ", ".join(parts) if parts else "-"
+
+    bot_rows = list(payload.get("bots") or [])
+    if not bot_rows:
+        return
+    table = Table(title="Bot Performance", header_style="bold")
+    table.add_column("Bot")
+    table.add_column("Open", justify="right")
+    table.add_column("Closed", justify="right")
+    table.add_column("Daily PnL", justify="right")
+    table.add_column("Net PnL", justify="right")
+    table.add_column("Entry Fills", justify="right")
+    table.add_column("Win Rate", justify="right")
+    table.add_column("Symbols")
+    for row in bot_rows:
+        table.add_row(
+            str(row.get("bot_name") or row.get("bot_id") or "-"),
+            _render_value(row.get("open_position_count")),
+            _render_value(row.get("closed_position_count")),
+            _render_money(row.get("daily_total_pnl")),
+            _render_money(row.get("net_total_pnl")),
+            _render_value(row.get("daily_entry_fill_count")),
+            _render_percent(row.get("closed_win_rate")),
+            render_symbol_stats(row.get("symbol_stats")),
+        )
+    console.print(table)
+
+
 def _job_run_status_text(status: str | None) -> Text:
     normalized = str(status or "unknown").strip().lower()
     style = {
@@ -285,6 +363,7 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
     broker_sync = dict(details.get("broker_sync") or {})
     alert_delivery = dict(details.get("alert_delivery") or {})
     automation_runtime = dict(details.get("automation_runtime") or {})
+    automation_performance = dict(details.get("automation_performance") or {})
 
     overview = Table.grid(padding=(0, 2))
     overview.add_row("Overall", _status_text(payload.get("status")))
@@ -304,7 +383,8 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
         (
             f"opps {_render_value(summary.get('automation_opportunity_count'))} | "
             f"selected {_render_value(summary.get('automation_selected_count'))} | "
-            f"positions {_render_value(summary.get('automation_open_position_count'))}"
+            f"positions {_render_value(summary.get('automation_open_position_count'))} | "
+            f"daily pnl {_render_money(summary.get('automation_daily_pnl'))}"
         ),
     )
     overview.add_row(
@@ -358,6 +438,11 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
         title="Automation Runtime",
         value=automation_runtime,
     )
+    _render_automation_performance(
+        console,
+        title="Automation Performance",
+        value=automation_performance,
+    )
 
     failure_rows = list(details.get("recent_failures") or [])
     if failure_rows:
@@ -383,6 +468,7 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
     broker_sync = dict(details.get("broker_sync") or {})
     market_session = dict(details.get("market_session") or {})
     automation_runtime = dict(details.get("automation_runtime") or {})
+    automation_performance = dict(details.get("automation_performance") or {})
 
     overview = Table.grid(padding=(0, 2))
     overview.add_row("Overall", _status_text(payload.get("status")))
@@ -431,7 +517,8 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
             f"opps {_render_value(summary.get('automation_opportunity_count'))} | "
             f"selected {_render_value(summary.get('automation_selected_count'))} | "
             f"positions {_render_value(summary.get('automation_open_position_count'))} | "
-            f"intents {_render_value(summary.get('automation_intent_count'))}"
+            f"intents {_render_value(summary.get('automation_intent_count'))} | "
+            f"daily pnl {_render_money(summary.get('automation_daily_pnl'))}"
         ),
     )
     overview.add_row(
@@ -452,6 +539,11 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
         console,
         title="Automation Runtime",
         value=automation_runtime,
+    )
+    _render_automation_performance(
+        console,
+        title="Automation Performance",
+        value=automation_performance,
     )
 
     top_positions = list(details.get("top_positions") or [])
