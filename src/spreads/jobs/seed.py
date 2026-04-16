@@ -245,7 +245,7 @@ def seed_definitions(db: str) -> list[str]:
             {
                 "job_key": "position_exit_manager:live",
                 "job_type": POSITION_EXIT_MANAGER_JOB_TYPE,
-                "enabled": True,
+                "enabled": False,
                 "schedule_type": "interval_minutes",
                 "schedule": {"minutes": 1},
                 "payload": {
