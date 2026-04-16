@@ -11,12 +11,18 @@ from spreads.jobs.registry import (
     EXECUTION_SUBMIT_ADHOC_JOB_KEY,
     EXECUTION_SUBMIT_JOB_TYPE,
     LIVE_COLLECTOR_JOB_TYPE,
+    OPTIONS_AUTOMATION_ENTRY_ADHOC_JOB_KEY,
+    OPTIONS_AUTOMATION_ENTRY_JOB_TYPE,
+    OPTIONS_AUTOMATION_MANAGEMENT_ADHOC_JOB_KEY,
+    OPTIONS_AUTOMATION_MANAGEMENT_JOB_TYPE,
     POST_CLOSE_ANALYSIS_ADHOC_JOB_KEY,
     POST_CLOSE_ANALYSIS_JOB_TYPE,
     POST_MARKET_ANALYSIS_JOB_TYPE,
     POSITION_EXIT_MANAGER_JOB_TYPE,
 )
 from spreads.runtime.config import default_database_url
+from spreads.services.automations import cadence_minutes
+from spreads.services.bots import load_active_bots
 from spreads.storage.factory import build_job_repository
 
 DEFAULT_AUTO_EXECUTION_POLICY = {
@@ -60,6 +66,92 @@ RETIRED_JOB_KEYS = (
     "generator:adhoc",
     "session_exit_manager:live",
 )
+
+
+def _options_automation_job_definitions() -> list[dict[str, object]]:
+    definitions: list[dict[str, object]] = [
+        {
+            "job_key": OPTIONS_AUTOMATION_ENTRY_ADHOC_JOB_KEY,
+            "job_type": OPTIONS_AUTOMATION_ENTRY_JOB_TYPE,
+            "enabled": False,
+            "schedule_type": "manual",
+            "schedule": {},
+            "payload": {},
+            "singleton_scope": None,
+        },
+        {
+            "job_key": OPTIONS_AUTOMATION_MANAGEMENT_ADHOC_JOB_KEY,
+            "job_type": OPTIONS_AUTOMATION_MANAGEMENT_JOB_TYPE,
+            "enabled": False,
+            "schedule_type": "manual",
+            "schedule": {},
+            "payload": {},
+            "singleton_scope": None,
+        },
+        {
+            "job_key": "live_collector:options_automation_short_dated_index_put_credit",
+            "job_type": LIVE_COLLECTOR_JOB_TYPE,
+            "enabled": True,
+            "schedule_type": "market_open_plus_minutes",
+            "schedule": {"minutes": -5},
+            "payload": {
+                "universe": "explore_10",
+                "strategy": "put_credit",
+                "profile": "weekly",
+                "greeks_source": "auto",
+                "top": 10,
+                "per_symbol_top": 1,
+                "interval_seconds": 300,
+                "backfill_missed_slots": False,
+                "max_slot_retries": 3,
+                "quote_capture_seconds": 20,
+                "trade_capture_seconds": 30,
+                "allow_off_hours": False,
+                "session_start_offset_minutes": -5,
+                "session_end_offset_minutes": 5,
+                "options_automation_enabled": True,
+                "execution_policy": dict(DEFAULT_SHADOW_EXECUTION_POLICY),
+                "risk_policy": dict(DEFAULT_AUTO_RISK_POLICY),
+                "exit_policy": dict(DEFAULT_AUTO_EXIT_POLICY),
+            },
+            "singleton_scope": "options_automation_short_dated_index_put_credit",
+        },
+    ]
+    for bot in load_active_bots().values():
+        for automation in bot.automations:
+            cadence = cadence_minutes(automation.automation.schedule)
+            base = {
+                "bot_id": bot.bot.bot_id,
+                "automation_id": automation.automation.automation_id,
+                "allow_off_hours": not bool(
+                    automation.automation.schedule.get("market_hours_only", False)
+                ),
+            }
+            if automation.automation.is_entry:
+                definitions.append(
+                    {
+                        "job_key": f"options_automation_entry:{bot.bot.bot_id}:{automation.automation.automation_id}",
+                        "job_type": OPTIONS_AUTOMATION_ENTRY_JOB_TYPE,
+                        "enabled": True,
+                        "schedule_type": "interval_minutes",
+                        "schedule": {"minutes": cadence},
+                        "payload": dict(base),
+                        "singleton_scope": f"{bot.bot.bot_id}:{automation.automation.automation_id}",
+                    }
+                )
+            if automation.automation.is_management:
+                definitions.append(
+                    {
+                        "job_key": f"options_automation_management:{bot.bot.bot_id}:{automation.automation.automation_id}",
+                        "job_type": OPTIONS_AUTOMATION_MANAGEMENT_JOB_TYPE,
+                        "enabled": True,
+                        "schedule_type": "interval_minutes",
+                        "schedule": {"minutes": cadence},
+                        "payload": dict(base),
+                        "singleton_scope": f"{bot.bot.bot_id}:{automation.automation.automation_id}",
+                    }
+                )
+    return definitions
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -445,6 +537,7 @@ def seed_definitions(db: str) -> list[str]:
                 "singleton_scope": None,
             },
         ]
+        definitions.extend(_options_automation_job_definitions())
         for definition in definitions:
             repo.upsert_job_definition(
                 job_key=definition["job_key"],

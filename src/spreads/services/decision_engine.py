@@ -6,6 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 from spreads.db.decorators import with_storage
+from spreads.services.automations import automation_should_run_now
 from spreads.services.bots import load_active_bots
 from spreads.services.option_structures import normalize_strategy_family
 
@@ -109,6 +110,13 @@ def run_entry_automation_decision(
         raise ValueError(f"Unknown automation_id for bot {bot_id}: {automation_id}")
     if not automation.automation.is_entry:
         raise ValueError(f"Automation {automation_id} is not an entry automation")
+    if not automation_should_run_now(automation.automation):
+        return {
+            "status": "skipped",
+            "reason": "outside_schedule_window",
+            "bot_id": bot_id,
+            "automation_id": automation_id,
+        }
 
     resolved_market_date = market_date or _market_date_today()
     run_key = f"decision:{bot_id}:{automation_id}:{_utc_now()}"

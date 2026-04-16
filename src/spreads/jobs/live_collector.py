@@ -15,7 +15,6 @@ from spreads.integrations.calendar_events import build_calendar_event_resolver
 from spreads.integrations.greeks import build_local_greeks_provider
 from spreads.runtime.config import default_database_url
 from spreads.services.bots import build_collector_scope
-from spreads.services.decision_engine import run_active_entry_decisions
 from spreads.services.execution import submit_auto_session_execution
 from spreads.services.live_selection import (
     read_previous_selection,
@@ -246,6 +245,9 @@ def _options_automation_scope() -> dict[str, Any]:
 
 
 def _apply_options_automation_overrides(args: argparse.Namespace) -> argparse.Namespace:
+    if not bool(getattr(args, "options_automation_enabled", False)):
+        setattr(args, "options_automation_scope", {"enabled": False})
+        return args
     scope = _options_automation_scope()
     setattr(args, "options_automation_scope", scope)
     if not bool(scope.get("enabled")):
@@ -1655,16 +1657,6 @@ def _run_collection_cycle(
     uoa_decisions = dict(capture_snapshot.uoa_decisions)
     if heartbeat is not None:
         heartbeat()
-    decision_runs: dict[str, Any] | None = None
-    if bool(options_scope.get("enabled")):
-        try:
-            decision_runs = run_active_entry_decisions(
-                db_target=args.history_db,
-                market_date=session_date,
-                storage=storage,
-            )
-        except Exception as exc:
-            print(f"Entry decision engine unavailable: {exc}")
     auto_execution: dict[str, Any] | None = None
     if tick_context is not None and bool(live_action_gate.get("allow_auto_execution")):
         try:
@@ -1765,7 +1757,6 @@ def _run_collection_cycle(
         "uoa_quote_summary": uoa_quote_summary,
         "uoa_decisions": uoa_decisions,
         "selection_summary": selection_summary,
-        "decision_runs": decision_runs,
         "auto_execution": auto_execution,
     }
 

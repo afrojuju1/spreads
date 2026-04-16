@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from spreads.services.strategy_configs import (
     StrategyConfig,
@@ -13,6 +15,8 @@ from spreads.services.strategy_configs import (
     default_config_root,
     load_strategy_configs,
 )
+
+NEW_YORK = ZoneInfo("America/New_York")
 
 
 @dataclass(frozen=True)
@@ -43,6 +47,46 @@ class ResolvedAutomation:
     automation: AutomationConfig
     strategy_config: StrategyConfig
     symbols: tuple[str, ...]
+
+
+def _parse_hhmm(value: str) -> tuple[int, int]:
+    hour_text, _, minute_text = str(value).partition(":")
+    if not _:
+        raise ValueError(f"Invalid HH:MM time: {value}")
+    return int(hour_text), int(minute_text)
+
+
+def cadence_minutes(schedule: dict[str, Any]) -> int:
+    cadence = str(schedule.get("cadence") or "").strip().lower()
+    if cadence.endswith("m"):
+        return max(int(cadence[:-1]), 1)
+    raise ValueError(f"Unsupported automation cadence: {cadence}")
+
+
+def automation_should_run_now(
+    automation: AutomationConfig,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    current = (now or datetime.now(NEW_YORK)).astimezone(NEW_YORK)
+    if current.weekday() >= 5:
+        return False
+    schedule = automation.schedule
+    if bool(schedule.get("market_hours_only", False)) and not (
+        (9, 30) <= (current.hour, current.minute) <= (16, 0)
+    ):
+        return False
+    start_time = schedule.get("start_time_et")
+    if start_time:
+        start_hour, start_minute = _parse_hhmm(str(start_time))
+        if (current.hour, current.minute) < (start_hour, start_minute):
+            return False
+    end_time = schedule.get("end_time_et")
+    if end_time:
+        end_hour, end_minute = _parse_hhmm(str(end_time))
+        if (current.hour, current.minute) > (end_hour, end_minute):
+            return False
+    return True
 
 
 def load_universe_symbols(
@@ -133,6 +177,8 @@ def resolve_automation(
 __all__ = [
     "AutomationConfig",
     "ResolvedAutomation",
+    "automation_should_run_now",
+    "cadence_minutes",
     "load_automations",
     "load_universe_symbols",
     "resolve_automation",
