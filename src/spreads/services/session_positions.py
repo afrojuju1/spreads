@@ -80,13 +80,14 @@ def _derive_live_exposure(
         if entry_value is None
         else round(entry_value * 100.0 * normalized_quantity, 2)
     )
-    if str(strategy_family or "").strip().lower() in {"long_straddle", "long_strangle"}:
+    normalized_family = str(strategy_family or "").strip().lower()
+    if normalized_family in {"long_straddle", "long_strangle"}:
         return {
             "entry_notional": entry_notional,
             "max_profit": None,
             "max_loss": entry_notional,
         }
-    premium_kind = net_premium_kind(strategy_family)
+    premium_kind = net_premium_kind(normalized_family)
     max_profit = entry_notional
     max_loss = None
     if entry_value is not None and width is not None:
@@ -104,6 +105,26 @@ def _derive_live_exposure(
         "entry_notional": entry_notional,
         "max_profit": max_profit,
         "max_loss": max_loss,
+    }
+
+
+def _explicit_candidate_exposure(
+    *,
+    candidate: Mapping[str, Any],
+    quantity: float,
+) -> dict[str, float | None]:
+    normalized_quantity = max(float(quantity), 0.0)
+    if normalized_quantity <= 0:
+        return {"max_profit": 0.0, "max_loss": 0.0}
+    max_profit = _coerce_float(candidate.get("max_profit"))
+    max_loss = _coerce_float(candidate.get("max_loss"))
+    return {
+        "max_profit": None
+        if max_profit is None
+        else round(max_profit * normalized_quantity, 2),
+        "max_loss": None
+        if max_loss is None
+        else round(max_loss * normalized_quantity, 2),
     }
 
 
@@ -378,6 +399,38 @@ def _position_economics(position: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _resolved_position_exposure(
+    *,
+    candidate: Mapping[str, Any],
+    existing: Mapping[str, Any] | None,
+    entry_value: float | None,
+    width: float | None,
+    quantity: float,
+    strategy_family: str | None,
+) -> dict[str, float | None]:
+    exposure = _derive_live_exposure(
+        entry_value=entry_value,
+        width=width,
+        quantity=quantity,
+        strategy_family=strategy_family,
+    )
+    explicit_candidate = _explicit_candidate_exposure(
+        candidate=candidate,
+        quantity=quantity,
+    )
+    existing_economics = _position_economics(existing or {})
+    if explicit_candidate.get("max_profit") is not None:
+        exposure["max_profit"] = explicit_candidate["max_profit"]
+    elif existing_economics.get("max_profit") is not None:
+        exposure["max_profit"] = existing_economics.get("max_profit")
+
+    if explicit_candidate.get("max_loss") is not None:
+        exposure["max_loss"] = explicit_candidate["max_loss"]
+    elif existing_economics.get("max_loss") is not None:
+        exposure["max_loss"] = existing_economics.get("max_loss")
+    return exposure
+
+
 def _position_strategy_metrics(position: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "width": _coerce_float(position.get("width")),
@@ -479,7 +532,9 @@ def _position_common_payload(
     strategy_family = _as_text(attempt.get("strategy_family")) or _as_text(
         existing.get("strategy_family") if isinstance(existing, Mapping) else None
     )
-    exposure = _derive_live_exposure(
+    exposure = _resolved_position_exposure(
+        candidate=candidate,
+        existing=existing,
         entry_value=entry_credit,
         width=width,
         quantity=remaining_quantity,

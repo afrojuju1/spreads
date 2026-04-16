@@ -942,23 +942,39 @@ def _resolve_reactive_auto_execution(
     }
 
 
-def _vertical_return_on_risk(
+def _capped_structure_return_on_risk(
     *,
     midpoint_value: float | None,
-    width: float | None,
+    span_value: float | None,
     premium_kind: str | None,
 ) -> float | None:
     if (
         midpoint_value is None
-        or width is None
+        or span_value is None
         or midpoint_value <= 0
-        or width <= 0
-        or midpoint_value >= width
+        or span_value <= 0
+        or midpoint_value >= span_value
     ):
         return None
     if premium_kind == "debit":
-        return round((width - midpoint_value) / midpoint_value, 4)
-    return round(midpoint_value / (width - midpoint_value), 4)
+        return round((span_value - midpoint_value) / midpoint_value, 4)
+    return round(midpoint_value / (span_value - midpoint_value), 4)
+
+
+def _candidate_capped_structure_span(
+    candidate_payload: Mapping[str, Any],
+) -> float | None:
+    width = _coerce_float(candidate_payload.get("width"))
+    if width is not None and width > 0:
+        return width
+    max_profit = _coerce_float(candidate_payload.get("max_profit"))
+    max_loss = _coerce_float(candidate_payload.get("max_loss"))
+    if max_profit is None or max_loss is None:
+        return None
+    span_dollars = max_profit + max_loss
+    if span_dollars <= 0:
+        return None
+    return round(span_dollars / 100.0, 4)
 
 
 def _validate_live_deployment_quality(
@@ -995,14 +1011,14 @@ def _validate_live_deployment_quality(
             "profile": profile,
         }
     legs = candidate_legs(candidate_payload)
-    width = _coerce_float(candidate_payload.get("width"))
-    if not legs or width is None or width <= 0:
+    span_value = _candidate_capped_structure_span(candidate_payload)
+    if not legs or span_value is None or span_value <= 0:
         return {
             "ok": False,
             "reason": "live_deployment_quality_unavailable",
             "message": (
-                "Open execution is blocked because the candidate is missing spread "
-                "geometry for live deployment validation."
+                "Open execution is blocked because the candidate is missing capped-risk "
+                "structure geometry for live deployment validation."
             ),
             "profile": profile,
         }
@@ -1017,7 +1033,7 @@ def _validate_live_deployment_quality(
             "ok": False,
             "reason": "live_quotes_unavailable",
             "message": (
-                "Open execution is blocked because a current live spread "
+                "Open execution is blocked because a current live multi-leg structure "
                 "snapshot is unavailable."
             ),
             "profile": profile,
@@ -1025,9 +1041,9 @@ def _validate_live_deployment_quality(
         }
 
     live_midpoint_value = _normalize_limit_value(live_snapshot.get("midpoint_value"))
-    live_return_on_risk = _vertical_return_on_risk(
+    live_return_on_risk = _capped_structure_return_on_risk(
         midpoint_value=live_midpoint_value,
-        width=width,
+        span_value=span_value,
         premium_kind=premium_kind,
     )
     if live_midpoint_value is None or live_return_on_risk is None:
@@ -1035,7 +1051,7 @@ def _validate_live_deployment_quality(
             "ok": False,
             "reason": "live_quotes_not_executable",
             "message": (
-                "Open execution is blocked because the live spread quotes were not executable."
+                "Open execution is blocked because the live structure quotes were not executable."
             ),
             "profile": profile,
             "live_quote": live_snapshot,
@@ -1053,7 +1069,7 @@ def _validate_live_deployment_quality(
             "profile": profile,
             "live_quote": {
                 **live_snapshot,
-                "width": width,
+                "span_value": span_value,
                 "live_return_on_risk": live_return_on_risk,
                 "minimum_return_on_risk": minimum_return_on_risk,
             },
@@ -1064,7 +1080,7 @@ def _validate_live_deployment_quality(
         "profile": profile,
         "live_quote": {
             **live_snapshot,
-            "width": width,
+            "span_value": span_value,
             "live_return_on_risk": live_return_on_risk,
             "minimum_return_on_risk": minimum_return_on_risk,
         },
@@ -1195,19 +1211,19 @@ def _classify_auto_execution_block(exc: Exception) -> dict[str, Any] | None:
             "message": message,
             "block_category": "environment",
         }
-    if (
-        message
-        == "Open execution is blocked because a current live spread snapshot is unavailable."
-    ):
+    if message in {
+        "Open execution is blocked because a current live spread snapshot is unavailable.",
+        "Open execution is blocked because a current live multi-leg structure snapshot is unavailable.",
+    }:
         return {
             "reason": "live_quotes_unavailable",
             "message": message,
             "block_category": "deployment_quality",
         }
-    if (
-        message
-        == "Open execution is blocked because the live spread quotes were not executable."
-    ):
+    if message in {
+        "Open execution is blocked because the live spread quotes were not executable.",
+        "Open execution is blocked because the live structure quotes were not executable.",
+    }:
         return {
             "reason": "live_quotes_not_executable",
             "message": message,

@@ -143,8 +143,11 @@ def _candidate_entry_notional(
 ) -> float | None:
     entry_price = price
     if entry_price is None or entry_price <= 0:
+        payload = _candidate_payload(candidate)
         entry_price = _coerce_float(
-            _candidate_payload(candidate).get("midpoint_credit")
+            payload.get("midpoint_credit")
+            or payload.get("midpoint_debit")
+            or payload.get("midpoint_value")
         )
     if entry_price is None or entry_price <= 0:
         return None
@@ -156,12 +159,17 @@ def _candidate_max_loss(candidate: dict[str, Any], quantity: float) -> float | N
     max_loss = _coerce_float(candidate_payload.get("max_loss"))
     if max_loss is None:
         width = _coerce_float(candidate_payload.get("width"))
-        midpoint_credit = _coerce_float(candidate_payload.get("midpoint_credit"))
-        if width is not None and midpoint_credit is not None:
-            if net_premium_kind(candidate_payload.get("strategy")) == "debit":
-                max_loss = midpoint_credit * 100.0
+        midpoint_value = _coerce_float(
+            candidate_payload.get("midpoint_credit")
+            or candidate_payload.get("midpoint_debit")
+            or candidate_payload.get("midpoint_value")
+        )
+        premium_kind = net_premium_kind(candidate_payload.get("strategy"))
+        if width is not None and midpoint_value is not None:
+            if premium_kind == "debit":
+                max_loss = midpoint_value * 100.0
             else:
-                max_loss = max(width - midpoint_credit, 0.0) * 100.0
+                max_loss = max(width - midpoint_value, 0.0) * 100.0
     if max_loss is None:
         return None
     return round(max_loss * quantity, 2)

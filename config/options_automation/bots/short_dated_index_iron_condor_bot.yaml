@@ -1,0 +1,14 @@
+bot_id: short_dated_index_iron_condor_bot
+name: Short-Dated Index Iron Condor Bot
+capital_limit: 5000
+max_open_positions: 2
+max_daily_actions: 4
+max_new_entries_per_day: 2
+daily_loss_limit: 250
+live_enabled: false
+cancel_pending_entries_after_et: "15:00"
+flatten_positions_at_et: "15:40"
+automation_ids:
+  - index_iron_condor_entry
+  - index_iron_condor_manage
+paused: false

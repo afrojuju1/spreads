@@ -122,6 +122,9 @@ def _options_automation_job_definitions() -> list[dict[str, object]]:
         elif scanner_strategy == "call_credit" and scanner_profile == "weekly":
             job_key = "live_collector:options_automation_short_dated_index_call_credit"
             singleton_scope = "options_automation_short_dated_index_call_credit"
+        elif scanner_strategy == "iron_condor" and scanner_profile == "weekly":
+            job_key = "live_collector:options_automation_short_dated_index_iron_condor"
+            singleton_scope = "options_automation_short_dated_index_iron_condor"
         else:
             job_key = f"live_collector:options_automation:{scanner_strategy}:{scanner_profile}"
             singleton_scope = f"options_automation:{scanner_strategy}:{scanner_profile}"
