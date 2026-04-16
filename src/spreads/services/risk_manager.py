@@ -18,7 +18,7 @@ from spreads.services.execution_lifecycle import (
     is_open_execution_attempt_status,
     resolve_execution_attempt_filled_quantity,
 )
-from spreads.services.option_structures import position_legs
+from spreads.services.option_structures import net_premium_kind, position_legs
 from spreads.services.positions import enrich_position_row
 from spreads.services.runtime_identity import parse_live_run_scope_id
 from spreads.services.value_coercion import (
@@ -61,6 +61,7 @@ INT_POLICY_KEYS = {
 }
 FLOAT_POLICY_KEYS = OPTIONAL_FLOAT_POLICY_KEYS
 BOOL_POLICY_KEYS = {"enabled", "allow_live"}
+
 
 def _coerce_bool(value: Any) -> bool:
     if isinstance(value, bool):
@@ -157,7 +158,10 @@ def _candidate_max_loss(candidate: dict[str, Any], quantity: float) -> float | N
         width = _coerce_float(candidate_payload.get("width"))
         midpoint_credit = _coerce_float(candidate_payload.get("midpoint_credit"))
         if width is not None and midpoint_credit is not None:
-            max_loss = max(width - midpoint_credit, 0.0) * 100.0
+            if net_premium_kind(candidate_payload.get("strategy")) == "debit":
+                max_loss = midpoint_credit * 100.0
+            else:
+                max_loss = max(width - midpoint_credit, 0.0) * 100.0
     if max_loss is None:
         return None
     return round(max_loss * quantity, 2)

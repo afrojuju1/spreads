@@ -413,6 +413,21 @@ def _position_entry_value(position: Mapping[str, Any]) -> float | None:
     )
 
 
+def _realized_close_pnl(
+    *,
+    entry_value: float | None,
+    exit_value: float | None,
+    quantity: float,
+    strategy_family: Any,
+) -> float:
+    if entry_value is None or exit_value is None or quantity <= 0:
+        return 0.0
+    premium_kind = net_premium_kind(strategy_family)
+    if premium_kind == "debit":
+        return round((exit_value - entry_value) * 100.0 * quantity, 2)
+    return round((entry_value - exit_value) * 100.0 * quantity, 2)
+
+
 def _position_common_payload(
     *,
     attempt: Mapping[str, Any],
@@ -787,9 +802,13 @@ def _sync_close_position(
 
     exit_value = _resolve_spread_amount(attempt, primary_order, filled_quantity)
     entry_credit = _position_entry_value(position)
-    realized_pnl = 0.0
-    if entry_credit is not None and exit_value is not None:
-        realized_pnl = round((entry_credit - exit_value) * 100.0 * filled_quantity, 2)
+    realized_pnl = _realized_close_pnl(
+        entry_value=entry_credit,
+        exit_value=exit_value,
+        quantity=filled_quantity,
+        strategy_family=_as_text(position.get("strategy_family"))
+        or _as_text(position.get("strategy")),
+    )
 
     now = _utc_now()
     execution_store.upsert_position_close(

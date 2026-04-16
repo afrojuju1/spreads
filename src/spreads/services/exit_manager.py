@@ -7,6 +7,7 @@ import pandas_market_calendars as mcal
 
 from spreads.db.decorators import with_storage
 from spreads.services.execution_portfolio import refresh_session_position_marks
+from spreads.services.option_structures import net_premium_kind
 from spreads.services.positions import enrich_position_row
 from spreads.services.risk_manager import normalize_risk_policy
 from spreads.storage.serializers import parse_datetime
@@ -203,12 +204,21 @@ def evaluate_exit_policy(
         mark=mark,
         now=current_time,
     )
-    entry_credit = _coerce_float(position.get("entry_credit"))
+    entry_value = _coerce_float(position.get("entry_credit")) or _coerce_float(
+        position.get("entry_value")
+    )
+    premium_kind = _as_text(position.get("entry_value_kind")) or net_premium_kind(
+        position.get("strategy") or position.get("strategy_family")
+    )
     if (
-        entry_credit is not None
+        entry_value is not None
         and effective_mark is not None
-        and effective_mark
-        <= entry_credit * max(1.0 - float(policy["profit_target_pct"]), 0.0)
+        and (
+            effective_mark >= entry_value * (1.0 + float(policy["profit_target_pct"]))
+            if premium_kind == "debit"
+            else effective_mark
+            <= entry_value * max(1.0 - float(policy["profit_target_pct"]), 0.0)
+        )
     ):
         return {
             "should_close": True,
@@ -217,9 +227,14 @@ def evaluate_exit_policy(
             "limit_price_source": "mark",
         }
     if (
-        entry_credit is not None
+        entry_value is not None
         and effective_mark is not None
-        and effective_mark >= entry_credit * float(policy["stop_multiple"])
+        and (
+            effective_mark
+            <= max(entry_value / max(float(policy["stop_multiple"]), 1.0), 0.0)
+            if premium_kind == "debit"
+            else effective_mark >= entry_value * float(policy["stop_multiple"])
+        )
     ):
         return {
             "should_close": True,
