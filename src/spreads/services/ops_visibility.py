@@ -235,9 +235,12 @@ def _collector_status(run: Mapping[str, Any] | None) -> str:
     )
     if str(live_action_gate.get("status") or "") == "blocked":
         return "blocked"
-    if str(run.get("status") or "") != "succeeded":
-        return "degraded"
+    run_status = str(run.get("status") or "")
     capture_status = str(run.get("capture_status") or "")
+    if run_status == "running" and capture_status in {"healthy", "idle"}:
+        return "healthy"
+    if run_status != "succeeded":
+        return "degraded"
     if capture_status == "healthy":
         return "healthy"
     if capture_status == "idle":

@@ -285,6 +285,14 @@ class ExecutionRepository(RepositoryBase):
             return None
         return self.row(row)
 
+    def delete_execution_intent(self, execution_intent_id: str) -> bool:
+        with self.session_scope() as session:
+            row = session.get(ExecutionIntentModel, execution_intent_id)
+            if row is None:
+                return False
+            session.delete(row)
+            return True
+
     def upsert_execution_intent(
         self,
         *,

@@ -401,6 +401,14 @@ class SignalRepository(RepositoryBase):
             return None
         return self.row(row)
 
+    def delete_opportunity(self, opportunity_id: str) -> bool:
+        with self.session_scope() as session:
+            row = session.get(OpportunityModel, opportunity_id)
+            if row is None:
+                return False
+            session.delete(row)
+            return True
+
     def upsert_opportunity(
         self,
         *,

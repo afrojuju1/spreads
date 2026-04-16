@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -22,6 +22,7 @@ from spreads.services.option_structures import (
     net_premium_kind,
     normalize_strategy_family,
 )
+from spreads.services.live_pipelines import resolve_live_collector_label
 from spreads.storage.serializers import parse_datetime
 
 AUTO_EXECUTION_MODES = {"paper", "live"}
@@ -34,6 +35,7 @@ WORKING_REPRICE_ATTEMPT_STATUSES = {
     "pending_new",
     "replaced",
 }
+TERMINAL_INTENT_STATES = {"failed", "canceled", "revoked", "expired"}
 
 
 def _utc_now() -> str:
@@ -752,6 +754,99 @@ def _backfill_strategy_position_links(
     return {"linked": linked, "results": results[:25]}
 
 
+def _active_options_automation_labels(job_store: Any) -> set[str]:
+    if job_store is None or not job_store.schema_ready():
+        return set()
+    labels: set[str] = set()
+    for definition in job_store.list_job_definitions(
+        enabled_only=True, job_type="live_collector"
+    ):
+        payload = dict(definition.get("payload") or {})
+        if not bool(payload.get("options_automation_enabled", False)):
+            continue
+        labels.add(resolve_live_collector_label(payload))
+    return labels
+
+
+def _cleanup_terminal_intent_history(
+    execution_store: Any,
+    *,
+    limit: int,
+    older_than_minutes: int = 15,
+) -> dict[str, Any]:
+    threshold = datetime.now(UTC) - timedelta(minutes=max(older_than_minutes, 1))
+    deleted = 0
+    results: list[dict[str, Any]] = []
+    intents = [
+        dict(row)
+        for row in execution_store.list_execution_intents(limit=max(int(limit), 1) * 25)
+    ]
+    for intent in intents:
+        if deleted >= max(int(limit), 1):
+            break
+        state = str(intent.get("state") or "")
+        if state not in TERMINAL_INTENT_STATES:
+            continue
+        created_at = parse_datetime(_as_text(intent.get("created_at")))
+        if created_at is None or created_at >= threshold:
+            continue
+        execution_intent_id = str(intent["execution_intent_id"])
+        if execution_store.delete_execution_intent(execution_intent_id):
+            deleted += 1
+            results.append(
+                {
+                    "execution_intent_id": execution_intent_id,
+                    "state": state,
+                    "slot_key": intent.get("slot_key"),
+                }
+            )
+    return {"deleted": deleted, "results": results[:25]}
+
+
+def _cleanup_stale_automation_opportunities(
+    *,
+    signal_store: Any,
+    job_store: Any,
+    market_date: str,
+    limit: int,
+    older_than_minutes: int = 15,
+) -> dict[str, Any]:
+    if not signal_store.schema_ready():
+        return {"deleted": 0, "results": []}
+    active_labels = _active_options_automation_labels(job_store)
+    threshold = datetime.now(UTC) - timedelta(minutes=max(older_than_minutes, 1))
+    deleted = 0
+    results: list[dict[str, Any]] = []
+    opportunities = [
+        dict(row)
+        for row in signal_store.list_opportunities(
+            market_date=market_date, limit=max(int(limit), 1) * 50
+        )
+    ]
+    for opportunity in opportunities:
+        if deleted >= max(int(limit), 1):
+            break
+        opportunity_id = str(opportunity["opportunity_id"])
+        label = str(opportunity.get("label") or "")
+        lifecycle_state = str(opportunity.get("lifecycle_state") or "")
+        updated_at = parse_datetime(_as_text(opportunity.get("updated_at")))
+        if updated_at is None or updated_at >= threshold:
+            continue
+        if _as_text(opportunity.get("consumed_by_execution_attempt_id")):
+            continue
+        if label not in active_labels or lifecycle_state == "expired":
+            if signal_store.delete_opportunity(opportunity_id):
+                deleted += 1
+                results.append(
+                    {
+                        "opportunity_id": opportunity_id,
+                        "label": label,
+                        "lifecycle_state": lifecycle_state,
+                    }
+                )
+    return {"deleted": deleted, "results": results[:25]}
+
+
 @with_storage()
 def submit_execution_intent(
     *,
@@ -935,8 +1030,19 @@ def dispatch_pending_execution_intents(
     if not execution_store.intent_schema_ready():
         return {"status": "skipped", "reason": "execution_intent_schema_unavailable"}
 
+    market_date = datetime.now(UTC).date().isoformat()
     client = create_alpaca_client_from_env()
     trading_environment = resolve_trading_environment(client.trading_base_url)
+    opportunity_cleanup = _cleanup_stale_automation_opportunities(
+        signal_store=storage.signals,
+        job_store=storage.jobs,
+        market_date=market_date,
+        limit=max(int(limit), 1),
+    )
+    intent_cleanup = _cleanup_terminal_intent_history(
+        execution_store,
+        limit=max(int(limit), 1),
+    )
     position_linkage = _backfill_strategy_position_links(
         execution_store,
         limit=max(int(limit), 1),
@@ -1067,6 +1173,8 @@ def dispatch_pending_execution_intents(
     return {
         "status": "ok",
         "trading_environment": trading_environment,
+        "opportunity_cleanup": opportunity_cleanup,
+        "intent_cleanup": intent_cleanup,
         "position_linkage": position_linkage,
         "slot_cleanup": slot_cleanup,
         "active_management": active_management,
