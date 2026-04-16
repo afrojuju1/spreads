@@ -56,6 +56,7 @@ from core.services.uoa_trade_baselines import build_uoa_trade_baselines
 from core.services.option_trade_records import build_trade_symbol_metadata
 from core.services.automation_runtime import build_entry_runtime
 from core.services.opportunity_generation import sync_entry_runtime_opportunities
+from core.services.strategy_builders import build_entry_runtime_candidates
 from core.services.signal_state import sync_live_collector_signal_layer
 from core.services.target_planner import refresh_options_automation_capture_targets
 from core.services.uoa_trade_summary import build_uoa_trade_summary
@@ -1605,6 +1606,14 @@ def _run_collection_cycle(
                 build_entry_runtime(bot, automation)
                 for bot, automation in list(options_scope.get("entry_runtimes") or [])
             ]
+            runtime_candidate_rows_by_owner = build_entry_runtime_candidates(
+                entry_runtimes=entry_runtimes,
+                base_scanner_args=scanner_args,
+                client=client,
+                calendar_resolver=calendar_resolver,
+                greeks_provider=greeks_provider,
+                per_runtime_limit=max(args.top, 1),
+            )
             automation_sync = sync_entry_runtime_opportunities(
                 signal_store=signal_store,
                 label=label,
@@ -1613,6 +1622,7 @@ def _run_collection_cycle(
                 cycle_id=cycle_id,
                 entry_runtimes=entry_runtimes,
                 symbol_candidates=symbol_strategy_candidates,
+                runtime_candidate_rows_by_owner=runtime_candidate_rows_by_owner,
                 persisted_opportunities=persisted_opportunities,
                 job_run_id=None if tick_context is None else tick_context.job_run_id,
                 top_promotable=args.top,

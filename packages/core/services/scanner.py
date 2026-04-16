@@ -35,7 +35,10 @@ from zoneinfo import ZoneInfo
 import msgpack
 import websocket
 
-from core.integrations.calendar_events import build_calendar_event_resolver, classify_underlying_type
+from core.integrations.calendar_events import (
+    build_calendar_event_resolver,
+    classify_underlying_type,
+)
 from core.integrations.calendar_events.models import CalendarPolicyDecision
 from core.integrations.calendar_events.policy import apply_strategy_calendar_policy
 from core.integrations.greeks import build_local_greeks_provider
@@ -60,7 +63,18 @@ DEFAULT_TRADING_BASE_URL = "https://api.alpaca.markets"
 NEW_YORK = ZoneInfo("America/New_York")
 DEFAULT_BOARD_UNIVERSE = "etf_core"
 ZERO_DTE_CORE_SYMBOLS = ("SPY", "QQQ", "IWM")
-ZERO_DTE_ALLOWED_SYMBOLS = ("SPY", "QQQ", "IWM", "DIA", "XLF", "XLE", "XLI", "XLV", "GLD", "TLT")
+ZERO_DTE_ALLOWED_SYMBOLS = (
+    "SPY",
+    "QQQ",
+    "IWM",
+    "DIA",
+    "XLF",
+    "XLE",
+    "XLI",
+    "XLV",
+    "GLD",
+    "TLT",
+)
 UNIVERSE_PRESETS: dict[str, tuple[str, ...]] = {
     "0dte_core": ZERO_DTE_CORE_SYMBOLS,
     "explore_10": ZERO_DTE_ALLOWED_SYMBOLS,
@@ -376,7 +390,13 @@ def resolve_symbols(args: argparse.Namespace) -> tuple[list[str], str]:
         symbols.extend(UNIVERSE_PRESETS[args.universe])
         label = args.universe
     if args.symbols:
-        symbols.extend([token.strip().upper() for token in args.symbols.split(",") if token.strip()])
+        symbols.extend(
+            [
+                token.strip().upper()
+                for token in args.symbols.split(",")
+                if token.strip()
+            ]
+        )
         if args.symbols.strip():
             label = "custom_symbols"
     if args.symbols_file:
@@ -514,7 +534,11 @@ def format_stream_timestamp(value: Any) -> str | None:
 
 
 def infer_underlying_key(underlying_type: str) -> str:
-    return "etf_index_proxy" if underlying_type == "etf_index_proxy" else "single_name_equity"
+    return (
+        "etf_index_proxy"
+        if underlying_type == "etf_index_proxy"
+        else "single_name_equity"
+    )
 
 
 def resolve_profile_value(override: Any, preset: Any) -> Any:
@@ -527,11 +551,19 @@ def apply_profile_defaults(args: argparse.Namespace, underlying_type: str) -> No
 
     args.min_dte = resolve_profile_value(args.min_dte, profile.min_dte)
     args.max_dte = resolve_profile_value(args.max_dte, profile.max_dte)
-    args.short_delta_min = resolve_profile_value(args.short_delta_min, profile.short_delta_min)
-    args.short_delta_max = resolve_profile_value(args.short_delta_max, profile.short_delta_max)
-    args.short_delta_target = resolve_profile_value(args.short_delta_target, profile.short_delta_target)
+    args.short_delta_min = resolve_profile_value(
+        args.short_delta_min, profile.short_delta_min
+    )
+    args.short_delta_max = resolve_profile_value(
+        args.short_delta_max, profile.short_delta_max
+    )
+    args.short_delta_target = resolve_profile_value(
+        args.short_delta_target, profile.short_delta_target
+    )
     args.min_width = resolve_profile_value(args.min_width, profile.min_width)
-    args.max_width = resolve_profile_value(args.max_width, profile.max_width_by_underlying[underlying_key])
+    args.max_width = resolve_profile_value(
+        args.max_width, profile.max_width_by_underlying[underlying_key]
+    )
     args.min_credit = resolve_profile_value(args.min_credit, profile.min_credit)
     args.min_open_interest = resolve_profile_value(
         args.min_open_interest,
@@ -541,8 +573,12 @@ def apply_profile_defaults(args: argparse.Namespace, underlying_type: str) -> No
         args.max_relative_spread,
         profile.max_relative_spread_by_underlying[underlying_key],
     )
-    args.min_return_on_risk = resolve_profile_value(args.min_return_on_risk, profile.min_return_on_risk)
-    args.min_fill_ratio = resolve_profile_value(args.min_fill_ratio, profile.min_fill_ratio)
+    args.min_return_on_risk = resolve_profile_value(
+        args.min_return_on_risk, profile.min_return_on_risk
+    )
+    args.min_fill_ratio = resolve_profile_value(
+        args.min_fill_ratio, profile.min_fill_ratio
+    )
     args.min_short_vs_expected_move_ratio = resolve_profile_value(
         args.min_short_vs_expected_move_ratio,
         profile.min_short_vs_expected_move_ratio,
@@ -553,7 +589,9 @@ def apply_profile_defaults(args: argparse.Namespace, underlying_type: str) -> No
     )
 
 
-def validate_profile_scope(symbol: str, args: argparse.Namespace, underlying_type: str) -> None:
+def validate_profile_scope(
+    symbol: str, args: argparse.Namespace, underlying_type: str
+) -> None:
     if args.profile != "0dte":
         return
     if underlying_type != "etf_index_proxy":
@@ -561,6 +599,19 @@ def validate_profile_scope(symbol: str, args: argparse.Namespace, underlying_typ
     if symbol.upper() not in ZERO_DTE_ALLOWED_SYMBOLS:
         allowed = ", ".join(ZERO_DTE_ALLOWED_SYMBOLS)
         raise SystemExit(f"0dte profile is currently limited to: {allowed}")
+
+
+def resolve_symbol_scan_args(
+    *, symbol: str, base_args: argparse.Namespace
+) -> tuple[argparse.Namespace, str]:
+    normalized_symbol = symbol.upper()
+    underlying_type = classify_underlying_type(normalized_symbol)
+    symbol_args = clone_args(base_args)
+    symbol_args.symbol = normalized_symbol
+    apply_profile_defaults(symbol_args, underlying_type)
+    validate_resolved_args(symbol_args)
+    validate_profile_scope(normalized_symbol, symbol_args, underlying_type)
+    return symbol_args, underlying_type
 
 
 @dataclass(frozen=True)
@@ -794,6 +845,20 @@ class SymbolScanResult:
 
 
 @dataclass(frozen=True)
+class SymbolMarketSlice:
+    symbol: str
+    underlying_type: str
+    spot_price: float
+    daily_bars: tuple[DailyBar, ...]
+    intraday_bars: tuple[IntradayBar, ...]
+    call_contracts_by_expiration: dict[str, list[OptionContract]]
+    put_contracts_by_expiration: dict[str, list[OptionContract]]
+    call_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]]
+    put_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]]
+    expected_moves_by_expiration: dict[str, ExpectedMoveEstimate]
+
+
+@dataclass(frozen=True)
 class UniverseScanFailure:
     symbol: str
     error: str
@@ -810,7 +875,9 @@ def build_setup_summaries(results: list[SymbolScanResult]) -> tuple[str, ...]:
     return tuple(summaries)
 
 
-def count_snapshot_delta_coverage(snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]]) -> tuple[int, int]:
+def count_snapshot_delta_coverage(
+    snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
+) -> tuple[int, int]:
     quoted_contracts = 0
     contracts_with_delta = 0
     for snapshot_map in snapshots_by_expiration.values():
@@ -821,13 +888,26 @@ def count_snapshot_delta_coverage(snapshots_by_expiration: dict[str, dict[str, O
     return quoted_contracts, contracts_with_delta
 
 
-def count_local_greeks_coverage(snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]]) -> int:
+def count_local_greeks_coverage(
+    snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
+) -> int:
     local_contracts = 0
     for snapshot_map in snapshots_by_expiration.values():
         for snapshot in snapshot_map.values():
             if snapshot.greeks_source == "local_bsm":
                 local_contracts += 1
     return local_contracts
+
+
+def count_alpaca_greeks_coverage(
+    snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
+) -> int:
+    alpaca_contracts = 0
+    for snapshot_map in snapshots_by_expiration.values():
+        for snapshot in snapshot_map.values():
+            if snapshot.greeks_source == "alpaca":
+                alpaca_contracts += 1
+    return alpaca_contracts
 
 
 PROFILE_CONFIGS: dict[str, ProfileConfig] = {
@@ -841,8 +921,14 @@ PROFILE_CONFIGS: dict[str, ProfileConfig] = {
         min_width=1.0,
         max_width_by_underlying={"etf_index_proxy": 2.0, "single_name_equity": 2.0},
         min_credit=0.08,
-        min_open_interest_by_underlying={"etf_index_proxy": 750, "single_name_equity": 750},
-        max_relative_spread_by_underlying={"etf_index_proxy": 0.08, "single_name_equity": 0.08},
+        min_open_interest_by_underlying={
+            "etf_index_proxy": 750,
+            "single_name_equity": 750,
+        },
+        max_relative_spread_by_underlying={
+            "etf_index_proxy": 0.08,
+            "single_name_equity": 0.08,
+        },
         min_return_on_risk=0.05,
         min_fill_ratio=0.80,
         min_short_vs_expected_move_ratio=0.08,
@@ -858,8 +944,14 @@ PROFILE_CONFIGS: dict[str, ProfileConfig] = {
         min_width=1.0,
         max_width_by_underlying={"etf_index_proxy": 2.0, "single_name_equity": 2.0},
         min_credit=0.10,
-        min_open_interest_by_underlying={"etf_index_proxy": 1500, "single_name_equity": 1500},
-        max_relative_spread_by_underlying={"etf_index_proxy": 0.10, "single_name_equity": 0.10},
+        min_open_interest_by_underlying={
+            "etf_index_proxy": 1500,
+            "single_name_equity": 1500,
+        },
+        max_relative_spread_by_underlying={
+            "etf_index_proxy": 0.10,
+            "single_name_equity": 0.10,
+        },
         min_return_on_risk=0.08,
         min_fill_ratio=0.75,
         min_short_vs_expected_move_ratio=0.05,
@@ -875,8 +967,14 @@ PROFILE_CONFIGS: dict[str, ProfileConfig] = {
         min_width=1.0,
         max_width_by_underlying={"etf_index_proxy": 3.0, "single_name_equity": 5.0},
         min_credit=0.18,
-        min_open_interest_by_underlying={"etf_index_proxy": 500, "single_name_equity": 400},
-        max_relative_spread_by_underlying={"etf_index_proxy": 0.12, "single_name_equity": 0.15},
+        min_open_interest_by_underlying={
+            "etf_index_proxy": 500,
+            "single_name_equity": 400,
+        },
+        max_relative_spread_by_underlying={
+            "etf_index_proxy": 0.12,
+            "single_name_equity": 0.15,
+        },
         min_return_on_risk=0.10,
         min_fill_ratio=0.72,
         min_short_vs_expected_move_ratio=-0.05,
@@ -892,8 +990,14 @@ PROFILE_CONFIGS: dict[str, ProfileConfig] = {
         min_width=1.0,
         max_width_by_underlying={"etf_index_proxy": 5.0, "single_name_equity": 10.0},
         min_credit=0.25,
-        min_open_interest_by_underlying={"etf_index_proxy": 500, "single_name_equity": 250},
-        max_relative_spread_by_underlying={"etf_index_proxy": 0.18, "single_name_equity": 0.18},
+        min_open_interest_by_underlying={
+            "etf_index_proxy": 500,
+            "single_name_equity": 250,
+        },
+        max_relative_spread_by_underlying={
+            "etf_index_proxy": 0.18,
+            "single_name_equity": 0.18,
+        },
         min_return_on_risk=0.10,
         min_fill_ratio=0.70,
         min_short_vs_expected_move_ratio=-0.08,
@@ -909,8 +1013,14 @@ PROFILE_CONFIGS: dict[str, ProfileConfig] = {
         min_width=2.0,
         max_width_by_underlying={"etf_index_proxy": 10.0, "single_name_equity": 10.0},
         min_credit=0.35,
-        min_open_interest_by_underlying={"etf_index_proxy": 300, "single_name_equity": 200},
-        max_relative_spread_by_underlying={"etf_index_proxy": 0.20, "single_name_equity": 0.20},
+        min_open_interest_by_underlying={
+            "etf_index_proxy": 300,
+            "single_name_equity": 200,
+        },
+        max_relative_spread_by_underlying={
+            "etf_index_proxy": 0.20,
+            "single_name_equity": 0.20,
+        },
         min_return_on_risk=0.12,
         min_fill_ratio=0.68,
         min_short_vs_expected_move_ratio=-0.10,
@@ -976,7 +1086,9 @@ class AlpacaClient:
             method=method.upper(),
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.request_timeout_seconds) as response:
+            with urllib.request.urlopen(
+                request, timeout=self.request_timeout_seconds
+            ) as response:
                 body_bytes = response.read()
                 if not body_bytes:
                     return None
@@ -995,7 +1107,9 @@ class AlpacaClient:
                 url=url,
             ) from exc
 
-    def get_json(self, base_url: str, path: str, params: dict[str, Any] | None = None) -> Any:
+    def get_json(
+        self, base_url: str, path: str, params: dict[str, Any] | None = None
+    ) -> Any:
         return self.request_json("GET", base_url, path, params=params)
 
     def post_json(
@@ -1129,7 +1243,9 @@ class AlpacaClient:
             "/v2/stocks/quotes/latest",
             {"symbols": symbol, "feed": stock_feed},
         )
-        quote = self._extract_symbol_payload(quote_payload, symbol, plural_key="quotes", singular_key="quote")
+        quote = self._extract_symbol_payload(
+            quote_payload, symbol, plural_key="quotes", singular_key="quote"
+        )
         bid = parse_float(pick(quote, "bp", "bid_price"))
         ask = parse_float(pick(quote, "ap", "ask_price"))
         if bid and ask and bid > 0 and ask > 0:
@@ -1140,7 +1256,9 @@ class AlpacaClient:
             "/v2/stocks/trades/latest",
             {"symbols": symbol, "feed": stock_feed},
         )
-        trade = self._extract_symbol_payload(trade_payload, symbol, plural_key="trades", singular_key="trade")
+        trade = self._extract_symbol_payload(
+            trade_payload, symbol, plural_key="trades", singular_key="trade"
+        )
         price = parse_float(pick(trade, "p", "price"))
         if price and price > 0:
             return price
@@ -1215,7 +1333,10 @@ class AlpacaClient:
             close_price = parse_float(pick(item, "c", "close"))
             volume = parse_int(pick(item, "v", "volume"))
             timestamp = pick(item, "t", "timestamp")
-            if None in (open_price, high_price, low_price, close_price, volume) or not timestamp:
+            if (
+                None in (open_price, high_price, low_price, close_price, volume)
+                or not timestamp
+            ):
                 continue
             bars.append(
                 DailyBar(
@@ -1260,7 +1381,10 @@ class AlpacaClient:
             close_price = parse_float(pick(item, "c", "close"))
             volume = parse_int(pick(item, "v", "volume"))
             timestamp = pick(item, "t", "timestamp")
-            if None in (open_price, high_price, low_price, close_price, volume) or not timestamp:
+            if (
+                None in (open_price, high_price, low_price, close_price, volume)
+                or not timestamp
+            ):
                 continue
             bars.append(
                 IntradayBar(
@@ -1384,7 +1508,10 @@ class AlpacaClient:
                         close_price = parse_float(pick(item, "c", "close"))
                         volume = parse_int(pick(item, "v", "volume")) or 0
                         timestamp = pick(item, "t", "timestamp")
-                        if None in (open_price, high_price, low_price, close_price) or not timestamp:
+                        if (
+                            None in (open_price, high_price, low_price, close_price)
+                            or not timestamp
+                        ):
                             continue
                         bars_by_symbol.setdefault(symbol, []).append(
                             DailyBar(
@@ -1414,10 +1541,14 @@ class AlpacaClient:
                 return payload[plural_key][symbol]
         if singular_key in payload and isinstance(payload[singular_key], dict):
             return payload[singular_key]
-        raise RuntimeError(f"Unexpected Alpaca response shape while looking up {symbol}")
+        raise RuntimeError(
+            f"Unexpected Alpaca response shape while looking up {symbol}"
+        )
 
     @staticmethod
-    def _parse_option_snapshot(symbol: str, snapshot: dict[str, Any]) -> OptionSnapshot | None:
+    def _parse_option_snapshot(
+        symbol: str, snapshot: dict[str, Any]
+    ) -> OptionSnapshot | None:
         latest_quote = snapshot.get("latestQuote") or snapshot.get("latest_quote") or {}
         greeks = snapshot.get("greeks") or {}
         latest_trade = snapshot.get("latestTrade") or snapshot.get("latest_trade") or {}
@@ -1458,7 +1589,9 @@ class AlpacaClient:
 
 
 class AlpacaOptionQuoteStreamer:
-    def __init__(self, *, key_id: str, secret_key: str, data_base_url: str, feed: str) -> None:
+    def __init__(
+        self, *, key_id: str, secret_key: str, data_base_url: str, feed: str
+    ) -> None:
         self.key_id = key_id
         self.secret_key = secret_key
         self.feed = feed
@@ -1476,7 +1609,9 @@ class AlpacaOptionQuoteStreamer:
         duration_seconds: float,
     ) -> dict[str, LiveOptionQuote]:
         latest_quotes: dict[str, LiveOptionQuote] = {}
-        for quote in self.collect_quote_events(symbols, duration_seconds=duration_seconds):
+        for quote in self.collect_quote_events(
+            symbols, duration_seconds=duration_seconds
+        ):
             latest_quotes[quote.symbol] = quote
         return latest_quotes
 
@@ -1497,7 +1632,9 @@ class AlpacaOptionQuoteStreamer:
         )
         try:
             self._await_connection(ws)
-            self._send(ws, {"action": "auth", "key": self.key_id, "secret": self.secret_key})
+            self._send(
+                ws, {"action": "auth", "key": self.key_id, "secret": self.secret_key}
+            )
             self._await_authentication(ws)
             self._send(ws, {"action": "subscribe", "quotes": symbols})
             deadline = time_module.monotonic() + max(duration_seconds, 0.5)
@@ -1522,13 +1659,13 @@ class AlpacaOptionQuoteStreamer:
                         continue
                     quote_events.append(
                         LiveOptionQuote(
-                        symbol=str(message.get("S")),
-                        bid=bid,
-                        ask=ask,
-                        bid_size=parse_int(message.get("bs")) or 0,
-                        ask_size=parse_int(message.get("as")) or 0,
-                        timestamp=format_stream_timestamp(message.get("t")),
-                    )
+                            symbol=str(message.get("S")),
+                            bid=bid,
+                            ask=ask,
+                            bid_size=parse_int(message.get("bs")) or 0,
+                            ask_size=parse_int(message.get("as")) or 0,
+                            timestamp=format_stream_timestamp(message.get("t")),
+                        )
                     )
         finally:
             ws.close()
@@ -1561,7 +1698,10 @@ class AlpacaOptionQuoteStreamer:
 
     @staticmethod
     def _send(ws: websocket.WebSocket, payload: dict[str, Any]) -> None:
-        ws.send(msgpack.packb(payload, use_bin_type=True), opcode=websocket.ABNF.OPCODE_BINARY)
+        ws.send(
+            msgpack.packb(payload, use_bin_type=True),
+            opcode=websocket.ABNF.OPCODE_BINARY,
+        )
 
     @staticmethod
     def _recv_messages(ws: websocket.WebSocket) -> list[dict[str, Any]]:
@@ -1766,20 +1906,48 @@ def analyze_daily_setup(
         )
 
     if bullish:
-        distance_to_20d_extreme_pct = (spot_price - low_20) / spot_price if spot_price > 0 else None
-        price_vs_sma20_score = 0.5 if spot_vs_sma20_pct is None else clamp(0.5 + (spot_vs_sma20_pct / 0.08))
-        trend_score = 0.5 if sma20_vs_sma50_pct is None else clamp(0.5 + (sma20_vs_sma50_pct / 0.06))
-        momentum_score = 0.5 if return_5d_pct is None else clamp(0.45 + (return_5d_pct / 0.08))
+        distance_to_20d_extreme_pct = (
+            (spot_price - low_20) / spot_price if spot_price > 0 else None
+        )
+        price_vs_sma20_score = (
+            0.5
+            if spot_vs_sma20_pct is None
+            else clamp(0.5 + (spot_vs_sma20_pct / 0.08))
+        )
+        trend_score = (
+            0.5
+            if sma20_vs_sma50_pct is None
+            else clamp(0.5 + (sma20_vs_sma50_pct / 0.06))
+        )
+        momentum_score = (
+            0.5 if return_5d_pct is None else clamp(0.45 + (return_5d_pct / 0.08))
+        )
         extreme_distance_score = (
-            0.5 if distance_to_20d_extreme_pct is None else clamp(distance_to_20d_extreme_pct / 0.04)
+            0.5
+            if distance_to_20d_extreme_pct is None
+            else clamp(distance_to_20d_extreme_pct / 0.04)
         )
     else:
-        distance_to_20d_extreme_pct = (high_20 - spot_price) / spot_price if spot_price > 0 else None
-        price_vs_sma20_score = 0.5 if spot_vs_sma20_pct is None else clamp(0.5 - (spot_vs_sma20_pct / 0.08))
-        trend_score = 0.5 if sma20_vs_sma50_pct is None else clamp(0.5 - (sma20_vs_sma50_pct / 0.06))
-        momentum_score = 0.5 if return_5d_pct is None else clamp(0.55 - (return_5d_pct / 0.08))
+        distance_to_20d_extreme_pct = (
+            (high_20 - spot_price) / spot_price if spot_price > 0 else None
+        )
+        price_vs_sma20_score = (
+            0.5
+            if spot_vs_sma20_pct is None
+            else clamp(0.5 - (spot_vs_sma20_pct / 0.08))
+        )
+        trend_score = (
+            0.5
+            if sma20_vs_sma50_pct is None
+            else clamp(0.5 - (sma20_vs_sma50_pct / 0.06))
+        )
+        momentum_score = (
+            0.5 if return_5d_pct is None else clamp(0.55 - (return_5d_pct / 0.08))
+        )
         extreme_distance_score = (
-            0.5 if distance_to_20d_extreme_pct is None else clamp(distance_to_20d_extreme_pct / 0.04)
+            0.5
+            if distance_to_20d_extreme_pct is None
+            else clamp(distance_to_20d_extreme_pct / 0.04)
         )
 
     score = round(
@@ -1797,45 +1965,69 @@ def analyze_daily_setup(
     if bullish:
         if spot_vs_sma20_pct is not None:
             if spot_vs_sma20_pct > 0.02:
-                reasons.append(supportive_note("spot is extended above the 20-day average"))
+                reasons.append(
+                    supportive_note("spot is extended above the 20-day average")
+                )
             elif spot_vs_sma20_pct < -0.01:
                 reasons.append(caution_note("spot is trading below the 20-day average"))
         if sma20_vs_sma50_pct is not None:
             if sma20_vs_sma50_pct > 0.015:
-                reasons.append(supportive_note("20-day average is above the 50-day average"))
+                reasons.append(
+                    supportive_note("20-day average is above the 50-day average")
+                )
             elif sma20_vs_sma50_pct < -0.01:
-                reasons.append(caution_note("20-day average is below the 50-day average"))
+                reasons.append(
+                    caution_note("20-day average is below the 50-day average")
+                )
         if return_5d_pct is not None:
             if return_5d_pct > 0.03:
-                reasons.append(supportive_note("recent 5-day momentum is strongly positive"))
+                reasons.append(
+                    supportive_note("recent 5-day momentum is strongly positive")
+                )
             elif return_5d_pct < -0.02:
-                reasons.append(caution_note("recent 5-day momentum is weak to negative"))
+                reasons.append(
+                    caution_note("recent 5-day momentum is weak to negative")
+                )
         if distance_to_20d_extreme_pct is not None:
             if distance_to_20d_extreme_pct < 0.01:
                 reasons.append(caution_note("spot is trading near the 20-day low"))
             elif distance_to_20d_extreme_pct > 0.03:
-                reasons.append(supportive_note("spot has room above the recent 20-day low"))
+                reasons.append(
+                    supportive_note("spot has room above the recent 20-day low")
+                )
     else:
         if spot_vs_sma20_pct is not None:
             if spot_vs_sma20_pct > 0.02:
-                reasons.append(supportive_note("spot is extended above the 20-day average"))
+                reasons.append(
+                    supportive_note("spot is extended above the 20-day average")
+                )
             elif spot_vs_sma20_pct < -0.01:
                 reasons.append(caution_note("spot is trading below the 20-day average"))
         if sma20_vs_sma50_pct is not None:
             if sma20_vs_sma50_pct > 0.015:
-                reasons.append(caution_note("20-day average is leading the 50-day average higher"))
+                reasons.append(
+                    caution_note("20-day average is leading the 50-day average higher")
+                )
             elif sma20_vs_sma50_pct < -0.01:
-                reasons.append(supportive_note("20-day average is below the 50-day average"))
+                reasons.append(
+                    supportive_note("20-day average is below the 50-day average")
+                )
         if return_5d_pct is not None:
             if return_5d_pct > 0.03:
-                reasons.append(caution_note("recent 5-day momentum is strongly positive"))
+                reasons.append(
+                    caution_note("recent 5-day momentum is strongly positive")
+                )
             elif return_5d_pct < -0.02:
-                reasons.append(supportive_note("recent 5-day momentum is weak to negative"))
+                reasons.append(
+                    supportive_note("recent 5-day momentum is weak to negative")
+                )
         if distance_to_20d_extreme_pct is not None:
             if distance_to_20d_extreme_pct < 0.01:
                 reasons.append(caution_note("spot is trading near the 20-day high"))
             elif distance_to_20d_extreme_pct > 0.03:
-                reasons.append(supportive_note("spot has room below the recent 20-day high"))
+                reasons.append(
+                    supportive_note("spot has room below the recent 20-day high")
+                )
 
     status = setup_status_from_score(score)
     if not reasons:
@@ -1882,8 +2074,7 @@ def analyze_intraday_setup(
     session_high = max(bar.high for bar in bars)
     session_low = min(bar.low for bar in bars)
     weighted_prices = [
-        ((bar.high + bar.low + bar.close) / 3.0) * max(bar.volume, 1)
-        for bar in bars
+        ((bar.high + bar.low + bar.close) / 3.0) * max(bar.volume, 1) for bar in bars
     ]
     total_volume = sum(max(bar.volume, 1) for bar in bars)
     vwap = None if total_volume <= 0 else sum(weighted_prices) / total_volume
@@ -1918,22 +2109,54 @@ def analyze_intraday_setup(
             source_window_minutes=len(bars),
         )
     if bullish:
-        distance_to_session_extreme_pct = (spot_price - session_low) / spot_price if spot_price > 0 else None
-        opening_range_break_pct = (spot_price - opening_range_high) / spot_price if spot_price > 0 else None
-        vwap_score = 0.5 if spot_vs_vwap_pct is None else clamp(0.5 + (spot_vs_vwap_pct / 0.01))
-        opening_range_score = 0.5 if opening_range_break_pct is None else clamp(0.55 + (opening_range_break_pct / 0.01))
-        momentum_score = 0.5 if intraday_return_pct is None else clamp(0.5 + (intraday_return_pct / 0.015))
+        distance_to_session_extreme_pct = (
+            (spot_price - session_low) / spot_price if spot_price > 0 else None
+        )
+        opening_range_break_pct = (
+            (spot_price - opening_range_high) / spot_price if spot_price > 0 else None
+        )
+        vwap_score = (
+            0.5 if spot_vs_vwap_pct is None else clamp(0.5 + (spot_vs_vwap_pct / 0.01))
+        )
+        opening_range_score = (
+            0.5
+            if opening_range_break_pct is None
+            else clamp(0.55 + (opening_range_break_pct / 0.01))
+        )
+        momentum_score = (
+            0.5
+            if intraday_return_pct is None
+            else clamp(0.5 + (intraday_return_pct / 0.015))
+        )
         extreme_score = (
-            0.5 if distance_to_session_extreme_pct is None else clamp(distance_to_session_extreme_pct / 0.012)
+            0.5
+            if distance_to_session_extreme_pct is None
+            else clamp(distance_to_session_extreme_pct / 0.012)
         )
     else:
-        distance_to_session_extreme_pct = (session_high - spot_price) / spot_price if spot_price > 0 else None
-        opening_range_break_pct = (opening_range_low - spot_price) / spot_price if spot_price > 0 else None
-        vwap_score = 0.5 if spot_vs_vwap_pct is None else clamp(0.5 - (spot_vs_vwap_pct / 0.01))
-        opening_range_score = 0.5 if opening_range_break_pct is None else clamp(0.55 + (opening_range_break_pct / 0.01))
-        momentum_score = 0.5 if intraday_return_pct is None else clamp(0.5 - (intraday_return_pct / 0.015))
+        distance_to_session_extreme_pct = (
+            (session_high - spot_price) / spot_price if spot_price > 0 else None
+        )
+        opening_range_break_pct = (
+            (opening_range_low - spot_price) / spot_price if spot_price > 0 else None
+        )
+        vwap_score = (
+            0.5 if spot_vs_vwap_pct is None else clamp(0.5 - (spot_vs_vwap_pct / 0.01))
+        )
+        opening_range_score = (
+            0.5
+            if opening_range_break_pct is None
+            else clamp(0.55 + (opening_range_break_pct / 0.01))
+        )
+        momentum_score = (
+            0.5
+            if intraday_return_pct is None
+            else clamp(0.5 - (intraday_return_pct / 0.015))
+        )
         extreme_score = (
-            0.5 if distance_to_session_extreme_pct is None else clamp(distance_to_session_extreme_pct / 0.012)
+            0.5
+            if distance_to_session_extreme_pct is None
+            else clamp(distance_to_session_extreme_pct / 0.012)
         )
 
     score = round(
@@ -1959,7 +2182,9 @@ def analyze_intraday_setup(
             if opening_range_break_pct > 0.001:
                 reasons.append(supportive_note("spot is above the opening range high"))
             elif spot_price < opening_range_low:
-                reasons.append(caution_note("spot has broken below the opening range low"))
+                reasons.append(
+                    caution_note("spot has broken below the opening range low")
+                )
         if intraday_return_pct is not None:
             if intraday_return_pct > 0.004:
                 reasons.append(supportive_note("intraday trend is positive"))
@@ -1980,7 +2205,9 @@ def analyze_intraday_setup(
             if opening_range_break_pct > 0.001:
                 reasons.append(supportive_note("spot is below the opening range low"))
             elif spot_price > opening_range_high:
-                reasons.append(caution_note("spot has broken above the opening range high"))
+                reasons.append(
+                    caution_note("spot has broken above the opening range high")
+                )
         if intraday_return_pct is not None:
             if intraday_return_pct < -0.004:
                 reasons.append(supportive_note("intraday trend is negative"))
@@ -1994,9 +2221,13 @@ def analyze_intraday_setup(
 
     if not reasons:
         if bullish:
-            reasons.append(f"{symbol} intraday setup is {status} for bullish positioning")
+            reasons.append(
+                f"{symbol} intraday setup is {status} for bullish positioning"
+            )
         else:
-            reasons.append(f"{symbol} intraday setup is {status} for bearish positioning")
+            reasons.append(
+                f"{symbol} intraday setup is {status} for bearish positioning"
+            )
 
     return UnderlyingSetupContext(
         strategy=strategy,
@@ -2044,7 +2275,9 @@ def combine_setup_contexts(
     if daily_setup.status == "unknown":
         intraday_weight = 1.0
     daily_weight = 1.0 - intraday_weight
-    blended_score = round((daily_setup.score * daily_weight) + (intraday_setup.score * intraday_weight), 1)
+    blended_score = round(
+        (daily_setup.score * daily_weight) + (intraday_setup.score * intraday_weight), 1
+    )
     blended_status = setup_status_from_score(blended_score)
 
     ordered_reasons = list(intraday_setup.reasons[:4]) + list(daily_setup.reasons[:3])
@@ -2087,8 +2320,12 @@ def analyze_underlying_setup(
     intraday_bars: list[IntradayBar] | None = None,
 ) -> UnderlyingSetupContext:
     daily_setup = analyze_daily_setup(symbol, spot_price, daily_bars, strategy=strategy)
-    intraday_setup = analyze_intraday_setup(symbol, spot_price, intraday_bars or [], strategy=strategy)
-    return combine_setup_contexts(daily_setup, intraday_setup, profile=profile, strategy=strategy)
+    intraday_setup = analyze_intraday_setup(
+        symbol, spot_price, intraday_bars or [], strategy=strategy
+    )
+    return combine_setup_contexts(
+        daily_setup, intraday_setup, profile=profile, strategy=strategy
+    )
 
 
 def attach_underlying_setup(
@@ -2097,7 +2334,9 @@ def attach_underlying_setup(
 ) -> list[SpreadCandidate]:
     if setup is None:
         return candidates
-    has_intraday_context = setup.intraday_score is not None and (setup.source_window_minutes or 0) > 0
+    has_intraday_context = (
+        setup.intraday_score is not None and (setup.source_window_minutes or 0) > 0
+    )
     return [
         replace(
             candidate,
@@ -2143,7 +2382,10 @@ def assess_data_quality(
             penalized = True
         reasons.append(reason)
     elif long_vol:
-        if candidate.modeled_move_vs_break_even_move is not None and candidate.modeled_move_vs_break_even_move < 0.85:
+        if (
+            candidate.modeled_move_vs_break_even_move is not None
+            and candidate.modeled_move_vs_break_even_move < 0.85
+        ):
             reason = (
                 "Modeled move does not clear the structure break-even cleanly "
                 f"({candidate.modeled_move_vs_break_even_move:.2f} < 0.85)"
@@ -2154,8 +2396,12 @@ def assess_data_quality(
                 penalized = True
             reasons.append(reason)
     else:
-        short_ratio = (candidate.short_vs_expected_move or 0.0) / candidate.expected_move
-        breakeven_ratio = (candidate.breakeven_vs_expected_move or 0.0) / candidate.expected_move
+        short_ratio = (
+            candidate.short_vs_expected_move or 0.0
+        ) / candidate.expected_move
+        breakeven_ratio = (
+            candidate.breakeven_vs_expected_move or 0.0
+        ) / candidate.expected_move
         if short_ratio < args.min_short_vs_expected_move_ratio:
             reason = (
                 f"Short strike sits too far inside expected move "
@@ -2185,7 +2431,10 @@ def assess_data_quality(
             penalized = True
         reasons.append(reason)
 
-    if underlying_type == "single_name_equity" and candidate.calendar_confidence == "low":
+    if (
+        underlying_type == "single_name_equity"
+        and candidate.calendar_confidence == "low"
+    ):
         reason = "Calendar data confidence is low for this single-name candidate"
         if args.data_policy == "strict":
             blocked = True
@@ -2208,7 +2457,9 @@ def attach_data_quality(
 ) -> list[SpreadCandidate]:
     enriched: list[SpreadCandidate] = []
     for candidate in candidates:
-        status, reasons = assess_data_quality(candidate, underlying_type=underlying_type, args=args)
+        status, reasons = assess_data_quality(
+            candidate, underlying_type=underlying_type, args=args
+        )
         if args.data_policy == "strict" and status == "blocked":
             continue
         enriched.append(replace(candidate, data_status=status, data_reasons=reasons))
@@ -2229,7 +2480,10 @@ def build_selection_notes(
         notes.append("atm-move")
     elif candidate.strategy == "long_strangle":
         notes.append("winged-move")
-    elif candidate.short_delta is not None and abs(abs(candidate.short_delta) - delta_target) <= 0.02:
+    elif (
+        candidate.short_delta is not None
+        and abs(abs(candidate.short_delta) - delta_target) <= 0.02
+    ):
         notes.append("delta-fit")
     if long_vol and candidate.modeled_move_vs_break_even_move is not None:
         if candidate.modeled_move_vs_break_even_move >= 1.0:
@@ -2245,7 +2499,9 @@ def build_selection_notes(
         notes.append("good-fill")
     elif candidate.fill_ratio >= args.min_fill_ratio:
         notes.append("acceptable-fill")
-    if min(candidate.short_open_interest, candidate.long_open_interest) >= max(args.min_open_interest * 3, 500):
+    if min(candidate.short_open_interest, candidate.long_open_interest) >= max(
+        args.min_open_interest * 3, 500
+    ):
         notes.append("liquid")
     if candidate.calendar_status == "clean":
         notes.append("calendar-clean")
@@ -2261,7 +2517,11 @@ def build_selection_notes(
         notes.append("data-caution")
     if candidate.greeks_source != "alpaca":
         notes.append("local-greeks")
-    if len(notes) > 4 and candidate.greeks_source != "alpaca" and "local-greeks" not in notes[:4]:
+    if (
+        len(notes) > 4
+        and candidate.greeks_source != "alpaca"
+        and "local-greeks" not in notes[:4]
+    ):
         notes = [*notes[:3], "local-greeks"]
     return tuple(notes[:4])
 
@@ -2275,7 +2535,9 @@ def attach_selection_notes(
     ]
 
 
-def deduplicate_candidates(candidates: list[SpreadCandidate], expand_duplicates: bool) -> list[SpreadCandidate]:
+def deduplicate_candidates(
+    candidates: list[SpreadCandidate], expand_duplicates: bool
+) -> list[SpreadCandidate]:
     if expand_duplicates:
         return candidates
 
@@ -2334,10 +2596,19 @@ def clone_args(args: argparse.Namespace) -> argparse.Namespace:
 def validate_resolved_args(args: argparse.Namespace) -> None:
     if args.min_dte < 0 or args.max_dte < args.min_dte:
         raise SystemExit("Expected 0 <= min-dte <= max-dte")
-    if args.short_delta_min < 0 or args.short_delta_max > 1 or args.short_delta_min > args.short_delta_max:
+    if (
+        args.short_delta_min < 0
+        or args.short_delta_max > 1
+        or args.short_delta_min > args.short_delta_max
+    ):
         raise SystemExit("Expected 0 <= short-delta-min <= short-delta-max <= 1")
-    if args.short_delta_target < args.short_delta_min or args.short_delta_target > args.short_delta_max:
-        raise SystemExit("Expected short-delta-target to fall inside the selected delta band")
+    if (
+        args.short_delta_target < args.short_delta_min
+        or args.short_delta_target > args.short_delta_max
+    ):
+        raise SystemExit(
+            "Expected short-delta-target to fall inside the selected delta band"
+        )
     if args.min_width <= 0:
         raise SystemExit("Expected min-width > 0")
     if args.max_width < args.min_width:
@@ -2352,10 +2623,20 @@ def validate_resolved_args(args: argparse.Namespace) -> None:
         raise SystemExit("Expected per-symbol-top > 0")
     if args.min_fill_ratio <= 0 or args.min_fill_ratio > 1.25:
         raise SystemExit("Expected min-fill-ratio to be in (0, 1.25]")
-    if args.min_short_vs_expected_move_ratio < -1 or args.min_short_vs_expected_move_ratio > 1:
-        raise SystemExit("Expected min-short-vs-expected-move-ratio to be between -1 and 1")
-    if args.min_breakeven_vs_expected_move_ratio < -1 or args.min_breakeven_vs_expected_move_ratio > 1:
-        raise SystemExit("Expected min-breakeven-vs-expected-move-ratio to be between -1 and 1")
+    if (
+        args.min_short_vs_expected_move_ratio < -1
+        or args.min_short_vs_expected_move_ratio > 1
+    ):
+        raise SystemExit(
+            "Expected min-short-vs-expected-move-ratio to be between -1 and 1"
+        )
+    if (
+        args.min_breakeven_vs_expected_move_ratio < -1
+        or args.min_breakeven_vs_expected_move_ratio > 1
+    ):
+        raise SystemExit(
+            "Expected min-breakeven-vs-expected-move-ratio to be between -1 and 1"
+        )
 
 
 def make_open_order_payload(
@@ -2476,13 +2757,19 @@ def default_output_path(symbol: str, strategy: str, output_format: str) -> str:
         "iron_condor": "iron_condors",
         "combined": "combined_credit_spreads",
     }.get(strategy, "call_credit_spreads")
-    return str(Path("outputs") / directory / f"{symbol.lower()}_{timestamp}.{output_format}")
+    return str(
+        Path("outputs") / directory / f"{symbol.lower()}_{timestamp}.{output_format}"
+    )
 
 
 def default_universe_output_path(label: str, strategy: str, output_format: str) -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_label = label.lower().replace(" ", "_")
-    return str(Path("outputs") / "universe_boards" / f"{safe_label}_{strategy}_{timestamp}.{output_format}")
+    return str(
+        Path("outputs")
+        / "universe_boards"
+        / f"{safe_label}_{strategy}_{timestamp}.{output_format}"
+    )
 
 
 def write_latest_copy(output_path: str, latest_name: str) -> str:
@@ -2492,7 +2779,9 @@ def write_latest_copy(output_path: str, latest_name: str) -> str:
 
 
 def option_expiry_close(expiration_date: str) -> datetime:
-    local_close = datetime.combine(date.fromisoformat(expiration_date), time(16, 0), tzinfo=NEW_YORK)
+    local_close = datetime.combine(
+        date.fromisoformat(expiration_date), time(16, 0), tzinfo=NEW_YORK
+    )
     return local_close.astimezone(UTC)
 
 
@@ -2589,7 +2878,9 @@ def build_vertical_spreads(
         days_to_expiration = days_from_today(expiration_date)
 
         short_contracts = (
-            sorted_contracts if option_type == "call" else list(reversed(sorted_contracts))
+            sorted_contracts
+            if option_type == "call"
+            else list(reversed(sorted_contracts))
         )
 
         for short_contract in short_contracts:
@@ -2613,7 +2904,9 @@ def build_vertical_spreads(
             if short_delta is None:
                 continue
             short_delta_magnitude = abs(short_delta)
-            if not (args.short_delta_min <= short_delta_magnitude <= args.short_delta_max):
+            if not (
+                args.short_delta_min <= short_delta_magnitude <= args.short_delta_max
+            ):
                 continue
 
             short_index = sorted_contracts.index(short_contract)
@@ -2692,15 +2985,29 @@ def build_vertical_spreads(
                     continue
 
                 if option_type == "call":
-                    breakeven = long_contract.strike_price + midpoint_credit if premium_kind == "debit" else short_contract.strike_price + midpoint_credit
-                    short_otm_pct = (short_contract.strike_price - spot_price) / spot_price
+                    breakeven = (
+                        long_contract.strike_price + midpoint_credit
+                        if premium_kind == "debit"
+                        else short_contract.strike_price + midpoint_credit
+                    )
+                    short_otm_pct = (
+                        short_contract.strike_price - spot_price
+                    ) / spot_price
                     breakeven_cushion_pct = (breakeven - spot_price) / spot_price
                 else:
-                    breakeven = long_contract.strike_price - midpoint_credit if premium_kind == "debit" else short_contract.strike_price - midpoint_credit
-                    short_otm_pct = (spot_price - short_contract.strike_price) / spot_price
+                    breakeven = (
+                        long_contract.strike_price - midpoint_credit
+                        if premium_kind == "debit"
+                        else short_contract.strike_price - midpoint_credit
+                    )
+                    short_otm_pct = (
+                        spot_price - short_contract.strike_price
+                    ) / spot_price
                     breakeven_cushion_pct = (spot_price - breakeven) / spot_price
                 fill_ratio = clamp(
-                    midpoint_credit / natural_credit if premium_kind == "debit" else natural_credit / midpoint_credit,
+                    midpoint_credit / natural_credit
+                    if premium_kind == "debit"
+                    else natural_credit / midpoint_credit,
                     0.0,
                     1.25,
                 )
@@ -2715,7 +3022,9 @@ def build_vertical_spreads(
                     expected_move_source_strike = expected_move.reference_strike
                     if option_type == "call":
                         expected_move_boundary = spot_price + expected_move.amount
-                        short_vs_expected_move = short_contract.strike_price - expected_move_boundary
+                        short_vs_expected_move = (
+                            short_contract.strike_price - expected_move_boundary
+                        )
                         breakeven_vs_expected_move = (
                             expected_move_boundary - breakeven
                             if premium_kind == "debit"
@@ -2723,7 +3032,9 @@ def build_vertical_spreads(
                         )
                     else:
                         expected_move_boundary = spot_price - expected_move.amount
-                        short_vs_expected_move = expected_move_boundary - short_contract.strike_price
+                        short_vs_expected_move = (
+                            expected_move_boundary - short_contract.strike_price
+                        )
                         breakeven_vs_expected_move = (
                             breakeven - expected_move_boundary
                             if premium_kind == "debit"
@@ -2837,11 +3148,17 @@ def build_iron_condors(
         }
 
         short_calls = [
-            contract for contract in call_contracts if contract.strike_price > spot_price
+            contract
+            for contract in call_contracts
+            if contract.strike_price > spot_price
         ]
         short_puts = list(
             reversed(
-                [contract for contract in put_contracts if contract.strike_price < spot_price]
+                [
+                    contract
+                    for contract in put_contracts
+                    if contract.strike_price < spot_price
+                ]
             )
         )
 
@@ -2872,7 +3189,9 @@ def build_iron_condors(
                     long_put.open_interest < args.min_open_interest
                     or long_put_snapshot.bid_size <= 0
                     or long_put_snapshot.ask_size <= 0
-                    or relative_spread_exceeds(long_put_snapshot, args.max_relative_spread)
+                    or relative_spread_exceeds(
+                        long_put_snapshot, args.max_relative_spread
+                    )
                 ):
                     continue
 
@@ -2990,7 +3309,9 @@ def build_iron_condors(
                         4,
                     )
                     side_balance_score = round(
-                        clamp(1.0 - abs(short_put_delta - short_call_delta) / delta_window),
+                        clamp(
+                            1.0 - abs(short_put_delta - short_call_delta) / delta_window
+                        ),
                         4,
                     )
                     leg_quote_size = min(
@@ -3031,11 +3352,13 @@ def build_iron_condors(
                                 else "mixed"
                             ),
                             short_midpoint=round(
-                                short_put_snapshot.midpoint + short_call_snapshot.midpoint,
+                                short_put_snapshot.midpoint
+                                + short_call_snapshot.midpoint,
                                 4,
                             ),
                             long_midpoint=round(
-                                long_put_snapshot.midpoint + long_call_snapshot.midpoint,
+                                long_put_snapshot.midpoint
+                                + long_call_snapshot.midpoint,
                                 4,
                             ),
                             short_bid=round(
@@ -3246,14 +3569,20 @@ def build_long_straddles(
             )
             fill_ratio = clamp(midpoint_credit / natural_credit, 0.0, 1.25)
             strike = call_contract.strike_price
-            short_otm_pct = abs(strike - spot_price) / spot_price if spot_price > 0 else 0.0
-            breakeven_cushion_pct = break_even_move / spot_price if spot_price > 0 else 0.0
+            short_otm_pct = (
+                abs(strike - spot_price) / spot_price if spot_price > 0 else 0.0
+            )
+            breakeven_cushion_pct = (
+                break_even_move / spot_price if spot_price > 0 else 0.0
+            )
             average_delta = round((call_delta + put_delta) / 2.0, 4)
             side_balance_score = round(
                 clamp(1.0 - abs(call_delta - put_delta) / 0.35),
                 4,
             )
-            expected_move_amount = expected_move_pct = expected_move_source_strike = None
+            expected_move_amount = expected_move_pct = expected_move_source_strike = (
+                None
+            )
             short_vs_expected_move = breakeven_vs_expected_move = None
             if expected_move is not None:
                 expected_move_amount = expected_move.amount
@@ -3289,7 +3618,10 @@ def build_long_straddles(
                     midpoint_credit=midpoint_credit,
                     natural_credit=natural_credit,
                     max_profit=round(
-                        max((expected_move_amount or midpoint_credit) - midpoint_credit, 0.01)
+                        max(
+                            (expected_move_amount or midpoint_credit) - midpoint_credit,
+                            0.01,
+                        )
                         * 100.0,
                         2,
                     ),
@@ -3420,18 +3752,23 @@ def build_long_strangles(
                 if lower_distance <= 0 or upper_distance <= 0:
                     continue
                 wing_symmetry_ratio = round(
-                    min(lower_distance, upper_distance) / max(lower_distance, upper_distance),
+                    min(lower_distance, upper_distance)
+                    / max(lower_distance, upper_distance),
                     4,
                 )
                 if wing_symmetry_ratio < 0.55:
                     continue
 
-                midpoint_credit = round(put_snapshot.midpoint + call_snapshot.midpoint, 4)
+                midpoint_credit = round(
+                    put_snapshot.midpoint + call_snapshot.midpoint, 4
+                )
                 natural_credit = round(put_snapshot.ask + call_snapshot.ask, 4)
                 if midpoint_credit < args.min_credit or natural_credit <= 0:
                     continue
 
-                break_even_move = min(lower_distance + midpoint_credit, upper_distance + midpoint_credit)
+                break_even_move = min(
+                    lower_distance + midpoint_credit, upper_distance + midpoint_credit
+                )
                 modeled_move_vs_implied_move = _ratio_or_none(
                     expected_move.amount if expected_move is not None else None,
                     midpoint_credit,
@@ -3446,20 +3783,30 @@ def build_long_strangles(
                     or round((put_delta + call_delta) / 2.0, 4)
                 )
                 fill_ratio = clamp(midpoint_credit / natural_credit, 0.0, 1.25)
-                short_otm_pct = min(lower_distance, upper_distance) / spot_price if spot_price > 0 else 0.0
-                breakeven_cushion_pct = break_even_move / spot_price if spot_price > 0 else 0.0
+                short_otm_pct = (
+                    min(lower_distance, upper_distance) / spot_price
+                    if spot_price > 0
+                    else 0.0
+                )
+                breakeven_cushion_pct = (
+                    break_even_move / spot_price if spot_price > 0 else 0.0
+                )
                 average_delta = round((put_delta + call_delta) / 2.0, 4)
                 side_balance_score = round(
                     clamp(1.0 - abs(put_delta - call_delta) / delta_window),
                     4,
                 )
-                expected_move_amount = expected_move_pct = expected_move_source_strike = None
+                expected_move_amount = expected_move_pct = (
+                    expected_move_source_strike
+                ) = None
                 short_vs_expected_move = breakeven_vs_expected_move = None
                 if expected_move is not None:
                     expected_move_amount = expected_move.amount
                     expected_move_pct = expected_move.percent_of_spot
                     expected_move_source_strike = expected_move.reference_strike
-                    short_vs_expected_move = expected_move.amount - min(lower_distance, upper_distance)
+                    short_vs_expected_move = expected_move.amount - min(
+                        lower_distance, upper_distance
+                    )
                     breakeven_vs_expected_move = expected_move.amount - break_even_move
 
                 candidates.append(
@@ -3474,7 +3821,9 @@ def build_long_strangles(
                         long_symbol=call_contract.symbol,
                         short_strike=put_contract.strike_price,
                         long_strike=call_contract.strike_price,
-                        width=round(call_contract.strike_price - put_contract.strike_price, 4),
+                        width=round(
+                            call_contract.strike_price - put_contract.strike_price, 4
+                        ),
                         short_delta=average_delta,
                         long_delta=average_delta,
                         greeks_source=call_snapshot.greeks_source
@@ -3489,7 +3838,11 @@ def build_long_strangles(
                         midpoint_credit=midpoint_credit,
                         natural_credit=natural_credit,
                         max_profit=round(
-                            max((expected_move_amount or break_even_move) - break_even_move, 0.01)
+                            max(
+                                (expected_move_amount or break_even_move)
+                                - break_even_move,
+                                0.01,
+                            )
                             * 100.0,
                             2,
                         ),
@@ -3529,8 +3882,12 @@ def build_long_strangles(
                         long_implied_volatility=call_snapshot.implied_volatility,
                         short_volume=put_snapshot.daily_volume,
                         long_volume=call_snapshot.daily_volume,
-                        lower_breakeven=round(put_contract.strike_price - midpoint_credit, 4),
-                        upper_breakeven=round(call_contract.strike_price + midpoint_credit, 4),
+                        lower_breakeven=round(
+                            put_contract.strike_price - midpoint_credit, 4
+                        ),
+                        upper_breakeven=round(
+                            call_contract.strike_price + midpoint_credit, 4
+                        ),
                         side_balance_score=side_balance_score,
                         wing_symmetry_ratio=wing_symmetry_ratio,
                     )
@@ -3554,22 +3911,22 @@ def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> flo
         delta_half_band = 0.20
     delta_score = 1.0
     if candidate.short_delta is not None:
-        delta_score = 1.0 - min(abs(abs(candidate.short_delta) - delta_target) / delta_half_band, 1.0)
+        delta_score = 1.0 - min(
+            abs(abs(candidate.short_delta) - delta_target) / delta_half_band, 1.0
+        )
 
     dte_target = (args.min_dte + args.max_dte) / 2.0
     dte_half_band = max((args.max_dte - args.min_dte) / 2.0, 1.0)
-    dte_score = 1.0 - min(abs(candidate.days_to_expiration - dte_target) / dte_half_band, 1.0)
+    dte_score = 1.0 - min(
+        abs(candidate.days_to_expiration - dte_target) / dte_half_band, 1.0
+    )
 
     fill_score = clamp(candidate.fill_ratio)
-    liquidity_score = (
-        0.75
-        * log_scaled_score(
-            min(candidate.short_open_interest, candidate.long_open_interest),
-            floor=max(args.min_open_interest, 1),
-            ceiling=max(args.min_open_interest * 8, 10),
-        )
-        + 0.25 * clamp(candidate.min_quote_size / 100.0)
-    )
+    liquidity_score = 0.75 * log_scaled_score(
+        min(candidate.short_open_interest, candidate.long_open_interest),
+        floor=max(args.min_open_interest, 1),
+        ceiling=max(args.min_open_interest * 8, 10),
+    ) + 0.25 * clamp(candidate.min_quote_size / 100.0)
 
     if candidate.strategy == "long_straddle":
         width_target = 0.0
@@ -3578,7 +3935,9 @@ def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> flo
     elif args.profile == "0dte":
         width_target = 2.0 if session_bucket == "late" else 1.0
     else:
-        width_target = max(args.min_width, 2.0 if args.profile == "core" else args.min_width)
+        width_target = max(
+            args.min_width, 2.0 if args.profile == "core" else args.min_width
+        )
     width_window = max(args.max_width - args.min_width, 1.0)
     if candidate.strategy == "long_straddle":
         width_window = 1.0
@@ -3599,23 +3958,18 @@ def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> flo
 
     if long_vol:
         short_expected_move_score = clamp(
-            (
-                (candidate.modeled_move_vs_implied_move or 0.85)
-                - 0.80
-            )
-            / 0.35
+            ((candidate.modeled_move_vs_implied_move or 0.85) - 0.80) / 0.35
         )
         breakeven_expected_move_score = clamp(
-            (
-                (candidate.modeled_move_vs_break_even_move or 0.85)
-                - 0.80
-            )
-            / 0.30
+            ((candidate.modeled_move_vs_break_even_move or 0.85) - 0.80) / 0.30
         )
     elif candidate.expected_move and candidate.expected_move > 0:
-        short_expected_move_score = clamp(0.50 + (candidate.short_vs_expected_move or 0.0) / candidate.expected_move)
+        short_expected_move_score = clamp(
+            0.50 + (candidate.short_vs_expected_move or 0.0) / candidate.expected_move
+        )
         breakeven_expected_move_score = clamp(
-            0.45 + (candidate.breakeven_vs_expected_move or 0.0) / candidate.expected_move
+            0.45
+            + (candidate.breakeven_vs_expected_move or 0.0) / candidate.expected_move
         )
     else:
         short_expected_move_score = clamp(candidate.short_otm_pct / 0.03)
@@ -3649,15 +4003,24 @@ def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> flo
         "penalized": 0.90,
         "blocked": 0.0,
     }.get(candidate.data_status, 1.0)
-    return round(base_score * calendar_multiplier * setup_multiplier * data_multiplier * 100.0, 1)
+    return round(
+        base_score * calendar_multiplier * setup_multiplier * data_multiplier * 100.0, 1
+    )
 
 
-def rank_candidates(candidates: list[SpreadCandidate], args: argparse.Namespace) -> list[SpreadCandidate]:
-    ranked = [replace(candidate, quality_score=score_candidate(candidate, args)) for candidate in candidates]
+def rank_candidates(
+    candidates: list[SpreadCandidate], args: argparse.Namespace
+) -> list[SpreadCandidate]:
+    ranked = [
+        replace(candidate, quality_score=score_candidate(candidate, args))
+        for candidate in candidates
+    ]
     return sort_candidates_for_display(ranked)
 
 
-def sort_candidates_for_display(candidates: list[SpreadCandidate]) -> list[SpreadCandidate]:
+def sort_candidates_for_display(
+    candidates: list[SpreadCandidate],
+) -> list[SpreadCandidate]:
     ranked = list(candidates)
     ranked.sort(
         key=lambda candidate: (
@@ -3675,7 +4038,9 @@ def format_dte_label(days_to_expiration: int) -> str:
     return "0D" if days_to_expiration == 0 else str(days_to_expiration)
 
 
-def build_table_rows(candidates: list[SpreadCandidate], *, include_strategy: bool = False) -> list[list[str]]:
+def build_table_rows(
+    candidates: list[SpreadCandidate], *, include_strategy: bool = False
+) -> list[list[str]]:
     rows: list[list[str]] = []
     for candidate in candidates:
         row = []
@@ -3691,10 +4056,14 @@ def build_table_rows(candidates: list[SpreadCandidate], *, include_strategy: boo
                 f"{candidate.midpoint_credit:.2f}",
                 f"{candidate.return_on_risk * 100:.1f}",
                 f"{candidate.quality_score:.1f}",
-                "n/a" if candidate.short_delta is None else f"{candidate.short_delta:.2f}",
+                "n/a"
+                if candidate.short_delta is None
+                else f"{candidate.short_delta:.2f}",
                 f"{candidate.short_otm_pct * 100:.1f}",
                 f"{candidate.breakeven_cushion_pct * 100:.1f}",
-                "n/a" if candidate.short_vs_expected_move is None else f"{candidate.short_vs_expected_move:.2f}",
+                "n/a"
+                if candidate.short_vs_expected_move is None
+                else f"{candidate.short_vs_expected_move:.2f}",
                 f"{min(candidate.short_open_interest, candidate.long_open_interest)}",
                 candidate.calendar_status,
                 candidate.data_status,
@@ -3753,8 +4122,28 @@ def print_human_readable(
         print("No option structures matched the current filters and calendar policy.")
         return
 
-    include_strategy = strategy == "combined" or len({candidate.strategy for candidate in candidates}) > 1
-    headers = ["Expiry", "DTE", "Short", "Long", "Width", "Entry", "ROR%", "Score", "Δ", "OTM%", "BE%", "S-EM", "MinOI", "Cal", "DQ", "EvtD"]
+    include_strategy = (
+        strategy == "combined"
+        or len({candidate.strategy for candidate in candidates}) > 1
+    )
+    headers = [
+        "Expiry",
+        "DTE",
+        "Short",
+        "Long",
+        "Width",
+        "Entry",
+        "ROR%",
+        "Score",
+        "Δ",
+        "OTM%",
+        "BE%",
+        "S-EM",
+        "MinOI",
+        "Cal",
+        "DQ",
+        "EvtD",
+    ]
     if include_strategy:
         headers = ["Side", *headers]
     rows = build_table_rows(candidates, include_strategy=include_strategy)
@@ -3782,7 +4171,9 @@ def print_human_readable(
             print(f"   data: {'; '.join(candidate.data_reasons)}")
         if candidate.calendar_sources:
             source_line = ", ".join(candidate.calendar_sources)
-            print(f"   sources: {source_line} | confidence {candidate.calendar_confidence}")
+            print(
+                f"   sources: {source_line} | confidence {candidate.calendar_confidence}"
+            )
         if candidate.macro_regime:
             print(f"   macro regime: {candidate.macro_regime}")
         if candidate.setup_score is not None:
@@ -3887,11 +4278,15 @@ def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
             row["setup_reasons"] = "; ".join(candidate.setup_reasons)
             row["data_reasons"] = "; ".join(candidate.data_reasons)
             row["selection_notes"] = ", ".join(candidate.selection_notes)
-            row["order_payload"] = json.dumps(candidate.order_payload, separators=(",", ":"))
+            row["order_payload"] = json.dumps(
+                candidate.order_payload, separators=(",", ":")
+            )
             writer.writerow(row)
 
 
-def serialize_setup_context(setup: UnderlyingSetupContext | None) -> dict[str, Any] | None:
+def serialize_setup_context(
+    setup: UnderlyingSetupContext | None,
+) -> dict[str, Any] | None:
     if setup is None:
         return None
     payload = asdict(setup)
@@ -3913,7 +4308,9 @@ def write_json(
     payload = {
         "symbol": symbol,
         "spot_price": spot_price,
-        "generated_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "generated_at": datetime.now(UTC)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z"),
         "run_id": run_id,
         "filters": build_filter_payload(args),
         "setup": serialize_setup_context(setup),
@@ -3940,9 +4337,13 @@ def build_ranked_candidate_rows(
                 f"{candidate.long_strike:.2f}",
                 f"{candidate.midpoint_credit:.2f}",
                 f"{candidate.quality_score:.1f}",
-                "n/a" if candidate.short_delta is None else f"{candidate.short_delta:.2f}",
+                "n/a"
+                if candidate.short_delta is None
+                else f"{candidate.short_delta:.2f}",
                 f"{candidate.breakeven_cushion_pct * 100:.1f}",
-                "n/a" if candidate.short_vs_expected_move is None else f"{candidate.short_vs_expected_move:.2f}",
+                "n/a"
+                if candidate.short_vs_expected_move is None
+                else f"{candidate.short_vs_expected_move:.2f}",
                 candidate.calendar_status,
                 candidate.data_status,
                 candidate.setup_status,
@@ -3978,10 +4379,27 @@ def print_ranked_candidates(
     print()
 
     if ranked_candidates:
-        include_strategy = strategy == "combined" or len(
-            {candidate.strategy for candidate in ranked_candidates}
-        ) > 1
-        headers = ["Symbol", "Expiry", "DTE", "Spot", "Short", "Long", "MidCr", "Score", "Δ", "BE%", "S-EM", "Cal", "DQ", "Setup", "Why"]
+        include_strategy = (
+            strategy == "combined"
+            or len({candidate.strategy for candidate in ranked_candidates}) > 1
+        )
+        headers = [
+            "Symbol",
+            "Expiry",
+            "DTE",
+            "Spot",
+            "Short",
+            "Long",
+            "MidCr",
+            "Score",
+            "Δ",
+            "BE%",
+            "S-EM",
+            "Cal",
+            "DQ",
+            "Setup",
+            "Why",
+        ]
         if include_strategy:
             headers = ["Symbol", "Side", *headers[1:]]
         print(
@@ -4038,7 +4456,9 @@ def write_universe_json(
         "label": label,
         "strategy": strategy,
         "symbols": symbols,
-        "generated_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "generated_at": datetime.now(UTC)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z"),
         "candidate_count": len(candidates),
         "failures": [asdict(failure) for failure in failures],
         "candidates": [asdict(candidate) for candidate in candidates],
@@ -4047,7 +4467,9 @@ def write_universe_json(
         json.dump(payload, handle, indent=2)
 
 
-def build_stream_symbols(candidates: list[SpreadCandidate], *, max_symbols: int = 16) -> list[str]:
+def build_stream_symbols(
+    candidates: list[SpreadCandidate], *, max_symbols: int = 16
+) -> list[str]:
     symbols: list[str] = []
     seen: set[str] = set()
     for candidate in candidates:
@@ -4077,7 +4499,10 @@ def build_live_spread_rows(
         if live_snapshot is None:
             continue
         primary_label = f"{candidate.short_strike:.2f}/{candidate.long_strike:.2f}"
-        if candidate.secondary_short_strike is not None and candidate.secondary_long_strike is not None:
+        if (
+            candidate.secondary_short_strike is not None
+            and candidate.secondary_long_strike is not None
+        ):
             primary_label = (
                 f"{candidate.long_strike:.2f}-{candidate.short_strike:.2f}"
                 f" / {candidate.secondary_short_strike:.2f}-{candidate.secondary_long_strike:.2f}"
@@ -4113,7 +4538,9 @@ def maybe_stream_live_quotes(
         return
 
     print()
-    print(f"Streaming live option quotes for {len(stream_symbols)} legs via Alpaca websocket...")
+    print(
+        f"Streaming live option quotes for {len(stream_symbols)} legs via Alpaca websocket..."
+    )
     try:
         streamer = AlpacaOptionQuoteStreamer(
             key_id=client.headers["APCA-API-KEY-ID"],
@@ -4121,7 +4548,9 @@ def maybe_stream_live_quotes(
             data_base_url=client.data_base_url,
             feed=args.feed,
         )
-        live_quotes = streamer.stream_quotes(stream_symbols, duration_seconds=args.stream_seconds)
+        live_quotes = streamer.stream_quotes(
+            stream_symbols, duration_seconds=args.stream_seconds
+        )
     except Exception as exc:
         print(f"Live quote stream unavailable: {exc}")
         return
@@ -4135,7 +4564,16 @@ def maybe_stream_live_quotes(
         print("Live quote stream did not return both legs for the displayed spreads.")
         return
 
-    headers = ["Side", "Expiry", "Strikes", "Width", "LiveMid", "LiveNat", "Legs", "Time"]
+    headers = [
+        "Side",
+        "Expiry",
+        "Strikes",
+        "Width",
+        "LiveMid",
+        "LiveNat",
+        "Legs",
+        "Time",
+    ]
     print(format_table(headers, rows))
     print()
 
@@ -4159,7 +4597,9 @@ def attach_calendar_decisions(
 
     window_start = datetime.now(UTC).isoformat()
     decisions_by_expiration: dict[str, CalendarPolicyDecision] = {}
-    for expiration_date in sorted({candidate.expiration_date for candidate in candidates}, reverse=True):
+    for expiration_date in sorted(
+        {candidate.expiration_date for candidate in candidates}, reverse=True
+    ):
         context = resolver.resolve_calendar_context(
             symbol=symbol,
             strategy=strategy,
@@ -4206,7 +4646,9 @@ def attach_calendar_decisions(
     return filtered_candidates
 
 
-def group_contracts_by_expiration(contracts: Iterable[OptionContract]) -> dict[str, list[OptionContract]]:
+def group_contracts_by_expiration(
+    contracts: Iterable[OptionContract],
+) -> dict[str, list[OptionContract]]:
     grouped: dict[str, list[OptionContract]] = {}
     for contract in contracts:
         grouped.setdefault(contract.expiration_date, []).append(contract)
@@ -4214,14 +4656,24 @@ def group_contracts_by_expiration(contracts: Iterable[OptionContract]) -> dict[s
 
 
 def latest_bar_on_or_before(bars: list[DailyBar], target_date: date) -> DailyBar | None:
-    eligible = [bar for bar in bars if datetime.fromisoformat(bar.timestamp.replace("Z", "+00:00")).date() <= target_date]
+    eligible = [
+        bar
+        for bar in bars
+        if datetime.fromisoformat(bar.timestamp.replace("Z", "+00:00")).date()
+        <= target_date
+    ]
     if not eligible:
         return None
     return eligible[-1]
 
 
 def bars_through_date(bars: list[DailyBar], target_date: date) -> list[DailyBar]:
-    return [bar for bar in bars if datetime.fromisoformat(bar.timestamp.replace("Z", "+00:00")).date() <= target_date]
+    return [
+        bar
+        for bar in bars
+        if datetime.fromisoformat(bar.timestamp.replace("Z", "+00:00")).date()
+        <= target_date
+    ]
 
 
 def latest_option_bar_on_or_before(
@@ -4310,11 +4762,15 @@ def option_bar_available_for_target(
     long_symbol: str,
     target_date: date,
 ) -> bool:
-    short_bar = latest_option_bar_on_or_before(bars_by_symbol, short_symbol, target_date)
+    short_bar = latest_option_bar_on_or_before(
+        bars_by_symbol, short_symbol, target_date
+    )
     long_bar = latest_option_bar_on_or_before(bars_by_symbol, long_symbol, target_date)
     if short_bar is None or long_bar is None:
         return False
-    short_date = datetime.fromisoformat(short_bar.timestamp.replace("Z", "+00:00")).date()
+    short_date = datetime.fromisoformat(
+        short_bar.timestamp.replace("Z", "+00:00")
+    ).date()
     long_date = datetime.fromisoformat(long_bar.timestamp.replace("Z", "+00:00")).date()
     return short_date == target_date and long_date == target_date
 
@@ -4356,9 +4812,7 @@ def simulate_exit_until_date(
     if not path_date_sets:
         return {"status": "pending_option_bars"}
     path_dates = sorted(
-        d
-        for d in set.intersection(*path_date_sets)
-        if start_date <= d <= target_date
+        d for d in set.intersection(*path_date_sets) if start_date <= d <= target_date
     )
     if not path_dates:
         return {"status": "pending_option_bars"}
@@ -4512,12 +4966,21 @@ def summarize_replay(
     profit_target: float,
     stop_multiple: float,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    generated_at = datetime.fromisoformat(run_payload["generated_at"].replace("Z", "+00:00"))
+    generated_at = datetime.fromisoformat(
+        run_payload["generated_at"].replace("Z", "+00:00")
+    )
     run_date = generated_at.astimezone(NEW_YORK).date()
-    strategy = run_payload.get("strategy") or run_payload["filters"].get("strategy", "call_credit")
+    strategy = run_payload.get("strategy") or run_payload["filters"].get(
+        "strategy", "call_credit"
+    )
     option_type = strategy_option_type(strategy)
-    latest_available_date = None if not bars else max(
-        datetime.fromisoformat(bar.timestamp.replace("Z", "+00:00")).date() for bar in bars
+    latest_available_date = (
+        None
+        if not bars
+        else max(
+            datetime.fromisoformat(bar.timestamp.replace("Z", "+00:00")).date()
+            for bar in bars
+        )
     )
     horizons = [
         ("entry", run_date),
@@ -4584,8 +5047,12 @@ def summarize_replay(
 
             available_candidates += 1
             path_bars = horizon_bars
-            path_high = max(bar.high for bar in path_bars) if path_bars else horizon_bar.high
-            path_low = min(bar.low for bar in path_bars) if path_bars else horizon_bar.low
+            path_high = (
+                max(bar.high for bar in path_bars) if path_bars else horizon_bar.high
+            )
+            path_low = (
+                min(bar.low for bar in path_bars) if path_bars else horizon_bar.low
+            )
             if option_type == "put":
                 touched_short = path_low <= candidate["short_strike"]
                 closed_beyond_short = horizon_bar.close <= candidate["short_strike"]
@@ -4609,7 +5076,9 @@ def summarize_replay(
                     "expiration_date": candidate["expiration_date"],
                     "status": "available",
                     "spot_at_horizon": horizon_bar.close,
-                    "path_extreme_to_horizon": path_low if option_type == "put" else path_high,
+                    "path_extreme_to_horizon": path_low
+                    if option_type == "put"
+                    else path_high,
                     "touched_short_strike": touched_short,
                     "closed_past_short_strike": closed_beyond_short,
                     "closed_past_breakeven": closed_beyond_breakeven,
@@ -4631,7 +5100,9 @@ def summarize_replay(
                 "horizon": label,
                 "available": available_candidates,
                 "pending": total - available_candidates,
-                "touch_pct": None if available_candidates == 0 else 100.0 * touched / available_candidates,
+                "touch_pct": None
+                if available_candidates == 0
+                else 100.0 * touched / available_candidates,
                 "close_past_short_pct": None
                 if available_candidates == 0
                 else 100.0 * closed_past_short / available_candidates,
@@ -4641,9 +5112,15 @@ def summarize_replay(
                 "profit_target_hit_pct": None
                 if available_candidates == 0
                 else 100.0 * profit_target_hits / available_candidates,
-                "stop_hit_pct": None if available_candidates == 0 else 100.0 * stop_hits / available_candidates,
-                "conflict_pct": None if available_candidates == 0 else 100.0 * conflicts / available_candidates,
-                "avg_pnl": None if available_candidates == 0 else total_pnl / available_candidates,
+                "stop_hit_pct": None
+                if available_candidates == 0
+                else 100.0 * stop_hits / available_candidates,
+                "conflict_pct": None
+                if available_candidates == 0
+                else 100.0 * conflicts / available_candidates,
+                "avg_pnl": None
+                if available_candidates == 0
+                else total_pnl / available_candidates,
             }
         )
 
@@ -4693,7 +5170,9 @@ def summarize_replay(
             continue
         expiry_available += 1
         path_bars = bars_through_date(bars, expiry_date)
-        path_high = max(bar.high for bar in path_bars) if path_bars else horizon_bar.high
+        path_high = (
+            max(bar.high for bar in path_bars) if path_bars else horizon_bar.high
+        )
         path_low = min(bar.low for bar in path_bars) if path_bars else horizon_bar.low
         if option_type == "put":
             touched_short = path_low <= candidate["short_strike"]
@@ -4718,7 +5197,9 @@ def summarize_replay(
                 "expiration_date": candidate["expiration_date"],
                 "status": "available",
                 "spot_at_horizon": horizon_bar.close,
-                "path_extreme_to_horizon": path_low if option_type == "put" else path_high,
+                "path_extreme_to_horizon": path_low
+                if option_type == "put"
+                else path_high,
                 "touched_short_strike": touched_short,
                 "closed_past_short_strike": closed_beyond_short,
                 "closed_past_breakeven": closed_beyond_breakeven,
@@ -4740,7 +5221,9 @@ def summarize_replay(
             "horizon": "expiry",
             "available": expiry_available,
             "pending": total - expiry_available,
-            "touch_pct": None if expiry_available == 0 else 100.0 * expiry_touched / expiry_available,
+            "touch_pct": None
+            if expiry_available == 0
+            else 100.0 * expiry_touched / expiry_available,
             "close_past_short_pct": None
             if expiry_available == 0
             else 100.0 * expiry_closed_past_short / expiry_available,
@@ -4750,9 +5233,15 @@ def summarize_replay(
             "profit_target_hit_pct": None
             if expiry_available == 0
             else 100.0 * expiry_profit_targets / expiry_available,
-            "stop_hit_pct": None if expiry_available == 0 else 100.0 * expiry_stop_hits / expiry_available,
-            "conflict_pct": None if expiry_available == 0 else 100.0 * expiry_conflicts / expiry_available,
-            "avg_pnl": None if expiry_available == 0 else expiry_total_pnl / expiry_available,
+            "stop_hit_pct": None
+            if expiry_available == 0
+            else 100.0 * expiry_stop_hits / expiry_available,
+            "conflict_pct": None
+            if expiry_available == 0
+            else 100.0 * expiry_conflicts / expiry_available,
+            "avg_pnl": None
+            if expiry_available == 0
+            else expiry_total_pnl / expiry_available,
         }
     )
 
@@ -4764,7 +5253,9 @@ def print_replay_summary(
     summaries: list[dict[str, Any]],
     rows: list[dict[str, Any]],
 ) -> None:
-    strategy = run_payload.get("strategy") or run_payload["filters"].get("strategy", "call_credit")
+    strategy = run_payload.get("strategy") or run_payload["filters"].get(
+        "strategy", "call_credit"
+    )
     print(
         f"Replay run: {run_payload['run_id']} | {run_payload['symbol']} | "
         f"strategy {strategy} | profile {run_payload['profile']} | generated {run_payload['generated_at']}"
@@ -4772,7 +5263,18 @@ def print_replay_summary(
     print(f"Stored candidates: {run_payload['candidate_count']}")
     print()
 
-    table_headers = ["Horizon", "Avail", "Pending", "Touch%", "PastShort%", "PastBE%", "PT%", "Stop%", "Conf%", "AvgPnL$"]
+    table_headers = [
+        "Horizon",
+        "Avail",
+        "Pending",
+        "Touch%",
+        "PastShort%",
+        "PastBE%",
+        "PT%",
+        "Stop%",
+        "Conf%",
+        "AvgPnL$",
+    ]
     table_rows = []
     for summary in summaries:
         table_rows.append(
@@ -4780,14 +5282,24 @@ def print_replay_summary(
                 summary["horizon"],
                 str(summary["available"]),
                 str(summary["pending"]),
-                "n/a" if summary["touch_pct"] is None else f"{summary['touch_pct']:.1f}",
-                "n/a" if summary["close_past_short_pct"] is None else f"{summary['close_past_short_pct']:.1f}",
+                "n/a"
+                if summary["touch_pct"] is None
+                else f"{summary['touch_pct']:.1f}",
+                "n/a"
+                if summary["close_past_short_pct"] is None
+                else f"{summary['close_past_short_pct']:.1f}",
                 "n/a"
                 if summary["close_past_breakeven_pct"] is None
                 else f"{summary['close_past_breakeven_pct']:.1f}",
-                "n/a" if summary["profit_target_hit_pct"] is None else f"{summary['profit_target_hit_pct']:.1f}",
-                "n/a" if summary["stop_hit_pct"] is None else f"{summary['stop_hit_pct']:.1f}",
-                "n/a" if summary["conflict_pct"] is None else f"{summary['conflict_pct']:.1f}",
+                "n/a"
+                if summary["profit_target_hit_pct"] is None
+                else f"{summary['profit_target_hit_pct']:.1f}",
+                "n/a"
+                if summary["stop_hit_pct"] is None
+                else f"{summary['stop_hit_pct']:.1f}",
+                "n/a"
+                if summary["conflict_pct"] is None
+                else f"{summary['conflict_pct']:.1f}",
                 "n/a" if summary["avg_pnl"] is None else f"{summary['avg_pnl']:.0f}",
             ]
         )
@@ -4849,19 +5361,26 @@ def run_replay(
     else:
         if not args.symbol:
             raise SystemExit("Replay latest requires --symbol or use --replay-run-id")
-        run_payload = history_store.get_latest_run(args.symbol.upper(), strategy=args.strategy)
+        run_payload = history_store.get_latest_run(
+            args.symbol.upper(), strategy=args.strategy
+        )
 
     if not run_payload:
         target = args.replay_run_id or args.symbol.upper()
         raise SystemExit(f"No stored run found for replay target: {target}")
 
     candidates = history_store.list_candidates(run_payload["run_id"])
-    generated_at = datetime.fromisoformat(run_payload["generated_at"].replace("Z", "+00:00"))
+    generated_at = datetime.fromisoformat(
+        run_payload["generated_at"].replace("Z", "+00:00")
+    )
     run_date = generated_at.astimezone(NEW_YORK).date()
     replay_end = max(
         [
             run_date + timedelta(days=3),
-            *[date.fromisoformat(candidate["expiration_date"]) for candidate in candidates],
+            *[
+                date.fromisoformat(candidate["expiration_date"])
+                for candidate in candidates
+            ],
         ]
     )
     bars = client.get_daily_bars(
@@ -4893,6 +5412,266 @@ def run_replay(
     return 0
 
 
+def build_symbol_market_slice(
+    *,
+    symbol: str,
+    symbol_args: argparse.Namespace,
+    client: AlpacaClient,
+    greeks_provider: Any,
+) -> SymbolMarketSlice:
+    normalized_symbol = symbol.upper()
+    underlying_type = classify_underlying_type(normalized_symbol)
+    min_expiration = (date.today() + timedelta(days=symbol_args.min_dte)).isoformat()
+    max_expiration = (date.today() + timedelta(days=symbol_args.max_dte)).isoformat()
+
+    spot_price = client.get_underlying_price(normalized_symbol, symbol_args.stock_feed)
+    daily_bars: list[DailyBar] = []
+    intraday_bars: list[IntradayBar] = []
+    if symbol_args.setup_filter == "on":
+        daily_bars = client.get_daily_bars(
+            normalized_symbol,
+            start=(date.today() - timedelta(days=120)).isoformat(),
+            end=date.today().isoformat(),
+            stock_feed=symbol_args.stock_feed,
+        )
+        try:
+            session_start = datetime.combine(
+                date.today(), time(9, 30), tzinfo=NEW_YORK
+            ).astimezone(UTC)
+            session_end = datetime.now(UTC)
+            intraday_bars = client.get_intraday_bars(
+                normalized_symbol,
+                start=session_start.isoformat(),
+                end=session_end.isoformat(),
+                stock_feed=symbol_args.stock_feed,
+            )
+        except Exception:
+            intraday_bars = []
+
+    call_contracts = client.list_option_contracts(
+        normalized_symbol, min_expiration, max_expiration, option_type="call"
+    )
+    put_contracts = client.list_option_contracts(
+        normalized_symbol, min_expiration, max_expiration, option_type="put"
+    )
+    call_contracts_by_expiration = group_contracts_by_expiration(call_contracts)
+    put_contracts_by_expiration = group_contracts_by_expiration(put_contracts)
+
+    call_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]] = {}
+    put_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]] = {}
+    for expiration_date in sorted(call_contracts_by_expiration):
+        call_snapshots_by_expiration[expiration_date] = (
+            client.get_option_chain_snapshots(
+                normalized_symbol,
+                expiration_date,
+                "call",
+                symbol_args.feed,
+            )
+        )
+        put_snapshots_by_expiration[expiration_date] = (
+            client.get_option_chain_snapshots(
+                normalized_symbol,
+                expiration_date,
+                "put",
+                symbol_args.feed,
+            )
+        )
+
+    snapshot_timestamp = datetime.now(UTC)
+    call_snapshots_by_expiration = enrich_missing_greeks(
+        symbol=normalized_symbol,
+        option_type="call",
+        spot_price=spot_price,
+        contracts_by_expiration=call_contracts_by_expiration,
+        snapshots_by_expiration=call_snapshots_by_expiration,
+        greeks_provider=greeks_provider,
+        as_of=snapshot_timestamp,
+        source_mode=symbol_args.greeks_source,
+    )
+    put_snapshots_by_expiration = enrich_missing_greeks(
+        symbol=normalized_symbol,
+        option_type="put",
+        spot_price=spot_price,
+        contracts_by_expiration=put_contracts_by_expiration,
+        snapshots_by_expiration=put_snapshots_by_expiration,
+        greeks_provider=greeks_provider,
+        as_of=snapshot_timestamp,
+        source_mode=symbol_args.greeks_source,
+    )
+    expected_moves_by_expiration = build_expected_move_estimates(
+        spot_price=spot_price,
+        call_contracts_by_expiration=call_contracts_by_expiration,
+        put_contracts_by_expiration=put_contracts_by_expiration,
+        call_snapshots_by_expiration=call_snapshots_by_expiration,
+        put_snapshots_by_expiration=put_snapshots_by_expiration,
+    )
+    return SymbolMarketSlice(
+        symbol=normalized_symbol,
+        underlying_type=underlying_type,
+        spot_price=spot_price,
+        daily_bars=tuple(daily_bars),
+        intraday_bars=tuple(intraday_bars),
+        call_contracts_by_expiration=call_contracts_by_expiration,
+        put_contracts_by_expiration=put_contracts_by_expiration,
+        call_snapshots_by_expiration=call_snapshots_by_expiration,
+        put_snapshots_by_expiration=put_snapshots_by_expiration,
+        expected_moves_by_expiration=expected_moves_by_expiration,
+    )
+
+
+def build_setup_context_from_market_slice(
+    *, market_slice: SymbolMarketSlice, symbol_args: argparse.Namespace
+) -> UnderlyingSetupContext | None:
+    if symbol_args.setup_filter != "on":
+        return None
+    return analyze_underlying_setup(
+        market_slice.symbol,
+        market_slice.spot_price,
+        list(market_slice.daily_bars),
+        strategy=symbol_args.strategy,
+        profile=symbol_args.profile,
+        intraday_bars=list(market_slice.intraday_bars),
+    )
+
+
+def count_market_slice_coverage(
+    *, market_slice: SymbolMarketSlice, symbol_args: argparse.Namespace
+) -> tuple[int, int, int, int]:
+    if (
+        symbol_args.strategy == "iron_condor"
+        or symbol_args.strategy in LONG_VOL_STRATEGIES
+    ):
+        call_quoted_count, call_delta_count = count_snapshot_delta_coverage(
+            market_slice.call_snapshots_by_expiration
+        )
+        put_quoted_count, put_delta_count = count_snapshot_delta_coverage(
+            market_slice.put_snapshots_by_expiration
+        )
+        quoted_contract_count = call_quoted_count + put_quoted_count
+        alpaca_delta_contract_count = count_alpaca_greeks_coverage(
+            market_slice.call_snapshots_by_expiration
+        ) + count_alpaca_greeks_coverage(market_slice.put_snapshots_by_expiration)
+        delta_contract_count = call_delta_count + put_delta_count
+        local_delta_contract_count = count_local_greeks_coverage(
+            market_slice.call_snapshots_by_expiration
+        ) + count_local_greeks_coverage(market_slice.put_snapshots_by_expiration)
+        return (
+            quoted_contract_count,
+            alpaca_delta_contract_count,
+            delta_contract_count,
+            local_delta_contract_count,
+        )
+
+    option_type = strategy_option_type(symbol_args.strategy)
+    option_snapshots_by_expiration = (
+        market_slice.call_snapshots_by_expiration
+        if option_type == "call"
+        else market_slice.put_snapshots_by_expiration
+    )
+    quoted_contract_count, delta_contract_count = count_snapshot_delta_coverage(
+        option_snapshots_by_expiration
+    )
+    alpaca_delta_contract_count = count_alpaca_greeks_coverage(
+        option_snapshots_by_expiration
+    )
+    local_delta_contract_count = count_local_greeks_coverage(
+        option_snapshots_by_expiration
+    )
+    return (
+        quoted_contract_count,
+        alpaca_delta_contract_count,
+        delta_contract_count,
+        local_delta_contract_count,
+    )
+
+
+def build_candidates_from_market_slice(
+    *,
+    market_slice: SymbolMarketSlice,
+    symbol_args: argparse.Namespace,
+    calendar_resolver: Any,
+) -> tuple[list[SpreadCandidate], UnderlyingSetupContext | None]:
+    setup_context = build_setup_context_from_market_slice(
+        market_slice=market_slice,
+        symbol_args=symbol_args,
+    )
+    if symbol_args.strategy == "iron_condor":
+        all_candidates = build_iron_condors(
+            symbol=market_slice.symbol,
+            spot_price=market_slice.spot_price,
+            call_contracts_by_expiration=market_slice.call_contracts_by_expiration,
+            put_contracts_by_expiration=market_slice.put_contracts_by_expiration,
+            call_snapshots_by_expiration=market_slice.call_snapshots_by_expiration,
+            put_snapshots_by_expiration=market_slice.put_snapshots_by_expiration,
+            expected_moves_by_expiration=market_slice.expected_moves_by_expiration,
+            args=symbol_args,
+        )
+    elif symbol_args.strategy == "long_straddle":
+        all_candidates = build_long_straddles(
+            symbol=market_slice.symbol,
+            spot_price=market_slice.spot_price,
+            call_contracts_by_expiration=market_slice.call_contracts_by_expiration,
+            put_contracts_by_expiration=market_slice.put_contracts_by_expiration,
+            call_snapshots_by_expiration=market_slice.call_snapshots_by_expiration,
+            put_snapshots_by_expiration=market_slice.put_snapshots_by_expiration,
+            expected_moves_by_expiration=market_slice.expected_moves_by_expiration,
+            args=symbol_args,
+        )
+    elif symbol_args.strategy == "long_strangle":
+        all_candidates = build_long_strangles(
+            symbol=market_slice.symbol,
+            spot_price=market_slice.spot_price,
+            call_contracts_by_expiration=market_slice.call_contracts_by_expiration,
+            put_contracts_by_expiration=market_slice.put_contracts_by_expiration,
+            call_snapshots_by_expiration=market_slice.call_snapshots_by_expiration,
+            put_snapshots_by_expiration=market_slice.put_snapshots_by_expiration,
+            expected_moves_by_expiration=market_slice.expected_moves_by_expiration,
+            args=symbol_args,
+        )
+    else:
+        option_type = strategy_option_type(symbol_args.strategy)
+        option_contracts_by_expiration = (
+            market_slice.call_contracts_by_expiration
+            if option_type == "call"
+            else market_slice.put_contracts_by_expiration
+        )
+        option_snapshots_by_expiration = (
+            market_slice.call_snapshots_by_expiration
+            if option_type == "call"
+            else market_slice.put_snapshots_by_expiration
+        )
+        all_candidates = build_vertical_spreads(
+            symbol=market_slice.symbol,
+            strategy=symbol_args.strategy,
+            spot_price=market_slice.spot_price,
+            contracts_by_expiration=option_contracts_by_expiration,
+            snapshots_by_expiration=option_snapshots_by_expiration,
+            expected_moves_by_expiration=market_slice.expected_moves_by_expiration,
+            args=symbol_args,
+        )
+    all_candidates = attach_underlying_setup(all_candidates, setup_context)
+    all_candidates = attach_calendar_decisions(
+        symbol=market_slice.symbol,
+        strategy=symbol_args.strategy,
+        underlying_type=market_slice.underlying_type,
+        candidates=all_candidates,
+        resolver=calendar_resolver,
+        calendar_policy=symbol_args.calendar_policy,
+        refresh_calendar_events=symbol_args.refresh_calendar_events,
+    )
+    all_candidates = attach_data_quality(
+        candidates=all_candidates,
+        underlying_type=market_slice.underlying_type,
+        args=symbol_args,
+    )
+    all_candidates = attach_selection_notes(all_candidates, symbol_args)
+    all_candidates = rank_candidates(all_candidates, symbol_args)
+    all_candidates = deduplicate_candidates(
+        all_candidates, symbol_args.expand_duplicates
+    )
+    return all_candidates, setup_context
+
+
 def scan_symbol_live(
     *,
     symbol: str,
@@ -4903,216 +5682,31 @@ def scan_symbol_live(
     history_store: RunHistoryRepository,
 ) -> SymbolScanResult:
     symbol = symbol.upper()
-    underlying_type = classify_underlying_type(symbol)
-    symbol_args = clone_args(base_args)
-    symbol_args.symbol = symbol
-    apply_profile_defaults(symbol_args, underlying_type)
-    validate_resolved_args(symbol_args)
-    validate_profile_scope(symbol, symbol_args, underlying_type)
-
-    min_expiration = (date.today() + timedelta(days=symbol_args.min_dte)).isoformat()
-    max_expiration = (date.today() + timedelta(days=symbol_args.max_dte)).isoformat()
-
-    spot_price = client.get_underlying_price(symbol, symbol_args.stock_feed)
-    setup_context: UnderlyingSetupContext | None = None
-    if symbol_args.setup_filter == "on":
-        daily_bars = client.get_daily_bars(
-            symbol,
-            start=(date.today() - timedelta(days=120)).isoformat(),
-            end=date.today().isoformat(),
-            stock_feed=symbol_args.stock_feed,
-        )
-        intraday_bars: list[IntradayBar] = []
-        try:
-            session_start = datetime.combine(date.today(), time(9, 30), tzinfo=NEW_YORK).astimezone(UTC)
-            session_end = datetime.now(UTC)
-            intraday_bars = client.get_intraday_bars(
-                symbol,
-                start=session_start.isoformat(),
-                end=session_end.isoformat(),
-                stock_feed=symbol_args.stock_feed,
-            )
-        except Exception:
-            intraday_bars = []
-        setup_context = analyze_underlying_setup(
-            symbol,
-            spot_price,
-            daily_bars,
-            strategy=symbol_args.strategy,
-            profile=symbol_args.profile,
-            intraday_bars=intraday_bars,
-        )
-
-    call_contracts = client.list_option_contracts(symbol, min_expiration, max_expiration, option_type="call")
-    put_contracts = client.list_option_contracts(symbol, min_expiration, max_expiration, option_type="put")
-    contracts_by_expiration = group_contracts_by_expiration(call_contracts)
-    put_contracts_by_expiration = group_contracts_by_expiration(put_contracts)
-
-    call_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]] = {}
-    put_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]] = {}
-    for expiration_date in sorted(contracts_by_expiration):
-        call_snapshots_by_expiration[expiration_date] = client.get_option_chain_snapshots(
-            symbol,
-            expiration_date,
-            "call",
-            symbol_args.feed,
-        )
-        put_snapshots_by_expiration[expiration_date] = client.get_option_chain_snapshots(
-            symbol,
-            expiration_date,
-            "put",
-            symbol_args.feed,
-        )
-
-    if symbol_args.strategy == "iron_condor" or symbol_args.strategy in LONG_VOL_STRATEGIES:
-        call_quoted_count, call_alpaca_delta_count = count_snapshot_delta_coverage(
-            call_snapshots_by_expiration
-        )
-        put_quoted_count, put_alpaca_delta_count = count_snapshot_delta_coverage(
-            put_snapshots_by_expiration
-        )
-        quoted_contract_count = call_quoted_count + put_quoted_count
-        alpaca_delta_contract_count = call_alpaca_delta_count + put_alpaca_delta_count
-    else:
-        option_type = strategy_option_type(symbol_args.strategy)
-        raw_option_snapshots_by_expiration = (
-            call_snapshots_by_expiration if option_type == "call" else put_snapshots_by_expiration
-        )
-        quoted_contract_count, alpaca_delta_contract_count = count_snapshot_delta_coverage(
-            raw_option_snapshots_by_expiration
-        )
-
-    snapshot_timestamp = datetime.now(UTC)
-    call_snapshots_by_expiration = enrich_missing_greeks(
+    symbol_args, underlying_type = resolve_symbol_scan_args(
+        symbol=symbol, base_args=base_args
+    )
+    market_slice = build_symbol_market_slice(
         symbol=symbol,
-        option_type="call",
-        spot_price=spot_price,
-        contracts_by_expiration=contracts_by_expiration,
-        snapshots_by_expiration=call_snapshots_by_expiration,
+        symbol_args=symbol_args,
+        client=client,
         greeks_provider=greeks_provider,
-        as_of=snapshot_timestamp,
-        source_mode=symbol_args.greeks_source,
     )
-    put_snapshots_by_expiration = enrich_missing_greeks(
-        symbol=symbol,
-        option_type="put",
-        spot_price=spot_price,
-        contracts_by_expiration=put_contracts_by_expiration,
-        snapshots_by_expiration=put_snapshots_by_expiration,
-        greeks_provider=greeks_provider,
-        as_of=snapshot_timestamp,
-        source_mode=symbol_args.greeks_source,
+    (
+        quoted_contract_count,
+        alpaca_delta_contract_count,
+        delta_contract_count,
+        local_delta_contract_count,
+    ) = count_market_slice_coverage(market_slice=market_slice, symbol_args=symbol_args)
+    all_candidates, setup_context = build_candidates_from_market_slice(
+        market_slice=market_slice,
+        symbol_args=symbol_args,
+        calendar_resolver=calendar_resolver,
     )
-
-    expected_moves_by_expiration = build_expected_move_estimates(
-        spot_price=spot_price,
-        call_contracts_by_expiration=contracts_by_expiration,
-        put_contracts_by_expiration=put_contracts_by_expiration,
-        call_snapshots_by_expiration=call_snapshots_by_expiration,
-        put_snapshots_by_expiration=put_snapshots_by_expiration,
-    )
-
-    if symbol_args.strategy == "iron_condor":
-        call_delta_count, put_delta_count = (
-            count_snapshot_delta_coverage(call_snapshots_by_expiration)[1],
-            count_snapshot_delta_coverage(put_snapshots_by_expiration)[1],
-        )
-        delta_contract_count = call_delta_count + put_delta_count
-        local_delta_contract_count = count_local_greeks_coverage(
-            call_snapshots_by_expiration
-        ) + count_local_greeks_coverage(put_snapshots_by_expiration)
-        all_candidates = build_iron_condors(
-            symbol=symbol,
-            spot_price=spot_price,
-            call_contracts_by_expiration=contracts_by_expiration,
-            put_contracts_by_expiration=put_contracts_by_expiration,
-            call_snapshots_by_expiration=call_snapshots_by_expiration,
-            put_snapshots_by_expiration=put_snapshots_by_expiration,
-            expected_moves_by_expiration=expected_moves_by_expiration,
-            args=symbol_args,
-        )
-    elif symbol_args.strategy == "long_straddle":
-        call_delta_count, put_delta_count = (
-            count_snapshot_delta_coverage(call_snapshots_by_expiration)[1],
-            count_snapshot_delta_coverage(put_snapshots_by_expiration)[1],
-        )
-        delta_contract_count = call_delta_count + put_delta_count
-        local_delta_contract_count = count_local_greeks_coverage(
-            call_snapshots_by_expiration
-        ) + count_local_greeks_coverage(put_snapshots_by_expiration)
-        all_candidates = build_long_straddles(
-            symbol=symbol,
-            spot_price=spot_price,
-            call_contracts_by_expiration=contracts_by_expiration,
-            put_contracts_by_expiration=put_contracts_by_expiration,
-            call_snapshots_by_expiration=call_snapshots_by_expiration,
-            put_snapshots_by_expiration=put_snapshots_by_expiration,
-            expected_moves_by_expiration=expected_moves_by_expiration,
-            args=symbol_args,
-        )
-    elif symbol_args.strategy == "long_strangle":
-        call_delta_count, put_delta_count = (
-            count_snapshot_delta_coverage(call_snapshots_by_expiration)[1],
-            count_snapshot_delta_coverage(put_snapshots_by_expiration)[1],
-        )
-        delta_contract_count = call_delta_count + put_delta_count
-        local_delta_contract_count = count_local_greeks_coverage(
-            call_snapshots_by_expiration
-        ) + count_local_greeks_coverage(put_snapshots_by_expiration)
-        all_candidates = build_long_strangles(
-            symbol=symbol,
-            spot_price=spot_price,
-            call_contracts_by_expiration=contracts_by_expiration,
-            put_contracts_by_expiration=put_contracts_by_expiration,
-            call_snapshots_by_expiration=call_snapshots_by_expiration,
-            put_snapshots_by_expiration=put_snapshots_by_expiration,
-            expected_moves_by_expiration=expected_moves_by_expiration,
-            args=symbol_args,
-        )
-    else:
-        option_type = strategy_option_type(symbol_args.strategy)
-        option_contracts_by_expiration = (
-            contracts_by_expiration if option_type == "call" else put_contracts_by_expiration
-        )
-        option_snapshots_by_expiration = (
-            call_snapshots_by_expiration if option_type == "call" else put_snapshots_by_expiration
-        )
-        _, delta_contract_count = count_snapshot_delta_coverage(
-            option_snapshots_by_expiration
-        )
-        local_delta_contract_count = count_local_greeks_coverage(
-            option_snapshots_by_expiration
-        )
-        all_candidates = build_vertical_spreads(
-            symbol=symbol,
-            strategy=symbol_args.strategy,
-            spot_price=spot_price,
-            contracts_by_expiration=option_contracts_by_expiration,
-            snapshots_by_expiration=option_snapshots_by_expiration,
-            expected_moves_by_expiration=expected_moves_by_expiration,
-            args=symbol_args,
-        )
-    all_candidates = attach_underlying_setup(all_candidates, setup_context)
-    all_candidates = attach_calendar_decisions(
-        symbol=symbol,
-        strategy=symbol_args.strategy,
-        underlying_type=underlying_type,
-        candidates=all_candidates,
-        resolver=calendar_resolver,
-        calendar_policy=symbol_args.calendar_policy,
-        refresh_calendar_events=symbol_args.refresh_calendar_events,
-    )
-    all_candidates = attach_data_quality(
-        candidates=all_candidates,
-        underlying_type=underlying_type,
-        args=symbol_args,
-    )
-    all_candidates = attach_selection_notes(all_candidates, symbol_args)
-    all_candidates = rank_candidates(all_candidates, symbol_args)
-    all_candidates = deduplicate_candidates(all_candidates, symbol_args.expand_duplicates)
 
     run_id = build_run_id(symbol, symbol_args.strategy, symbol_args.profile)
-    generated_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    generated_at = (
+        datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    )
     history_store.save_run(
         run_id=run_id,
         generated_at=generated_at,
@@ -5120,7 +5714,7 @@ def scan_symbol_live(
         strategy=symbol_args.strategy,
         session_label=getattr(symbol_args, "session_label", None),
         profile=symbol_args.profile,
-        spot_price=spot_price,
+        spot_price=market_slice.spot_price,
         output_path="",
         filters=build_filter_payload(symbol_args),
         setup_status=None if setup_context is None else setup_context.status,
@@ -5132,7 +5726,7 @@ def scan_symbol_live(
     return SymbolScanResult(
         symbol=symbol,
         underlying_type=underlying_type,
-        spot_price=spot_price,
+        spot_price=market_slice.spot_price,
         args=symbol_args,
         setup=setup_context,
         candidates=all_candidates,
@@ -5170,8 +5764,12 @@ def scan_symbol_across_strategies(
                 )
             )
         except Exception as exc:
-            label = f"{symbol}:{strategy}" if base_args.strategy == "combined" else symbol
-            failures.append(UniverseScanFailure(symbol=label, error=str(exc).splitlines()[0]))
+            label = (
+                f"{symbol}:{strategy}" if base_args.strategy == "combined" else symbol
+            )
+            failures.append(
+                UniverseScanFailure(symbol=label, error=str(exc).splitlines()[0])
+            )
     return results, failures
 
 
@@ -5182,7 +5780,11 @@ def merge_strategy_candidates(
 ) -> list[SpreadCandidate]:
     merged: list[SpreadCandidate] = []
     for result in results:
-        candidates = result.candidates if per_strategy_top is None else result.candidates[:per_strategy_top]
+        candidates = (
+            result.candidates
+            if per_strategy_top is None
+            else result.candidates[:per_strategy_top]
+        )
         merged.extend(candidates)
     return sort_candidates_for_display(merged)
 
@@ -5232,7 +5834,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.strategy == "combined":
             combined_candidates = merge_strategy_candidates(strategy_results)
             primary_result = strategy_results[0]
-            output_path = args.output or default_output_path(primary_result.symbol, args.strategy, args.output_format)
+            output_path = args.output or default_output_path(
+                primary_result.symbol, args.strategy, args.output_format
+            )
             if args.output_format == "csv":
                 write_csv(output_path, combined_candidates)
             else:
@@ -5256,7 +5860,9 @@ def main(argv: list[str] | None = None) -> int:
                             "symbol": primary_result.symbol,
                             "strategy": args.strategy,
                             "spot_price": primary_result.spot_price,
-                            "generated_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+                            "generated_at": datetime.now(UTC)
+                            .isoformat(timespec="seconds")
+                            .replace("+00:00", "Z"),
                             "filters": build_filter_payload(args),
                             "strategy_runs": [
                                 {
@@ -5273,7 +5879,9 @@ def main(argv: list[str] | None = None) -> int:
                                 for result in strategy_results
                             ],
                             "failures": [asdict(failure) for failure in failures],
-                            "candidates": [asdict(candidate) for candidate in candidates],
+                            "candidates": [
+                                asdict(candidate) for candidate in candidates
+                            ],
                             "output_file": output_path,
                         },
                         indent=2,
@@ -5300,7 +5908,9 @@ def main(argv: list[str] | None = None) -> int:
                             f"{strategy_result.delta_contract_count}, local Greeks for "
                             f"{strategy_result.local_delta_contract_count}."
                         )
-                maybe_stream_live_quotes(args=args, client=client, candidates=candidates)
+                maybe_stream_live_quotes(
+                    args=args, client=client, candidates=candidates
+                )
                 if failures:
                     print("Failures:")
                     for failure in failures:
@@ -5312,7 +5922,9 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"- {result.args.strategy}: {result.run_id}")
         else:
             result = strategy_results[0]
-            output_path = args.output or default_output_path(result.symbol, result.args.strategy, args.output_format)
+            output_path = args.output or default_output_path(
+                result.symbol, result.args.strategy, args.output_format
+            )
 
             if args.output_format == "csv":
                 write_csv(output_path, result.candidates)
@@ -5339,7 +5951,9 @@ def main(argv: list[str] | None = None) -> int:
                             "symbol": result.symbol,
                             "strategy": result.args.strategy,
                             "spot_price": result.spot_price,
-                            "generated_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+                            "generated_at": datetime.now(UTC)
+                            .isoformat(timespec="seconds")
+                            .replace("+00:00", "Z"),
                             "run_id": result.run_id,
                             "filters": build_filter_payload(result.args),
                             "setup": None
@@ -5349,7 +5963,9 @@ def main(argv: list[str] | None = None) -> int:
                                 "score": result.setup.score,
                                 "reasons": list(result.setup.reasons),
                             },
-                            "candidates": [asdict(candidate) for candidate in candidates],
+                            "candidates": [
+                                asdict(candidate) for candidate in candidates
+                            ],
                             "output_file": output_path,
                         },
                         indent=2,
@@ -5373,7 +5989,9 @@ def main(argv: list[str] | None = None) -> int:
                         f"{result.delta_contract_count}, local Greeks for "
                         f"{result.local_delta_contract_count}."
                     )
-                maybe_stream_live_quotes(args=result.args, client=client, candidates=candidates)
+                maybe_stream_live_quotes(
+                    args=result.args, client=client, candidates=candidates
+                )
                 print(f"Saved {len(result.candidates)} candidates to {output_path}")
                 print(f"Latest copy: {latest_copy}")
                 print(f"Run id: {result.run_id}")
@@ -5403,7 +6021,9 @@ def main(argv: list[str] | None = None) -> int:
 
         ranked_candidates = sort_candidates_for_display(ranked_candidates)
         ranked_candidates = ranked_candidates[: args.top]
-        output_path = args.output or default_universe_output_path(universe_label, args.strategy, args.output_format)
+        output_path = args.output or default_universe_output_path(
+            universe_label, args.strategy, args.output_format
+        )
 
         if args.output_format == "csv":
             write_universe_csv(output_path, ranked_candidates)
@@ -5431,7 +6051,9 @@ def main(argv: list[str] | None = None) -> int:
                         "symbols": symbols,
                         "candidate_count": len(ranked_candidates),
                         "failures": [asdict(failure) for failure in failures],
-                        "candidates": [asdict(candidate) for candidate in ranked_candidates],
+                        "candidates": [
+                            asdict(candidate) for candidate in ranked_candidates
+                        ],
                         "output_file": output_path,
                     },
                     indent=2,
@@ -5452,9 +6074,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             if scan_results:
                 print(f"Stored per-symbol runs: {len(scan_results)}")
-            print(
-                f"Saved {len(ranked_candidates)} ranked candidates to {output_path}"
-            )
+            print(f"Saved {len(ranked_candidates)} ranked candidates to {output_path}")
             print(f"Latest copy: {latest_copy}")
 
     history_store.close()

@@ -269,6 +269,8 @@ class SignalRepository(RepositoryBase):
         bot_id: str | None = None,
         automation_id: str | None = None,
         session_date: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
         cycle_id: str | None = None,
         limit: int = 200,
     ) -> list[AutomationRunRecord]:
@@ -282,6 +284,14 @@ class SignalRepository(RepositoryBase):
         if session_date:
             statement = statement.where(
                 AutomationRunModel.session_date == date.fromisoformat(session_date)
+            )
+        if start_date:
+            statement = statement.where(
+                AutomationRunModel.session_date >= date.fromisoformat(start_date)
+            )
+        if end_date:
+            statement = statement.where(
+                AutomationRunModel.session_date <= date.fromisoformat(end_date)
             )
         if cycle_id:
             statement = statement.where(AutomationRunModel.cycle_id == cycle_id)
@@ -1128,6 +1138,7 @@ class SignalRepository(RepositoryBase):
         automation_id: str | None = None,
         opportunity_id: str | None = None,
         run_key: str | None = None,
+        scope_key: str | None = None,
         states: list[str] | None = None,
         limit: int = 200,
     ) -> list[OpportunityDecisionRecord]:
@@ -1144,6 +1155,8 @@ class SignalRepository(RepositoryBase):
             )
         if run_key:
             statement = statement.where(OpportunityDecisionModel.run_key == run_key)
+        if scope_key:
+            statement = statement.where(OpportunityDecisionModel.scope_key == scope_key)
         if states:
             statement = statement.where(OpportunityDecisionModel.state.in_(states))
         statement = statement.order_by(

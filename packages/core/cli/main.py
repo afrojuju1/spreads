@@ -4,6 +4,7 @@ from collections.abc import Callable
 
 import typer
 
+from core.cli.backtest import backtest_app
 from core.cli.ops import (
     audit_command,
     jobs_app,
@@ -72,6 +73,7 @@ app.command("audit", help="Replay one pipeline date for operator investigation."
     audit_command
 )
 app.add_typer(jobs_app, name="jobs")
+app.add_typer(backtest_app, name="backtest")
 app.add_typer(replay_app, name="replay")
 app.add_typer(uoa_app, name="uoa")
 

@@ -641,6 +641,11 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
             "selection_memory": {},
             "events": [],
         }
+        runtime_candidate_rows_by_owner = {
+            (bot.bot.bot_id, runtime.automation.automation_id): {
+                symbol: [dict(candidate)]
+            }
+        }
 
         with (
             patch(
@@ -658,6 +663,10 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
             patch(
                 "core.jobs.live_collector.read_previous_selection",
                 return_value=({}, {}),
+            ),
+            patch(
+                "core.jobs.live_collector.build_entry_runtime_candidates",
+                return_value=runtime_candidate_rows_by_owner,
             ),
             patch(
                 "core.jobs.live_collector.select_live_opportunities",

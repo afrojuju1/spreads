@@ -12,6 +12,7 @@ from core.services.runtime_policy import (
 )
 from core.services.automation_runtime import EntryRuntime
 from core.services.strategy_registry import resolve_strategy_definition
+from core.services.strategy_builders import runtime_owner_key
 
 
 def build_automation_run_id(cycle_id: str, bot_id: str, automation_id: str) -> str:
@@ -318,6 +319,10 @@ def sync_entry_runtime_opportunities(
     cycle_id: str,
     entry_runtimes: list[EntryRuntime],
     symbol_candidates: dict[str, list[dict[str, Any]]],
+    runtime_candidate_rows_by_owner: dict[
+        tuple[str, str], dict[str, list[dict[str, Any]]]
+    ]
+    | None,
     persisted_opportunities: list[dict[str, Any]],
     job_run_id: str | None,
     top_promotable: int,
@@ -338,9 +343,21 @@ def sync_entry_runtime_opportunities(
     scoped_opportunities: list[dict[str, Any]] = []
 
     for runtime in entry_runtimes:
-        filtered_candidates = _filtered_symbol_candidates(
-            symbol_candidates=symbol_candidates,
-            runtime=runtime,
+        owner_candidates = None
+        if runtime_candidate_rows_by_owner:
+            owner_candidates = runtime_candidate_rows_by_owner.get(
+                runtime_owner_key(runtime)
+            )
+        filtered_candidates = (
+            {
+                str(symbol): [dict(candidate) for candidate in rows]
+                for symbol, rows in owner_candidates.items()
+            }
+            if owner_candidates
+            else _filtered_symbol_candidates(
+                symbol_candidates=symbol_candidates,
+                runtime=runtime,
+            )
         )
         selection = select_live_opportunities(
             label=label,

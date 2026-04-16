@@ -10,8 +10,8 @@ from core.services.execution_portfolio import refresh_session_position_marks
 from core.services.exit_manager import (
     OPEN_CLOSE_ATTEMPT_STATUSES,
     OPEN_POSITION_STATUSES,
-    evaluate_exit_policy,
 )
+from core.services.management_planner import plan_position_management
 from core.services.option_structures import normalize_strategy_family
 from core.services.positions import enrich_position_row
 from core.services.automation_runtime import resolve_management_runtime
@@ -36,27 +36,6 @@ def _as_text(value: Any) -> str | None:
         return None
     rendered = str(value).strip()
     return rendered or None
-
-
-def _coerce_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _resolve_management_limit_price(
-    position: dict[str, Any],
-) -> tuple[float | None, str | None]:
-    mark = _coerce_float(position.get("close_mark"))
-    if mark is not None and mark > 0:
-        return round(max(mark, 0.01), 2), "mark"
-    width = _coerce_float(position.get("width"))
-    if width is not None and width > 0:
-        return round(max(width, 0.01), 2), "width"
-    return None, None
 
 
 def _intent_id(position_id: str, automation_id: str) -> str:
@@ -215,24 +194,12 @@ def run_management_automation_decision(
             )
             continue
 
-        if flatten_due:
-            limit_price, limit_price_source = _resolve_management_limit_price(position)
-            decision = (
-                {"should_close": False, "reason": "awaiting_flatten_price"}
-                if limit_price is None
-                else {
-                    "should_close": True,
-                    "reason": "bot_flatten",
-                    "limit_price": limit_price,
-                    "limit_price_source": limit_price_source,
-                }
-            )
-        else:
-            decision = evaluate_exit_policy(
-                position=position,
-                mark=_coerce_float(position.get("close_mark")),
-                now=datetime.now(UTC),
-            )
+        decision = plan_position_management(
+            runtime=runtime,
+            position=position,
+            flatten_due=flatten_due,
+            now=datetime.now(UTC),
+        )
         execution_store.update_position(
             position_id=position_id,
             last_exit_evaluated_at=_utc_now(),

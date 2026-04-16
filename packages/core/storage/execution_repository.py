@@ -367,6 +367,8 @@ class ExecutionRepository(RepositoryBase):
         *,
         bot_id: str | None = None,
         automation_id: str | None = None,
+        opportunity_decision_id: str | None = None,
+        strategy_position_id: str | None = None,
         slot_key: str | None = None,
         states: list[str] | None = None,
         execution_attempt_id: str | None = None,
@@ -378,6 +380,14 @@ class ExecutionRepository(RepositoryBase):
         if automation_id:
             statement = statement.where(
                 ExecutionIntentModel.automation_id == automation_id
+            )
+        if opportunity_decision_id:
+            statement = statement.where(
+                ExecutionIntentModel.opportunity_decision_id == opportunity_decision_id
+            )
+        if strategy_position_id:
+            statement = statement.where(
+                ExecutionIntentModel.strategy_position_id == strategy_position_id
             )
         if slot_key:
             statement = statement.where(ExecutionIntentModel.slot_key == slot_key)
