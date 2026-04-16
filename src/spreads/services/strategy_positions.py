@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from spreads.db.decorators import with_storage
@@ -20,6 +20,14 @@ ACTIVE_INTENT_STATES = ["pending", "claimed", "submitted", "partially_filled"]
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _expires_in(minutes: int) -> str:
+    return (
+        (datetime.now(UTC) + timedelta(minutes=max(minutes, 1)))
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def _as_text(value: Any) -> str | None:
@@ -246,7 +254,7 @@ def run_management_automation_decision(
             },
             config_hash=bot.config_hash,
             state="pending",
-            expires_at=_utc_now(),
+            expires_at=_expires_in(5),
             superseded_by_id=None,
             payload={
                 "position_id": position_id,

@@ -14,13 +14,25 @@ from spreads.services.deployment_policy import (
     DEPLOYMENT_MODE_PAPER_AUTO,
 )
 from spreads.services.execution import (
+    refresh_execution_attempt,
     submit_opportunity_execution,
     submit_position_close_by_id,
+)
+from spreads.services.option_structures import (
+    net_premium_kind,
+    normalize_strategy_family,
 )
 from spreads.storage.serializers import parse_datetime
 
 AUTO_EXECUTION_MODES = {"paper", "live"}
 ACTIVE_INTENT_STATES = {"pending", "claimed", "submitted", "partially_filled"}
+WORKING_REPRICE_ATTEMPT_STATUSES = {
+    "accepted",
+    "accepted_for_bidding",
+    "new",
+    "pending_new",
+    "replaced",
+}
 
 
 def _utc_now() -> str:
@@ -32,6 +44,15 @@ def _as_text(value: Any) -> str | None:
         return None
     rendered = str(value).strip()
     return rendered or None
+
+
+def _coerce_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _intent_payload(intent: dict[str, Any]) -> dict[str, Any]:
@@ -109,6 +130,324 @@ def _attempt_state(attempt: dict[str, Any] | None) -> str:
     if status in {"expired", "revoked"}:
         return status
     return "claimed"
+
+
+def _attempt_request(attempt: dict[str, Any]) -> dict[str, Any]:
+    payload = attempt.get("request")
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
+def _reprice_count(intent: dict[str, Any]) -> int:
+    payload = _intent_payload(intent)
+    try:
+        return int(payload.get("reprice_count") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _submitted_age_seconds(attempt: dict[str, Any]) -> float | None:
+    submitted_at = parse_datetime(_as_text(attempt.get("submitted_at")))
+    if submitted_at is None:
+        submitted_at = parse_datetime(_as_text(attempt.get("requested_at")))
+    if submitted_at is None:
+        return None
+    return max((datetime.now(UTC) - submitted_at).total_seconds(), 0.0)
+
+
+def _next_reprice_limit(
+    intent: dict[str, Any], attempt: dict[str, Any]
+) -> float | None:
+    request = _attempt_request(attempt)
+    candidate = (
+        request.get("candidate") if isinstance(request.get("candidate"), dict) else {}
+    )
+    execution_policy = (
+        request.get("execution_policy")
+        if isinstance(request.get("execution_policy"), dict)
+        else {}
+    )
+    current_limit = _coerce_float(attempt.get("requested_limit_price"))
+    if current_limit is None:
+        current_limit = _coerce_float(attempt.get("limit_price"))
+    if current_limit is None:
+        return None
+    midpoint_value = _coerce_float(
+        candidate.get("midpoint_credit")
+        or candidate.get("midpoint_debit")
+        or candidate.get("midpoint_value")
+    )
+    natural_value = _coerce_float(
+        candidate.get("natural_credit")
+        or candidate.get("natural_debit")
+        or candidate.get("natural_value")
+    )
+    max_credit_concession = max(
+        _coerce_float(execution_policy.get("max_credit_concession")) or 0.02,
+        0.0,
+    )
+    step = 0.01
+    premium_kind = net_premium_kind(
+        normalize_strategy_family(
+            attempt.get("strategy_family") or attempt.get("strategy")
+        )
+    )
+    if premium_kind == "debit":
+        ceiling = current_limit + max_credit_concession
+        target = min(round(current_limit + step, 2), round(ceiling, 2))
+        if natural_value is not None:
+            target = min(target, round(max(natural_value, current_limit), 2))
+        if target <= current_limit:
+            return None
+        return target
+
+    floor = round(max(current_limit - max_credit_concession, 0.01), 2)
+    target = max(round(current_limit - step, 2), floor)
+    if natural_value is not None:
+        target = min(target, round(current_limit - step, 2))
+    if target >= current_limit:
+        return None
+    return max(target, 0.01)
+
+
+def _replacement_intent_id() -> str:
+    return f"execution_intent:{uuid4().hex}"
+
+
+def _create_replacement_intent(
+    execution_store: Any,
+    *,
+    intent: dict[str, Any],
+    attempt: dict[str, Any],
+) -> dict[str, Any] | None:
+    next_limit = _next_reprice_limit(intent, attempt)
+    if next_limit is None:
+        updated = _update_intent(
+            execution_store,
+            intent,
+            state="failed",
+            payload_updates={"dispatch_status": "reprice_exhausted"},
+            updated_at=_utc_now(),
+        )
+        _append_event(
+            execution_store,
+            execution_intent_id=str(intent["execution_intent_id"]),
+            event_type="reprice_exhausted",
+            payload={"execution_attempt_id": attempt.get("execution_attempt_id")},
+        )
+        return updated
+    now = _utc_now()
+    replacement_id = _replacement_intent_id()
+    payload = _intent_payload(intent)
+    payload.update(
+        {
+            "limit_price": next_limit,
+            "reprice_count": _reprice_count(intent) + 1,
+            "dispatch_status": "pending",
+            "supersedes_execution_intent_id": str(intent["execution_intent_id"]),
+            "previous_execution_attempt_id": _as_text(
+                attempt.get("execution_attempt_id")
+            ),
+        }
+    )
+    execution_store.upsert_execution_intent(
+        execution_intent_id=replacement_id,
+        bot_id=str(intent["bot_id"]),
+        automation_id=str(intent["automation_id"]),
+        opportunity_decision_id=_as_text(intent.get("opportunity_decision_id")),
+        strategy_position_id=_as_text(intent.get("strategy_position_id")),
+        execution_attempt_id=None,
+        action_type=str(intent["action_type"]),
+        slot_key=str(intent["slot_key"]),
+        claim_token=None,
+        policy_ref=dict(intent.get("policy_ref") or {}),
+        config_hash=str(intent.get("config_hash") or ""),
+        state="pending",
+        expires_at=_as_text(intent.get("expires_at")),
+        superseded_by_id=None,
+        payload=payload,
+        created_at=now,
+        updated_at=now,
+    )
+    updated = execution_store.upsert_execution_intent(
+        execution_intent_id=str(intent["execution_intent_id"]),
+        bot_id=str(intent["bot_id"]),
+        automation_id=str(intent["automation_id"]),
+        opportunity_decision_id=_as_text(intent.get("opportunity_decision_id")),
+        strategy_position_id=_as_text(intent.get("strategy_position_id")),
+        execution_attempt_id=_as_text(attempt.get("execution_attempt_id")),
+        action_type=str(intent["action_type"]),
+        slot_key=str(intent["slot_key"]),
+        claim_token=_as_text(intent.get("claim_token")),
+        policy_ref=dict(intent.get("policy_ref") or {}),
+        config_hash=str(intent.get("config_hash") or ""),
+        state="canceled",
+        expires_at=_as_text(intent.get("expires_at")),
+        superseded_by_id=replacement_id,
+        payload={
+            **_intent_payload(intent),
+            "dispatch_status": "canceled_for_reprice",
+            "replacement_execution_intent_id": replacement_id,
+        },
+        created_at=str(intent["created_at"]),
+        updated_at=now,
+    )
+    _append_event(
+        execution_store,
+        execution_intent_id=str(intent["execution_intent_id"]),
+        event_type="replaced",
+        payload={
+            "replacement_execution_intent_id": replacement_id,
+            "next_limit_price": next_limit,
+        },
+    )
+    _append_event(
+        execution_store,
+        execution_intent_id=replacement_id,
+        event_type="created",
+        payload={
+            "reprice_count": payload.get("reprice_count"),
+            "limit_price": next_limit,
+            "replaces_execution_intent_id": str(intent["execution_intent_id"]),
+        },
+    )
+    return updated
+
+
+def _manage_submitted_open_intents(
+    *,
+    db_target: str,
+    storage: Any,
+    execution_store: Any,
+    limit: int,
+    stale_after_seconds: int = 60,
+) -> dict[str, Any]:
+    intents = [
+        dict(row)
+        for row in execution_store.list_execution_intents(
+            states=["submitted"],
+            limit=max(int(limit), 1) * 5,
+        )
+    ]
+    reviewed = 0
+    repriced = 0
+    canceled = 0
+    refreshed = 0
+    results: list[dict[str, Any]] = []
+    client = create_alpaca_client_from_env()
+    for intent in intents:
+        if reviewed >= max(int(limit), 1):
+            break
+        reviewed += 1
+        if str(intent.get("action_type") or "") != "open":
+            continue
+        execution_attempt_id = _as_text(intent.get("execution_attempt_id"))
+        if execution_attempt_id is None:
+            continue
+        refreshed_result = refresh_execution_attempt(
+            db_target=db_target,
+            execution_attempt_id=execution_attempt_id,
+            storage=storage,
+        )
+        refreshed_attempt = (
+            refreshed_result.get("attempt")
+            if isinstance(refreshed_result.get("attempt"), dict)
+            else None
+        )
+        if refreshed_attempt is None:
+            continue
+        refreshed += 1
+        status = str(refreshed_attempt.get("status") or "").strip().lower()
+        if status in {
+            "filled",
+            "failed",
+            "canceled",
+            "cancelled",
+            "expired",
+            "rejected",
+        }:
+            if status in {"canceled", "cancelled"}:
+                replacement = _create_replacement_intent(
+                    execution_store,
+                    intent=intent,
+                    attempt=refreshed_attempt,
+                )
+                if replacement is not None:
+                    repriced += 1
+                    results.append(
+                        {
+                            "execution_intent_id": str(intent["execution_intent_id"]),
+                            "status": "replaced",
+                            "replacement_execution_intent_id": replacement.get(
+                                "superseded_by_id"
+                            ),
+                        }
+                    )
+            continue
+        if status not in WORKING_REPRICE_ATTEMPT_STATUSES:
+            continue
+        age_seconds = _submitted_age_seconds(refreshed_attempt)
+        if age_seconds is None or age_seconds < float(max(stale_after_seconds, 1)):
+            continue
+        broker_order_id = _as_text(refreshed_attempt.get("broker_order_id"))
+        if broker_order_id is None:
+            continue
+        client.cancel_order(broker_order_id)
+        canceled += 1
+        _append_event(
+            execution_store,
+            execution_intent_id=str(intent["execution_intent_id"]),
+            event_type="cancel_requested_for_reprice",
+            payload={
+                "execution_attempt_id": execution_attempt_id,
+                "broker_order_id": broker_order_id,
+                "age_seconds": age_seconds,
+            },
+        )
+        post_cancel = refresh_execution_attempt(
+            db_target=db_target,
+            execution_attempt_id=execution_attempt_id,
+            storage=storage,
+        )
+        post_cancel_attempt = (
+            post_cancel.get("attempt")
+            if isinstance(post_cancel.get("attempt"), dict)
+            else refreshed_attempt
+        )
+        post_cancel_status = (
+            str(post_cancel_attempt.get("status") or "").strip().lower()
+        )
+        if post_cancel_status in {"canceled", "cancelled"}:
+            replacement = _create_replacement_intent(
+                execution_store,
+                intent=intent,
+                attempt=post_cancel_attempt,
+            )
+            if replacement is not None:
+                repriced += 1
+                results.append(
+                    {
+                        "execution_intent_id": str(intent["execution_intent_id"]),
+                        "status": "replaced",
+                        "replacement_execution_intent_id": replacement.get(
+                            "superseded_by_id"
+                        ),
+                    }
+                )
+                continue
+        results.append(
+            {
+                "execution_intent_id": str(intent["execution_intent_id"]),
+                "status": post_cancel_status,
+                "execution_attempt_id": execution_attempt_id,
+            }
+        )
+    return {
+        "reviewed": reviewed,
+        "refreshed": refreshed,
+        "cancel_requested": canceled,
+        "repriced": repriced,
+        "results": results,
+    }
 
 
 def _auto_execution_gate(
@@ -203,6 +542,7 @@ def submit_execution_intent(
 
     try:
         if intent.get("opportunity_decision_id"):
+            payload = _intent_payload(intent)
             decision = signal_store.get_opportunity_decision(
                 str(intent["opportunity_decision_id"])
             )
@@ -213,6 +553,11 @@ def submit_execution_intent(
             result = submit_opportunity_execution(
                 db_target=db_target,
                 opportunity_id=str(decision["opportunity_id"]),
+                limit_price=(
+                    None
+                    if payload.get("limit_price") in (None, "")
+                    else float(payload["limit_price"])
+                ),
                 request_metadata={
                     "execution_intent_id": execution_intent_id,
                     "bot_id": intent.get("bot_id"),
@@ -320,6 +665,12 @@ def dispatch_pending_execution_intents(
 
     client = create_alpaca_client_from_env()
     trading_environment = resolve_trading_environment(client.trading_base_url)
+    active_management = _manage_submitted_open_intents(
+        db_target=db_target,
+        storage=storage,
+        execution_store=execution_store,
+        limit=max(int(limit), 1),
+    )
     intents = [
         dict(row)
         for row in execution_store.list_execution_intents(
@@ -436,6 +787,7 @@ def dispatch_pending_execution_intents(
     return {
         "status": "ok",
         "trading_environment": trading_environment,
+        "active_management": active_management,
         "reviewed": reviewed,
         "submitted": submitted,
         "skipped": skipped,
