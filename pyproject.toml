@@ -26,7 +26,7 @@ dependencies = [
 ]
 
 [project.scripts]
-spreads = "spreads.cli.main:main"
+spreads = "core.cli.main:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/spreads"]
+packages = ["packages/core", "packages/api"]

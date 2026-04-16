@@ -50,8 +50,8 @@
 - For storage-backed backend work, use the repo’s configured Postgres target via existing helpers; do not assume SQLite or ad hoc local storage.
 - For new API work, start with the narrowest interface that satisfies the current use case and expand only when there is a real caller.
 - Prefer targeted service, API, and data-backed smoke checks during normal development; avoid broad verification unless the user asks.
-- Read and follow the more specific backend instructions in [src/spreads/AGENTS.md](src/spreads/AGENTS.md) when working under `src/spreads`.
-- Read and follow the API-specific instructions in [apps/api/AGENTS.md](apps/api/AGENTS.md) when working under `apps/api`.
+- Read and follow the more specific backend instructions in [packages/core/AGENTS.md](packages/core/AGENTS.md) when working under `packages/core`.
+- Read and follow the API-specific instructions in [packages/api/AGENTS.md](packages/api/AGENTS.md) when working under `packages/api`.
 
 ## Planning Docs
 
@@ -61,4 +61,4 @@
 
 ## Web App
 
-- Read and follow the more specific instructions in [apps/web/AGENTS.md](apps/web/AGENTS.md) when working under `apps/web`.
+- Read and follow the more specific instructions in [packages/web/AGENTS.md](packages/web/AGENTS.md) when working under `packages/web`.

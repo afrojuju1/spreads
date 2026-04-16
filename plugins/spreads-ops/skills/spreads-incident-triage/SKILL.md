@@ -25,12 +25,12 @@ For ops and end-of-day questions, prefer the live Docker-backed state before rea
 
 ## Canonical Owners
 
-- session list and detail: `/Users/adeb/Projects/spreads/src/spreads/services/sessions.py`
-- account and trading health: `/Users/adeb/Projects/spreads/src/spreads/services/account_state.py`
-- closed-session analysis: `/Users/adeb/Projects/spreads/src/spreads/services/post_market_analysis.py`
-- post-market storage: `/Users/adeb/Projects/spreads/src/spreads/storage/post_market_repository.py`
-- alert delivery state: `/Users/adeb/Projects/spreads/src/spreads/storage/alert_repository.py`
-- worker and scheduler behavior: `/Users/adeb/Projects/spreads/src/spreads/jobs/worker.py`, `/Users/adeb/Projects/spreads/src/spreads/jobs/registry.py`, `/Users/adeb/Projects/spreads/src/spreads/storage/job_repository.py`
+- session list and detail: `/Users/adeb/Projects/spreads/packages/core/services/sessions.py`
+- account and trading health: `/Users/adeb/Projects/spreads/packages/core/services/account_state.py`
+- closed-session analysis: `/Users/adeb/Projects/spreads/packages/core/services/post_market_analysis.py`
+- post-market storage: `/Users/adeb/Projects/spreads/packages/core/storage/post_market_repository.py`
+- alert delivery state: `/Users/adeb/Projects/spreads/packages/core/storage/alert_repository.py`
+- worker and scheduler behavior: `/Users/adeb/Projects/spreads/packages/core/jobs/worker.py`, `/Users/adeb/Projects/spreads/packages/core/jobs/registry.py`, `/Users/adeb/Projects/spreads/packages/core/storage/job_repository.py`
 
 ## Canonical Surfaces
 

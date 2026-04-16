@@ -1320,12 +1320,12 @@ The design is working when:
 Internal:
 
 - [Spread Selection Review And Refactor Plan](./2026-04-11_spread_selection_refactor_plan.md)
-- [scanner.py](/Users/adeb/Projects/spreads/src/spreads/services/scanner.py)
-- [live_collector.py](/Users/adeb/Projects/spreads/src/spreads/jobs/live_collector.py)
-- [execution.py](/Users/adeb/Projects/spreads/src/spreads/services/execution.py)
-- [post_market_analysis.py](/Users/adeb/Projects/spreads/src/spreads/services/post_market_analysis.py)
-- [signal_state.py](/Users/adeb/Projects/spreads/src/spreads/services/signal_state.py)
-- [alerts/rules.py](/Users/adeb/Projects/spreads/src/spreads/alerts/rules.py)
+- [scanner.py](/Users/adeb/Projects/spreads/packages/core/services/scanner.py)
+- [live_collector.py](/Users/adeb/Projects/spreads/packages/core/jobs/live_collector.py)
+- [execution.py](/Users/adeb/Projects/spreads/packages/core/services/execution.py)
+- [post_market_analysis.py](/Users/adeb/Projects/spreads/packages/core/services/post_market_analysis.py)
+- [signal_state.py](/Users/adeb/Projects/spreads/packages/core/services/signal_state.py)
+- [alerts/rules.py](/Users/adeb/Projects/spreads/packages/core/alerts/rules.py)
 - [Alpaca Capabilities Statement](../research/alpaca_capabilities_statement.md)
 
 External:

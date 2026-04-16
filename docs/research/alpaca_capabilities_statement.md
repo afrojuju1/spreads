@@ -153,18 +153,18 @@ Purpose: this is the repo's canonical Alpaca capability reference for research, 
 
 Current implementation already uses several Alpaca surfaces:
 
-- [src/spreads/services/scanner.py](/Users/adeb/Projects/spreads/src/spreads/services/scanner.py)
+- [packages/core/services/scanner.py](/Users/adeb/Projects/spreads/packages/core/services/scanner.py)
 - uses option contract discovery
 - uses option chain snapshots
 - uses latest option quotes
 - uses stock daily/intraday bars
 - uses option bars
 
-- [src/spreads/services/option_quote_capture.py](/Users/adeb/Projects/spreads/src/spreads/services/option_quote_capture.py)
+- [packages/core/services/option_quote_capture.py](/Users/adeb/Projects/spreads/packages/core/services/option_quote_capture.py)
 - already captures live option quote events over Alpaca's msgpack WebSocket
 - already supports dynamic subscribe/unsubscribe for changing symbol sets
 
-- [src/spreads/jobs/live_collector.py](/Users/adeb/Projects/spreads/src/spreads/jobs/live_collector.py)
+- [packages/core/jobs/live_collector.py](/Users/adeb/Projects/spreads/packages/core/jobs/live_collector.py)
 - already persists latest-quote and WebSocket quote captures during live collection cycles
 
 Current repo gaps relative to Alpaca's documented capability surface:

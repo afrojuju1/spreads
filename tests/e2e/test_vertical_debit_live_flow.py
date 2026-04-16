@@ -5,13 +5,13 @@ from argparse import Namespace
 from dataclasses import asdict
 from datetime import date
 
-from spreads.services.execution import (
+from core.services.execution import (
     _build_close_order_request,
     _build_order_request,
     normalize_execution_policy,
 )
-from spreads.services.opportunity_scoring import build_candidate_opportunity_score
-from spreads.services.scanner import (
+from core.services.opportunity_scoring import build_candidate_opportunity_score
+from core.services.scanner import (
     DailyBar,
     ExpectedMoveEstimate,
     OptionContract,

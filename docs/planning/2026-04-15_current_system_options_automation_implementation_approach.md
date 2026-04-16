@@ -17,7 +17,7 @@ Related:
 
 Define how to build the new CLI-first, single-operator, `1-14` DTE options automation system using the backend we already have.
 
-This document intentionally ignores `apps/web`.
+This document intentionally ignores `packages/web`.
 
 This is not a clean-sheet design. It starts from the runtime that already exists in code and assumes we are willing to do aggressive refactors and deletions where the current shape is wrong.
 
@@ -60,12 +60,12 @@ The system already runs as a modular monolith with:
 
 Key modules:
 
-- `src/spreads/jobs/scheduler.py`
-- `src/spreads/jobs/worker.py`
-- `src/spreads/jobs/registry.py`
-- `src/spreads/storage/context.py`
-- `src/spreads/storage/factory.py`
-- `src/spreads/cli/main.py`
+- `packages/core/jobs/scheduler.py`
+- `packages/core/jobs/worker.py`
+- `packages/core/jobs/registry.py`
+- `packages/core/storage/context.py`
+- `packages/core/storage/factory.py`
+- `packages/core/cli/main.py`
 
 ### 2. Market Data Capture Is Already On The Right Boundary
 
@@ -77,9 +77,9 @@ That is the correct boundary for Alpaca and should remain intact.
 
 Key modules:
 
-- `src/spreads/services/market_recorder.py`
-- `src/spreads/services/live_recovery.py`
-- `src/spreads/storage/recovery_repository.py`
+- `packages/core/services/market_recorder.py`
+- `packages/core/services/live_recovery.py`
+- `packages/core/storage/recovery_repository.py`
 
 ### 3. There Is Already A Canonical Opportunity Layer
 
@@ -91,10 +91,10 @@ The repo already has a better state model than the older scan-history path:
 
 Key modules:
 
-- `src/spreads/services/signal_state.py`
-- `src/spreads/services/opportunities.py`
-- `src/spreads/storage/signal_models.py`
-- `src/spreads/storage/signal_repository.py`
+- `packages/core/services/signal_state.py`
+- `packages/core/services/opportunities.py`
+- `packages/core/storage/signal_models.py`
+- `packages/core/storage/signal_repository.py`
 
 This is the strongest current foundation for the new automation system.
 
@@ -110,12 +110,12 @@ The repo already has:
 
 Key modules:
 
-- `src/spreads/services/execution.py`
-- `src/spreads/services/execution_portfolio.py`
-- `src/spreads/services/broker_sync.py`
-- `src/spreads/services/risk_manager.py`
-- `src/spreads/services/exit_manager.py`
-- `src/spreads/storage/execution_models.py`
+- `packages/core/services/execution.py`
+- `packages/core/services/execution_portfolio.py`
+- `packages/core/services/broker_sync.py`
+- `packages/core/services/risk_manager.py`
+- `packages/core/services/exit_manager.py`
+- `packages/core/storage/execution_models.py`
 
 ### 5. Operator Surfaces Already Exist
 
@@ -134,11 +134,11 @@ Shipped command families include:
 
 Key modules:
 
-- `src/spreads/cli/main.py`
-- `src/spreads/cli/ops.py`
-- `src/spreads/cli/runtime.py`
-- `src/spreads/cli/replay.py`
-- `src/spreads/services/ops_visibility.py`
+- `packages/core/cli/main.py`
+- `packages/core/cli/ops.py`
+- `packages/core/cli/runtime.py`
+- `packages/core/cli/replay.py`
+- `packages/core/services/ops_visibility.py`
 
 ## What Is Structurally Wrong Today
 
@@ -209,7 +209,7 @@ Current anchors:
 - `job_definitions`
 - `job_runs`
 - `job_leases`
-- `src/spreads/jobs/registry.py`
+- `packages/core/jobs/registry.py`
 
 ### Demote `pipeline` To A Compatibility View
 
@@ -531,9 +531,9 @@ Use checked-in YAML for operator-defined behavior and Postgres for runtime state
 
 Recommended config roots:
 
-- `config/options_automation/strategies/*.yaml`
-- `config/options_automation/automations/*.yaml`
-- `config/options_automation/bots/*.yaml`
+- `packages/config/strategies/*.yaml`
+- `packages/config/automations/*.yaml`
+- `packages/config/bots/*.yaml`
 
 ### `StrategyConfig`
 

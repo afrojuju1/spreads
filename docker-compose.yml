@@ -44,7 +44,7 @@ services:
         "uv",
         "run",
         "uvicorn",
-        "apps.api.main:app",
+        "api.main:app",
         "--host",
         "0.0.0.0",
         "--port",
@@ -53,9 +53,9 @@ services:
         "--timeout-graceful-shutdown",
         "2",
         "--reload-dir",
-        "src",
+        "packages/core",
         "--reload-dir",
-        "apps/api",
+        "packages/api",
       ]
     volumes:
       - .:/app
@@ -78,7 +78,7 @@ services:
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
       REDIS_URL: redis://redis:6379/0
       SPREADS_INTERNAL_API_BASE_URL: http://api:8000
-    command: ["uv", "run", "arq", "spreads.jobs.worker.MainWorkerSettings"]
+    command: ["uv", "run", "arq", "core.jobs.worker.MainWorkerSettings"]
     volumes:
       - .:/app
   worker-collector:
@@ -98,7 +98,7 @@ services:
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
       REDIS_URL: redis://redis:6379/0
       SPREADS_INTERNAL_API_BASE_URL: http://api:8000
-    command: ["uv", "run", "arq", "spreads.jobs.worker.CollectorWorkerSettings"]
+    command: ["uv", "run", "arq", "core.jobs.worker.CollectorWorkerSettings"]
     volumes:
       - .:/app
   scheduler:
@@ -134,7 +134,7 @@ services:
       - .:/app
   web:
     build:
-      context: ./apps/web
+      context: ./packages/web
       target: dev
     restart: unless-stopped
     depends_on:
@@ -147,7 +147,7 @@ services:
       WATCHPACK_POLLING: "true"
       NEXT_TELEMETRY_DISABLED: "1"
     volumes:
-      - ./apps/web:/app
+      - ./packages/web:/app
       - web_node_modules:/app/node_modules
       - web_next_data:/app/.next
     ports:

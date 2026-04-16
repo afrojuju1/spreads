@@ -84,8 +84,8 @@ Already implemented:
 Evidence:
 
 - [current_system_state.md](../current_system_state.md)
-- [risk_manager.py](/Users/adeb/Projects/spreads/src/spreads/services/risk_manager.py)
-- [providers.tsx](/Users/adeb/Projects/spreads/apps/web/components/providers.tsx)
+- [risk_manager.py](/Users/adeb/Projects/spreads/packages/core/services/risk_manager.py)
+- [providers.tsx](/Users/adeb/Projects/spreads/packages/web/components/providers.tsx)
 
 What is missing:
 
@@ -118,9 +118,9 @@ Already implemented:
 Evidence:
 
 - [current_system_state.md](../current_system_state.md)
-- [scanner.py](/Users/adeb/Projects/spreads/src/spreads/services/scanner.py)
-- [live_collector.py](/Users/adeb/Projects/spreads/src/spreads/jobs/live_collector.py)
-- [collector_models.py](/Users/adeb/Projects/spreads/src/spreads/storage/collector_models.py)
+- [scanner.py](/Users/adeb/Projects/spreads/packages/core/services/scanner.py)
+- [live_collector.py](/Users/adeb/Projects/spreads/packages/core/jobs/live_collector.py)
+- [collector_models.py](/Users/adeb/Projects/spreads/packages/core/storage/collector_models.py)
 
 What is missing:
 
@@ -161,10 +161,10 @@ Already implemented:
 Evidence:
 
 - [current_system_state.md](../current_system_state.md)
-- [execution.py](/Users/adeb/Projects/spreads/src/spreads/services/execution.py)
-- [broker_sync.py](/Users/adeb/Projects/spreads/src/spreads/services/broker_sync.py)
-- [risk_manager.py](/Users/adeb/Projects/spreads/src/spreads/services/risk_manager.py)
-- [exit_manager.py](/Users/adeb/Projects/spreads/src/spreads/services/exit_manager.py)
+- [execution.py](/Users/adeb/Projects/spreads/packages/core/services/execution.py)
+- [broker_sync.py](/Users/adeb/Projects/spreads/packages/core/services/broker_sync.py)
+- [risk_manager.py](/Users/adeb/Projects/spreads/packages/core/services/risk_manager.py)
+- [exit_manager.py](/Users/adeb/Projects/spreads/packages/core/services/exit_manager.py)
 
 What is still missing or weak:
 
@@ -198,9 +198,9 @@ Already implemented:
 
 Evidence:
 
-- [analysis.py](/Users/adeb/Projects/spreads/src/spreads/services/analysis.py)
-- [post_market_analysis.py](/Users/adeb/Projects/spreads/src/spreads/services/post_market_analysis.py)
-- [generator.py](/Users/adeb/Projects/spreads/src/spreads/services/generator.py)
+- [analysis.py](/Users/adeb/Projects/spreads/packages/core/services/analysis.py)
+- [post_market_analysis.py](/Users/adeb/Projects/spreads/packages/core/services/post_market_analysis.py)
+- [generator.py](/Users/adeb/Projects/spreads/packages/core/services/generator.py)
 
 What is missing:
 

@@ -20,8 +20,8 @@ Keep this document only as background on why the system must maintain a single u
 
 Current live capture uses two separate API-process brokers:
 
-- [option_quote_capture.py](../../src/spreads/services/option_quote_capture.py)
-- [option_trade_capture.py](../../src/spreads/services/option_trade_capture.py)
+- [option_quote_capture.py](../../packages/core/services/option_quote_capture.py)
+- [option_trade_capture.py](../../packages/core/services/option_trade_capture.py)
 
 That design works functionally, but it is structurally wrong for Alpaca's option stream constraints.
 
@@ -294,12 +294,12 @@ Exit condition:
 Expected module layout:
 
 - new shared broker module:
-  - `../../src/spreads/services/option_stream_broker.py`
+  - `../../packages/core/services/option_stream_broker.py`
 - existing adapters remain:
-  - `../../src/spreads/services/option_quote_capture.py`
-  - `../../src/spreads/services/option_trade_capture.py`
+  - `../../packages/core/services/option_quote_capture.py`
+  - `../../packages/core/services/option_trade_capture.py`
 - API wiring remains in:
-  - `../../apps/api/main.py`
+  - `../../packages/api/main.py`
 
 ## Why This Is The Right v1
 
@@ -321,8 +321,8 @@ Superseded on April 15, 2026.
 
 Current runtime behavior:
 
-- [market_recorder.py](../../src/spreads/services/market_recorder.py) owns the single Alpaca option websocket
-- [live_collector.py](../../src/spreads/jobs/live_collector.py) refreshes recorder targets and consumes recorder-backed quote/trade rows
+- [market_recorder.py](../../packages/core/services/market_recorder.py) owns the single Alpaca option websocket
+- [live_collector.py](../../packages/core/jobs/live_collector.py) refreshes recorder targets and consumes recorder-backed quote/trade rows
 - the API no longer owns option-stream broker lifecycle or a combined internal capture route
 
 The reasoning in this document still matters, but the API-owned implementation path described below is historical only.

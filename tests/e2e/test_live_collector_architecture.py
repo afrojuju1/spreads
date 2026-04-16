@@ -7,23 +7,23 @@ from argparse import Namespace
 from datetime import UTC, datetime
 from unittest.mock import patch
 
-from spreads.jobs.live_collector import (
+from core.jobs.live_collector import (
     LiveCaptureSnapshot,
     LiveTickContext,
     _run_collection_cycle,
     capture_live_option_market_state,
 )
-from spreads.jobs.orchestration import isoformat_utc
-from spreads.jobs.scheduler import _reconcile_live_collector_jobs
-from spreads.services.live_collector_health import (
+from core.jobs.orchestration import isoformat_utc
+from core.jobs.scheduler import _reconcile_live_collector_jobs
+from core.services.live_collector_health import (
     build_quote_capture_summary,
     build_trade_capture_summary,
 )
-from spreads.services.pipelines import get_pipeline_detail, list_pipelines
-from spreads.services.live_recovery import LIVE_SLOT_STATUS_MISSED
-from spreads.services.risk_manager import evaluate_open_execution
-from spreads.services.uoa_state import get_latest_uoa_state
-from spreads.storage.collector_repository import CollectorRepository
+from core.services.pipelines import get_pipeline_detail, list_pipelines
+from core.services.live_recovery import LIVE_SLOT_STATUS_MISSED
+from core.services.risk_manager import evaluate_open_execution
+from core.services.uoa_state import get_latest_uoa_state
+from core.storage.collector_repository import CollectorRepository
 
 
 def _candidate_payload(symbol: str = "AAPL") -> dict[str, object]:
@@ -538,19 +538,19 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         scanner_args = Namespace(feed="opra", data_base_url="https://data.example")
 
         with patch(
-            "spreads.jobs.live_collector.run_universe_cycle",
+            "core.jobs.live_collector.run_universe_cycle",
             return_value=(["AAPL"], "earnings", [], [], []),
         ), patch(
-            "spreads.jobs.live_collector.build_symbol_strategy_candidates",
+            "core.jobs.live_collector.build_symbol_strategy_candidates",
             return_value={"AAPL": [_candidate_payload()]},
         ), patch(
-            "spreads.jobs.live_collector.capture_live_option_market_state",
+            "core.jobs.live_collector.capture_live_option_market_state",
             return_value=_same_slot_capture_snapshot(),
         ), patch(
-            "spreads.jobs.live_collector.read_previous_selection",
+            "core.jobs.live_collector.read_previous_selection",
             return_value=({}, {}),
         ), patch(
-            "spreads.jobs.live_collector.sync_live_collector_signal_layer",
+            "core.jobs.live_collector.sync_live_collector_signal_layer",
             return_value={
                 "signal_states_upserted": 0,
                 "signal_transitions_recorded": 0,
@@ -558,7 +558,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                 "opportunities_expired": 0,
             },
         ), patch(
-            "spreads.jobs.live_collector.dispatch_cycle_alerts",
+            "core.jobs.live_collector.dispatch_cycle_alerts",
             return_value=[],
         ):
             result = _run_collection_cycle(
@@ -623,11 +623,11 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         ]
 
         with patch(
-            "spreads.jobs.live_collector.refresh_live_session_capture_targets",
+            "core.jobs.live_collector.refresh_live_session_capture_targets",
             side_effect=lambda **_: order.append("targets")
             or {"status": "ok", "capture_targets": {}},
         ), patch(
-            "spreads.jobs.live_collector.collect_latest_quote_records",
+            "core.jobs.live_collector.collect_latest_quote_records",
             side_effect=lambda **_: order.append("baseline")
             or [
                 {
@@ -639,7 +639,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                 }
             ],
         ), patch(
-            "spreads.jobs.live_collector.collect_recorded_market_data_records",
+            "core.jobs.live_collector.collect_recorded_market_data_records",
             side_effect=lambda **_: order.append("recorded")
             or {
                 "quotes": recorder_quotes,
@@ -649,16 +649,16 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                 "quote_complete": True,
             },
         ), patch(
-            "spreads.jobs.live_collector.build_uoa_trade_summary",
+            "core.jobs.live_collector.build_uoa_trade_summary",
             return_value={"overview": {"scoreable_trade_count": 1}},
         ), patch(
-            "spreads.jobs.live_collector.build_uoa_quote_summary",
+            "core.jobs.live_collector.build_uoa_quote_summary",
             return_value={"overview": {"observed_contract_count": 1}},
         ), patch(
-            "spreads.jobs.live_collector.build_uoa_trade_baselines",
+            "core.jobs.live_collector.build_uoa_trade_baselines",
             return_value={},
         ), patch(
-            "spreads.jobs.live_collector.build_uoa_root_decisions",
+            "core.jobs.live_collector.build_uoa_root_decisions",
             return_value={"overview": {"root_count": 1}},
         ):
             snapshot = capture_live_option_market_state(
@@ -688,16 +688,16 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
     def test_pipeline_detail_prefers_canonical_signal_opportunities(self) -> None:
         storage = _PipelineStorage()
         with patch(
-            "spreads.services.pipelines.build_session_execution_portfolio",
+            "core.services.pipelines.build_session_execution_portfolio",
             return_value={"positions": []},
         ), patch(
-            "spreads.services.pipelines.build_session_risk_snapshot",
+            "core.services.pipelines.build_session_risk_snapshot",
             return_value={"status": "healthy", "note": "ok"},
         ), patch(
-            "spreads.services.pipelines.get_control_state_snapshot",
+            "core.services.pipelines.get_control_state_snapshot",
             return_value={"mode": "normal"},
         ), patch(
-            "spreads.services.pipelines.list_session_execution_attempts",
+            "core.services.pipelines.list_session_execution_attempts",
             return_value=[],
         ):
             detail = get_pipeline_detail(
@@ -893,7 +893,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
 
         async def run_test() -> dict[str, object]:
             with patch(
-                "spreads.jobs.scheduler.resolve_live_tick_plan",
+                "core.jobs.scheduler.resolve_live_tick_plan",
                 return_value={
                     "label": "test",
                     "session_id": "live:test:2026-04-15",
@@ -904,16 +904,16 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                     "payload": {"interval_seconds": 60},
                 },
             ), patch(
-                "spreads.jobs.scheduler._live_run_active",
+                "core.jobs.scheduler._live_run_active",
                 return_value=True,
             ), patch(
-                "spreads.jobs.scheduler._enqueue_job_run",
+                "core.jobs.scheduler._enqueue_job_run",
                 return_value=True,
             ), patch(
-                "spreads.jobs.scheduler._enqueue_collector_recovery_if_needed",
+                "core.jobs.scheduler._enqueue_collector_recovery_if_needed",
                 return_value=None,
             ), patch(
-                "spreads.jobs.scheduler._publish_job_run_update",
+                "core.jobs.scheduler._publish_job_run_update",
                 return_value=None,
             ):
                 return await _reconcile_live_collector_jobs(
@@ -967,7 +967,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         }
 
         with patch(
-            "spreads.services.risk_manager._current_trading_environment",
+            "core.services.risk_manager._current_trading_environment",
             return_value="live",
         ), patch.dict(
             os.environ,

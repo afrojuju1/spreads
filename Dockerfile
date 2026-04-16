@@ -4,11 +4,10 @@ WORKDIR /app
 
 ENV UV_PROJECT_ENVIRONMENT="/opt/venv"
 ENV PATH="/opt/venv/bin:${PATH}"
-ENV PYTHONPATH="/app/src"
+ENV PYTHONPATH="/app/packages"
 
 COPY pyproject.toml uv.lock alembic.ini ./
-COPY src ./src
-COPY apps ./apps
+COPY packages ./packages
 COPY alembic ./alembic
 COPY data ./data
 COPY docs ./docs

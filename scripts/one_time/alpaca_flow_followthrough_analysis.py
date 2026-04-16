@@ -15,16 +15,16 @@ import pandas as pd
 import pandas_market_calendars as mcal
 
 ROOT = Path(__file__).resolve().parents[2]
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+PACKAGES = ROOT / "packages"
+if str(PACKAGES) not in sys.path:
+    sys.path.insert(0, str(PACKAGES))
 
-from spreads.services.alpaca import create_alpaca_client_from_env  # noqa: E402
-from spreads.services.option_trade_records import (  # noqa: E402
+from core.services.alpaca import create_alpaca_client_from_env  # noqa: E402
+from core.services.option_trade_records import (  # noqa: E402
     UOA_ALLOWED_TRADE_CONDITIONS,
     classify_trade_conditions_for_uoa,
 )
-from spreads.services.scanner import AlpacaClient  # noqa: E402
+from core.services.scanner import AlpacaClient  # noqa: E402
 
 NEW_YORK = ZoneInfo("America/New_York")
 NYSE = mcal.get_calendar("NYSE")
@@ -137,7 +137,9 @@ def choose_analysis_sessions(
     sessions: int,
     baseline_sessions: int,
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[date], list[date], dict[date, date | None]]:
-    schedule_start = (start_date or (end_date - timedelta(days=max(60, sessions * 3)))) - timedelta(days=90)
+    schedule_start = (
+        start_date or (end_date - timedelta(days=max(60, sessions * 3)))
+    ) - timedelta(days=90)
     schedule_end = end_date + timedelta(days=10)
     schedule = build_schedule(schedule_start, schedule_end)
     eligible = schedule[schedule["session_date"] <= end_date].copy()
@@ -153,7 +155,9 @@ def choose_analysis_sessions(
 
     analysis_dates = analysis_rows["session_date"].tolist()
     first_analysis_date = analysis_dates[0]
-    prior_rows = eligible[eligible["session_date"] < first_analysis_date].tail(max(baseline_sessions, 0))
+    prior_rows = eligible[eligible["session_date"] < first_analysis_date].tail(
+        max(baseline_sessions, 0)
+    )
     baseline_dates = prior_rows["session_date"].tolist()
     working_dates = baseline_dates + analysis_dates
     working_schedule = schedule[schedule["session_date"].isin(working_dates)].copy()
@@ -162,7 +166,9 @@ def choose_analysis_sessions(
 
 
 def build_schedule(start_date: date, end_date: date) -> pd.DataFrame:
-    raw = NYSE.schedule(start_date=start_date.isoformat(), end_date=end_date.isoformat())
+    raw = NYSE.schedule(
+        start_date=start_date.isoformat(), end_date=end_date.isoformat()
+    )
     rows: list[dict[str, Any]] = []
     for session_ts, row in raw.iterrows():
         rows.append(
@@ -179,7 +185,9 @@ def build_next_session_map(schedule: pd.DataFrame) -> dict[date, date | None]:
     ordered_dates = schedule["session_date"].tolist()
     payload: dict[date, date | None] = {}
     for index, session_date in enumerate(ordered_dates):
-        payload[session_date] = None if index + 1 >= len(ordered_dates) else ordered_dates[index + 1]
+        payload[session_date] = (
+            None if index + 1 >= len(ordered_dates) else ordered_dates[index + 1]
+        )
     return payload
 
 
@@ -294,17 +302,27 @@ def fetch_contracts(
                     expiration_value = item.get("expiration_date")
                     option_type = str(item.get("type") or "").strip().lower()
                     strike_price = item.get("strike_price")
-                    if not expiration_value or option_type not in {"call", "put"} or strike_price in (None, ""):
+                    if (
+                        not expiration_value
+                        or option_type not in {"call", "put"}
+                        or strike_price in (None, "")
+                    ):
                         continue
                     seen.add(option_symbol)
                     rows.append(
                         {
                             "option_symbol": option_symbol,
-                            "underlying_symbol": str(item.get("underlying_symbol") or symbol).upper(),
-                            "expiration_date": date.fromisoformat(str(expiration_value)),
+                            "underlying_symbol": str(
+                                item.get("underlying_symbol") or symbol
+                            ).upper(),
+                            "expiration_date": date.fromisoformat(
+                                str(expiration_value)
+                            ),
                             "option_type": option_type,
                             "strike_price": float(strike_price),
-                            "open_interest": None if item.get("open_interest") in (None, "") else int(item["open_interest"]),
+                            "open_interest": None
+                            if item.get("open_interest") in (None, "")
+                            else int(item["open_interest"]),
                             "status": status,
                         }
                     )
@@ -323,8 +341,10 @@ def fetch_contracts(
                 "status",
             ]
         )
-    frame = pd.DataFrame(rows).drop_duplicates(subset=["option_symbol"]).sort_values(
-        ["underlying_symbol", "expiration_date", "option_symbol"]
+    frame = (
+        pd.DataFrame(rows)
+        .drop_duplicates(subset=["option_symbol"])
+        .sort_values(["underlying_symbol", "expiration_date", "option_symbol"])
     )
     return frame.reset_index(drop=True)
 
@@ -345,7 +365,11 @@ def select_session_contracts(
         & (contracts["expiration_date"] >= session_date)
         & (contracts["expiration_date"] <= max_expiration)
     ].copy()
-    if max_contracts_per_type is not None and max_contracts_per_type > 0 and not subset.empty:
+    if (
+        max_contracts_per_type is not None
+        and max_contracts_per_type > 0
+        and not subset.empty
+    ):
         limited_frames: list[pd.DataFrame] = []
         for option_type in ("call", "put"):
             typed = subset[subset["option_type"] == option_type].copy()
@@ -353,7 +377,12 @@ def select_session_contracts(
                 continue
             typed["open_interest_rank"] = typed["open_interest"].fillna(-1)
             typed = typed.sort_values(
-                ["open_interest_rank", "expiration_date", "strike_price", "option_symbol"],
+                [
+                    "open_interest_rank",
+                    "expiration_date",
+                    "strike_price",
+                    "option_symbol",
+                ],
                 ascending=[False, True, True, True],
             ).head(max_contracts_per_type)
             limited_frames.append(typed.drop(columns=["open_interest_rank"]))
@@ -413,9 +442,15 @@ def fetch_session_trades(
                         continue
                     for trade in trades:
                         trade_timestamp = to_ny_timestamp(trade.get("t"))
-                        if trade_timestamp is None or trade_timestamp < market_open or trade_timestamp >= market_close:
+                        if (
+                            trade_timestamp is None
+                            or trade_timestamp < market_open
+                            or trade_timestamp >= market_close
+                        ):
                             continue
-                        included_in_score, exclusion_reason, conditions = classify_trade_conditions_for_uoa(trade.get("c"))
+                        included_in_score, exclusion_reason, conditions = (
+                            classify_trade_conditions_for_uoa(trade.get("c"))
+                        )
                         if exclusion_reason:
                             exclusion_reason_counts[exclusion_reason] += 1
                         dte = (metadata["expiration_date"] - session_date).days
@@ -432,7 +467,9 @@ def fetch_session_trades(
                                 "trade_timestamp": trade_timestamp,
                                 "price": float(trade.get("p") or 0.0),
                                 "size": int(trade.get("s") or 0),
-                                "premium": float(trade.get("p") or 0.0) * int(trade.get("s") or 0) * 100.0,
+                                "premium": float(trade.get("p") or 0.0)
+                                * int(trade.get("s") or 0)
+                                * 100.0,
                                 "exchange_code": str(trade.get("x") or "") or None,
                                 "conditions": conditions,
                                 "included_in_score": included_in_score,
@@ -460,10 +497,14 @@ def build_base_windows(
     session_date: date,
     market_open: pd.Timestamp,
 ) -> pd.DataFrame:
-    slot_starts = pd.date_range(start=market_open, periods=SLOTS_PER_SESSION, freq=f"{SLOT_MINUTES}min")
+    slot_starts = pd.date_range(
+        start=market_open, periods=SLOTS_PER_SESSION, freq=f"{SLOT_MINUTES}min"
+    )
     rows: list[dict[str, Any]] = []
     for slot_index, slot_start in enumerate(slot_starts):
-        time_bucket = "open" if slot_index < 12 else "close" if slot_index >= 60 else "mid"
+        time_bucket = (
+            "open" if slot_index < 12 else "close" if slot_index >= 60 else "mid"
+        )
         rows.append(
             {
                 "symbol": symbol,
@@ -484,7 +525,9 @@ def summarize_session_windows(
     market_open: pd.Timestamp,
     trades: pd.DataFrame,
 ) -> pd.DataFrame:
-    base = build_base_windows(symbol=symbol, session_date=session_date, market_open=market_open)
+    base = build_base_windows(
+        symbol=symbol, session_date=session_date, market_open=market_open
+    )
     if trades.empty:
         for column in (
             "raw_trade_count",
@@ -508,17 +551,29 @@ def summarize_session_windows(
     for slot_start, group in trades.groupby("slot_start", sort=True):
         scoreable = group[group["included_in_score"]].copy()
         scoreable_premium = float(scoreable["premium"].sum())
-        call_premium = float(scoreable.loc[scoreable["option_type"] == "call", "premium"].sum())
-        put_premium = float(scoreable.loc[scoreable["option_type"] == "put", "premium"].sum())
-        near_premium = float(scoreable.loc[scoreable["dte"].between(0, 7), "premium"].sum())
-        far_premium = float(scoreable.loc[scoreable["dte"].between(8, 21), "premium"].sum())
+        call_premium = float(
+            scoreable.loc[scoreable["option_type"] == "call", "premium"].sum()
+        )
+        put_premium = float(
+            scoreable.loc[scoreable["option_type"] == "put", "premium"].sum()
+        )
+        near_premium = float(
+            scoreable.loc[scoreable["dte"].between(0, 7), "premium"].sum()
+        )
+        far_premium = float(
+            scoreable.loc[scoreable["dte"].between(8, 21), "premium"].sum()
+        )
         contract_premium = (
-            scoreable.groupby("option_symbol")["premium"].sum().sort_values(ascending=False)
+            scoreable.groupby("option_symbol")["premium"]
+            .sum()
+            .sort_values(ascending=False)
             if not scoreable.empty
             else pd.Series(dtype=float)
         )
         expiry_premium = (
-            scoreable.groupby("expiration_date")["premium"].sum().sort_values(ascending=False)
+            scoreable.groupby("expiration_date")["premium"]
+            .sum()
+            .sort_values(ascending=False)
             if not scoreable.empty
             else pd.Series(dtype=float)
         )
@@ -530,7 +585,9 @@ def summarize_session_windows(
                 "scoreable_trade_count": int(len(scoreable)),
                 "scoreable_premium": round(scoreable_premium, 4),
                 "excluded_trade_count": int((~group["included_in_score"]).sum()),
-                "excluded_premium": round(float(group.loc[~group["included_in_score"], "premium"].sum()), 4),
+                "excluded_premium": round(
+                    float(group.loc[~group["included_in_score"], "premium"].sum()), 4
+                ),
                 "distinct_contract_count": int(scoreable["option_symbol"].nunique()),
                 "largest_contract_share": 0.0
                 if scoreable_premium <= 0 or contract_premium.empty
@@ -538,10 +595,18 @@ def summarize_session_windows(
                 "largest_expiry_share": 0.0
                 if scoreable_premium <= 0 or expiry_premium.empty
                 else round(float(expiry_premium.iloc[0] / scoreable_premium), 4),
-                "call_share": 0.0 if scoreable_premium <= 0 else round(call_premium / scoreable_premium, 4),
-                "put_share": 0.0 if scoreable_premium <= 0 else round(put_premium / scoreable_premium, 4),
-                "near_dte_share": 0.0 if scoreable_premium <= 0 else round(near_premium / scoreable_premium, 4),
-                "far_dte_share": 0.0 if scoreable_premium <= 0 else round(far_premium / scoreable_premium, 4),
+                "call_share": 0.0
+                if scoreable_premium <= 0
+                else round(call_premium / scoreable_premium, 4),
+                "put_share": 0.0
+                if scoreable_premium <= 0
+                else round(put_premium / scoreable_premium, 4),
+                "near_dte_share": 0.0
+                if scoreable_premium <= 0
+                else round(near_premium / scoreable_premium, 4),
+                "far_dte_share": 0.0
+                if scoreable_premium <= 0
+                else round(far_premium / scoreable_premium, 4),
             }
         )
     aggregated = pd.DataFrame(rows)
@@ -578,24 +643,36 @@ def add_slot_baselines(
     ordered = frame.sort_values(["symbol", "slot_index", "session_date"]).copy()
     grouped = ordered.groupby(["symbol", "slot_index"], sort=False)["scoreable_premium"]
     ordered["baseline_sample_size"] = grouped.transform(
-        lambda series: series.shift(1).rolling(baseline_sessions, min_periods=baseline_sessions).count()
+        lambda series: series.shift(1)
+        .rolling(baseline_sessions, min_periods=baseline_sessions)
+        .count()
     )
     ordered["slot_baseline_median_premium"] = grouped.transform(
-        lambda series: series.shift(1).rolling(baseline_sessions, min_periods=baseline_sessions).median()
+        lambda series: series.shift(1)
+        .rolling(baseline_sessions, min_periods=baseline_sessions)
+        .median()
     )
     ordered["slot_baseline_p90_premium"] = grouped.transform(
-        lambda series: series.shift(1).rolling(baseline_sessions, min_periods=baseline_sessions).quantile(0.9)
+        lambda series: series.shift(1)
+        .rolling(baseline_sessions, min_periods=baseline_sessions)
+        .quantile(0.9)
     )
     ordered["premium_vs_slot_median"] = ordered.apply(
         lambda row: None
-        if row["slot_baseline_median_premium"] in (None, 0) or pd.isna(row["slot_baseline_median_premium"])
-        else round(float(row["scoreable_premium"] / row["slot_baseline_median_premium"]), 4),
+        if row["slot_baseline_median_premium"] in (None, 0)
+        or pd.isna(row["slot_baseline_median_premium"])
+        else round(
+            float(row["scoreable_premium"] / row["slot_baseline_median_premium"]), 4
+        ),
         axis=1,
     )
     ordered["premium_vs_slot_p90"] = ordered.apply(
         lambda row: None
-        if row["slot_baseline_p90_premium"] in (None, 0) or pd.isna(row["slot_baseline_p90_premium"])
-        else round(float(row["scoreable_premium"] / row["slot_baseline_p90_premium"]), 4),
+        if row["slot_baseline_p90_premium"] in (None, 0)
+        or pd.isna(row["slot_baseline_p90_premium"])
+        else round(
+            float(row["scoreable_premium"] / row["slot_baseline_p90_premium"]), 4
+        ),
         axis=1,
     )
     return ordered
@@ -616,7 +693,8 @@ def classify_event_windows(
         & ((threshold <= 0) | (ordered["scoreable_premium"] >= threshold))
     )
     ordered["concentrated_burst"] = ordered["premium_burst"] & (
-        (ordered["largest_contract_share"] >= 0.50) | (ordered["largest_expiry_share"] >= 0.70)
+        (ordered["largest_contract_share"] >= 0.50)
+        | (ordered["largest_expiry_share"] >= 0.70)
     )
     ordered["repeated_burst"] = ordered["premium_burst"] & ordered.groupby(
         ["symbol", "session_date"], sort=False
@@ -656,7 +734,11 @@ def fetch_stock_bars(
                     "limit": 1000,
                 },
             )
-            bars = response.get("bars", {}).get(symbol, []) if isinstance(response, dict) else []
+            bars = (
+                response.get("bars", {}).get(symbol, [])
+                if isinstance(response, dict)
+                else []
+            )
             minute_rows: list[dict[str, Any]] = []
             for bar in bars:
                 timestamp = to_ny_timestamp(bar.get("t"))
@@ -675,7 +757,11 @@ def fetch_stock_bars(
             if not minute_rows:
                 payload[(symbol, row.session_date)] = pd.DataFrame()
                 continue
-            frame = pd.DataFrame(minute_rows).drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
+            frame = (
+                pd.DataFrame(minute_rows)
+                .drop_duplicates(subset=["timestamp"])
+                .sort_values("timestamp")
+            )
             frame = frame.set_index("timestamp")
             payload[(symbol, row.session_date)] = frame
     return payload
@@ -703,7 +789,11 @@ def add_forward_labels(
             "forward_60m_max_up_pct": None,
             "forward_60m_max_down_pct": None,
         }
-        if current_session_bars is None or current_session_bars.empty or reference_timestamp not in current_session_bars.index:
+        if (
+            current_session_bars is None
+            or current_session_bars.empty
+            or reference_timestamp not in current_session_bars.index
+        ):
             label_rows.append(label_row)
             continue
 
@@ -711,7 +801,9 @@ def add_forward_labels(
         label_row["reference_price"] = round(reference_price, 4)
 
         def close_return(minutes_forward: int) -> float | None:
-            target_timestamp = reference_timestamp + pd.Timedelta(minutes=minutes_forward)
+            target_timestamp = reference_timestamp + pd.Timedelta(
+                minutes=minutes_forward
+            )
             if target_timestamp not in current_session_bars.index:
                 return None
             target_close = float(current_session_bars.loc[target_timestamp, "close"])
@@ -723,22 +815,33 @@ def add_forward_labels(
         label_row["forward_60m_return_pct"] = close_return(60)
 
         session_close = float(current_session_bars["close"].iloc[-1])
-        label_row["forward_to_close_return_pct"] = round((session_close / reference_price - 1.0) * 100.0, 4)
+        label_row["forward_to_close_return_pct"] = round(
+            (session_close / reference_price - 1.0) * 100.0, 4
+        )
 
         future_60 = current_session_bars[
             (current_session_bars.index > reference_timestamp)
-            & (current_session_bars.index <= reference_timestamp + pd.Timedelta(minutes=60))
+            & (
+                current_session_bars.index
+                <= reference_timestamp + pd.Timedelta(minutes=60)
+            )
         ]
         if not future_60.empty:
-            label_row["forward_60m_max_up_pct"] = round((float(future_60["high"].max()) / reference_price - 1.0) * 100.0, 4)
-            label_row["forward_60m_max_down_pct"] = round((float(future_60["low"].min()) / reference_price - 1.0) * 100.0, 4)
+            label_row["forward_60m_max_up_pct"] = round(
+                (float(future_60["high"].max()) / reference_price - 1.0) * 100.0, 4
+            )
+            label_row["forward_60m_max_down_pct"] = round(
+                (float(future_60["low"].min()) / reference_price - 1.0) * 100.0, 4
+            )
 
         next_session = next_session_by_session.get(row.session_date)
         if next_session is not None:
             next_session_bars = stock_bars.get((row.symbol, next_session))
             if next_session_bars is not None and not next_session_bars.empty:
                 next_open = float(next_session_bars["open"].iloc[0])
-                label_row["forward_next_open_return_pct"] = round((next_open / reference_price - 1.0) * 100.0, 4)
+                label_row["forward_next_open_return_pct"] = round(
+                    (next_open / reference_price - 1.0) * 100.0, 4
+                )
 
         label_rows.append(label_row)
 
@@ -755,20 +858,34 @@ def build_summary_by_symbol(events: pd.DataFrame) -> pd.DataFrame:
                 "events": int(len(group)),
                 "concentrated_events": int(group["concentrated_burst"].sum()),
                 "repeated_events": int(group["repeated_burst"].sum()),
-                "call_dominant_events": int((group["dominance"] == "call_dominant").sum()),
-                "put_dominant_events": int((group["dominance"] == "put_dominant").sum()),
+                "call_dominant_events": int(
+                    (group["dominance"] == "call_dominant").sum()
+                ),
+                "put_dominant_events": int(
+                    (group["dominance"] == "put_dominant").sum()
+                ),
                 "mixed_events": int((group["dominance"] == "mixed").sum()),
-                "avg_scoreable_premium": round(float(group["scoreable_premium"].mean()), 2),
+                "avg_scoreable_premium": round(
+                    float(group["scoreable_premium"].mean()), 2
+                ),
                 "avg_premium_vs_slot_p90": mean_pct(group["premium_vs_slot_p90"]),
                 "avg_5m_return_pct": mean_pct(group["forward_5m_return_pct"]),
                 "avg_15m_return_pct": mean_pct(group["forward_15m_return_pct"]),
                 "avg_30m_return_pct": mean_pct(group["forward_30m_return_pct"]),
                 "avg_60m_return_pct": mean_pct(group["forward_60m_return_pct"]),
-                "avg_to_close_return_pct": mean_pct(group["forward_to_close_return_pct"]),
-                "avg_next_open_return_pct": mean_pct(group["forward_next_open_return_pct"]),
+                "avg_to_close_return_pct": mean_pct(
+                    group["forward_to_close_return_pct"]
+                ),
+                "avg_next_open_return_pct": mean_pct(
+                    group["forward_next_open_return_pct"]
+                ),
                 "hit_rate_15m_pct": positive_rate_pct(group["forward_15m_return_pct"]),
-                "hit_rate_to_close_pct": positive_rate_pct(group["forward_to_close_return_pct"]),
-                "hit_rate_next_open_pct": positive_rate_pct(group["forward_next_open_return_pct"]),
+                "hit_rate_to_close_pct": positive_rate_pct(
+                    group["forward_to_close_return_pct"]
+                ),
+                "hit_rate_next_open_pct": positive_rate_pct(
+                    group["forward_next_open_return_pct"]
+                ),
             }
         )
     return pd.DataFrame(rows)
@@ -786,18 +903,30 @@ def build_summary_by_bucket(events: pd.DataFrame) -> pd.DataFrame:
                 "dominance": dominance,
                 "time_bucket": time_bucket,
                 "events": int(len(group)),
-                "avg_scoreable_premium": round(float(group["scoreable_premium"].mean()), 2),
+                "avg_scoreable_premium": round(
+                    float(group["scoreable_premium"].mean()), 2
+                ),
                 "avg_15m_return_pct": mean_pct(group["forward_15m_return_pct"]),
-                "avg_to_close_return_pct": mean_pct(group["forward_to_close_return_pct"]),
-                "avg_next_open_return_pct": mean_pct(group["forward_next_open_return_pct"]),
+                "avg_to_close_return_pct": mean_pct(
+                    group["forward_to_close_return_pct"]
+                ),
+                "avg_next_open_return_pct": mean_pct(
+                    group["forward_next_open_return_pct"]
+                ),
                 "hit_rate_15m_pct": positive_rate_pct(group["forward_15m_return_pct"]),
-                "hit_rate_to_close_pct": positive_rate_pct(group["forward_to_close_return_pct"]),
-                "hit_rate_next_open_pct": positive_rate_pct(group["forward_next_open_return_pct"]),
+                "hit_rate_to_close_pct": positive_rate_pct(
+                    group["forward_to_close_return_pct"]
+                ),
+                "hit_rate_next_open_pct": positive_rate_pct(
+                    group["forward_next_open_return_pct"]
+                ),
             }
         )
-    return pd.DataFrame(rows).sort_values(
-        ["primary_family", "dominance", "time_bucket"]
-    ).reset_index(drop=True)
+    return (
+        pd.DataFrame(rows)
+        .sort_values(["primary_family", "dominance", "time_bucket"])
+        .reset_index(drop=True)
+    )
 
 
 def render_report(
@@ -821,7 +950,9 @@ def render_report(
         f"- analysis sessions: `{analysis_dates[0].isoformat()}` to `{analysis_dates[-1].isoformat()}` ({len(analysis_dates)} sessions)"
     )
     lines.append(f"- baseline sessions: `{len(baseline_dates)}`")
-    lines.append(f"- allowed trade conditions: `{','.join(sorted(UOA_ALLOWED_TRADE_CONDITIONS))}`")
+    lines.append(
+        f"- allowed trade conditions: `{','.join(sorted(UOA_ALLOWED_TRADE_CONDITIONS))}`"
+    )
     lines.append(f"- tracked contracts: `{len(contracts)}`")
     lines.append(f"- analyzed windows: `{len(windows)}`")
     lines.append(f"- qualifying events: `{len(events)}`")
@@ -862,7 +993,9 @@ def write_outputs(
     events.to_csv(output_dir / "events.csv", index=False)
     summary_by_symbol.to_csv(output_dir / "summary_by_symbol.csv", index=False)
     summary_by_bucket.to_csv(output_dir / "summary_by_bucket.csv", index=False)
-    (output_dir / "meta.json").write_text(json.dumps(meta, indent=2, default=str), encoding="utf-8")
+    (output_dir / "meta.json").write_text(
+        json.dumps(meta, indent=2, default=str), encoding="utf-8"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -870,7 +1003,13 @@ def main(argv: list[str] | None = None) -> int:
     symbols = normalize_symbols(args.symbols)
     end_date = resolve_end_date(args.end_date)
     start_date = None if not args.start_date else date.fromisoformat(args.start_date)
-    full_schedule, working_schedule, analysis_dates, baseline_dates, next_session_by_session = choose_analysis_sessions(
+    (
+        full_schedule,
+        working_schedule,
+        analysis_dates,
+        baseline_dates,
+        next_session_by_session,
+    ) = choose_analysis_sessions(
         start_date=start_date,
         end_date=end_date,
         sessions=args.sessions,
@@ -918,7 +1057,10 @@ def main(argv: list[str] | None = None) -> int:
                 progress_label=f"{row.session_date.isoformat()} {symbol}",
             )
             if trades.empty:
-                print(f"{row.session_date.isoformat()} {symbol}: 0 trades", file=sys.stderr)
+                print(
+                    f"{row.session_date.isoformat()} {symbol}: 0 trades",
+                    file=sys.stderr,
+                )
             else:
                 print(
                     f"{row.session_date.isoformat()} {symbol}: {len(trades)} raw trades, "
@@ -952,11 +1094,14 @@ def main(argv: list[str] | None = None) -> int:
             *[
                 next_session
                 for session_date in analysis_dates
-                if (next_session := next_session_by_session.get(session_date)) is not None
+                if (next_session := next_session_by_session.get(session_date))
+                is not None
             ],
         }
     )
-    stock_sessions = full_schedule[full_schedule["session_date"].isin(analysis_plus_next)].copy()
+    stock_sessions = full_schedule[
+        full_schedule["session_date"].isin(analysis_plus_next)
+    ].copy()
     stock_bars = fetch_stock_bars(
         client,
         symbols=symbols,
@@ -1000,9 +1145,11 @@ def main(argv: list[str] | None = None) -> int:
         "excluded_trade_count",
         "excluded_premium",
     ]
-    events = analysis_events[selected_columns].sort_values(
-        ["symbol", "session_date", "slot_time"]
-    ).reset_index(drop=True)
+    events = (
+        analysis_events[selected_columns]
+        .sort_values(["symbol", "session_date", "slot_time"])
+        .reset_index(drop=True)
+    )
     summary_by_symbol = build_summary_by_symbol(analysis_events)
     summary_by_bucket = build_summary_by_bucket(analysis_events)
 

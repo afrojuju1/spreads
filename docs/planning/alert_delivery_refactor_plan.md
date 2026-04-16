@@ -156,18 +156,18 @@ API and web consumers were updated to:
 
 Primary files updated by this refactor:
 
-- [alert_models.py](/Users/adeb/Projects/spreads/src/spreads/storage/alert_models.py)
-- [alert_repository.py](/Users/adeb/Projects/spreads/src/spreads/storage/alert_repository.py)
-- [dispatcher.py](/Users/adeb/Projects/spreads/src/spreads/alerts/dispatcher.py)
-- [operator_actions.py](/Users/adeb/Projects/spreads/src/spreads/services/operator_actions.py)
-- [alert_delivery.py](/Users/adeb/Projects/spreads/src/spreads/services/alert_delivery.py)
-- [live_collector.py](/Users/adeb/Projects/spreads/src/spreads/jobs/live_collector.py)
-- [registry.py](/Users/adeb/Projects/spreads/src/spreads/jobs/registry.py)
-- [worker.py](/Users/adeb/Projects/spreads/src/spreads/jobs/worker.py)
-- [seed.py](/Users/adeb/Projects/spreads/src/spreads/jobs/seed.py)
-- [main.py](/Users/adeb/Projects/spreads/apps/api/main.py)
-- [providers.tsx](/Users/adeb/Projects/spreads/apps/web/components/providers.tsx)
-- [alerts-feed.tsx](/Users/adeb/Projects/spreads/apps/web/components/alerts/alerts-feed.tsx)
+- [alert_models.py](/Users/adeb/Projects/spreads/packages/core/storage/alert_models.py)
+- [alert_repository.py](/Users/adeb/Projects/spreads/packages/core/storage/alert_repository.py)
+- [dispatcher.py](/Users/adeb/Projects/spreads/packages/core/alerts/dispatcher.py)
+- [operator_actions.py](/Users/adeb/Projects/spreads/packages/core/services/operator_actions.py)
+- [alert_delivery.py](/Users/adeb/Projects/spreads/packages/core/services/alert_delivery.py)
+- [live_collector.py](/Users/adeb/Projects/spreads/packages/core/jobs/live_collector.py)
+- [registry.py](/Users/adeb/Projects/spreads/packages/core/jobs/registry.py)
+- [worker.py](/Users/adeb/Projects/spreads/packages/core/jobs/worker.py)
+- [seed.py](/Users/adeb/Projects/spreads/packages/core/jobs/seed.py)
+- [main.py](/Users/adeb/Projects/spreads/packages/api/main.py)
+- [providers.tsx](/Users/adeb/Projects/spreads/packages/web/components/providers.tsx)
+- [alerts-feed.tsx](/Users/adeb/Projects/spreads/packages/web/components/alerts/alerts-feed.tsx)
 
 ## Migration Notes
 

@@ -6,20 +6,20 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import create_engine, pool
 
-from spreads.storage import alert_models as storage_alert_models  # noqa: F401
-from spreads.storage import broker_models as storage_broker_models  # noqa: F401
-from spreads.storage import calendar_models as storage_calendar_models  # noqa: F401
-from spreads.storage import collector_models as storage_collector_models  # noqa: F401
-from spreads.storage import control_models as storage_control_models  # noqa: F401
-from spreads.storage import event_models as storage_event_models  # noqa: F401
-from spreads.storage import execution_models as storage_execution_models  # noqa: F401
-from spreads.storage import job_models as storage_job_models  # noqa: F401
-from spreads.storage import post_market_models as storage_post_market_models  # noqa: F401
-from spreads.storage import recovery_models as storage_recovery_models  # noqa: F401
-from spreads.storage import risk_models as storage_risk_models  # noqa: F401
-from spreads.storage import signal_models as storage_signal_models  # noqa: F401
-from spreads.storage.db import Base
-from spreads.storage import models as storage_models  # noqa: F401
+from core.storage import alert_models as storage_alert_models  # noqa: F401
+from core.storage import broker_models as storage_broker_models  # noqa: F401
+from core.storage import calendar_models as storage_calendar_models  # noqa: F401
+from core.storage import collector_models as storage_collector_models  # noqa: F401
+from core.storage import control_models as storage_control_models  # noqa: F401
+from core.storage import event_models as storage_event_models  # noqa: F401
+from core.storage import execution_models as storage_execution_models  # noqa: F401
+from core.storage import job_models as storage_job_models  # noqa: F401
+from core.storage import post_market_models as storage_post_market_models  # noqa: F401
+from core.storage import recovery_models as storage_recovery_models  # noqa: F401
+from core.storage import risk_models as storage_risk_models  # noqa: F401
+from core.storage import signal_models as storage_signal_models  # noqa: F401
+from core.storage.db import Base
+from core.storage import models as storage_models  # noqa: F401
 
 config = context.config
 

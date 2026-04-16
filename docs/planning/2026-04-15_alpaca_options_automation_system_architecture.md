@@ -159,12 +159,12 @@ Use one local operator config root with checked-in strategy definitions and untr
 Recommended layout:
 
 ```text
-config/options_automation/system.yaml
-config/options_automation/strategies/*.yaml
-config/options_automation/automations/*.yaml
-config/options_automation/policies/*.yaml
-config/options_automation/bots/*.yaml
-config/options_automation/universes/*.yaml
+packages/config/system.yaml
+packages/config/strategies/*.yaml
+packages/config/automations/*.yaml
+packages/config/policies/*.yaml
+packages/config/bots/*.yaml
+packages/config/universes/*.yaml
 .env.local
 ```
 

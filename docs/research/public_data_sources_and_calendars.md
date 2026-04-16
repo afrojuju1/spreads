@@ -8,9 +8,9 @@ Purpose: identify free or public data sources that can feed the system alongside
 
 The repo already has a calendar-events subsystem and three adapters:
 
-- [earnings_calendar.py](/Users/adeb/Projects/spreads/src/spreads/integrations/calendar_events/adapters/earnings_calendar.py)
-- [macro_calendar.py](/Users/adeb/Projects/spreads/src/spreads/integrations/calendar_events/adapters/macro_calendar.py)
-- [alpaca_corporate_actions.py](/Users/adeb/Projects/spreads/src/spreads/integrations/calendar_events/adapters/alpaca_corporate_actions.py)
+- [earnings_calendar.py](/Users/adeb/Projects/spreads/packages/core/integrations/calendar_events/adapters/earnings_calendar.py)
+- [macro_calendar.py](/Users/adeb/Projects/spreads/packages/core/integrations/calendar_events/adapters/macro_calendar.py)
+- [alpaca_corporate_actions.py](/Users/adeb/Projects/spreads/packages/core/integrations/calendar_events/adapters/alpaca_corporate_actions.py)
 
 Current posture:
 
@@ -269,7 +269,7 @@ This is still the weak point in the free stack.
 
 Current repo state:
 
-- [earnings_calendar.py](/Users/adeb/Projects/spreads/src/spreads/integrations/calendar_events/adapters/earnings_calendar.py) uses a low-confidence DoltHub earnings source
+- [earnings_calendar.py](/Users/adeb/Projects/spreads/packages/core/integrations/calendar_events/adapters/earnings_calendar.py) uses a low-confidence DoltHub earnings source
 
 Practical conclusion:
 

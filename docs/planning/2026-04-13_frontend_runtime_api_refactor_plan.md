@@ -27,7 +27,7 @@ Note:
 
 The current web app still calls deleted or intentionally removed surfaces:
 
-- [`apps/web/lib/api.ts`](../../apps/web/lib/api.ts)
+- [`packages/web/lib/api.ts`](../../packages/web/lib/api.ts)
   - `getLive()`
   - `getUniverses()`
   - `getGeneratorSymbols()`
@@ -43,18 +43,18 @@ The current web app still calls deleted or intentionally removed surfaces:
   - `createGeneratorCandidateAction()`
   - `buildGeneratorJobWebSocketUrl()`
 
-- [`apps/web/components/layout-nav.tsx`](../../apps/web/components/layout-nav.tsx)
+- [`packages/web/components/layout-nav.tsx`](../../packages/web/components/layout-nav.tsx)
   - still exposes `Generator`, `Alerts`, and `Jobs`
 
-- [`apps/web/components/providers.tsx`](../../apps/web/components/providers.tsx)
+- [`packages/web/components/providers.tsx`](../../packages/web/components/providers.tsx)
   - still invalidates generator, alerts, and jobs queries
   - still renders notices pointing to `/generator`, `/alerts`, and `/jobs`
   - still handles `generator.job.updated` as a first-class product event
 
 - route tree still includes pages that no longer have a canonical backend:
-  - [`apps/web/app/generator/page.tsx`](../../apps/web/app/generator/page.tsx)
-  - [`apps/web/app/alerts/page.tsx`](../../apps/web/app/alerts/page.tsx)
-  - [`apps/web/app/jobs/page.tsx`](../../apps/web/app/jobs/page.tsx)
+  - [`packages/web/app/generator/page.tsx`](../../packages/web/app/generator/page.tsx)
+  - [`packages/web/app/alerts/page.tsx`](../../packages/web/app/alerts/page.tsx)
+  - [`packages/web/app/jobs/page.tsx`](../../packages/web/app/jobs/page.tsx)
 
 ## Target Product Surface
 
@@ -78,7 +78,7 @@ If those views are still needed later, they should return as a separate `/ops` o
 
 ### 1. Shrink the API client to canonical runtime calls
 
-[`apps/web/lib/api.ts`](../../apps/web/lib/api.ts) should keep only:
+[`packages/web/lib/api.ts`](../../packages/web/lib/api.ts) should keep only:
 
 - `getAccountOverview()`
 - `getSessions()`
@@ -98,21 +98,21 @@ Delete the API client methods for removed backend routes instead of leaving them
 
 The app route tree should reduce to:
 
-- [`apps/web/app/page.tsx`](../../apps/web/app/page.tsx)
+- [`packages/web/app/page.tsx`](../../packages/web/app/page.tsx)
   - keep redirect to `/sessions`
-- `apps/web/app/account/page.tsx`
-- `apps/web/app/sessions/page.tsx`
-- `apps/web/app/sessions/[sessionId]/page.tsx`
+- `packages/web/app/account/page.tsx`
+- `packages/web/app/sessions/page.tsx`
+- `packages/web/app/sessions/[sessionId]/page.tsx`
 
 Remove:
 
-- `apps/web/app/generator/page.tsx`
-- `apps/web/app/alerts/page.tsx`
-- `apps/web/app/jobs/page.tsx`
+- `packages/web/app/generator/page.tsx`
+- `packages/web/app/alerts/page.tsx`
+- `packages/web/app/jobs/page.tsx`
 
 ### 3. Simplify navigation
 
-[`apps/web/components/layout-nav.tsx`](../../apps/web/components/layout-nav.tsx) should only show:
+[`packages/web/components/layout-nav.tsx`](../../packages/web/components/layout-nav.tsx) should only show:
 
 - `Sessions`
 - `Account`
@@ -121,7 +121,7 @@ Do not leave dead nav items that route into pages backed by deleted API contract
 
 ### 4. Re-scope realtime handling
 
-[`apps/web/components/providers.tsx`](../../apps/web/components/providers.tsx) should be simplified around the runtime app:
+[`packages/web/components/providers.tsx`](../../packages/web/components/providers.tsx) should be simplified around the runtime app:
 
 - keep global websocket connection to `/ws/events`
 - invalidate only:
@@ -183,7 +183,7 @@ Result:
 
 ### Phase 3: tighten the session workspace
 
-- review [`apps/web/components/sessions/session-detail.tsx`](../../apps/web/components/sessions/session-detail.tsx)
+- review [`packages/web/components/sessions/session-detail.tsx`](../../packages/web/components/sessions/session-detail.tsx)
 - collapse any UI that still assumes separate jobs/alerts/generator destinations
 - make session detail the single operational drill-down surface
 

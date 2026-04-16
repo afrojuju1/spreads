@@ -13,16 +13,18 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+PACKAGES = ROOT / "packages"
+if str(PACKAGES) not in sys.path:
+    sys.path.insert(0, str(PACKAGES))
 
-from spreads.services.alpaca import create_alpaca_client_from_env  # noqa: E402
-from spreads.services.scanner import AlpacaClient  # noqa: E402
+from core.services.alpaca import create_alpaca_client_from_env  # noqa: E402
+from core.services.scanner import AlpacaClient  # noqa: E402
 
 NEW_YORK = ZoneInfo("America/New_York")
 DEFAULT_SOURCE_ROOT = ROOT / "outputs" / "analysis" / "alpaca_flow_regime_matrix"
-DEFAULT_OUTPUT_ROOT = ROOT / "outputs" / "analysis" / "alpaca_flow_counter_regime_context"
+DEFAULT_OUTPUT_ROOT = (
+    ROOT / "outputs" / "analysis" / "alpaca_flow_counter_regime_context"
+)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -102,7 +104,10 @@ def get_json_with_retry(
             last_error = exc
             if attempt >= attempts:
                 raise
-            print(f"Retrying {path} after attempt {attempt} failed: {exc}", file=sys.stderr)
+            print(
+                f"Retrying {path} after attempt {attempt} failed: {exc}",
+                file=sys.stderr,
+            )
             time.sleep(sleep_seconds * attempt)
     if last_error is not None:  # pragma: no cover - safety
         raise last_error
@@ -135,8 +140,12 @@ def bool_rate_pct(series: pd.Series) -> float | None:
 
 
 def opposite_nonzero_sign(left: pd.Series, right: pd.Series) -> pd.Series:
-    left_sign = left.apply(lambda value: None if pd.isna(value) or value == 0 else value > 0)
-    right_sign = right.apply(lambda value: None if pd.isna(value) or value == 0 else value > 0)
+    left_sign = left.apply(
+        lambda value: None if pd.isna(value) or value == 0 else value > 0
+    )
+    right_sign = right.apply(
+        lambda value: None if pd.isna(value) or value == 0 else value > 0
+    )
     return pd.Series(
         [
             None if a is None or b is None else a != b
@@ -155,12 +164,18 @@ def classify_signed_context(change_pct: float | None, flat_threshold_pct: float)
     return "up" if float(change_pct) > 0 else "down"
 
 
-def classify_regime_relative_context(change_pct: float | None, *, regime: str, flat_threshold_pct: float) -> str:
+def classify_regime_relative_context(
+    change_pct: float | None, *, regime: str, flat_threshold_pct: float
+) -> str:
     if change_pct is None or pd.isna(change_pct):
         return "unknown"
     if abs(float(change_pct)) < flat_threshold_pct:
         return "flat"
-    return "with_regime" if float(change_pct) * regime_direction(regime) > 0 else "against_regime"
+    return (
+        "with_regime"
+        if float(change_pct) * regime_direction(regime) > 0
+        else "against_regime"
+    )
 
 
 def load_counter_regime_events(source_root: Path, source_label: str) -> pd.DataFrame:
@@ -193,7 +208,8 @@ def load_counter_regime_events(source_root: Path, source_label: str) -> pd.DataF
         filtered["forward_15m_return_pct"], filtered["forward_to_close_return_pct"]
     )
     filtered["flip_to_close_to_next_open"] = opposite_nonzero_sign(
-        filtered["forward_to_close_return_pct"], filtered["forward_next_open_return_pct"]
+        filtered["forward_to_close_return_pct"],
+        filtered["forward_next_open_return_pct"],
     )
     return filtered.reset_index(drop=True)
 
@@ -243,12 +259,18 @@ def fetch_daily_bars(
                         "volume": int(bar.get("v") or 0),
                     }
                 )
-        page_token = payload.get("next_page_token") if isinstance(payload, dict) else None
+        page_token = (
+            payload.get("next_page_token") if isinstance(payload, dict) else None
+        )
         if not page_token:
             break
     if not rows:
         raise SystemExit("No Alpaca daily bars returned for the requested date range")
-    frame = pd.DataFrame(rows).drop_duplicates(subset=["symbol", "session_date"]).sort_values(["symbol", "session_date"])
+    frame = (
+        pd.DataFrame(rows)
+        .drop_duplicates(subset=["symbol", "session_date"])
+        .sort_values(["symbol", "session_date"])
+    )
     return frame.reset_index(drop=True)
 
 
@@ -267,12 +289,27 @@ def build_daily_context(
             prior_day_return_pct = None
             prior_2day_return_pct = None
             if prev_row is not None and prev_row["close"] > 0:
-                gap_pct = round((float(row["open"]) / float(prev_row["close"]) - 1.0) * 100.0, 4)
+                gap_pct = round(
+                    (float(row["open"]) / float(prev_row["close"]) - 1.0) * 100.0, 4
+                )
                 if float(prev_row["open"]) > 0:
-                    prior_day_return_pct = round((float(prev_row["close"]) / float(prev_row["open"]) - 1.0) * 100.0, 4)
-            if index >= 2 and float(ordered.iloc[index - 2]["close"]) > 0 and prev_row is not None:
+                    prior_day_return_pct = round(
+                        (float(prev_row["close"]) / float(prev_row["open"]) - 1.0)
+                        * 100.0,
+                        4,
+                    )
+            if (
+                index >= 2
+                and float(ordered.iloc[index - 2]["close"]) > 0
+                and prev_row is not None
+            ):
                 prior_2day_return_pct = round(
-                    (float(prev_row["close"]) / float(ordered.iloc[index - 2]["close"]) - 1.0) * 100.0,
+                    (
+                        float(prev_row["close"])
+                        / float(ordered.iloc[index - 2]["close"])
+                        - 1.0
+                    )
+                    * 100.0,
                     4,
                 )
             rows.append(
@@ -282,9 +319,13 @@ def build_daily_context(
                     "session_open": round(float(row["open"]), 4),
                     "session_close": round(float(row["close"]), 4),
                     "gap_pct": gap_pct,
-                    "gap_direction": classify_signed_context(gap_pct, gap_flat_threshold_pct),
+                    "gap_direction": classify_signed_context(
+                        gap_pct, gap_flat_threshold_pct
+                    ),
                     "prior_day_return_pct": prior_day_return_pct,
-                    "prior_day_direction": classify_signed_context(prior_day_return_pct, prior_day_flat_threshold_pct),
+                    "prior_day_direction": classify_signed_context(
+                        prior_day_return_pct, prior_day_flat_threshold_pct
+                    ),
                     "prior_2day_return_pct": prior_2day_return_pct,
                 }
             )
@@ -300,8 +341,13 @@ def attach_context(
 ) -> pd.DataFrame:
     merged = events.merge(context, on=["symbol", "session_date"], how="left")
     if merged["gap_pct"].isna().any():
-        missing = merged[merged["gap_pct"].isna()][["symbol", "session_date"]].drop_duplicates()
-        missing_pairs = ", ".join(f"{row.symbol}:{row.session_date.isoformat()}" for row in missing.itertuples(index=False))
+        missing = merged[merged["gap_pct"].isna()][
+            ["symbol", "session_date"]
+        ].drop_duplicates()
+        missing_pairs = ", ".join(
+            f"{row.symbol}:{row.session_date.isoformat()}"
+            for row in missing.itertuples(index=False)
+        )
         raise SystemExit(f"Missing daily context for some events: {missing_pairs}")
 
     merged["gap_context"] = merged.apply(
@@ -327,19 +373,30 @@ def attach_context(
     merged["regime_adjusted_15m_pct"] = merged.apply(
         lambda row: None
         if pd.isna(row["forward_15m_return_pct"])
-        else round(float(row["forward_15m_return_pct"]) * regime_direction(str(row["regime"])), 4),
+        else round(
+            float(row["forward_15m_return_pct"]) * regime_direction(str(row["regime"])),
+            4,
+        ),
         axis=1,
     )
     merged["regime_adjusted_to_close_pct"] = merged.apply(
         lambda row: None
         if pd.isna(row["forward_to_close_return_pct"])
-        else round(float(row["forward_to_close_return_pct"]) * regime_direction(str(row["regime"])), 4),
+        else round(
+            float(row["forward_to_close_return_pct"])
+            * regime_direction(str(row["regime"])),
+            4,
+        ),
         axis=1,
     )
     merged["regime_adjusted_next_open_pct"] = merged.apply(
         lambda row: None
         if pd.isna(row["forward_next_open_return_pct"])
-        else round(float(row["forward_next_open_return_pct"]) * regime_direction(str(row["regime"])), 4),
+        else round(
+            float(row["forward_next_open_return_pct"])
+            * regime_direction(str(row["regime"])),
+            4,
+        ),
         axis=1,
     )
     return merged
@@ -356,21 +413,41 @@ def build_summary(frame: pd.DataFrame, group_columns: list[str]) -> pd.DataFrame
             {
                 "events": int(len(group)),
                 "sessions": session_count,
-                "avg_events_per_session": round(float(len(group) / session_count), 2) if session_count > 0 else None,
-                "avg_scoreable_premium": round(float(group["scoreable_premium"].mean()), 2),
+                "avg_events_per_session": round(float(len(group) / session_count), 2)
+                if session_count > 0
+                else None,
+                "avg_scoreable_premium": round(
+                    float(group["scoreable_premium"].mean()), 2
+                ),
                 "avg_gap_pct": mean_value(group["gap_pct"]),
                 "avg_prior_day_return_pct": mean_value(group["prior_day_return_pct"]),
                 "avg_15m_return_pct": mean_value(group["forward_15m_return_pct"]),
-                "avg_to_close_return_pct": mean_value(group["forward_to_close_return_pct"]),
-                "avg_next_open_return_pct": mean_value(group["forward_next_open_return_pct"]),
+                "avg_to_close_return_pct": mean_value(
+                    group["forward_to_close_return_pct"]
+                ),
+                "avg_next_open_return_pct": mean_value(
+                    group["forward_next_open_return_pct"]
+                ),
                 "hit_rate_15m_pct": positive_rate_pct(group["forward_15m_return_pct"]),
-                "hit_rate_to_close_pct": positive_rate_pct(group["forward_to_close_return_pct"]),
-                "hit_rate_next_open_pct": positive_rate_pct(group["forward_next_open_return_pct"]),
+                "hit_rate_to_close_pct": positive_rate_pct(
+                    group["forward_to_close_return_pct"]
+                ),
+                "hit_rate_next_open_pct": positive_rate_pct(
+                    group["forward_next_open_return_pct"]
+                ),
                 "flip_15m_to_close_pct": bool_rate_pct(group["flip_15m_to_close"]),
-                "flip_to_close_to_next_open_pct": bool_rate_pct(group["flip_to_close_to_next_open"]),
-                "regime_adjusted_avg_15m_pct": mean_value(group["regime_adjusted_15m_pct"]),
-                "regime_adjusted_avg_to_close_pct": mean_value(group["regime_adjusted_to_close_pct"]),
-                "regime_adjusted_avg_next_open_pct": mean_value(group["regime_adjusted_next_open_pct"]),
+                "flip_to_close_to_next_open_pct": bool_rate_pct(
+                    group["flip_to_close_to_next_open"]
+                ),
+                "regime_adjusted_avg_15m_pct": mean_value(
+                    group["regime_adjusted_15m_pct"]
+                ),
+                "regime_adjusted_avg_to_close_pct": mean_value(
+                    group["regime_adjusted_to_close_pct"]
+                ),
+                "regime_adjusted_avg_next_open_pct": mean_value(
+                    group["regime_adjusted_next_open_pct"]
+                ),
             }
         )
         rows.append(row)
@@ -388,7 +465,9 @@ def make_support_table(
     filtered = summary[summary["events"] >= min_events].copy()
     if filtered.empty:
         return filtered
-    ordered = filtered.sort_values(sort_columns, ascending=ascending).reset_index(drop=True)
+    ordered = filtered.sort_values(sort_columns, ascending=ascending).reset_index(
+        drop=True
+    )
     return ordered if limit is None else ordered.head(limit)
 
 
@@ -426,7 +505,9 @@ def render_report(
     lines.append("")
     lines.append("- overnight gap: current session open vs prior session close")
     lines.append("- prior-day trend: prior session close vs prior session open")
-    lines.append("- with-regime / against-regime are classified relative to the run regime, not raw up/down direction")
+    lines.append(
+        "- with-regime / against-regime are classified relative to the run regime, not raw up/down direction"
+    )
     lines.append("")
     lines.append("## Summary By Context")
     lines.append("")
@@ -472,9 +553,13 @@ def write_outputs(
     highest_flip: pd.DataFrame,
     meta: dict[str, Any],
 ) -> None:
-    events_with_context.to_csv(output_dir / "counter_regime_events_with_context.csv", index=False)
+    events_with_context.to_csv(
+        output_dir / "counter_regime_events_with_context.csv", index=False
+    )
     summary_by_context.to_csv(output_dir / "summary_by_context.csv", index=False)
-    summary_by_time_bucket.to_csv(output_dir / "summary_by_time_bucket.csv", index=False)
+    summary_by_time_bucket.to_csv(
+        output_dir / "summary_by_time_bucket.csv", index=False
+    )
     best_to_close.to_csv(output_dir / "best_to_close_buckets.csv", index=False)
     best_next_open.to_csv(output_dir / "best_next_open_buckets.csv", index=False)
     highest_flip.to_csv(output_dir / "highest_flip_buckets.csv", index=False)
@@ -487,7 +572,9 @@ def main(argv: list[str] | None = None) -> int:
     output_dir = make_output_dir(Path(args.output_root), args.label)
     events = load_counter_regime_events(source_root, args.source_label)
 
-    symbols = sorted(events["symbol"].dropna().astype(str).str.upper().unique().tolist())
+    symbols = sorted(
+        events["symbol"].dropna().astype(str).str.upper().unique().tolist()
+    )
     min_session = min(events["session_date"])
     max_session = max(events["session_date"])
 
@@ -522,7 +609,13 @@ def main(argv: list[str] | None = None) -> int:
     summary_by_time_bucket = make_support_table(
         full_time_bucket_summary,
         min_events=args.min_events,
-        sort_columns=["regime", "symbol", "time_bucket", "gap_context", "prior_day_context"],
+        sort_columns=[
+            "regime",
+            "symbol",
+            "time_bucket",
+            "gap_context",
+            "prior_day_context",
+        ],
         ascending=[True, True, True, True, True],
     )
     best_to_close = make_support_table(

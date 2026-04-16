@@ -65,14 +65,14 @@ Redis = transport, queueing, leases, and pub/sub fanout
                       v                                                 v
            +----------+-----------+                         +-----------+----------+
            |   Web UI (Next.js)   |                         |   CLI entrypoints    |
-           |     apps/web         |                         | scan / collect / ops |
+           |     packages/web         |                         | scan / collect / ops |
            +----------+-----------+                         | replay / research    |
                       |                                     +-----------+----------+
                       | HTTP + WS                                      |
                       v                                                 |
            +----------+-------------------------------------------------+----------+
            |                         API (FastAPI)                                  |
-           |                        apps/api/app                                    |
+           |                        packages/api/app                                    |
            | account | control | sessions | UOA | ws/events                        |
            +----------+-------------------------------+----------------+------------+
                       |                               |                |

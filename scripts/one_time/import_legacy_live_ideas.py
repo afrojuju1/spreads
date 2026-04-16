@@ -9,11 +9,11 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+PACKAGES = ROOT / "packages"
+if str(PACKAGES) not in sys.path:
+    sys.path.insert(0, str(PACKAGES))
 
-from spreads.storage import build_collector_repository, default_database_url
+from core.storage import build_collector_repository, default_database_url
 
 
 def parse_args() -> argparse.Namespace:
@@ -96,7 +96,9 @@ def main() -> int:
     snapshots_dir = live_ideas_dir / "snapshots"
     allowed_labels = None
     if args.labels:
-        allowed_labels = {item.strip() for item in args.labels.split(",") if item.strip()}
+        allowed_labels = {
+            item.strip() for item in args.labels.split(",") if item.strip()
+        }
 
     if not snapshots_dir.exists():
         raise SystemExit(f"Snapshots directory not found: {snapshots_dir}")
@@ -123,11 +125,22 @@ def main() -> int:
             profile = payload.get("profile")
             greeks_source = payload.get("greeks_source")
             symbols = payload.get("symbols")
-            if not cycle_id or not generated_at or not label or not strategy or not profile or not greeks_source or not isinstance(symbols, list):
+            if (
+                not cycle_id
+                or not generated_at
+                or not label
+                or not strategy
+                or not profile
+                or not greeks_source
+                or not isinstance(symbols, list)
+            ):
                 skipped_invalid += 1
                 continue
 
-            if collector_store.get_cycle(str(cycle_id)) is not None and not args.replace_existing:
+            if (
+                collector_store.get_cycle(str(cycle_id)) is not None
+                and not args.replace_existing
+            ):
                 skipped_existing += 1
                 continue
 

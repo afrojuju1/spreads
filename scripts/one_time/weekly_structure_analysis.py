@@ -17,12 +17,12 @@ from zoneinfo import ZoneInfo
 import pandas_market_calendars as mcal
 
 ROOT = Path(__file__).resolve().parents[2]
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+PACKAGES = ROOT / "packages"
+if str(PACKAGES) not in sys.path:
+    sys.path.insert(0, str(PACKAGES))
 
-from spreads.services.alpaca import create_alpaca_client_from_env  # noqa: E402
-from spreads.services.scanner import AlpacaClient, DailyBar  # noqa: E402
+from core.services.alpaca import create_alpaca_client_from_env  # noqa: E402
+from core.services.scanner import AlpacaClient, DailyBar  # noqa: E402
 
 NEW_YORK = ZoneInfo("America/New_York")
 
@@ -280,7 +280,9 @@ def safe_correlation(xs: list[float], ys: list[float]) -> float | None:
 
 
 @lru_cache(maxsize=None)
-def build_eligible_weeks(*, requested_start: date, requested_end: date) -> list[tuple[date, date]]:
+def build_eligible_weeks(
+    *, requested_start: date, requested_end: date
+) -> list[tuple[date, date]]:
     nyse = mcal.get_calendar("NYSE")
     schedule = nyse.schedule(
         start_date=start_of_week(requested_start).isoformat(),
@@ -304,7 +306,9 @@ def build_eligible_weeks(*, requested_start: date, requested_end: date) -> list[
     return eligible_weeks
 
 
-def build_condition_profile(label: str, periods: list[WeeklyPeriod]) -> ConditionProfile:
+def build_condition_profile(
+    label: str, periods: list[WeeklyPeriod]
+) -> ConditionProfile:
     rest = [period.rest_of_week_pct for period in periods]
     full = [period.full_week_pct for period in periods]
     return ConditionProfile(
@@ -317,7 +321,9 @@ def build_condition_profile(label: str, periods: list[WeeklyPeriod]) -> Conditio
     )
 
 
-def build_regime_profile(*, regime_type: str, label: str, periods: list[WeeklyPeriod]) -> RegimeProfile:
+def build_regime_profile(
+    *, regime_type: str, label: str, periods: list[WeeklyPeriod]
+) -> RegimeProfile:
     full = [period.full_week_pct for period in periods]
     rest = [period.rest_of_week_pct for period in periods]
     return RegimeProfile(
@@ -331,10 +337,22 @@ def build_regime_profile(*, regime_type: str, label: str, periods: list[WeeklyPe
 
 
 def build_monday_signal_profile(periods: list[WeeklyPeriod]) -> MondaySignalProfile:
-    monday_periods = [period for period in periods if date.fromisoformat(period.first_day).weekday() == 0]
+    monday_periods = [
+        period
+        for period in periods
+        if date.fromisoformat(period.first_day).weekday() == 0
+    ]
     rest = [period.rest_of_week_pct for period in monday_periods]
-    red_rest = [period.rest_of_week_pct for period in monday_periods if period.first_day_intraday_pct < 0.0]
-    green_rest = [period.rest_of_week_pct for period in monday_periods if period.first_day_intraday_pct > 0.0]
+    red_rest = [
+        period.rest_of_week_pct
+        for period in monday_periods
+        if period.first_day_intraday_pct < 0.0
+    ]
+    green_rest = [
+        period.rest_of_week_pct
+        for period in monday_periods
+        if period.first_day_intraday_pct > 0.0
+    ]
     return MondaySignalProfile(
         monday_weeks=len(monday_periods),
         monday_vs_tue_fri_corr=safe_correlation(
@@ -369,7 +387,9 @@ def build_window_core(
 
         weekend_gap_into_week_pct = None
         if previous_week_last_close is not None:
-            weekend_gap_into_week_pct = (first_bar.open / previous_week_last_close - 1.0) * 100.0
+            weekend_gap_into_week_pct = (
+                first_bar.open / previous_week_last_close - 1.0
+            ) * 100.0
 
         weekly_periods.append(
             WeeklyPeriod(
@@ -415,7 +435,9 @@ def build_window_core(
             continue
         weekend_gap_factor *= 1.0 + (period.weekend_gap_into_week_pct / 100.0)
 
-    within_week_gap_factor = total_gap_factor / weekend_gap_factor if weekend_gap_factor != 0.0 else 1.0
+    within_week_gap_factor = (
+        total_gap_factor / weekend_gap_factor if weekend_gap_factor != 0.0 else 1.0
+    )
     buy_and_hold_factor = filtered_bars[-1].close / filtered_bars[0].open
 
     return WindowCore(
@@ -443,11 +465,15 @@ def build_weekday_profiles(
     gap_by_weekday: dict[int, list[float]] = {index: [] for index in range(5)}
 
     for index, (bar, session_date) in enumerate(zip(daily_bars, daily_dates)):
-        intraday_by_weekday[session_date.weekday()].append((bar.close / bar.open - 1.0) * 100.0)
+        intraday_by_weekday[session_date.weekday()].append(
+            (bar.close / bar.open - 1.0) * 100.0
+        )
         if index == 0:
             continue
         previous_bar = daily_bars[index - 1]
-        gap_by_weekday[session_date.weekday()].append((bar.open / previous_bar.close - 1.0) * 100.0)
+        gap_by_weekday[session_date.weekday()].append(
+            (bar.open / previous_bar.close - 1.0) * 100.0
+        )
 
     profiles: list[DayOfWeekProfile] = []
     for weekday_index in range(5):
@@ -499,16 +525,32 @@ def build_rolling_window_profiles(
                 window_months=window_months,
                 windows=len(window_cores),
                 avg_buy_and_hold_return_pct=safe_mean(
-                    [core.buy_and_hold_return_pct for core in window_cores if core.buy_and_hold_return_pct is not None]
+                    [
+                        core.buy_and_hold_return_pct
+                        for core in window_cores
+                        if core.buy_and_hold_return_pct is not None
+                    ]
                 ),
                 median_buy_and_hold_return_pct=safe_median(
-                    [core.buy_and_hold_return_pct for core in window_cores if core.buy_and_hold_return_pct is not None]
+                    [
+                        core.buy_and_hold_return_pct
+                        for core in window_cores
+                        if core.buy_and_hold_return_pct is not None
+                    ]
                 ),
                 avg_intraday_return_pct=safe_mean(
-                    [core.intraday_return_pct for core in window_cores if core.intraday_return_pct is not None]
+                    [
+                        core.intraday_return_pct
+                        for core in window_cores
+                        if core.intraday_return_pct is not None
+                    ]
                 ),
                 avg_total_gap_return_pct=safe_mean(
-                    [core.total_gap_return_pct for core in window_cores if core.total_gap_return_pct is not None]
+                    [
+                        core.total_gap_return_pct
+                        for core in window_cores
+                        if core.total_gap_return_pct is not None
+                    ]
                 ),
                 gap_dominant_window_rate_pct=win_rate_pct(
                     [
@@ -525,7 +567,8 @@ def build_rolling_window_profiles(
                 positive_weekend_gap_window_rate_pct=win_rate_pct(
                     [
                         1.0
-                        if core.weekend_gap_return_pct is not None and core.weekend_gap_return_pct > 0.0
+                        if core.weekend_gap_return_pct is not None
+                        and core.weekend_gap_return_pct > 0.0
                         else -1.0
                         for core in window_cores
                     ]
@@ -541,7 +584,9 @@ def build_regime_profiles(
     weekly_periods: list[WeeklyPeriod],
 ) -> tuple[list[RegimeProfile], list[RegimeProfile]]:
     ordered_dates = sorted(bars_by_date)
-    date_to_index = {session_date: index for index, session_date in enumerate(ordered_dates)}
+    date_to_index = {
+        session_date: index for index, session_date in enumerate(ordered_dates)
+    }
     trailing_vol_by_week_start: dict[str, float] = {}
     drawdown_state_by_week_start: dict[str, bool] = {}
     volatility_samples: list[float] = []
@@ -557,24 +602,45 @@ def build_regime_profiles(
 
         trailing_high_window = prior_dates[-252:] if len(prior_dates) >= 1 else []
         if trailing_high_window:
-            trailing_high = max(bars_by_date[session_date].close for session_date in trailing_high_window)
-            drawdown_state_by_week_start[period.first_day] = prior_close / trailing_high - 1.0 <= -0.10
+            trailing_high = max(
+                bars_by_date[session_date].close
+                for session_date in trailing_high_window
+            )
+            drawdown_state_by_week_start[period.first_day] = (
+                prior_close / trailing_high - 1.0 <= -0.10
+            )
 
         trailing_return_window = prior_dates[-21:]
         if len(trailing_return_window) >= 21:
-            closes = [bars_by_date[session_date].close for session_date in trailing_return_window]
-            close_returns = [(current / previous) - 1.0 for previous, current in zip(closes, closes[1:])]
+            closes = [
+                bars_by_date[session_date].close
+                for session_date in trailing_return_window
+            ]
+            close_returns = [
+                (current / previous) - 1.0
+                for previous, current in zip(closes, closes[1:])
+            ]
             if len(close_returns) >= 2:
                 mean_return = mean(close_returns)
-                variance = sum((value - mean_return) ** 2 for value in close_returns) / (len(close_returns) - 1)
+                variance = sum(
+                    (value - mean_return) ** 2 for value in close_returns
+                ) / (len(close_returns) - 1)
                 realized_vol = math.sqrt(variance) * math.sqrt(252.0) * 100.0
                 trailing_vol_by_week_start[period.first_day] = realized_vol
                 volatility_samples.append(realized_vol)
 
     volatility_cutoff = median(volatility_samples) if volatility_samples else None
 
-    drawdown_periods = [period for period in weekly_periods if drawdown_state_by_week_start.get(period.first_day) is True]
-    non_drawdown_periods = [period for period in weekly_periods if drawdown_state_by_week_start.get(period.first_day) is False]
+    drawdown_periods = [
+        period
+        for period in weekly_periods
+        if drawdown_state_by_week_start.get(period.first_day) is True
+    ]
+    non_drawdown_periods = [
+        period
+        for period in weekly_periods
+        if drawdown_state_by_week_start.get(period.first_day) is False
+    ]
 
     high_vol_periods = []
     low_vol_periods = []
@@ -589,12 +655,20 @@ def build_regime_profiles(
                 low_vol_periods.append(period)
 
     drawdown_profiles = [
-        build_regime_profile(regime_type="drawdown", label="drawdown>=10%", periods=drawdown_periods),
-        build_regime_profile(regime_type="drawdown", label="drawdown<10%", periods=non_drawdown_periods),
+        build_regime_profile(
+            regime_type="drawdown", label="drawdown>=10%", periods=drawdown_periods
+        ),
+        build_regime_profile(
+            regime_type="drawdown", label="drawdown<10%", periods=non_drawdown_periods
+        ),
     ]
     volatility_profiles = [
-        build_regime_profile(regime_type="volatility", label="high_vol", periods=high_vol_periods),
-        build_regime_profile(regime_type="volatility", label="low_vol", periods=low_vol_periods),
+        build_regime_profile(
+            regime_type="volatility", label="high_vol", periods=high_vol_periods
+        ),
+        build_regime_profile(
+            regime_type="volatility", label="low_vol", periods=low_vol_periods
+        ),
     ]
     return drawdown_profiles, volatility_profiles
 
@@ -615,7 +689,11 @@ def build_possible_insights(
 ) -> list[str]:
     insights: list[str] = []
 
-    if buy_and_hold_return_pct > 0 and intraday_return_pct < 0 and total_gap_return_pct > buy_and_hold_return_pct:
+    if (
+        buy_and_hold_return_pct > 0
+        and intraday_return_pct < 0
+        and total_gap_return_pct > buy_and_hold_return_pct
+    ):
         insights.append(
             f"{symbol} was net positive only because non-session gaps offset negative intraday drift."
         )
@@ -662,7 +740,9 @@ def build_possible_insights(
 
     best_intraday_day = max(
         weekday_profiles,
-        key=lambda profile: profile.avg_intraday_pct if profile.avg_intraday_pct is not None else float("-inf"),
+        key=lambda profile: profile.avg_intraday_pct
+        if profile.avg_intraday_pct is not None
+        else float("-inf"),
     )
     if best_intraday_day.avg_intraday_pct is not None:
         insights.append(
@@ -671,7 +751,9 @@ def build_possible_insights(
 
     best_gap_day = max(
         weekday_profiles,
-        key=lambda profile: profile.avg_gap_into_open_pct if profile.avg_gap_into_open_pct is not None else float("-inf"),
+        key=lambda profile: profile.avg_gap_into_open_pct
+        if profile.avg_gap_into_open_pct is not None
+        else float("-inf"),
     )
     if best_gap_day.avg_gap_into_open_pct is not None:
         insights.append(
@@ -756,11 +838,19 @@ def analyze_symbol(
     filtered_dates = core.filtered_dates
     filtered_bars = core.filtered_bars
     full_week_returns = [period.full_week_pct for period in weekly_periods]
-    first_day_intraday_returns = [period.first_day_intraday_pct for period in weekly_periods]
+    first_day_intraday_returns = [
+        period.first_day_intraday_pct for period in weekly_periods
+    ]
     rest_of_week_returns = [period.rest_of_week_pct for period in weekly_periods]
-    red_first_day_periods = [period for period in weekly_periods if period.first_day_intraday_pct < 0.0]
-    green_first_day_periods = [period for period in weekly_periods if period.first_day_intraday_pct > 0.0]
-    weekday_profiles = build_weekday_profiles(daily_bars=filtered_bars, daily_dates=filtered_dates)
+    red_first_day_periods = [
+        period for period in weekly_periods if period.first_day_intraday_pct < 0.0
+    ]
+    green_first_day_periods = [
+        period for period in weekly_periods if period.first_day_intraday_pct > 0.0
+    ]
+    weekday_profiles = build_weekday_profiles(
+        daily_bars=filtered_bars, daily_dates=filtered_dates
+    )
     monday_signal = build_monday_signal_profile(weekly_periods)
     rolling_windows = build_rolling_window_profiles(
         bars_by_date=bars_by_date,
@@ -778,8 +868,12 @@ def analyze_symbol(
         symbol=symbol,
         requested_start=requested_start.isoformat(),
         requested_end=requested_end.isoformat(),
-        first_included_day=None if core.first_included_day is None else core.first_included_day.isoformat(),
-        last_included_day=None if core.last_included_day is None else core.last_included_day.isoformat(),
+        first_included_day=None
+        if core.first_included_day is None
+        else core.first_included_day.isoformat(),
+        last_included_day=None
+        if core.last_included_day is None
+        else core.last_included_day.isoformat(),
         trading_days=core.trading_days,
         full_weeks=core.full_weeks,
         buy_and_hold_return_pct=core.buy_and_hold_return_pct,
@@ -794,9 +888,15 @@ def analyze_symbol(
         median_first_day_intraday_pct=safe_median(first_day_intraday_returns),
         avg_rest_of_week_pct=safe_mean(rest_of_week_returns),
         median_rest_of_week_pct=safe_median(rest_of_week_returns),
-        first_day_vs_rest_corr=safe_correlation(first_day_intraday_returns, rest_of_week_returns),
-        after_red_first_day=build_condition_profile("after_red_first_day", red_first_day_periods),
-        after_green_first_day=build_condition_profile("after_green_first_day", green_first_day_periods),
+        first_day_vs_rest_corr=safe_correlation(
+            first_day_intraday_returns, rest_of_week_returns
+        ),
+        after_red_first_day=build_condition_profile(
+            "after_red_first_day", red_first_day_periods
+        ),
+        after_green_first_day=build_condition_profile(
+            "after_green_first_day", green_first_day_periods
+        ),
         monday_signal=monday_signal,
         rolling_windows=rolling_windows,
         drawdown_regimes=drawdown_regimes,
@@ -881,8 +981,14 @@ def render_text(results: list[SymbolAnalysisResult], *, show_weeks: int) -> str:
                 lines.append(f"    - {insight}")
         if show_weeks > 0 and result.weekly_periods:
             lines.append("  Sample weekly periods:")
-            for period in result.weekly_periods[: min(show_weeks, len(result.weekly_periods))]:
-                weekend = "n/a" if period.weekend_gap_into_week_pct is None else f"{period.weekend_gap_into_week_pct:.2f}%"
+            for period in result.weekly_periods[
+                : min(show_weeks, len(result.weekly_periods))
+            ]:
+                weekend = (
+                    "n/a"
+                    if period.weekend_gap_into_week_pct is None
+                    else f"{period.weekend_gap_into_week_pct:.2f}%"
+                )
                 lines.append(
                     "    "
                     f"{period.first_day} -> {period.last_day}: first day {period.first_day_intraday_pct:.2f}%, "

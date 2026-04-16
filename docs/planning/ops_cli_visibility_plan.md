@@ -128,9 +128,9 @@ Avoid embedding business logic in Typer command bodies.
 The right structure is:
 
 ```text
-src/spreads/cli/main.py
-src/spreads/cli/ops.py
-src/spreads/services/ops_visibility.py
+packages/core/cli/main.py
+packages/core/cli/ops.py
+packages/core/services/ops_visibility.py
 ```
 
 The CLI should be a thin input/output adapter over a reusable visibility service layer.
@@ -172,7 +172,7 @@ Recommended approach:
 - a small shared render helper module, for example:
 
 ```text
-src/spreads/cli/ops_render.py
+packages/core/cli/ops_render.py
 ```
 
 Use `Rich` from day one for this CLI.
@@ -211,10 +211,10 @@ Do not add a separate TUI framework in V1.
 Keep the structure shallow and centered on one root app.
 
 ```text
-src/spreads/cli/main.py
-src/spreads/cli/ops.py
-src/spreads/cli/ops_render.py
-src/spreads/services/ops_visibility.py
+packages/core/cli/main.py
+packages/core/cli/ops.py
+packages/core/cli/ops_render.py
+packages/core/services/ops_visibility.py
 ```
 
 Responsibilities:
@@ -823,7 +823,7 @@ The long-term goal is one root command, not permanent dual entrypoints.
 Add one new shared service module:
 
 ```text
-src/spreads/services/ops_visibility.py
+packages/core/services/ops_visibility.py
 ```
 
 Its job should be to build normalized payloads for:
@@ -844,28 +844,28 @@ It also gives the future web UI a reusable backend-friendly aggregation layer.
 
 ### System
 
-- `/jobs/health` payload logic in [main.py](/Users/adeb/Projects/spreads/apps/api/main.py)
-- control snapshot in [control_plane.py](/Users/adeb/Projects/spreads/src/spreads/services/control_plane.py)
-- live collector payload enrichment in [live_collector_health.py](/Users/adeb/Projects/spreads/src/spreads/services/live_collector_health.py)
+- `/jobs/health` payload logic in [main.py](/Users/adeb/Projects/spreads/packages/api/main.py)
+- control snapshot in [control_plane.py](/Users/adeb/Projects/spreads/packages/core/services/control_plane.py)
+- live collector payload enrichment in [live_collector_health.py](/Users/adeb/Projects/spreads/packages/core/services/live_collector_health.py)
 
 ### Trading
 
-- account overview in [account_state.py](/Users/adeb/Projects/spreads/src/spreads/services/account_state.py)
-- portfolio and mark refresh in [execution_portfolio.py](/Users/adeb/Projects/spreads/src/spreads/services/execution_portfolio.py)
-- session risk in [risk_manager.py](/Users/adeb/Projects/spreads/src/spreads/services/risk_manager.py)
-- broker sync in [broker_sync.py](/Users/adeb/Projects/spreads/src/spreads/services/broker_sync.py)
+- account overview in [account_state.py](/Users/adeb/Projects/spreads/packages/core/services/account_state.py)
+- portfolio and mark refresh in [execution_portfolio.py](/Users/adeb/Projects/spreads/packages/core/services/execution_portfolio.py)
+- session risk in [risk_manager.py](/Users/adeb/Projects/spreads/packages/core/services/risk_manager.py)
+- broker sync in [broker_sync.py](/Users/adeb/Projects/spreads/packages/core/services/broker_sync.py)
 
 ### Session / Investigation
 
-- session list/detail in [sessions.py](/Users/adeb/Projects/spreads/src/spreads/services/sessions.py)
-- audit replay in [audit_replay.py](/Users/adeb/Projects/spreads/src/spreads/services/audit_replay.py)
-- alerts via [alert_repository.py](/Users/adeb/Projects/spreads/src/spreads/storage/alert_repository.py)
-- jobs via [job_repository.py](/Users/adeb/Projects/spreads/src/spreads/storage/job_repository.py)
-- post-market runs via [post_market_repository.py](/Users/adeb/Projects/spreads/src/spreads/storage/post_market_repository.py)
+- session list/detail in [sessions.py](/Users/adeb/Projects/spreads/packages/core/services/sessions.py)
+- audit replay in [audit_replay.py](/Users/adeb/Projects/spreads/packages/core/services/audit_replay.py)
+- alerts via [alert_repository.py](/Users/adeb/Projects/spreads/packages/core/storage/alert_repository.py)
+- jobs via [job_repository.py](/Users/adeb/Projects/spreads/packages/core/storage/job_repository.py)
+- post-market runs via [post_market_repository.py](/Users/adeb/Projects/spreads/packages/core/storage/post_market_repository.py)
 
 ### UOA
 
-- latest/cycle state in [uoa_state.py](/Users/adeb/Projects/spreads/src/spreads/services/uoa_state.py)
+- latest/cycle state in [uoa_state.py](/Users/adeb/Projects/spreads/packages/core/services/uoa_state.py)
 - decision and summary payloads from the live collector result
 
 ## Output Design
@@ -926,7 +926,7 @@ Update [pyproject.toml](/Users/adeb/Projects/spreads/pyproject.toml):
 - add the canonical script entry:
 
 ```toml
-spreads = "spreads.cli.main:main"
+spreads = "core.cli.main:main"
 ```
 
 During migration, the old script entries can remain temporarily.
@@ -936,7 +936,7 @@ During migration, the old script entries can remain temporarily.
 Implement:
 
 ```text
-src/spreads/cli/main.py
+packages/core/cli/main.py
 ```
 
 Responsibilities:
@@ -954,9 +954,9 @@ Responsibilities:
 Implement:
 
 ```text
-src/spreads/cli/ops.py
-src/spreads/cli/ops_render.py
-src/spreads/services/ops_visibility.py
+packages/core/cli/ops.py
+packages/core/cli/ops_render.py
+packages/core/services/ops_visibility.py
 ```
 
 Recommended split:
@@ -1005,10 +1005,10 @@ Do not let each command implement its own polling loop.
 Phase 1 should touch only:
 
 - [pyproject.toml](/Users/adeb/Projects/spreads/pyproject.toml)
-- [main.py](/Users/adeb/Projects/spreads/src/spreads/cli/main.py)
-- [ops.py](/Users/adeb/Projects/spreads/src/spreads/cli/ops.py)
-- [ops_render.py](/Users/adeb/Projects/spreads/src/spreads/cli/ops_render.py)
-- [ops_visibility.py](/Users/adeb/Projects/spreads/src/spreads/services/ops_visibility.py)
+- [main.py](/Users/adeb/Projects/spreads/packages/core/cli/main.py)
+- [ops.py](/Users/adeb/Projects/spreads/packages/core/cli/ops.py)
+- [ops_render.py](/Users/adeb/Projects/spreads/packages/core/cli/ops_render.py)
+- [ops_visibility.py](/Users/adeb/Projects/spreads/packages/core/services/ops_visibility.py)
 
 Avoid migrating `scan` / `collect` / `analyze` in the same first patch unless the command registration is trivial.
 

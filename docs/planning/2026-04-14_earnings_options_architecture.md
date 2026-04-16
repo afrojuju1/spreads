@@ -1026,8 +1026,8 @@ Keep the build sequence dependency-first.
 
 Modules:
 
-- `src/spreads/integrations/calendar_events/`
-- `src/spreads/services/selection_terms.py` if shared selection windows need extension
+- `packages/core/integrations/calendar_events/`
+- `packages/core/services/selection_terms.py` if shared selection windows need extension
 
 Work:
 
@@ -1040,9 +1040,9 @@ Work:
 
 Modules:
 
-- `src/spreads/domain/opportunity_models.py`
-- `src/spreads/services/opportunity_replay.py`
-- `src/spreads/services/opportunity_scoring.py`
+- `packages/core/domain/opportunity_models.py`
+- `packages/core/services/opportunity_replay.py`
+- `packages/core/services/opportunity_scoring.py`
 
 Work:
 
@@ -1054,9 +1054,9 @@ Work:
 
 Modules:
 
-- `src/spreads/storage/models.py`
-- `src/spreads/storage/collector_models.py`
-- `src/spreads/storage/execution_models.py`
+- `packages/core/storage/models.py`
+- `packages/core/storage/collector_models.py`
+- `packages/core/storage/execution_models.py`
 - repositories touching candidate and position persistence
 
 Work:
@@ -1069,7 +1069,7 @@ Work:
 
 Modules:
 
-- new family-builder surface under `src/spreads/services/`
+- new family-builder surface under `packages/core/services/`
 - current chain and quote helpers reused from scanner and market-data services
 
 Work:
@@ -1086,7 +1086,7 @@ Work:
 
 Modules:
 
-- `src/spreads/services/opportunity_replay.py`
+- `packages/core/services/opportunity_replay.py`
 - replay CLI surfaces
 
 Work:
@@ -1099,9 +1099,9 @@ Work:
 
 Modules:
 
-- `src/spreads/services/live_selection.py`
-- `src/spreads/services/execution.py`
-- `src/spreads/services/session_positions.py`
+- `packages/core/services/live_selection.py`
+- `packages/core/services/execution.py`
+- `packages/core/services/session_positions.py`
 - quote and trade capture helpers
 
 Work:

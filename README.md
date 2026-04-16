@@ -6,15 +6,15 @@ It scans candidate spreads, runs live collection sessions, persists runtime hist
 
 ## What Is Here
 
-- `apps/api`
+- `packages/api`
   - FastAPI backend for sessions, alerts, jobs, account state, and post-market analysis
-- `apps/web`
+- `packages/web`
   - Next.js operator dashboard
-- `src/spreads/services`
+- `packages/core/services`
   - scanner, session, account, alert, and post-market logic
-- `src/spreads/jobs`
+- `packages/core/jobs`
   - scheduler and ARQ worker entrypoints
-- `src/spreads/storage`
+- `packages/core/storage`
   - Postgres-backed repositories and models
 - `docs`
   - setup notes, research references, and planning docs
@@ -120,7 +120,7 @@ uv run spreads scheduler
 ## Useful Docs
 
 - [Database Setup](docs/database.md)
-- [Web README](apps/web/README.md)
+- [Web README](packages/web/README.md)
 - [Alpaca Capabilities Statement](docs/research/alpaca_capabilities_statement.md)
 - [Ops CLI Visibility Plan](docs/planning/ops_cli_visibility_plan.md)
 

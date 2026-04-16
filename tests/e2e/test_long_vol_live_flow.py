@@ -5,17 +5,17 @@ from argparse import Namespace
 from dataclasses import asdict
 from typing import Any
 
-from spreads.services.execution import _build_order_request, normalize_execution_policy
-from spreads.services.live_collector_health import build_selection_summary
-from spreads.services.opportunity_scoring import build_candidate_opportunity_score
-from spreads.services.scanner import (
+from core.services.execution import _build_order_request, normalize_execution_policy
+from core.services.live_collector_health import build_selection_summary
+from core.services.opportunity_scoring import build_candidate_opportunity_score
+from core.services.scanner import (
     ExpectedMoveEstimate,
     OptionContract,
     OptionSnapshot,
     build_long_straddles,
     build_long_strangles,
 )
-from spreads.services.session_positions import sync_session_position_from_attempt
+from core.services.session_positions import sync_session_position_from_attempt
 
 
 def _args() -> Namespace:
