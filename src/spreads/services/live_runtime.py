@@ -40,8 +40,7 @@ def list_latest_live_sessions(
     pipeline_rows = _list_runtime_pipelines(job_store)
     if not pipeline_rows:
         pipeline_rows = [
-            dict(row)
-            for row in collector_store.list_pipelines(limit=max(limit, 1))
+            dict(row) for row in collector_store.list_pipelines(limit=max(limit, 1))
         ]
     latest_cycles = _latest_cycles_for_market_date(
         collector_store=collector_store,
@@ -96,6 +95,12 @@ def list_latest_live_sessions(
             and isinstance(summary_run.get("selection_summary"), Mapping)
             else None
         )
+        raw_candidate_summary = (
+            dict(summary_run.get("raw_candidate_summary") or {})
+            if isinstance(summary_run, Mapping)
+            and isinstance(summary_run.get("raw_candidate_summary"), Mapping)
+            else None
+        )
         sessions.append(
             {
                 "pipeline": dict(pipeline),
@@ -106,6 +111,7 @@ def list_latest_live_sessions(
                 "latest_run": latest_runs_by_session_id.get(session_id),
                 "job_run": _job_run_payload(summary_run),
                 "selection_summary": selection_summary,
+                "raw_candidate_summary": raw_candidate_summary,
                 "quote_capture": {}
                 if summary_run is None
                 else dict(summary_run.get("quote_capture") or {}),
@@ -257,6 +263,15 @@ def _build_live_session_state(
             else None
         )
     )
+    raw_candidate_summary = (
+        None
+        if run_payload is None
+        else (
+            dict(run_payload.get("raw_candidate_summary") or {})
+            if isinstance(run_payload.get("raw_candidate_summary"), Mapping)
+            else None
+        )
+    )
     if selection_summary is None:
         selection_summary = build_selection_summary(opportunities)
     recovery_slots = (
@@ -271,14 +286,10 @@ def _build_live_session_state(
         ]
     )
     live_opportunities = [
-        row
-        for row in opportunities
-        if str(row.get("eligibility") or "live") == "live"
+        row for row in opportunities if str(row.get("eligibility") or "live") == "live"
     ]
     analysis_only_opportunities = [
-        row
-        for row in opportunities
-        if str(row.get("eligibility") or "live") != "live"
+        row for row in opportunities if str(row.get("eligibility") or "live") != "live"
     ]
 
     return {
@@ -301,11 +312,20 @@ def _build_live_session_state(
         "candidate_counts": candidate_counts,
         "selection_counts": selection_counts,
         "selection_summary": selection_summary,
+        "raw_candidate_summary": raw_candidate_summary,
         "cycle_events": cycle_events,
-        "quote_capture": {} if run_payload is None else dict(run_payload.get("quote_capture") or {}),
-        "trade_capture": {} if run_payload is None else dict(run_payload.get("trade_capture") or {}),
-        "uoa_summary": {} if run_payload is None else dict(run_payload.get("uoa_summary") or {}),
-        "uoa_quote_summary": {} if run_payload is None else dict(run_payload.get("uoa_quote_summary") or {}),
+        "quote_capture": {}
+        if run_payload is None
+        else dict(run_payload.get("quote_capture") or {}),
+        "trade_capture": {}
+        if run_payload is None
+        else dict(run_payload.get("trade_capture") or {}),
+        "uoa_summary": {}
+        if run_payload is None
+        else dict(run_payload.get("uoa_summary") or {}),
+        "uoa_quote_summary": {}
+        if run_payload is None
+        else dict(run_payload.get("uoa_quote_summary") or {}),
         "uoa_decisions": normalize_uoa_decisions_payload(
             None if run_payload is None else run_payload.get("uoa_decisions")
         ),
@@ -471,7 +491,8 @@ def _cycle_opportunity_payloads(
     )
     if not opportunities and not signal_schema_ready:
         opportunities = [
-            dict(candidate) for candidate in collector_store.list_cycle_candidates(cycle_id)
+            dict(candidate)
+            for candidate in collector_store.list_cycle_candidates(cycle_id)
         ]
     return opportunities
 
@@ -489,7 +510,11 @@ def _load_summary_run(
         label=label,
         status="succeeded",
     )
-    return None if run_record is None else enrich_live_collector_job_run_payload(run_record)
+    return (
+        None
+        if run_record is None
+        else enrich_live_collector_job_run_payload(run_record)
+    )
 
 
 def _job_run_payload(run_payload: Mapping[str, Any] | None) -> dict[str, Any] | None:

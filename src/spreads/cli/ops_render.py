@@ -172,6 +172,126 @@ def _render_selection_summary(
     console.print(table)
 
 
+def _render_raw_candidate_summary(
+    console: Console,
+    *,
+    title: str,
+    value: Any,
+) -> None:
+    payload = value if isinstance(value, dict) else {}
+    if not payload:
+        return
+    overview = Table(title=title, show_edge=False, header_style="bold")
+    overview.add_column("Metric", style="bold")
+    overview.add_column("Value")
+    overview.add_row("Candidates", _render_value(payload.get("candidate_count")))
+    overview.add_row(
+        "Symbols",
+        _render_count_map(payload.get("symbol_counts"), limit=6, item_length=80),
+    )
+    overview.add_row(
+        "Strategies",
+        _render_count_map(payload.get("strategy_counts"), limit=6, item_length=80),
+    )
+    console.print(overview)
+
+    rows = list(payload.get("top_candidates") or [])
+    if not rows:
+        return
+    table = Table(title=f"{title} Top Candidates", header_style="bold")
+    table.add_column("Underlying")
+    table.add_column("Strategy")
+    table.add_column("Expiry")
+    table.add_column("Short")
+    table.add_column("Long")
+    table.add_column("Quality", justify="right")
+    table.add_column("Credit", justify="right")
+    table.add_column("ROR", justify="right")
+    table.add_column("Setup")
+    for row in rows[:8]:
+        table.add_row(
+            str(row.get("underlying_symbol") or "-"),
+            str(row.get("strategy") or "-"),
+            str(row.get("expiration_date") or "-"),
+            _truncate(row.get("short_symbol"), length=24),
+            _truncate(row.get("long_symbol"), length=24),
+            _render_value(row.get("quality_score")),
+            _render_money(row.get("midpoint_credit")),
+            _render_value(row.get("return_on_risk")),
+            str(row.get("setup_status") or "-"),
+        )
+    console.print(table)
+
+
+def _render_collector_raw_candidates(
+    console: Console,
+    *,
+    collector_rows: list[dict[str, Any]],
+) -> None:
+    rows_with_raw = [
+        row
+        for row in collector_rows
+        if isinstance(row.get("raw_candidate_summary"), dict)
+    ]
+    if not rows_with_raw:
+        return
+    table = Table(title="Collector Raw Candidates", header_style="bold")
+    table.add_column("Collector")
+    table.add_column("Raw", justify="right")
+    table.add_column("Selected", justify="right")
+    table.add_column("Symbols")
+    table.add_column("Strategies")
+    for row in rows_with_raw:
+        raw_summary = dict(row.get("raw_candidate_summary") or {})
+        selection_summary = (
+            row.get("selection_summary")
+            if isinstance(row.get("selection_summary"), dict)
+            else {}
+        )
+        table.add_row(
+            str(row.get("job_key") or "-"),
+            _render_value(raw_summary.get("candidate_count")),
+            _render_value(selection_summary.get("opportunity_count")),
+            _render_count_map(
+                raw_summary.get("symbol_counts"), limit=4, item_length=48
+            ),
+            _render_count_map(
+                raw_summary.get("strategy_counts"), limit=4, item_length=48
+            ),
+        )
+    console.print(table)
+
+    top_rows: list[tuple[str, dict[str, Any]]] = []
+    for row in rows_with_raw:
+        raw_summary = dict(row.get("raw_candidate_summary") or {})
+        for candidate in list(raw_summary.get("top_candidates") or [])[:4]:
+            if isinstance(candidate, dict):
+                top_rows.append((str(row.get("job_key") or "-"), candidate))
+    if not top_rows:
+        return
+    table = Table(title="Collector Raw Top Candidates", header_style="bold")
+    table.add_column("Collector")
+    table.add_column("Underlying")
+    table.add_column("Strategy")
+    table.add_column("Expiry")
+    table.add_column("Quality", justify="right")
+    table.add_column("Credit", justify="right")
+    table.add_column("ROR", justify="right")
+    table.add_column("Setup")
+    for collector_key, candidate in top_rows[:12]:
+        table.add_row(
+            _truncate(collector_key, length=36),
+            str(candidate.get("underlying_symbol") or "-"),
+            str(candidate.get("strategy") or "-"),
+            str(candidate.get("expiration_date") or "-"),
+            _render_value(candidate.get("quality_score")),
+            _render_money(candidate.get("midpoint_credit")),
+            _render_value(candidate.get("return_on_risk")),
+            str(candidate.get("setup_status") or "-"),
+        )
+    console.print(table)
+
+
 def _render_automation_runtime_summary(
     console: Console,
     *,
@@ -529,6 +649,7 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
                 str(row.get("last_slot_at") or "-"),
             )
         console.print(table)
+        _render_collector_raw_candidates(console, collector_rows=collector_rows)
 
     _render_automation_runtime_summary(
         console,
@@ -566,6 +687,7 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
     market_session = dict(details.get("market_session") or {})
     automation_runtime = dict(details.get("automation_runtime") or {})
     automation_performance = dict(details.get("automation_performance") or {})
+    collector_rows = list(details.get("latest_collectors") or [])
 
     overview = Table.grid(padding=(0, 2))
     overview.add_row("Overall", _status_text(payload.get("status")))
@@ -642,6 +764,7 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
         title="Automation Performance",
         value=automation_performance,
     )
+    _render_collector_raw_candidates(console, collector_rows=collector_rows)
 
     top_positions = list(details.get("top_positions") or [])
     if top_positions:

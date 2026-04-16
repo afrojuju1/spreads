@@ -216,11 +216,7 @@ def _increment_counter(mapping: dict[str, int], value: str | None) -> None:
 def build_selection_summary(
     opportunities: Sequence[Mapping[str, Any]] | None,
 ) -> dict[str, Any]:
-    rows = [
-        dict(row)
-        for row in list(opportunities or [])
-        if isinstance(row, Mapping)
-    ]
+    rows = [dict(row) for row in list(opportunities or []) if isinstance(row, Mapping)]
     strategy_family_counts: Counter[str] = Counter()
     earnings_phase_counts: Counter[str] = Counter()
     selection_state_counts: Counter[str] = Counter()
@@ -266,7 +262,9 @@ def build_selection_summary(
             auto_live_eligible_count += 1
 
         for blocker in scoring_blockers:
-            category = "quote_liquidity" if _quote_liquidity_blocker(blocker) else "policy"
+            category = (
+                "quote_liquidity" if _quote_liquidity_blocker(blocker) else "policy"
+            )
             blocker_counts[category][blocker] += 1
 
         for blocker in execution_blockers:
@@ -317,8 +315,7 @@ def normalize_selection_summary(
         },
         "blocker_counts": {
             category: {
-                str(key): _read_int(counts, key)
-                for key in sorted(dict(counts or {}))
+                str(key): _read_int(counts, key) for key in sorted(dict(counts or {}))
             }
             for category, counts in (
                 (str(key), blocker_counts_payload.get(key))
@@ -898,6 +895,7 @@ def enrich_live_collector_job_run_payload(payload: Mapping[str, Any]) -> dict[st
     enriched["uoa_quote_summary"] = result.get("uoa_quote_summary") or {}
     enriched["uoa_decisions"] = result.get("uoa_decisions") or {}
     enriched["selection_summary"] = result.get("selection_summary") or {}
+    enriched["raw_candidate_summary"] = result.get("raw_candidate_summary") or {}
     enriched["auto_execution_summary"] = result.get("auto_execution_summary")
     enriched["capture_status"] = result["quote_capture"]["capture_status"]
     run_payload = (

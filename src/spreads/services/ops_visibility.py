@@ -306,6 +306,12 @@ def _latest_live_collectors(
             if session is None or not isinstance(session.get("quote_capture"), Mapping)
             else dict(session.get("quote_capture") or {})
         )
+        raw_candidate_summary = (
+            {}
+            if session is None
+            or not isinstance(session.get("raw_candidate_summary"), Mapping)
+            else dict(session.get("raw_candidate_summary") or {})
+        )
         capture_status = None if run is None else run.get("capture_status")
         if capture_status is None:
             capture_status = quote_capture.get("capture_status")
@@ -327,6 +333,7 @@ def _latest_live_collectors(
                 "selection_summary": None
                 if session is None
                 else _selection_summary_payload(session.get("selection_summary")),
+                "raw_candidate_summary": raw_candidate_summary,
                 "last_slot_at": (
                     None
                     if run is None

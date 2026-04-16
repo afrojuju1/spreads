@@ -462,6 +462,52 @@ def build_symbol_strategy_candidates(
     return grouped
 
 
+def build_raw_candidate_summary(
+    symbol_strategy_candidates: dict[str, list[dict[str, Any]]],
+    *,
+    limit: int = 10,
+) -> dict[str, Any]:
+    total = 0
+    strategy_counts: dict[str, int] = {}
+    symbol_counts: dict[str, int] = {}
+    ranked_rows: list[dict[str, Any]] = []
+    for symbol, candidates in sorted(symbol_strategy_candidates.items()):
+        symbol_counts[str(symbol)] = len(candidates)
+        total += len(candidates)
+        for candidate in candidates:
+            strategy = str(candidate.get("strategy") or "unknown")
+            strategy_counts[strategy] = int(strategy_counts.get(strategy) or 0) + 1
+            ranked_rows.append(
+                {
+                    "underlying_symbol": str(
+                        candidate.get("underlying_symbol") or symbol
+                    ),
+                    "strategy": strategy,
+                    "expiration_date": candidate.get("expiration_date"),
+                    "short_symbol": candidate.get("short_symbol"),
+                    "long_symbol": candidate.get("long_symbol"),
+                    "quality_score": float(candidate.get("quality_score") or 0.0),
+                    "midpoint_credit": float(candidate.get("midpoint_credit") or 0.0),
+                    "return_on_risk": float(candidate.get("return_on_risk") or 0.0),
+                    "setup_status": candidate.get("setup_status"),
+                }
+            )
+    ranked_rows.sort(
+        key=lambda row: (
+            float(row.get("quality_score") or 0.0),
+            float(row.get("return_on_risk") or 0.0),
+            float(row.get("midpoint_credit") or 0.0),
+        ),
+        reverse=True,
+    )
+    return {
+        "candidate_count": total,
+        "symbol_counts": dict(sorted(symbol_counts.items())),
+        "strategy_counts": dict(sorted(strategy_counts.items())),
+        "top_candidates": ranked_rows[: max(int(limit), 1)],
+    }
+
+
 def _capture_candidate_identity(candidate: dict[str, Any]) -> tuple[str, str, str]:
     return (
         legs_identity_key(
@@ -1505,6 +1551,7 @@ def _run_collection_cycle(
     selection_memory = dict(selection["selection_memory"])
     events = _filter_scope_rows(list(selection["events"]), scope=options_scope)
     selection_summary = build_selection_summary(opportunities)
+    raw_candidate_summary = build_raw_candidate_summary(symbol_strategy_candidates)
     persisted_opportunities = collector_store.save_cycle(
         cycle_id=cycle_id,
         label=label,
@@ -1768,6 +1815,7 @@ def _run_collection_cycle(
         "uoa_summary": uoa_summary,
         "uoa_quote_summary": uoa_quote_summary,
         "uoa_decisions": uoa_decisions,
+        "raw_candidate_summary": raw_candidate_summary,
         "selection_summary": selection_summary,
         "auto_execution": auto_execution,
     }
@@ -1912,6 +1960,7 @@ def run_collection_tick(
         "uoa_summary": dict(cycle_result["uoa_summary"]),
         "uoa_quote_summary": dict(cycle_result["uoa_quote_summary"]),
         "uoa_decisions": dict(cycle_result["uoa_decisions"]),
+        "raw_candidate_summary": dict(cycle_result["raw_candidate_summary"]),
         "selection_summary": dict(cycle_result["selection_summary"]),
         "auto_execution": cycle_result["auto_execution"],
         "label": cycle_result["label"],
@@ -2024,6 +2073,12 @@ def run_collection(
         quote_summary={},
         capture_window_seconds=0,
     )
+    last_raw_candidate_summary = {
+        "candidate_count": 0,
+        "symbol_counts": {},
+        "strategy_counts": {},
+        "top_candidates": [],
+    }
     last_selection_summary = build_selection_summary([])
     iterations_completed = 0
     try:
@@ -2090,6 +2145,7 @@ def run_collection(
                 last_uoa_summary = dict(cycle_result["uoa_summary"])
                 last_uoa_quote_summary = dict(cycle_result["uoa_quote_summary"])
                 last_uoa_decisions = dict(cycle_result["uoa_decisions"])
+                last_raw_candidate_summary = dict(cycle_result["raw_candidate_summary"])
                 last_selection_summary = dict(cycle_result["selection_summary"])
                 if iteration < args.iterations - 1:
                     elapsed_seconds = time_module.monotonic() - iteration_started_at
@@ -2135,6 +2191,7 @@ def run_collection(
         "uoa_summary": last_uoa_summary,
         "uoa_quote_summary": last_uoa_quote_summary,
         "uoa_decisions": last_uoa_decisions,
+        "raw_candidate_summary": last_raw_candidate_summary,
         "selection_summary": last_selection_summary,
         "label": last_label,
     }
