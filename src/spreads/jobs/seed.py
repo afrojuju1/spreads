@@ -160,6 +160,7 @@ def _options_automation_job_definitions() -> list[dict[str, object]]:
                     "execution_policy": dict(DEFAULT_SHADOW_EXECUTION_POLICY),
                     "risk_policy": dict(DEFAULT_AUTO_RISK_POLICY),
                     "exit_policy": dict(DEFAULT_AUTO_EXIT_POLICY),
+                    **dict(scope.get("scanner_args") or {}),
                 },
                 "singleton_scope": singleton_scope,
             }

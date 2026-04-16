@@ -223,6 +223,48 @@ def build_collector_scope(
     scanner_profiles = {
         automation.strategy_config.scanner_profile for _bot, automation in entries
     }
+    dte_mins = [
+        int(automation.strategy_config.builder_params.get("dte_min") or 0)
+        for _bot, automation in entries
+        if automation.strategy_config.builder_params.get("dte_min") is not None
+    ]
+    dte_maxs = [
+        int(automation.strategy_config.builder_params.get("dte_max") or 0)
+        for _bot, automation in entries
+        if automation.strategy_config.builder_params.get("dte_max") is not None
+    ]
+    short_delta_mins = [
+        float(automation.strategy_config.builder_params.get("short_delta_min") or 0.0)
+        for _bot, automation in entries
+        if automation.strategy_config.builder_params.get("short_delta_min") is not None
+    ]
+    short_delta_maxs = [
+        float(automation.strategy_config.builder_params.get("short_delta_max") or 0.0)
+        for _bot, automation in entries
+        if automation.strategy_config.builder_params.get("short_delta_max") is not None
+    ]
+    widths = [
+        float(width)
+        for _bot, automation in entries
+        for width in list(
+            automation.strategy_config.builder_params.get("width_points") or []
+        )
+    ]
+    open_interest_values = [
+        int(automation.strategy_config.liquidity_rules.get("min_open_interest") or 0)
+        for _bot, automation in entries
+        if automation.strategy_config.liquidity_rules.get("min_open_interest")
+        is not None
+    ]
+    relative_spread_values = [
+        float(
+            automation.strategy_config.liquidity_rules.get("max_leg_spread_pct_mid")
+            or 0.0
+        )
+        for _bot, automation in entries
+        if automation.strategy_config.liquidity_rules.get("max_leg_spread_pct_mid")
+        is not None
+    ]
     return {
         "enabled": True,
         "symbols": tuple(symbols),
@@ -232,6 +274,35 @@ def build_collector_scope(
         "scanner_profile": None
         if len(scanner_profiles) != 1
         else next(iter(scanner_profiles)),
+        "scanner_args": {
+            **({} if not dte_mins else {"min_dte": min(dte_mins)}),
+            **({} if not dte_maxs else {"max_dte": max(dte_maxs)}),
+            **(
+                {}
+                if not short_delta_mins
+                else {"short_delta_min": min(short_delta_mins)}
+            ),
+            **(
+                {}
+                if not short_delta_maxs
+                else {"short_delta_max": max(short_delta_maxs)}
+            ),
+            **(
+                {}
+                if not widths
+                else {"min_width": min(widths), "max_width": max(widths)}
+            ),
+            **(
+                {}
+                if not open_interest_values
+                else {"min_open_interest": min(open_interest_values)}
+            ),
+            **(
+                {}
+                if not relative_spread_values
+                else {"max_relative_spread": max(relative_spread_values)}
+            ),
+        },
         "entry_runtimes": entries,
     }
 

@@ -4,7 +4,7 @@ enabled: true
 builder_params:
   dte_min: 4
   dte_max: 10
-  short_delta_min: 0.18
+  short_delta_min: 0.10
   short_delta_max: 0.28
   width_points: [2, 3, 5]
 entry_recipe_refs:
