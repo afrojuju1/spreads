@@ -109,6 +109,7 @@ ATTEMPT_CONTEXT_BUCKET_MIRROR = {
     "position_close": "position_close",
 }
 
+
 def _normalize_attempt_context(value: Any) -> str | None:
     normalized = _as_text(value)
     if normalized == "promotable":
@@ -482,7 +483,9 @@ def _execution_attempt_identity(attempt: Mapping[str, Any]) -> str | None:
         if isinstance(attempt.get("candidate"), Mapping)
         else {}
     )
-    legs = normalize_legs(request_order.get("legs")) or candidate_legs(candidate_payload)
+    legs = normalize_legs(request_order.get("legs")) or candidate_legs(
+        candidate_payload
+    )
     if not legs:
         return None
     strategy = (
@@ -761,7 +764,9 @@ def _resolve_candidate_entry_prices(
     candidate_payload: dict[str, Any],
 ) -> tuple[float | None, float | None]:
     midpoint_value = _normalize_limit_value(
-        candidate_payload.get("midpoint_value", candidate_payload.get("midpoint_credit"))
+        candidate_payload.get(
+            "midpoint_value", candidate_payload.get("midpoint_credit")
+        )
     )
     natural_value = _normalize_limit_value(
         candidate_payload.get("natural_value", candidate_payload.get("natural_credit"))
@@ -1125,7 +1130,9 @@ def _resolve_open_limit_price(
     fill_ratio_concession = max(midpoint_value - natural_value, 0.0) * max(
         1.0 - fill_ratio, 0.0
     )
-    concession = min(fill_ratio_concession, max_credit_concession, max_concession_to_floor)
+    concession = min(
+        fill_ratio_concession, max_credit_concession, max_concession_to_floor
+    )
     return round(max(midpoint_value - concession, credit_floor, 0.01), 2)
 
 
@@ -1312,7 +1319,12 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
         min_credit_retention_pct = DEFAULT_MIN_CREDIT_RETENTION_PCT
         max_credit_concession = DEFAULT_MAX_CREDIT_CONCESSION
     enabled = deployment_mode_auto_executes(deployment_mode)
-    if pricing_mode not in {"midpoint", "adaptive_credit", "adaptive_debit", "adaptive"}:
+    if pricing_mode not in {
+        "midpoint",
+        "adaptive_credit",
+        "adaptive_debit",
+        "adaptive",
+    }:
         raise ValueError(f"Unsupported execution pricing mode: {pricing_mode}")
     min_credit_retention_pct = _clamp_fraction(
         min_credit_retention_pct, minimum=0.5, maximum=1.0
@@ -2115,6 +2127,83 @@ def _publish_execution_attempt_event(attempt: dict[str, Any], *, message: str) -
         )
     except Exception:
         pass
+
+
+def _linked_execution_intent_id(attempt: Mapping[str, Any]) -> str | None:
+    request = attempt.get("request")
+    if not isinstance(request, Mapping):
+        return None
+    return _as_text(request.get("execution_intent_id"))
+
+
+def _intent_state_from_attempt_status(status: str) -> str:
+    normalized = str(status or "").strip().lower()
+    if normalized in {"partially_filled"}:
+        return "partially_filled"
+    if normalized in {"filled"}:
+        return "filled"
+    if normalized in {"canceled", "cancelled"}:
+        return "canceled"
+    if normalized in {"expired", "revoked"}:
+        return normalized
+    if normalized in {"failed", "rejected"}:
+        return "failed"
+    if normalized in {"new", "accepted", "pending_new", "submitted"}:
+        return "submitted"
+    return "claimed"
+
+
+def _sync_linked_execution_intent(
+    *,
+    execution_store: Any,
+    attempt: Mapping[str, Any],
+    state: str | None = None,
+    event_type: str,
+    message: str,
+) -> None:
+    execution_intent_id = _linked_execution_intent_id(attempt)
+    if execution_intent_id is None or not execution_store.intent_schema_ready():
+        return
+    intent = execution_store.get_execution_intent(execution_intent_id)
+    if intent is None:
+        return
+    resolved_state = state or _intent_state_from_attempt_status(
+        str(attempt.get("status") or "")
+    )
+    updated_at = _utc_now()
+    execution_store.upsert_execution_intent(
+        execution_intent_id=str(intent["execution_intent_id"]),
+        bot_id=str(intent["bot_id"]),
+        automation_id=str(intent["automation_id"]),
+        opportunity_decision_id=_as_text(intent.get("opportunity_decision_id")),
+        strategy_position_id=_as_text(intent.get("strategy_position_id")),
+        execution_attempt_id=_as_text(attempt.get("execution_attempt_id")),
+        action_type=str(intent["action_type"]),
+        slot_key=str(intent["slot_key"]),
+        claim_token=_as_text(intent.get("claim_token")),
+        policy_ref=dict(intent.get("policy_ref") or {}),
+        config_hash=str(intent.get("config_hash") or ""),
+        state=resolved_state,
+        expires_at=_as_text(intent.get("expires_at")),
+        superseded_by_id=_as_text(intent.get("superseded_by_id")),
+        payload={
+            **dict(intent.get("payload") or {}),
+            "execution_attempt_id": _as_text(attempt.get("execution_attempt_id")),
+            "attempt_status": str(attempt.get("status") or ""),
+        },
+        created_at=str(intent["created_at"]),
+        updated_at=updated_at,
+    )
+    execution_store.append_execution_intent_event(
+        execution_intent_id=execution_intent_id,
+        event_type=event_type,
+        event_at=updated_at,
+        payload={
+            "execution_attempt_id": _as_text(attempt.get("execution_attempt_id")),
+            "message": message,
+            "attempt_status": str(attempt.get("status") or ""),
+        },
+    )
 
 
 def _publish_risk_decision_event(risk_decision: dict[str, Any]) -> None:
@@ -3009,6 +3098,13 @@ def run_execution_submit(
             failed_attempt,
             message="Execution failed before submission: missing broker order payload.",
         )
+        _sync_linked_execution_intent(
+            execution_store=execution_store,
+            attempt=failed_attempt,
+            state="failed",
+            event_type="failed",
+            message="Execution failed before submission: missing broker order payload.",
+        )
         raise ValueError("Execution attempt is missing its broker order payload.")
 
     if str(payload.get("trade_intent") or OPEN_TRADE_INTENT) == OPEN_TRADE_INTENT:
@@ -3028,6 +3124,13 @@ def run_execution_submit(
             failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
             _publish_execution_attempt_event(
                 failed_attempt,
+                message=f"Execution failed before submission: {timing_gate['message']}",
+            )
+            _sync_linked_execution_intent(
+                execution_store=execution_store,
+                attempt=failed_attempt,
+                state="failed",
+                event_type="failed",
                 message=f"Execution failed before submission: {timing_gate['message']}",
             )
             return {
@@ -3057,6 +3160,16 @@ def run_execution_submit(
             failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
             _publish_execution_attempt_event(
                 failed_attempt,
+                message=(
+                    "Execution failed before submission: "
+                    f"{live_deployment_quality['message']}"
+                ),
+            )
+            _sync_linked_execution_intent(
+                execution_store=execution_store,
+                attempt=failed_attempt,
+                state="failed",
+                event_type="failed",
                 message=(
                     "Execution failed before submission: "
                     f"{live_deployment_quality['message']}"
@@ -3103,6 +3216,12 @@ def run_execution_submit(
         )
         message = _submission_message(synced_attempt, queued=False)
         _publish_execution_attempt_event(synced_attempt, message=message)
+        _sync_linked_execution_intent(
+            execution_store=execution_store,
+            attempt=synced_attempt,
+            event_type="submitted",
+            message=message,
+        )
         return {
             "status": "submitted",
             "execution_attempt_id": execution_attempt_id,
@@ -3124,6 +3243,13 @@ def run_execution_submit(
                 failed_attempt,
                 message=f"Execution failed before submission: {exc}",
             )
+            _sync_linked_execution_intent(
+                execution_store=execution_store,
+                attempt=failed_attempt,
+                state="failed",
+                event_type="failed",
+                message=f"Execution failed before submission: {exc}",
+            )
             raise
         broker_order_id = _as_text(submitted_order.get("id"))
         submitted_status = str(submitted_order.get("status") or "submitted").lower()
@@ -3143,6 +3269,15 @@ def run_execution_submit(
         failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
         _publish_execution_attempt_event(
             failed_attempt,
+            message=(
+                f"Order {broker_order_id or execution_attempt_id} was submitted, "
+                f"but local execution sync failed: {exc}"
+            ),
+        )
+        _sync_linked_execution_intent(
+            execution_store=execution_store,
+            attempt=failed_attempt,
+            event_type="submit_unknown",
             message=(
                 f"Order {broker_order_id or execution_attempt_id} was submitted, "
                 f"but local execution sync failed: {exc}"

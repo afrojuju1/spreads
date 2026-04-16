@@ -14,6 +14,8 @@ from spreads.integrations.alpaca.client import AlpacaClient, infer_trading_base_
 from spreads.integrations.calendar_events import build_calendar_event_resolver
 from spreads.integrations.greeks import build_local_greeks_provider
 from spreads.runtime.config import default_database_url
+from spreads.services.bots import build_collector_scope
+from spreads.services.decision_engine import run_active_entry_decisions
 from spreads.services.execution import submit_auto_session_execution
 from spreads.services.live_selection import (
     read_previous_selection,
@@ -36,7 +38,11 @@ from spreads.services.live_recovery import (
     resolve_live_slot_stale_after_seconds,
 )
 from spreads.services.live_pipelines import build_live_snapshot_label
-from spreads.services.option_structures import candidate_legs, legs_identity_key
+from spreads.services.option_structures import (
+    candidate_legs,
+    legs_identity_key,
+    normalize_strategy_family,
+)
 from spreads.services.option_quote_records import (
     build_quote_records,
     build_quote_symbol_metadata,
@@ -50,6 +56,7 @@ from spreads.services.candidate_history_recovery import (
 from spreads.services.uoa_trade_baselines import build_uoa_trade_baselines
 from spreads.services.option_trade_records import build_trade_symbol_metadata
 from spreads.services.signal_state import sync_live_collector_signal_layer
+from spreads.services.target_planner import refresh_options_automation_capture_targets
 from spreads.services.uoa_trade_summary import build_uoa_trade_summary
 from spreads.services.scanner import (
     NEW_YORK,
@@ -222,6 +229,102 @@ def build_collection_args(
     for key, value in (overrides or {}).items():
         setattr(args, key, value)
     return args
+
+
+def _options_automation_scope() -> dict[str, Any]:
+    try:
+        return build_collector_scope()
+    except Exception as exc:
+        print(f"Options automation config unavailable: {exc}")
+        return {
+            "enabled": False,
+            "symbols": (),
+            "scanner_strategy": None,
+            "scanner_profile": None,
+            "entry_runtimes": [],
+        }
+
+
+def _apply_options_automation_overrides(args: argparse.Namespace) -> argparse.Namespace:
+    scope = _options_automation_scope()
+    setattr(args, "options_automation_scope", scope)
+    if not bool(scope.get("enabled")):
+        return args
+    symbols = list(scope.get("symbols") or [])
+    if symbols:
+        args.symbols = ",".join(symbols)
+    scanner_strategy = scope.get("scanner_strategy")
+    if isinstance(scanner_strategy, str) and scanner_strategy:
+        args.strategy = scanner_strategy
+    scanner_profile = scope.get("scanner_profile")
+    if isinstance(scanner_profile, str) and scanner_profile:
+        args.profile = scanner_profile
+    return args
+
+
+def _allowed_scope_symbols(scope: dict[str, Any]) -> set[str]:
+    return {str(symbol).upper() for symbol in list(scope.get("symbols") or [])}
+
+
+def _allowed_scope_families(scope: dict[str, Any]) -> set[str]:
+    families: set[str] = set()
+    for _bot, automation in list(scope.get("entry_runtimes") or []):
+        families.add(str(automation.strategy_config.strategy_family))
+    return families
+
+
+def _filter_scope_candidates(
+    symbol_strategy_candidates: dict[str, list[dict[str, Any]]],
+    *,
+    scope: dict[str, Any],
+) -> dict[str, list[dict[str, Any]]]:
+    if not bool(scope.get("enabled")):
+        return symbol_strategy_candidates
+    allowed_symbols = _allowed_scope_symbols(scope)
+    allowed_families = _allowed_scope_families(scope)
+    filtered: dict[str, list[dict[str, Any]]] = {}
+    for symbol, candidates in symbol_strategy_candidates.items():
+        if allowed_symbols and str(symbol).upper() not in allowed_symbols:
+            continue
+        matching = [
+            dict(candidate)
+            for candidate in candidates
+            if normalize_strategy_family(
+                candidate.get("strategy_family") or candidate.get("strategy")
+            )
+            in allowed_families
+        ]
+        if matching:
+            filtered[str(symbol)] = matching
+    return filtered
+
+
+def _filter_scope_rows(
+    rows: list[dict[str, Any]],
+    *,
+    scope: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not bool(scope.get("enabled")):
+        return rows
+    allowed_symbols = _allowed_scope_symbols(scope)
+    allowed_families = _allowed_scope_families(scope)
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        symbol = str(
+            row.get("underlying_symbol")
+            or row.get("symbol")
+            or row.get("root_symbol")
+            or ""
+        ).upper()
+        if allowed_symbols and symbol not in allowed_symbols:
+            continue
+        family = normalize_strategy_family(
+            row.get("strategy_family") or row.get("strategy")
+        )
+        if family not in allowed_families:
+            continue
+        filtered.append(dict(row))
+    return filtered
 
 
 def collection_window_is_open(
@@ -473,7 +576,9 @@ def capture_live_option_market_state(
     stream_trade_error: str | None = None
     contract_metadata_by_symbol = build_quote_symbol_metadata(capture_candidates)
     expected_quote_symbols = list(contract_metadata_by_symbol.keys())
-    expected_trade_symbols = list(build_trade_symbol_metadata(capture_candidates).keys())
+    expected_trade_symbols = list(
+        build_trade_symbol_metadata(capture_candidates).keys()
+    )
     expected_uoa_roots = sorted(
         {
             str(candidate.get("underlying_symbol") or "").strip()
@@ -525,8 +630,12 @@ def capture_live_option_market_state(
                     label=label,
                     profile=args.profile,
                     session_date=session_date,
-                    session_id=None if tick_context is None else tick_context.session_id,
-                    job_run_id=None if tick_context is None else tick_context.job_run_id,
+                    session_id=None
+                    if tick_context is None
+                    else tick_context.session_id,
+                    job_run_id=None
+                    if tick_context is None
+                    else tick_context.job_run_id,
                     quotes=latest_quote_records,
                 )
             except Exception as exc:
@@ -549,8 +658,7 @@ def capture_live_option_market_state(
                 )
                 stream_trade_error = stream_quote_error
                 print(
-                    "Live stream market-data capture unavailable: "
-                    f"{stream_quote_error}"
+                    f"Live stream market-data capture unavailable: {stream_quote_error}"
                 )
             else:
                 capture_response = collect_recorded_market_data_records(
@@ -591,13 +699,11 @@ def capture_live_option_market_state(
                 )
                 if stream_quote_error:
                     print(
-                        "Live stream quote capture unavailable: "
-                        f"{stream_quote_error}"
+                        f"Live stream quote capture unavailable: {stream_quote_error}"
                     )
                 if stream_trade_error:
                     print(
-                        "Live stream trade capture unavailable: "
-                        f"{stream_trade_error}"
+                        f"Live stream trade capture unavailable: {stream_trade_error}"
                     )
                 if stream_quote_records:
                     stream_quote_event_count = len(stream_quote_records)
@@ -619,8 +725,7 @@ def capture_live_option_market_state(
                         )
                     except Exception as exc:
                         print(
-                            "Live stream quote event normalization unavailable: "
-                            f"{exc}"
+                            f"Live stream quote event normalization unavailable: {exc}"
                         )
                 if stream_trade_records:
                     stream_trade_event_count = len(stream_trade_records)
@@ -642,8 +747,7 @@ def capture_live_option_market_state(
                         )
                     except Exception as exc:
                         print(
-                            "Live stream trade event normalization unavailable: "
-                            f"{exc}"
+                            f"Live stream trade event normalization unavailable: {exc}"
                         )
         if quote_event_count == 0:
             try:
@@ -669,8 +773,12 @@ def capture_live_option_market_state(
                         label=label,
                         profile=args.profile,
                         session_date=session_date,
-                        session_id=None if tick_context is None else tick_context.session_id,
-                        job_run_id=None if tick_context is None else tick_context.job_run_id,
+                        session_id=None
+                        if tick_context is None
+                        else tick_context.session_id,
+                        job_run_id=None
+                        if tick_context is None
+                        else tick_context.job_run_id,
                         quotes=recovery_quote_records,
                     )
                 except Exception as exc:
@@ -1253,6 +1361,7 @@ def _run_collection_cycle(
     tick_context: LiveTickContext | None,
     scanner_args: argparse.Namespace,
     client: AlpacaClient,
+    storage: Any,
     history_store: RunHistoryRepository,
     alert_store: AlertRepository,
     job_store: Any,
@@ -1290,10 +1399,15 @@ def _run_collection_cycle(
     run_ids = {
         (result.symbol, result.args.strategy): result.run_id for result in scan_results
     }
+    options_scope = getattr(args, "options_automation_scope", {"enabled": False})
     symbol_strategy_candidates = build_symbol_strategy_candidates(
         scan_results,
         run_ids,
         max_per_strategy=WATCHLIST_PER_STRATEGY,
+    )
+    symbol_strategy_candidates = _filter_scope_candidates(
+        symbol_strategy_candidates,
+        scope=options_scope,
     )
     capture_snapshot = capture_live_option_market_state(
         args=args,
@@ -1356,12 +1470,26 @@ def _run_collection_cycle(
             recovered_candidates=recovered_payloads,
             signal_cycle_context=signal_cycle_context,
         )
-        symbol_strategy_candidates = dict(selection.get("symbol_candidates") or {})
+        symbol_strategy_candidates = _filter_scope_candidates(
+            dict(selection.get("symbol_candidates") or {}),
+            scope=options_scope,
+        )
         promotable_payloads = list(selection["promotable_candidates"])
         monitor_payloads = list(selection["monitor_candidates"])
-    opportunities = list(selection["opportunities"])
+    opportunities = _filter_scope_rows(
+        list(selection["opportunities"]),
+        scope=options_scope,
+    )
+    promotable_payloads = _filter_scope_rows(
+        promotable_payloads,
+        scope=options_scope,
+    )
+    monitor_payloads = _filter_scope_rows(
+        monitor_payloads,
+        scope=options_scope,
+    )
     selection_memory = dict(selection["selection_memory"])
-    events = list(selection["events"])
+    events = _filter_scope_rows(list(selection["events"]), scope=options_scope)
     selection_summary = build_selection_summary(opportunities)
     persisted_opportunities = collector_store.save_cycle(
         cycle_id=cycle_id,
@@ -1416,26 +1544,43 @@ def _run_collection_cycle(
     }
     if tick_context is not None and recovery_store is not None:
         try:
-            target_refresh = refresh_live_session_capture_targets(
-                recovery_store=recovery_store,
-                session_id=tick_context.session_id,
-                session_date=session_date,
-                label=label,
-                profile=args.profile,
-                promotable_candidates=promotable_payloads,
-                monitor_candidates=monitor_payloads,
-                capture_candidates=quote_candidates,
-                data_base_url=getattr(scanner_args, "data_base_url", None),
-                session_end_offset_minutes=int(
-                    getattr(args, "session_end_offset_minutes", 0)
-                ),
-            )
-            capture_targets = {
-                str(reason): [dict(row) for row in rows if isinstance(row, dict)]
-                for reason, rows in dict(
-                    target_refresh.get("capture_targets") or {}
-                ).items()
-            }
+            if bool(options_scope.get("enabled")):
+                target_refresh = refresh_options_automation_capture_targets(
+                    recovery_store=recovery_store,
+                    session_id=tick_context.session_id,
+                    session_date=session_date,
+                    entry_runtimes=list(options_scope.get("entry_runtimes") or []),
+                    opportunities=opportunities,
+                    label=label,
+                    data_base_url=getattr(scanner_args, "data_base_url", None),
+                )
+                capture_targets = {
+                    str(reason): [dict(row) for row in rows if isinstance(row, dict)]
+                    for reason, rows in dict(
+                        target_refresh.get("capture_targets") or {}
+                    ).items()
+                }
+            else:
+                target_refresh = refresh_live_session_capture_targets(
+                    recovery_store=recovery_store,
+                    session_id=tick_context.session_id,
+                    session_date=session_date,
+                    label=label,
+                    profile=args.profile,
+                    promotable_candidates=promotable_payloads,
+                    monitor_candidates=monitor_payloads,
+                    capture_candidates=quote_candidates,
+                    data_base_url=getattr(scanner_args, "data_base_url", None),
+                    session_end_offset_minutes=int(
+                        getattr(args, "session_end_offset_minutes", 0)
+                    ),
+                )
+                capture_targets = {
+                    str(reason): [dict(row) for row in rows if isinstance(row, dict)]
+                    for reason, rows in dict(
+                        target_refresh.get("capture_targets") or {}
+                    ).items()
+                }
         except Exception as exc:
             print(f"Capture target refresh unavailable: {exc}")
     quote_event_count = capture_snapshot.quote_event_count
@@ -1496,11 +1641,30 @@ def _run_collection_cycle(
                 live_action_gate = history_gate
         except Exception as exc:
             print(f"Live capture history gate unavailable: {exc}")
+    if bool(options_scope.get("enabled")):
+        live_action_gate = {
+            **dict(live_action_gate),
+            "status": "bot_runtime_owned",
+            "reason_code": "bot_runtime_owned",
+            "message": "Collector discovery is active, but execution and alerts are owned by the options automation runtime.",
+            "allow_auto_execution": False,
+            "allow_alerts": False,
+        }
     uoa_summary = dict(capture_snapshot.uoa_summary)
     uoa_quote_summary = dict(capture_snapshot.uoa_quote_summary)
     uoa_decisions = dict(capture_snapshot.uoa_decisions)
     if heartbeat is not None:
         heartbeat()
+    decision_runs: dict[str, Any] | None = None
+    if bool(options_scope.get("enabled")):
+        try:
+            decision_runs = run_active_entry_decisions(
+                db_target=args.history_db,
+                market_date=session_date,
+                storage=storage,
+            )
+        except Exception as exc:
+            print(f"Entry decision engine unavailable: {exc}")
     auto_execution: dict[str, Any] | None = None
     if tick_context is not None and bool(live_action_gate.get("allow_auto_execution")):
         try:
@@ -1601,6 +1765,7 @@ def _run_collection_cycle(
         "uoa_quote_summary": uoa_quote_summary,
         "uoa_decisions": uoa_decisions,
         "selection_summary": selection_summary,
+        "decision_runs": decision_runs,
         "auto_execution": auto_execution,
     }
 
@@ -1612,6 +1777,7 @@ def run_collection_tick(
     heartbeat: Callable[[], None] | None = None,
     emit_output: bool = True,
 ) -> dict[str, Any]:
+    args = _apply_options_automation_overrides(args)
     scanner_args = build_scanner_args(args)
     reference_time = _resolve_collection_reference_time(tick_context.slot_at)
     if not args.allow_off_hours and not collection_window_is_open(
@@ -1701,6 +1867,7 @@ def run_collection_tick(
                 tick_context=tick_context,
                 scanner_args=scanner_args,
                 client=client,
+                storage=storage,
                 history_store=storage.history,
                 alert_store=storage.alerts,
                 job_store=storage.jobs,

@@ -121,6 +121,84 @@ class ExecutionAttemptModel(Base):
     error_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class ExecutionIntentModel(Base):
+    __tablename__ = "execution_intents"
+    __table_args__ = (
+        Index("idx_execution_intents_bot_created", "bot_id", "created_at"),
+        Index("idx_execution_intents_slot_state", "slot_key", "state"),
+        Index("idx_execution_intents_opportunity_decision", "opportunity_decision_id"),
+        Index("idx_execution_intents_strategy_position", "strategy_position_id"),
+        Index("idx_execution_intents_execution_attempt", "execution_attempt_id"),
+    )
+
+    execution_intent_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    bot_id: Mapped[str] = mapped_column(Text, nullable=False)
+    automation_id: Mapped[str] = mapped_column(Text, nullable=False)
+    opportunity_decision_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey(
+            "opportunity_decisions.opportunity_decision_id", ondelete="SET NULL"
+        ),
+        nullable=True,
+    )
+    strategy_position_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("portfolio_positions.position_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    execution_attempt_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("execution_attempts.execution_attempt_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    action_type: Mapped[str] = mapped_column(Text, nullable=False)
+    slot_key: Mapped[str] = mapped_column(Text, nullable=False)
+    claim_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    policy_ref_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    config_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    superseded_by_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class ExecutionIntentEventModel(Base):
+    __tablename__ = "execution_intent_events"
+    __table_args__ = (
+        Index(
+            "idx_execution_intent_events_intent_event_at",
+            "execution_intent_id",
+            "event_at",
+        ),
+    )
+
+    execution_intent_event_id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, autoincrement=True
+    )
+    execution_intent_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("execution_intents.execution_intent_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+
+
 class ExecutionOrderModel(Base):
     __tablename__ = "execution_orders"
     __table_args__ = (

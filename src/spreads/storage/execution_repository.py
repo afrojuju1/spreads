@@ -8,6 +8,8 @@ from spreads.storage.base import RepositoryBase
 from spreads.storage.execution_models import (
     ExecutionAttemptModel,
     ExecutionFillModel,
+    ExecutionIntentEventModel,
+    ExecutionIntentModel,
     ExecutionOrderModel,
     PortfolioPositionModel,
     PositionCloseModel,
@@ -15,6 +17,8 @@ from spreads.storage.execution_models import (
 from spreads.storage.records import (
     ExecutionAttemptRecord,
     ExecutionFillRecord,
+    ExecutionIntentEventRecord,
+    ExecutionIntentRecord,
     ExecutionOrderRecord,
     PortfolioPositionRecord,
     PositionCloseRecord,
@@ -32,6 +36,11 @@ class ExecutionRepository(RepositoryBase):
     def schema_ready(self) -> bool:
         return self.schema_has_tables(
             "execution_attempts", "execution_orders", "execution_fills"
+        )
+
+    def intent_schema_ready(self) -> bool:
+        return self.schema_has_tables(
+            "execution_intents", "execution_intent_events", "execution_attempts"
         )
 
     def positions_schema_ready(self) -> bool:
@@ -266,6 +275,140 @@ class ExecutionRepository(RepositoryBase):
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
         return self.rows(rows)
+
+    def get_execution_intent(
+        self, execution_intent_id: str
+    ) -> ExecutionIntentRecord | None:
+        with self.session_factory() as session:
+            row = session.get(ExecutionIntentModel, execution_intent_id)
+        if row is None:
+            return None
+        return self.row(row)
+
+    def upsert_execution_intent(
+        self,
+        *,
+        execution_intent_id: str,
+        bot_id: str,
+        automation_id: str,
+        opportunity_decision_id: str | None,
+        strategy_position_id: str | None,
+        execution_attempt_id: str | None,
+        action_type: str,
+        slot_key: str,
+        claim_token: str | None,
+        policy_ref: dict[str, Any],
+        config_hash: str,
+        state: str,
+        expires_at: str | None,
+        superseded_by_id: str | None,
+        payload: dict[str, Any] | None,
+        created_at: str,
+        updated_at: str,
+    ) -> ExecutionIntentRecord:
+        created_at_dt = parse_datetime(created_at)
+        updated_at_dt = parse_datetime(updated_at)
+        expires_at_dt = parse_datetime(expires_at)
+        if created_at_dt is None or updated_at_dt is None:
+            raise ValueError("created_at and updated_at are required")
+        with self.session_scope() as session:
+            row = session.get(ExecutionIntentModel, execution_intent_id)
+            if row is None:
+                row = ExecutionIntentModel(
+                    execution_intent_id=execution_intent_id,
+                    created_at=created_at_dt,
+                    bot_id=bot_id,
+                    automation_id=automation_id,
+                    opportunity_decision_id=opportunity_decision_id,
+                    strategy_position_id=strategy_position_id,
+                    execution_attempt_id=execution_attempt_id,
+                    action_type=action_type,
+                    slot_key=slot_key,
+                    claim_token=claim_token,
+                    policy_ref_json=dict(policy_ref),
+                    config_hash=config_hash,
+                    state=state,
+                    expires_at=expires_at_dt,
+                    superseded_by_id=superseded_by_id,
+                    payload_json=dict(payload or {}),
+                    updated_at=updated_at_dt,
+                )
+                session.add(row)
+            else:
+                row.bot_id = bot_id
+                row.automation_id = automation_id
+                row.opportunity_decision_id = opportunity_decision_id
+                row.strategy_position_id = strategy_position_id
+                row.execution_attempt_id = execution_attempt_id
+                row.action_type = action_type
+                row.slot_key = slot_key
+                row.claim_token = claim_token
+                row.policy_ref_json = dict(policy_ref)
+                row.config_hash = config_hash
+                row.state = state
+                row.expires_at = expires_at_dt
+                row.superseded_by_id = superseded_by_id
+                row.payload_json = dict(payload or {})
+                row.updated_at = updated_at_dt
+            session.flush()
+            session.refresh(row)
+            return self.row(row)
+
+    def list_execution_intents(
+        self,
+        *,
+        bot_id: str | None = None,
+        automation_id: str | None = None,
+        slot_key: str | None = None,
+        states: list[str] | None = None,
+        execution_attempt_id: str | None = None,
+        limit: int = 200,
+    ) -> list[ExecutionIntentRecord]:
+        statement = select(ExecutionIntentModel)
+        if bot_id:
+            statement = statement.where(ExecutionIntentModel.bot_id == bot_id)
+        if automation_id:
+            statement = statement.where(
+                ExecutionIntentModel.automation_id == automation_id
+            )
+        if slot_key:
+            statement = statement.where(ExecutionIntentModel.slot_key == slot_key)
+        if states:
+            statement = statement.where(ExecutionIntentModel.state.in_(states))
+        if execution_attempt_id:
+            statement = statement.where(
+                ExecutionIntentModel.execution_attempt_id == execution_attempt_id
+            )
+        statement = statement.order_by(
+            ExecutionIntentModel.created_at.desc(),
+            ExecutionIntentModel.execution_intent_id.asc(),
+        ).limit(limit)
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return self.rows(rows)
+
+    def append_execution_intent_event(
+        self,
+        *,
+        execution_intent_id: str,
+        event_type: str,
+        event_at: str,
+        payload: dict[str, Any] | None = None,
+    ) -> ExecutionIntentEventRecord:
+        event_at_dt = parse_datetime(event_at)
+        if event_at_dt is None:
+            raise ValueError("event_at is required")
+        with self.session_scope() as session:
+            row = ExecutionIntentEventModel(
+                execution_intent_id=execution_intent_id,
+                event_type=event_type,
+                event_at=event_at_dt,
+                payload_json=dict(payload or {}),
+            )
+            session.add(row)
+            session.flush()
+            session.refresh(row)
+            return self.row(row)
 
     def update_attempt(
         self,

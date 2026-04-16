@@ -9,11 +9,13 @@ from spreads.services.runtime_identity import build_pipeline_id
 from spreads.storage.base import RepositoryBase
 from spreads.storage.records import (
     OpportunityRecord,
+    OpportunityDecisionRecord,
     SignalStateRecord,
     SignalStateTransitionRecord,
 )
 from spreads.storage.serializers import parse_date, parse_datetime
 from spreads.storage.signal_models import (
+    OpportunityDecisionModel,
     OpportunityModel,
     SignalStateModel,
     SignalStateTransitionModel,
@@ -177,6 +179,9 @@ class SignalRepository(RepositoryBase):
             "signal_state_transitions",
             "opportunities",
         )
+
+    def decision_schema_ready(self) -> bool:
+        return self.schema_has_tables("opportunities", "opportunity_decisions")
 
     def get_signal_state(self, signal_state_id: str) -> SignalStateRecord | None:
         with self.session_factory() as session:
@@ -823,3 +828,107 @@ class SignalRepository(RepositoryBase):
             session.flush()
             session.refresh(row)
             return self.row(row), changed
+
+    def get_opportunity_decision(
+        self, opportunity_decision_id: str
+    ) -> OpportunityDecisionRecord | None:
+        with self.session_factory() as session:
+            row = session.get(OpportunityDecisionModel, opportunity_decision_id)
+        if row is None:
+            return None
+        return self.row(row)
+
+    def upsert_opportunity_decision(
+        self,
+        *,
+        opportunity_decision_id: str,
+        opportunity_id: str,
+        bot_id: str,
+        automation_id: str,
+        run_key: str,
+        scope_key: str,
+        policy_ref: dict[str, Any],
+        config_hash: str,
+        state: str,
+        score: float | None,
+        rank: int | None,
+        reason_codes: list[str],
+        superseded_by_id: str | None,
+        decided_at: str,
+        payload: dict[str, Any] | None = None,
+    ) -> OpportunityDecisionRecord:
+        decided_at_dt = parse_datetime(decided_at)
+        if decided_at_dt is None:
+            raise ValueError("decided_at is required")
+        with self.session_scope() as session:
+            row = session.get(OpportunityDecisionModel, opportunity_decision_id)
+            if row is None:
+                row = OpportunityDecisionModel(
+                    opportunity_decision_id=opportunity_decision_id,
+                    opportunity_id=opportunity_id,
+                    bot_id=bot_id,
+                    automation_id=automation_id,
+                    run_key=run_key,
+                    scope_key=scope_key,
+                    policy_ref_json=dict(policy_ref),
+                    config_hash=config_hash,
+                    state=state,
+                    score=score,
+                    rank=rank,
+                    reason_codes_json=list(reason_codes),
+                    superseded_by_id=superseded_by_id,
+                    decided_at=decided_at_dt,
+                    payload_json=dict(payload or {}),
+                )
+                session.add(row)
+            else:
+                row.opportunity_id = opportunity_id
+                row.bot_id = bot_id
+                row.automation_id = automation_id
+                row.run_key = run_key
+                row.scope_key = scope_key
+                row.policy_ref_json = dict(policy_ref)
+                row.config_hash = config_hash
+                row.state = state
+                row.score = score
+                row.rank = rank
+                row.reason_codes_json = list(reason_codes)
+                row.superseded_by_id = superseded_by_id
+                row.decided_at = decided_at_dt
+                row.payload_json = dict(payload or {})
+            session.flush()
+            session.refresh(row)
+            return self.row(row)
+
+    def list_opportunity_decisions(
+        self,
+        *,
+        bot_id: str | None = None,
+        automation_id: str | None = None,
+        opportunity_id: str | None = None,
+        run_key: str | None = None,
+        states: list[str] | None = None,
+        limit: int = 200,
+    ) -> list[OpportunityDecisionRecord]:
+        statement = select(OpportunityDecisionModel)
+        if bot_id:
+            statement = statement.where(OpportunityDecisionModel.bot_id == bot_id)
+        if automation_id:
+            statement = statement.where(
+                OpportunityDecisionModel.automation_id == automation_id
+            )
+        if opportunity_id:
+            statement = statement.where(
+                OpportunityDecisionModel.opportunity_id == opportunity_id
+            )
+        if run_key:
+            statement = statement.where(OpportunityDecisionModel.run_key == run_key)
+        if states:
+            statement = statement.where(OpportunityDecisionModel.state.in_(states))
+        statement = statement.order_by(
+            OpportunityDecisionModel.decided_at.desc(),
+            OpportunityDecisionModel.opportunity_decision_id.asc(),
+        ).limit(limit)
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return self.rows(rows)
