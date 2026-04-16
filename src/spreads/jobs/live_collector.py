@@ -248,6 +248,13 @@ def _apply_options_automation_overrides(args: argparse.Namespace) -> argparse.Na
     if not bool(getattr(args, "options_automation_enabled", False)):
         setattr(args, "options_automation_scope", {"enabled": False})
         return args
+    if not str(getattr(args, "label", "") or "").strip():
+        args.label = build_live_snapshot_label(
+            universe_label=str(getattr(args, "universe", "0dte_core") or "0dte_core"),
+            strategy=str(getattr(args, "strategy", "combined") or "combined"),
+            profile=str(getattr(args, "profile", "0dte") or "0dte"),
+            greeks_source=str(getattr(args, "greeks_source", "auto") or "auto"),
+        )
     scope = _options_automation_scope()
     setattr(args, "options_automation_scope", scope)
     if not bool(scope.get("enabled")):
@@ -1391,7 +1398,7 @@ def _run_collection_cycle(
             history_store=history_store,
         )
     )
-    label = build_live_snapshot_label(
+    label = str(getattr(args, "label", "") or "").strip() or build_live_snapshot_label(
         universe_label=universe_label,
         strategy=args.strategy,
         profile=args.profile,

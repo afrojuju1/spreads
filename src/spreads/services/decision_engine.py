@@ -8,6 +8,7 @@ from uuid import uuid4
 from spreads.db.decorators import with_storage
 from spreads.services.automations import automation_should_run_now
 from spreads.services.bots import load_active_bots
+from spreads.services.live_pipelines import resolve_live_collector_label
 from spreads.services.option_structures import normalize_strategy_family
 
 ACTIVE_INTENT_STATES = ["pending", "claimed", "submitted", "partially_filled"]
@@ -51,20 +52,23 @@ def _matching_opportunities(
     market_date: str,
     symbols: tuple[str, ...],
     strategy_family: str,
+    allowed_labels: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     rows = [
         dict(row)
         for row in signal_store.list_opportunities(
             market_date=market_date,
             eligibility_state="live",
-            strategy_family=strategy_family,
             limit=500,
         )
     ]
+    allowed_symbols = set(symbols)
     filtered = [
         row
         for row in rows
-        if str(row.get("underlying_symbol") or "").upper() in set(symbols)
+        if normalize_strategy_family(row.get("strategy_family")) == strategy_family
+        and str(row.get("underlying_symbol") or "").upper() in allowed_symbols
+        and (not allowed_labels or str(row.get("label") or "") in allowed_labels)
         and str(row.get("lifecycle_state") or "") in {"candidate", "ready", "blocked"}
         and row.get("consumed_by_execution_attempt_id") in (None, "")
     ]
@@ -78,6 +82,19 @@ def _matching_opportunities(
     return filtered
 
 
+def _active_options_automation_labels(job_store: Any) -> set[str]:
+    labels: set[str] = set()
+    for definition in job_store.list_job_definitions(
+        enabled_only=True,
+        job_type="live_collector",
+    ):
+        payload = dict(definition.get("payload") or {})
+        if not bool(payload.get("options_automation_enabled", False)):
+            continue
+        labels.add(resolve_live_collector_label(payload))
+    return labels
+
+
 @with_storage()
 def run_entry_automation_decision(
     *,
@@ -89,6 +106,7 @@ def run_entry_automation_decision(
 ) -> dict[str, Any]:
     signal_store = storage.signals
     execution_store = storage.execution
+    job_store = storage.jobs
     if not signal_store.schema_ready() or not signal_store.decision_schema_ready():
         return {"status": "skipped", "reason": "signal_decision_schema_unavailable"}
     if not execution_store.intent_schema_ready():
@@ -135,6 +153,7 @@ def run_entry_automation_decision(
         strategy_family=normalize_strategy_family(
             automation.strategy_config.strategy_id
         ),
+        allowed_labels=_active_options_automation_labels(job_store),
     )
     min_score = float(
         automation.automation.trigger_policy.get("min_opportunity_score") or 0.0

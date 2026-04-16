@@ -35,6 +35,7 @@ from spreads.services.control_plane import (
     publish_control_gate_event,
 )
 from spreads.services.deployment_policy import (
+    DEPLOYMENT_MODE_PAPER_AUTO,
     deployment_mode_auto_executes,
     resolve_execution_deployment_mode,
 )
@@ -963,6 +964,7 @@ def _vertical_return_on_risk(
 def _validate_live_deployment_quality(
     *,
     candidate_payload: Mapping[str, Any],
+    deployment_mode: str | None = None,
     client: Any | None = None,
 ) -> dict[str, Any]:
     profile = resolve_candidate_profile(candidate_payload)
@@ -970,7 +972,11 @@ def _validate_live_deployment_quality(
     minimum_return_on_risk = _coerce_float(
         thresholds.get("min_execution_return_on_risk")
     )
-    if minimum_return_on_risk is None:
+    enforce_return_floor = (
+        minimum_return_on_risk is not None
+        and str(deployment_mode or "").strip().lower() != DEPLOYMENT_MODE_PAPER_AUTO
+    )
+    if minimum_return_on_risk is None and not enforce_return_floor:
         return {
             "ok": True,
             "profile": profile,
@@ -1035,7 +1041,7 @@ def _validate_live_deployment_quality(
             "live_quote": live_snapshot,
         }
 
-    if live_return_on_risk < minimum_return_on_risk:
+    if enforce_return_floor and live_return_on_risk < minimum_return_on_risk:
         return {
             "ok": False,
             "reason": "live_return_on_risk_below_floor",
@@ -2188,6 +2194,7 @@ def _sync_linked_execution_intent(
         superseded_by_id=_as_text(intent.get("superseded_by_id")),
         payload={
             **dict(intent.get("payload") or {}),
+            "dispatch_status": resolved_state,
             "execution_attempt_id": _as_text(attempt.get("execution_attempt_id")),
             "attempt_status": str(attempt.get("status") or ""),
         },
@@ -2481,6 +2488,7 @@ def submit_live_session_execution(
         )
         live_deployment_quality = _validate_live_deployment_quality(
             candidate_payload=candidate_payload,
+            deployment_mode=str(resolved_execution_policy.get("deployment_mode") or ""),
         )
         if not live_deployment_quality["ok"]:
             raise ValueError(str(live_deployment_quality["message"]))
@@ -3157,8 +3165,19 @@ def run_execution_submit(
         heartbeat()
     client = create_alpaca_client_from_env()
     if str(payload.get("trade_intent") or OPEN_TRADE_INTENT) == OPEN_TRADE_INTENT:
+        request_payload = (
+            payload.get("request")
+            if isinstance(payload.get("request"), Mapping)
+            else {}
+        )
+        request_execution_policy = (
+            request_payload.get("execution_policy")
+            if isinstance(request_payload.get("execution_policy"), Mapping)
+            else {}
+        )
         live_deployment_quality = _validate_live_deployment_quality(
             candidate_payload=dict(payload.get("candidate") or {}),
+            deployment_mode=str(request_execution_policy.get("deployment_mode") or ""),
             client=client,
         )
         if not live_deployment_quality["ok"]:

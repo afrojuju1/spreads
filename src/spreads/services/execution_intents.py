@@ -9,6 +9,10 @@ from spreads.services.alpaca import (
     create_alpaca_client_from_env,
     resolve_trading_environment,
 )
+from spreads.services.deployment_policy import (
+    DEPLOYMENT_MODE_LIVE_AUTO,
+    DEPLOYMENT_MODE_PAPER_AUTO,
+)
 from spreads.services.execution import (
     submit_opportunity_execution,
     submit_position_close_by_id,
@@ -124,6 +128,19 @@ def _auto_execution_gate(
     return True, None
 
 
+def _intent_execution_policy(intent: dict[str, Any]) -> dict[str, Any] | None:
+    payload = _intent_payload(intent)
+    approval_mode = str(payload.get("approval_mode") or "manual").strip().lower()
+    execution_mode = str(payload.get("execution_mode") or "paper").strip().lower()
+    if approval_mode != "auto":
+        return None
+    if execution_mode == "paper":
+        return {"deployment_mode": DEPLOYMENT_MODE_PAPER_AUTO}
+    if execution_mode == "live":
+        return {"deployment_mode": DEPLOYMENT_MODE_LIVE_AUTO}
+    return None
+
+
 @with_storage()
 def submit_execution_intent(
     *,
@@ -200,6 +217,11 @@ def submit_execution_intent(
                     "execution_intent_id": execution_intent_id,
                     "bot_id": intent.get("bot_id"),
                     "automation_id": intent.get("automation_id"),
+                    **(
+                        {}
+                        if _intent_execution_policy(intent) is None
+                        else {"execution_policy": _intent_execution_policy(intent)}
+                    ),
                 },
                 storage=storage,
             )
