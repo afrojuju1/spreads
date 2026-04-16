@@ -444,9 +444,7 @@ def evaluate_earnings_signal_gate(
         elif metric < modeled_move_vs_break_even_move_min:
             blockers.append("modeled_move_vs_break_even_move_too_low")
 
-    neutral_regime_signal_min = _as_float(
-        thresholds.get("neutral_regime_signal_min")
-    )
+    neutral_regime_signal_min = _as_float(thresholds.get("neutral_regime_signal_min"))
     if neutral_regime_signal_min is not None:
         metric = _as_float(bundle.get("neutral_regime_signal"))
         if metric is None:
@@ -454,9 +452,7 @@ def evaluate_earnings_signal_gate(
         elif metric < neutral_regime_signal_min:
             blockers.append("neutral_regime_signal_too_low")
 
-    residual_iv_richness_min = _as_float(
-        thresholds.get("residual_iv_richness_min")
-    )
+    residual_iv_richness_min = _as_float(thresholds.get("residual_iv_richness_min"))
     if residual_iv_richness_min is not None:
         metric = _as_float(bundle.get("residual_iv_richness"))
         if metric is None:
@@ -523,10 +519,10 @@ def earnings_phase_policy_blockers(
         blockers.append("earnings_horizon_band_blocked")
     if earnings_phase == "through_event" and horizon_band_value == "same_day":
         blockers.append("same_day_earnings_event_blocked")
-    if (
-        earnings_phase in {"through_event", "post_event_fresh"}
-        and earnings_timing_confidence not in {"medium", "high"}
-    ):
+    if earnings_phase in {
+        "through_event",
+        "post_event_fresh",
+    } and earnings_timing_confidence not in {"medium", "high"}:
         blockers.append("earnings_timing_confidence_too_low")
     if earnings_phase == "pre_event_runup":
         if family == "iron_condor":
@@ -545,7 +541,10 @@ def earnings_phase_policy_blockers(
         ):
             blockers.append("through_event_single_name_short_premium_blocked")
     elif earnings_phase == "post_event_fresh":
-        if family == "iron_condor" and horizon_band_value not in {"near_term", "post_event"}:
+        if family == "iron_condor" and horizon_band_value not in {
+            "near_term",
+            "post_event",
+        }:
             blockers.append("post_event_iron_condor_horizon_blocked")
     if phase_preference == "blocked" and not blockers:
         blockers.append("earnings_phase_family_blocked")
@@ -625,6 +624,9 @@ def profile_specific_score_components(
     components: dict[str, float] = {}
     evidence: dict[str, Any] = {}
     cycle_payload = {} if not isinstance(cycle, Mapping) else dict(cycle)
+    family = strategy_family(_as_text(candidate.get("strategy")))
+    symbol = _as_text(candidate.get("underlying_symbol")) or ""
+    product_class_value = product_class(symbol)
 
     buffer_ratio = _carry_buffer_ratio(candidate)
     if style_profile == "carry" and buffer_ratio is not None:
@@ -640,8 +642,19 @@ def profile_specific_score_components(
         elif setup_status == "neutral":
             components["tactical_setup_penalty"] = 3.0
         elif setup_status not in {"", "unknown"}:
-            components["tactical_setup_penalty"] = 8.0
+            penalty = 8.0
+            if family == "call_credit_spread" and product_class_value in {
+                "cash_settled_index",
+                "top_tier_etf",
+                "broad_etf",
+            }:
+                penalty = 1.5
+                components["tactical_countertrend_short_premium_delta"] = 4.0
+                evidence["countertrend_short_premium_relief"] = True
+            components["tactical_setup_penalty"] = penalty
         evidence["setup_status"] = setup_status or "unknown"
+        evidence["strategy_family"] = family
+        evidence["product_class"] = product_class_value
 
         short_delta = abs(_as_float(candidate.get("short_delta")) or 0.0)
         if short_delta > 0.0:
@@ -858,7 +871,9 @@ def build_candidate_opportunity_score(
                 horizon_band_value=horizon_band_value,
                 earnings_timing_confidence=str(
                     candidate.get("earnings_timing_confidence") or "unknown"
-                ).strip().lower(),
+                )
+                .strip()
+                .lower(),
             )
         )
         resolved_blockers.extend(list(signal_gate["blockers"]))

@@ -5,7 +5,7 @@ schedule:
   cadence: 5m
   market_hours_only: true
   start_time_et: "09:45"
-  end_time_et: "15:15"
+  end_time_et: "15:45"
 universe_ref: liquid_index_etfs
 trigger_policy:
   min_opportunity_score: 60
