@@ -385,6 +385,11 @@ def _manage_submitted_open_intents(
             continue
         if status not in WORKING_REPRICE_ATTEMPT_STATUSES:
             continue
+        active, inactive_reason = _opportunity_is_active_for_intent(
+            storage.signals,
+            intent,
+            execution_attempt_id=execution_attempt_id,
+        )
         age_seconds = _submitted_age_seconds(refreshed_attempt)
         if age_seconds is None or age_seconds < float(max(stale_after_seconds, 1)):
             continue
@@ -416,6 +421,47 @@ def _manage_submitted_open_intents(
         post_cancel_status = (
             str(post_cancel_attempt.get("status") or "").strip().lower()
         )
+        if not active and post_cancel_status in {"canceled", "cancelled"}:
+            updated = execution_store.upsert_execution_intent(
+                execution_intent_id=str(intent["execution_intent_id"]),
+                bot_id=str(intent["bot_id"]),
+                automation_id=str(intent["automation_id"]),
+                opportunity_decision_id=_as_text(intent.get("opportunity_decision_id")),
+                strategy_position_id=_as_text(intent.get("strategy_position_id")),
+                execution_attempt_id=execution_attempt_id,
+                action_type=str(intent["action_type"]),
+                slot_key=str(intent["slot_key"]),
+                claim_token=_as_text(intent.get("claim_token")),
+                policy_ref=dict(intent.get("policy_ref") or {}),
+                config_hash=str(intent.get("config_hash") or ""),
+                state="revoked",
+                expires_at=_as_text(intent.get("expires_at")),
+                superseded_by_id=None,
+                payload={
+                    **_intent_payload(intent),
+                    "dispatch_status": "revoked",
+                    "revoke_reason": inactive_reason,
+                },
+                created_at=str(intent["created_at"]),
+                updated_at=_utc_now(),
+            )
+            _append_event(
+                execution_store,
+                execution_intent_id=str(intent["execution_intent_id"]),
+                event_type="revoked",
+                payload={
+                    "reason": inactive_reason,
+                    "execution_attempt_id": execution_attempt_id,
+                },
+            )
+            results.append(
+                {
+                    "execution_intent_id": str(intent["execution_intent_id"]),
+                    "status": updated.get("state"),
+                    "reason": inactive_reason,
+                }
+            )
+            continue
         if post_cancel_status in {"canceled", "cancelled"}:
             replacement = _create_replacement_intent(
                 execution_store,
@@ -478,6 +524,186 @@ def _intent_execution_policy(intent: dict[str, Any]) -> dict[str, Any] | None:
     if execution_mode == "live":
         return {"deployment_mode": DEPLOYMENT_MODE_LIVE_AUTO}
     return None
+
+
+def _resolve_intent_opportunity_id(
+    signal_store: Any,
+    intent: dict[str, Any],
+) -> str | None:
+    opportunity_decision_id = _as_text(intent.get("opportunity_decision_id"))
+    if opportunity_decision_id:
+        decision = signal_store.get_opportunity_decision(opportunity_decision_id)
+        if decision is not None:
+            return _as_text(decision.get("opportunity_id"))
+    return _as_text(_intent_payload(intent).get("opportunity_id"))
+
+
+def _opportunity_is_active_for_intent(
+    signal_store: Any,
+    intent: dict[str, Any],
+    *,
+    execution_attempt_id: str | None = None,
+) -> tuple[bool, str | None]:
+    opportunity_id = _resolve_intent_opportunity_id(signal_store, intent)
+    if opportunity_id is None:
+        return False, "opportunity_missing"
+    opportunity = signal_store.get_opportunity(opportunity_id)
+    if opportunity is None:
+        return False, "opportunity_missing"
+    lifecycle_state = str(opportunity.get("lifecycle_state") or "")
+    eligibility_state = str(opportunity.get("eligibility_state") or "")
+    if lifecycle_state not in {"candidate", "ready", "blocked"}:
+        return False, "opportunity_inactive"
+    if eligibility_state != "live":
+        return False, "opportunity_not_live"
+    consumed = _as_text(opportunity.get("consumed_by_execution_attempt_id"))
+    if execution_attempt_id and consumed not in {None, "", execution_attempt_id}:
+        return False, "opportunity_consumed_elsewhere"
+    return True, None
+
+
+def _cleanup_slot_conflicts(
+    execution_store: Any,
+    *,
+    limit: int,
+) -> dict[str, Any]:
+    rows = [
+        dict(row)
+        for row in execution_store.list_execution_intents(
+            limit=max(int(limit), 1) * 20,
+        )
+    ]
+    slots: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        slot_key = str(row.get("slot_key") or "")
+        if not slot_key:
+            continue
+        slots.setdefault(slot_key, []).append(row)
+
+    revoked = 0
+    results: list[dict[str, Any]] = []
+    for slot_key, intents in slots.items():
+        intents.sort(
+            key=lambda row: parse_datetime(_as_text(row.get("created_at")))
+            or datetime.min.replace(tzinfo=UTC),
+            reverse=True,
+        )
+        anchor_id: str | None = None
+        for intent in intents:
+            state = str(intent.get("state") or "")
+            intent_id = str(intent["execution_intent_id"])
+            if anchor_id is None and state in ACTIVE_INTENT_STATES.union({"filled"}):
+                anchor_id = intent_id
+                continue
+            if anchor_id is None:
+                continue
+            if state not in {"pending", "claimed"}:
+                continue
+            if _as_text(intent.get("execution_attempt_id")):
+                continue
+            updated = execution_store.upsert_execution_intent(
+                execution_intent_id=intent_id,
+                bot_id=str(intent["bot_id"]),
+                automation_id=str(intent["automation_id"]),
+                opportunity_decision_id=_as_text(intent.get("opportunity_decision_id")),
+                strategy_position_id=_as_text(intent.get("strategy_position_id")),
+                execution_attempt_id=None,
+                action_type=str(intent["action_type"]),
+                slot_key=slot_key,
+                claim_token=_as_text(intent.get("claim_token")),
+                policy_ref=dict(intent.get("policy_ref") or {}),
+                config_hash=str(intent.get("config_hash") or ""),
+                state="revoked",
+                expires_at=_as_text(intent.get("expires_at")),
+                superseded_by_id=anchor_id,
+                payload={
+                    **_intent_payload(intent),
+                    "dispatch_status": "revoked",
+                    "revoked_by_execution_intent_id": anchor_id,
+                },
+                created_at=str(intent["created_at"]),
+                updated_at=_utc_now(),
+            )
+            _append_event(
+                execution_store,
+                execution_intent_id=intent_id,
+                event_type="revoked",
+                payload={
+                    "reason": "slot_conflict",
+                    "anchor_execution_intent_id": anchor_id,
+                },
+            )
+            revoked += 1
+            results.append(
+                {
+                    "execution_intent_id": intent_id,
+                    "slot_key": slot_key,
+                    "status": updated.get("state"),
+                    "anchor_execution_intent_id": anchor_id,
+                }
+            )
+    return {"revoked": revoked, "results": results[:25]}
+
+
+def _backfill_strategy_position_links(
+    execution_store: Any, *, limit: int
+) -> dict[str, Any]:
+    linked = 0
+    results: list[dict[str, Any]] = []
+    positions = [
+        dict(row)
+        for row in execution_store.list_positions(limit=max(int(limit), 1) * 10)
+    ]
+    for position in positions:
+        position_id = str(position.get("position_id") or "")
+        open_execution_attempt_id = _as_text(position.get("open_execution_attempt_id"))
+        if not position_id or open_execution_attempt_id is None:
+            continue
+        attempt = execution_store.get_attempt(open_execution_attempt_id)
+        if attempt is None:
+            continue
+        request = (
+            attempt.get("request") if isinstance(attempt.get("request"), dict) else {}
+        )
+        execution_intent_id = _as_text(request.get("execution_intent_id"))
+        if execution_intent_id is None:
+            continue
+        intent = execution_store.get_execution_intent(execution_intent_id)
+        if intent is None:
+            continue
+        if _as_text(intent.get("strategy_position_id")) == position_id:
+            continue
+        updated = execution_store.upsert_execution_intent(
+            execution_intent_id=str(intent["execution_intent_id"]),
+            bot_id=str(intent["bot_id"]),
+            automation_id=str(intent["automation_id"]),
+            opportunity_decision_id=_as_text(intent.get("opportunity_decision_id")),
+            strategy_position_id=position_id,
+            execution_attempt_id=_as_text(intent.get("execution_attempt_id")),
+            action_type=str(intent["action_type"]),
+            slot_key=str(intent["slot_key"]),
+            claim_token=_as_text(intent.get("claim_token")),
+            policy_ref=dict(intent.get("policy_ref") or {}),
+            config_hash=str(intent.get("config_hash") or ""),
+            state=str(intent.get("state") or ""),
+            expires_at=_as_text(intent.get("expires_at")),
+            superseded_by_id=_as_text(intent.get("superseded_by_id")),
+            payload={
+                **_intent_payload(intent),
+                "strategy_position_id": position_id,
+            },
+            created_at=str(intent["created_at"]),
+            updated_at=_utc_now(),
+        )
+        linked += 1
+        results.append(
+            {
+                "execution_intent_id": str(intent["execution_intent_id"]),
+                "strategy_position_id": position_id,
+                "state": updated.get("state"),
+            }
+        )
+    return {"linked": linked, "results": results[:25]}
 
 
 @with_storage()
@@ -665,6 +891,14 @@ def dispatch_pending_execution_intents(
 
     client = create_alpaca_client_from_env()
     trading_environment = resolve_trading_environment(client.trading_base_url)
+    position_linkage = _backfill_strategy_position_links(
+        execution_store,
+        limit=max(int(limit), 1),
+    )
+    slot_cleanup = _cleanup_slot_conflicts(
+        execution_store,
+        limit=max(int(limit), 1),
+    )
     active_management = _manage_submitted_open_intents(
         db_target=db_target,
         storage=storage,
@@ -787,6 +1021,8 @@ def dispatch_pending_execution_intents(
     return {
         "status": "ok",
         "trading_environment": trading_environment,
+        "position_linkage": position_linkage,
+        "slot_cleanup": slot_cleanup,
         "active_management": active_management,
         "reviewed": reviewed,
         "submitted": submitted,

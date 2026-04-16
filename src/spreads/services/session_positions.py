@@ -158,6 +158,11 @@ def _attempt_source_job(attempt: Mapping[str, Any]) -> dict[str, Any]:
     return dict(payload) if isinstance(payload, Mapping) else {}
 
 
+def _attempt_execution_intent_id(attempt: Mapping[str, Any]) -> str | None:
+    request = _attempt_request(attempt)
+    return _as_text(request.get("execution_intent_id"))
+
+
 def _resolve_primary_order(attempt: Mapping[str, Any]) -> Mapping[str, Any] | None:
     return resolve_execution_attempt_primary_order(attempt)
 
@@ -292,6 +297,47 @@ def _resolve_opened_at(attempt: Mapping[str, Any]) -> str | None:
     )
 
 
+def _sync_linked_execution_intent_position(
+    *,
+    execution_store: Any,
+    attempt: Mapping[str, Any],
+    position_id: str,
+) -> None:
+    if not execution_store.intent_schema_ready():
+        return
+    execution_intent_id = _attempt_execution_intent_id(attempt)
+    if execution_intent_id is None:
+        return
+    intent = execution_store.get_execution_intent(execution_intent_id)
+    if intent is None:
+        return
+    payload = (
+        intent.get("payload") if isinstance(intent.get("payload"), Mapping) else {}
+    )
+    execution_store.upsert_execution_intent(
+        execution_intent_id=str(intent["execution_intent_id"]),
+        bot_id=str(intent["bot_id"]),
+        automation_id=str(intent["automation_id"]),
+        opportunity_decision_id=_as_text(intent.get("opportunity_decision_id")),
+        strategy_position_id=position_id,
+        execution_attempt_id=_as_text(attempt.get("execution_attempt_id")),
+        action_type=str(intent["action_type"]),
+        slot_key=str(intent["slot_key"]),
+        claim_token=_as_text(intent.get("claim_token")),
+        policy_ref=dict(intent.get("policy_ref") or {}),
+        config_hash=str(intent.get("config_hash") or ""),
+        state=str(intent.get("state") or ""),
+        expires_at=_as_text(intent.get("expires_at")),
+        superseded_by_id=_as_text(intent.get("superseded_by_id")),
+        payload={
+            **dict(payload),
+            "strategy_position_id": position_id,
+        },
+        created_at=str(intent["created_at"]),
+        updated_at=_utc_now(),
+    )
+
+
 def _resolve_closed_at(attempt: Mapping[str, Any]) -> str | None:
     fill_times = [
         _as_text(fill.get("filled_at"))
@@ -360,10 +406,10 @@ def _position_entry_value(position: Mapping[str, Any]) -> float | None:
         if isinstance(position.get("economics"), Mapping)
         else {}
     )
-    return _coerce_float(position.get("entry_value")) or _coerce_float(
-        economics.get("entry_value")
-    ) or _coerce_float(
-        economics.get("entry_credit")
+    return (
+        _coerce_float(position.get("entry_value"))
+        or _coerce_float(economics.get("entry_value"))
+        or _coerce_float(economics.get("entry_credit"))
     )
 
 
@@ -458,8 +504,7 @@ def _position_common_payload(
             else None
         ),
         "root_symbol": root_symbol,
-        "strategy_family": strategy_family
-        or str(attempt.get("strategy") or "unknown"),
+        "strategy_family": strategy_family or str(attempt.get("strategy") or "unknown"),
         "style_profile": _as_text(attempt.get("style_profile"))
         or _as_text(
             existing.get("style_profile") if isinstance(existing, Mapping) else None
@@ -687,6 +732,11 @@ def _sync_open_position(
         execution_attempt_id=str(attempt["execution_attempt_id"]),
         position_id=str(existing["position_id"]),
     )
+    _sync_linked_execution_intent_position(
+        execution_store=execution_store,
+        attempt=attempt,
+        position_id=str(existing["position_id"]),
+    )
     return existing
 
 
@@ -713,6 +763,11 @@ def _sync_close_position(
     broker_status = (_as_text(attempt.get("status")) or "unknown").lower()
     execution_store.update_attempt(
         execution_attempt_id=str(attempt["execution_attempt_id"]),
+        position_id=position_id,
+    )
+    _sync_linked_execution_intent_position(
+        execution_store=execution_store,
+        attempt=attempt,
         position_id=position_id,
     )
     execution_store.update_position(

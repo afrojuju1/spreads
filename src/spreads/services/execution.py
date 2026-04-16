@@ -2177,12 +2177,15 @@ def _sync_linked_execution_intent(
         str(attempt.get("status") or "")
     )
     updated_at = _utc_now()
+    strategy_position_id = _as_text(attempt.get("position_id")) or _as_text(
+        intent.get("strategy_position_id")
+    )
     execution_store.upsert_execution_intent(
         execution_intent_id=str(intent["execution_intent_id"]),
         bot_id=str(intent["bot_id"]),
         automation_id=str(intent["automation_id"]),
         opportunity_decision_id=_as_text(intent.get("opportunity_decision_id")),
-        strategy_position_id=_as_text(intent.get("strategy_position_id")),
+        strategy_position_id=strategy_position_id,
         execution_attempt_id=_as_text(attempt.get("execution_attempt_id")),
         action_type=str(intent["action_type"]),
         slot_key=str(intent["slot_key"]),
@@ -2197,6 +2200,11 @@ def _sync_linked_execution_intent(
             "dispatch_status": resolved_state,
             "execution_attempt_id": _as_text(attempt.get("execution_attempt_id")),
             "attempt_status": str(attempt.get("status") or ""),
+            **(
+                {}
+                if strategy_position_id is None
+                else {"strategy_position_id": strategy_position_id}
+            ),
         },
         created_at=str(intent["created_at"]),
         updated_at=updated_at,
