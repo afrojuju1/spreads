@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
+
+from sqlalchemy import func, select
 
 from spreads.db.decorators import with_storage
 from spreads.jobs.orchestration import (
@@ -16,6 +18,7 @@ from spreads.jobs.orchestration import (
 )
 from spreads.services.account_state import get_account_overview
 from spreads.services.audit_replay import DEFAULT_EVENT_SCAN_LIMIT, build_audit_replay
+from spreads.services.bots import load_active_bots
 from spreads.services.broker_sync import BROKER_SYNC_KEY
 from spreads.services.control_plane import (
     get_control_state_snapshot,
@@ -29,7 +32,10 @@ from spreads.services.execution_lifecycle import (
     resolve_execution_submit_job_run_id,
 )
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
-from spreads.services.live_pipelines import list_enabled_live_collector_pipelines
+from spreads.services.live_pipelines import (
+    list_enabled_live_collector_pipelines,
+    resolve_live_collector_label,
+)
 from spreads.services.live_runtime import list_latest_live_sessions
 from spreads.services.positions import enrich_position_row
 from spreads.services.risk_manager import assess_position_risk
@@ -51,6 +57,8 @@ from spreads.services.value_coercion import (
     utc_now_iso as _utc_now,
 )
 from spreads.storage.serializers import parse_datetime
+from spreads.storage.execution_models import ExecutionIntentModel
+from spreads.storage.signal_models import OpportunityDecisionModel, OpportunityModel
 
 OPEN_POSITION_STATUSES = ["open", "partial_close"]
 BROKER_SYNC_STALE_AFTER_SECONDS = 15 * 60
@@ -79,6 +87,7 @@ STATUS_RANK = {
 
 class OpsLookupError(LookupError):
     pass
+
 
 def _stream_quote_events_saved(capture: Mapping[str, Any] | None) -> int:
     if not isinstance(capture, Mapping):
@@ -158,6 +167,7 @@ def _attention(*, severity: str, code: str, message: str) -> dict[str, str]:
         "code": code,
         "message": message,
     }
+
 
 def _control_status(control: Mapping[str, Any]) -> str:
     mode = str(control.get("mode") or "unknown")
@@ -292,11 +302,7 @@ def _latest_live_collectors(
             if session is None or not isinstance(session.get("quote_capture"), Mapping)
             else dict(session.get("quote_capture") or {})
         )
-        capture_status = (
-            None
-            if run is None
-            else run.get("capture_status")
-        )
+        capture_status = None if run is None else run.get("capture_status")
         if capture_status is None:
             capture_status = quote_capture.get("capture_status")
         collector_status = _collector_status(run)
@@ -336,6 +342,141 @@ def _latest_live_collectors(
             }
         )
     return latest_collectors
+
+
+def _active_options_automation_labels(job_store: Any) -> set[str]:
+    if job_store is None or not job_store.schema_ready():
+        return set()
+    labels: set[str] = set()
+    for definition in job_store.list_job_definitions(
+        enabled_only=True, job_type="live_collector"
+    ):
+        payload = dict(definition.get("payload") or {})
+        if not bool(payload.get("options_automation_enabled", False)):
+            continue
+        labels.add(resolve_live_collector_label(payload))
+    return labels
+
+
+def _bot_runtime_summary(*, storage: Any, market_date: str) -> dict[str, Any]:
+    bots = load_active_bots()
+    bot_ids = sorted(bots)
+    summary = {
+        "bot_count": len(bot_ids),
+        "entry_automation_count": sum(
+            1
+            for bot in bots.values()
+            for automation in bot.automations
+            if automation.automation.is_entry
+        ),
+        "management_automation_count": sum(
+            1
+            for bot in bots.values()
+            for automation in bot.automations
+            if automation.automation.is_management
+        ),
+        "opportunity_count": 0,
+        "decision_count": 0,
+        "decision_state_counts": {},
+        "intent_count": 0,
+        "intent_state_counts": {},
+        "open_position_count": 0,
+        "open_position_symbols": {},
+    }
+    if not bot_ids:
+        return summary
+
+    market_day = date.fromisoformat(market_date)
+    window_start = datetime.fromisoformat(market_date).replace(tzinfo=UTC)
+    window_end = window_start + timedelta(days=1)
+    labels = _active_options_automation_labels(storage.jobs)
+    signal_store = storage.signals
+    execution_store = storage.execution
+
+    if signal_store.schema_ready():
+        with signal_store.session_factory() as session:
+            if labels:
+                summary["opportunity_count"] = int(
+                    session.scalar(
+                        select(func.count())
+                        .select_from(OpportunityModel)
+                        .where(OpportunityModel.market_date == market_day)
+                        .where(OpportunityModel.label.in_(sorted(labels)))
+                    )
+                    or 0
+                )
+            decision_rows = session.execute(
+                select(OpportunityDecisionModel.state, func.count())
+                .where(OpportunityDecisionModel.bot_id.in_(bot_ids))
+                .where(OpportunityDecisionModel.decided_at >= window_start)
+                .where(OpportunityDecisionModel.decided_at < window_end)
+                .group_by(OpportunityDecisionModel.state)
+                .order_by(OpportunityDecisionModel.state.asc())
+            ).all()
+            decision_state_counts = {
+                str(state): int(count) for state, count in decision_rows
+            }
+            summary["decision_state_counts"] = decision_state_counts
+            summary["decision_count"] = sum(decision_state_counts.values())
+
+    if execution_store.intent_schema_ready():
+        with execution_store.session_factory() as session:
+            intent_rows = session.execute(
+                select(ExecutionIntentModel.state, func.count())
+                .where(ExecutionIntentModel.bot_id.in_(bot_ids))
+                .where(ExecutionIntentModel.created_at >= window_start)
+                .where(ExecutionIntentModel.created_at < window_end)
+                .group_by(ExecutionIntentModel.state)
+                .order_by(ExecutionIntentModel.state.asc())
+            ).all()
+            intent_state_counts = {
+                str(state): int(count) for state, count in intent_rows
+            }
+            summary["intent_state_counts"] = intent_state_counts
+            summary["intent_count"] = sum(intent_state_counts.values())
+
+    if (
+        execution_store.portfolio_schema_ready()
+        and execution_store.intent_schema_ready()
+    ):
+        symbol_counts: Counter[str] = Counter()
+        open_positions = [
+            enrich_position_row(dict(position))
+            for position in execution_store.list_positions(
+                statuses=OPEN_POSITION_STATUSES,
+                limit=200,
+            )
+        ]
+        for position in open_positions:
+            open_execution_attempt_id = _as_text(
+                position.get("open_execution_attempt_id")
+            )
+            if open_execution_attempt_id is None:
+                continue
+            attempt = execution_store.get_attempt(open_execution_attempt_id)
+            if attempt is None:
+                continue
+            request = (
+                attempt.get("request")
+                if isinstance(attempt.get("request"), Mapping)
+                else {}
+            )
+            execution_intent_id = _as_text(request.get("execution_intent_id"))
+            if execution_intent_id is None:
+                continue
+            intent = execution_store.get_execution_intent(execution_intent_id)
+            if intent is None or str(intent.get("bot_id") or "") not in bot_ids:
+                continue
+            symbol_counts[
+                str(
+                    position.get("underlying_symbol")
+                    or position.get("root_symbol")
+                    or "unknown"
+                )
+            ] += 1
+        summary["open_position_count"] = int(sum(symbol_counts.values()))
+        summary["open_position_symbols"] = dict(sorted(symbol_counts.items()))
+    return summary
 
 
 def _market_session_context(
@@ -379,7 +520,10 @@ def _skip_is_benign(run: Mapping[str, Any]) -> bool:
     if reason == "stale_slot" and str(run.get("job_type") or "") == "live_collector":
         return True
     error_text = str(_as_text(run.get("error_text")) or "").strip().lower()
-    return error_text == "superseded during queue consolidation"
+    return error_text in {
+        "superseded during queue consolidation",
+        "superseded by a newer live slot under scheduler coalescing.",
+    }
 
 
 def _job_run_requires_attention(
@@ -974,6 +1118,7 @@ def build_system_status(
 ) -> dict[str, Any]:
     generated_at = _utc_now()
     now = _parse_timestamp(generated_at) or datetime.now(UTC)
+    market_date = now.astimezone(NEW_YORK).date().isoformat()
     market_session = _market_session_context(now=now)
     control = get_control_state_snapshot(storage=storage)
     attention: list[dict[str, str]] = []
@@ -1202,12 +1347,17 @@ def build_system_status(
             "collector_selection": _aggregate_selection_summaries(
                 [row.get("selection_summary") for row in latest_collectors]
             ),
+            "automation_runtime": _bot_runtime_summary(
+                storage=storage,
+                market_date=market_date,
+            ),
             "broker_sync": broker_sync,
             "alert_delivery": alert_delivery,
         }
     )
 
     collector_selection = dict(details.get("collector_selection") or {})
+    automation_runtime = dict(details.get("automation_runtime") or {})
     summary = {
         "control_mode": control.get("mode"),
         "worker_count": len(workers),
@@ -1236,6 +1386,20 @@ def build_system_status(
             collector_selection.get("auto_live_eligible_count")
         )
         or 0,
+        "automation_opportunity_count": _coerce_int(
+            automation_runtime.get("opportunity_count")
+        )
+        or 0,
+        "automation_selected_count": _coerce_int(
+            (automation_runtime.get("decision_state_counts") or {}).get("selected")
+        )
+        or 0,
+        "automation_intent_count": _coerce_int(automation_runtime.get("intent_count"))
+        or 0,
+        "automation_open_position_count": _coerce_int(
+            automation_runtime.get("open_position_count")
+        )
+        or 0,
         "broker_sync_status": broker_sync.get("status"),
         "alert_delivery_status": alert_delivery.get("status"),
         "market_session_status": market_session.get("status"),
@@ -1257,6 +1421,7 @@ def build_trading_health(
 ) -> dict[str, Any]:
     generated_at = _utc_now()
     now = _parse_timestamp(generated_at) or datetime.now(UTC)
+    market_date = now.astimezone(NEW_YORK).date().isoformat()
     market_session = _market_session_context(now=now)
     attention: list[dict[str, str]] = []
     statuses: list[str] = []
@@ -1379,6 +1544,10 @@ def build_trading_health(
     )
     details["latest_collectors"] = latest_collectors
     details["collector_selection"] = collector_selection
+    details["automation_runtime"] = _bot_runtime_summary(
+        storage=storage,
+        market_date=market_date,
+    )
     open_execution_attempts: list[dict[str, Any]]
     if execution_store.schema_ready():
         open_execution_attempts = [
@@ -1618,6 +1787,25 @@ def build_trading_health(
         or 0,
         "collector_auto_live_eligible_count": _coerce_int(
             collector_selection.get("auto_live_eligible_count")
+        )
+        or 0,
+        "automation_opportunity_count": _coerce_int(
+            (details.get("automation_runtime") or {}).get("opportunity_count")
+        )
+        or 0,
+        "automation_selected_count": _coerce_int(
+            (
+                (details.get("automation_runtime") or {}).get("decision_state_counts")
+                or {}
+            ).get("selected")
+        )
+        or 0,
+        "automation_intent_count": _coerce_int(
+            (details.get("automation_runtime") or {}).get("intent_count")
+        )
+        or 0,
+        "automation_open_position_count": _coerce_int(
+            (details.get("automation_runtime") or {}).get("open_position_count")
         )
         or 0,
         "account_error": account_error,

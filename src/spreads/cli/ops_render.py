@@ -99,7 +99,9 @@ def _render_count_map(
         ),
         key=lambda item: (-item[1], item[0]),
     )
-    rendered = ", ".join(f"{name} {_render_value(count)}" for name, count in ranked[:limit])
+    rendered = ", ".join(
+        f"{name} {_render_value(count)}" for name, count in ranked[:limit]
+    )
     if len(ranked) > limit:
         rendered += ", …"
     return _truncate(rendered, length=item_length)
@@ -138,7 +140,9 @@ def _render_selection_summary(
     table.add_column("Metric", style="bold")
     table.add_column("Value")
     table.add_row("Opportunities", _render_value(payload.get("opportunity_count")))
-    table.add_row("Auto Live Eligible", _render_value(payload.get("auto_live_eligible_count")))
+    table.add_row(
+        "Auto Live Eligible", _render_value(payload.get("auto_live_eligible_count"))
+    )
     table.add_row("Shadow Only", _render_value(payload.get("shadow_only_count")))
     table.add_row("Families", _render_count_map(payload.get("strategy_family_counts")))
     table.add_row("Phases", _render_count_map(payload.get("earnings_phase_counts")))
@@ -147,7 +151,11 @@ def _render_selection_summary(
         "Timing Confidence",
         _render_count_map(payload.get("timing_confidence_counts")),
     )
-    blocker_counts = payload.get("blocker_counts") if isinstance(payload.get("blocker_counts"), dict) else {}
+    blocker_counts = (
+        payload.get("blocker_counts")
+        if isinstance(payload.get("blocker_counts"), dict)
+        else {}
+    )
     table.add_row("Policy Blockers", _render_count_map(blocker_counts.get("policy")))
     table.add_row(
         "Signal Blockers",
@@ -160,6 +168,48 @@ def _render_selection_summary(
     table.add_row(
         "Execution Blockers",
         _render_count_map(blocker_counts.get("execution_gate")),
+    )
+    console.print(table)
+
+
+def _render_automation_runtime_summary(
+    console: Console,
+    *,
+    title: str,
+    value: Any,
+) -> None:
+    payload = value if isinstance(value, dict) else {}
+    if not payload:
+        return
+    table = Table(title=title, show_edge=False, header_style="bold")
+    table.add_column("Metric", style="bold")
+    table.add_column("Value")
+    table.add_row("Bots", _render_value(payload.get("bot_count")))
+    table.add_row(
+        "Entry Automations", _render_value(payload.get("entry_automation_count"))
+    )
+    table.add_row(
+        "Mgmt Automations",
+        _render_value(payload.get("management_automation_count")),
+    )
+    table.add_row("Opportunities", _render_value(payload.get("opportunity_count")))
+    table.add_row("Decisions", _render_value(payload.get("decision_count")))
+    table.add_row(
+        "Decision States",
+        _render_count_map(payload.get("decision_state_counts")),
+    )
+    table.add_row("Intents", _render_value(payload.get("intent_count")))
+    table.add_row(
+        "Intent States",
+        _render_count_map(payload.get("intent_state_counts")),
+    )
+    table.add_row(
+        "Open Positions",
+        _render_value(payload.get("open_position_count")),
+    )
+    table.add_row(
+        "Position Symbols",
+        _render_count_map(payload.get("open_position_symbols")),
     )
     console.print(table)
 
@@ -234,6 +284,7 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
     scheduler = dict(details.get("scheduler") or {})
     broker_sync = dict(details.get("broker_sync") or {})
     alert_delivery = dict(details.get("alert_delivery") or {})
+    automation_runtime = dict(details.get("automation_runtime") or {})
 
     overview = Table.grid(padding=(0, 2))
     overview.add_row("Overall", _status_text(payload.get("status")))
@@ -249,10 +300,11 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
         f"running {_render_value(summary.get('running_job_count'))} | queued {_render_value(summary.get('queued_job_count'))}",
     )
     overview.add_row(
-        "Collector Opps",
+        "Automation",
         (
-            f"total {_render_value(summary.get('collector_opportunity_count'))} | "
-            f"live-ready {_render_value(summary.get('collector_auto_live_eligible_count'))}"
+            f"opps {_render_value(summary.get('automation_opportunity_count'))} | "
+            f"selected {_render_value(summary.get('automation_selected_count'))} | "
+            f"positions {_render_value(summary.get('automation_open_position_count'))}"
         ),
     )
     overview.add_row(
@@ -286,7 +338,9 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Last Slot")
         for row in collector_rows:
             selection_summary = (
-                row.get("selection_summary") if isinstance(row.get("selection_summary"), dict) else {}
+                row.get("selection_summary")
+                if isinstance(row.get("selection_summary"), dict)
+                else {}
             )
             table.add_row(
                 str(row.get("job_key") or "-"),
@@ -299,10 +353,10 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
             )
         console.print(table)
 
-    _render_selection_summary(
+    _render_automation_runtime_summary(
         console,
-        title="Collector Selection",
-        value=details.get("collector_selection") or {},
+        title="Automation Runtime",
+        value=automation_runtime,
     )
 
     failure_rows = list(details.get("recent_failures") or [])
@@ -328,6 +382,7 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
     account = dict(details.get("account") or {})
     broker_sync = dict(details.get("broker_sync") or {})
     market_session = dict(details.get("market_session") or {})
+    automation_runtime = dict(details.get("automation_runtime") or {})
 
     overview = Table.grid(padding=(0, 2))
     overview.add_row("Overall", _status_text(payload.get("status")))
@@ -371,10 +426,12 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
     )
     overview.add_row("Collectors", _render_value(summary.get("collector_count")))
     overview.add_row(
-        "Collector Opps",
+        "Automation",
         (
-            f"total {_render_value(summary.get('collector_opportunity_count'))} | "
-            f"live-ready {_render_value(summary.get('collector_auto_live_eligible_count'))}"
+            f"opps {_render_value(summary.get('automation_opportunity_count'))} | "
+            f"selected {_render_value(summary.get('automation_selected_count'))} | "
+            f"positions {_render_value(summary.get('automation_open_position_count'))} | "
+            f"intents {_render_value(summary.get('automation_intent_count'))}"
         ),
     )
     overview.add_row(
@@ -391,10 +448,10 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
 
     _render_attention(console, payload)
 
-    _render_selection_summary(
+    _render_automation_runtime_summary(
         console,
-        title="Collector Selection",
-        value=details.get("collector_selection") or {},
+        title="Automation Runtime",
+        value=automation_runtime,
     )
 
     top_positions = list(details.get("top_positions") or [])

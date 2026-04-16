@@ -26,6 +26,7 @@ from spreads.storage.serializers import parse_datetime
 
 AUTO_EXECUTION_MODES = {"paper", "live"}
 ACTIVE_INTENT_STATES = {"pending", "claimed", "submitted", "partially_filled"}
+OPEN_POSITION_STATES = {"open", "partial_open", "partial_close"}
 WORKING_REPRICE_ATTEMPT_STATUSES = {
     "accepted",
     "accepted_for_bidding",
@@ -63,6 +64,25 @@ def _intent_payload(intent: dict[str, Any]) -> dict[str, Any]:
     if isinstance(payload_json, dict):
         return dict(payload_json)
     return {}
+
+
+def _intent_action_type(
+    intent: dict[str, Any], attempt: dict[str, Any] | None = None
+) -> str:
+    action_type = str(intent.get("action_type") or "").strip().lower()
+    if action_type:
+        return action_type
+    request = {} if attempt is None else _attempt_request(attempt)
+    trade_intent = (
+        str(
+            request.get("trade_intent")
+            or (None if attempt is None else attempt.get("trade_intent"))
+            or "open"
+        )
+        .strip()
+        .lower()
+    )
+    return "close" if trade_intent == "close" else "open"
 
 
 def _update_intent(
@@ -191,6 +211,11 @@ def _next_reprice_limit(
             attempt.get("strategy_family") or attempt.get("strategy")
         )
     )
+    if _intent_action_type(intent, attempt) == "close":
+        if premium_kind == "credit":
+            premium_kind = "debit"
+        elif premium_kind == "debit":
+            premium_kind = "credit"
     if premium_kind == "debit":
         ceiling = current_limit + max_credit_concession
         target = min(round(current_limit + step, 2), round(ceiling, 2))
@@ -338,8 +363,7 @@ def _manage_submitted_open_intents(
         if reviewed >= max(int(limit), 1):
             break
         reviewed += 1
-        if str(intent.get("action_type") or "") != "open":
-            continue
+        action_type = _intent_action_type(intent)
         execution_attempt_id = _as_text(intent.get("execution_attempt_id"))
         if execution_attempt_id is None:
             continue
@@ -385,11 +409,17 @@ def _manage_submitted_open_intents(
             continue
         if status not in WORKING_REPRICE_ATTEMPT_STATUSES:
             continue
-        active, inactive_reason = _opportunity_is_active_for_intent(
-            storage.signals,
-            intent,
-            execution_attempt_id=execution_attempt_id,
-        )
+        if action_type == "open":
+            active, inactive_reason = _opportunity_is_active_for_intent(
+                storage.signals,
+                intent,
+                execution_attempt_id=execution_attempt_id,
+            )
+        else:
+            active, inactive_reason = _position_is_active_for_intent(
+                execution_store,
+                intent,
+            )
         age_seconds = _submitted_age_seconds(refreshed_attempt)
         if age_seconds is None or age_seconds < float(max(stale_after_seconds, 1)):
             continue
@@ -559,6 +589,22 @@ def _opportunity_is_active_for_intent(
     consumed = _as_text(opportunity.get("consumed_by_execution_attempt_id"))
     if execution_attempt_id and consumed not in {None, "", execution_attempt_id}:
         return False, "opportunity_consumed_elsewhere"
+    return True, None
+
+
+def _position_is_active_for_intent(
+    execution_store: Any,
+    intent: dict[str, Any],
+) -> tuple[bool, str | None]:
+    strategy_position_id = _as_text(intent.get("strategy_position_id"))
+    if strategy_position_id is None:
+        return False, "position_missing"
+    position = execution_store.get_position(strategy_position_id)
+    if position is None:
+        return False, "position_missing"
+    status = str(position.get("status") or "")
+    if status not in OPEN_POSITION_STATES:
+        return False, "position_closed"
     return True, None
 
 
