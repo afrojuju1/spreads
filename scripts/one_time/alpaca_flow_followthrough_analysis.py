@@ -102,6 +102,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=OPTION_BATCH_SIZE,
         help=f"Contracts per historical trades request. Default: {OPTION_BATCH_SIZE}",
     )
+    parser.add_argument(
+        "--max-contracts-per-type",
+        type=int,
+        help=(
+            "Optional cap on contracts per option type per session, ranked by open interest. "
+            "Useful for very large chains like SPY/QQQ."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -128,7 +136,7 @@ def choose_analysis_sessions(
     end_date: date,
     sessions: int,
     baseline_sessions: int,
-) -> tuple[pd.DataFrame, list[date], list[date], dict[date, date | None]]:
+) -> tuple[pd.DataFrame, pd.DataFrame, list[date], list[date], dict[date, date | None]]:
     schedule_start = (start_date or (end_date - timedelta(days=max(60, sessions * 3)))) - timedelta(days=90)
     schedule_end = end_date + timedelta(days=10)
     schedule = build_schedule(schedule_start, schedule_end)
@@ -150,7 +158,7 @@ def choose_analysis_sessions(
     working_dates = baseline_dates + analysis_dates
     working_schedule = schedule[schedule["session_date"].isin(working_dates)].copy()
     next_by_session = build_next_session_map(schedule)
-    return working_schedule, analysis_dates, baseline_dates, next_by_session
+    return schedule, working_schedule, analysis_dates, baseline_dates, next_by_session
 
 
 def build_schedule(start_date: date, end_date: date) -> pd.DataFrame:
@@ -327,6 +335,7 @@ def select_session_contracts(
     symbol: str,
     session_date: date,
     max_dte: int,
+    max_contracts_per_type: int | None = None,
 ) -> pd.DataFrame:
     if contracts.empty:
         return contracts
@@ -336,6 +345,20 @@ def select_session_contracts(
         & (contracts["expiration_date"] >= session_date)
         & (contracts["expiration_date"] <= max_expiration)
     ].copy()
+    if max_contracts_per_type is not None and max_contracts_per_type > 0 and not subset.empty:
+        limited_frames: list[pd.DataFrame] = []
+        for option_type in ("call", "put"):
+            typed = subset[subset["option_type"] == option_type].copy()
+            if typed.empty:
+                continue
+            typed["open_interest_rank"] = typed["open_interest"].fillna(-1)
+            typed = typed.sort_values(
+                ["open_interest_rank", "expiration_date", "strike_price", "option_symbol"],
+                ascending=[False, True, True, True],
+            ).head(max_contracts_per_type)
+            limited_frames.append(typed.drop(columns=["open_interest_rank"]))
+        if limited_frames:
+            subset = pd.concat(limited_frames, ignore_index=True)
     return subset.reset_index(drop=True)
 
 
@@ -619,26 +642,34 @@ def fetch_stock_bars(
     for symbol in symbols:
         print(f"Fetching stock bars for {symbol}", file=sys.stderr)
         for row in sessions.itertuples(index=False):
-            bars = client.get_intraday_bars(
-                symbol,
-                start=to_iso_utc(row.market_open),
-                end=to_iso_utc(row.market_close),
-                stock_feed=stock_feed,
-                timeframe="1Min",
+            response = get_json_with_retry(
+                client,
+                base_url=client.data_base_url,
+                path="/v2/stocks/bars",
+                params={
+                    "symbols": symbol,
+                    "timeframe": "1Min",
+                    "start": to_iso_utc(row.market_open),
+                    "end": to_iso_utc(row.market_close),
+                    "adjustment": "raw",
+                    "feed": stock_feed,
+                    "limit": 1000,
+                },
             )
+            bars = response.get("bars", {}).get(symbol, []) if isinstance(response, dict) else []
             minute_rows: list[dict[str, Any]] = []
             for bar in bars:
-                timestamp = to_ny_timestamp(bar.timestamp)
+                timestamp = to_ny_timestamp(bar.get("t"))
                 if timestamp is None:
                     continue
                 minute_rows.append(
                     {
                         "timestamp": timestamp,
-                        "open": float(bar.open),
-                        "high": float(bar.high),
-                        "low": float(bar.low),
-                        "close": float(bar.close),
-                        "volume": int(bar.volume),
+                        "open": float(bar.get("o") or 0.0),
+                        "high": float(bar.get("h") or 0.0),
+                        "low": float(bar.get("l") or 0.0),
+                        "close": float(bar.get("c") or 0.0),
+                        "volume": int(bar.get("v") or 0),
                     }
                 )
             if not minute_rows:
@@ -839,7 +870,7 @@ def main(argv: list[str] | None = None) -> int:
     symbols = normalize_symbols(args.symbols)
     end_date = resolve_end_date(args.end_date)
     start_date = None if not args.start_date else date.fromisoformat(args.start_date)
-    working_schedule, analysis_dates, baseline_dates, next_session_by_session = choose_analysis_sessions(
+    full_schedule, working_schedule, analysis_dates, baseline_dates, next_session_by_session = choose_analysis_sessions(
         start_date=start_date,
         end_date=end_date,
         sessions=args.sessions,
@@ -870,6 +901,7 @@ def main(argv: list[str] | None = None) -> int:
                 symbol=symbol,
                 session_date=row.session_date,
                 max_dte=args.max_dte,
+                max_contracts_per_type=args.max_contracts_per_type,
             )
             print(
                 f"{row.session_date.isoformat()} {symbol}: {len(session_contracts)} contracts",
@@ -924,7 +956,7 @@ def main(argv: list[str] | None = None) -> int:
             ],
         }
     )
-    stock_sessions = working_schedule[working_schedule["session_date"].isin(analysis_plus_next)].copy()
+    stock_sessions = full_schedule[full_schedule["session_date"].isin(analysis_plus_next)].copy()
     stock_bars = fetch_stock_bars(
         client,
         symbols=symbols,
@@ -983,6 +1015,7 @@ def main(argv: list[str] | None = None) -> int:
         "baseline_required": int(args.baseline_sessions),
         "max_dte": int(args.max_dte),
         "allowed_conditions": sorted(UOA_ALLOWED_TRADE_CONDITIONS),
+        "max_contracts_per_type": args.max_contracts_per_type,
         "contract_count": int(len(contracts)),
         "window_count": int(len(windows)),
         "event_count": int(len(events)),
