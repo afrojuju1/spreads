@@ -132,6 +132,7 @@ def _validate_open_timing_window(
     exit_policy: dict[str, Any] | None,
     current_time: datetime,
     profile: str | None = None,
+    deployment_mode: str | None = None,
 ) -> dict[str, Any]:
     normalized_policy = normalize_exit_policy(exit_policy)
     force_close_at_text = _as_text(normalized_policy.get("force_close_at"))
@@ -151,6 +152,8 @@ def _validate_open_timing_window(
     minimum_minutes_to_force_close = _coerce_float(
         thresholds.get("min_minutes_to_force_close")
     )
+    if str(deployment_mode or "").strip().lower() == DEPLOYMENT_MODE_PAPER_AUTO:
+        minimum_minutes_to_force_close = None
     minutes_to_force_close = round(
         max((force_close_at - current_time).total_seconds(), 0.0) / 60.0,
         1,
@@ -265,6 +268,15 @@ def _evaluate_open_attempt_guard(
         exit_policy=_attempt_exit_policy(attempt),
         current_time=current_time,
         profile=resolve_candidate_profile(dict(attempt.get("candidate") or {})),
+        deployment_mode=str(
+            (
+                (_attempt_request(attempt).get("execution_policy") or {}).get(
+                    "deployment_mode"
+                )
+            )
+            if isinstance(_attempt_request(attempt).get("execution_policy"), Mapping)
+            else ""
+        ),
     )
     if str(lifecycle.get("phase") or "") == "submit_unknown":
         return {
@@ -2530,6 +2542,7 @@ def submit_live_session_execution(
             exit_policy=resolved_exit_policy,
             current_time=parse_datetime(requested_at) or datetime.now(UTC),
             profile=resolve_candidate_profile(candidate_payload),
+            deployment_mode=str(resolved_execution_policy.get("deployment_mode") or ""),
         )
         if not timing_gate["allowed"]:
             raise ValueError(str(timing_gate["message"]))
@@ -3152,10 +3165,16 @@ def run_execution_submit(
         raise ValueError("Execution attempt is missing its broker order payload.")
 
     if str(payload.get("trade_intent") or OPEN_TRADE_INTENT) == OPEN_TRADE_INTENT:
+        request_execution_policy = (
+            request.get("execution_policy")
+            if isinstance(request.get("execution_policy"), Mapping)
+            else {}
+        )
         timing_gate = _validate_open_timing_window(
             exit_policy=request.get("exit_policy"),
             current_time=datetime.now(UTC),
             profile=resolve_candidate_profile(dict(payload.get("candidate") or {})),
+            deployment_mode=str(request_execution_policy.get("deployment_mode") or ""),
         )
         if not timing_gate["allowed"]:
             execution_store.update_attempt(

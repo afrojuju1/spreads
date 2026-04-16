@@ -2,7 +2,7 @@ strategy_config_id: short_dated_index_call_credit
 strategy_id: call_credit_spread
 enabled: true
 builder_params:
-  dte_min: 5
+  dte_min: 4
   dte_max: 10
   short_delta_min: 0.18
   short_delta_max: 0.28
