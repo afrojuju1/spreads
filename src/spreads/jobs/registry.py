@@ -16,6 +16,7 @@ POSITION_EXIT_MANAGER_JOB_TYPE = "position_exit_manager"
 COLLECTOR_RECOVERY_JOB_TYPE = "collector_recovery"
 OPTIONS_AUTOMATION_ENTRY_JOB_TYPE = "options_automation_entry"
 OPTIONS_AUTOMATION_MANAGEMENT_JOB_TYPE = "options_automation_management"
+OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE = "options_automation_execute"
 
 EXECUTION_SUBMIT_ADHOC_JOB_KEY = "execution_submit:adhoc"
 ALERT_DELIVERY_ADHOC_JOB_KEY = "alert_delivery:adhoc"
@@ -24,6 +25,7 @@ POST_CLOSE_ANALYSIS_ADHOC_JOB_KEY = "post_close_analysis:adhoc"
 COLLECTOR_RECOVERY_JOB_KEY = "collector_recovery:global"
 OPTIONS_AUTOMATION_ENTRY_ADHOC_JOB_KEY = "options_automation_entry:adhoc"
 OPTIONS_AUTOMATION_MANAGEMENT_ADHOC_JOB_KEY = "options_automation_management:adhoc"
+OPTIONS_AUTOMATION_EXECUTE_ADHOC_JOB_KEY = "options_automation_execute:adhoc"
 
 
 @dataclass(frozen=True)
@@ -99,6 +101,11 @@ JOB_SPECS = {
             task_name="run_options_automation_management_job",
             queue_name=MAIN_QUEUE_NAME,
         ),
+        JobSpec(
+            job_type=OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE,
+            task_name="run_options_automation_execute_job",
+            queue_name=MAIN_QUEUE_NAME,
+        ),
     )
 }
 
@@ -117,6 +124,7 @@ WORKER_LANES = (
             JOB_SPECS[COLLECTOR_RECOVERY_JOB_TYPE].task_name,
             JOB_SPECS[OPTIONS_AUTOMATION_ENTRY_JOB_TYPE].task_name,
             JOB_SPECS[OPTIONS_AUTOMATION_MANAGEMENT_JOB_TYPE].task_name,
+            JOB_SPECS[OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE].task_name,
         ),
         max_jobs=4,
     ),

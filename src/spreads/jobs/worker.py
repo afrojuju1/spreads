@@ -28,6 +28,7 @@ from spreads.jobs.registry import (
     EXECUTION_SUBMIT_JOB_TYPE,
     LIVE_COLLECTOR_JOB_TYPE,
     MAIN_QUEUE_NAME,
+    OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE,
     OPTIONS_AUTOMATION_ENTRY_JOB_TYPE,
     OPTIONS_AUTOMATION_MANAGEMENT_JOB_TYPE,
     POSITION_EXIT_MANAGER_JOB_TYPE,
@@ -55,6 +56,7 @@ from spreads.services.broker_sync import run_broker_sync
 from spreads.services.decision_engine import run_entry_automation_decision
 from spreads.services.exit_manager import run_position_exit_manager
 from spreads.services.execution import run_execution_submit
+from spreads.services.execution_intents import dispatch_pending_execution_intents
 from spreads.services.live_collector_health import enrich_live_collector_job_run_payload
 from spreads.services.live_recovery import (
     LIVE_SLOT_STATUS_MISSED,
@@ -1139,6 +1141,35 @@ async def run_options_automation_management_job(
     )
 
 
+async def run_options_automation_execute_job(
+    ctx: dict[str, Any],
+    job_key: str,
+    job_run_id: str,
+    payload: dict[str, Any],
+    arq_job_id: str,
+) -> dict[str, Any]:
+    database_url = ctx["database_url"]
+
+    def runner(heartbeat: Any) -> dict[str, Any]:
+        heartbeat()
+        return dispatch_pending_execution_intents(
+            db_target=database_url,
+            limit=int(payload.get("limit", 25) or 25),
+        )
+
+    enriched_payload = dict(payload)
+    enriched_payload["job_type"] = OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE
+    return await _execute_managed_job(
+        ctx,
+        job_key=job_key,
+        job_run_id=job_run_id,
+        arq_job_id=arq_job_id,
+        payload=enriched_payload,
+        runner=runner,
+        compact_result=lambda result: result,
+    )
+
+
 async def run_alert_delivery_job(
     ctx: dict[str, Any],
     job_key: str,
@@ -1464,6 +1495,7 @@ class MainWorkerSettings:
         run_execution_submit_job,
         run_options_automation_entry_job,
         run_options_automation_management_job,
+        run_options_automation_execute_job,
         run_alert_delivery_job,
         run_alert_reconcile_job,
         run_position_exit_manager_job,

@@ -10,6 +10,6 @@ universe_ref: liquid_index_etfs
 trigger_policy:
   min_opportunity_score: 70
   replan_on_new_cycle: true
-approval_mode: manual
+approval_mode: auto
 execution_mode: paper
 enabled: true

@@ -2790,6 +2790,12 @@ def refresh_live_session_execution(
             f"{client_order_id}: {reconciled_attempt['status']}."
         )
         _publish_execution_attempt_event(reconciled_attempt, message=message)
+        _sync_linked_execution_intent(
+            execution_store=execution_store,
+            attempt=reconciled_attempt,
+            event_type="reconciled",
+            message=message,
+        )
         return {
             "action": "refresh",
             "changed": True,
@@ -2810,6 +2816,12 @@ def refresh_live_session_execution(
     )
     message = f"Refreshed execution {execution_attempt_id}: {payload['status']}."
     _publish_execution_attempt_event(payload, message=message)
+    _sync_linked_execution_intent(
+        execution_store=execution_store,
+        attempt=payload,
+        event_type="refreshed",
+        message=message,
+    )
     return {
         "action": "refresh",
         "changed": True,

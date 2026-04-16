@@ -9,6 +9,6 @@ schedule:
 universe_ref: liquid_index_etfs
 trigger_policy:
   replan_on_new_cycle: false
-approval_mode: manual
+approval_mode: auto
 execution_mode: paper
 enabled: true

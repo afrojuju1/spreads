@@ -11,6 +11,8 @@ from spreads.jobs.registry import (
     EXECUTION_SUBMIT_ADHOC_JOB_KEY,
     EXECUTION_SUBMIT_JOB_TYPE,
     LIVE_COLLECTOR_JOB_TYPE,
+    OPTIONS_AUTOMATION_EXECUTE_ADHOC_JOB_KEY,
+    OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE,
     OPTIONS_AUTOMATION_ENTRY_ADHOC_JOB_KEY,
     OPTIONS_AUTOMATION_ENTRY_JOB_TYPE,
     OPTIONS_AUTOMATION_MANAGEMENT_ADHOC_JOB_KEY,
@@ -71,6 +73,15 @@ RETIRED_JOB_KEYS = (
 def _options_automation_job_definitions() -> list[dict[str, object]]:
     definitions: list[dict[str, object]] = [
         {
+            "job_key": OPTIONS_AUTOMATION_EXECUTE_ADHOC_JOB_KEY,
+            "job_type": OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE,
+            "enabled": False,
+            "schedule_type": "manual",
+            "schedule": {},
+            "payload": {},
+            "singleton_scope": None,
+        },
+        {
             "job_key": OPTIONS_AUTOMATION_ENTRY_ADHOC_JOB_KEY,
             "job_type": OPTIONS_AUTOMATION_ENTRY_JOB_TYPE,
             "enabled": False,
@@ -115,6 +126,18 @@ def _options_automation_job_definitions() -> list[dict[str, object]]:
                 "exit_policy": dict(DEFAULT_AUTO_EXIT_POLICY),
             },
             "singleton_scope": "options_automation_short_dated_index_put_credit",
+        },
+        {
+            "job_key": "options_automation_execute:global",
+            "job_type": OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE,
+            "enabled": True,
+            "schedule_type": "interval_minutes",
+            "schedule": {"minutes": 1},
+            "payload": {
+                "limit": 25,
+                "allow_off_hours": False,
+            },
+            "singleton_scope": "global",
         },
     ]
     for bot in load_active_bots().values():
