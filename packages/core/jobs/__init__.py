@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 def live_collector_main() -> int:
-    from core.jobs.live_collector import main
+    from core.services.collections.runtime import main
 
     return main()
 

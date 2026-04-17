@@ -13,11 +13,6 @@ import redis.asyncio as redis_async
 from arq import create_pool
 
 from core.events.bus import publish_global_event_async
-from core.jobs.live_collector import (
-    LiveTickContext,
-    build_collection_args,
-    run_collection_tick,
-)
 from core.jobs.registry import (
     ALERT_DELIVERY_JOB_TYPE,
     ALERT_RECONCILE_JOB_TYPE,
@@ -46,6 +41,9 @@ from core.services.analysis import (
     build_analysis_args,
     run_post_close_analysis,
 )
+from core.services.collections.config import build_collection_args
+from core.services.collections.models import LiveTickContext
+from core.services.collections.runtime import run_collection_tick
 from core.services.alert_delivery import (
     ALERT_DELIVERY_STALE_SECONDS,
     reconcile_alert_delivery,
