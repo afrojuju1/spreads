@@ -4,7 +4,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
-from core.services.live_collector_health import build_selection_summary
+from core.services.live_collector_health.selection import build_selection_summary
 from core.services.live_selection import select_live_opportunities
 from core.services.ops import (
     build_job_run_view,

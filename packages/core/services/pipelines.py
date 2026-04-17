@@ -11,7 +11,7 @@ from core.services.execution import (
     normalize_execution_policy,
 )
 from core.services.execution_portfolio import build_session_execution_portfolio
-from core.services.live_collector_health import (
+from core.services.live_collector_health.tradeability import (
     build_tradeability_summary,
 )
 from core.services.live_runtime import (

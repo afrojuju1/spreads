@@ -5,7 +5,9 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from core.services.live_collector_health import TRADEABILITY_STATE_RECOVERY_ONLY
+from core.services.live_collector_health.tradeability import (
+    TRADEABILITY_STATE_RECOVERY_ONLY,
+)
 from core.services.value_coercion import as_text as _as_text
 
 from .shared import (

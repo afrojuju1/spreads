@@ -24,7 +24,7 @@ from core.services.collections.shared import (
     resolve_collection_reference_time,
     session_date_for_generated_at,
 )
-from core.services.live_collector_health import (
+from core.services.live_collector_health.capture import (
     build_quote_capture_summary,
     build_trade_capture_summary,
 )

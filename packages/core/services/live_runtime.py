@@ -4,10 +4,12 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from core.services.execution import normalize_execution_policy
-from core.services.live_collector_health import (
-    build_selection_summary,
+from core.services.live_collector_health.enrichment import (
     enrich_live_collector_job_run_payload,
     normalize_uoa_decisions_payload,
+)
+from core.services.live_collector_health.selection import (
+    build_selection_summary,
 )
 from core.services.live_pipelines import list_enabled_live_collector_pipelines
 from core.services.live_recovery import (

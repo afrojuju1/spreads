@@ -13,7 +13,9 @@ from core.jobs.orchestration import (
     singleton_lease_key,
 )
 from core.jobs.registry import WORKER_LANES, get_queue_name_for_job_type
-from core.services.live_collector_health import enrich_live_collector_job_run_payload
+from core.services.live_collector_health.enrichment import (
+    enrich_live_collector_job_run_payload,
+)
 from core.services.selection_summary import selection_summary_payload as _selection_summary_payload
 from core.services.value_coercion import (
     as_text as _as_text,

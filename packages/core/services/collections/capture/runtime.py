@@ -4,7 +4,7 @@ import argparse
 from typing import Any
 
 from core.integrations.alpaca.client import AlpacaClient
-from core.services.live_collector_health import (
+from core.services.live_collector_health.capture import (
     build_quote_capture_summary,
     build_trade_capture_summary,
 )

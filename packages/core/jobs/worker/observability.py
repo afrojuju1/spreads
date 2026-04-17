@@ -6,7 +6,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from core.events.bus import publish_global_event_async
-from core.services.live_collector_health import enrich_live_collector_job_run_payload
+from core.services.live_collector_health.enrichment import (
+    enrich_live_collector_job_run_payload,
+)
 from core.services.live_pipelines import build_live_run_scope_id
 
 LIVE_COLLECTOR_STREAM_STALL_THRESHOLD = 2

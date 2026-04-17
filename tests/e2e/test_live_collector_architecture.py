@@ -14,7 +14,7 @@ from core.services.collections.cycle import run_collection_cycle
 from core.services.collections.models import LiveCaptureSnapshot, LiveTickContext
 from core.services.bots import load_active_bots
 from core.services.decision_engine import run_entry_automation_decision
-from core.services.live_collector_health import (
+from core.services.live_collector_health.capture import (
     build_quote_capture_summary,
     build_trade_capture_summary,
 )
