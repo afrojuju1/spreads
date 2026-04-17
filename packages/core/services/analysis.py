@@ -25,7 +25,8 @@ from core.services.selection_terms import (
     selection_state_counts,
     selection_state_rank,
 )
-from core.services.scanner import NEW_YORK, summarize_replay
+from core.services.market_dates import NEW_YORK, resolve_market_date
+from core.services.scanners.service import summarize_replay
 from core.storage.collector_repository import CollectorRepository
 from core.storage.run_history_repository import RunHistoryRepository
 
@@ -71,12 +72,6 @@ def build_analysis_args(overrides: dict[str, Any] | None = None) -> argparse.Nam
     for key, value in (overrides or {}).items():
         setattr(args, key, value)
     return args
-
-
-def resolve_date(value: str) -> str:
-    if value == "today":
-        return datetime.now(NEW_YORK).date().isoformat()
-    return value
 
 
 def parse_setup_json(value: dict[str, Any] | str | None) -> dict[str, Any] | None:
@@ -1104,7 +1099,7 @@ def render_session_summary_markdown(summary: Mapping[str, Any]) -> str:
 
 
 def run_post_close_analysis(args: argparse.Namespace, *, emit_output: bool = True) -> dict[str, Any]:
-    session_date = resolve_date(args.date)
+    session_date = resolve_market_date(args.date)
     summary = build_session_summary(
         db_target=args.db,
         session_date=session_date,

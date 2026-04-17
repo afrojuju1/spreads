@@ -11,12 +11,14 @@ from core.services.execution import (
     _validate_live_deployment_quality,
     normalize_execution_policy,
 )
-from core.services.opportunity_scoring import build_candidate_opportunity_score
-from core.services.scanner import (
+from core.domain.models import (
     ExpectedMoveEstimate,
     LiveOptionQuote,
     OptionContract,
     OptionSnapshot,
+)
+from core.services.opportunity_scoring import build_candidate_opportunity_score
+from core.services.scanners.service import (
     build_iron_condors,
 )
 from core.services.session_positions import sync_session_position_from_attempt
@@ -75,6 +77,9 @@ class _InMemoryExecutionStore:
 
     def portfolio_schema_ready(self) -> bool:
         return True
+
+    def intent_schema_ready(self) -> bool:
+        return False
 
     def create_position(self, *, position_id: str, **payload: Any) -> dict[str, Any]:
         row = {"position_id": position_id, **payload}

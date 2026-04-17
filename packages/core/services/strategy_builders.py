@@ -4,9 +4,9 @@ import argparse
 from dataclasses import asdict
 from typing import Any
 
+from core.integrations.alpaca.client import AlpacaClient
 from core.services.automation_runtime import EntryRuntime, StrategyBuildSettings
-from core.services.scanner import (
-    AlpacaClient,
+from core.services.scanners.service import (
     build_candidates_from_market_slice,
     build_symbol_market_slice,
     clone_args,

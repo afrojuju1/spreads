@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 def scan_main() -> int:
-    from core.services.scanner import main
+    from core.services.scanners.service import main
 
     return main()
 

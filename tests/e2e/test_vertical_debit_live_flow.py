@@ -5,17 +5,19 @@ from argparse import Namespace
 from dataclasses import asdict
 from datetime import date
 
+from core.domain.models import (
+    DailyBar,
+    ExpectedMoveEstimate,
+    OptionContract,
+    OptionSnapshot,
+)
 from core.services.execution import (
     _build_close_order_request,
     _build_order_request,
     normalize_execution_policy,
 )
 from core.services.opportunity_scoring import build_candidate_opportunity_score
-from core.services.scanner import (
-    DailyBar,
-    ExpectedMoveEstimate,
-    OptionContract,
-    OptionSnapshot,
+from core.services.scanners.service import (
     build_vertical_spreads,
     mark_spread_on_date,
 )

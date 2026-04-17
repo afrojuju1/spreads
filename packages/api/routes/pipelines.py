@@ -4,7 +4,7 @@ from fastapi import APIRouter, Query
 
 from api.errors import bad_request_error, not_found_error
 from core.runtime.config import default_database_url
-from core.services.analysis import resolve_date
+from core.services.market_dates import resolve_market_date
 from core.services.pipelines import (
     get_pipeline_detail,
     list_pipeline_cycles,
@@ -25,7 +25,9 @@ def list_pipelines_route(
     db: str | None = None,
 ) -> dict[str, object]:
     try:
-        resolved_market_date = None if market_date is None else resolve_date(market_date)
+        resolved_market_date = (
+            None if market_date is None else resolve_market_date(market_date)
+        )
     except ValueError as exc:
         raise bad_request_error(exc) from exc
     return list_pipelines(
@@ -45,7 +47,9 @@ def get_pipeline_route(
     db: str | None = None,
 ) -> dict[str, object]:
     try:
-        resolved_market_date = None if market_date is None else resolve_date(market_date)
+        resolved_market_date = (
+            None if market_date is None else resolve_market_date(market_date)
+        )
         resolved_include_replay = include_replay.strip().lower()
         if resolved_include_replay not in {"none", "current", "recent", "both"}:
             raise bad_request_error(
@@ -73,7 +77,9 @@ def list_pipeline_cycles_route(
     db: str | None = None,
 ) -> dict[str, object]:
     try:
-        resolved_market_date = None if market_date is None else resolve_date(market_date)
+        resolved_market_date = (
+            None if market_date is None else resolve_market_date(market_date)
+        )
     except ValueError as exc:
         raise bad_request_error(exc) from exc
     return list_pipeline_cycles(

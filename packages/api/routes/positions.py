@@ -5,7 +5,7 @@ from fastapi import APIRouter, Query
 from api.errors import bad_request_error, execution_runtime_error, not_found_error
 from api.schemas.positions import PositionCloseRequest
 from core.runtime.config import default_database_url
-from core.services.analysis import resolve_date
+from core.services.market_dates import resolve_market_date
 from core.services.execution import submit_position_close_by_id
 from core.services.positions import get_position_detail, list_positions
 
@@ -24,7 +24,9 @@ def list_positions_route(
     db: str | None = None,
 ) -> dict[str, object]:
     try:
-        resolved_market_date = None if market_date is None else resolve_date(market_date)
+        resolved_market_date = (
+            None if market_date is None else resolve_market_date(market_date)
+        )
     except ValueError as exc:
         raise bad_request_error(exc) from exc
     return list_positions(

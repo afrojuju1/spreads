@@ -5,7 +5,7 @@ from fastapi import APIRouter, Query
 from api.errors import bad_request_error, execution_runtime_error, not_found_error
 from api.schemas.opportunities import OpportunityExecutionRequest
 from core.runtime.config import default_database_url
-from core.services.analysis import resolve_date
+from core.services.market_dates import resolve_market_date
 from core.services.execution import submit_opportunity_execution
 from core.services.opportunities import get_opportunity_detail, list_opportunities
 
@@ -27,7 +27,7 @@ def list_opportunities_route(
 ) -> dict[str, object]:
     try:
         resolved_market_date = (
-            None if market_date is None else resolve_date(market_date)
+            None if market_date is None else resolve_market_date(market_date)
         )
     except ValueError as exc:
         raise bad_request_error(exc) from exc

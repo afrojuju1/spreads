@@ -5,13 +5,15 @@ from argparse import Namespace
 from dataclasses import asdict
 from typing import Any
 
-from core.services.execution import _build_order_request, normalize_execution_policy
-from core.services.live_collector_health import build_selection_summary
-from core.services.opportunity_scoring import build_candidate_opportunity_score
-from core.services.scanner import (
+from core.domain.models import (
     ExpectedMoveEstimate,
     OptionContract,
     OptionSnapshot,
+)
+from core.services.execution import _build_order_request, normalize_execution_policy
+from core.services.live_collector_health import build_selection_summary
+from core.services.opportunity_scoring import build_candidate_opportunity_score
+from core.services.scanners.service import (
     build_long_straddles,
     build_long_strangles,
 )
@@ -55,6 +57,9 @@ class _InMemoryExecutionStore:
 
     def portfolio_schema_ready(self) -> bool:
         return True
+
+    def intent_schema_ready(self) -> bool:
+        return False
 
     def create_position(self, *, position_id: str, **payload: Any) -> dict[str, Any]:
         row = {"position_id": position_id, **payload}

@@ -14,7 +14,7 @@ from core.services.runtime_identity import (
     resolve_product_class,
     resolve_style_profile,
 )
-from core.services.scanner import resolve_symbols
+from core.services.scanners.service import resolve_symbols
 
 
 def build_live_snapshot_label(

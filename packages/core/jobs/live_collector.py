@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from core.common import env_or_die, load_local_env
 from core.alerts.dispatcher import dispatch_cycle_alerts
+from core.domain.models import SpreadCandidate, SymbolScanResult, UniverseScanFailure
 from core.events.bus import build_global_event
 from core.integrations.alpaca.client import AlpacaClient, infer_trading_base_url
 from core.integrations.calendar_events import build_calendar_event_resolver
@@ -60,11 +61,8 @@ from core.services.strategy_builders import build_entry_runtime_candidates
 from core.services.signal_state import sync_live_collector_signal_layer
 from core.services.target_planner import refresh_options_automation_capture_targets
 from core.services.uoa_trade_summary import build_uoa_trade_summary
-from core.services.scanner import (
-    NEW_YORK,
-    SpreadCandidate,
-    SymbolScanResult,
-    UniverseScanFailure,
+from core.services.market_dates import NEW_YORK
+from core.services.scanners.service import (
     merge_strategy_candidates,
     parse_args as parse_scanner_args,
     resolve_symbols,

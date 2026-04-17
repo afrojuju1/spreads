@@ -16,7 +16,7 @@ from core.services.option_structures import (
 from core.services.positions import enrich_position_row
 from core.services.risk_manager import assess_position_risk
 from core.services.runtime_identity import parse_live_run_scope_id
-from core.services.scanner import LiveOptionQuote
+from core.domain.models import LiveOptionQuote
 
 QUOTE_FEEDS = ("opra", "indicative")
 OPEN_POSITION_STATUSES = {"open", "partial_close"}

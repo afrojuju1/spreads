@@ -7,8 +7,8 @@ from typing import Any, Mapping
 from core.services.analysis import (
     build_session_summary,
     render_session_summary_markdown,
-    resolve_date,
 )
+from core.services.market_dates import resolve_market_date
 from core.runtime.config import default_database_url
 from core.services.selection_terms import (
     MONITOR_SELECTION_STATE,
@@ -487,7 +487,7 @@ def run_post_market_analysis(
     analysis_run_id: str | None = None,
     job_run_id: str | None = None,
 ) -> dict[str, Any]:
-    session_date = resolve_date(args.date)
+    session_date = resolve_market_date(args.date)
     run_id = analysis_run_id or f"post-market:{args.label}:{session_date}"
     repository = build_post_market_repository(args.db)
     created_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")

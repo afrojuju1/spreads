@@ -44,7 +44,6 @@ from core.runtime.config import default_database_url, default_redis_url
 from core.runtime.redis import build_redis_settings
 from core.services.analysis import (
     build_analysis_args,
-    resolve_date,
     run_post_close_analysis,
 )
 from core.services.alert_delivery import (
@@ -58,6 +57,7 @@ from core.services.exit_manager import run_position_exit_manager
 from core.services.execution import run_execution_submit
 from core.services.execution_intents import dispatch_pending_execution_intents
 from core.services.live_collector_health import enrich_live_collector_job_run_payload
+from core.services.market_dates import resolve_market_date
 from core.services.live_recovery import (
     LIVE_SLOT_STATUS_MISSED,
     LIVE_SLOT_STATUS_RUNNING,
@@ -747,7 +747,7 @@ def run_post_close_analysis_targets(
     payload: dict[str, Any],
     heartbeat: Any,
 ) -> dict[str, Any]:
-    session_date = resolve_date(str(payload.get("date", "today")))
+    session_date = resolve_market_date(str(payload.get("date", "today")))
     catalog = build_live_session_catalog_for_date(
         job_store=job_store,
         session_date=session_date,
@@ -796,7 +796,7 @@ def run_post_market_analysis_targets(
     payload: dict[str, Any],
     heartbeat: Any,
 ) -> dict[str, Any]:
-    session_date = resolve_date(str(payload.get("date", "today")))
+    session_date = resolve_market_date(str(payload.get("date", "today")))
     catalog = build_live_session_catalog_for_date(
         job_store=job_store,
         session_date=session_date,

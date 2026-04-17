@@ -11,15 +11,10 @@ from typing import Any
 import msgpack
 import websockets
 
-from core.common import env_or_die
+from core.common import env_or_die, format_stream_timestamp, parse_float, parse_int
+from core.domain.models import LiveOptionQuote
+from core.integrations.alpaca.client import DEFAULT_DATA_BASE_URL
 from core.services.option_trade_records import normalize_trade_conditions
-from core.services.scanner import (
-    DEFAULT_DATA_BASE_URL,
-    LiveOptionQuote,
-    format_stream_timestamp,
-    parse_float,
-    parse_int,
-)
 
 DEFAULT_OPTION_STREAM_IDLE_TIMEOUT_SECONDS = 2.0
 OPTION_STREAM_SHUTDOWN_MESSAGE = "Option stream capture cancelled during API shutdown"

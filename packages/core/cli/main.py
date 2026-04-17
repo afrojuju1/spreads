@@ -25,7 +25,7 @@ from core.services.alpaca_research import main as research_alpaca_main
 from core.services.analysis import main as analyze_main
 from core.services.market_recorder import main as market_recorder_main
 from core.services.post_market_analysis import main as post_market_analyze_main
-from core.services.scanner import main as scan_main
+from core.services.scanners.service import main as scan_main
 
 PASSTHROUGH_CONTEXT_SETTINGS = {
     "allow_extra_args": True,
