@@ -33,21 +33,25 @@ from core.services.scanners.market_data import (
     enrich_missing_greeks,
     group_contracts_by_expiration,
 )
-from core.storage.run_history_repository import RunHistoryRepository
-
-from .service import (
-    analyze_underlying_setup,
+from core.services.scanners.postprocess import (
     attach_calendar_decisions,
     attach_data_quality,
     attach_selection_notes,
+    deduplicate_candidates,
+)
+from core.services.scanners.setup import (
+    analyze_underlying_setup,
     attach_underlying_setup,
+    serialize_setup_context,
+)
+from core.storage.run_history_repository import RunHistoryRepository
+
+from .service import (
     build_iron_condors,
     build_long_straddles,
     build_long_strangles,
     build_vertical_spreads,
-    deduplicate_candidates,
     rank_candidates,
-    serialize_setup_context,
     sort_candidates_for_display,
 )
 
