@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +74,10 @@ def _compare_output_path() -> Path:
     return BACKTEST_OUTPUT_ROOT / "compare" / "latest.json"
 
 
+def _artifact_run_id() -> str:
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+
+
 def _write_bootstrap_artifacts(
     *,
     output_dir: Path,
@@ -81,18 +86,29 @@ def _write_bootstrap_artifacts(
     export_csv: str | None,
 ) -> dict[str, str]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    run_id = _artifact_run_id()
+    run_dir = output_dir / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
     summary_path = output_dir / "summary.json"
     sessions_path = output_dir / "sessions.csv"
+    run_summary_path = run_dir / "summary.json"
+    run_sessions_path = run_dir / "sessions.csv"
     _write_json_export(str(summary_path), payload)
     _write_csv_export(str(sessions_path), _flatten_sessions(payload))
+    _write_json_export(str(run_summary_path), payload)
+    _write_csv_export(str(run_sessions_path), _flatten_sessions(payload))
     if export_json:
         _write_json_export(export_json, payload)
     if export_csv:
         _write_csv_export(export_csv, _flatten_sessions(payload))
     return {
+        "run_id": run_id,
         "output_dir": str(output_dir),
         "summary_json": str(summary_path),
         "sessions_csv": str(sessions_path),
+        "run_dir": str(run_dir),
+        "run_summary_json": str(run_summary_path),
+        "run_sessions_csv": str(run_sessions_path),
         **(
             {}
             if export_json is None
@@ -123,6 +139,7 @@ def _render_bootstrap_text(payload: dict[str, Any]) -> str:
                 f"Artifacts: {artifacts.get('output_dir')}",
                 f"- summary {artifacts.get('summary_json')}",
                 f"- sessions {artifacts.get('sessions_csv')}",
+                f"- run {artifacts.get('run_dir')}",
             ]
         ),
         "",
@@ -143,7 +160,10 @@ def _render_compare_text(payload: dict[str, Any]) -> str:
         *(
             []
             if not artifacts.get("comparison_json")
-            else [f"Artifact: {artifacts.get('comparison_json')}"]
+            else [
+                f"Artifact: {artifacts.get('comparison_json')}",
+                f"Run: {artifacts.get('comparison_run_json')}",
+            ]
         ),
         "",
         "Metrics:",
@@ -226,10 +246,20 @@ def compare_backtest_command(
         right_payload=_read_json_payload(right_json),
     )
     comparison_output_path = _compare_output_path()
+    comparison_run_id = _artifact_run_id()
+    comparison_run_path = (
+        BACKTEST_OUTPUT_ROOT / "compare" / "runs" / f"{comparison_run_id}.json"
+    )
+    comparison_run_path.parent.mkdir(parents=True, exist_ok=True)
     _write_json_export(str(comparison_output_path), payload)
+    _write_json_export(str(comparison_run_path), payload)
     rendered_payload = {
         **payload,
-        "artifacts": {"comparison_json": str(comparison_output_path)},
+        "artifacts": {
+            "comparison_json": str(comparison_output_path),
+            "comparison_run_json": str(comparison_run_path),
+            "run_id": comparison_run_id,
+        },
     }
     if json_output:
         render_json_payload(build_console(no_color=no_color), rendered_payload)

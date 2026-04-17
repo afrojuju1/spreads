@@ -1484,6 +1484,7 @@ def _run_collection_cycle(
         (result.symbol, result.args.strategy): result.run_id for result in scan_results
     }
     options_scope = getattr(args, "options_automation_scope", {"enabled": False})
+    automation_mode = bool(options_scope.get("enabled"))
     entry_runtimes = [
         build_entry_runtime(bot, automation)
         for bot, automation in list(options_scope.get("entry_runtimes") or [])
@@ -1537,33 +1538,17 @@ def _run_collection_cycle(
         "uoa_decisions": dict(capture_snapshot.uoa_decisions),
         "uoa_quote_summary": dict(capture_snapshot.uoa_quote_summary),
     }
-    previous_promotable, previous_selection_memory = read_previous_selection(
-        collector_store, label
-    )
     recovered_payloads: list[dict[str, Any]] = []
-    selection = select_live_opportunities(
-        label=label,
-        cycle_id=cycle_id,
-        generated_at=generated_at,
-        symbol_candidates=symbol_strategy_candidates,
-        previous_promotable=previous_promotable,
-        previous_selection_memory=previous_selection_memory,
-        top_promotable=args.top,
-        top_monitor=WATCHLIST_TOP,
-        profile=args.profile,
-        signal_cycle_context=signal_cycle_context,
-    )
-    symbol_strategy_candidates = dict(selection.get("symbol_candidates") or {})
-    promotable_payloads = list(selection["promotable_candidates"])
-    monitor_payloads = list(selection["monitor_candidates"])
-    if args.profile == "0dte" and not promotable_payloads and not monitor_payloads:
-        recovered_payloads = recover_session_candidates_from_history(
-            history_store=history_store,
-            session_date=session_date,
-            session_label=label,
-            generated_at=generated_at,
-            top=WATCHLIST_TOP,
-            max_per_strategy=WATCHLIST_PER_STRATEGY,
+    previous_promotable: dict[str, dict[str, Any]] = {}
+    previous_selection_memory: dict[str, dict[str, Any]] = {}
+    promotable_payloads: list[dict[str, Any]] = []
+    monitor_payloads: list[dict[str, Any]] = []
+    opportunities: list[dict[str, Any]] = []
+    selection_memory: dict[str, Any] = {}
+    events: list[dict[str, Any]] = []
+    if not automation_mode:
+        previous_promotable, previous_selection_memory = read_previous_selection(
+            collector_store, label
         )
         selection = select_live_opportunities(
             label=label,
@@ -1575,30 +1560,53 @@ def _run_collection_cycle(
             top_promotable=args.top,
             top_monitor=WATCHLIST_TOP,
             profile=args.profile,
-            recovered_candidates=recovered_payloads,
             signal_cycle_context=signal_cycle_context,
         )
-        symbol_strategy_candidates = _filter_scope_candidates(
-            dict(selection.get("symbol_candidates") or {}),
-            scope=options_scope,
-        )
+        symbol_strategy_candidates = dict(selection.get("symbol_candidates") or {})
         promotable_payloads = list(selection["promotable_candidates"])
         monitor_payloads = list(selection["monitor_candidates"])
-    opportunities = _filter_scope_rows(
-        list(selection["opportunities"]),
-        scope=options_scope,
-    )
-    promotable_payloads = _filter_scope_rows(
-        promotable_payloads,
-        scope=options_scope,
-    )
-    monitor_payloads = _filter_scope_rows(
-        monitor_payloads,
-        scope=options_scope,
-    )
-    selection_memory = dict(selection["selection_memory"])
-    events = _filter_scope_rows(list(selection["events"]), scope=options_scope)
-    selection_summary = build_selection_summary(opportunities)
+        if args.profile == "0dte" and not promotable_payloads and not monitor_payloads:
+            recovered_payloads = recover_session_candidates_from_history(
+                history_store=history_store,
+                session_date=session_date,
+                session_label=label,
+                generated_at=generated_at,
+                top=WATCHLIST_TOP,
+                max_per_strategy=WATCHLIST_PER_STRATEGY,
+            )
+            selection = select_live_opportunities(
+                label=label,
+                cycle_id=cycle_id,
+                generated_at=generated_at,
+                symbol_candidates=symbol_strategy_candidates,
+                previous_promotable=previous_promotable,
+                previous_selection_memory=previous_selection_memory,
+                top_promotable=args.top,
+                top_monitor=WATCHLIST_TOP,
+                profile=args.profile,
+                recovered_candidates=recovered_payloads,
+                signal_cycle_context=signal_cycle_context,
+            )
+            symbol_strategy_candidates = _filter_scope_candidates(
+                dict(selection.get("symbol_candidates") or {}),
+                scope=options_scope,
+            )
+            promotable_payloads = list(selection["promotable_candidates"])
+            monitor_payloads = list(selection["monitor_candidates"])
+        opportunities = _filter_scope_rows(
+            list(selection["opportunities"]),
+            scope=options_scope,
+        )
+        promotable_payloads = _filter_scope_rows(
+            promotable_payloads,
+            scope=options_scope,
+        )
+        monitor_payloads = _filter_scope_rows(
+            monitor_payloads,
+            scope=options_scope,
+        )
+        selection_memory = dict(selection["selection_memory"])
+        events = _filter_scope_rows(list(selection["events"]), scope=options_scope)
     raw_candidate_summary = build_raw_candidate_summary(symbol_strategy_candidates)
     persisted_opportunities = collector_store.save_cycle(
         cycle_id=cycle_id,
@@ -1613,8 +1621,8 @@ def _run_collection_cycle(
         symbols=symbols,
         failures=[asdict(failure) for failure in failures],
         selection_memory=selection_memory,
-        opportunities=opportunities,
-        events=events,
+        opportunities=[] if automation_mode else opportunities,
+        events=[] if automation_mode else events,
     )
     signal_sync = {
         "signal_states_upserted": 0,
@@ -1622,23 +1630,24 @@ def _run_collection_cycle(
         "opportunities_upserted": 0,
         "opportunities_expired": 0,
     }
-    try:
-        signal_sync = sync_live_collector_signal_layer(
-            signal_store=signal_store,
-            label=label,
-            session_date=session_date,
-            generated_at=generated_at,
-            cycle_id=cycle_id,
-            strategy=args.strategy,
-            profile=args.profile,
-            symbols=symbols,
-            symbol_candidates=symbol_strategy_candidates,
-            selection_memory=selection_memory,
-            failures=[asdict(failure) for failure in failures],
-            persisted_opportunities=persisted_opportunities,
-        )
-    except Exception as exc:
-        print(f"Signal-state sync unavailable: {exc}")
+    if not automation_mode:
+        try:
+            signal_sync = sync_live_collector_signal_layer(
+                signal_store=signal_store,
+                label=label,
+                session_date=session_date,
+                generated_at=generated_at,
+                cycle_id=cycle_id,
+                strategy=args.strategy,
+                profile=args.profile,
+                symbols=symbols,
+                symbol_candidates=symbol_strategy_candidates,
+                selection_memory=selection_memory,
+                failures=[asdict(failure) for failure in failures],
+                persisted_opportunities=persisted_opportunities,
+            )
+        except Exception as exc:
+            print(f"Signal-state sync unavailable: {exc}")
     automation_sync = {
         "automation_runs_upserted": 0,
         "runtime_opportunities_upserted": 0,
@@ -1663,6 +1672,20 @@ def _run_collection_cycle(
             )
         except Exception as exc:
             print(f"Options automation runtime sync unavailable: {exc}")
+        opportunities = [
+            dict(row) for row in list(automation_sync.get("opportunities") or [])
+        ]
+        promotable_payloads = [
+            dict(row)
+            for row in opportunities
+            if str(row.get("selection_state") or "") == "promotable"
+        ]
+        monitor_payloads = [
+            dict(row)
+            for row in opportunities
+            if str(row.get("selection_state") or "") == "monitor"
+        ]
+    selection_summary = build_selection_summary(opportunities)
     if heartbeat is not None:
         heartbeat()
     quote_candidates = build_capture_candidates(

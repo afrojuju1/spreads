@@ -198,6 +198,65 @@ def _opportunity_source_index(
     return index
 
 
+def _read_previous_runtime_selection(
+    *,
+    signal_store: Any,
+    runtime: EntryRuntime,
+    session_date: str,
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    previous_runs = [
+        dict(row)
+        for row in signal_store.list_automation_runs(
+            bot_id=runtime.bot_id,
+            automation_id=runtime.automation_id,
+            session_date=session_date,
+            limit=1,
+        )
+    ]
+    if not previous_runs:
+        return {}, {}
+    previous_run = previous_runs[0]
+    selection_memory = {}
+    result_payload = (
+        previous_run.get("result")
+        if isinstance(previous_run.get("result"), dict)
+        else previous_run.get("result_json")
+    )
+    if isinstance(result_payload, dict) and isinstance(
+        result_payload.get("selection_memory"), dict
+    ):
+        selection_memory = {
+            str(symbol): dict(state)
+            for symbol, state in dict(
+                result_payload.get("selection_memory") or {}
+            ).items()
+            if isinstance(symbol, str) and isinstance(state, dict)
+        }
+    previous_promotable: dict[str, dict[str, Any]] = {}
+    for row in signal_store.list_opportunities(
+        bot_id=runtime.bot_id,
+        automation_id=runtime.automation_id,
+        automation_run_id=str(previous_run["automation_run_id"]),
+        runtime_owned=True,
+        limit=500,
+    ):
+        payload = dict(row)
+        if str(payload.get("selection_state") or "") != "promotable":
+            continue
+        candidate = (
+            payload.get("candidate")
+            if isinstance(payload.get("candidate"), dict)
+            else payload
+        )
+        symbol = str(
+            payload.get("underlying_symbol") or candidate.get("underlying_symbol") or ""
+        ).upper()
+        if not symbol:
+            continue
+        previous_promotable[symbol] = dict(candidate)
+    return previous_promotable, selection_memory
+
+
 def build_runtime_opportunity_payload(
     *,
     runtime: EntryRuntime,
@@ -343,6 +402,13 @@ def sync_entry_runtime_opportunities(
     scoped_opportunities: list[dict[str, Any]] = []
 
     for runtime in entry_runtimes:
+        previous_promotable, previous_selection_memory = (
+            _read_previous_runtime_selection(
+                signal_store=signal_store,
+                runtime=runtime,
+                session_date=session_date,
+            )
+        )
         owner_candidates = None
         if runtime_candidate_rows_by_owner:
             owner_candidates = runtime_candidate_rows_by_owner.get(
@@ -364,8 +430,8 @@ def sync_entry_runtime_opportunities(
             cycle_id=cycle_id,
             generated_at=generated_at,
             symbol_candidates=filtered_candidates,
-            previous_promotable={},
-            previous_selection_memory={},
+            previous_promotable=previous_promotable,
+            previous_selection_memory=previous_selection_memory,
             top_promotable=top_promotable,
             top_monitor=top_monitor,
             profile=runtime.build_settings.scanner_profile,
@@ -389,6 +455,7 @@ def sync_entry_runtime_opportunities(
             result={
                 "candidate_symbol_count": len(filtered_candidates),
                 "opportunity_count": len(selection["opportunities"]),
+                "selection_memory": dict(selection.get("selection_memory") or {}),
             },
             config_hash=runtime.config_hash,
         )

@@ -167,6 +167,18 @@ class _AutomationRuntimeSignalStore:
         self.automation_runs.append(row)
         return row
 
+    def list_automation_runs(self, **_: object) -> list[dict[str, object]]:
+        return list(self.automation_runs)
+
+    def list_opportunities(self, **kwargs: object) -> list[dict[str, object]]:
+        automation_run_id = kwargs.get("automation_run_id")
+        rows = list(self.opportunities)
+        if automation_run_id is not None:
+            rows = [
+                row for row in rows if row.get("automation_run_id") == automation_run_id
+            ]
+        return rows
+
     def upsert_opportunity(self, **kwargs: object) -> tuple[dict[str, object], bool]:
         row = dict(kwargs)
         self.opportunities.append(row)

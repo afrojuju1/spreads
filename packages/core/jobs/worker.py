@@ -177,13 +177,21 @@ def compact_post_market_result(result: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _heartbeat_runtime(job_store: Any, runtime_owner: str) -> None:
+    state = {
+        "kind": "worker",
+        "lane": str(getattr(job_store, "_worker_lane", "") or "unknown"),
+        "settings_name": str(
+            getattr(job_store, "_worker_settings_name", "") or "unknown"
+        ),
+        "queue_name": str(getattr(job_store, "_worker_queue_name", "") or "unknown"),
+    }
     while True:
         await asyncio.to_thread(
             job_store.acquire_lease,
             lease_key=worker_runtime_lease_key(runtime_owner),
             owner=runtime_owner,
             expires_in_seconds=WORKER_LEASE_TTL_SECONDS,
-            state={"kind": "worker"},
+            state=state,
         )
         await asyncio.sleep(WORKER_HEARTBEAT_SECONDS)
 
@@ -194,6 +202,17 @@ async def startup(ctx: dict[str, Any]) -> None:
     ctx["worker_name"] = worker_name()
     ctx["storage"] = build_storage_context(ctx["database_url"])
     ctx["job_store"] = build_job_repository(context=ctx["storage"])
+    setattr(ctx["job_store"], "_worker_lane", ctx.get("worker_lane", "unknown"))
+    setattr(
+        ctx["job_store"],
+        "_worker_settings_name",
+        ctx.get("worker_settings_name", "unknown"),
+    )
+    setattr(
+        ctx["job_store"],
+        "_worker_queue_name",
+        ctx.get("worker_queue_name", "unknown"),
+    )
     ctx["event_bus"] = redis_async.from_url(ctx["redis_url"], decode_responses=True)
     ctx["runtime_heartbeat_task"] = asyncio.create_task(
         _heartbeat_runtime(ctx["job_store"], ctx["worker_name"])
@@ -261,8 +280,18 @@ async def _enqueue_startup_collector_recovery(ctx: dict[str, Any]) -> None:
 
 
 async def main_startup(ctx: dict[str, Any]) -> None:
+    ctx["worker_lane"] = "main"
+    ctx["worker_settings_name"] = "MainWorkerSettings"
+    ctx["worker_queue_name"] = MAIN_QUEUE_NAME
     await startup(ctx)
     await _enqueue_startup_collector_recovery(ctx)
+
+
+async def collector_startup(ctx: dict[str, Any]) -> None:
+    ctx["worker_lane"] = "collector"
+    ctx["worker_settings_name"] = "CollectorWorkerSettings"
+    ctx["worker_queue_name"] = COLLECTOR_QUEUE_NAME
+    await startup(ctx)
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
@@ -1517,7 +1546,7 @@ class CollectorWorkerSettings:
     ]
     queue_name = COLLECTOR_QUEUE_NAME
     redis_settings = build_redis_settings(default_redis_url())
-    on_startup = startup
+    on_startup = collector_startup
     on_shutdown = shutdown
     keep_result = 0
     job_timeout = 8 * 60 * 60

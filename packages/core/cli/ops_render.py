@@ -846,6 +846,7 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row(
         "Singleton Leases", _render_value(summary.get("singleton_lease_count"))
     )
+    overview.add_row("Worker Lanes", _render_value(summary.get("worker_lane_count")))
     console.print(
         Panel(
             overview,
@@ -855,6 +856,30 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
     )
 
     _render_attention(console, payload)
+
+    lane_rows = list(details.get("worker_lanes") or [])
+    if lane_rows:
+        table = Table(title="Worker Lanes", header_style="bold")
+        table.add_column("Lane")
+        table.add_column("Queue")
+        table.add_column("Status")
+        table.add_column("Workers", justify="right")
+        table.add_column("Running", justify="right")
+        table.add_column("Queued", justify="right")
+        table.add_column("Tasks", justify="right")
+        table.add_column("Max Jobs", justify="right")
+        for row in lane_rows:
+            table.add_row(
+                str(row.get("lane") or row.get("settings_name") or "-"),
+                str(row.get("queue_name") or "-"),
+                _status_text(row.get("status")),
+                _render_value(row.get("active_worker_count")),
+                _render_value(row.get("running_job_count")),
+                _render_value(row.get("queued_job_count")),
+                _render_value(row.get("task_count")),
+                _render_value(row.get("max_jobs")),
+            )
+        console.print(table)
 
     definition_rows = list(details.get("job_definitions") or [])
     if definition_rows:

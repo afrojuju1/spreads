@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import func, select
 
 from core.db.decorators import with_storage
+from core.jobs.registry import WORKER_LANES, get_queue_name_for_job_type
 from core.jobs.orchestration import (
     NEW_YORK,
     SCHEDULER_RUNTIME_LEASE_KEY,
@@ -891,6 +892,60 @@ def _summarize_recovery_slot(row: Mapping[str, Any]) -> dict[str, Any]:
         "job_run_id": row.get("job_run_id"),
         "updated_at": row.get("updated_at"),
     }
+
+
+def _worker_lane_rows(
+    *,
+    workers: list[dict[str, Any]],
+    queued_jobs: list[dict[str, Any]],
+    running_jobs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    workers_by_settings: dict[str, list[dict[str, Any]]] = {}
+    for worker in workers:
+        lease_state = (
+            worker.get("lease_state")
+            if isinstance(worker.get("lease_state"), Mapping)
+            else {}
+        )
+        settings_name = str(
+            lease_state.get("settings_name") or lease_state.get("lane") or "unknown"
+        )
+        workers_by_settings.setdefault(settings_name, []).append(dict(worker))
+
+    queued_by_queue = Counter(
+        get_queue_name_for_job_type(str(row.get("job_type") or "unknown")) or "unknown"
+        for row in queued_jobs
+    )
+    running_by_queue = Counter(
+        get_queue_name_for_job_type(str(row.get("job_type") or "unknown")) or "unknown"
+        for row in running_jobs
+    )
+
+    rows: list[dict[str, Any]] = []
+    for lane in WORKER_LANES:
+        lane_workers = workers_by_settings.get(str(lane.settings_name), [])
+        active_worker_count = len(lane_workers)
+        queued_job_count = int(queued_by_queue.get(str(lane.queue_name), 0))
+        running_job_count = int(running_by_queue.get(str(lane.queue_name), 0))
+        status = "healthy" if active_worker_count > 0 else "blocked"
+        rows.append(
+            {
+                "settings_name": lane.settings_name,
+                "lane": str(lane.settings_name).removesuffix("WorkerSettings").lower(),
+                "queue_name": lane.queue_name,
+                "task_names": list(lane.task_names),
+                "task_count": len(lane.task_names),
+                "max_jobs": lane.max_jobs,
+                "active_worker_count": active_worker_count,
+                "active_workers": [
+                    str(worker.get("owner") or "-") for worker in lane_workers
+                ],
+                "queued_job_count": queued_job_count,
+                "running_job_count": running_job_count,
+                "status": status,
+            }
+        )
+    return rows
 
 
 def _summarize_alert(alert: Mapping[str, Any]) -> dict[str, Any]:
@@ -2069,6 +2124,27 @@ def build_jobs_overview(
             )
         )
 
+    lane_rows = _worker_lane_rows(
+        workers=workers,
+        queued_jobs=[
+            dict(row) for row in job_store.list_job_runs(status="queued", limit=200)
+        ],
+        running_jobs=[
+            dict(row) for row in job_store.list_job_runs(status="running", limit=200)
+        ],
+    )
+    blocked_lane_count = sum(
+        1 for row in lane_rows if str(row.get("status") or "") == "blocked"
+    )
+    if blocked_lane_count:
+        attention.append(
+            _attention(
+                severity="high",
+                code="worker_lanes_blocked",
+                message=f"{blocked_lane_count} worker lane(s) have no active workers.",
+            )
+        )
+
     stale_singleton_leases: list[dict[str, Any]] = []
     for lease in singleton_leases:
         lease_run_id = _as_text(lease.get("job_run_id"))
@@ -2122,6 +2198,7 @@ def build_jobs_overview(
             "operator_status_counts": dict(operator_status_counts),
             "job_type_counts": dict(job_type_counts),
             "singleton_lease_count": len(singleton_leases),
+            "worker_lane_count": len(lane_rows),
             "stale_running_count": stale_running_count,
             "degraded_capture_count": degraded_capture_count,
         },
@@ -2130,6 +2207,7 @@ def build_jobs_overview(
             "view": "list",
             "scheduler": scheduler_payload,
             "workers": workers,
+            "worker_lanes": lane_rows,
             "singleton_leases": singleton_leases,
             "stale_singleton_leases": stale_singleton_leases,
             "job_definitions": definition_rows,
