@@ -25,6 +25,14 @@ from core.services.scanners.config import (
     resolve_symbol_scan_args,
     strategy_option_type,
 )
+from core.services.scanners.market_data import (
+    build_expected_move_estimates,
+    count_alpaca_greeks_coverage,
+    count_local_greeks_coverage,
+    count_snapshot_delta_coverage,
+    enrich_missing_greeks,
+    group_contracts_by_expiration,
+)
 from core.storage.run_history_repository import RunHistoryRepository
 
 from .service import (
@@ -33,17 +41,11 @@ from .service import (
     attach_data_quality,
     attach_selection_notes,
     attach_underlying_setup,
-    build_expected_move_estimates,
     build_iron_condors,
     build_long_straddles,
     build_long_strangles,
     build_vertical_spreads,
-    count_alpaca_greeks_coverage,
-    count_local_greeks_coverage,
-    count_snapshot_delta_coverage,
     deduplicate_candidates,
-    enrich_missing_greeks,
-    group_contracts_by_expiration,
     rank_candidates,
     serialize_setup_context,
     sort_candidates_for_display,
