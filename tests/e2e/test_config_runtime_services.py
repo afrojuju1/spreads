@@ -15,7 +15,7 @@ from core.services.bootstrap_backtest import (
     compare_bootstrap_backtests,
 )
 from core.services.management_planner import plan_position_management
-from core.services.scanners.service import parse_args as parse_scanner_args
+from core.services.scanners.config import parse_args as parse_scanner_args
 from core.services.strategy_builders import build_entry_runtime_candidates
 
 

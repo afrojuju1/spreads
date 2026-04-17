@@ -6,12 +6,14 @@ from typing import Any
 
 from core.integrations.alpaca.client import AlpacaClient
 from core.services.automation_runtime import EntryRuntime, StrategyBuildSettings
-from core.services.scanners.service import (
-    build_candidates_from_market_slice,
-    build_symbol_market_slice,
+from core.services.scanners.config import (
     clone_args,
     resolve_profile_value,
     resolve_symbol_scan_args,
+)
+from core.services.scanners.service import (
+    build_candidates_from_market_slice,
+    build_symbol_market_slice,
 )
 
 

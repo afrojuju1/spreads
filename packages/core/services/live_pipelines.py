@@ -14,7 +14,7 @@ from core.services.runtime_identity import (
     resolve_product_class,
     resolve_style_profile,
 )
-from core.services.scanners.service import resolve_symbols
+from core.services.scanners.config import resolve_symbols
 
 
 def build_live_snapshot_label(
@@ -104,3 +104,19 @@ def build_live_session_catalog(
         ],
         "labels": sorted(expected_label_set | realized_set),
     }
+
+
+__all__ = [
+    "build_live_run_scope_id",
+    "build_live_session_catalog",
+    "build_live_snapshot_label",
+    "build_pipeline_id",
+    "list_enabled_live_collector_pipelines",
+    "parse_live_run_scope_id",
+    "parse_pipeline_id",
+    "resolve_horizon_intent",
+    "resolve_live_collector_label",
+    "resolve_pipeline_policy_fields",
+    "resolve_product_class",
+    "resolve_style_profile",
+]

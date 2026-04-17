@@ -9,7 +9,7 @@ from core.services.bots import build_collector_scope
 from core.services.live_pipelines import build_live_snapshot_label
 from core.services.market_dates import NEW_YORK
 from core.services.option_structures import normalize_strategy_family
-from core.services.scanners.service import parse_args as parse_scanner_args
+from core.services.scanners.config import parse_args as parse_scanner_args
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

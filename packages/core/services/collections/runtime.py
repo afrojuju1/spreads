@@ -59,9 +59,9 @@ from core.services.signal_state import sync_live_collector_signal_layer
 from core.services.target_planner import refresh_options_automation_capture_targets
 from core.services.uoa_trade_summary import build_uoa_trade_summary
 from core.services.market_dates import NEW_YORK
+from core.services.scanners.config import resolve_symbols
 from core.services.scanners.service import (
     merge_strategy_candidates,
-    resolve_symbols,
     scan_symbol_across_strategies,
     sort_candidates_for_display,
 )
