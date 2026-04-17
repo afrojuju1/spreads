@@ -24,16 +24,16 @@ from core.jobs.registry import (
     BROKER_SYNC_JOB_TYPE,
     COLLECTOR_RECOVERY_JOB_KEY,
     COLLECTOR_RECOVERY_JOB_TYPE,
-    COLLECTOR_QUEUE_NAME,
+    DISCOVERY_QUEUE_NAME,
     EXECUTION_SUBMIT_JOB_TYPE,
     LIVE_COLLECTOR_JOB_TYPE,
-    MAIN_QUEUE_NAME,
     OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE,
     OPTIONS_AUTOMATION_ENTRY_JOB_TYPE,
     OPTIONS_AUTOMATION_MANAGEMENT_JOB_TYPE,
     POSITION_EXIT_MANAGER_JOB_TYPE,
     POST_CLOSE_ANALYSIS_JOB_TYPE,
     POST_MARKET_ANALYSIS_JOB_TYPE,
+    RUNTIME_QUEUE_NAME,
     get_job_spec,
 )
 from core.jobs.orchestration import (
@@ -279,18 +279,18 @@ async def _enqueue_startup_collector_recovery(ctx: dict[str, Any]) -> None:
         await redis.close()
 
 
-async def main_startup(ctx: dict[str, Any]) -> None:
-    ctx["worker_lane"] = "main"
-    ctx["worker_settings_name"] = "MainWorkerSettings"
-    ctx["worker_queue_name"] = MAIN_QUEUE_NAME
+async def runtime_startup(ctx: dict[str, Any]) -> None:
+    ctx["worker_lane"] = "runtime"
+    ctx["worker_settings_name"] = "RuntimeWorkerSettings"
+    ctx["worker_queue_name"] = RUNTIME_QUEUE_NAME
     await startup(ctx)
     await _enqueue_startup_collector_recovery(ctx)
 
 
-async def collector_startup(ctx: dict[str, Any]) -> None:
-    ctx["worker_lane"] = "collector"
-    ctx["worker_settings_name"] = "CollectorWorkerSettings"
-    ctx["worker_queue_name"] = COLLECTOR_QUEUE_NAME
+async def discovery_startup(ctx: dict[str, Any]) -> None:
+    ctx["worker_lane"] = "discovery"
+    ctx["worker_settings_name"] = "DiscoveryWorkerSettings"
+    ctx["worker_queue_name"] = DISCOVERY_QUEUE_NAME
     await startup(ctx)
 
 
@@ -1517,7 +1517,7 @@ async def run_post_market_analysis_job(
         raise
 
 
-class MainWorkerSettings:
+class RuntimeWorkerSettings:
     functions = [
         run_broker_sync_job,
         run_collector_recovery_job,
@@ -1531,26 +1531,26 @@ class MainWorkerSettings:
         run_post_close_analysis_job,
         run_post_market_analysis_job,
     ]
-    queue_name = MAIN_QUEUE_NAME
+    queue_name = RUNTIME_QUEUE_NAME
     redis_settings = build_redis_settings(default_redis_url())
-    on_startup = main_startup
+    on_startup = runtime_startup
     on_shutdown = shutdown
     keep_result = 0
     job_timeout = 8 * 60 * 60
     max_jobs = 4
 
 
-class CollectorWorkerSettings:
+class DiscoveryWorkerSettings:
     functions = [
         run_live_collector_job,
     ]
-    queue_name = COLLECTOR_QUEUE_NAME
+    queue_name = DISCOVERY_QUEUE_NAME
     redis_settings = build_redis_settings(default_redis_url())
-    on_startup = collector_startup
+    on_startup = discovery_startup
     on_shutdown = shutdown
     keep_result = 0
     job_timeout = 8 * 60 * 60
     max_jobs = 1
 
 
-WorkerSettings = MainWorkerSettings
+WorkerSettings = RuntimeWorkerSettings

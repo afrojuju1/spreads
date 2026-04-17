@@ -81,13 +81,13 @@ Run:
 docker compose ps
 uv run spreads status
 uv run spreads trading
-docker compose logs --tail=100 scheduler worker-main worker-collector market-recorder api
+docker compose logs --tail=100 scheduler worker-runtime worker-discovery market-recorder api
 ```
 
 Remember:
 
 - `api` hot-reloads source changes in Docker
-- `worker-main`, `worker-collector`, and `scheduler` do not
+- `worker-runtime`, `worker-discovery`, and `scheduler` do not
 - `market-recorder` is a dedicated service and owns the live stream continuity path
 
 If backend code changed recently, stale workers are a first-class suspect.
@@ -204,9 +204,9 @@ If the task turns into a code change, finish with:
 ```bash
 uv run alembic upgrade head
 uv run spreads jobs seed
-docker compose restart scheduler worker-main worker-collector market-recorder
+docker compose restart scheduler worker-runtime worker-discovery market-recorder
 docker compose ps
-docker compose logs --tail=100 scheduler worker-main worker-collector market-recorder api
+docker compose logs --tail=100 scheduler worker-runtime worker-discovery market-recorder api
 uv run spreads status
 uv run spreads trading
 uv run spreads sessions --limit 5

@@ -817,6 +817,82 @@ def render_jobs_view(console: Console, payload: dict[str, Any]) -> None:
     _render_jobs_list(console, payload)
 
 
+def render_job_lanes_view(console: Console, payload: dict[str, Any]) -> None:
+    summary = dict(payload.get("summary") or {})
+    details = dict(payload.get("details") or {})
+    scheduler = dict(details.get("scheduler") or {})
+    lane_rows = list(details.get("worker_lanes") or [])
+
+    overview = Table.grid(padding=(0, 2))
+    overview.add_row("Overall", _status_text(payload.get("status")))
+    overview.add_row("Generated", _render_value(payload.get("generated_at")))
+    overview.add_row(
+        "Scheduler",
+        f"{_render_value(scheduler.get('status'))} @ {_render_value(scheduler.get('expires_at'))}",
+    )
+    overview.add_row("Worker Lanes", _render_value(summary.get("worker_lane_count")))
+    overview.add_row("Workers", _render_value(summary.get("active_worker_count")))
+    overview.add_row(
+        "Jobs",
+        f"running {_render_value(summary.get('running_job_count'))} | queued {_render_value(summary.get('queued_job_count'))}",
+    )
+    console.print(
+        Panel(
+            overview,
+            title="Worker Lanes",
+            border_style=STATUS_STYLES.get(str(payload.get("status")), "white"),
+        )
+    )
+
+    _render_attention(console, payload)
+
+    if lane_rows:
+        table = Table(title="Lane Summary", header_style="bold")
+        table.add_column("Lane")
+        table.add_column("Queue")
+        table.add_column("Status")
+        table.add_column("Workers", justify="right")
+        table.add_column("Running", justify="right")
+        table.add_column("Queued", justify="right")
+        table.add_column("Tasks", justify="right")
+        table.add_column("Max Jobs", justify="right")
+        for row in lane_rows:
+            table.add_row(
+                str(row.get("lane") or row.get("settings_name") or "-"),
+                str(row.get("queue_name") or "-"),
+                _status_text(row.get("status")),
+                _render_value(row.get("active_worker_count")),
+                _render_value(row.get("running_job_count")),
+                _render_value(row.get("queued_job_count")),
+                _render_value(row.get("task_count")),
+                _render_value(row.get("max_jobs")),
+            )
+        console.print(table)
+
+    workers = list(details.get("workers") or [])
+    if workers:
+        table = Table(title="Active Workers", header_style="bold")
+        table.add_column("Owner")
+        table.add_column("Lane")
+        table.add_column("Queue")
+        table.add_column("Settings")
+        table.add_column("Expires")
+        for row in workers:
+            lease_state = (
+                row.get("lease_state")
+                if isinstance(row.get("lease_state"), dict)
+                else {}
+            )
+            table.add_row(
+                str(row.get("owner") or "-"),
+                _render_value(lease_state.get("lane")),
+                _render_value(lease_state.get("queue_name")),
+                _render_value(lease_state.get("settings_name")),
+                _render_value(row.get("expires_at")),
+            )
+        console.print(table)
+
+
 def render_uoa_view(console: Console, payload: dict[str, Any]) -> None:
     _render_uoa_detail(console, payload)
 

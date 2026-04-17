@@ -32,8 +32,8 @@ Before rollout, classify what changed:
 
 - schema or Alembic files changed
 - job definitions, schedules, or policy payloads changed
-- code imported by `worker-main`
-- code imported by `worker-collector`
+- code imported by `worker-runtime`
+- code imported by `worker-discovery`
 - scheduler enqueue logic changed
 - `market-recorder` code changed
 - API-only or web-only code changed
@@ -59,10 +59,10 @@ Apply only the steps that match the change:
   - `uv run alembic upgrade head`
 - job definitions, seeded payloads, schedules, or policies changed:
   - `uv run spreads jobs seed`
-- code imported by `worker-main` changed:
-  - `docker compose restart worker-main`
-- code imported by `worker-collector` changed:
-  - `docker compose restart worker-collector`
+- code imported by `worker-runtime` changed:
+  - `docker compose restart worker-runtime`
+- code imported by `worker-discovery` changed:
+  - `docker compose restart worker-discovery`
 - scheduler code changed:
   - `docker compose restart scheduler`
 - recorder code changed:
@@ -90,7 +90,7 @@ Then drill into impacted labels:
 ```bash
 uv run spreads sessions <session-id>
 uv run spreads jobs
-docker compose logs --since 3m scheduler worker-main worker-collector market-recorder
+docker compose logs --since 3m scheduler worker-runtime worker-discovery market-recorder
 ```
 
 For policy or seeded job-definition changes, verify both layers:

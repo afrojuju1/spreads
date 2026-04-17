@@ -1148,11 +1148,11 @@ Only a few details remain intentionally open:
 - `combined` still means call/put credit spreads only. Debit, long-vol, and condor families run on their own collector jobs.
 - The seeded condor and long-vol jobs are shadow-only until live policy is enabled deliberately.
 - When live collector job definitions change, run `uv run spreads jobs seed`.
-- When worker- or scheduler-imported scanner/shared runtime code changes, restart `worker-main`, `worker-collector`, and `scheduler`.
+- When worker- or scheduler-imported scanner/shared runtime code changes, restart `worker-runtime`, `worker-discovery`, and `scheduler`.
 - Minimum verification for live family changes:
   - `uv run python -m unittest discover -s tests -p 'test_*e2e.py'`
-  - `docker compose ps worker-main worker-collector scheduler`
-  - `docker compose logs --since=2m worker-main worker-collector scheduler`
+  - `docker compose ps worker-runtime worker-discovery scheduler`
+  - `docker compose logs --since=2m worker-runtime worker-discovery scheduler`
 
 ## Success Criteria
 

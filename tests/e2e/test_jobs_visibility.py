@@ -66,7 +66,7 @@ class JobsVisibilityTests(unittest.TestCase):
                             "scheduled_for": now.isoformat(),
                             "started_at": now.isoformat(),
                             "heartbeat_at": now.isoformat(),
-                            "worker_name": "worker-main-1",
+                            "worker_name": "worker-runtime-1",
                         }
                     ]
                 return []
@@ -88,25 +88,25 @@ class JobsVisibilityTests(unittest.TestCase):
                     return []
                 return [
                     {
-                        "lease_key": f"{WORKER_RUNTIME_LEASE_PREFIX}worker-main-1",
-                        "owner": "worker-main-1",
+                        "lease_key": f"{WORKER_RUNTIME_LEASE_PREFIX}worker-runtime-1",
+                        "owner": "worker-runtime-1",
                         "expires_at": (now + timedelta(minutes=1)).isoformat(),
                         "lease_state": {
                             "kind": "worker",
-                            "lane": "main",
-                            "settings_name": "MainWorkerSettings",
-                            "queue_name": "arq:queue:fast",
+                            "lane": "runtime",
+                            "settings_name": "RuntimeWorkerSettings",
+                            "queue_name": "arq:queue:runtime",
                         },
                     },
                     {
-                        "lease_key": f"{WORKER_RUNTIME_LEASE_PREFIX}worker-collector-1",
-                        "owner": "worker-collector-1",
+                        "lease_key": f"{WORKER_RUNTIME_LEASE_PREFIX}worker-discovery-1",
+                        "owner": "worker-discovery-1",
                         "expires_at": (now + timedelta(minutes=1)).isoformat(),
                         "lease_state": {
                             "kind": "worker",
-                            "lane": "collector",
-                            "settings_name": "CollectorWorkerSettings",
-                            "queue_name": "arq:queue:collector",
+                            "lane": "discovery",
+                            "settings_name": "DiscoveryWorkerSettings",
+                            "queue_name": "arq:queue:discovery",
                         },
                     },
                 ]
@@ -119,10 +119,10 @@ class JobsVisibilityTests(unittest.TestCase):
         lane_rows = list(payload["details"]["worker_lanes"])
         self.assertEqual(len(lane_rows), 2)
         lanes = {row["lane"]: row for row in lane_rows}
-        self.assertEqual(lanes["main"]["running_job_count"], 1)
-        self.assertEqual(lanes["collector"]["queued_job_count"], 1)
-        self.assertEqual(lanes["main"]["active_worker_count"], 1)
-        self.assertEqual(lanes["collector"]["active_worker_count"], 1)
+        self.assertEqual(lanes["runtime"]["running_job_count"], 1)
+        self.assertEqual(lanes["discovery"]["queued_job_count"], 1)
+        self.assertEqual(lanes["runtime"]["active_worker_count"], 1)
+        self.assertEqual(lanes["discovery"]["active_worker_count"], 1)
 
 
 if __name__ == "__main__":

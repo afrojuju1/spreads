@@ -122,14 +122,14 @@ This must change to:
 Current `docker-compose.yml` assumes:
 
 - API app import path: `apps.api.main:app`
-- worker paths: `spreads.jobs.worker.MainWorkerSettings`
+- worker paths: `spreads.jobs.worker.RuntimeWorkerSettings`
 - reload dirs: `src` and `packages/api`
 - web build context and bind mount: `packages/web`
 
 These must change to:
 
 - API app import path: `api.main:app`
-- worker paths: `core.jobs.worker.MainWorkerSettings` and `CollectorWorkerSettings`
+- worker paths: `core.jobs.worker.RuntimeWorkerSettings` and `DiscoveryWorkerSettings`
 - reload dirs: `packages/core` and `packages/api`
 - web build context and bind mount: `packages/web`
 
@@ -209,7 +209,7 @@ After the restructure:
 
 1. `uv run alembic upgrade head`
 2. `uv run spreads jobs seed`
-3. `docker compose restart scheduler worker-main worker-collector api web`
+3. `docker compose restart scheduler worker-runtime worker-discovery api web`
 4. `uv run spreads status`
 5. `uv run spreads trading`
 6. `uv run spreads jobs`

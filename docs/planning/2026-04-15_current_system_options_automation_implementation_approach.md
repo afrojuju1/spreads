@@ -310,7 +310,7 @@ That layer is required for the two-stage scanner to work in production.
 ### Keep
 
 - scheduler and worker runtime: `jobs/scheduler.py`, `jobs/worker.py`, `jobs/registry.py`
-- current process topology: `api`, `scheduler`, `worker-main`, `worker-collector`
+- current process topology: `api`, `scheduler`, `worker-runtime`, `worker-discovery`
 - Postgres repository pattern: `storage/context.py`, `storage/factory.py`
 - recorder-owned stream model: `services/market_recorder.py`
 - signal and opportunity store: `services/signal_state.py`, `storage/signal_models.py`
@@ -697,8 +697,8 @@ Keep:
 
 - `api`
 - `scheduler`
-- `worker-main`
-- `worker-collector`
+- `worker-runtime`
+- `worker-discovery`
 - Postgres and Redis
 - `market_recorder` as the sole Alpaca option stream owner
 
@@ -718,10 +718,10 @@ Rules:
 
 Use this split:
 
-- `worker-collector`: shortlist generation, targeted option enrichment, structure building, recorder-target refresh
-- `worker-main`: bot entry evaluation, bot management evaluation, approvals, execution submission, broker sync, exit handling
+- `worker-discovery`: shortlist generation, targeted option enrichment, structure building, recorder-target refresh
+- `worker-runtime`: bot entry evaluation, bot management evaluation, approvals, execution submission, broker sync, exit handling
 
-The important change is that `worker-collector` stops being the place where trade decisions and auto-execution originate.
+The important change is that `worker-discovery` stops being the place where trade decisions and auto-execution originate.
 
 ### Add A Recorder Target Planner
 
@@ -944,7 +944,7 @@ This is where the product actually becomes an automation system instead of a col
 
 Infra consequence:
 
-- `worker-main` should become the lane that runs bot entry and management jobs
+- `worker-runtime` should become the lane that runs bot entry and management jobs
 - `job_definitions` should schedule these explicitly rather than hiding them inside collector behavior
 - decision runs should serialize by bot, automation, and planning scope
 

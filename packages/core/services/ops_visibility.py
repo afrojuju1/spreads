@@ -2217,6 +2217,44 @@ def build_jobs_overview(
 
 
 @with_storage()
+def build_job_lanes_overview(
+    *,
+    db_target: str | None = None,
+    storage: Any | None = None,
+) -> dict[str, Any]:
+    payload = build_jobs_overview(db_target=db_target, storage=storage)
+    details = dict(payload.get("details") or {})
+    lane_rows = list(details.get("worker_lanes") or [])
+    summary = dict(payload.get("summary") or {})
+    return {
+        "status": payload.get("status"),
+        "generated_at": payload.get("generated_at"),
+        "summary": {
+            "view": "lanes",
+            "worker_lane_count": len(lane_rows),
+            "active_worker_count": sum(
+                int(row.get("active_worker_count") or 0) for row in lane_rows
+            ),
+            "running_job_count": sum(
+                int(row.get("running_job_count") or 0) for row in lane_rows
+            ),
+            "queued_job_count": sum(
+                int(row.get("queued_job_count") or 0) for row in lane_rows
+            ),
+            "singleton_lease_count": summary.get("singleton_lease_count"),
+        },
+        "attention": list(payload.get("attention") or []),
+        "details": {
+            "view": "lanes",
+            "scheduler": details.get("scheduler"),
+            "workers": details.get("workers"),
+            "worker_lanes": lane_rows,
+            "singleton_leases": details.get("singleton_leases"),
+        },
+    }
+
+
+@with_storage()
 def build_job_run_view(
     *,
     job_run_id: str,

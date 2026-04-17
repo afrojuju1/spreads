@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-MAIN_QUEUE_NAME = "arq:queue:fast"
-COLLECTOR_QUEUE_NAME = "arq:queue:collector"
+RUNTIME_QUEUE_NAME = "arq:queue:runtime"
+DISCOVERY_QUEUE_NAME = "arq:queue:discovery"
 
 BROKER_SYNC_JOB_TYPE = "broker_sync"
 EXECUTION_SUBMIT_JOB_TYPE = "execution_submit"
@@ -49,70 +49,70 @@ JOB_SPECS = {
         JobSpec(
             job_type=BROKER_SYNC_JOB_TYPE,
             task_name="run_broker_sync_job",
-            queue_name=MAIN_QUEUE_NAME,
+            queue_name=RUNTIME_QUEUE_NAME,
         ),
         JobSpec(
             job_type=EXECUTION_SUBMIT_JOB_TYPE,
             task_name="run_execution_submit_job",
-            queue_name=MAIN_QUEUE_NAME,
+            queue_name=RUNTIME_QUEUE_NAME,
         ),
         JobSpec(
             job_type=ALERT_DELIVERY_JOB_TYPE,
             task_name="run_alert_delivery_job",
-            queue_name=MAIN_QUEUE_NAME,
+            queue_name=RUNTIME_QUEUE_NAME,
         ),
         JobSpec(
             job_type=ALERT_RECONCILE_JOB_TYPE,
             task_name="run_alert_reconcile_job",
-            queue_name=MAIN_QUEUE_NAME,
+            queue_name=RUNTIME_QUEUE_NAME,
         ),
         JobSpec(
             job_type=POSITION_EXIT_MANAGER_JOB_TYPE,
             task_name="run_position_exit_manager_job",
-            queue_name=MAIN_QUEUE_NAME,
+            queue_name=RUNTIME_QUEUE_NAME,
         ),
         JobSpec(
             job_type=LIVE_COLLECTOR_JOB_TYPE,
             task_name="run_live_collector_job",
-            queue_name=COLLECTOR_QUEUE_NAME,
+            queue_name=DISCOVERY_QUEUE_NAME,
         ),
         JobSpec(
             job_type=POST_CLOSE_ANALYSIS_JOB_TYPE,
             task_name="run_post_close_analysis_job",
-            queue_name=MAIN_QUEUE_NAME,
+            queue_name=RUNTIME_QUEUE_NAME,
         ),
         JobSpec(
             job_type=POST_MARKET_ANALYSIS_JOB_TYPE,
             task_name="run_post_market_analysis_job",
-            queue_name=MAIN_QUEUE_NAME,
+            queue_name=RUNTIME_QUEUE_NAME,
         ),
         JobSpec(
             job_type=COLLECTOR_RECOVERY_JOB_TYPE,
             task_name="run_collector_recovery_job",
-            queue_name=MAIN_QUEUE_NAME,
+            queue_name=RUNTIME_QUEUE_NAME,
         ),
         JobSpec(
             job_type=OPTIONS_AUTOMATION_ENTRY_JOB_TYPE,
             task_name="run_options_automation_entry_job",
-            queue_name=MAIN_QUEUE_NAME,
+            queue_name=RUNTIME_QUEUE_NAME,
         ),
         JobSpec(
             job_type=OPTIONS_AUTOMATION_MANAGEMENT_JOB_TYPE,
             task_name="run_options_automation_management_job",
-            queue_name=MAIN_QUEUE_NAME,
+            queue_name=RUNTIME_QUEUE_NAME,
         ),
         JobSpec(
             job_type=OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE,
             task_name="run_options_automation_execute_job",
-            queue_name=MAIN_QUEUE_NAME,
+            queue_name=RUNTIME_QUEUE_NAME,
         ),
     )
 }
 
 WORKER_LANES = (
     WorkerLaneSpec(
-        settings_name="MainWorkerSettings",
-        queue_name=MAIN_QUEUE_NAME,
+        settings_name="RuntimeWorkerSettings",
+        queue_name=RUNTIME_QUEUE_NAME,
         task_names=(
             JOB_SPECS[BROKER_SYNC_JOB_TYPE].task_name,
             JOB_SPECS[EXECUTION_SUBMIT_JOB_TYPE].task_name,
@@ -129,8 +129,8 @@ WORKER_LANES = (
         max_jobs=4,
     ),
     WorkerLaneSpec(
-        settings_name="CollectorWorkerSettings",
-        queue_name=COLLECTOR_QUEUE_NAME,
+        settings_name="DiscoveryWorkerSettings",
+        queue_name=DISCOVERY_QUEUE_NAME,
         task_names=(JOB_SPECS[LIVE_COLLECTOR_JOB_TYPE].task_name,),
     ),
 )

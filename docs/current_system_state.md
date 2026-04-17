@@ -93,13 +93,13 @@ Redis = transport, queueing, leases, and pub/sub fanout
                 |             |                        v
         +-------+--------+    |     +------------------+------------------+
         | market-recorder|    |     |               Redis                 |
-        | sole Alpaca    |    |     | arq:queue:fast | arq:queue:collector|
+        | sole Alpaca    |    |     | arq:queue:runtime | arq:queue:discovery|
         | option WS owner|    |     +--------+-------------------+--------+
         +-------+--------+    |              |                   |
                 |             |              v                   v
                 +-------------+   +----------+----------+   +----+----------------------+
-                                  | MainWorkerSettings  |   | CollectorWorkerSettings   |
-                                  | queue: arq:queue:fast|  | queue: arq:queue:collector|
+                                  | RuntimeWorkerSettings |  | DiscoveryWorkerSettings   |
+                                  | queue: arq:queue:runtime| | queue: arq:queue:discovery|
                                   +----------+----------+   +----+----------------------+
                                              |                   |
                                              | runs              | runs
@@ -136,13 +136,13 @@ Redis = transport, queueing, leases, and pub/sub fanout
                            v
         +------------------+------------------+
         |               Redis                 |
-        | arq:queue:fast | arq:queue:collector|
+        | arq:queue:runtime | arq:queue:discovery|
         +--------+-------------------+--------+
                  |                   |
                  v                   v
    +-------------+----------+   +----+----------------------+
-   | MainWorkerSettings     |   | CollectorWorkerSettings   |
-   | queue: arq:queue:fast  |   | queue: arq:queue:collector|
+   | RuntimeWorkerSettings  |   | DiscoveryWorkerSettings   |
+   | queue: arq:queue:runtime|  | queue: arq:queue:discovery|
    +-------------+----------+   +----+----------------------+
                  |                   |
                  | runs              | runs
@@ -263,8 +263,8 @@ Rule:
            v
    +-------+------------------------------+
    | Redis                               |
-   | arq:queue:fast                      |
-   | arq:queue:collector                 |
+   | arq:queue:runtime                   |
+   | arq:queue:discovery                 |
    | spreads:events                      |
    +-------+------------------------------+
            |                      ^
@@ -343,8 +343,8 @@ Workers:
 
 Current worker topology is:
 
-- `MainWorkerSettings`
-- `CollectorWorkerSettings`
+- `RuntimeWorkerSettings`
+- `DiscoveryWorkerSettings`
 
 Current main job types are:
 

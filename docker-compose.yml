@@ -61,7 +61,7 @@ services:
       - .:/app
     ports:
       - "58080:8000"
-  worker-main:
+  worker-runtime:
     build:
       context: .
     restart: unless-stopped
@@ -78,10 +78,10 @@ services:
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
       REDIS_URL: redis://redis:6379/0
       SPREADS_INTERNAL_API_BASE_URL: http://api:8000
-    command: ["uv", "run", "arq", "core.jobs.worker.MainWorkerSettings"]
+    command: ["uv", "run", "arq", "core.jobs.worker.RuntimeWorkerSettings"]
     volumes:
       - .:/app
-  worker-collector:
+  worker-discovery:
     build:
       context: .
     restart: unless-stopped
@@ -98,7 +98,7 @@ services:
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
       REDIS_URL: redis://redis:6379/0
       SPREADS_INTERNAL_API_BASE_URL: http://api:8000
-    command: ["uv", "run", "arq", "core.jobs.worker.CollectorWorkerSettings"]
+    command: ["uv", "run", "arq", "core.jobs.worker.DiscoveryWorkerSettings"]
     volumes:
       - .:/app
   scheduler:

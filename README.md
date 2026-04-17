@@ -112,7 +112,7 @@ uv run spreads scheduler
 ## Local Development Notes
 
 - In Docker, `api` hot-reloads source changes.
-- `worker-main`, `worker-collector`, and `scheduler` do not hot-reload. Restart those containers after backend changes they import.
+- `worker-runtime`, `worker-discovery`, and `scheduler` do not hot-reload. Restart those containers after backend changes they import.
 - Prefer using the existing Docker services for runtime checks instead of starting duplicate local processes.
 - Postgres is the source of truth for runtime history, sessions, alerts, jobs, and post-market analysis.
 - Post-market outcomes are modeled analysis, not realized account PnL.

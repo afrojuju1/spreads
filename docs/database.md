@@ -73,7 +73,7 @@ ARQ orchestration defaults:
 ```bash
 uv run spreads scheduler
 uv run arq core.jobs.worker.FastWorkerSettings
-uv run arq core.jobs.worker.CollectorWorkerSettings
+uv run arq core.jobs.worker.DiscoveryWorkerSettings
 uv run arq core.jobs.worker.AnalysisWorkerSettings
 uv run arq core.jobs.worker.GeneratorWorkerSettings
 ```

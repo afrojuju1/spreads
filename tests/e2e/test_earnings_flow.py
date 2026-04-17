@@ -26,8 +26,10 @@ def _now_iso() -> str:
 
 def _future_iso(hours: int = 1) -> str:
     return (
-        datetime.now(UTC) + timedelta(hours=hours)
-    ).isoformat(timespec="seconds").replace("+00:00", "Z")
+        (datetime.now(UTC) + timedelta(hours=hours))
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def _collector_candidate(
@@ -347,8 +349,8 @@ class _FakeJobStore:
         if "worker" in prefix:
             return [
                 {
-                    "lease_key": f"{prefix}worker-main",
-                    "owner": "worker-main",
+                    "lease_key": f"{prefix}worker-runtime",
+                    "owner": "worker-runtime",
                     "expires_at": _future_iso(),
                     "job_run_id": "worker-run",
                 }
@@ -471,6 +473,9 @@ class _FakeExecutionStore:
     def schema_ready(self) -> bool:
         return True
 
+    def intent_schema_ready(self) -> bool:
+        return False
+
     def list_attempts_by_status(self, **_: object) -> list[dict[str, object]]:
         return []
 
@@ -526,7 +531,7 @@ class EarningsFlowTests(unittest.TestCase):
             "started_at": _now_iso(),
             "finished_at": _now_iso(),
             "heartbeat_at": _now_iso(),
-            "worker_name": "worker-main",
+            "worker_name": "worker-runtime",
             "retry_count": 0,
             "session_id": "session-1",
             "slot_at": _now_iso(),
@@ -560,22 +565,25 @@ class EarningsFlowTests(unittest.TestCase):
         }
         storage = _FakeStorage(run_record)
 
-        with patch(
-            "core.services.ops_visibility.get_control_state_snapshot",
-            return_value={"mode": "normal"},
-        ), patch(
-            "core.services.ops_visibility.get_account_overview",
-            return_value={
-                "source": "live",
-                "environment": "paper",
-                "account": {
-                    "equity": 10000.0,
-                    "cash": 5000.0,
-                    "buying_power": 10000.0,
+        with (
+            patch(
+                "core.services.ops_visibility.get_control_state_snapshot",
+                return_value={"mode": "normal"},
+            ),
+            patch(
+                "core.services.ops_visibility.get_account_overview",
+                return_value={
+                    "source": "live",
+                    "environment": "paper",
+                    "account": {
+                        "equity": 10000.0,
+                        "cash": 5000.0,
+                        "buying_power": 10000.0,
+                    },
+                    "pnl": {"day_change": 0.0, "day_change_percent": 0.0},
+                    "sync": {},
                 },
-                "pnl": {"day_change": 0.0, "day_change_percent": 0.0},
-                "sync": {},
-            },
+            ),
         ):
             system_status = build_system_status(storage=storage)
             trading_health = build_trading_health(storage=storage)

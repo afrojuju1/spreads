@@ -9,6 +9,7 @@ import typer
 from core.cli.ops_render import (
     build_console,
     render_audit_view,
+    render_job_lanes_view,
     render_jobs_view,
     render_json_payload,
     render_system_status,
@@ -18,6 +19,7 @@ from core.cli.ops_render import (
 from core.services.ops_visibility import (
     OpsLookupError,
     build_audit_view,
+    build_job_lanes_overview,
     build_job_run_view,
     build_jobs_overview,
     build_system_status,
@@ -256,6 +258,24 @@ def jobs_run_command(
             job_run_id=job_run_id,
         ),
         renderer=render_jobs_view,
+        json_output=json_output,
+        watch_seconds=watch,
+        no_color=no_color,
+    )
+
+
+@jobs_app.command("lanes", help="Inspect runtime and discovery worker lanes.")
+def jobs_lanes_command(
+    db: str | None = typer.Option(None, "--db", help="Database URL override."),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
+    watch: float | None = typer.Option(
+        None, "--watch", help="Refresh every N seconds."
+    ),
+    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
+) -> None:
+    _run_visibility_command(
+        builder=lambda: build_job_lanes_overview(db_target=db),
+        renderer=render_job_lanes_view,
         json_output=json_output,
         watch_seconds=watch,
         no_color=no_color,
