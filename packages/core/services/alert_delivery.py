@@ -1,22 +1,17 @@
 from __future__ import annotations
 
-import asyncio
 import os
 from datetime import UTC, datetime, timedelta
 from typing import Any, Mapping
 
-from arq import create_pool
-
 from core.alerts.discord import build_discord_payload, send_discord_webhook
 from core.events.bus import publish_global_event_sync
+from core.jobs.adhoc import ensure_manual_job_definition, enqueue_ad_hoc_job
 from core.jobs.orchestration import build_job_attempt_id
 from core.jobs.registry import (
     ALERT_DELIVERY_ADHOC_JOB_KEY,
     ALERT_DELIVERY_JOB_TYPE,
-    get_job_spec,
 )
-from core.runtime.config import default_redis_url
-from core.runtime.redis import build_redis_settings
 from core.services.live_pipelines import build_live_run_scope_id
 from core.storage.alert_repository import (
     ALERT_RECORD_KIND_DELIVERY,
@@ -66,45 +61,11 @@ def _resolve_session_id(row: Mapping[str, Any], session_id: str | None = None) -
 
 
 def _ensure_alert_delivery_job_definition(job_store: JobRepository) -> None:
-    job_store.upsert_job_definition(
+    ensure_manual_job_definition(
         job_key=ALERT_DELIVERY_ADHOC_JOB_KEY,
         job_type=ALERT_DELIVERY_JOB_TYPE,
-        enabled=False,
-        schedule_type="manual",
-        schedule={},
-        payload={},
-        singleton_scope=None,
+        job_store=job_store,
     )
-
-
-def _enqueue_ad_hoc_job(
-    *,
-    job_type: str,
-    job_key: str,
-    job_run_id: str,
-    arq_job_id: str,
-    payload: dict[str, Any],
-) -> Any:
-    spec = get_job_spec(job_type)
-    if spec is None:
-        raise RuntimeError(f"Job type is not registered: {job_type}")
-
-    async def _enqueue() -> Any:
-        redis = await create_pool(build_redis_settings(default_redis_url()))
-        try:
-            return await redis.enqueue_job(
-                spec.task_name,
-                job_key,
-                job_run_id,
-                payload,
-                arq_job_id,
-                _job_id=arq_job_id,
-                _queue_name=spec.queue_name,
-            )
-        finally:
-            await redis.aclose()
-
-    return asyncio.run(_enqueue())
 
 
 def publish_alert_event(
@@ -192,7 +153,7 @@ def enqueue_alert_delivery_job(
         queued_at=scheduled_for,
     )
     try:
-        enqueued = _enqueue_ad_hoc_job(
+        enqueued = enqueue_ad_hoc_job(
             job_type=ALERT_DELIVERY_JOB_TYPE,
             job_key=ALERT_DELIVERY_ADHOC_JOB_KEY,
             job_run_id=job_run_id,

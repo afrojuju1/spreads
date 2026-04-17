@@ -10,6 +10,7 @@ from core.services.bot_analytics import evaluate_entry_controls
 from core.services.bots import load_active_bots
 from core.services.entry_planner import plan_entry_selection, score_opportunity
 from core.services.execution_intents import request_options_automation_dispatch
+from core.services.execution_intents.shared import issue_pending_execution_intent
 from core.services.live_pipelines import resolve_live_collector_label
 from core.services.management_recipes import build_exit_policy_from_recipe_refs
 from core.services.option_structures import normalize_strategy_family
@@ -236,7 +237,8 @@ def run_entry_automation_decision(
                 payload={"slot_key": slot_key},
             )
             continue
-        selected_intent = execution_store.upsert_execution_intent(
+        selected_intent = issue_pending_execution_intent(
+            execution_store,
             execution_intent_id=_intent_id(str(decision["opportunity_decision_id"])),
             bot_id=runtime.bot_id,
             automation_id=runtime.automation_id,
@@ -261,14 +263,10 @@ def run_entry_automation_decision(
                     tuple(runtime.automation.strategy_config.management_recipe_refs)
                 ),
             },
-            created_at=_utc_now(),
-            updated_at=_utc_now(),
-        )
-        execution_store.append_execution_intent_event(
-            execution_intent_id=str(selected_intent["execution_intent_id"]),
-            event_type="created",
-            event_at=_utc_now(),
-            payload={"opportunity_id": opportunity_id, "slot_key": slot_key},
+            created_event_payload={
+                "opportunity_id": opportunity_id,
+                "slot_key": slot_key,
+            },
         )
     if selected_intent is not None:
         dispatch_request = request_options_automation_dispatch(

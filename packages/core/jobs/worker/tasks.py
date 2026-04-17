@@ -24,7 +24,8 @@ from core.services.alert_delivery import (
     reconcile_alert_delivery,
     run_alert_delivery,
 )
-from core.services.analysis import build_analysis_args, run_post_close_analysis
+from core.services.analysis.cli import build_analysis_args
+from core.services.analysis.service import run_post_close_analysis
 from core.services.broker_sync import run_broker_sync
 from core.services.collections.config import build_collection_args
 from core.services.collections.models import LiveTickContext

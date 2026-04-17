@@ -4,7 +4,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from core.db.decorators import with_storage
-from core.services.analysis import build_session_summary
+from core.services.analysis.summary import build_session_summary
 from core.services.control_plane import get_control_state_snapshot
 from core.services.execution import (
     list_session_execution_attempts,

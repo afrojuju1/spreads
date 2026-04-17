@@ -1,22 +1,17 @@
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from arq import create_pool
-
 from core.db.decorators import with_storage
 from core.events.bus import publish_global_event_sync
 from core.integrations.alpaca.client import AlpacaClient, AlpacaRequestError
+from core.jobs.adhoc import ensure_manual_job_definition, enqueue_ad_hoc_job
 from core.jobs.registry import (
     EXECUTION_SUBMIT_ADHOC_JOB_KEY,
     EXECUTION_SUBMIT_JOB_TYPE,
-    get_job_spec,
 )
-from core.runtime.config import default_redis_url
-from core.runtime.redis import build_redis_settings
 from core.services.session_positions import (
     CLOSE_TRADE_INTENT,
     OPEN_TRADE_INTENT,
@@ -48,48 +43,6 @@ def _require_execution_schema(execution_store: Any) -> None:
 def _require_position_schema(execution_store: Any) -> None:
     if not execution_store.portfolio_schema_ready():
         raise RuntimeError(EXECUTION_SCHEMA_MESSAGE)
-
-
-def _ensure_execution_submit_job_definition(job_store: Any) -> None:
-    job_store.upsert_job_definition(
-        job_key=EXECUTION_SUBMIT_ADHOC_JOB_KEY,
-        job_type=EXECUTION_SUBMIT_JOB_TYPE,
-        enabled=False,
-        schedule_type="manual",
-        schedule={},
-        payload={},
-        singleton_scope=None,
-    )
-
-
-def _enqueue_ad_hoc_job(
-    *,
-    job_type: str,
-    job_key: str,
-    job_run_id: str,
-    arq_job_id: str,
-    payload: dict[str, Any],
-) -> Any:
-    spec = get_job_spec(job_type)
-    if spec is None:
-        raise RuntimeError(f"Job type is not registered: {job_type}")
-
-    async def _enqueue() -> Any:
-        redis = await create_pool(build_redis_settings(default_redis_url()))
-        try:
-            return await redis.enqueue_job(
-                spec.task_name,
-                job_key,
-                job_run_id,
-                payload,
-                arq_job_id,
-                _job_id=arq_job_id,
-                _queue_name=spec.queue_name,
-            )
-        finally:
-            await redis.aclose()
-
-    return asyncio.run(_enqueue())
 
 
 def _attach_attempt_details(
@@ -472,7 +425,11 @@ def _queue_execution_attempt(
     execution_store: Any,
     attempt: dict[str, Any],
 ) -> dict[str, Any]:
-    _ensure_execution_submit_job_definition(job_store)
+    ensure_manual_job_definition(
+        job_store,
+        job_key=EXECUTION_SUBMIT_ADHOC_JOB_KEY,
+        job_type=EXECUTION_SUBMIT_JOB_TYPE,
+    )
     execution_attempt_id = str(attempt["execution_attempt_id"])
     job_run_id = _execution_submit_job_run_id(execution_attempt_id)
     scheduled_for = datetime.now(UTC)
@@ -495,7 +452,7 @@ def _queue_execution_attempt(
         payload=payload,
     )
     try:
-        enqueued = _enqueue_ad_hoc_job(
+        enqueued = enqueue_ad_hoc_job(
             job_type=EXECUTION_SUBMIT_JOB_TYPE,
             job_key=EXECUTION_SUBMIT_ADHOC_JOB_KEY,
             job_run_id=job_run_id,

@@ -126,6 +126,55 @@ def _append_event(
     )
 
 
+def issue_pending_execution_intent(
+    execution_store: Any,
+    *,
+    execution_intent_id: str,
+    bot_id: str,
+    automation_id: str,
+    opportunity_decision_id: str | None,
+    strategy_position_id: str | None,
+    action_type: str,
+    slot_key: str,
+    policy_ref: dict[str, Any],
+    config_hash: str,
+    expires_at: str | None,
+    payload: dict[str, Any] | None = None,
+    created_event_payload: dict[str, Any] | None = None,
+    claim_token: str | None = None,
+    execution_attempt_id: str | None = None,
+    superseded_by_id: str | None = None,
+    state: str = "pending",
+) -> dict[str, Any]:
+    created_at = _utc_now()
+    intent = execution_store.upsert_execution_intent(
+        execution_intent_id=execution_intent_id,
+        bot_id=bot_id,
+        automation_id=automation_id,
+        opportunity_decision_id=opportunity_decision_id,
+        strategy_position_id=strategy_position_id,
+        execution_attempt_id=execution_attempt_id,
+        action_type=action_type,
+        slot_key=slot_key,
+        claim_token=claim_token,
+        policy_ref=policy_ref,
+        config_hash=config_hash,
+        state=state,
+        expires_at=expires_at,
+        superseded_by_id=superseded_by_id,
+        payload={} if payload is None else dict(payload),
+        created_at=created_at,
+        updated_at=created_at,
+    )
+    _append_event(
+        execution_store,
+        execution_intent_id=str(intent["execution_intent_id"]),
+        event_type="created",
+        payload=None if created_event_payload is None else dict(created_event_payload),
+    )
+    return intent
+
+
 def _attempt_state(attempt: dict[str, Any] | None) -> str:
     if attempt is None:
         return "claimed"

@@ -4,11 +4,9 @@ import argparse
 from datetime import UTC, datetime
 from typing import Any, Mapping
 
-from core.services.analysis import (
-    build_session_summary,
-    render_session_summary_markdown,
-)
 from core.services.market_dates import resolve_market_date
+from core.services.analysis.rendering import render_session_summary_markdown
+from core.services.analysis.summary import build_session_summary
 from core.runtime.config import default_database_url
 from core.services.selection_terms import (
     MONITOR_SELECTION_STATE,

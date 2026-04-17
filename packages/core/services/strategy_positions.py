@@ -11,6 +11,7 @@ from core.services.exit_manager import (
     OPEN_CLOSE_ATTEMPT_STATUSES,
     OPEN_POSITION_STATUSES,
 )
+from core.services.execution_intents.shared import issue_pending_execution_intent
 from core.services.management_planner import plan_position_management
 from core.services.option_structures import normalize_strategy_family
 from core.services.positions import enrich_position_row
@@ -267,7 +268,8 @@ def run_management_automation_decision(
             skipped += 1
             continue
 
-        execution_intent = execution_store.upsert_execution_intent(
+        issue_pending_execution_intent(
+            execution_store,
             execution_intent_id=_intent_id(position_id, automation_id),
             bot_id=runtime.bot_id,
             automation_id=runtime.automation_id,
@@ -295,14 +297,7 @@ def run_management_automation_decision(
                 "execution_mode": runtime.automation.automation.execution_mode,
                 "approval_mode": runtime.automation.automation.approval_mode,
             },
-            created_at=_utc_now(),
-            updated_at=_utc_now(),
-        )
-        execution_store.append_execution_intent_event(
-            execution_intent_id=str(execution_intent["execution_intent_id"]),
-            event_type="created",
-            event_at=_utc_now(),
-            payload={
+            created_event_payload={
                 "position_id": position_id,
                 "reason": decision.get("reason"),
                 "limit_price": decision.get("limit_price"),
