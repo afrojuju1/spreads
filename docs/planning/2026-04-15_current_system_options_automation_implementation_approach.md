@@ -1,12 +1,12 @@
 # Current-System Options Automation Implementation Approach
 
-Status: proposed
+Status: supporting implementation plan
 
 As of: Wednesday, April 15, 2026
 
 Related:
 
-- [Current System State](../current_system_state.md)
+- [System Architecture](../current_system_state.md)
 - [Alpaca Options Automation System Architecture](./2026-04-15_alpaca_options_automation_system_architecture.md)
 - [Alpaca Options Automation Schema](./2026-04-15_alpaca_options_automation_schema.md)
 - [Collector Decision Pipeline Design](./2026-04-15_collector_decision_pipeline_design.md)
@@ -20,6 +20,8 @@ Define how to build the new CLI-first, single-operator, `1-14` DTE options autom
 This document intentionally ignores `packages/web`.
 
 This is not a clean-sheet design. It starts from the runtime that already exists in code and assumes we are willing to do aggressive refactors and deletions where the current shape is wrong.
+
+This document is not the canonical source of truth for the overall current architecture. That role belongs to [System Architecture](../current_system_state.md). This document is the migration plan that explains how to evolve that runtime toward the options-automation model.
 
 ## Executive Summary
 

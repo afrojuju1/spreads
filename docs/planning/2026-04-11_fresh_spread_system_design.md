@@ -1,12 +1,13 @@
 # Fresh Spread Opportunity System Design
 
-Status: proposed
+Status: supporting design reference (implementation refreshed on 2026-04-17)
 
-As of: Saturday, April 11, 2026
+As of: Friday, April 17, 2026
 
 Related:
 
-- [Spread Selection Review And Refactor Plan](./2026-04-11_spread_selection_refactor_plan.md)
+- [System Architecture](../current_system_state.md)
+- [Spread Selection Review And Refactor Plan](./2026-04-11_spread_selection_refactor_plan.md) - historical implementation review before the `scanners/` and `collections/` package split
 - [Regime Detection Specification](./2026-04-11_regime_detection_spec.md)
 - [Strategy Policy Matrix](./2026-04-11_strategy_policy_matrix.md)
 - [Horizon Selection Specification](./2026-04-12_horizon_selection_spec.md)
@@ -42,6 +43,15 @@ This version replaces the earlier simpler design with a harder one. The central 
 - signal generation uses both stock-led and option-led paths
 - market-data quality, quote budgeting, and execution quality are first-class architectural concerns
 - calibration is offline-first and guarded against overfitting
+
+This document is not the canonical source of truth for the overall runtime architecture. That role belongs to [System Architecture](../current_system_state.md), which owns current service boundaries and top-level runtime topology.
+
+This document now serves two purposes:
+
+- describe the clean target architecture
+- map that target to the current module ownership in `packages/core/services`
+
+Where the current system has not reached the clean-sheet split yet, this document calls that out explicitly instead of treating planned components as already live.
 
 ## Core Design Principles
 
@@ -100,7 +110,32 @@ Mermaid source:
 
 - [2026-04-11_fresh_spread_system_design_runtime_flow.mmd](../diagrams/planning/2026-04-11_fresh_spread_system_design_runtime_flow.mmd)
 
+## Current Implementation Map
+
+The current backend no longer revolves around monolithic `scanner.py` or `live_collector.py` files. The live collector path is now split into focused packages, and this architecture should be read through those owners first.
+
+| Concern | Current owner | Current state |
+|---|---|---|
+| Symbol and strategy scanning | `services/scanners/` | `service.py` owns the CLI entrypoint, `runtime.py` assembles per-symbol market slices and strategy runs, `builders/` owns family-specific construction and ranking, and `postprocess.py` owns data-quality and calendar annotations. |
+| Collection orchestration | `services/collections/` | `runtime.py` owns collector entrypoints, `cycle.py` owns one collection cycle, `scanning.py` owns universe aggregation, and `capture/` owns quote, trade, and UOA capture helpers. |
+| Live selection and state assignment | `services/live_selection.py`, `services/opportunity_scoring.py`, `services/candidate_policy.py` | The live path already computes `discovery_score`, `promotion_score`, `execution_score`, `promotable` and `monitor` state, selection memory, and profile-specific deployment gates. |
+| Canonical opportunity persistence | `services/opportunity_generation.py`, `services/opportunities.py`, `storage/signal_repository.py` | Collector cycles persist the canonical live opportunity set, and options-automation runtimes project runtime-owned opportunities from that same cycle source instead of creating a parallel selection system. |
+| Pipeline identity and policy metadata | `services/live_pipelines.py`, `services/runtime_identity.py`, `services/pipelines.py` | Labels, pipeline ids, `style_profile`, `horizon_intent`, and `product_class` are normalized here and reused across CLI and API visibility. |
+| Health and operator diagnostics | `services/live_runtime.py`, `services/live_collector_health/`, `services/ops/` | Session detail, capture health, selection summaries, tradeability, jobs view, and trading overview all read from persisted collector and runtime state instead of parallel ad hoc logic. |
+| Execution policy and attempt lifecycle | `services/execution/` | `__init__.py` still owns submit and refresh flows, `policy.py` owns normalized execution policy, `attempts.py` owns persisted attempt, order, and fill lifecycle, and `guard.py` owns open-attempt safety checks. |
+| Replay and calibration surfaces | `services/opportunity_replay/`, `services/post_market_analysis.py` | Replay reconstructs `RegimeSnapshot`, `StrategyIntent`, `HorizonIntent`, allocation, and execution intents from stored cycle data, while post-market analysis remains the canonical closed-session diagnostic surface. |
+
+### Current Boundaries Versus Target Design
+
+- The package split for scanners, collections, execution, and live-collector health is current and should be treated as canonical.
+- The live path already has a canonical opportunity store and separate runtime-owned opportunity projections. `board` and `watchlist` are now legacy presentation terms over persisted `promotable` and `monitor` states.
+- Explicit persisted `RegimeSnapshot`, `StrategyIntent`, and `HorizonIntent` records are not yet first-class objects in the live collector path. Today they are strongest in replay and policy metadata, and only partly materialized in persisted opportunity rows.
+- Portfolio allocation is still lighter than the target design. Current live ranking and execution gating carry more responsibility than a fully separate allocator should long term.
+- Execution planning and execution submission still share a broad owner in `services/execution/__init__.py`. The package split is cleaner than before, but that surface remains a candidate for a later hard cut if order construction or replacement policy grows materially.
+
 ## Main Components
+
+The sections below describe the target clean-sheet component model. Use the implementation map above for the current module ownership.
 
 ### 1. Stock-Led Signal Engine
 
@@ -521,48 +556,32 @@ Suggested fields:
 
 ## Canonical Data Model
 
-The core entity should be one `Opportunity` record per candidate per cycle.
+The core entity is now one persisted `Opportunity` row per candidate per cycle, with optional runtime-owned projections for entry automations. The target model should start from the fields we already persist rather than inventing a parallel paper contract.
 
-Suggested fields:
+Current persisted live fields:
 
 | Field | Meaning |
 |---|---|
 | `opportunity_id` | stable candidate record id |
-| `cycle_id` | collector or analysis cycle id |
-| `regime_snapshot_id` | current regime snapshot reference |
-| `strategy_intent_id` | upstream strategy policy decision reference |
-| `horizon_intent_id` | upstream horizon selection reference |
-| `symbol` | underlying symbol |
-| `style_profile` | `reactive`, `tactical`, `carry`, etc. |
-| `strategy_family` | `long_call`, `long_put`, `call_credit_spread`, `put_credit_spread`, `call_debit_spread`, `put_debit_spread`, `iron_condor` |
-| `thesis_direction` | bullish, bearish, neutral |
-| `horizon_band` | `same_day`, `near_term`, `swing`, `carry`, etc. |
-| `target_dte` | selected target DTE |
-| `expiration_date` | expiration date |
-| `short_symbol` | short leg |
-| `long_symbol` | long leg |
-| `legs` | canonical leg payload for multi-leg strategies |
-| `product_type` | index, ETF, equity, etc. |
-| `exercise_style` | American or European |
-| `settlement_type` | cash or physical |
-| `payoff_class` | long premium, short premium, neutral premium, etc. |
-| `margin_cost` | expected capital or margin usage |
-| `execution_complexity` | single leg, vertical, condor, etc. |
-| `raw_features` | full feature payload used for scoring |
-| `data_quality_state` | live data trust summary |
-| `discovery_score` | broad candidate quality score |
-| `promotion_score` | style-ranking and state-assignment score |
-| `execution_score` | live execution-quality score |
-| `style_rank` | canonical order within the style profile |
-| `allocation_rank` | order after portfolio allocation |
-| `state` | `promotable`, `monitor`, `blocked`, `discarded`, `allocated`, `submitted`, `open`, `closed` |
-| `state_reason` | short classification reason |
-| `allocation_reason` | allocation or rejection reason |
-| `evidence` | structured explanation payload |
-| `quote_freshness` | quote age and quote persistence context |
-| `execution_readiness` | summary of live executability |
-| `created_at` | record creation time |
-| `updated_at` | latest state update time |
+| `pipeline_id`, `label`, `market_date`, `session_date`, `cycle_id` | canonical pipeline and collector-cycle identity |
+| `root_symbol`, `underlying_symbol`, `expiration_date` | instrument identity for the selected candidate |
+| `bot_id`, `automation_id`, `automation_run_id`, `strategy_config_id` | runtime ownership when the row is a runtime-owned automation projection |
+| `strategy_id`, `strategy_family`, `profile`, `style_profile`, `horizon_intent`, `product_class` | normalized policy identity already derived from runtime and profile metadata |
+| `selection_state`, `selection_rank`, `lifecycle_state`, `eligibility_state`, `state_reason` | canonical live rank and state assignment |
+| `promotion_score`, `execution_score`, `confidence` | live score outputs used for promotion and execution gating |
+| `candidate_identity`, `candidate`, `legs`, `order_payload` | canonical structure payload and execution shape |
+| `economics`, `strategy_metrics`, `risk_hints` | normalized ranking, execution, and future allocation inputs |
+| `execution_shape`, `evidence`, `reason_codes`, `blockers` | explanation payloads for audit, CLI, and API surfaces |
+| `source_cycle_id`, `source_candidate_id`, `source_selection_state` | back-reference from runtime-owned projections to the collector-cycle source row |
+| `created_at`, `updated_at`, `expires_at` | lifecycle timestamps |
+
+Target additions that are not yet first-class live records:
+
+- `regime_snapshot_id` and a persisted `RegimeSnapshot`
+- `strategy_intent_id` and a persisted `StrategyIntent`
+- `horizon_intent_id` and a persisted `HorizonIntent`
+- a separate allocation record with explicit `allocation_rank` and `allocation_reason`
+- explicit execution-readiness snapshots decoupled from the candidate payload
 
 Derived views:
 
@@ -1272,20 +1291,27 @@ One cycle should expose:
 - blocked candidates
 - summary diagnostics
 
-## Implementation Order
+In the current implementation this is persisted through the signal and opportunity tables, with collector-cycle opportunities as the canonical source and runtime-owned automation opportunities as derived projections keyed back to source candidates.
 
-1. build the canonical `Opportunity` data model
-2. build the `RegimeSnapshot` path from stock-led and option-led signals
-3. add the market-data quality and quote-budget service
-4. build the strategy policy engine and strategy registry
-5. build `HorizonIntent` selection so DTE becomes dynamic
-6. persist one canonical opportunity store per cycle
-7. build the style-ranking owner for all strategy families
-8. add the portfolio allocation and risk-budget layer
-9. derive `board` and `watchlist` views from candidate state and allocation state
-10. add the execution planner and move execution candidate selection onto `execution_score`
-11. separate opportunity-outcome evaluation from execution-quality evaluation
-12. add guarded offline-first calibration
+## Implementation Status And Remaining Gaps
+
+Implemented foundations:
+
+1. package-owned scanner decomposition under `services/scanners/`
+2. package-owned collection decomposition under `services/collections/`
+3. canonical live opportunity persistence and runtime-owned opportunity projection via `services/opportunity_generation.py` and `services/opportunities.py`
+4. profile-aware live scoring and selection in `services/opportunity_scoring.py` and `services/live_selection.py`
+5. execution policy, attempt persistence, and open-attempt guards under `services/execution/`
+6. live session, tradeability, and operator visibility under `services/live_runtime.py`, `services/pipelines.py`, `services/live_collector_health/`, and `services/ops/`
+7. replay reconstruction and post-market diagnostics under `services/opportunity_replay/` and `services/post_market_analysis.py`
+
+Remaining hard cuts to reach the full clean-sheet design:
+
+1. persist first-class `RegimeSnapshot`, `StrategyIntent`, and `HorizonIntent` in the live collector path instead of deriving most of them only in replay or identity helpers
+2. promote allocation into its own first-class live owner instead of leaving ranking, gating, and execution to share that responsibility
+3. make quote-budget and symbol-arming ownership explicit instead of distributing those concerns across collector capture, selection, and recovery helpers
+4. split execution planning from broker submission if `services/execution/__init__.py` keeps accumulating policy and order-construction logic
+5. close the calibration loop so replay and post-market outputs can safely feed bounded live threshold updates
 
 ## What This Design Avoids
 
@@ -1320,12 +1346,22 @@ The design is working when:
 Internal:
 
 - [Spread Selection Review And Refactor Plan](./2026-04-11_spread_selection_refactor_plan.md)
-- [scanner.py](/Users/adeb/Projects/spreads/packages/core/services/scanner.py)
-- [live_collector.py](/Users/adeb/Projects/spreads/packages/core/jobs/live_collector.py)
-- [execution.py](/Users/adeb/Projects/spreads/packages/core/services/execution.py)
-- [post_market_analysis.py](/Users/adeb/Projects/spreads/packages/core/services/post_market_analysis.py)
-- [signal_state.py](/Users/adeb/Projects/spreads/packages/core/services/signal_state.py)
-- [alerts/rules.py](/Users/adeb/Projects/spreads/packages/core/alerts/rules.py)
+- [scanners/service.py](../../packages/core/services/scanners/service.py)
+- [scanners/runtime.py](../../packages/core/services/scanners/runtime.py)
+- [collections/runtime.py](../../packages/core/services/collections/runtime.py)
+- [collections/cycle.py](../../packages/core/services/collections/cycle.py)
+- [live_selection.py](../../packages/core/services/live_selection.py)
+- [opportunity_scoring.py](../../packages/core/services/opportunity_scoring.py)
+- [opportunity_generation.py](../../packages/core/services/opportunity_generation.py)
+- [opportunities.py](../../packages/core/services/opportunities.py)
+- [live_runtime.py](../../packages/core/services/live_runtime.py)
+- [pipelines.py](../../packages/core/services/pipelines.py)
+- [execution/__init__.py](../../packages/core/services/execution/__init__.py)
+- [execution/attempts.py](../../packages/core/services/execution/attempts.py)
+- [opportunity_replay/__init__.py](../../packages/core/services/opportunity_replay/__init__.py)
+- [post_market_analysis.py](../../packages/core/services/post_market_analysis.py)
+- [signal_state.py](../../packages/core/services/signal_state.py)
+- [alerts/rules.py](../../packages/core/alerts/rules.py)
 - [Alpaca Capabilities Statement](../research/alpaca_capabilities_statement.md)
 
 External:

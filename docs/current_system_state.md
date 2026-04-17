@@ -1,10 +1,43 @@
-# Current System State
+# System Architecture
 
-This document describes the current runtime shape of the application as it exists in code today.
+This document is the canonical source of truth for the spreads system's overall architecture and current service boundaries.
 
-It is meant to be a working architecture map, not a target-state proposal.
+It describes the runtime shape of the application as it exists in code today.
 
-Last updated: 2026-04-15
+If another planning or design document disagrees about current ownership, topology, or boundary placement, this document wins.
+
+Use planning documents for target-state design, subsystem specifications, migration plans, and historical context.
+
+Last updated: 2026-04-17
+
+Related:
+
+- [Fresh Spread Opportunity System Design](./planning/2026-04-11_fresh_spread_system_design.md) for the target opportunity-selection architecture inside the broader system
+- [Current-System Options Automation Implementation Approach](./planning/2026-04-15_current_system_options_automation_implementation_approach.md) for the migration path that reuses the current backend
+- [Planning Docs](./planning/README.md) for supporting design notes, implementation plans, and historical references
+
+## Top-Level Boundaries
+
+| Boundary | Current owner | Notes |
+|---|---|---|
+| Operator interfaces | `packages/web`, `packages/api`, `packages/core/cli` | Web and CLI are interface layers. They should not own business logic. |
+| Scheduling and control | `packages/core/jobs`, `services/control_plane.py`, `services/runtime_policy.py` | Owns schedules, worker routing, control state, and runtime-policy gates. |
+| Market-data capture and recovery | `services/market_recorder.py`, `services/live_recovery/`, `services/collections/capture/` | `market_recorder.py` remains the sole Alpaca option websocket owner in normal runtime. |
+| Discovery and collection | `services/scanners/`, `services/collections/`, `services/live_selection.py`, `services/opportunity_scoring.py`, `services/candidate_policy.py` | Owns symbol scanning, cycle orchestration, live ranking, and promotable/monitor state assignment. |
+| Canonical opportunity state | `services/signal_state.py`, `services/opportunity_generation.py`, `services/opportunities.py`, `storage/signal_repository.py` | Owns signal state, canonical opportunity rows, and runtime-owned projections derived from collector cycles. |
+| Runtime, pipeline, and ops read models | `services/live_runtime.py`, `services/live_collector_health/`, `services/pipelines.py`, `services/ops/` | Owns current session views, health summaries, pipeline projections, and operator CLI payloads. |
+| Execution and portfolio state | `services/execution/`, `services/execution_portfolio.py`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py` | Owns broker submission, immutable execution ledger, day-local position ownership, reconciliation, and exit behavior. |
+| Replay and evaluation | `services/opportunity_replay/`, `services/post_market_analysis.py`, `services/analysis/` | Owns offline replay, scorecarding, diagnostics, and post-market evaluation. |
+| Persistence and event transport | Postgres, Redis | Postgres is source of truth. Redis handles queues, leases, and pub/sub fanout. |
+
+## Non-Negotiable Boundary Rules
+
+- `services/market_recorder.py` is the sole Alpaca option websocket owner in normal runtime.
+- API routes, web surfaces, and ops views are read models over service-owned state. They are not business-logic owners.
+- The discovery path may persist collector-cycle artifacts, but canonical live selection state lives in `signal_states`, `signal_state_transitions`, and `opportunities`.
+- Runtime-owned automation opportunities are projections over canonical cycle opportunities, not a separate selection system.
+- `execution` is the immutable broker-facing ledger. `session_positions` is the mutable owner of day-local position attribution.
+- `broker_sync` reconciles broker reality and health, but it does not take ownership of session attribution away from `session_positions`.
 
 ## Runtime Stack
 
@@ -105,10 +138,10 @@ Redis = transport, queueing, leases, and pub/sub fanout
                                              | runs              | runs
                                              |                   |
                                              | broker_sync       | live_collector
-                                             | execution_submit  | scanner + selection
-                                             | alert_delivery    | recorder-backed quote/trade reads
-                                             | alert_reconcile   | UOA + signal persistence
-                                             | session_exit_mgr  | live_action_gate
+                                             | execution_submit  | collections + scanners
+                                             | alert_delivery    | live_selection + signal sync
+                                             | alert_reconcile   | recorder-backed quote/trade reads
+                                             | session_exit_mgr  | UOA + live_action_gate
                                              | post_close        |
                                              | post_market       |
                                              v                   v
@@ -163,16 +196,16 @@ Redis = transport, queueing, leases, and pub/sub fanout
 
 ## Domain Slice Diagrams
 
-### Collector -> Signals -> Opportunities
+### Discovery -> Signals -> Opportunities
 
 ```text
         market calendar + profile
                   |
                   v
-        +---------+----------+
-        |   live_collector   |
-        | scanner + ranking  |
-        +---------+----------+
+        +---------+-----------------------------+
+        | live_collector job                    |
+        | collections/ + scanners/ + selection |
+        +---------+-----------------------------+
                   |
                   | cycle result
                   v
@@ -190,18 +223,20 @@ Redis = transport, queueing, leases, and pub/sub fanout
    | uoa summaries in job results    |
    +--------------+------------------+
                   |
-                  | normalize state
+                  | normalize + project state
                   v
    +--------------+------------------+
    | signal_states                   |
    | signal_state_transitions        |
    | opportunities                   |
+   | runtime-owned opportunity views |
    +--------------+------------------+
                   |
-                  | operator reads + auto-open input
+                  | runtime reads + ops + replay
                   v
    +--------------+------------------+
-   | sessions / ops / audit / replay |
+   | live_runtime / pipelines / ops  |
+   | audit / replay                  |
    +---------------------------------+
 ```
 
@@ -359,9 +394,16 @@ Current main job types are:
 
 Redis is transport and event fanout. Postgres remains the source of truth for job state.
 
-### 3. Live Collector
+### 3. Discovery, Collection, And Opportunity State
 
-The live collector is the intraday scanning loop.
+The `live_collector` job remains the discovery worker entrypoint, but it is no longer the right architectural owner for all of the logic it triggers.
+
+Today that path is split across:
+
+- `services/collections/` for collector entrypoints, cycle orchestration, capture helpers, and collection-time shared logic
+- `services/scanners/` for strategy scanning, builder logic, market-slice assembly, output formatting, and replay helpers
+- `services/live_selection.py` plus `services/opportunity_scoring.py` for live state assignment and scoring
+- `services/signal_state.py`, `services/opportunity_generation.py`, and `services/opportunities.py` for canonical signal and opportunity persistence
 
 At a high level it:
 
@@ -385,7 +427,7 @@ Its persistent outputs live mainly in:
 - `signal_state_transitions`
 - `opportunities`
 
-This is the source of live session opportunity state.
+This is the source of canonical live session opportunity state. Entry-automation runtime projections are derived from the same cycle source rather than through a separate parallel selector.
 
 For `0dte`, degraded quote capture can now persist the cycle and diagnostics while still blocking alerts and auto-execution. That block is surfaced as `live_action_gate`.
 
@@ -483,9 +525,16 @@ It:
 
 Forced end-of-day exits are treated as just another exit reason.
 
-### 8. Account And Realtime Read Model
+### 8. Runtime, Account, And Realtime Read Models
 
 The user-facing read model is assembled from multiple domains.
+
+Current service owners here are:
+
+- `services/live_runtime.py` for session detail and current collector-backed runtime state
+- `services/live_collector_health/` for capture, selection, enrichment, and tradeability summaries
+- `services/pipelines.py` for pipeline-facing runtime projections
+- `services/ops/` for operator CLI read models such as `status`, `trading`, `jobs`, `audit`, and `uoa`
 
 Examples:
 
@@ -579,12 +628,13 @@ events:
 
 The current application is best understood as one narrow runtime console sitting on top of one backend runtime with several cooperating subsystems:
 
-- a live collector that discovers intraday opportunities and persists promotable and monitor state
+- a discovery and collection stack built from `services/collections/`, `services/scanners/`, `services/live_selection.py`, and canonical signal/opportunity persistence
 - an execution ledger that records broker interactions immutably
 - a session position model that owns day-local trade state
 - a broker sync process that reconciles broker reality without taking ownership
 - a shared risk and exit layer for both manual and automated actions
-- an API and WebSocket layer that assembles read models and fans realtime events to the UI
+- runtime, pipeline, and ops read models assembled by `live_runtime`, `live_collector_health`, `pipelines`, and `ops`
+- an API and WebSocket layer that exposes those read models and fans realtime events to the UI
 - a scheduler plus two worker lanes over Redis ARQ
 - supporting alerts and analysis subsystems around that core
 
@@ -593,7 +643,7 @@ If you want to drill further, the next useful cuts are:
 - `execution` vs `session_positions`
 - `broker_sync`
 - `risk_exit`
-- `live_collector`
+- `collections` / `scanners` / `live_selection`
 - `web/API`
 - `scheduler/worker`
 - Postgres table groups and read models

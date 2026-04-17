@@ -4,13 +4,13 @@ This directory holds architecture notes, refactor plans, and design specificatio
 
 Use these entrypoints:
 
-- [Current System State](../current_system_state.md) for the runtime topology that exists in code today
-- [Current-System Options Automation Implementation Approach](./2026-04-15_current_system_options_automation_implementation_approach.md) for the refactor path that uses the existing backend instead of starting clean-sheet
+- [System Architecture](../current_system_state.md) as the canonical source of truth for the current overall runtime architecture and service boundaries
+- [Current-System Options Automation Implementation Approach](./2026-04-15_current_system_options_automation_implementation_approach.md) for the migration path that uses the existing backend instead of starting clean-sheet
 - [Backtest System Recommendation](./2026-04-16_backtest_system_recommendation.md) for the recommended split between replay and a new config-driven backtest engine
 - [Config-Driven Runtime Prerequisite Plan](./2026-04-16_config_driven_runtime_prerequisite_plan.md) for the implementation architecture needed before the improved backtest is meaningful
 - [Non-Web Large File Cleanup Audit](./2026-04-16_non_web_large_file_cleanup_audit.md) for the current backend cleanup priorities, thin-wrapper audit, and proposed service/module boundaries
 - [Workspace Packages Restructure Plan](./2026-04-16_workspace_packages_restructure_plan.md) for the completed workspace move into `packages/core`, `packages/api`, `packages/web`, and `packages/config`
-- [Fresh Spread Opportunity System Design](./2026-04-11_fresh_spread_system_design.md) for the current clean-sheet architecture
+- [Fresh Spread Opportunity System Design](./2026-04-11_fresh_spread_system_design.md) for the target opportunity-selection architecture inside the broader system
 - [Spread Selection Review And Refactor Plan](./2026-04-11_spread_selection_refactor_plan.md) for the diagnosis of the current selection path
 - [Ops CLI Visibility Plan](./ops_cli_visibility_plan.md) for shipped and deferred operator tooling
 
