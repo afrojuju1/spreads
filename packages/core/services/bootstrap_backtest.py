@@ -1,9 +1,16 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from core.db.decorators import with_storage
+from core.domain.backtest_models import (
+    BacktestAggregate,
+    BacktestRun,
+    BacktestSessionSummary,
+    BacktestTarget,
+    new_backtest_run_id,
+)
 from core.services.automation_runtime import resolve_entry_runtime
 from core.services.bot_analytics import evaluate_entry_controls
 from core.services.entry_planner import plan_entry_selection, score_opportunity
@@ -20,6 +27,10 @@ from core.services.option_structures import (
 )
 from core.storage.run_history_repository import session_bounds
 from core.storage.serializers import parse_datetime
+
+
+ENGINE_NAME = "bootstrap_backtest"
+ENGINE_VERSION = "v1"
 
 
 def _scope_key(bot_id: str, automation_id: str, session_date: str) -> str:
@@ -372,13 +383,17 @@ def _simulate_position_lifecycle(
 
 def compare_bootstrap_backtests(
     *,
-    left_payload: dict[str, Any],
-    right_payload: dict[str, Any],
-) -> dict[str, Any]:
-    left_target = dict(left_payload.get("target") or {})
-    right_target = dict(right_payload.get("target") or {})
-    left_aggregate = dict(left_payload.get("aggregate") or {})
-    right_aggregate = dict(right_payload.get("aggregate") or {})
+    left_run: BacktestRun,
+    right_run: BacktestRun,
+) -> BacktestRun:
+    left_target = BacktestTarget() if left_run.target is None else left_run.target
+    right_target = BacktestTarget() if right_run.target is None else right_run.target
+    left_aggregate = (
+        {} if left_run.aggregate is None else left_run.aggregate.to_payload()
+    )
+    right_aggregate = (
+        {} if right_run.aggregate is None else right_run.aggregate.to_payload()
+    )
     metric_keys = [
         "session_count",
         "modeled_selected_count",
@@ -410,11 +425,22 @@ def compare_bootstrap_backtests(
                 else round(_coerce_float(left_value) - _coerce_float(right_value), 4)
             ),
         }
-    return {
-        "left": left_target,
-        "right": right_target,
-        "metrics": metrics,
-    }
+    started_at = datetime.now(UTC)
+    return BacktestRun(
+        id=new_backtest_run_id("compare"),
+        kind="compare",
+        status="completed",
+        engine_name=ENGINE_NAME,
+        engine_version=ENGINE_VERSION,
+        created_at=started_at,
+        started_at=started_at,
+        completed_at=started_at,
+        left_target=left_target,
+        right_target=right_target,
+        comparison_metrics=metrics,
+        left_run_id=left_run.id,
+        right_run_id=right_run.id,
+    )
 
 
 def _latest_runs_by_session(
@@ -443,7 +469,8 @@ def build_bootstrap_backtest(
     end_date: str | None = None,
     limit: int = 200,
     storage: Any | None = None,
-) -> dict[str, Any]:
+) -> BacktestRun:
+    started_at = datetime.now(UTC)
     runtime = resolve_entry_runtime(bot_id=bot_id, automation_id=automation_id)
     signal_store = storage.signals
     execution_store = storage.execution
@@ -462,7 +489,7 @@ def build_bootstrap_backtest(
         ]
     )[: max(int(limit), 1)]
 
-    sessions: list[dict[str, Any]] = []
+    sessions: list[BacktestSessionSummary] = []
     matched_selection_count = 0
     modeled_selected_count = 0
     actual_selected_count = 0
@@ -612,44 +639,59 @@ def build_bootstrap_backtest(
         total_unrealized_pnl += unrealized_pnl
 
         sessions.append(
-            {
-                "session_date": session_date,
-                "automation_run_id": str(run["automation_run_id"]),
-                "opportunity_count": len(opportunities),
-                "modeled_selected_opportunity_id": modeled_selected_id,
-                "actual_selected_opportunity_id": actual_selected_id,
-                "selection_match": modeled_selected_id == actual_selected_id
-                if modeled_selected_id is not None and actual_selected_id is not None
-                else None,
-                "controls_allowed": controls_allowed,
-                "controls_reason": controls_reason,
-                "modeled_intent_state": None
-                if modeled_execution is None
-                else modeled_execution.get("intent_state"),
-                "modeled_fill_state": None
-                if modeled_execution is None
-                else modeled_execution.get("fill_state"),
-                "modeled_fill_price": None
-                if modeled_execution is None
-                else modeled_execution.get("fill_price"),
-                "modeled_position": None
-                if modeled_execution is None
-                else modeled_execution.get("position"),
-                "modeled_exit_state": modeled_lifecycle.get("exit_state"),
-                "modeled_exit_reason": modeled_lifecycle.get("exit_reason"),
-                "modeled_exit_recipe_ref": modeled_lifecycle.get("exit_recipe_ref"),
-                "modeled_exit_at": modeled_lifecycle.get("exit_at"),
-                "modeled_exit_fill_price": modeled_lifecycle.get("exit_fill_price"),
-                "modeled_realized_pnl": modeled_lifecycle.get("realized_pnl"),
-                "modeled_unrealized_pnl": modeled_lifecycle.get("unrealized_pnl"),
-                "modeled_final_close_mark": modeled_lifecycle.get("final_close_mark"),
-                "modeled_quote_event_count": modeled_lifecycle.get("quote_event_count"),
-                "modeled_snapshot_count": modeled_lifecycle.get("snapshot_count"),
-                "selected_intent_count": len(selected_intents),
-                "position_count": len(positions),
-                "realized_pnl": round(realized_pnl, 2),
-                "unrealized_pnl": round(unrealized_pnl, 2),
-                "top_opportunities": [
+            BacktestSessionSummary(
+                session_date=session_date,
+                automation_run_id=str(run["automation_run_id"]),
+                opportunity_count=len(opportunities),
+                modeled_selected_opportunity_id=modeled_selected_id,
+                actual_selected_opportunity_id=actual_selected_id,
+                selection_match=(
+                    modeled_selected_id == actual_selected_id
+                    if modeled_selected_id is not None
+                    and actual_selected_id is not None
+                    else None
+                ),
+                controls_allowed=controls_allowed,
+                controls_reason=controls_reason,
+                modeled_intent_state=(
+                    None
+                    if modeled_execution is None
+                    else modeled_execution.get("intent_state")
+                ),
+                modeled_fill_state=(
+                    None
+                    if modeled_execution is None
+                    else modeled_execution.get("fill_state")
+                ),
+                modeled_fill_price=(
+                    None
+                    if modeled_execution is None
+                    else modeled_execution.get("fill_price")
+                ),
+                modeled_position=(
+                    {}
+                    if modeled_execution is None
+                    else dict(modeled_execution.get("position") or {})
+                ),
+                modeled_exit_state=modeled_lifecycle.get("exit_state"),
+                modeled_exit_reason=modeled_lifecycle.get("exit_reason"),
+                modeled_exit_recipe_ref=modeled_lifecycle.get("exit_recipe_ref"),
+                modeled_exit_at=modeled_lifecycle.get("exit_at"),
+                modeled_exit_fill_price=modeled_lifecycle.get("exit_fill_price"),
+                modeled_realized_pnl=modeled_lifecycle.get("realized_pnl"),
+                modeled_unrealized_pnl=modeled_lifecycle.get("unrealized_pnl"),
+                modeled_final_close_mark=modeled_lifecycle.get("final_close_mark"),
+                modeled_quote_event_count=int(
+                    modeled_lifecycle.get("quote_event_count") or 0
+                ),
+                modeled_snapshot_count=int(
+                    modeled_lifecycle.get("snapshot_count") or 0
+                ),
+                selected_intent_count=len(selected_intents),
+                position_count=len(positions),
+                realized_pnl=round(realized_pnl, 2),
+                unrealized_pnl=round(unrealized_pnl, 2),
+                top_opportunities=[
                     {
                         "opportunity_id": str(row.get("opportunity_id")),
                         "underlying_symbol": row.get("underlying_symbol"),
@@ -663,44 +705,66 @@ def build_bootstrap_backtest(
                     }
                     for row in opportunities[:5]
                 ],
-            }
+            )
         )
 
-    return {
-        "target": {
-            "bot_id": runtime.bot_id,
-            "automation_id": runtime.automation_id,
-            "strategy_config_id": runtime.strategy_config_id,
-            "strategy_id": runtime.strategy_id,
+    completed_at = datetime.now(UTC)
+    return BacktestRun(
+        id=new_backtest_run_id("bootstrap"),
+        kind="bootstrap",
+        status="completed",
+        engine_name=ENGINE_NAME,
+        engine_version=ENGINE_VERSION,
+        created_at=started_at,
+        started_at=started_at,
+        completed_at=completed_at,
+        target=BacktestTarget(
+            bot_id=runtime.bot_id,
+            automation_id=runtime.automation_id,
+            strategy_config_id=runtime.strategy_config_id,
+            strategy_id=runtime.strategy_id,
+            config_hash=runtime.config_hash,
+            start_date=(None if start_date is None else date.fromisoformat(start_date)),
+            end_date=(None if end_date is None else date.fromisoformat(end_date)),
+            session_limit=max(int(limit), 1),
+        ),
+        aggregate=BacktestAggregate(
+            session_count=len(sessions),
+            modeled_selected_count=modeled_selected_count,
+            modeled_fill_count=modeled_fill_count,
+            modeled_position_count=modeled_position_count,
+            modeled_closed_count=modeled_closed_count,
+            modeled_open_position_count=modeled_open_position_count,
+            actual_selected_count=actual_selected_count,
+            matched_selection_count=matched_selection_count,
+            selection_match_rate=(
+                None
+                if actual_selected_count == 0
+                else round(matched_selection_count / actual_selected_count, 4)
+            ),
+            modeled_fill_rate=(
+                None
+                if modeled_selected_count == 0
+                else round(modeled_fill_count / modeled_selected_count, 4)
+            ),
+            actual_fill_rate=(
+                None
+                if actual_selected_count == 0
+                else round(actual_fill_count / actual_selected_count, 4)
+            ),
+            modeled_realized_pnl=round(total_modeled_realized_pnl, 2),
+            modeled_unrealized_pnl=round(total_modeled_unrealized_pnl, 2),
+            position_count=total_position_count,
+            realized_pnl=round(total_realized_pnl, 2),
+            unrealized_pnl=round(total_unrealized_pnl, 2),
+        ),
+        sessions=sessions,
+        params={
             "start_date": start_date,
             "end_date": end_date,
+            "limit": max(int(limit), 1),
         },
-        "aggregate": {
-            "session_count": len(sessions),
-            "modeled_selected_count": modeled_selected_count,
-            "modeled_fill_count": modeled_fill_count,
-            "modeled_position_count": modeled_position_count,
-            "modeled_closed_count": modeled_closed_count,
-            "modeled_open_position_count": modeled_open_position_count,
-            "actual_selected_count": actual_selected_count,
-            "matched_selection_count": matched_selection_count,
-            "selection_match_rate": None
-            if actual_selected_count == 0
-            else round(matched_selection_count / actual_selected_count, 4),
-            "modeled_fill_rate": None
-            if modeled_selected_count == 0
-            else round(modeled_fill_count / modeled_selected_count, 4),
-            "actual_fill_rate": None
-            if actual_selected_count == 0
-            else round(actual_fill_count / actual_selected_count, 4),
-            "modeled_realized_pnl": round(total_modeled_realized_pnl, 2),
-            "modeled_unrealized_pnl": round(total_modeled_unrealized_pnl, 2),
-            "position_count": total_position_count,
-            "realized_pnl": round(total_realized_pnl, 2),
-            "unrealized_pnl": round(total_unrealized_pnl, 2),
-        },
-        "sessions": sessions,
-    }
+    )
 
 
 __all__ = ["build_bootstrap_backtest", "compare_bootstrap_backtests"]

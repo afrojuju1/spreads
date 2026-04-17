@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import unittest
 from unittest.mock import patch
 
+from core.domain.backtest_models import BacktestAggregate, BacktestRun, BacktestTarget
 from core.services.automation_runtime import (
     resolve_entry_runtime,
     resolve_management_runtime,
@@ -183,7 +184,7 @@ class BootstrapBacktestTests(unittest.TestCase):
             "core.services.bootstrap_backtest.evaluate_entry_controls",
             return_value=(True, None, {"open_position_count": 0}),
         ):
-            payload = build_bootstrap_backtest(
+            run = build_bootstrap_backtest(
                 db_target="postgresql://example",
                 bot_id=runtime.bot_id,
                 automation_id=runtime.automation_id,
@@ -191,33 +192,49 @@ class BootstrapBacktestTests(unittest.TestCase):
                 storage=_Storage(),
             )
 
-        self.assertEqual(payload["aggregate"]["session_count"], 1)
-        self.assertEqual(payload["aggregate"]["matched_selection_count"], 1)
-        self.assertEqual(payload["aggregate"]["modeled_fill_count"], 1)
-        self.assertEqual(payload["aggregate"]["modeled_closed_count"], 1)
-        self.assertEqual(payload["aggregate"]["modeled_realized_pnl"], 55.0)
-        self.assertEqual(payload["aggregate"]["realized_pnl"], 12.5)
-        self.assertEqual(
-            payload["sessions"][0]["actual_selected_opportunity_id"], "opp-1"
-        )
-        self.assertEqual(payload["sessions"][0]["modeled_fill_state"], "filled")
-        self.assertEqual(payload["sessions"][0]["modeled_exit_state"], "closed")
-        self.assertEqual(payload["sessions"][0]["modeled_exit_reason"], "profit_target")
+        self.assertEqual(run.kind, "bootstrap")
+        self.assertEqual(run.aggregate.session_count, 1)
+        self.assertEqual(run.aggregate.matched_selection_count, 1)
+        self.assertEqual(run.aggregate.modeled_fill_count, 1)
+        self.assertEqual(run.aggregate.modeled_closed_count, 1)
+        self.assertEqual(run.aggregate.modeled_realized_pnl, 55.0)
+        self.assertEqual(run.aggregate.realized_pnl, 12.5)
+        self.assertEqual(run.sessions[0].actual_selected_opportunity_id, "opp-1")
+        self.assertEqual(run.sessions[0].modeled_fill_state, "filled")
+        self.assertEqual(run.sessions[0].modeled_exit_state, "closed")
+        self.assertEqual(run.sessions[0].modeled_exit_reason, "profit_target")
 
     def test_compare_bootstrap_backtests_reports_metric_deltas(self) -> None:
         comparison = compare_bootstrap_backtests(
-            left_payload={
-                "target": {"automation_id": "left"},
-                "aggregate": {"session_count": 3, "realized_pnl": 12.5},
-            },
-            right_payload={
-                "target": {"automation_id": "right"},
-                "aggregate": {"session_count": 2, "realized_pnl": 7.5},
-            },
+            left_run=BacktestRun(
+                id="left-run",
+                kind="bootstrap",
+                status="completed",
+                engine_name="bootstrap_backtest",
+                engine_version="v1",
+                created_at=datetime(2026, 4, 16, 15, 0, tzinfo=UTC),
+                started_at=datetime(2026, 4, 16, 15, 0, tzinfo=UTC),
+                completed_at=datetime(2026, 4, 16, 15, 1, tzinfo=UTC),
+                target=BacktestTarget(automation_id="left"),
+                aggregate=BacktestAggregate(session_count=3, realized_pnl=12.5),
+            ),
+            right_run=BacktestRun(
+                id="right-run",
+                kind="bootstrap",
+                status="completed",
+                engine_name="bootstrap_backtest",
+                engine_version="v1",
+                created_at=datetime(2026, 4, 16, 15, 0, tzinfo=UTC),
+                started_at=datetime(2026, 4, 16, 15, 0, tzinfo=UTC),
+                completed_at=datetime(2026, 4, 16, 15, 1, tzinfo=UTC),
+                target=BacktestTarget(automation_id="right"),
+                aggregate=BacktestAggregate(session_count=2, realized_pnl=7.5),
+            ),
         )
 
-        self.assertEqual(comparison["metrics"]["session_count"]["delta"], 1.0)
-        self.assertEqual(comparison["metrics"]["realized_pnl"]["delta"], 5.0)
+        self.assertEqual(comparison.kind, "compare")
+        self.assertEqual(comparison.comparison_metrics["session_count"]["delta"], 1.0)
+        self.assertEqual(comparison.comparison_metrics["realized_pnl"]["delta"], 5.0)
 
 
 if __name__ == "__main__":
