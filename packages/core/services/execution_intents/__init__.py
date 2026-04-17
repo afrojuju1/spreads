@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from arq import create_pool
+
 from core.db.decorators import with_storage
+from core.jobs.registry import (
+    OPTIONS_AUTOMATION_EXECUTE_ADHOC_JOB_KEY,
+    OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE,
+    get_job_spec,
+)
+from core.runtime.config import default_redis_url
+from core.runtime.redis import build_redis_settings
 from core.services.alpaca import (
     create_alpaca_client_from_env,
     resolve_trading_environment,
@@ -38,6 +48,129 @@ from .shared import (
 )
 
 PRE_DISPATCH_EXPIRE_REASON = "dispatch_window_elapsed"
+
+
+def _ensure_options_automation_execute_job_definition(job_store: Any) -> None:
+    job_store.upsert_job_definition(
+        job_key=OPTIONS_AUTOMATION_EXECUTE_ADHOC_JOB_KEY,
+        job_type=OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE,
+        enabled=False,
+        schedule_type="manual",
+        schedule={},
+        payload={},
+        singleton_scope=None,
+    )
+
+
+def _enqueue_ad_hoc_job(
+    *,
+    job_type: str,
+    job_key: str,
+    job_run_id: str,
+    arq_job_id: str,
+    payload: dict[str, Any],
+) -> Any:
+    spec = get_job_spec(job_type)
+    if spec is None:
+        raise RuntimeError(f"Job type is not registered: {job_type}")
+
+    async def _enqueue() -> Any:
+        redis = await create_pool(build_redis_settings(default_redis_url()))
+        try:
+            return await redis.enqueue_job(
+                spec.task_name,
+                job_key,
+                job_run_id,
+                payload,
+                arq_job_id,
+                _job_id=arq_job_id,
+                _queue_name=spec.queue_name,
+            )
+        finally:
+            await redis.aclose()
+
+    return asyncio.run(_enqueue())
+
+
+def request_options_automation_dispatch(
+    *,
+    job_store: Any,
+    limit: int = 25,
+    requested_by: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    if job_store is None:
+        return None
+    if hasattr(job_store, "schema_ready") and not job_store.schema_ready():
+        return None
+    required_methods = (
+        "upsert_job_definition",
+        "create_job_run",
+        "update_job_run_status",
+    )
+    if any(not hasattr(job_store, method_name) for method_name in required_methods):
+        return None
+
+    _ensure_options_automation_execute_job_definition(job_store)
+    scheduled_for = datetime.now(UTC)
+    job_run_id = f"{OPTIONS_AUTOMATION_EXECUTE_ADHOC_JOB_KEY}:{uuid4().hex}"
+    payload: dict[str, Any] = {
+        "limit": max(int(limit), 1),
+        "job_key": OPTIONS_AUTOMATION_EXECUTE_ADHOC_JOB_KEY,
+        "job_type": OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE,
+        "scheduled_for": scheduled_for.isoformat().replace("+00:00", "Z"),
+        "singleton_scope": "global",
+    }
+    if requested_by:
+        payload["requested_by"] = dict(requested_by)
+
+    job_run, _ = job_store.create_job_run(
+        job_run_id=job_run_id,
+        job_key=OPTIONS_AUTOMATION_EXECUTE_ADHOC_JOB_KEY,
+        arq_job_id=job_run_id,
+        job_type=OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE,
+        status="queued",
+        scheduled_for=scheduled_for,
+        payload=payload,
+    )
+    try:
+        enqueued = _enqueue_ad_hoc_job(
+            job_type=OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE,
+            job_key=OPTIONS_AUTOMATION_EXECUTE_ADHOC_JOB_KEY,
+            job_run_id=job_run_id,
+            arq_job_id=job_run_id,
+            payload=payload,
+        )
+    except Exception as exc:
+        job_store.update_job_run_status(
+            job_run_id=job_run_id,
+            status="failed",
+            expected_arq_job_id=job_run_id,
+            finished_at=scheduled_for,
+            error_text=str(exc),
+        )
+        return {
+            "status": "failed",
+            "job_run_id": job_run_id,
+            "error": str(exc),
+        }
+    if enqueued is None:
+        job_store.update_job_run_status(
+            job_run_id=job_run_id,
+            status="failed",
+            expected_arq_job_id=job_run_id,
+            finished_at=scheduled_for,
+            error_text="Options automation execute job was not enqueued.",
+        )
+        return {
+            "status": "failed",
+            "job_run_id": job_run_id,
+            "error": "Options automation execute job was not enqueued.",
+        }
+    return {
+        "status": "queued",
+        "job_run_id": str(job_run["job_run_id"]),
+        "job_key": OPTIONS_AUTOMATION_EXECUTE_ADHOC_JOB_KEY,
+    }
 
 
 def _intent_target_is_active(
@@ -471,4 +604,9 @@ def dispatch_pending_execution_intents(
     }
 
 
-__all__ = ["dispatch_pending_execution_intents", "submit_execution_intent"]
+__all__ = [
+    "PRE_DISPATCH_EXPIRE_REASON",
+    "dispatch_pending_execution_intents",
+    "request_options_automation_dispatch",
+    "submit_execution_intent",
+]

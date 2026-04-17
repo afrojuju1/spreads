@@ -781,6 +781,80 @@ class EarningsFlowTests(unittest.TestCase):
             {item["code"] for item in system_status["attention"]},
         )
 
+    def test_ops_status_degrades_for_automation_dispatch_gap(self) -> None:
+        summary_run = _collector_run_record()
+        storage = _FakeStorage(summary_run)
+        automation_runtime = {
+            "opportunity_count": 10,
+            "decision_state_counts": {"selected": 3},
+            "entry_intent_count": 3,
+            "management_intent_count": 0,
+            "open_position_count": 0,
+        }
+        automation_performance = {
+            "daily_total_pnl": 0.0,
+            "entry_funnel": {
+                "overall": {
+                    "selected": 3,
+                    "intents_created": 3,
+                    "submitted": 0,
+                    "blocker_reasons": {"dispatch_window_elapsed": 3},
+                }
+            },
+        }
+
+        with (
+            patch(
+                "core.services.ops.get_control_state_snapshot",
+                return_value={"mode": "normal"},
+            ),
+            patch(
+                "core.services.ops.get_account_overview",
+                return_value={
+                    "source": "live",
+                    "environment": "paper",
+                    "account": {
+                        "equity": 10000.0,
+                        "cash": 5000.0,
+                        "buying_power": 10000.0,
+                    },
+                    "pnl": {"day_change": 0.0, "day_change_percent": 0.0},
+                    "sync": {},
+                },
+            ),
+            patch(
+                "core.services.ops.system._bot_runtime_summary",
+                return_value=automation_runtime,
+            ),
+            patch(
+                "core.services.ops.trading._bot_runtime_summary",
+                return_value=automation_runtime,
+            ),
+            patch(
+                "core.services.ops.system.build_automation_performance_summary",
+                return_value=automation_performance,
+            ),
+            patch(
+                "core.services.ops.trading.build_automation_performance_summary",
+                return_value=automation_performance,
+            ),
+        ):
+            system_status = build_system_status(storage=storage)
+            trading_status = build_trading_health(storage=storage)
+
+        self.assertEqual(system_status["status"], "degraded")
+        self.assertEqual(trading_status["status"], "degraded")
+        self.assertEqual(system_status["summary"]["automation_dispatch_gap_count"], 3)
+        self.assertEqual(trading_status["summary"]["automation_dispatch_gap_count"], 3)
+        self.assertIn(
+            "automation_entry_dispatch_gap",
+            {item["code"] for item in system_status["attention"]},
+        )
+        self.assertIn(
+            "automation_entry_dispatch_gap",
+            {item["code"] for item in trading_status["attention"]},
+        )
+
     def test_earnings_live_selection_prefers_options_evidence_and_blocks_weak_quotes(
         self,
     ) -> None:

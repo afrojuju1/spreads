@@ -9,6 +9,7 @@ from core.services.automations import automation_should_run_now
 from core.services.bot_analytics import evaluate_entry_controls
 from core.services.bots import load_active_bots
 from core.services.entry_planner import plan_entry_selection, score_opportunity
+from core.services.execution_intents import request_options_automation_dispatch
 from core.services.live_pipelines import resolve_live_collector_label
 from core.services.management_recipes import build_exit_policy_from_recipe_refs
 from core.services.option_structures import normalize_strategy_family
@@ -181,6 +182,7 @@ def run_entry_automation_decision(
 
     decisions: list[dict[str, Any]] = []
     selected_intent: dict[str, Any] | None = None
+    dispatch_job_run_id: str | None = None
     for decision_plan, opportunity in zip(
         plan["decisions"], opportunities, strict=False
     ):
@@ -268,6 +270,37 @@ def run_entry_automation_decision(
             event_at=_utc_now(),
             payload={"opportunity_id": opportunity_id, "slot_key": slot_key},
         )
+    if selected_intent is not None:
+        dispatch_request = request_options_automation_dispatch(
+            job_store=job_store,
+            requested_by={
+                "reason": "entry_intent_created",
+                "execution_intent_id": str(selected_intent["execution_intent_id"]),
+                "bot_id": runtime.bot_id,
+                "automation_id": runtime.automation_id,
+            },
+        )
+        if dispatch_request is not None:
+            dispatch_job_run_id = (
+                None
+                if dispatch_request.get("job_run_id") in (None, "")
+                else str(dispatch_request["job_run_id"])
+            )
+            execution_store.append_execution_intent_event(
+                execution_intent_id=str(selected_intent["execution_intent_id"]),
+                event_type=(
+                    "dispatch_requested"
+                    if str(dispatch_request.get("status") or "") == "queued"
+                    else "dispatch_request_failed"
+                ),
+                event_at=_utc_now(),
+                payload={
+                    "job_run_id": dispatch_job_run_id,
+                    "job_key": dispatch_request.get("job_key"),
+                    "status": dispatch_request.get("status"),
+                    "error": dispatch_request.get("error"),
+                },
+            )
 
     return {
         "status": "ok",
@@ -283,6 +316,7 @@ def run_entry_automation_decision(
         "execution_intent_id": None
         if selected_intent is None
         else str(selected_intent.get("execution_intent_id")),
+        "dispatch_job_run_id": dispatch_job_run_id,
     }
 
 

@@ -173,3 +173,39 @@ def _run_duration_seconds(run: Mapping[str, Any]) -> float | None:
     if duration_seconds < 0:
         return None
     return round(duration_seconds, 3)
+
+
+def _automation_dispatch_gap_summary(
+    automation_performance: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    entry_funnel = (
+        automation_performance.get("entry_funnel")
+        if isinstance(automation_performance, Mapping)
+        else {}
+    )
+    overall = (
+        entry_funnel.get("overall")
+        if isinstance(entry_funnel, Mapping)
+        else {}
+    )
+    blocker_reasons = (
+        overall.get("blocker_reasons")
+        if isinstance(overall.get("blocker_reasons"), Mapping)
+        else {}
+    )
+    selected_count = _coerce_int(overall.get("selected")) or 0
+    submitted_count = _coerce_int(overall.get("submitted")) or 0
+    intent_count = _coerce_int(overall.get("intents_created")) or 0
+    dispatch_window_elapsed_count = (
+        _coerce_int(blocker_reasons.get("dispatch_window_elapsed")) or 0
+    )
+    return {
+        "selected_count": selected_count,
+        "intent_count": intent_count,
+        "submitted_count": submitted_count,
+        "dispatch_window_elapsed_count": dispatch_window_elapsed_count,
+        "pending_submission_gap_count": max(intent_count - submitted_count, 0),
+        "has_dispatch_gap": bool(
+            dispatch_window_elapsed_count > 0 and selected_count > submitted_count
+        ),
+    }

@@ -51,12 +51,15 @@ def _skip_is_benign(run: Mapping[str, Any]) -> bool:
         return True
     if reason == "outside_schedule_window":
         return True
+    if reason == "superseded_by_newer_scheduled_run":
+        return True
     if reason == "stale_slot" and str(run.get("job_type") or "") == "live_collector":
         return True
     error_text = str(_as_text(run.get("error_text")) or "").strip().lower()
     return error_text in {
         "superseded during queue consolidation",
         "superseded by a newer live slot under scheduler coalescing.",
+        "superseded by a newer scheduled run.",
     }
 
 
@@ -116,6 +119,11 @@ def _job_run_operator_status(
                 return (
                     "healthy",
                     "Stale live slot was intentionally marked missed instead of replayed.",
+                )
+            if reason == "superseded_by_newer_scheduled_run":
+                return (
+                    "healthy",
+                    "Older scheduled job run was superseded by a newer run for the same job key.",
                 )
             return "healthy", "Job run was superseded during queue consolidation."
         return "degraded", reason or "Job run was skipped."
@@ -347,6 +355,22 @@ def _worker_lane_rows(
     return rows
 
 
+def _split_active_queued_jobs(
+    queued_jobs: list[dict[str, Any]],
+    *,
+    now: datetime,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    active: list[dict[str, Any]] = []
+    stale: list[dict[str, Any]] = []
+    for row in queued_jobs:
+        operator_status, _ = _job_run_operator_status(row, now=now)
+        if operator_status == "healthy":
+            active.append(dict(row))
+        else:
+            stale.append(dict(row))
+    return active, stale
+
+
 @with_storage()
 def build_jobs_overview(
     *,
@@ -424,6 +448,13 @@ def build_jobs_overview(
         )
     ]
     run_rows = _sorted_by_activity(run_rows)
+    queued_run_rows = [
+        dict(row) for row in job_store.list_job_runs(status="queued", limit=200)
+    ]
+    active_queued_run_rows, stale_queued_run_rows = _split_active_queued_jobs(
+        queued_run_rows,
+        now=now,
+    )
 
     scheduler_lease = job_store.get_lease(SCHEDULER_RUNTIME_LEASE_KEY)
     scheduler_payload = {
@@ -516,6 +547,17 @@ def build_jobs_overview(
                 message=f"{degraded_capture_count} live collector run(s) completed with degraded capture.",
             )
         )
+    if stale_queued_run_rows:
+        attention.append(
+            _attention(
+                severity="low",
+                code="stale_queued_jobs_present",
+                message=(
+                    f"{len(stale_queued_run_rows)} queued job run(s) are stale and no longer "
+                    "count as active backlog."
+                ),
+            )
+        )
 
     actionable_definition_rows = [
         row for row in definition_rows if _definition_requires_attention(row, now=now)
@@ -538,9 +580,7 @@ def build_jobs_overview(
 
     lane_rows = _worker_lane_rows(
         workers=workers,
-        queued_jobs=[
-            dict(row) for row in job_store.list_job_runs(status="queued", limit=200)
-        ],
+        queued_jobs=active_queued_run_rows,
         running_jobs=[
             dict(row) for row in job_store.list_job_runs(status="running", limit=200)
         ],
@@ -612,6 +652,7 @@ def build_jobs_overview(
             "singleton_lease_count": len(singleton_leases),
             "worker_lane_count": len(lane_rows),
             "stale_running_count": stale_running_count,
+            "stale_queued_job_count": len(stale_queued_run_rows),
             "degraded_capture_count": degraded_capture_count,
         },
         "attention": attention,
@@ -622,6 +663,7 @@ def build_jobs_overview(
             "worker_lanes": lane_rows,
             "singleton_leases": singleton_leases,
             "stale_singleton_leases": stale_singleton_leases,
+            "stale_queued_job_runs": stale_queued_run_rows,
             "job_definitions": definition_rows,
             "job_runs": run_rows,
         },

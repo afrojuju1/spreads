@@ -32,6 +32,7 @@ from .collectors import (
 )
 from .shared import (
     _attention,
+    _automation_dispatch_gap_summary,
     _combine_statuses,
     _control_status,
     _seconds_since,
@@ -389,6 +390,23 @@ def build_trading_health(
         storage=storage,
         market_date=market_date,
     )
+    automation_dispatch_gap = _automation_dispatch_gap_summary(
+        details["automation_performance"]
+    )
+    details["automation_dispatch_gap"] = automation_dispatch_gap
+    if automation_dispatch_gap["has_dispatch_gap"]:
+        statuses.append("degraded")
+        attention.append(
+            _attention(
+                severity="medium",
+                code="automation_entry_dispatch_gap",
+                message=(
+                    f"Automation selected {automation_dispatch_gap['selected_count']} entry "
+                    f"opportunity(s) today, but {automation_dispatch_gap['dispatch_window_elapsed_count']} "
+                    "aged out before submission."
+                ),
+            )
+        )
     if execution_store.schema_ready():
         open_execution_attempts = [
             dict(row)
@@ -648,6 +666,10 @@ def build_trading_health(
         or 0,
         "automation_management_intent_count": _coerce_int(
             (details.get("automation_runtime") or {}).get("management_intent_count")
+        )
+        or 0,
+        "automation_dispatch_gap_count": _coerce_int(
+            automation_dispatch_gap.get("dispatch_window_elapsed_count")
         )
         or 0,
         "automation_open_position_count": _coerce_int(

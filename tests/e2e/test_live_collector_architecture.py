@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 from core.jobs.orchestration import isoformat_utc
-from core.jobs.scheduler import _reconcile_live_collector_jobs
+from core.jobs.scheduler import _enqueue_definition_jobs, _reconcile_live_collector_jobs
 from core.services.collections.capture.runtime import capture_live_option_market_state
 from core.services.collections.cycle import run_collection_cycle
 from core.services.collections.models import LiveCaptureSnapshot, LiveTickContext
@@ -2029,6 +2029,162 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         self.assertEqual(old_slot_record["status"], LIVE_SLOT_STATUS_MISSED)
         self.assertIn(str(current_run["job_run_id"]), result["enqueued"])
 
+    def test_scheduler_supersedes_stale_definition_runs(self) -> None:
+        now = datetime(2026, 4, 15, 14, 31, 5, tzinfo=UTC)
+        latest_slot = datetime(2026, 4, 15, 14, 31, tzinfo=UTC)
+
+        class _DefinitionJobStore:
+            def __init__(self) -> None:
+                self.definition = {
+                    "job_key": "alert_reconcile:scheduled",
+                    "job_type": "alert_reconcile",
+                    "enabled": True,
+                    "schedule_type": "interval_minutes",
+                    "schedule": {"minutes": 1},
+                    "singleton_scope": "global",
+                    "payload": {"allow_off_hours": True},
+                }
+                self.runs = {
+                    "alert_reconcile:scheduled:20260415T142900Z": {
+                        "job_run_id": "alert_reconcile:scheduled:20260415T142900Z",
+                        "job_key": "alert_reconcile:scheduled",
+                        "job_type": "alert_reconcile",
+                        "status": "queued",
+                        "scheduled_for": datetime(2026, 4, 15, 14, 29, tzinfo=UTC),
+                        "arq_job_id": "alert_reconcile:scheduled:20260415T142900Z",
+                        "payload": {},
+                    },
+                    "alert_reconcile:scheduled:20260415T143000Z": {
+                        "job_run_id": "alert_reconcile:scheduled:20260415T143000Z",
+                        "job_key": "alert_reconcile:scheduled",
+                        "job_type": "alert_reconcile",
+                        "status": "queued",
+                        "scheduled_for": datetime(2026, 4, 15, 14, 30, tzinfo=UTC),
+                        "arq_job_id": "alert_reconcile:scheduled:20260415T143000Z",
+                        "payload": {},
+                    },
+                    "alert_reconcile:scheduled:20260415T143100Z": {
+                        "job_run_id": "alert_reconcile:scheduled:20260415T143100Z",
+                        "job_key": "alert_reconcile:scheduled",
+                        "job_type": "alert_reconcile",
+                        "status": "succeeded",
+                        "scheduled_for": latest_slot,
+                        "arq_job_id": "alert_reconcile:scheduled:20260415T143100Z",
+                        "payload": {},
+                    },
+                }
+
+            def list_job_definitions(self, **_: object) -> list[dict[str, object]]:
+                return [dict(self.definition)]
+
+            def list_latest_runs_by_job_keys(
+                self, *, job_keys: list[str], **_: object
+            ) -> list[dict[str, object]]:
+                if job_keys != ["alert_reconcile:scheduled"]:
+                    return []
+                return [dict(self.runs["alert_reconcile:scheduled:20260415T143100Z"])]
+
+            def list_job_runs(self, **kwargs: object) -> list[dict[str, object]]:
+                rows = [
+                    dict(row)
+                    for row in self.runs.values()
+                    if (
+                        kwargs.get("job_key") is None
+                        or row["job_key"] == kwargs["job_key"]
+                    )
+                    and (
+                        kwargs.get("status") is None
+                        or row["status"] == kwargs["status"]
+                    )
+                ]
+                rows.sort(
+                    key=lambda row: (row["scheduled_for"], row["job_run_id"]),
+                    reverse=True,
+                )
+                limit = int(kwargs.get("limit") or len(rows))
+                return rows[:limit]
+
+            def get_lease(self, _lease_key: str) -> None:
+                return None
+
+            def create_job_run(
+                self, **kwargs: object
+            ) -> tuple[dict[str, object], bool]:
+                record = dict(kwargs)
+                self.runs[str(record["job_run_id"])] = record
+                return dict(record), True
+
+            def update_job_run_status(
+                self,
+                *,
+                job_run_id: str,
+                status: str,
+                expected_arq_job_id: str | None = None,
+                finished_at: datetime | None = None,
+                result: dict[str, object] | None = None,
+                error_text: str | None = None,
+                **_: object,
+            ) -> dict[str, object] | None:
+                row = self.runs[job_run_id]
+                if (
+                    expected_arq_job_id is not None
+                    and row["arq_job_id"] != expected_arq_job_id
+                ):
+                    return None
+                row["status"] = status
+                if finished_at is not None:
+                    row["finished_at"] = finished_at
+                if result is not None:
+                    row["result"] = dict(result)
+                if error_text is not None:
+                    row["error_text"] = error_text
+                return dict(row)
+
+        job_store = _DefinitionJobStore()
+
+        async def run_test() -> dict[str, object]:
+            with (
+                patch(
+                    "core.jobs.scheduler.due_job_payload",
+                    return_value=(
+                        "alert_reconcile:scheduled:20260415T143200Z",
+                        datetime(2026, 4, 15, 14, 32, tzinfo=UTC),
+                        {
+                            "job_key": "alert_reconcile:scheduled",
+                            "job_type": "alert_reconcile",
+                            "scheduled_for": "2026-04-15T14:32:00Z",
+                            "singleton_scope": "global",
+                        },
+                    ),
+                ),
+                patch(
+                    "core.jobs.scheduler._enqueue_job_run",
+                    return_value=True,
+                ),
+                patch(
+                    "core.jobs.scheduler._publish_job_run_update",
+                    return_value=None,
+                ),
+            ):
+                return await _enqueue_definition_jobs(
+                    job_store,
+                    object(),
+                    now=now,
+                )
+
+        result = asyncio.run(run_test())
+
+        self.assertEqual(
+            job_store.runs["alert_reconcile:scheduled:20260415T142900Z"]["status"],
+            "skipped",
+        )
+        self.assertEqual(
+            job_store.runs["alert_reconcile:scheduled:20260415T143000Z"]["status"],
+            "skipped",
+        )
+        self.assertEqual(result["skipped"][0]["reason"], "superseded_stale_queued_runs")
+        self.assertEqual(result["skipped"][0]["count"], "2")
+
     def test_entry_decision_prefers_automation_scoped_opportunities(self) -> None:
         bot = load_active_bots()["short_dated_index_credit_bot"]
         runtime = next(
@@ -2160,6 +2316,72 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         self.assertEqual(
             intent["payload"]["opportunity_expires_at"],
             scoped_row["expires_at"],
+        )
+
+    def test_entry_decision_requests_immediate_dispatch_for_selected_intent(self) -> None:
+        bot = load_active_bots()["short_dated_index_credit_bot"]
+        runtime = next(
+            item
+            for item in bot.automations
+            if item.automation.automation_id == "index_put_credit_entry"
+        )
+        symbol = runtime.symbols[0]
+        scoped_row = {
+            "opportunity_id": "opp-scoped",
+            "underlying_symbol": symbol,
+            "strategy_family": runtime.strategy_config.strategy_family,
+            "lifecycle_state": "ready",
+            "consumed_by_execution_attempt_id": None,
+            "execution_score": 91.0,
+            "selection_rank": 1,
+            "label": "runtime_label",
+            "expires_at": "2026-04-15T15:30:00Z",
+        }
+        generic_row = dict(scoped_row)
+        generic_row["opportunity_id"] = "opp-generic"
+        generic_row["execution_score"] = 75.0
+        signals = _DecisionSignalStore(scoped_row=scoped_row, generic_row=generic_row)
+        execution = _DecisionExecutionStore()
+        storage = _DecisionStorage(
+            signals=signals,
+            execution=execution,
+            jobs=_DecisionJobStore(),
+        )
+
+        with (
+            patch(
+                "core.services.decision_engine.automation_should_run_now",
+                return_value=True,
+            ),
+            patch(
+                "core.services.decision_engine.evaluate_entry_controls",
+                return_value=(True, None, {"open_positions": 0}),
+            ),
+            patch(
+                "core.services.decision_engine.request_options_automation_dispatch",
+                return_value={
+                    "status": "queued",
+                    "job_run_id": "options_automation_execute:adhoc:test",
+                    "job_key": "options_automation_execute:adhoc",
+                },
+            ),
+        ):
+            result = run_entry_automation_decision(
+                db_target="postgresql://example",
+                bot_id=bot.bot.bot_id,
+                automation_id=runtime.automation.automation_id,
+                market_date="2026-04-15",
+                storage=storage,
+            )
+
+        self.assertEqual(
+            result["dispatch_job_run_id"],
+            "options_automation_execute:adhoc:test",
+        )
+        self.assertEqual(execution.intent_events[-1]["event_type"], "dispatch_requested")
+        self.assertEqual(
+            execution.intent_events[-1]["payload"]["job_run_id"],
+            "options_automation_execute:adhoc:test",
         )
 
     def test_intent_summary_separates_entry_and_management_states(self) -> None:

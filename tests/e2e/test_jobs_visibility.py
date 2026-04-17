@@ -51,6 +51,12 @@ class JobsVisibilityTests(unittest.TestCase):
                 if status == "queued":
                     return [
                         {
+                            "job_run_id": "queued-stale-runtime",
+                            "job_type": "options_automation_execute",
+                            "status": "queued",
+                            "scheduled_for": (now - timedelta(minutes=30)).isoformat(),
+                        },
+                        {
                             "job_run_id": "queued-collector",
                             "job_type": "live_collector",
                             "status": "queued",
@@ -121,8 +127,10 @@ class JobsVisibilityTests(unittest.TestCase):
         lanes = {row["lane"]: row for row in lane_rows}
         self.assertEqual(lanes["runtime"]["running_job_count"], 1)
         self.assertEqual(lanes["discovery"]["queued_job_count"], 1)
+        self.assertEqual(lanes["runtime"]["queued_job_count"], 0)
         self.assertEqual(lanes["runtime"]["active_worker_count"], 1)
         self.assertEqual(lanes["discovery"]["active_worker_count"], 1)
+        self.assertEqual(payload["summary"]["stale_queued_job_count"], 1)
 
 
 if __name__ == "__main__":

@@ -40,6 +40,7 @@ from core.storage.serializers import parse_datetime
 DEFAULT_POLL_SECONDS = 30
 SCHEDULER_LEASE_TTL_SECONDS = 90
 LIVE_SLOT_MAX_RETRIES = 3
+DEFINITION_QUEUE_CLEANUP_LIMIT = 500
 
 
 def _log_scheduler_event(event: str, **payload: Any) -> None:
@@ -574,6 +575,61 @@ async def _enqueue_definition_jobs(job_store: Any, redis: Any, *, now: datetime)
         due = due_job_payload(definition, now=now)
         if due is None:
             continue
+        latest_runs = await asyncio.to_thread(
+            job_store.list_latest_runs_by_job_keys,
+            job_keys=[str(definition["job_key"])],
+            statuses=None,
+        )
+        latest_run = latest_runs[0] if latest_runs else None
+        latest_scheduled_for = (
+            None
+            if latest_run is None
+            else parse_datetime(latest_run.get("scheduled_for"))
+        )
+        superseded_stale_runs = 0
+        if latest_scheduled_for is not None:
+            queued_runs = await asyncio.to_thread(
+                job_store.list_job_runs,
+                job_key=str(definition["job_key"]),
+                status="queued",
+                limit=DEFINITION_QUEUE_CLEANUP_LIMIT,
+            )
+            for queued_run in queued_runs:
+                queued_job_run_id = str(queued_run.get("job_run_id") or "")
+                if latest_run is not None and queued_job_run_id == str(
+                    latest_run.get("job_run_id") or ""
+                ):
+                    continue
+                queued_scheduled_for = parse_datetime(queued_run.get("scheduled_for"))
+                if (
+                    queued_scheduled_for is None
+                    or queued_scheduled_for >= latest_scheduled_for
+                ):
+                    continue
+                superseded_record = await asyncio.to_thread(
+                    job_store.update_job_run_status,
+                    job_run_id=queued_job_run_id,
+                    status="skipped",
+                    expected_arq_job_id=str(queued_run.get("arq_job_id") or ""),
+                    finished_at=now,
+                    result={
+                        "status": "skipped",
+                        "reason": "superseded_by_newer_scheduled_run",
+                    },
+                    error_text="Superseded by a newer scheduled run.",
+                )
+                if superseded_record is None:
+                    continue
+                superseded_stale_runs += 1
+                await _publish_job_run_update(redis, superseded_record)
+        if superseded_stale_runs:
+            skipped.append(
+                {
+                    "job_key": str(definition["job_key"]),
+                    "reason": "superseded_stale_queued_runs",
+                    "count": str(superseded_stale_runs),
+                }
+            )
         job_run_id, scheduled_for, payload = due
         if definition["singleton_scope"]:
             lease = await asyncio.to_thread(

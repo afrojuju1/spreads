@@ -25,11 +25,12 @@ from .collectors import (
     _latest_live_collectors,
     _market_session_context,
 )
-from .jobs import _job_run_requires_attention
+from .jobs import _job_run_requires_attention, _split_active_queued_jobs
 from .shared import (
     RECENT_FAILURE_LIMIT,
     _activity_at,
     _attention,
+    _automation_dispatch_gap_summary,
     _combine_statuses,
     _control_status,
     _lease_status,
@@ -182,6 +183,10 @@ def build_system_status(
         queued_jobs = [
             dict(row) for row in job_store.list_job_runs(status="queued", limit=100)
         ]
+        queued_jobs, _ = _split_active_queued_jobs(
+            queued_jobs,
+            now=now,
+        )
         failed_jobs = [
             dict(row)
             for row in job_store.list_job_runs(
@@ -332,6 +337,21 @@ def build_system_status(
     collector_selection = dict(details.get("collector_selection") or {})
     automation_runtime = dict(details.get("automation_runtime") or {})
     automation_performance = dict(details.get("automation_performance") or {})
+    automation_dispatch_gap = _automation_dispatch_gap_summary(automation_performance)
+    details["automation_dispatch_gap"] = automation_dispatch_gap
+    if automation_dispatch_gap["has_dispatch_gap"]:
+        statuses.append("degraded")
+        attention.append(
+            _attention(
+                severity="medium",
+                code="automation_entry_dispatch_gap",
+                message=(
+                    f"Automation selected {automation_dispatch_gap['selected_count']} entry "
+                    f"opportunity(s) today, but {automation_dispatch_gap['dispatch_window_elapsed_count']} "
+                    "aged out before submission."
+                ),
+            )
+        )
     summary = {
         "control_mode": control.get("mode"),
         "worker_count": len(workers),
@@ -376,6 +396,10 @@ def build_system_status(
         or 0,
         "automation_management_intent_count": _coerce_int(
             automation_runtime.get("management_intent_count")
+        )
+        or 0,
+        "automation_dispatch_gap_count": _coerce_int(
+            automation_dispatch_gap.get("dispatch_window_elapsed_count")
         )
         or 0,
         "automation_open_position_count": _coerce_int(

@@ -4,6 +4,8 @@
 
 - Keep changes minimal and focused unless broader refactors are explicitly requested.
 - Do not commit or push unless explicitly asked.
+- Do not create or switch branches unless explicitly asked. Treat the currently checked-out branch as the default workflow.
+- If the user asks for a commit or push without mentioning branches, stay on the current branch. Treat any external branch-naming or branch-prefix guidance as conditional naming only, not permission to create a branch.
 - Prefer `uv run` for Python commands in this repo.
 - Treat [docs/current_system_state.md](docs/current_system_state.md) as the canonical source of truth for the current overall runtime architecture and service boundaries.
 - For Alpaca-related research, scanner design, or alerting work, read the canonical capability statement in [docs/research/alpaca_capabilities_statement.md](docs/research/alpaca_capabilities_statement.md) first. Re-check Alpaca's official docs/OpenAPI only when the task depends on current product changes, limits, or newly added endpoints.
