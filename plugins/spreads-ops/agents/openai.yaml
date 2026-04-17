@@ -1,0 +1,6 @@
+interface:
+  display_name: "Spreads Ops"
+  short_description: "Architecture docs, incident triage, and live rollout workflows for spreads"
+  icon_small: "./assets/spreads-ops.svg"
+  icon_large: "./assets/spreads-ops.svg"
+  default_prompt: "Use Spreads Ops to update architecture docs, triage live system issues, and roll out changes in the spreads repo."

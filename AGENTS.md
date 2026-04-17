@@ -5,6 +5,7 @@
 - Keep changes minimal and focused unless broader refactors are explicitly requested.
 - Do not commit or push unless explicitly asked.
 - Prefer `uv run` for Python commands in this repo.
+- Treat [docs/current_system_state.md](docs/current_system_state.md) as the canonical source of truth for the current overall runtime architecture and service boundaries.
 - For Alpaca-related research, scanner design, or alerting work, read the canonical capability statement in [docs/research/alpaca_capabilities_statement.md](docs/research/alpaca_capabilities_statement.md) first. Re-check Alpaca's official docs/OpenAPI only when the task depends on current product changes, limits, or newly added endpoints.
 
 ## Code Quality And Architecture
@@ -24,13 +25,17 @@
 ## Dev Workflow
 
 - This repo is in active development by default.
+- This repo has a local Codex plugin at `plugins/spreads-ops`. Prefer its repo-specific skills when the task matches:
+  - `spreads-incident-triage` for runtime incidents, degraded collectors, trading blocks, and "what broke?" questions
+  - `spreads-live-rollout` for changes that must be applied to the running Docker-backed system
+  - `spreads-architecture-docs` for architecture-doc maintenance, boundary updates, and source-of-truth consolidation
 - For operator visibility or runtime triage, prefer the shipped ops CLI first when it fits the question:
   - `uv run spreads status`
   - `uv run spreads trading`
   - `uv run spreads pipelines`
   - `uv run spreads jobs`
   - `uv run spreads uoa`
-  - `uv run spreads audit <session-id>`
+  - `uv run spreads audit <pipeline-id> --date <YYYY-MM-DD>`
 - For offline selection research or policy tuning, prefer the replay CLI before ad hoc scripts or raw SQL:
   - `uv run spreads replay`
   - `uv run spreads replay --label <label> --date <YYYY-MM-DD>`
@@ -55,8 +60,12 @@
 
 ## Planning Docs
 
+- For overall architecture, service-boundary, or ownership questions, start with `docs/current_system_state.md`.
+- If a planning document disagrees with `docs/current_system_state.md` about current ownership or runtime topology, `docs/current_system_state.md` wins.
 - If a planning document is being used as an active checkpoint for implementation work, keep its completion status current when a milestone meaningfully changes.
-- For selection-architecture work, start with `docs/planning/2026-04-11_fresh_spread_system_design.md` and `docs/planning/2026-04-11_spread_selection_refactor_plan.md`.
+- For target opportunity-selection architecture, start with `docs/planning/2026-04-11_fresh_spread_system_design.md`.
+- For historical diagnosis of the older selection path, use `docs/planning/2026-04-11_spread_selection_refactor_plan.md`.
+- For migration planning that reuses the existing backend, use `docs/planning/2026-04-15_current_system_options_automation_implementation_approach.md`.
 - Treat older planning docs as historical context unless they are explicitly called out as the active source of truth.
 
 ## Web App

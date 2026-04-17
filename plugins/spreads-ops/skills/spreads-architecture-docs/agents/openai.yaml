@@ -1,0 +1,4 @@
+interface:
+  display_name: "Architecture Docs"
+  short_description: "Maintain the canonical spreads architecture and boundary docs"
+  default_prompt: "Use $spreads-architecture-docs to update docs/current_system_state.md, align AGENTS.md guidance, and keep supporting architecture docs in sync."

@@ -1,29 +1,45 @@
 {
   "name": "spreads-ops",
   "version": "0.1.0",
-  "description": "Repo-local skills for triaging incidents and rolling out live ops changes in the spreads system.",
+  "description": "Repo-local skills for architecture maintenance, incident triage, and live rollouts in the spreads system.",
   "author": {
-    "name": "Adeb"
+    "name": "Adeb",
+    "url": "https://github.com/afrojuju1"
   },
+  "homepage": "https://github.com/afrojuju1/spreads",
+  "repository": "https://github.com/afrojuju1/spreads",
   "license": "MIT",
   "keywords": [
     "spreads",
     "operations",
     "incident-triage",
+    "architecture",
     "rollout",
     "trading"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Spreads Ops",
-    "shortDescription": "Triage incidents and roll out live changes in spreads",
+    "shortDescription": "Architecture docs, incident triage, and live rollout workflows for spreads",
+    "longDescription": "Use Spreads Ops to maintain the repo's canonical architecture docs, triage live trading and collection incidents, and roll out backend changes safely against the Docker-backed spreads system.",
     "developerName": "Adeb",
     "category": "Coding",
     "capabilities": [
-      "Interactive"
+      "Interactive",
+      "Read",
+      "Write"
     ],
+    "websiteURL": "https://github.com/afrojuju1/spreads",
+    "privacyPolicyURL": "https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement",
+    "termsOfServiceURL": "https://docs.github.com/en/site-policy/github-terms/github-terms-of-service",
     "defaultPrompt": [
-      "Triage a spreads collector, trading, or rollout issue"
-    ]
+      "Update the spreads architecture docs to match the current system boundaries",
+      "Triage why trading or collection is degraded in the running spreads stack",
+      "Roll out a backend change to the live Docker-backed spreads system safely"
+    ],
+    "brandColor": "#0F766E",
+    "composerIcon": "./assets/spreads-ops.svg",
+    "logo": "./assets/spreads-ops.svg",
+    "screenshots": []
   }
 }

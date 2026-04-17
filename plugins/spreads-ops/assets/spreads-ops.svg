@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">Spreads Ops</title>
+  <desc id="desc">Teal grid with rising trade path.</desc>
+  <rect width="128" height="128" rx="24" fill="#0F172A"/>
+  <path d="M28 34H100" stroke="#134E4A" stroke-width="8" stroke-linecap="round"/>
+  <path d="M28 64H100" stroke="#134E4A" stroke-width="8" stroke-linecap="round"/>
+  <path d="M28 94H100" stroke="#134E4A" stroke-width="8" stroke-linecap="round"/>
+  <path d="M34 98L54 78L68 86L94 48" fill="none" stroke="#2DD4BF" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="34" cy="98" r="7" fill="#F8FAFC"/>
+  <circle cx="54" cy="78" r="7" fill="#F8FAFC"/>
+  <circle cx="68" cy="86" r="7" fill="#F8FAFC"/>
+  <circle cx="94" cy="48" r="7" fill="#F8FAFC"/>
+</svg>

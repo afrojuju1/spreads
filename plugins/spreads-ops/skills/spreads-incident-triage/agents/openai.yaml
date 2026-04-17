@@ -1,0 +1,4 @@
+interface:
+  display_name: "Incident Triage"
+  short_description: "Triage degraded collectors, trading gates, and runtime issues"
+  default_prompt: "Use $spreads-incident-triage to start from the running Docker-backed system, identify the real blocker, and separate runtime faults from policy or strategy gates."

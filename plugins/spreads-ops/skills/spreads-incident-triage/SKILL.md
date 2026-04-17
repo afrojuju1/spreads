@@ -17,6 +17,8 @@ Use this skill when the task is to figure out what broke in `spreads`, especiall
 
 Apply it only inside `/Users/adeb/Projects/spreads`.
 
+Use [docs/current_system_state.md](../../../../docs/current_system_state.md) as the canonical source of truth for current runtime ownership and boundary questions.
+
 ## First Principle
 
 Start with the running system, not code inspection.
@@ -25,8 +27,11 @@ For ops and end-of-day questions, prefer the live Docker-backed state before rea
 
 ## Canonical Owners
 
-- session list and detail: `/Users/adeb/Projects/spreads/packages/core/services/sessions.py`
-- account and trading health: `/Users/adeb/Projects/spreads/packages/core/services/account_state.py`
+- runtime and pipeline detail: `/Users/adeb/Projects/spreads/packages/core/services/live_runtime.py` and `/Users/adeb/Projects/spreads/packages/core/services/pipelines.py`
+- operator health views: `/Users/adeb/Projects/spreads/packages/core/services/ops/`
+- discovery and collection flow: `/Users/adeb/Projects/spreads/packages/core/services/collections/`, `/Users/adeb/Projects/spreads/packages/core/services/scanners/`, `/Users/adeb/Projects/spreads/packages/core/services/live_selection.py`, and `/Users/adeb/Projects/spreads/packages/core/services/opportunity_scoring.py`
+- canonical opportunity state: `/Users/adeb/Projects/spreads/packages/core/services/signal_state.py`, `/Users/adeb/Projects/spreads/packages/core/services/opportunity_generation.py`, and `/Users/adeb/Projects/spreads/packages/core/services/opportunities.py`
+- account and trading health: `/Users/adeb/Projects/spreads/packages/core/services/account_state.py` and `/Users/adeb/Projects/spreads/packages/core/services/ops/trading.py`
 - closed-session analysis: `/Users/adeb/Projects/spreads/packages/core/services/post_market_analysis.py`
 - post-market storage: `/Users/adeb/Projects/spreads/packages/core/storage/post_market_repository.py`
 - alert delivery state: `/Users/adeb/Projects/spreads/packages/core/storage/alert_repository.py`
@@ -40,9 +45,9 @@ Start with the shipped ops CLI, then fall back to logs or code:
 docker compose ps
 uv run spreads status
 uv run spreads trading
-uv run spreads sessions --limit 5
-uv run spreads sessions <session-id>
+uv run spreads pipelines
 uv run spreads jobs
+uv run spreads uoa
 ```
 
 Use direct API reads or code inspection only when the CLI is insufficient.
@@ -97,8 +102,9 @@ If backend code changed recently, stale workers are a first-class suspect.
 Use:
 
 ```bash
-uv run spreads sessions --limit 20
-uv run spreads sessions <session-id>
+uv run spreads pipelines
+uv run spreads pipelines <pipeline-id> --date YYYY-MM-DD
+uv run spreads audit <pipeline-id> --date YYYY-MM-DD
 ```
 
 Focus on:
@@ -120,6 +126,8 @@ Treat these as hard signals:
 - `stream_quote_events_saved=0` for a live label means the stream or recorder path produced no usable live quote rows
 - `risk_status=blocked` with a note like `max_open_positions_per_session reached` means policy saturation, not collector failure
 
+If the pipeline id is not obvious, list pipelines first and use the exact `pipeline:<label>` id shown by `uv run spreads pipelines`.
+
 ### 3. Check Actual Trading Outcome
 
 Use:
@@ -140,6 +148,7 @@ Do not present modeled session results as realized account performance.
 Use:
 
 ```bash
+uv run spreads replay --label <label> --date YYYY-MM-DD
 curl -s 'http://localhost:58080/post-market/YYYY-MM-DD/<label>'
 ```
 
@@ -209,7 +218,7 @@ docker compose ps
 docker compose logs --tail=100 scheduler worker-runtime worker-discovery market-recorder api
 uv run spreads status
 uv run spreads trading
-uv run spreads sessions --limit 5
+uv run spreads pipelines
 ```
 
 Restart `api` or `web` only when needed or when explicitly requested.

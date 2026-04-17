@@ -7,6 +7,8 @@ description: Roll out spreads backend or live-ops changes that touch schema, job
 
 Use this skill inside `/Users/adeb/Projects/spreads` when the user wants a change to be made live, applied to the running stack, or verified end to end.
 
+Use [docs/current_system_state.md](../../../../docs/current_system_state.md) as the canonical source of truth for current runtime ownership and restart boundaries.
+
 Typical prompts:
 
 - "finish this live fix"
@@ -37,6 +39,13 @@ Before rollout, classify what changed:
 - scheduler enqueue logic changed
 - `market-recorder` code changed
 - API-only or web-only code changed
+
+Use these current code owners while classifying:
+
+- discovery and collection: `services/scanners/`, `services/collections/`, `services/live_selection.py`, `services/opportunity_scoring.py`
+- canonical opportunity state: `services/signal_state.py`, `services/opportunity_generation.py`, `services/opportunities.py`
+- runtime read models: `services/live_runtime.py`, `services/live_collector_health/`, `services/pipelines.py`, `services/ops/`
+- execution and positions: `services/execution/`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py`
 
 Use that classification to decide the minimum safe rollout.
 
@@ -74,6 +83,12 @@ Apply only the steps that match the change:
 
 If multiple backend runtime surfaces changed, restart only the affected services, not the whole stack by reflex.
 
+In practice:
+
+- most changes under `services/scanners/`, `services/collections/`, `services/live_selection.py`, `services/opportunity_scoring.py`, `services/opportunity_generation.py`, or shared backend code imported by collector jobs require at least `worker-discovery`
+- most changes under `services/execution/`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, or runtime job logic require at least `worker-runtime`
+- if ownership crosses both lanes, restart both workers and the scheduler only when scheduling logic or job dispatch changed
+
 ## Verification After Rollout
 
 Use the ops CLI first:
@@ -82,13 +97,14 @@ Use the ops CLI first:
 docker compose ps
 uv run spreads status
 uv run spreads trading
-uv run spreads sessions --limit 5
+uv run spreads pipelines
 ```
 
 Then drill into impacted labels:
 
 ```bash
-uv run spreads sessions <session-id>
+uv run spreads pipelines <pipeline-id> --date YYYY-MM-DD
+uv run spreads audit <pipeline-id> --date YYYY-MM-DD
 uv run spreads jobs
 docker compose logs --since 3m scheduler worker-runtime worker-discovery market-recorder
 ```

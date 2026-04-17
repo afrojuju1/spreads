@@ -1,0 +1,4 @@
+interface:
+  display_name: "Live Rollout"
+  short_description: "Apply and verify live backend changes in spreads"
+  default_prompt: "Use $spreads-live-rollout to classify the change, restart only the needed Docker services, and verify the rollout through the spreads ops CLI."

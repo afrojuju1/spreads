@@ -8,6 +8,8 @@ Prefer `lodash-es` for standard utility work in this app when it cleanly covers 
 
 ## Repo Notes
 
+- Treat [../../docs/current_system_state.md](../../docs/current_system_state.md) as the canonical source of truth for current operator-surface boundaries and runtime ownership.
 - The generator workbench's `board` and `watchlist` promote actions are legacy manual overrides over the live collector state.
 - Do not expand that UI model as if it were the long-term selection architecture; the target direction is one canonical opportunity list with rendered views.
 - When touching generator/operator surfaces, preserve existing behavior unless the change is explicitly part of the selection-state migration.
+- Keep web surfaces as read models over `services/live_runtime.py`, `services/pipelines.py`, `services/opportunities.py`, and `services/ops/`; do not invent web-only business-logic owners.
