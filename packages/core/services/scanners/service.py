@@ -25,7 +25,7 @@ from core.domain.models import SpreadCandidate, SymbolScanResult, UniverseScanFa
 from core.integrations.alpaca.client import AlpacaClient, infer_trading_base_url
 from core.integrations.calendar_events import build_calendar_event_resolver
 from core.integrations.greeks import build_local_greeks_provider
-from core.services.scanners.builders import sort_candidates_for_display
+from core.services.scanners.builders.ranking import sort_candidates_for_display
 from core.services.scanners.config import build_filter_payload, parse_args, resolve_symbols
 from core.services.scanners.output import (
     build_setup_summaries,

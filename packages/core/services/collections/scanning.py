@@ -6,7 +6,7 @@ from typing import Any
 
 from core.domain.models import SpreadCandidate, SymbolScanResult, UniverseScanFailure
 from core.services.live_pipelines import build_live_snapshot_label
-from core.services.scanners.builders import sort_candidates_for_display
+from core.services.scanners.builders.ranking import sort_candidates_for_display
 from core.services.scanners.config import resolve_symbols
 from core.services.scanners.runtime import (
     merge_strategy_candidates,
