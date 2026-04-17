@@ -383,10 +383,21 @@ def _render_automation_runtime_summary(
         "Decision States",
         _render_count_map(payload.get("decision_state_counts")),
     )
-    table.add_row("Intents", _render_value(payload.get("intent_count")))
     table.add_row(
-        "Intent States",
-        _render_count_map(payload.get("intent_state_counts")),
+        "Entry Intents",
+        _render_value(payload.get("entry_intent_count")),
+    )
+    table.add_row(
+        "Entry Intent States",
+        _render_count_map(payload.get("entry_intent_state_counts")),
+    )
+    table.add_row(
+        "Mgmt Intents",
+        _render_value(payload.get("management_intent_count")),
+    )
+    table.add_row(
+        "Mgmt Intent States",
+        _render_count_map(payload.get("management_intent_state_counts")),
     )
     table.add_row(
         "Open Positions",
@@ -666,6 +677,8 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
             f"opps {_render_value(summary.get('automation_opportunity_count'))} | "
             f"selected {_render_value(summary.get('automation_selected_count'))} | "
             f"positions {_render_value(summary.get('automation_open_position_count'))} | "
+            f"entry intents {_render_value(summary.get('automation_entry_intent_count'))} | "
+            f"mgmt intents {_render_value(summary.get('automation_management_intent_count'))} | "
             f"daily pnl {_render_money(summary.get('automation_daily_pnl'))}"
         ),
     )
@@ -803,7 +816,8 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
             f"opps {_render_value(summary.get('automation_opportunity_count'))} | "
             f"selected {_render_value(summary.get('automation_selected_count'))} | "
             f"positions {_render_value(summary.get('automation_open_position_count'))} | "
-            f"intents {_render_value(summary.get('automation_intent_count'))} | "
+            f"entry intents {_render_value(summary.get('automation_entry_intent_count'))} | "
+            f"mgmt intents {_render_value(summary.get('automation_management_intent_count'))} | "
             f"daily pnl {_render_money(summary.get('automation_daily_pnl'))}"
         ),
     )

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from core.db.decorators import with_storage
@@ -16,10 +16,19 @@ from core.services.runtime_policy import build_runtime_policy_ref
 from core.services.automation_runtime import resolve_entry_runtime
 
 ACTIVE_INTENT_STATES = ["pending", "claimed", "submitted", "partially_filled"]
+ENTRY_INTENT_TTL_MINUTES = 5
 
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _expires_in(minutes: int) -> str:
+    return (
+        (datetime.now(UTC) + timedelta(minutes=max(minutes, 1)))
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def _market_date_today() -> str:
@@ -238,10 +247,11 @@ def run_entry_automation_decision(
             policy_ref=policy_ref,
             config_hash=runtime.config_hash,
             state="pending",
-            expires_at=str(opportunity.get("expires_at") or _utc_now()),
+            expires_at=_expires_in(ENTRY_INTENT_TTL_MINUTES),
             superseded_by_id=None,
             payload={
                 "opportunity_id": opportunity_id,
+                "opportunity_expires_at": opportunity.get("expires_at"),
                 "underlying_symbol": opportunity.get("underlying_symbol"),
                 "execution_mode": runtime.automation.automation.execution_mode,
                 "approval_mode": runtime.automation.automation.approval_mode,

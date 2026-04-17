@@ -370,6 +370,14 @@ def build_system_status(
         or 0,
         "automation_intent_count": _coerce_int(automation_runtime.get("intent_count"))
         or 0,
+        "automation_entry_intent_count": _coerce_int(
+            automation_runtime.get("entry_intent_count")
+        )
+        or 0,
+        "automation_management_intent_count": _coerce_int(
+            automation_runtime.get("management_intent_count")
+        )
+        or 0,
         "automation_open_position_count": _coerce_int(
             automation_runtime.get("open_position_count")
         )

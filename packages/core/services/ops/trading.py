@@ -642,6 +642,14 @@ def build_trading_health(
             (details.get("automation_runtime") or {}).get("intent_count")
         )
         or 0,
+        "automation_entry_intent_count": _coerce_int(
+            (details.get("automation_runtime") or {}).get("entry_intent_count")
+        )
+        or 0,
+        "automation_management_intent_count": _coerce_int(
+            (details.get("automation_runtime") or {}).get("management_intent_count")
+        )
+        or 0,
         "automation_open_position_count": _coerce_int(
             (details.get("automation_runtime") or {}).get("open_position_count")
         )

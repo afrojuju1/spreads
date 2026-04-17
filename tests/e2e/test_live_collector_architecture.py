@@ -12,9 +12,13 @@ from core.jobs.scheduler import _reconcile_live_collector_jobs
 from core.services.collections.capture.runtime import capture_live_option_market_state
 from core.services.collections.cycle import run_collection_cycle
 from core.services.collections.models import LiveCaptureSnapshot, LiveTickContext
+from core.services.bot_analytics import summarize_intent_counts
 from core.services.bots import load_active_bots
 from core.services.decision_engine import run_entry_automation_decision
-from core.services.execution_intents import dispatch_pending_execution_intents
+from core.services.execution_intents import (
+    PRE_DISPATCH_EXPIRE_REASON,
+    dispatch_pending_execution_intents,
+)
 from core.services.live_collector_health.capture import (
     build_quote_capture_summary,
     build_trade_capture_summary,
@@ -23,8 +27,10 @@ from core.services.ops.jobs import build_job_run_view
 from core.services.pipelines import get_pipeline_detail, list_pipelines
 from core.services.live_recovery import LIVE_SLOT_STATUS_MISSED
 from core.services.risk_manager import evaluate_open_execution
+from core.services.strategy_positions import run_management_automation_decision
 from core.services.uoa_state import get_latest_uoa_state
 from core.storage.collector_repository import CollectorRepository
+from core.storage.serializers import parse_datetime
 
 
 def _candidate_payload(symbol: str = "AAPL") -> dict[str, object]:
@@ -1119,6 +1125,371 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         self.assertEqual(cleanup["results"][0]["execution_intent_id"], intent_id)
         self.assertEqual(storage.execution.rows[0]["state"], "expired")
 
+    def test_execute_job_records_dispatch_window_elapsed_for_expired_entry_intent(
+        self,
+    ) -> None:
+        intent_id = "execution_intent:entry-expired-1"
+
+        class _SignalStore:
+            def schema_ready(self) -> bool:
+                return True
+
+            def list_opportunities(self, **_: object) -> list[dict[str, object]]:
+                return []
+
+        class _ExecutionStore:
+            def __init__(self) -> None:
+                self.intent = {
+                    "execution_intent_id": intent_id,
+                    "bot_id": "short_dated_index_credit_bot",
+                    "automation_id": "index_put_credit_entry",
+                    "opportunity_decision_id": "opportunity_decision:1",
+                    "strategy_position_id": None,
+                    "execution_attempt_id": None,
+                    "action_type": "open",
+                    "slot_key": "entry:short_dated_index_credit_bot:cfg:GLD",
+                    "claim_token": None,
+                    "policy_ref": {},
+                    "config_hash": "cfg-1",
+                    "state": "pending",
+                    "expires_at": "2026-04-17T16:30:00Z",
+                    "superseded_by_id": None,
+                    "payload": {
+                        "dispatch_status": "pending",
+                        "approval_mode": "auto",
+                        "execution_mode": "paper",
+                    },
+                    "created_at": "2026-04-17T16:25:00Z",
+                    "updated_at": "2026-04-17T16:25:00Z",
+                }
+                self.events: list[dict[str, object]] = []
+
+            def intent_schema_ready(self) -> bool:
+                return True
+
+            def list_execution_intents(
+                self, **kwargs: object
+            ) -> list[dict[str, object]]:
+                states = kwargs.get("states")
+                if states == ["pending"] and self.intent["state"] == "pending":
+                    return [dict(self.intent)]
+                return []
+
+            def upsert_execution_intent(self, **kwargs: object) -> dict[str, object]:
+                self.intent = dict(kwargs)
+                return dict(self.intent)
+
+            def append_execution_intent_event(self, **kwargs: object) -> dict[str, object]:
+                row = dict(kwargs)
+                self.events.append(row)
+                return row
+
+        class _JobStore:
+            def schema_ready(self) -> bool:
+                return True
+
+            def list_job_definitions(self, **_: object) -> list[dict[str, object]]:
+                return []
+
+        class _Storage:
+            def __init__(self) -> None:
+                self.signals = _SignalStore()
+                self.execution = _ExecutionStore()
+                self.jobs = _JobStore()
+
+        storage = _Storage()
+
+        with (
+            patch(
+                "core.services.execution_intents.create_alpaca_client_from_env",
+                return_value=type("Client", (), {"trading_base_url": "paper"})(),
+            ),
+            patch(
+                "core.services.execution_intents.resolve_trading_environment",
+                return_value="paper",
+            ),
+            patch(
+                "core.services.execution_intents._cleanup_terminal_intent_history",
+                return_value={"deleted": 0, "results": []},
+            ),
+            patch(
+                "core.services.execution_intents._backfill_strategy_position_links",
+                return_value={"linked": 0, "results": []},
+            ),
+            patch(
+                "core.services.execution_intents._cleanup_slot_conflicts",
+                return_value={"revoked": 0, "results": []},
+            ),
+            patch(
+                "core.services.execution_intents._manage_submitted_open_intents",
+                return_value={"managed": 0, "results": []},
+            ),
+        ):
+            result = dispatch_pending_execution_intents(
+                db_target="postgresql://example",
+                storage=storage,
+                limit=10,
+            )
+
+        self.assertEqual(result["expired"], 1)
+        self.assertEqual(result["results"][0]["reason"], PRE_DISPATCH_EXPIRE_REASON)
+        self.assertEqual(storage.execution.intent["state"], "expired")
+        self.assertEqual(
+            storage.execution.intent["payload"]["expire_reason"],
+            PRE_DISPATCH_EXPIRE_REASON,
+        )
+        self.assertEqual(storage.execution.events[-1]["event_type"], "expired")
+        self.assertEqual(
+            storage.execution.events[-1]["payload"]["reason"],
+            PRE_DISPATCH_EXPIRE_REASON,
+        )
+
+    def test_dispatch_revokes_close_intent_when_position_is_already_closed(self) -> None:
+        intent_id = "execution_intent:manage:index_put_credit_manage:position-1"
+
+        class _SignalStore:
+            def schema_ready(self) -> bool:
+                return True
+
+            def list_opportunities(self, **_: object) -> list[dict[str, object]]:
+                return []
+
+        class _ExecutionStore:
+            def __init__(self) -> None:
+                self.intent = {
+                    "execution_intent_id": intent_id,
+                    "bot_id": "short_dated_index_credit_bot",
+                    "automation_id": "index_put_credit_manage",
+                    "opportunity_decision_id": None,
+                    "strategy_position_id": "position-1",
+                    "execution_attempt_id": None,
+                    "action_type": "close",
+                    "slot_key": "manage:position-1:close",
+                    "claim_token": None,
+                    "policy_ref": {},
+                    "config_hash": "cfg-1",
+                    "state": "pending",
+                    "expires_at": None,
+                    "superseded_by_id": None,
+                    "payload": {
+                        "position_id": "position-1",
+                        "dispatch_status": "pending",
+                        "approval_mode": "auto",
+                        "execution_mode": "paper",
+                    },
+                    "created_at": "2026-04-17T18:00:00Z",
+                    "updated_at": "2026-04-17T18:00:00Z",
+                }
+                self.events: list[dict[str, object]] = []
+
+            def intent_schema_ready(self) -> bool:
+                return True
+
+            def list_execution_intents(
+                self, **kwargs: object
+            ) -> list[dict[str, object]]:
+                states = kwargs.get("states")
+                if states == ["pending"] and self.intent["state"] == "pending":
+                    return [dict(self.intent)]
+                return []
+
+            def get_execution_intent(self, execution_intent_id: str) -> dict[str, object] | None:
+                if execution_intent_id != intent_id:
+                    return None
+                return dict(self.intent)
+
+            def upsert_execution_intent(self, **kwargs: object) -> dict[str, object]:
+                self.intent = dict(kwargs)
+                return dict(self.intent)
+
+            def append_execution_intent_event(self, **kwargs: object) -> dict[str, object]:
+                row = dict(kwargs)
+                self.events.append(row)
+                return row
+
+            def get_position(self, position_id: str) -> dict[str, object] | None:
+                if position_id != "position-1":
+                    return None
+                return {"position_id": position_id, "status": "closed"}
+
+        class _JobStore:
+            def schema_ready(self) -> bool:
+                return True
+
+            def list_job_definitions(self, **_: object) -> list[dict[str, object]]:
+                return []
+
+        class _Storage:
+            def __init__(self) -> None:
+                self.signals = _SignalStore()
+                self.execution = _ExecutionStore()
+                self.jobs = _JobStore()
+
+        storage = _Storage()
+
+        with (
+            patch(
+                "core.services.execution_intents.create_alpaca_client_from_env",
+                return_value=type("Client", (), {"trading_base_url": "paper"})(),
+            ),
+            patch(
+                "core.services.execution_intents.resolve_trading_environment",
+                return_value="paper",
+            ),
+            patch(
+                "core.services.execution_intents._cleanup_terminal_intent_history",
+                return_value={"deleted": 0, "results": []},
+            ),
+            patch(
+                "core.services.execution_intents._backfill_strategy_position_links",
+                return_value={"linked": 0, "results": []},
+            ),
+            patch(
+                "core.services.execution_intents._cleanup_slot_conflicts",
+                return_value={"revoked": 0, "results": []},
+            ),
+            patch(
+                "core.services.execution_intents._manage_submitted_open_intents",
+                return_value={"managed": 0, "results": []},
+            ),
+        ):
+            result = dispatch_pending_execution_intents(
+                db_target="postgresql://example",
+                storage=storage,
+                limit=10,
+            )
+
+        self.assertEqual(result["failed"], 0)
+        self.assertEqual(result["skipped"], 1)
+        self.assertEqual(storage.execution.intent["state"], "revoked")
+        self.assertEqual(
+            storage.execution.intent["payload"]["revoke_reason"],
+            "position_closed",
+        )
+        self.assertEqual(result["results"][0]["status"], "revoked")
+        self.assertEqual(storage.execution.events[-1]["event_type"], "revoked")
+
+    def test_management_automation_skips_positions_missing_after_refresh(self) -> None:
+        position_id = "position-1"
+
+        class _ExecutionStore:
+            def __init__(self) -> None:
+                self.position_queries = 0
+                self.position_updates: list[dict[str, object]] = []
+                self.created_intents: list[dict[str, object]] = []
+
+            def portfolio_schema_ready(self) -> bool:
+                return True
+
+            def intent_schema_ready(self) -> bool:
+                return True
+
+            def list_positions(self, **_: object) -> list[dict[str, object]]:
+                self.position_queries += 1
+                if self.position_queries == 1:
+                    return [
+                        {
+                            "position_id": position_id,
+                            "bot_id": "short_dated_index_credit_bot",
+                            "automation_id": "index_put_credit_entry",
+                            "strategy_config_id": "cfg-1",
+                            "strategy_id": "strategy-1",
+                            "pipeline_id": "pipeline:explore_10_put_credit_weekly_auto",
+                            "root_symbol": "QQQ",
+                            "strategy_family": "put_credit_spread",
+                            "status": "open",
+                            "remaining_quantity": 1.0,
+                            "closed_at": None,
+                            "market_date_closed": None,
+                            "market_date_opened": "2026-04-17",
+                            "open_execution_attempt_id": "execution:open-1",
+                        }
+                    ]
+                return []
+
+            def list_open_attempts_for_position(self, **_: object) -> list[dict[str, object]]:
+                return []
+
+            def update_position(self, **kwargs: object) -> dict[str, object]:
+                row = dict(kwargs)
+                self.position_updates.append(row)
+                return row
+
+            def list_execution_intents(self, **_: object) -> list[dict[str, object]]:
+                return []
+
+            def upsert_execution_intent(self, **kwargs: object) -> dict[str, object]:
+                row = dict(kwargs)
+                self.created_intents.append(row)
+                return row
+
+            def append_execution_intent_event(self, **kwargs: object) -> dict[str, object]:
+                return dict(kwargs)
+
+        class _Storage:
+            def __init__(self) -> None:
+                self.execution = _ExecutionStore()
+
+        runtime = Namespace(
+            bot_id="short_dated_index_credit_bot",
+            automation_id="index_put_credit_manage",
+            strategy_config_id="cfg-1",
+            strategy_family="put_credit_spread",
+            symbols=("QQQ",),
+            bot=Namespace(bot=Namespace(flatten_positions_at_et=None)),
+            automation=Namespace(
+                automation=Namespace(
+                    execution_mode="paper",
+                    approval_mode="auto",
+                )
+            ),
+        )
+        storage = _Storage()
+
+        with (
+            patch(
+                "core.services.strategy_positions.resolve_management_runtime",
+                return_value=runtime,
+            ),
+            patch(
+                "core.services.strategy_positions.automation_should_run_now",
+                return_value=True,
+            ),
+            patch(
+                "core.services.strategy_positions.bot_time_reached",
+                return_value=False,
+            ),
+            patch(
+                "core.services.strategy_positions.refresh_session_position_marks",
+                return_value={"refreshed": 0},
+            ),
+            patch(
+                "core.services.strategy_positions.plan_position_management",
+                return_value={
+                    "should_close": True,
+                    "reason": "force_close",
+                    "limit_price": 1.0,
+                    "limit_price_source": "width",
+                },
+            ),
+        ):
+            result = run_management_automation_decision(
+                db_target="postgresql://example",
+                bot_id=runtime.bot_id,
+                automation_id=runtime.automation_id,
+                storage=storage,
+            )
+
+        self.assertEqual(result["position_count"], 1)
+        self.assertEqual(result["evaluated"], 1)
+        self.assertEqual(result["created_intents"], 0)
+        self.assertEqual(result["skipped"], 1)
+        self.assertEqual(storage.execution.created_intents, [])
+        self.assertEqual(
+            storage.execution.position_updates[-1]["last_exit_reason"],
+            "position_no_longer_open",
+        )
+
     def test_collection_cycle_uses_same_slot_signal_context(self) -> None:
         collector_store = _CollectorStore()
         args = Namespace(
@@ -1726,6 +2097,87 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                 "profit_target_pct"
             ],
             0.5,
+        )
+
+    def test_entry_decision_sets_post_decision_intent_ttl(self) -> None:
+        bot = load_active_bots()["short_dated_index_credit_bot"]
+        runtime = next(
+            item
+            for item in bot.automations
+            if item.automation.automation_id == "index_put_credit_entry"
+        )
+        symbol = runtime.symbols[0]
+        scoped_row = {
+            "opportunity_id": "opp-scoped",
+            "underlying_symbol": symbol,
+            "strategy_family": runtime.strategy_config.strategy_family,
+            "lifecycle_state": "ready",
+            "consumed_by_execution_attempt_id": None,
+            "execution_score": 91.0,
+            "selection_rank": 1,
+            "label": "runtime_label",
+            "expires_at": "2026-04-15T15:30:00Z",
+        }
+        generic_row = dict(scoped_row)
+        generic_row["opportunity_id"] = "opp-generic"
+        generic_row["execution_score"] = 75.0
+        signals = _DecisionSignalStore(scoped_row=scoped_row, generic_row=generic_row)
+        execution = _DecisionExecutionStore()
+        storage = _DecisionStorage(
+            signals=signals,
+            execution=execution,
+            jobs=_DecisionJobStore(),
+        )
+
+        with (
+            patch(
+                "core.services.decision_engine.automation_should_run_now",
+                return_value=True,
+            ),
+            patch(
+                "core.services.decision_engine.evaluate_entry_controls",
+                return_value=(True, None, {"open_positions": 0}),
+            ),
+        ):
+            run_entry_automation_decision(
+                db_target="postgresql://example",
+                bot_id=bot.bot.bot_id,
+                automation_id=runtime.automation.automation_id,
+                market_date="2026-04-15",
+                storage=storage,
+            )
+
+        intent = execution.upserted_intents[0]
+        created_at = parse_datetime(str(intent["created_at"]))
+        expires_at = parse_datetime(str(intent["expires_at"]))
+
+        self.assertIsNotNone(created_at)
+        self.assertIsNotNone(expires_at)
+        assert created_at is not None
+        assert expires_at is not None
+        self.assertGreaterEqual(expires_at - created_at, timedelta(minutes=5))
+        self.assertNotEqual(intent["expires_at"], scoped_row["expires_at"])
+        self.assertEqual(
+            intent["payload"]["opportunity_expires_at"],
+            scoped_row["expires_at"],
+        )
+
+    def test_intent_summary_separates_entry_and_management_states(self) -> None:
+        summary = summarize_intent_counts(
+            [
+                ("open", "expired", 3),
+                ("close", "revoked", 2),
+                ("close", "filled", 1),
+            ]
+        )
+
+        self.assertEqual(summary["intent_count"], 6)
+        self.assertEqual(summary["entry_intent_count"], 3)
+        self.assertEqual(summary["entry_intent_state_counts"], {"expired": 3})
+        self.assertEqual(summary["management_intent_count"], 3)
+        self.assertEqual(
+            summary["management_intent_state_counts"],
+            {"filled": 1, "revoked": 2},
         )
 
     def test_runtime_deployment_mode_controls_live_approval_with_legacy_backcompat(

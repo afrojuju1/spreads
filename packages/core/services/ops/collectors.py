@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import func, select
 
 from core.jobs.orchestration import NEW_YORK, _market_schedule
+from core.services.bot_analytics import summarize_intent_counts
 from core.services.bots import load_active_bots
 from core.services.live_pipelines import (
     list_enabled_live_collector_pipelines,
@@ -211,6 +212,10 @@ def _bot_runtime_summary(*, storage: Any, market_date: str) -> dict[str, Any]:
         "decision_state_counts": {},
         "intent_count": 0,
         "intent_state_counts": {},
+        "entry_intent_count": 0,
+        "entry_intent_state_counts": {},
+        "management_intent_count": 0,
+        "management_intent_state_counts": {},
         "open_position_count": 0,
         "open_position_symbols": {},
     }
@@ -253,18 +258,31 @@ def _bot_runtime_summary(*, storage: Any, market_date: str) -> dict[str, Any]:
     if execution_store.intent_schema_ready():
         with execution_store.session_factory() as session:
             intent_rows = session.execute(
-                select(ExecutionIntentModel.state, func.count())
+                select(
+                    ExecutionIntentModel.action_type,
+                    ExecutionIntentModel.state,
+                    func.count(),
+                )
                 .where(ExecutionIntentModel.bot_id.in_(bot_ids))
                 .where(ExecutionIntentModel.created_at >= window_start)
                 .where(ExecutionIntentModel.created_at < window_end)
-                .group_by(ExecutionIntentModel.state)
-                .order_by(ExecutionIntentModel.state.asc())
+                .group_by(
+                    ExecutionIntentModel.action_type,
+                    ExecutionIntentModel.state,
+                )
+                .order_by(
+                    ExecutionIntentModel.action_type.asc(),
+                    ExecutionIntentModel.state.asc(),
+                )
             ).all()
-            intent_state_counts = {
-                str(state): int(count) for state, count in intent_rows
-            }
-            summary["intent_state_counts"] = intent_state_counts
-            summary["intent_count"] = sum(intent_state_counts.values())
+            summary.update(
+                summarize_intent_counts(
+                    [
+                        (action_type, state, int(count))
+                        for action_type, state, count in intent_rows
+                    ]
+                )
+            )
 
     if execution_store.portfolio_schema_ready() and execution_store.intent_schema_ready():
         symbol_counts: Counter[str] = Counter()

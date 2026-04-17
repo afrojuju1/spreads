@@ -62,6 +62,35 @@ def _increment_counts(target: dict[str, int], key: str, amount: int = 1) -> None
     target[key] = int(target.get(key) or 0) + int(amount)
 
 
+def summarize_intent_counts(
+    rows: list[tuple[str | None, str | None, int]],
+) -> dict[str, Any]:
+    intent_state_counts: Counter[str] = Counter()
+    entry_intent_state_counts: Counter[str] = Counter()
+    management_intent_state_counts: Counter[str] = Counter()
+    for action_type, state, count in rows:
+        normalized_state = str(state or "unknown")
+        normalized_action_type = str(action_type or "").strip().lower()
+        count_value = int(count)
+        intent_state_counts.update({normalized_state: count_value})
+        if normalized_action_type == "open":
+            entry_intent_state_counts.update({normalized_state: count_value})
+        elif normalized_action_type == "close":
+            management_intent_state_counts.update({normalized_state: count_value})
+    return {
+        "intent_count": int(sum(intent_state_counts.values())),
+        "intent_state_counts": dict(sorted(intent_state_counts.items())),
+        "entry_intent_count": int(sum(entry_intent_state_counts.values())),
+        "entry_intent_state_counts": dict(
+            sorted(entry_intent_state_counts.items())
+        ),
+        "management_intent_count": int(sum(management_intent_state_counts.values())),
+        "management_intent_state_counts": dict(
+            sorted(management_intent_state_counts.items())
+        ),
+    }
+
+
 def _funnel_row(name: str) -> dict[str, Any]:
     return {
         "name": name,
@@ -205,7 +234,7 @@ def _build_entry_funnel(
                 _increment_counts(overall, "repriced")
                 _increment_counts(row, "repriced")
             payload = dict(intent.payload_json or {})
-            for key in ("revoke_reason", "error"):
+            for key in ("revoke_reason", "expire_reason", "error"):
                 reason = _as_text(payload.get(key))
                 if reason:
                     _increment_counts(overall["blocker_reasons"], reason)
@@ -329,21 +358,38 @@ def build_bot_metrics(
                 {str(state): int(count) for state, count in rows}
             )
 
-    intent_state_counts: Counter[str] = Counter()
+    intent_summary = {
+        "intent_count": 0,
+        "intent_state_counts": {},
+        "entry_intent_count": 0,
+        "entry_intent_state_counts": {},
+        "management_intent_count": 0,
+        "management_intent_state_counts": {},
+    }
     daily_action_count = 0
     daily_entry_fill_count = 0
     daily_close_fill_count = 0
     if execution_store.intent_schema_ready():
         with execution_store.session_factory() as session:
             rows = session.execute(
-                select(ExecutionIntentModel.state, func.count())
+                select(
+                    ExecutionIntentModel.action_type,
+                    ExecutionIntentModel.state,
+                    func.count(),
+                )
                 .where(ExecutionIntentModel.bot_id == bot_id)
                 .where(ExecutionIntentModel.created_at >= window_start)
                 .where(ExecutionIntentModel.created_at < window_end)
-                .group_by(ExecutionIntentModel.state)
+                .group_by(
+                    ExecutionIntentModel.action_type,
+                    ExecutionIntentModel.state,
+                )
             ).all()
-            intent_state_counts.update(
-                {str(state): int(count) for state, count in rows}
+            intent_summary = summarize_intent_counts(
+                [
+                    (action_type, state, int(count))
+                    for action_type, state, count in rows
+                ]
             )
             daily_action_count = int(
                 session.scalar(
@@ -457,8 +503,7 @@ def build_bot_metrics(
         "market_date": resolved_market_date,
         "decision_count": int(sum(decision_state_counts.values())),
         "decision_state_counts": dict(sorted(decision_state_counts.items())),
-        "intent_count": int(sum(intent_state_counts.values())),
-        "intent_state_counts": dict(sorted(intent_state_counts.items())),
+        **intent_summary,
         "daily_action_count": daily_action_count,
         "daily_entry_fill_count": daily_entry_fill_count,
         "daily_close_fill_count": daily_close_fill_count,

@@ -23,16 +23,35 @@ from .maintenance import (
     _cleanup_terminal_intent_history,
     _intent_execution_policy,
     _intent_exit_policy,
+    _opportunity_is_active_for_intent,
+    _position_is_active_for_intent,
 )
 from .repricing import _manage_submitted_open_intents
 from .shared import (
     _append_event,
     _as_text,
     _attempt_state,
+    _intent_action_type,
     _intent_payload,
     _update_intent,
     _utc_now,
 )
+
+PRE_DISPATCH_EXPIRE_REASON = "dispatch_window_elapsed"
+
+
+def _intent_target_is_active(
+    *,
+    intent: dict[str, Any],
+    execution_store: Any,
+    signal_store: Any,
+) -> tuple[bool, str | None]:
+    action_type = _intent_action_type(intent)
+    if _as_text(intent.get("strategy_position_id")) is not None or action_type == "close":
+        return _position_is_active_for_intent(execution_store, intent)
+    if _as_text(intent.get("opportunity_decision_id")) is not None or action_type == "open":
+        return _opportunity_is_active_for_intent(signal_store, intent)
+    return False, "source_reference_missing"
 
 
 @with_storage()
@@ -56,6 +75,39 @@ def submit_execution_intent(
             "changed": False,
             "message": "Execution intent is no longer pending submission.",
             "execution_intent": intent,
+        }
+
+    target_active, inactive_reason = _intent_target_is_active(
+        intent=dict(intent),
+        execution_store=execution_store,
+        signal_store=signal_store,
+    )
+    if not target_active:
+        revoked_intent = _update_intent(
+            execution_store,
+            dict(intent),
+            state="revoked",
+            payload_updates={
+                "dispatch_status": "revoked",
+                "revoke_reason": inactive_reason,
+            },
+            updated_at=_utc_now(),
+        )
+        _append_event(
+            execution_store,
+            execution_intent_id=execution_intent_id,
+            event_type="revoked",
+            payload={"reason": inactive_reason},
+        )
+        return {
+            "action": "submit_execution_intent",
+            "changed": False,
+            "message": (
+                "Execution intent target is no longer active."
+                if inactive_reason is None
+                else f"Execution intent target is no longer active: {inactive_reason}"
+            ),
+            "execution_intent": revoked_intent,
         }
 
     claim_token = str(intent.get("claim_token") or uuid4().hex)
@@ -284,20 +336,24 @@ def dispatch_pending_execution_intents(
                 execution_store,
                 intent,
                 state="expired",
-                payload_updates={"dispatch_status": "expired"},
+                payload_updates={
+                    "dispatch_status": "expired",
+                    "expire_reason": PRE_DISPATCH_EXPIRE_REASON,
+                },
                 updated_at=_utc_now(),
             )
             _append_event(
                 execution_store,
                 execution_intent_id=execution_intent_id,
                 event_type="expired",
-                payload={"reason": "expired_before_dispatch"},
+                payload={"reason": PRE_DISPATCH_EXPIRE_REASON},
             )
             expired += 1
             results.append(
                 {
                     "execution_intent_id": execution_intent_id,
                     "status": "expired",
+                    "reason": PRE_DISPATCH_EXPIRE_REASON,
                     "intent": updated,
                 }
             )
@@ -384,6 +440,10 @@ def dispatch_pending_execution_intents(
         )
         if final_state == "failed":
             failed += 1
+        elif final_state == "expired":
+            expired += 1
+        elif final_state in {"revoked", "pending", "claimed"}:
+            skipped += 1
         else:
             submitted += 1
         results.append(

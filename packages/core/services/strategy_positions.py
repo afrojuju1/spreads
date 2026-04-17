@@ -38,6 +38,15 @@ def _as_text(value: Any) -> str | None:
     return rendered or None
 
 
+def _coerce_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _intent_id(position_id: str, automation_id: str) -> str:
     return f"execution_intent:manage:{automation_id}:{position_id}"
 
@@ -66,6 +75,20 @@ def _position_owner_intent(
     if execution_intent_id is None or not execution_store.intent_schema_ready():
         return None
     return execution_store.get_execution_intent(execution_intent_id)
+
+
+def _position_is_manageable_open(position: dict[str, Any]) -> bool:
+    status = str(position.get("status") or position.get("position_status") or "")
+    if status not in OPEN_POSITION_STATUSES:
+        return False
+    if _as_text(position.get("closed_at")) is not None:
+        return False
+    if _as_text(position.get("market_date_closed")) is not None:
+        return False
+    remaining_quantity = _coerce_float(position.get("remaining_quantity"))
+    if remaining_quantity is not None and remaining_quantity <= 0:
+        return False
+    return True
 
 
 @with_storage()
@@ -125,6 +148,8 @@ def run_management_automation_decision(
             not in allowed_symbols
         ):
             continue
+        if not _position_is_manageable_open(position):
+            continue
         managed_positions.append(position)
 
     if not managed_positions:
@@ -169,10 +194,25 @@ def run_management_automation_decision(
     skipped = 0
     decisions: list[dict[str, Any]] = []
     for original_position in managed_positions:
-        position = position_map.get(
-            str(original_position["position_id"]), original_position
-        )
-        position_id = str(position["position_id"])
+        position_id = str(original_position["position_id"])
+        position = position_map.get(position_id)
+        if position is None or not _position_is_manageable_open(position):
+            execution_store.update_position(
+                position_id=position_id,
+                last_exit_evaluated_at=_utc_now(),
+                last_exit_reason="position_no_longer_open",
+                updated_at=_utc_now(),
+            )
+            evaluated += 1
+            skipped += 1
+            decisions.append(
+                {
+                    "position_id": position_id,
+                    "reason": "position_no_longer_open",
+                    "should_close": False,
+                }
+            )
+            continue
         if execution_store.list_open_attempts_for_position(
             position_id=position_id,
             statuses=sorted(OPEN_CLOSE_ATTEMPT_STATUSES),
