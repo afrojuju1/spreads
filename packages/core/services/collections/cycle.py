@@ -12,11 +12,11 @@ from core.services.automation_runtime import build_entry_runtime
 from core.services.candidate_history_recovery import (
     recover_session_candidates_from_history,
 )
-from core.services.collections.capture import (
+from core.services.collections.capture.candidates import (
     build_capture_candidates,
     build_preselection_capture_candidates,
-    capture_live_option_market_state,
 )
+from core.services.collections.capture.runtime import capture_live_option_market_state
 from core.services.collections.config import (
     _filter_scope_candidates,
     _filter_scope_rows,

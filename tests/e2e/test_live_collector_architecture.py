@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from core.jobs.orchestration import isoformat_utc
 from core.jobs.scheduler import _reconcile_live_collector_jobs
-from core.services.collections.capture import capture_live_option_market_state
+from core.services.collections.capture.runtime import capture_live_option_market_state
 from core.services.collections.cycle import run_collection_cycle
 from core.services.collections.models import LiveCaptureSnapshot, LiveTickContext
 from core.services.bots import load_active_bots
@@ -874,12 +874,12 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
 
         with (
             patch(
-                "core.services.collections.capture.refresh_live_session_capture_targets",
+                "core.services.collections.capture.runtime.refresh_live_session_capture_targets",
                 side_effect=lambda **_: order.append("targets")
                 or {"status": "ok", "capture_targets": {}},
             ),
             patch(
-                "core.services.collections.capture.collect_latest_quote_records",
+                "core.services.collections.capture.runtime.collect_latest_quote_records",
                 side_effect=lambda **_: order.append("baseline")
                 or [
                     {
@@ -892,7 +892,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                 ],
             ),
             patch(
-                "core.services.collections.capture.collect_recorded_market_data_records",
+                "core.services.collections.capture.runtime.collect_recorded_market_data_records",
                 side_effect=lambda **_: order.append("recorded")
                 or {
                     "quotes": recorder_quotes,
@@ -903,19 +903,19 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                 },
             ),
             patch(
-                "core.services.collections.capture.build_uoa_trade_summary",
+                "core.services.collections.capture.runtime.build_uoa_trade_summary",
                 return_value={"overview": {"scoreable_trade_count": 1}},
             ),
             patch(
-                "core.services.collections.capture.build_uoa_quote_summary",
+                "core.services.collections.capture.runtime.build_uoa_quote_summary",
                 return_value={"overview": {"observed_contract_count": 1}},
             ),
             patch(
-                "core.services.collections.capture.build_uoa_trade_baselines",
+                "core.services.collections.capture.runtime.build_uoa_trade_baselines",
                 return_value={},
             ),
             patch(
-                "core.services.collections.capture.build_uoa_root_decisions",
+                "core.services.collections.capture.runtime.build_uoa_root_decisions",
                 return_value={"overview": {"root_count": 1}},
             ),
         ):
