@@ -11,7 +11,7 @@ from core.services.scanners.config import (
     resolve_profile_value,
     resolve_symbol_scan_args,
 )
-from core.services.scanners.service import (
+from core.services.scanners.runtime import (
     build_candidates_from_market_slice,
     build_symbol_market_slice,
 )

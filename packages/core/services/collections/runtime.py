@@ -60,9 +60,11 @@ from core.services.target_planner import refresh_options_automation_capture_targ
 from core.services.uoa_trade_summary import build_uoa_trade_summary
 from core.services.market_dates import NEW_YORK
 from core.services.scanners.config import resolve_symbols
-from core.services.scanners.service import (
+from core.services.scanners.runtime import (
     merge_strategy_candidates,
     scan_symbol_across_strategies,
+)
+from core.services.scanners.service import (
     sort_candidates_for_display,
 )
 from core.storage.alert_repository import AlertRepository
