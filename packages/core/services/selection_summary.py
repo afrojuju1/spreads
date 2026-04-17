@@ -51,6 +51,24 @@ def selection_summary_payload(value: Any) -> dict[str, Any]:
     }
 
 
+def automation_summary_payload(value: Any) -> dict[str, Any]:
+    payload = value if isinstance(value, Mapping) else {}
+    return {
+        "automation_runs_upserted": (
+            coerce_int(payload.get("automation_runs_upserted")) or 0
+        ),
+        "runtime_opportunities_upserted": (
+            coerce_int(payload.get("runtime_opportunities_upserted")) or 0
+        ),
+        "runtime_opportunities_expired": (
+            coerce_int(payload.get("runtime_opportunities_expired")) or 0
+        ),
+        "runtime_selection_summary": selection_summary_payload(
+            payload.get("runtime_selection_summary")
+        ),
+    }
+
+
 def aggregate_selection_summaries(
     summaries: Sequence[Mapping[str, Any]] | None,
 ) -> dict[str, Any]:
@@ -103,6 +121,7 @@ def _counter_map(value: Any) -> dict[str, int]:
 
 
 __all__ = [
+    "automation_summary_payload",
     "aggregate_selection_summaries",
     "live_selection_counts",
     "selection_summary_payload",

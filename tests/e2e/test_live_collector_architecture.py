@@ -4,7 +4,7 @@ import asyncio
 import os
 import unittest
 from argparse import Namespace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 from core.jobs.orchestration import isoformat_utc
@@ -14,10 +14,12 @@ from core.services.collections.cycle import run_collection_cycle
 from core.services.collections.models import LiveCaptureSnapshot, LiveTickContext
 from core.services.bots import load_active_bots
 from core.services.decision_engine import run_entry_automation_decision
+from core.services.execution_intents import dispatch_pending_execution_intents
 from core.services.live_collector_health.capture import (
     build_quote_capture_summary,
     build_trade_capture_summary,
 )
+from core.services.ops.jobs import build_job_run_view
 from core.services.pipelines import get_pipeline_detail, list_pipelines
 from core.services.live_recovery import LIVE_SLOT_STATUS_MISSED
 from core.services.risk_manager import evaluate_open_execution
@@ -728,6 +730,154 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
             runtime.strategy_config.strategy_config_id,
         )
 
+    def test_collection_cycle_persists_canonical_opportunities_for_automation_scopes(
+        self,
+    ) -> None:
+        collector_store = _CollectorStore()
+        signal_store = _AutomationRuntimeSignalStore()
+        bot = load_active_bots()["short_dated_index_credit_bot"]
+        runtime = next(
+            item
+            for item in bot.automations
+            if item.automation.automation_id == "index_put_credit_entry"
+        )
+        symbol = runtime.symbols[0]
+        candidate = {
+            **_candidate_payload(symbol),
+            "strategy": "put_credit",
+            "profile": "weekly",
+            "short_delta": 0.22,
+            "width": 2.0,
+            "short_open_interest": 1200,
+            "long_open_interest": 1100,
+            "short_relative_spread": 0.05,
+            "long_relative_spread": 0.04,
+        }
+        args = Namespace(
+            strategy="put_credit",
+            profile="weekly",
+            greeks_source="local",
+            top=5,
+            history_db="postgresql://example",
+            execution_policy=None,
+            quote_capture_seconds=0,
+            trade_capture_seconds=0,
+            session_end_offset_minutes=0,
+            options_automation_scope={
+                "enabled": True,
+                "symbols": tuple(runtime.symbols),
+                "entry_runtimes": [(bot, runtime)],
+            },
+        )
+        scanner_args = Namespace(feed="opra", data_base_url="https://data.example")
+        collector_selection = {
+            "symbol_candidates": {symbol: [dict(candidate)]},
+            "promotable_candidates": [dict(candidate)],
+            "monitor_candidates": [],
+            "opportunities": [
+                {
+                    **candidate,
+                    "selection_state": "promotable",
+                    "selection_rank": 1,
+                    "state_reason": "selected_promotable",
+                    "origin": "live_scan",
+                    "eligibility": "live",
+                    "candidate": dict(candidate),
+                }
+            ],
+            "selection_memory": {},
+            "events": [],
+        }
+        runtime_selection = {
+            "symbol_candidates": {symbol: [dict(candidate)]},
+            "promotable_candidates": [],
+            "monitor_candidates": [],
+            "opportunities": [],
+            "selection_memory": {},
+            "events": [],
+        }
+        runtime_candidate_rows_by_owner = {
+            (bot.bot.bot_id, runtime.automation.automation_id): {
+                symbol: [dict(candidate)]
+            }
+        }
+
+        with (
+            patch(
+                "core.services.collections.cycle.run_universe_cycle",
+                return_value=([symbol], "liquid_index_etfs", [], [], []),
+            ),
+            patch(
+                "core.services.collections.cycle.build_symbol_strategy_candidates",
+                return_value={symbol: [candidate]},
+            ),
+            patch(
+                "core.services.collections.cycle.capture_live_option_market_state",
+                return_value=_same_slot_capture_snapshot(symbol),
+            ),
+            patch(
+                "core.services.collections.cycle.read_previous_selection",
+                return_value=({}, {}),
+            ),
+            patch(
+                "core.services.collections.cycle.build_entry_runtime_candidates",
+                return_value=runtime_candidate_rows_by_owner,
+            ),
+            patch(
+                "core.services.collections.cycle.select_live_opportunities",
+                return_value=collector_selection,
+            ),
+            patch(
+                "core.services.opportunity_generation.select_live_opportunities",
+                return_value=runtime_selection,
+            ),
+            patch(
+                "core.services.collections.cycle.sync_live_collector_signal_layer",
+                return_value={
+                    "signal_states_upserted": 1,
+                    "signal_transitions_recorded": 1,
+                    "opportunities_upserted": 1,
+                    "opportunities_expired": 0,
+                },
+            ) as signal_sync,
+            patch(
+                "core.services.collections.cycle.dispatch_cycle_alerts",
+                return_value=[],
+            ),
+        ):
+            result = run_collection_cycle(
+                args,
+                tick_context=None,
+                scanner_args=scanner_args,
+                client=object(),
+                history_store=_HistoryStore(),
+                alert_store=_AlertStore(),
+                job_store=_JobStoreThatMustNotServeStaleContext(),
+                collector_store=collector_store,
+                event_store=_EventStore(),
+                signal_store=signal_store,
+                recovery_store=None,
+                calendar_resolver=object(),
+                greeks_provider=object(),
+                emit_output=False,
+            )
+
+        self.assertIsNotNone(collector_store.saved_cycle)
+        self.assertEqual(len(collector_store.saved_cycle["opportunities"]), 1)
+        self.assertEqual(result["selection_summary"]["opportunity_count"], 1)
+        self.assertEqual(
+            result["automation_summary"]["runtime_selection_summary"][
+                "opportunity_count"
+            ],
+            0,
+        )
+        self.assertEqual(result["promotable_opportunity_count"], 1)
+        signal_sync.assert_called_once()
+        self.assertEqual(
+            len(signal_sync.call_args.kwargs["persisted_opportunities"]),
+            1,
+        )
+
     def test_save_cycle_does_not_materialize_legacy_pipeline_rows(self) -> None:
         tracking_session = _TrackingSession()
         repo = _CollectorRepositoryWithoutLegacyPipelineWrites(tracking_session)
@@ -762,6 +912,212 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
 
         merged_type_names = [type(value).__name__ for value in tracking_session.merged]
         self.assertEqual(merged_type_names, ["CollectorCycleModel"])
+
+    def test_execute_job_terminalizes_inactive_runtime_opportunities(self) -> None:
+        stale_updated_at = (datetime.now(UTC) - timedelta(minutes=30)).isoformat()
+        opportunity_id = (
+            "opportunity:short_dated_index_credit_bot:index_put_credit_entry:"
+            "2026-04-17:GLD:legs"
+        )
+
+        class _SignalStore:
+            def __init__(self) -> None:
+                self.rows = [
+                    {
+                        "opportunity_id": opportunity_id,
+                        "label": "explore_10_put_credit_weekly_auto",
+                        "lifecycle_state": "candidate",
+                        "updated_at": stale_updated_at,
+                        "consumed_by_execution_attempt_id": None,
+                        "reason_codes": ["selected_monitor"],
+                    }
+                ]
+                self.expired_ids: list[str] = []
+
+            def schema_ready(self) -> bool:
+                return True
+
+            def list_opportunities(self, **_: object) -> list[dict[str, object]]:
+                return [dict(row) for row in self.rows]
+
+            def expire_opportunity(
+                self,
+                opportunity_id: str,
+                *,
+                expired_at: str,
+                reason_code: str = "expired_manual",
+            ) -> dict[str, object] | None:
+                for row in self.rows:
+                    if row["opportunity_id"] != opportunity_id:
+                        continue
+                    reasons = [str(value) for value in row.get("reason_codes") or []]
+                    if reason_code not in reasons:
+                        reasons.append(reason_code)
+                    row["reason_codes"] = reasons
+                    row["lifecycle_state"] = "expired"
+                    row["updated_at"] = expired_at
+                    row["expires_at"] = expired_at
+                    self.expired_ids.append(opportunity_id)
+                    return dict(row)
+                return None
+
+            def delete_opportunity(self, opportunity_id: str) -> bool:
+                raise AssertionError(
+                    f"cleanup must not delete opportunity {opportunity_id}"
+                )
+
+        class _ExecutionStore:
+            def intent_schema_ready(self) -> bool:
+                return True
+
+            def list_execution_intents(self, **_: object) -> list[dict[str, object]]:
+                return []
+
+        class _JobStore:
+            def schema_ready(self) -> bool:
+                return True
+
+            def list_job_definitions(self, **_: object) -> list[dict[str, object]]:
+                return []
+
+        class _Storage:
+            def __init__(self) -> None:
+                self.signals = _SignalStore()
+                self.execution = _ExecutionStore()
+                self.jobs = _JobStore()
+
+        storage = _Storage()
+
+        with (
+            patch(
+                "core.services.execution_intents.create_alpaca_client_from_env",
+                return_value=type("Client", (), {"trading_base_url": "paper"})(),
+            ),
+            patch(
+                "core.services.execution_intents.resolve_trading_environment",
+                return_value="paper",
+            ),
+            patch(
+                "core.services.execution_intents._cleanup_terminal_intent_history",
+                return_value={"deleted": 0, "results": []},
+            ),
+            patch(
+                "core.services.execution_intents._backfill_strategy_position_links",
+                return_value={"linked": 0, "results": []},
+            ),
+            patch(
+                "core.services.execution_intents._cleanup_slot_conflicts",
+                return_value={"revoked": 0, "results": []},
+            ),
+            patch(
+                "core.services.execution_intents._manage_submitted_open_intents",
+                return_value={"managed": 0, "results": []},
+            ),
+        ):
+            result = dispatch_pending_execution_intents(
+                db_target="postgresql://example",
+                storage=storage,
+                limit=10,
+            )
+
+        cleanup = dict(result["opportunity_cleanup"])
+        self.assertEqual(cleanup["deleted"], 0)
+        self.assertEqual(cleanup["terminalized"], 1)
+        self.assertEqual(storage.signals.expired_ids, [opportunity_id])
+        self.assertEqual(storage.signals.rows[0]["lifecycle_state"], "expired")
+        self.assertIn(
+            "expired_inactive_automation_label",
+            storage.signals.rows[0]["reason_codes"],
+        )
+
+    def test_execute_job_retains_terminal_execution_intents(self) -> None:
+        stale_created_at = (datetime.now(UTC) - timedelta(minutes=30)).isoformat()
+        intent_id = "execution_intent:terminal-1"
+
+        class _SignalStore:
+            def schema_ready(self) -> bool:
+                return True
+
+            def list_opportunities(self, **_: object) -> list[dict[str, object]]:
+                return []
+
+        class _ExecutionStore:
+            def __init__(self) -> None:
+                self.rows = [
+                    {
+                        "execution_intent_id": intent_id,
+                        "bot_id": "short_dated_index_credit_bot",
+                        "automation_id": "index_put_credit_entry",
+                        "state": "expired",
+                        "slot_key": "entry:GLD",
+                        "created_at": stale_created_at,
+                    }
+                ]
+
+            def intent_schema_ready(self) -> bool:
+                return True
+
+            def list_execution_intents(
+                self, **kwargs: object
+            ) -> list[dict[str, object]]:
+                states = kwargs.get("states")
+                if states == ["pending"]:
+                    return []
+                return [dict(row) for row in self.rows]
+
+            def delete_execution_intent(self, execution_intent_id: str) -> bool:
+                raise AssertionError(
+                    f"cleanup must not delete execution intent {execution_intent_id}"
+                )
+
+        class _JobStore:
+            def schema_ready(self) -> bool:
+                return True
+
+            def list_job_definitions(self, **_: object) -> list[dict[str, object]]:
+                return []
+
+        class _Storage:
+            def __init__(self) -> None:
+                self.signals = _SignalStore()
+                self.execution = _ExecutionStore()
+                self.jobs = _JobStore()
+
+        storage = _Storage()
+
+        with (
+            patch(
+                "core.services.execution_intents.create_alpaca_client_from_env",
+                return_value=type("Client", (), {"trading_base_url": "paper"})(),
+            ),
+            patch(
+                "core.services.execution_intents.resolve_trading_environment",
+                return_value="paper",
+            ),
+            patch(
+                "core.services.execution_intents._backfill_strategy_position_links",
+                return_value={"linked": 0, "results": []},
+            ),
+            patch(
+                "core.services.execution_intents._cleanup_slot_conflicts",
+                return_value={"revoked": 0, "results": []},
+            ),
+            patch(
+                "core.services.execution_intents._manage_submitted_open_intents",
+                return_value={"managed": 0, "results": []},
+            ),
+        ):
+            result = dispatch_pending_execution_intents(
+                db_target="postgresql://example",
+                storage=storage,
+                limit=10,
+            )
+
+        cleanup = dict(result["intent_cleanup"])
+        self.assertEqual(cleanup["deleted"], 0)
+        self.assertEqual(cleanup["retained"], 1)
+        self.assertEqual(cleanup["results"][0]["execution_intent_id"], intent_id)
+        self.assertEqual(storage.execution.rows[0]["state"], "expired")
 
     def test_collection_cycle_uses_same_slot_signal_context(self) -> None:
         collector_store = _CollectorStore()
@@ -996,6 +1352,92 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         )
         self.assertEqual(pipeline["promotable_count"], 1)
         self.assertEqual(pipeline["monitor_count"], 0)
+
+    def test_job_run_view_surfaces_live_collector_automation_summary(self) -> None:
+        run = {
+            "job_run_id": "run-1",
+            "job_key": "live_collector:explore_10_call_debit_weekly_auto",
+            "job_type": "live_collector",
+            "status": "succeeded",
+            "scheduled_for": "2026-04-15T14:35:00Z",
+            "started_at": "2026-04-15T14:35:01Z",
+            "finished_at": "2026-04-15T14:35:15Z",
+            "session_id": "live:explore_10_call_debit_weekly_auto:2026-04-15",
+            "slot_at": "2026-04-15T14:35:00Z",
+            "worker_name": "worker",
+            "retry_count": 0,
+            "payload": {
+                "label": "explore_10_call_debit_weekly_auto",
+                "session_date": "2026-04-15",
+            },
+            "result": {
+                "label": "explore_10_call_debit_weekly_auto",
+                "quote_capture": {},
+                "trade_capture": {},
+                "uoa_summary": {},
+                "uoa_quote_summary": {},
+                "uoa_decisions": {},
+                "selection_summary": {
+                    "opportunity_count": 1,
+                    "selection_state_counts": {"promotable": 1},
+                },
+                "automation_summary": {
+                    "automation_runs_upserted": 1,
+                    "runtime_opportunities_upserted": 2,
+                    "runtime_opportunities_expired": 1,
+                    "runtime_selection_summary": {
+                        "opportunity_count": 2,
+                        "selection_state_counts": {
+                            "promotable": 1,
+                            "monitor": 1,
+                        },
+                    },
+                },
+            },
+        }
+        definition = {
+            "job_key": "live_collector:explore_10_call_debit_weekly_auto",
+            "job_type": "live_collector",
+            "enabled": True,
+            "payload": {},
+        }
+
+        class _JobStore:
+            def schema_ready(self) -> bool:
+                return True
+
+            def get_job_run(self, job_run_id: str) -> dict[str, object] | None:
+                return dict(run) if job_run_id == "run-1" else None
+
+            def get_job_definition(self, job_key: str) -> dict[str, object] | None:
+                return dict(definition) if job_key == definition["job_key"] else None
+
+            def list_latest_runs_by_job_keys(
+                self, **_: object
+            ) -> list[dict[str, object]]:
+                return [dict(run)]
+
+            def get_lease(self, key: str) -> None:
+                del key
+                return None
+
+        storage = type("Storage", (), {"jobs": _JobStore()})()
+
+        job_view = build_job_run_view(job_run_id="run-1", storage=storage)
+
+        self.assertEqual(job_view["summary"]["runtime_opportunity_count"], 2)
+        self.assertEqual(
+            job_view["details"]["automation_summary"][
+                "runtime_opportunities_upserted"
+            ],
+            2,
+        )
+        self.assertEqual(
+            job_view["details"]["automation_summary"]["runtime_selection_summary"][
+                "selection_state_counts"
+            ]["monitor"],
+            1,
+        )
 
     def test_uoa_state_prefers_canonical_signal_opportunities(self) -> None:
         storage = _PipelineStorage()

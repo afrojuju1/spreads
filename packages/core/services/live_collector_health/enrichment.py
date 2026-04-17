@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from core.services.selection_summary import automation_summary_payload
 from core.services.selection_terms import normalize_uoa_decision_state
 
 from .capture import build_quote_capture_summary, build_trade_capture_summary
@@ -225,6 +226,33 @@ def enrich_live_collector_result(
         if isinstance(enriched.get("uoa_decisions"), Mapping)
         else None
     )
+    raw_automation_summary = (
+        dict(enriched.get("automation_summary") or {})
+        if isinstance(enriched.get("automation_summary"), Mapping)
+        else {}
+    )
+    raw_automation_summary.setdefault(
+        "automation_runs_upserted",
+        enriched.get("automation_runs_upserted"),
+    )
+    raw_automation_summary.setdefault(
+        "runtime_opportunities_upserted",
+        enriched.get("runtime_opportunities_upserted"),
+    )
+    raw_automation_summary.setdefault(
+        "runtime_opportunities_expired",
+        enriched.get("runtime_opportunities_expired"),
+    )
+    enriched["automation_summary"] = automation_summary_payload(raw_automation_summary)
+    enriched["automation_runs_upserted"] = enriched["automation_summary"][
+        "automation_runs_upserted"
+    ]
+    enriched["runtime_opportunities_upserted"] = enriched["automation_summary"][
+        "runtime_opportunities_upserted"
+    ]
+    enriched["runtime_opportunities_expired"] = enriched["automation_summary"][
+        "runtime_opportunities_expired"
+    ]
     enriched["selection_summary"] = normalize_selection_summary(
         enriched.get("selection_summary")
         if isinstance(enriched.get("selection_summary"), Mapping)
@@ -263,6 +291,14 @@ def enrich_live_collector_job_run_payload(payload: Mapping[str, Any]) -> dict[st
     enriched["uoa_decisions"] = result.get("uoa_decisions") or {}
     enriched["selection_summary"] = result.get("selection_summary") or {}
     enriched["raw_candidate_summary"] = result.get("raw_candidate_summary") or {}
+    enriched["automation_summary"] = result.get("automation_summary") or {}
+    enriched["automation_runs_upserted"] = result.get("automation_runs_upserted") or 0
+    enriched["runtime_opportunities_upserted"] = (
+        result.get("runtime_opportunities_upserted") or 0
+    )
+    enriched["runtime_opportunities_expired"] = (
+        result.get("runtime_opportunities_expired") or 0
+    )
     enriched["auto_execution_summary"] = result.get("auto_execution_summary")
     enriched["capture_status"] = result["quote_capture"]["capture_status"]
     run_payload = (

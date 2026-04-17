@@ -286,14 +286,14 @@ def _cleanup_terminal_intent_history(
     older_than_minutes: int = 15,
 ) -> dict[str, Any]:
     threshold = datetime.now(UTC) - timedelta(minutes=max(older_than_minutes, 1))
-    deleted = 0
+    retained = 0
     results: list[dict[str, Any]] = []
     intents = [
         dict(row)
         for row in execution_store.list_execution_intents(limit=max(int(limit), 1) * 25)
     ]
     for intent in intents:
-        if deleted >= max(int(limit), 1):
+        if retained >= max(int(limit), 1):
             break
         state = str(intent.get("state") or "")
         if state not in TERMINAL_INTENT_STATES:
@@ -302,16 +302,15 @@ def _cleanup_terminal_intent_history(
         if created_at is None or created_at >= threshold:
             continue
         execution_intent_id = str(intent["execution_intent_id"])
-        if execution_store.delete_execution_intent(execution_intent_id):
-            deleted += 1
-            results.append(
-                {
-                    "execution_intent_id": execution_intent_id,
-                    "state": state,
-                    "slot_key": intent.get("slot_key"),
-                }
-            )
-    return {"deleted": deleted, "results": results[:25]}
+        retained += 1
+        results.append(
+            {
+                "execution_intent_id": execution_intent_id,
+                "state": state,
+                "slot_key": intent.get("slot_key"),
+            }
+        )
+    return {"deleted": 0, "retained": retained, "results": results[:25]}
 
 
 def _cleanup_stale_automation_opportunities(
@@ -323,10 +322,10 @@ def _cleanup_stale_automation_opportunities(
     older_than_minutes: int = 15,
 ) -> dict[str, Any]:
     if not signal_store.schema_ready():
-        return {"deleted": 0, "results": []}
+        return {"deleted": 0, "terminalized": 0, "results": []}
     active_labels = _active_options_automation_labels(job_store)
     threshold = datetime.now(UTC) - timedelta(minutes=max(older_than_minutes, 1))
-    deleted = 0
+    terminalized = 0
     results: list[dict[str, Any]] = []
     opportunities = [
         dict(row)
@@ -337,7 +336,7 @@ def _cleanup_stale_automation_opportunities(
         )
     ]
     for opportunity in opportunities:
-        if deleted >= max(int(limit), 1):
+        if terminalized >= max(int(limit), 1):
             break
         opportunity_id = str(opportunity["opportunity_id"])
         label = str(opportunity.get("label") or "")
@@ -347,14 +346,24 @@ def _cleanup_stale_automation_opportunities(
             continue
         if _as_text(opportunity.get("consumed_by_execution_attempt_id")):
             continue
-        if label not in active_labels or lifecycle_state == "expired":
-            if signal_store.delete_opportunity(opportunity_id):
-                deleted += 1
-                results.append(
-                    {
-                        "opportunity_id": opportunity_id,
-                        "label": label,
-                        "lifecycle_state": lifecycle_state,
-                    }
-                )
-    return {"deleted": deleted, "results": results[:25]}
+        if lifecycle_state == "expired":
+            continue
+        if label in active_labels:
+            continue
+        expired = signal_store.expire_opportunity(
+            opportunity_id,
+            expired_at=_utc_now(),
+            reason_code="expired_inactive_automation_label",
+        )
+        if expired is None:
+            continue
+        terminalized += 1
+        results.append(
+            {
+                "opportunity_id": opportunity_id,
+                "label": label,
+                "previous_lifecycle_state": lifecycle_state,
+                "lifecycle_state": expired.get("lifecycle_state"),
+            }
+        )
+    return {"deleted": 0, "terminalized": terminalized, "results": results[:25]}

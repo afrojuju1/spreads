@@ -758,6 +758,16 @@ def build_job_run_view(
             )
 
     result = run.get("result") if isinstance(run.get("result"), Mapping) else {}
+    automation_summary = (
+        dict(run.get("automation_summary") or {})
+        if isinstance(run.get("automation_summary"), Mapping)
+        else {}
+    )
+    runtime_selection_summary = (
+        dict(automation_summary.get("runtime_selection_summary") or {})
+        if isinstance(automation_summary.get("runtime_selection_summary"), Mapping)
+        else {}
+    )
     if (
         str(run.get("status") or "") == "failed"
         and _as_text(run.get("error_text")) is None
@@ -792,6 +802,22 @@ def build_job_run_view(
                 (run.get("selection_summary") or {}).get("opportunity_count")
             )
             or 0,
+            "automation_runs_upserted": _coerce_int(
+                automation_summary.get("automation_runs_upserted")
+            )
+            or 0,
+            "runtime_opportunities_upserted": _coerce_int(
+                automation_summary.get("runtime_opportunities_upserted")
+            )
+            or 0,
+            "runtime_opportunities_expired": _coerce_int(
+                automation_summary.get("runtime_opportunities_expired")
+            )
+            or 0,
+            "runtime_opportunity_count": _coerce_int(
+                runtime_selection_summary.get("opportunity_count")
+            )
+            or 0,
         },
         "attention": attention,
         "details": {
@@ -806,6 +832,7 @@ def build_job_run_view(
             "uoa_quote_summary": dict(run.get("uoa_quote_summary") or {}),
             "uoa_decisions": dict(run.get("uoa_decisions") or {}),
             "selection_summary": _selection_summary_payload(run.get("selection_summary")),
+            "automation_summary": automation_summary,
             "singleton_lease": None if singleton_lease is None else dict(singleton_lease),
         },
     }

@@ -103,6 +103,12 @@ def list_latest_live_sessions(
             and isinstance(summary_run.get("raw_candidate_summary"), Mapping)
             else None
         )
+        automation_summary = (
+            dict(summary_run.get("automation_summary") or {})
+            if isinstance(summary_run, Mapping)
+            and isinstance(summary_run.get("automation_summary"), Mapping)
+            else None
+        )
         sessions.append(
             {
                 "pipeline": dict(pipeline),
@@ -114,6 +120,7 @@ def list_latest_live_sessions(
                 "job_run": _job_run_payload(summary_run),
                 "selection_summary": selection_summary,
                 "raw_candidate_summary": raw_candidate_summary,
+                "automation_summary": automation_summary,
                 "quote_capture": {}
                 if summary_run is None
                 else dict(summary_run.get("quote_capture") or {}),
@@ -274,6 +281,15 @@ def _build_live_session_state(
             else None
         )
     )
+    automation_summary = (
+        None
+        if run_payload is None
+        else (
+            dict(run_payload.get("automation_summary") or {})
+            if isinstance(run_payload.get("automation_summary"), Mapping)
+            else None
+        )
+    )
     if selection_summary is None:
         selection_summary = build_selection_summary(opportunities)
     recovery_slots = (
@@ -315,6 +331,7 @@ def _build_live_session_state(
         "selection_counts": selection_counts,
         "selection_summary": selection_summary,
         "raw_candidate_summary": raw_candidate_summary,
+        "automation_summary": automation_summary,
         "cycle_events": cycle_events,
         "quote_capture": {}
         if run_payload is None

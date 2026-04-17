@@ -169,6 +169,14 @@ def run_collection_tick(
         "signal_transitions_recorded": cycle_result["signal_transitions_recorded"],
         "opportunities_upserted": cycle_result["opportunities_upserted"],
         "opportunities_expired": cycle_result["opportunities_expired"],
+        "automation_runs_upserted": cycle_result["automation_runs_upserted"],
+        "runtime_opportunities_upserted": cycle_result[
+            "runtime_opportunities_upserted"
+        ],
+        "runtime_opportunities_expired": cycle_result[
+            "runtime_opportunities_expired"
+        ],
+        "automation_summary": dict(cycle_result["automation_summary"]),
         "quote_capture": dict(cycle_result["quote_capture"]),
         "trade_capture": dict(cycle_result["trade_capture"]),
         "uoa_summary": dict(cycle_result["uoa_summary"]),
@@ -232,6 +240,9 @@ def run_collection(
     total_signal_transitions = 0
     total_opportunities = 0
     total_opportunities_expired = 0
+    total_automation_runs = 0
+    total_runtime_opportunities = 0
+    total_runtime_opportunities_expired = 0
     last_label: str | None = None
     bootstrap_result = build_skipped_collection_result(
         reason="bootstrap",
@@ -251,6 +262,12 @@ def run_collection(
     last_selection_summary: dict[str, object] = dict(
         bootstrap_result["selection_summary"]
     )
+    last_automation_summary: dict[str, object] = {
+        "automation_runs_upserted": 0,
+        "runtime_opportunities_upserted": 0,
+        "runtime_opportunities_expired": 0,
+        "runtime_selection_summary": {},
+    }
     iterations_completed = 0
     try:
         with build_storage_context(args.history_db) as storage:
@@ -311,6 +328,13 @@ def run_collection(
                 total_opportunities_expired += int(
                     cycle_result["opportunities_expired"]
                 )
+                total_automation_runs += int(cycle_result["automation_runs_upserted"])
+                total_runtime_opportunities += int(
+                    cycle_result["runtime_opportunities_upserted"]
+                )
+                total_runtime_opportunities_expired += int(
+                    cycle_result["runtime_opportunities_expired"]
+                )
                 iterations_completed += 1
                 last_label = str(cycle_result["label"])
                 last_uoa_summary = dict(cycle_result["uoa_summary"])
@@ -318,6 +342,7 @@ def run_collection(
                 last_uoa_decisions = dict(cycle_result["uoa_decisions"])
                 last_raw_candidate_summary = dict(cycle_result["raw_candidate_summary"])
                 last_selection_summary = dict(cycle_result["selection_summary"])
+                last_automation_summary = dict(cycle_result["automation_summary"])
                 if iteration < args.iterations - 1:
                     elapsed_seconds = time_module.monotonic() - iteration_started_at
                     sleep_seconds = max(
@@ -347,6 +372,17 @@ def run_collection(
         "signal_transitions_recorded": total_signal_transitions,
         "opportunities_upserted": total_opportunities,
         "opportunities_expired": total_opportunities_expired,
+        "automation_runs_upserted": total_automation_runs,
+        "runtime_opportunities_upserted": total_runtime_opportunities,
+        "runtime_opportunities_expired": total_runtime_opportunities_expired,
+        "automation_summary": {
+            "automation_runs_upserted": total_automation_runs,
+            "runtime_opportunities_upserted": total_runtime_opportunities,
+            "runtime_opportunities_expired": total_runtime_opportunities_expired,
+            "runtime_selection_summary": dict(
+                last_automation_summary.get("runtime_selection_summary") or {}
+            ),
+        },
         "quote_capture": build_quote_capture_summary(
             expected_quote_symbols=[],
             total_quote_events_saved=total_quote_events,

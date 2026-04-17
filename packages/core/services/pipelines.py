@@ -516,6 +516,7 @@ def get_pipeline_detail(
     ]
     selection_counts = dict(live_session.get("selection_counts") or {})
     candidate_counts = dict(live_session.get("candidate_counts") or {})
+    automation_summary = dict(live_session.get("automation_summary") or {})
     current_cycle = {
         **_build_cycle_payload(
             pipeline_id=pipeline_id,
@@ -529,6 +530,7 @@ def get_pipeline_detail(
         "promotable_count": int(selection_counts.get("promotable") or 0),
         "monitor_count": int(selection_counts.get("monitor") or 0),
         "legacy_session_id": legacy_session_id,
+        "automation_summary": automation_summary,
     }
 
     alerts = [
@@ -671,6 +673,7 @@ def get_pipeline_detail(
         **tradeability_fields,
         "pipeline": dict(pipeline),
         "current_cycle": current_cycle,
+        "automation_summary": automation_summary,
         "cycles": cycles,
         "opportunities": live_opportunities,
         "analysis_only_opportunities": analysis_only_opportunities,

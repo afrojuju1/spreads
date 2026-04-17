@@ -219,7 +219,72 @@ def _render_raw_candidate_summary(
             _render_money(row.get("midpoint_credit")),
             _render_value(row.get("return_on_risk")),
             str(row.get("setup_status") or "-"),
+    )
+    console.print(table)
+
+
+def _render_automation_sync_value(value: Any) -> str:
+    payload = value if isinstance(value, dict) else {}
+    runtime_selection = (
+        payload.get("runtime_selection_summary")
+        if isinstance(payload.get("runtime_selection_summary"), dict)
+        else {}
+    )
+    if (
+        not payload
+        or (
+            int(payload.get("automation_runs_upserted") or 0) <= 0
+            and int(payload.get("runtime_opportunities_upserted") or 0) <= 0
+            and int(payload.get("runtime_opportunities_expired") or 0) <= 0
+            and int(runtime_selection.get("opportunity_count") or 0) <= 0
         )
+    ):
+        return "-"
+    return (
+        f"runs {_render_value(payload.get('automation_runs_upserted'))} | "
+        f"opps {_render_value(runtime_selection.get('opportunity_count'))} | "
+        f"up {_render_value(payload.get('runtime_opportunities_upserted'))} | "
+        f"exp {_render_value(payload.get('runtime_opportunities_expired'))}"
+    )
+
+
+def _render_automation_sync_summary(
+    console: Console,
+    *,
+    title: str,
+    value: Any,
+) -> None:
+    payload = value if isinstance(value, dict) else {}
+    runtime_selection = (
+        payload.get("runtime_selection_summary")
+        if isinstance(payload.get("runtime_selection_summary"), dict)
+        else {}
+    )
+    if _render_automation_sync_value(payload) == "-":
+        return
+    table = Table(title=title, show_edge=False, header_style="bold")
+    table.add_column("Metric", style="bold")
+    table.add_column("Value")
+    table.add_row(
+        "Runs Upserted",
+        _render_value(payload.get("automation_runs_upserted")),
+    )
+    table.add_row(
+        "Runtime Opportunities",
+        _render_value(runtime_selection.get("opportunity_count")),
+    )
+    table.add_row(
+        "Runtime Upserted",
+        _render_value(payload.get("runtime_opportunities_upserted")),
+    )
+    table.add_row(
+        "Runtime Expired",
+        _render_value(payload.get("runtime_opportunities_expired")),
+    )
+    table.add_row(
+        "Runtime States",
+        _render_count_map(runtime_selection.get("selection_state_counts")),
+    )
     console.print(table)
 
 
@@ -631,6 +696,7 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Capture")
         table.add_column("Auto Exec")
         table.add_column("Opps/Live", justify="right")
+        table.add_column("Automation")
         table.add_column("Quote Stream/Base", justify="right")
         table.add_column("Last Slot")
         for row in collector_rows:
@@ -645,6 +711,7 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
                 str(row.get("capture_status") or "-"),
                 _render_auto_execution_summary(row.get("auto_execution_summary")),
                 f"{_render_value(selection_summary.get('opportunity_count'))}/{_render_value(selection_summary.get('auto_live_eligible_count'))}",
+                _render_automation_sync_value(row.get("automation_summary")),
                 f"{_render_value(row.get('stream_quote_events_saved'))}/{_render_value(row.get('baseline_quote_events_saved'))}",
                 str(row.get("last_slot_at") or "-"),
             )
@@ -1057,6 +1124,10 @@ def _render_job_run_detail(console: Console, payload: dict[str, Any]) -> None:
         "Opportunities",
         _render_value(summary.get("collector_opportunity_count")),
     )
+    overview.add_row(
+        "Automation",
+        _render_automation_sync_value(details.get("automation_summary")),
+    )
     console.print(
         Panel(
             overview,
@@ -1096,6 +1167,11 @@ def _render_job_run_detail(console: Console, payload: dict[str, Any]) -> None:
         console,
         title="Selection Summary",
         value=details.get("selection_summary") or {},
+    )
+    _render_automation_sync_summary(
+        console,
+        title="Automation Sync",
+        value=details.get("automation_summary") or {},
     )
 
     error_text = run.get("error_text")
@@ -1327,7 +1403,6 @@ def _render_uoa_detail(console: Console, payload: dict[str, Any]) -> None:
 def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
     summary = dict(payload.get("summary") or {})
     details = dict(payload.get("details") or {})
-    target = dict(details.get("target") or {})
     current_cycle = dict(details.get("current_cycle") or {})
     portfolio_summary = dict(details.get("portfolio_summary") or {})
     post_market = dict(details.get("post_market") or {})
@@ -1389,6 +1464,10 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
                 f"promotable {_render_value(current_cycle.get('promotable_count'))} | "
                 f"monitor {_render_value(current_cycle.get('monitor_count'))}"
             ),
+        )
+        table.add_row(
+            "Automation",
+            _render_automation_sync_value(current_cycle.get("automation_summary")),
         )
         console.print(table)
 

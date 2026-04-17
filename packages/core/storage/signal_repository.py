@@ -529,6 +529,44 @@ class SignalRepository(RepositoryBase):
             session.delete(row)
             return True
 
+    @staticmethod
+    def _expire_opportunity_model(
+        row: OpportunityModel,
+        *,
+        expired_at_dt: datetime,
+        reason_code: str,
+    ) -> None:
+        reason_codes = [str(value) for value in row.reason_codes_json or []]
+        if reason_code not in reason_codes:
+            reason_codes.append(reason_code)
+        row.lifecycle_state = "expired"
+        row.reason_codes_json = reason_codes
+        row.updated_at = expired_at_dt
+        row.expires_at = expired_at_dt
+
+    def expire_opportunity(
+        self,
+        opportunity_id: str,
+        *,
+        expired_at: str,
+        reason_code: str = "expired_manual",
+    ) -> OpportunityRecord | None:
+        expired_at_dt = parse_datetime(expired_at)
+        if expired_at_dt is None:
+            raise ValueError("expired_at is required")
+        with self.session_scope() as session:
+            row = session.get(OpportunityModel, opportunity_id)
+            if row is None:
+                return None
+            self._expire_opportunity_model(
+                row,
+                expired_at_dt=expired_at_dt,
+                reason_code=str(reason_code),
+            )
+            session.flush()
+            session.refresh(row)
+            return self.row(row)
+
     def upsert_opportunity(
         self,
         *,
@@ -939,13 +977,11 @@ class SignalRepository(RepositoryBase):
             rows = session.scalars(statement).all()
             expired_rows: list[OpportunityModel] = []
             for row in rows:
-                reason_codes = [str(value) for value in row.reason_codes_json or []]
-                if "expired_cycle_absence" not in reason_codes:
-                    reason_codes.append("expired_cycle_absence")
-                row.lifecycle_state = "expired"
-                row.reason_codes_json = reason_codes
-                row.updated_at = expired_at_dt
-                row.expires_at = expired_at_dt
+                self._expire_opportunity_model(
+                    row,
+                    expired_at_dt=expired_at_dt,
+                    reason_code="expired_cycle_absence",
+                )
                 expired_rows.append(row)
             session.flush()
             for row in expired_rows:
