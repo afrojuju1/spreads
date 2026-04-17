@@ -32,6 +32,53 @@ def _future_iso(hours: int = 1) -> str:
     )
 
 
+def _collector_run_record(
+    *,
+    job_run_id: str = "run-1",
+    status: str = "succeeded",
+    timestamp: str | None = None,
+    label: str = "0dte_core_call_debit_weekly_auto",
+    market_date: str = "2026-04-15",
+    result: dict[str, object] | None = None,
+) -> dict[str, object]:
+    run_at = timestamp or _now_iso()
+    payload: dict[str, object] = {
+        "job_run_id": job_run_id,
+        "job_key": "live_collector:earnings",
+        "job_type": "live_collector",
+        "status": status,
+        "scheduled_for": run_at,
+        "started_at": run_at,
+        "heartbeat_at": run_at,
+        "worker_name": "worker-runtime",
+        "retry_count": 0,
+        "session_id": f"live:{label}:{market_date}",
+        "slot_at": run_at,
+        "payload": {
+            "label": label,
+            "profile": "weekly",
+            "singleton_scope": "earnings",
+        },
+    }
+    if status == "succeeded":
+        payload["finished_at"] = run_at
+        payload["result"] = {
+            "label": label,
+            "profile": "weekly",
+            "quote_events_saved": 0,
+            "baseline_quote_events_saved": 0,
+            "stream_quote_events_saved": 0,
+            "trade_events_saved": 0,
+            "stream_trade_events_saved": 0,
+            "selection_summary": {},
+            "uoa_summary": {},
+            "uoa_quote_summary": {},
+            "uoa_decisions": {},
+            **dict(result or {}),
+        }
+    return payload
+
+
 def _collector_candidate(
     *,
     symbol: str,
@@ -314,8 +361,17 @@ def _run_replay_flow(rows: list[dict[str, object]]) -> dict[str, object]:
 
 
 class _FakeJobStore:
-    def __init__(self, run_record: dict[str, object]) -> None:
+    def __init__(
+        self,
+        run_record: dict[str, object],
+        *,
+        latest_session_run: dict[str, object] | None = None,
+        recent_runs: list[dict[str, object]] | None = None,
+        latest_runs_by_job_key: dict[str, dict[str, object]] | None = None,
+    ) -> None:
         self.run_record = dict(run_record)
+        self.latest_session_run = dict(latest_session_run or run_record)
+        self.recent_runs = [dict(row) for row in list(recent_runs or [])]
         self.definition = {
             "job_key": "live_collector:earnings",
             "job_type": "live_collector",
@@ -331,6 +387,14 @@ class _FakeJobStore:
                 "greeks_source": "auto",
             },
         }
+        self.latest_runs_by_job_key = {
+            str(key): dict(row)
+            for key, row in dict(latest_runs_by_job_key or {}).items()
+        }
+        self.latest_runs_by_job_key.setdefault(
+            str(self.definition["job_key"]),
+            dict(self.latest_session_run),
+        )
 
     def schema_ready(self) -> bool:
         return True
@@ -357,8 +421,18 @@ class _FakeJobStore:
             ]
         return []
 
-    def list_job_runs(self, **_: object) -> list[dict[str, object]]:
-        return []
+    def list_job_runs(self, **filters: object) -> list[dict[str, object]]:
+        status = filters.get("status")
+        rows = [dict(row) for row in self.recent_runs]
+        latest_status = str(self.latest_session_run.get("status") or "")
+        if latest_status in {"queued", "running"}:
+            rows.append(dict(self.latest_session_run))
+        if status is None:
+            return rows
+        normalized_status = str(status)
+        return [
+            row for row in rows if str(row.get("status") or "") == normalized_status
+        ]
 
     def list_job_definitions(self, **_: object) -> list[dict[str, object]]:
         return [dict(self.definition)]
@@ -369,9 +443,12 @@ class _FakeJobStore:
         job_keys: list[str],
         **_: object,
     ) -> list[dict[str, object]]:
-        if self.definition["job_key"] not in job_keys:
-            return []
-        return [dict(self.run_record)]
+        rows: list[dict[str, object]] = []
+        for job_key in job_keys:
+            row = self.latest_runs_by_job_key.get(str(job_key))
+            if row is not None:
+                rows.append(dict(row))
+        return rows
 
     def list_latest_runs_by_session_ids(
         self,
@@ -379,12 +456,14 @@ class _FakeJobStore:
         session_ids: list[str],
         **_: object,
     ) -> list[dict[str, object]]:
-        return [dict(self.run_record)] if session_ids else []
+        return [dict(self.latest_session_run)] if session_ids else []
 
     def get_job_run(self, job_run_id: str) -> dict[str, object] | None:
-        if job_run_id != self.run_record["job_run_id"]:
-            return None
-        return dict(self.run_record)
+        if job_run_id == self.run_record["job_run_id"]:
+            return dict(self.run_record)
+        if job_run_id == self.latest_session_run["job_run_id"]:
+            return dict(self.latest_session_run)
+        return None
 
     def get_job_definition(self, job_key: str) -> dict[str, object] | None:
         if job_key != self.definition["job_key"]:
@@ -487,8 +566,20 @@ class _FakeExecutionStore:
 
 
 class _FakeStorage:
-    def __init__(self, run_record: dict[str, object]) -> None:
-        self.jobs = _FakeJobStore(run_record)
+    def __init__(
+        self,
+        run_record: dict[str, object],
+        *,
+        latest_session_run: dict[str, object] | None = None,
+        recent_runs: list[dict[str, object]] | None = None,
+        latest_runs_by_job_key: dict[str, dict[str, object]] | None = None,
+    ) -> None:
+        self.jobs = _FakeJobStore(
+            run_record,
+            latest_session_run=latest_session_run,
+            recent_runs=recent_runs,
+            latest_runs_by_job_key=latest_runs_by_job_key,
+        )
         self.collector = _FakeCollectorStore()
         self.recovery = _FakeRecoveryStore()
         self.signals = _FakeSignalStore()
@@ -616,6 +707,78 @@ class EarningsFlowTests(unittest.TestCase):
                 "neutral_regime_signal_too_low"
             ],
             1,
+        )
+
+    def test_system_status_ignores_recovered_recent_failures(self) -> None:
+        summary_run = _collector_run_record()
+        failure_at = (
+            datetime.now(UTC) - timedelta(minutes=10)
+        ).isoformat(timespec="seconds").replace("+00:00", "Z")
+        success_at = (
+            datetime.now(UTC) - timedelta(minutes=1)
+        ).isoformat(timespec="seconds").replace("+00:00", "Z")
+        storage = _FakeStorage(
+            summary_run,
+            recent_runs=[
+                {
+                    "job_run_id": "failed-1",
+                    "job_key": "broker_sync:alpaca",
+                    "job_type": "broker_sync",
+                    "status": "failed",
+                    "scheduled_for": failure_at,
+                    "finished_at": failure_at,
+                    "error_text": "temporary outage",
+                }
+            ],
+            latest_runs_by_job_key={
+                "broker_sync:alpaca": {
+                    "job_run_id": "success-1",
+                    "job_key": "broker_sync:alpaca",
+                    "job_type": "broker_sync",
+                    "status": "succeeded",
+                    "scheduled_for": success_at,
+                    "finished_at": success_at,
+                }
+            },
+        )
+
+        with patch(
+            "core.services.ops.get_control_state_snapshot",
+            return_value={"mode": "normal"},
+        ):
+            system_status = build_system_status(storage=storage)
+
+        self.assertEqual(system_status["status"], "healthy")
+        self.assertEqual(system_status["summary"]["recent_failure_count"], 0)
+        self.assertNotIn(
+            "recent_job_failures",
+            {item["code"] for item in system_status["attention"]},
+        )
+
+    def test_system_status_keeps_fresh_running_collector_healthy(self) -> None:
+        summary_run = _collector_run_record()
+        running_run = _collector_run_record(
+            job_run_id="run-2",
+            status="running",
+        )
+        storage = _FakeStorage(
+            summary_run,
+            latest_session_run=running_run,
+        )
+
+        with patch(
+            "core.services.ops.get_control_state_snapshot",
+            return_value={"mode": "normal"},
+        ):
+            system_status = build_system_status(storage=storage)
+
+        collector_row = system_status["details"]["latest_collectors"][0]
+        self.assertEqual(system_status["status"], "healthy")
+        self.assertEqual(collector_row["status"], "healthy")
+        self.assertFalse(collector_row["needs_attention"])
+        self.assertNotIn(
+            "collector_unhealthy",
+            {item["code"] for item in system_status["attention"]},
         )
 
     def test_earnings_live_selection_prefers_options_evidence_and_blocks_weak_quotes(

@@ -40,6 +40,52 @@ from .trading import _alert_delivery_payload, _broker_sync_payload
 RECENT_ALERT_LIMIT = 200
 
 
+def _actionable_recent_failures(
+    job_store: Any,
+    recent_failures: list[dict[str, Any]],
+    *,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    candidates = [
+        dict(row) for row in recent_failures if _job_run_requires_attention(row, now=now)
+    ]
+    if not candidates:
+        return []
+
+    job_keys = sorted(
+        {
+            str(row.get("job_key") or "").strip()
+            for row in candidates
+            if str(row.get("job_key") or "").strip()
+        }
+    )
+    latest_by_key = {
+        str(row.get("job_key") or "").strip(): dict(row)
+        for row in job_store.list_latest_runs_by_job_keys(
+            job_keys=job_keys,
+            statuses=None,
+        )
+    }
+
+    actionable: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    for row in candidates:
+        job_key = str(row.get("job_key") or "").strip()
+        if not job_key:
+            actionable.append(dict(row))
+            continue
+        if job_key in seen_keys:
+            continue
+        seen_keys.add(job_key)
+        latest_row = latest_by_key.get(job_key)
+        if latest_row is None:
+            actionable.append(dict(row))
+            continue
+        if _job_run_requires_attention(latest_row, now=now):
+            actionable.append(latest_row)
+    return _sorted_by_activity(actionable)
+
+
 @with_storage()
 def build_system_status(
     *,
@@ -151,9 +197,11 @@ def build_system_status(
             )
         ]
         recent_failures = _sorted_by_activity(failed_jobs + skipped_jobs)[:RECENT_FAILURE_LIMIT]
-        actionable_recent_failures = [
-            row for row in recent_failures if _job_run_requires_attention(row, now=now)
-        ]
+        actionable_recent_failures = _actionable_recent_failures(
+            job_store,
+            recent_failures,
+            now=now,
+        )
         if actionable_recent_failures:
             attention.append(
                 _attention(

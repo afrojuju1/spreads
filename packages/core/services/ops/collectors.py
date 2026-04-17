@@ -23,6 +23,7 @@ from core.services.value_coercion import (
 from core.storage.execution_models import ExecutionIntentModel
 from core.storage.signal_models import OpportunityDecisionModel, OpportunityModel
 
+from .jobs import _job_run_operator_status
 from .shared import (
     _is_recent,
     _stream_quote_events_saved,
@@ -31,7 +32,11 @@ from .shared import (
 OPEN_POSITION_STATUSES = ["open", "partial_close"]
 
 
-def _collector_status(run: Mapping[str, Any] | None) -> str:
+def _collector_status(
+    run: Mapping[str, Any] | None,
+    *,
+    now: datetime,
+) -> str:
     if run is None:
         return "unknown"
     live_action_gate = (
@@ -41,12 +46,15 @@ def _collector_status(run: Mapping[str, Any] | None) -> str:
     )
     if str(live_action_gate.get("status") or "") == "blocked":
         return "blocked"
+    job_operator_status, _ = _job_run_operator_status(run, now=now)
+    if job_operator_status in {"blocked", "degraded"}:
+        return job_operator_status
     run_status = str(run.get("status") or "")
     capture_status = str(run.get("capture_status") or "")
-    if run_status == "running" and capture_status in {"healthy", "idle"}:
+    if run_status in {"queued", "running"} and job_operator_status == "healthy":
         return "healthy"
     if run_status != "succeeded":
-        return "degraded"
+        return job_operator_status if job_operator_status != "unknown" else "degraded"
     if capture_status == "healthy":
         return "healthy"
     if capture_status == "idle":
@@ -61,7 +69,7 @@ def _collector_requires_attention(
 ) -> bool:
     if run is None:
         return True
-    collector_status = _collector_status(run)
+    collector_status = _collector_status(run, now=now)
     if collector_status in {"healthy", "idle"}:
         return False
     return _is_recent(
@@ -126,7 +134,7 @@ def _latest_live_collectors(
         capture_status = None if run is None else run.get("capture_status")
         if capture_status is None:
             capture_status = quote_capture.get("capture_status")
-        collector_status = _collector_status(run)
+        collector_status = _collector_status(run, now=now)
         needs_attention = _collector_requires_attention(run, now=now)
         stream_quote_events_saved = _stream_quote_events_saved(quote_capture)
         latest_collectors.append(
