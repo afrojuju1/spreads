@@ -1,6 +1,6 @@
 ## Non-Web Large File Cleanup Audit
 
-Status: proposed
+Status: in progress
 
 As of: Thursday, April 16, 2026
 
@@ -19,7 +19,22 @@ Then propose a cleanup structure that fits the repo's existing rules:
 - `jobs/` owns worker and scheduler entrypoints
 - `packages/api` stays a thin adapter
 
-This document is a cleanup and abstraction proposal, not an implementation plan for a full rewrite.
+This document started as a cleanup and abstraction proposal and is now also serving as the running checkpoint for the implemented package cutovers below.
+
+## Progress Snapshot
+
+Completed clean cuts:
+
+- `services/scanners/` now owns scanner behavior; the old top-level scanner monolith and wrapper-only setup module were removed.
+- `services/collections/` now owns collector behavior; the old `jobs/live_collector.py` logic container was deleted.
+- `core.jobs.worker` is now a package split into lifecycle, managed execution, planner helpers, observability, and task entrypoints.
+
+Still open:
+
+- `services/ops/` cutover from `ops_visibility.py`
+- `services/execution/` cutover from `execution.py`
+- `services/replay/` and `services/post_close/` cutover from `opportunity_replay.py` and `analysis.py`
+- storage aggregate splits where they still buy clarity after the service cutovers
 
 ## Audit Method
 
@@ -41,7 +56,7 @@ Primary inputs:
 
 ## Largest Non-Web Code Files
 
-Highest line-count files in backend/runtime scope:
+Highest line-count files in backend/runtime scope at audit time:
 
 1. `packages/core/services/scanner.py` - 6089
 2. `packages/core/services/execution.py` - 3684
@@ -473,10 +488,11 @@ These files are large, but they are lower-priority than the service monoliths be
 
 ### Phase 2: Package cutover
 
-1. Replace `scanner.py` with `services/scanners/` and rewrite imports in one pass.
-2. Replace collector logic with `services/collections/` and a real `jobs/collections.py` entrypoint.
-3. Replace `ops_visibility.py` with `services/ops/`.
-4. Move CLI render code into `cli/render/`.
+1. Completed: replace `scanner.py` with `services/scanners/` and rewrite imports in one pass.
+2. Completed: replace collector logic with `services/collections/` and delete the old job-owned logic module.
+3. Completed: replace `jobs/worker.py` with a real `jobs/worker/` package that keeps `core.jobs.worker` as the canonical ARQ surface.
+4. Next: replace `ops_visibility.py` with `services/ops/`.
+5. Next: move CLI render code into `cli/render/`.
 
 ### Phase 3: Canonical path hardening
 
