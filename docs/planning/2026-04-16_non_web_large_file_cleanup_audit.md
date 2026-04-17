@@ -28,10 +28,10 @@ Completed clean cuts:
 - `services/scanners/` now owns scanner behavior; the old top-level scanner monolith and wrapper-only setup module were removed.
 - `services/collections/` now owns collector behavior; the old `jobs/live_collector.py` logic container was deleted.
 - `core.jobs.worker` is now a package split into lifecycle, managed execution, planner helpers, observability, and task entrypoints.
+- `services/ops/` is now the canonical operator visibility surface; the old `ops_visibility.py` module was replaced by a package-owned surface and its audit/UOA views were split into owned modules.
 
 Still open:
 
-- `services/ops/` cutover from `ops_visibility.py`
 - `services/execution/` cutover from `execution.py`
 - `services/replay/` and `services/post_close/` cutover from `opportunity_replay.py` and `analysis.py`
 - storage aggregate splits where they still buy clarity after the service cutovers
@@ -491,7 +491,7 @@ These files are large, but they are lower-priority than the service monoliths be
 1. Completed: replace `scanner.py` with `services/scanners/` and rewrite imports in one pass.
 2. Completed: replace collector logic with `services/collections/` and delete the old job-owned logic module.
 3. Completed: replace `jobs/worker.py` with a real `jobs/worker/` package that keeps `core.jobs.worker` as the canonical ARQ surface.
-4. Next: replace `ops_visibility.py` with `services/ops/`.
+4. Completed: replace `ops_visibility.py` with `services/ops/`.
 5. Next: move CLI render code into `cli/render/`.
 
 ### Phase 3: Canonical path hardening

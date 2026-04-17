@@ -7,5 +7,5 @@
 - Keep route ownership explicit:
   - pipeline runtime routes -> `services/pipelines.py`
   - UOA routes -> `services/uoa_state.py`
-  - internal ops/health visibility routes -> `services/ops_visibility.py`
+  - internal ops/health visibility routes -> `services/ops/`
 - For runtime and rollout guidance, also follow [packages/core/AGENTS.md](../../packages/core/AGENTS.md).

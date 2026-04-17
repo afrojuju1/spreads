@@ -16,7 +16,7 @@ from core.cli.ops_render import (
     render_trading_health,
     render_uoa_view,
 )
-from core.services.ops_visibility import (
+from core.services.ops import (
     OpsLookupError,
     build_audit_view,
     build_job_lanes_overview,

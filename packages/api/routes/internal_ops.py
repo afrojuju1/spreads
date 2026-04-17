@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from api.errors import service_unavailable_error
 from core.runtime.config import default_database_url
-from core.services.ops_visibility import build_system_status, build_trading_health
+from core.services.ops import build_system_status, build_trading_health
 
 router = APIRouter()
 

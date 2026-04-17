@@ -7,7 +7,7 @@ from core.jobs.orchestration import (
     SCHEDULER_RUNTIME_LEASE_KEY,
     WORKER_RUNTIME_LEASE_PREFIX,
 )
-from core.services.ops_visibility import build_jobs_overview
+from core.services.ops import build_jobs_overview
 
 
 class JobsVisibilityTests(unittest.TestCase):

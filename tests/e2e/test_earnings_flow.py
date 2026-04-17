@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from core.services.live_collector_health import build_selection_summary
 from core.services.live_selection import select_live_opportunities
-from core.services.ops_visibility import (
+from core.services.ops import (
     build_job_run_view,
     build_system_status,
     build_trading_health,
@@ -567,11 +567,11 @@ class EarningsFlowTests(unittest.TestCase):
 
         with (
             patch(
-                "core.services.ops_visibility.get_control_state_snapshot",
+                "core.services.ops.get_control_state_snapshot",
                 return_value={"mode": "normal"},
             ),
             patch(
-                "core.services.ops_visibility.get_account_overview",
+                "core.services.ops.get_account_overview",
                 return_value={
                     "source": "live",
                     "environment": "paper",
