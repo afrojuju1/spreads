@@ -44,9 +44,7 @@ from core.services.scanners.setup import (
     attach_underlying_setup,
     serialize_setup_context,
 )
-from core.storage.run_history_repository import RunHistoryRepository
-
-from .service import (
+from core.services.scanners.builders import (
     build_iron_condors,
     build_long_straddles,
     build_long_strangles,
@@ -54,6 +52,7 @@ from .service import (
     rank_candidates,
     sort_candidates_for_display,
 )
+from core.storage.run_history_repository import RunHistoryRepository
 
 
 def _build_run_id(symbol: str, strategy: str, profile: str) -> str:

@@ -13,7 +13,7 @@ from core.services.analysis_helpers import (
     score_bucket_label,
 )
 from core.services.market_dates import NEW_YORK
-from core.services.scanners.service import summarize_replay
+from core.services.scanners.replay import summarize_replay
 from core.services.selection_terms import (
     MONITOR_SELECTION_STATE,
     PROMOTABLE_SELECTION_STATE,

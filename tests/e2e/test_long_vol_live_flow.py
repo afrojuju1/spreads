@@ -13,7 +13,7 @@ from core.domain.models import (
 from core.services.execution import _build_order_request, normalize_execution_policy
 from core.services.live_collector_health import build_selection_summary
 from core.services.opportunity_scoring import build_candidate_opportunity_score
-from core.services.scanners.service import (
+from core.services.scanners.builders import (
     build_long_straddles,
     build_long_strangles,
 )

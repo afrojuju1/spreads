@@ -18,7 +18,7 @@ from core.domain.models import (
     OptionSnapshot,
 )
 from core.services.opportunity_scoring import build_candidate_opportunity_score
-from core.services.scanners.service import (
+from core.services.scanners.builders import (
     build_iron_condors,
 )
 from core.services.session_positions import sync_session_position_from_attempt
