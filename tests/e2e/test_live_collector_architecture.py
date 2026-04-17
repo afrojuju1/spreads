@@ -10,8 +10,8 @@ from unittest.mock import patch
 from core.jobs.orchestration import isoformat_utc
 from core.jobs.scheduler import _reconcile_live_collector_jobs
 from core.services.collections.capture import capture_live_option_market_state
+from core.services.collections.cycle import run_collection_cycle
 from core.services.collections.models import LiveCaptureSnapshot, LiveTickContext
-from core.services.collections.runtime import _run_collection_cycle
 from core.services.bots import load_active_bots
 from core.services.decision_engine import run_entry_automation_decision
 from core.services.live_collector_health import (
@@ -658,27 +658,27 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
 
         with (
             patch(
-                "core.services.collections.runtime.run_universe_cycle",
+                "core.services.collections.cycle.run_universe_cycle",
                 return_value=([symbol], "liquid_index_etfs", [], [], []),
             ),
             patch(
-                "core.services.collections.runtime.build_symbol_strategy_candidates",
+                "core.services.collections.cycle.build_symbol_strategy_candidates",
                 return_value={symbol: [candidate]},
             ),
             patch(
-                "core.services.collections.runtime.capture_live_option_market_state",
+                "core.services.collections.cycle.capture_live_option_market_state",
                 return_value=_same_slot_capture_snapshot(symbol),
             ),
             patch(
-                "core.services.collections.runtime.read_previous_selection",
+                "core.services.collections.cycle.read_previous_selection",
                 return_value=({}, {}),
             ),
             patch(
-                "core.services.collections.runtime.build_entry_runtime_candidates",
+                "core.services.collections.cycle.build_entry_runtime_candidates",
                 return_value=runtime_candidate_rows_by_owner,
             ),
             patch(
-                "core.services.collections.runtime.select_live_opportunities",
+                "core.services.collections.cycle.select_live_opportunities",
                 return_value=selection_payload,
             ),
             patch(
@@ -686,7 +686,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                 return_value=selection_payload,
             ),
             patch(
-                "core.services.collections.runtime.sync_live_collector_signal_layer",
+                "core.services.collections.cycle.sync_live_collector_signal_layer",
                 return_value={
                     "signal_states_upserted": 0,
                     "signal_transitions_recorded": 0,
@@ -695,11 +695,11 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                 },
             ),
             patch(
-                "core.services.collections.runtime.dispatch_cycle_alerts",
+                "core.services.collections.cycle.dispatch_cycle_alerts",
                 return_value=[],
             ),
         ):
-            result = _run_collection_cycle(
+            result = run_collection_cycle(
                 args,
                 tick_context=None,
                 scanner_args=scanner_args,
@@ -780,23 +780,23 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
 
         with (
             patch(
-                "core.services.collections.runtime.run_universe_cycle",
+                "core.services.collections.cycle.run_universe_cycle",
                 return_value=(["AAPL"], "earnings", [], [], []),
             ),
             patch(
-                "core.services.collections.runtime.build_symbol_strategy_candidates",
+                "core.services.collections.cycle.build_symbol_strategy_candidates",
                 return_value={"AAPL": [_candidate_payload()]},
             ),
             patch(
-                "core.services.collections.runtime.capture_live_option_market_state",
+                "core.services.collections.cycle.capture_live_option_market_state",
                 return_value=_same_slot_capture_snapshot(),
             ),
             patch(
-                "core.services.collections.runtime.read_previous_selection",
+                "core.services.collections.cycle.read_previous_selection",
                 return_value=({}, {}),
             ),
             patch(
-                "core.services.collections.runtime.sync_live_collector_signal_layer",
+                "core.services.collections.cycle.sync_live_collector_signal_layer",
                 return_value={
                     "signal_states_upserted": 0,
                     "signal_transitions_recorded": 0,
@@ -805,11 +805,11 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                 },
             ),
             patch(
-                "core.services.collections.runtime.dispatch_cycle_alerts",
+                "core.services.collections.cycle.dispatch_cycle_alerts",
                 return_value=[],
             ),
         ):
-            result = _run_collection_cycle(
+            result = run_collection_cycle(
                 args,
                 tick_context=None,
                 scanner_args=scanner_args,
