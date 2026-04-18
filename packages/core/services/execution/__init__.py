@@ -294,7 +294,7 @@ def _plan_opportunity_from_signal_row(
         execution_complexity=None,
         product_class=_as_text(opportunity.get("product_class"))
         or str(policy_fields["product_class"]),
-        legacy_selection_state=_as_text(opportunity.get("selection_state")),
+        baseline_selection_state=_as_text(opportunity.get("selection_state")),
         evidence=evidence,
         legs=_opportunity_legs_from_row(opportunity),
     )

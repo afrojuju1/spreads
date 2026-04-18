@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
+from core.services.selection_terms import normalize_selection_state
 from core.services.opportunity_scoring import candidate_event_state
 
 TOP_TIER_ETF_SYMBOLS = {"SPY", "QQQ", "IWM", "DIA", "GLD", "TLT"}
@@ -136,18 +137,12 @@ def _dte_bucket(value: Any) -> tuple[str, int]:
     return "46+", 6
 
 
-def _normalize_legacy_selection_state(value: Any) -> str | None:
-    normalized = _as_text(value)
-    if normalized == "board":
-        return "promotable"
-    if normalized == "watchlist":
-        return "monitor"
-    return normalized
-
-
-def _legacy_selection_state_from_row(row: Mapping[str, Any]) -> str | None:
-    return _normalize_legacy_selection_state(
-        row.get("legacy_selection_state", row.get("bucket"))
+def _baseline_selection_state_from_row(row: Mapping[str, Any]) -> str | None:
+    return normalize_selection_state(
+        row.get(
+            "baseline_selection_state",
+            row.get("selection_state", row.get("bucket")),
+        )
     )
 
 
@@ -158,7 +153,7 @@ def _group_value_from_row(
 ) -> str | None:
     group_value = _as_text(row.get("group_value")) or _as_text(row.get("bucket"))
     if dimension == "classification":
-        return _normalize_legacy_selection_state(group_value)
+        return normalize_selection_state(group_value)
     return group_value
 
 

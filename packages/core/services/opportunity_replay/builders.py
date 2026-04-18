@@ -32,13 +32,13 @@ from core.services.opportunity_scoring import (
 from .shared import (
     _as_float,
     _as_text,
+    _baseline_selection_state_from_row,
     _clamp,
     _direction_from_candidates,
     _event_state,
     _group_value_from_row,
     _horizon_band,
     _intraday_structure,
-    _legacy_selection_state_from_row,
     _liquidity_state,
     _normalize_score,
     _product_class,
@@ -289,41 +289,26 @@ def _build_historical_dimension_lookup(
                 average_estimated_pnl = (
                     _as_float(row.get("average_estimated_pnl")) or 0.0
                 )
-                legacy_promotable_baseline_count = max(
-                    int(
-                        _as_float(
-                            row.get(
-                                "legacy_promotable_baseline_count",
-                                row.get("board_count"),
-                            )
-                        )
-                        or 0
-                    ),
+                promotable_count = max(
+                    int(_as_float(row.get("promotable_count")) or 0),
                     0,
                 )
-                legacy_monitor_count = max(
-                    int(
-                        _as_float(
-                            row.get("legacy_monitor_count", row.get("watchlist_count"))
-                        )
-                        or 0
-                    ),
+                monitor_count = max(
+                    int(_as_float(row.get("monitor_count")) or 0),
                     0,
                 )
                 bucket_totals = totals[dimension_key].setdefault(
                     group_value,
                     {
                         "count": 0.0,
-                        "legacy_promotable_baseline_count": 0.0,
-                        "legacy_monitor_count": 0.0,
+                        "promotable_count": 0.0,
+                        "monitor_count": 0.0,
                         "estimated_pnl_total": 0.0,
                     },
                 )
                 bucket_totals["count"] += float(count)
-                bucket_totals["legacy_promotable_baseline_count"] += float(
-                    legacy_promotable_baseline_count
-                )
-                bucket_totals["legacy_monitor_count"] += float(legacy_monitor_count)
+                bucket_totals["promotable_count"] += float(promotable_count)
+                bucket_totals["monitor_count"] += float(monitor_count)
                 bucket_totals["estimated_pnl_total"] += average_estimated_pnl * float(
                     count
                 )
@@ -338,10 +323,8 @@ def _build_historical_dimension_lookup(
             dimension_lookup[group_value] = {
                 "group_value": group_value,
                 "count": count,
-                "legacy_promotable_baseline_count": int(
-                    totals_row["legacy_promotable_baseline_count"]
-                ),
-                "legacy_monitor_count": int(totals_row["legacy_monitor_count"]),
+                "promotable_count": int(totals_row["promotable_count"]),
+                "monitor_count": int(totals_row["monitor_count"]),
                 "average_estimated_pnl": round(
                     totals_row["estimated_pnl_total"] / float(count),
                     4,
@@ -375,8 +358,8 @@ def _dimension_adjustment(
         "group_value": group_value,
         "average_estimated_pnl": average_estimated_pnl,
         "count": row.get("count"),
-        "legacy_promotable_baseline_count": row.get("legacy_promotable_baseline_count"),
-        "legacy_monitor_count": row.get("legacy_monitor_count"),
+        "promotable_count": row.get("promotable_count"),
+        "monitor_count": row.get("monitor_count"),
     }
 
 
@@ -780,7 +763,7 @@ def _build_opportunities(
             style_profile=strategy_intent.style_profile,
             policy_state=strategy_intent.policy_state,
             blockers=strategy_intent.blockers,
-            legacy_selection_state=_legacy_selection_state_from_row(row),
+            baseline_selection_state=_baseline_selection_state_from_row(row),
             dimension_lookup=dimension_lookup,
         )
         discovery_score = scorecard["discovery_score"]
@@ -816,10 +799,10 @@ def _build_opportunities(
             capital_usage=_as_float(candidate.get("max_loss")),
             execution_complexity=execution_complexity(family),
             product_class=_product_class(symbol),
-            legacy_selection_state=_legacy_selection_state_from_row(row),
+            baseline_selection_state=_baseline_selection_state_from_row(row),
             evidence={
-                "legacy_selection_state": _legacy_selection_state_from_row(row),
-                "legacy_position": row.get("position"),
+                "baseline_selection_state": _baseline_selection_state_from_row(row),
+                "baseline_position": row.get("position"),
                 "quality_score": _as_float(candidate.get("quality_score")),
                 "setup_score_delta": scorecard["setup_score_delta"],
                 "fill_ratio_delta": scorecard["fill_ratio_delta"],

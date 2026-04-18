@@ -473,44 +473,6 @@ def build_recent_opportunity_replay_batch(
             ),
         },
     }
-    aggregate["legacy_promotable_baseline_metrics"] = aggregate["promotable_baseline_metrics"]
-    aggregate["promoted_from_legacy_monitor_metrics"] = aggregate["promoted_monitor_metrics"]
-    aggregate["rejected_legacy_promotable_metrics"] = aggregate[
-        "rejected_promotable_baseline_metrics"
-    ]
-    aggregate["sessions_with_legacy_monitor_promotions"] = aggregate[
-        "sessions_with_monitor_promotions"
-    ]
-    aggregate["sessions_with_rejected_legacy_promotable"] = aggregate[
-        "sessions_with_rejected_promotable_baseline"
-    ]
-    aggregate["promoted_from_legacy_monitor_total"] = aggregate[
-        "promoted_monitor_total"
-    ]
-    aggregate["rejected_legacy_promotable_total"] = aggregate[
-        "rejected_promotable_baseline_total"
-    ]
-    aggregate["average_allocator_vs_legacy_promotable_baseline_overlap"] = aggregate[
-        "average_allocator_vs_promotable_baseline_overlap"
-    ]
-    aggregate["allocator_minus_legacy_promotable_baseline_avg_estimated_pnl"] = aggregate[
-        "allocator_minus_promotable_baseline_avg_estimated_pnl"
-    ]
-    aggregate["allocator_minus_legacy_promotable_baseline_avg_estimated_close_pnl"] = aggregate[
-        "allocator_minus_promotable_baseline_avg_estimated_close_pnl"
-    ]
-    aggregate["allocator_minus_legacy_promotable_baseline_avg_actual_net_pnl"] = aggregate[
-        "allocator_minus_promotable_baseline_avg_actual_net_pnl"
-    ]
-    aggregate["allocator_minus_legacy_promotable_baseline_avg_actual_minus_estimated_close_pnl"] = aggregate[
-        "allocator_minus_promotable_baseline_avg_actual_minus_estimated_close_pnl"
-    ]
-    aggregate["legacy_monitor_promotion_hit_rate"] = aggregate[
-        "monitor_promotion_hit_rate"
-    ]
-    aggregate["rejected_legacy_promotable_miss_rate"] = aggregate[
-        "rejected_promotable_baseline_positive_rate"
-    ]
     warnings: list[str] = []
     if session_count < recent:
         warnings.append(

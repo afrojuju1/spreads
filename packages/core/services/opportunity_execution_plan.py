@@ -269,7 +269,7 @@ def build_allocation_decisions(
                     "rank": opportunity.rank,
                     "promotion_score": opportunity.promotion_score,
                     "execution_score": opportunity_execution_score(opportunity),
-                    "legacy_selection_state": opportunity.legacy_selection_state,
+                    "baseline_selection_state": opportunity.baseline_selection_state,
                     "product_class": opportunity.product_class,
                 },
             )
@@ -364,7 +364,7 @@ def build_execution_intents(
                 evidence={
                     "allocation_score": decision.allocation_score,
                     "execution_score": opportunity_execution_score(opportunity),
-                    "legacy_selection_state": opportunity.legacy_selection_state,
+                    "baseline_selection_state": opportunity.baseline_selection_state,
                     "rank": opportunity.rank,
                     "legs": [leg.to_payload() for leg in opportunity.legs],
                 },

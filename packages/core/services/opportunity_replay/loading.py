@@ -95,7 +95,7 @@ def _wrap_recovered_candidate_rows(
             {
                 "candidate_id": -index,
                 "cycle_id": cycle_id,
-                "legacy_selection_state": "recovered",
+                "baseline_selection_state": "recovered",
                 "position": index,
                 "run_id": payload.get("run_id"),
                 "underlying_symbol": payload.get("underlying_symbol"),

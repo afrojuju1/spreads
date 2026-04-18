@@ -12,10 +12,13 @@ from core.services.ops import (
     build_trading_health,
 )
 from core.services.opportunity_replay import (
+    _build_comparison,
     _build_horizon_intents,
     _build_opportunities,
     _build_regime_snapshots,
+    _build_scorecard,
     _build_strategy_intents,
+    _build_summary,
     _flatten_opportunity_rows,
 )
 
@@ -341,6 +344,24 @@ def _run_replay_flow(rows: list[dict[str, object]]) -> dict[str, object]:
         horizon_intents=horizon_intents,
         dimension_lookup={},
     )
+    comparison = _build_comparison(
+        opportunities=opportunities,
+        allocation_decisions=[],
+        outcome_matches={},
+    )
+    scorecard = _build_scorecard(
+        opportunities=opportunities,
+        allocation_decisions=[],
+        comparison=comparison,
+        outcome_matches={},
+    )
+    summary, _ = _build_summary(
+        cycle=cycle,
+        opportunities=opportunities,
+        allocation_decisions=[],
+        calibration_lookup={},
+        calibration_meta={},
+    )
     flat_rows = _flatten_opportunity_rows(
         session={
             "label": cycle["label"],
@@ -349,13 +370,16 @@ def _run_replay_flow(rows: list[dict[str, object]]) -> dict[str, object]:
         },
         opportunities=opportunities,
         allocation_decisions=[],
-        comparison={},
+        comparison=comparison,
         outcome_matches={},
     )
     return {
         "strategy_intents": strategy_intents,
         "horizon_intents": horizon_intents,
         "opportunities": opportunities,
+        "comparison": comparison,
+        "scorecard": scorecard,
+        "summary": summary,
         "rows": flat_rows,
     }
 
@@ -949,6 +973,57 @@ class EarningsFlowTests(unittest.TestCase):
         self.assertGreaterEqual(row["pricing_signal"], 0.55)
         self.assertEqual(row["event_state"], "pre_event_runup")
         self.assertTrue(row["signal_gate_eligible"])
+
+    def test_replay_payload_uses_canonical_baseline_fields_only(self) -> None:
+        payload = _run_replay_flow(
+            [
+                _candidate_row(
+                    candidate_id=10,
+                    symbol="AAPL",
+                    strategy="call_debit",
+                    expiration_date="2026-04-20",
+                    short_symbol="AAPL260420C210",
+                    long_symbol="AAPL260420C205",
+                    days_to_expiration=6,
+                    earnings_phase="pre_event_runup",
+                    setup_score=84.0,
+                    setup_intraday_score=86.0,
+                    fill_ratio=0.93,
+                    quality_score=88.0,
+                    options_bias_alignment=True,
+                    debit_width_ratio=0.40,
+                )
+            ]
+        )
+
+        opportunity = payload["opportunities"][0]
+        row = payload["rows"][0]
+        comparison = payload["comparison"]
+        scorecard = payload["scorecard"]
+        summary = payload["summary"]
+
+        self.assertEqual(opportunity.baseline_selection_state, "promotable")
+        self.assertIn("baseline_selection_state", row)
+        self.assertNotIn("legacy_selection_state", row)
+        self.assertEqual(
+            comparison["promotable_baseline"]["items"][0]["baseline_selection_state"],
+            "promotable",
+        )
+        self.assertNotIn("legacy_promotable_baseline", comparison)
+        self.assertNotIn("promoted_from_legacy_monitor", comparison)
+        self.assertNotIn("rejected_legacy_promotable", comparison)
+        self.assertIn("promotable_baseline", scorecard)
+        self.assertNotIn("legacy_promotable_baseline", scorecard)
+        self.assertIn(
+            "allocator_minus_promotable_baseline_avg_estimated_pnl",
+            scorecard["deltas"],
+        )
+        self.assertNotIn(
+            "allocator_minus_legacy_promotable_baseline_avg_estimated_pnl",
+            scorecard["deltas"],
+        )
+        self.assertIn("promotable_baseline_symbols", summary)
+        self.assertNotIn("legacy_promotable_baseline_symbols", summary)
 
     def test_through_event_long_straddle_reaches_replay_row_with_derived_signals(
         self,

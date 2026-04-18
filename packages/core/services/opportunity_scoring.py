@@ -790,8 +790,8 @@ def dimension_adjustment(
         "group_value": group_value,
         "average_estimated_pnl": average_estimated_pnl,
         "count": row.get("count"),
-        "legacy_promotable_baseline_count": row.get("legacy_promotable_baseline_count"),
-        "legacy_monitor_count": row.get("legacy_monitor_count"),
+        "promotable_count": row.get("promotable_count"),
+        "monitor_count": row.get("monitor_count"),
     }
 
 
@@ -826,7 +826,7 @@ def build_candidate_opportunity_score(
     style_profile: str | None = None,
     policy_state: str | None = None,
     blockers: Sequence[str] | None = None,
-    legacy_selection_state: str | None = None,
+    baseline_selection_state: str | None = None,
     dimension_lookup: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     symbol = _as_text(candidate.get("underlying_symbol")) or ""
@@ -909,7 +909,7 @@ def build_candidate_opportunity_score(
         if weight <= 0.0:
             continue
         if dimension == "classification":
-            group_value = legacy_selection_state
+            group_value = baseline_selection_state
         elif dimension == "strategy":
             group_value = strategy
         elif dimension == "symbol":
@@ -1032,7 +1032,7 @@ def score_candidate_opportunity(
     style_profile: str | None = None,
     policy_state: str | None = None,
     blockers: Sequence[str] | None = None,
-    legacy_selection_state: str | None = None,
+    baseline_selection_state: str | None = None,
     dimension_lookup: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     return build_candidate_opportunity_score(
@@ -1041,7 +1041,7 @@ def score_candidate_opportunity(
         style_profile=style_profile,
         policy_state=policy_state,
         blockers=blockers,
-        legacy_selection_state=legacy_selection_state,
+        baseline_selection_state=baseline_selection_state,
         dimension_lookup=dimension_lookup,
     )
 
