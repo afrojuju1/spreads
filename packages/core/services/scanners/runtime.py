@@ -57,9 +57,45 @@ from core.services.scanners.builders.verticals import build_vertical_spreads
 from core.storage.run_history_repository import RunHistoryRepository
 
 
-def _build_run_id(symbol: str, strategy: str, profile: str) -> str:
+def build_scan_run_id(symbol: str, strategy: str, profile: str) -> str:
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     return f"{timestamp}_{symbol.lower()}_{strategy}_{profile}"
+
+
+def persist_scan_run(
+    *,
+    history_store: RunHistoryRepository,
+    symbol_args: argparse.Namespace,
+    market_slice: SymbolMarketSlice,
+    setup_context: UnderlyingSetupContext | None,
+    candidates: list[SpreadCandidate],
+    session_label: str | None = None,
+) -> str:
+    run_id = build_scan_run_id(
+        market_slice.symbol,
+        symbol_args.strategy,
+        symbol_args.profile,
+    )
+    generated_at = (
+        datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    )
+    history_store.save_run(
+        run_id=run_id,
+        generated_at=generated_at,
+        symbol=market_slice.symbol,
+        strategy=symbol_args.strategy,
+        session_label=session_label
+        or getattr(symbol_args, "session_label", None),
+        profile=symbol_args.profile,
+        spot_price=market_slice.spot_price,
+        output_path="",
+        filters=build_filter_payload(symbol_args),
+        setup_status=None if setup_context is None else setup_context.status,
+        setup_score=None if setup_context is None else setup_context.score,
+        setup_payload=serialize_setup_context(setup_context),
+        candidates=candidates,
+    )
+    return run_id
 
 
 def build_symbol_market_slice(
@@ -353,24 +389,13 @@ def scan_symbol_live(
         calendar_resolver=calendar_resolver,
     )
 
-    run_id = _build_run_id(symbol, symbol_args.strategy, symbol_args.profile)
-    generated_at = (
-        datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-    )
-    history_store.save_run(
-        run_id=run_id,
-        generated_at=generated_at,
-        symbol=symbol,
-        strategy=symbol_args.strategy,
-        session_label=getattr(symbol_args, "session_label", None),
-        profile=symbol_args.profile,
-        spot_price=market_slice.spot_price,
-        output_path="",
-        filters=build_filter_payload(symbol_args),
-        setup_status=None if setup_context is None else setup_context.status,
-        setup_score=None if setup_context is None else setup_context.score,
-        setup_payload=serialize_setup_context(setup_context),
+    run_id = persist_scan_run(
+        history_store=history_store,
+        symbol_args=symbol_args,
+        market_slice=market_slice,
+        setup_context=setup_context,
         candidates=all_candidates,
+        session_label=getattr(symbol_args, "session_label", None),
     )
 
     return SymbolScanResult(
@@ -441,10 +466,12 @@ def merge_strategy_candidates(
 
 __all__ = [
     "build_candidates_from_market_slice",
+    "build_scan_run_id",
     "build_setup_context_from_market_slice",
     "build_symbol_market_slice",
     "count_market_slice_coverage",
     "merge_strategy_candidates",
+    "persist_scan_run",
     "scan_symbol_across_strategies",
     "scan_symbol_live",
 ]

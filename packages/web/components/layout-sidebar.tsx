@@ -72,7 +72,7 @@ export function LayoutSidebar() {
               Operator
             </div>
             <div className="mt-1 text-sm text-foreground/70">
-              Pipelines, opportunities, positions, and broker state.
+              Automations, discovery, positions, and broker state.
             </div>
           </div>
         </div>
@@ -112,7 +112,7 @@ export function LayoutSidebar() {
           <SheetHeader className="border-b border-border/70 px-5 py-5">
             <SheetTitle>Navigation</SheetTitle>
             <SheetDescription>
-              Pipelines, opportunities, positions, and broker state.
+              Automations, discovery, positions, and broker state.
             </SheetDescription>
           </SheetHeader>
           <div className="flex h-full flex-col px-5 py-5">
@@ -128,7 +128,8 @@ export function LayoutSidebar() {
                   Operator
                 </div>
                 <div className="mt-1 text-sm text-foreground/70">
-                  One layout for runtime control, open risk, and broker state.
+                  One layout for automation control, discovery diagnostics, open
+                  risk, and broker state.
                 </div>
               </div>
             </div>

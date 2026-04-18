@@ -19,6 +19,7 @@ import {
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
+  buildAutomationHref,
   buildPipelineHref,
   buildGlobalEventsWebSocketUrl,
   parseGlobalRealtimeEvent,
@@ -100,10 +101,15 @@ function humanizeToken(value: string): string {
   return startCase(value);
 }
 
-function resolvePipelineHrefFromPayload(payload: Record<string, unknown>): string {
-  const pipelineId = readText(payload.pipeline_id);
+function resolveOperatorHrefFromPayload(payload: Record<string, unknown>): string {
+  const botId = readText(payload.bot_id);
+  const automationId = readText(payload.automation_id);
   const marketDate =
     readText(payload.market_date) ?? readText(payload.session_date);
+  if (botId && automationId) {
+    return buildAutomationHref(botId, automationId, marketDate);
+  }
+  const pipelineId = readText(payload.pipeline_id);
   if (pipelineId) {
     return buildPipelineHref(pipelineId, marketDate);
   }
@@ -132,7 +138,7 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
         id: `${event.topic}:${event.entity_id}`,
         title: `Alert ${humanizeToken(status)}`,
         body: `${symbol} ${alertType} was recorded in the alert feed.`,
-        href: resolvePipelineHrefFromPayload(payload),
+        href: resolveOperatorHrefFromPayload(payload),
         summary: `Alert ${symbol} ${humanizeToken(status)}`,
         timestamp: event.timestamp,
         tone:
@@ -159,7 +165,7 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
         id: `${event.topic}:${event.entity_id}`,
         title,
         body: readText(payload.message) ?? `${symbol} was applied to the ${label} live workflow.`,
-        href: resolvePipelineHrefFromPayload(payload),
+        href: resolveOperatorHrefFromPayload(payload),
         summary: `Live ${label} updated`,
         timestamp: event.timestamp,
         tone: "info",
@@ -178,7 +184,7 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
         body:
           readText(payload.error_text) ??
           `${jobType} ${status === "skipped" ? "did not run" : "reported a failure"} for ${jobKey}.`,
-        href: resolvePipelineHrefFromPayload(payload),
+        href: resolveOperatorHrefFromPayload(payload),
         summary: `Job ${jobType} ${humanizeToken(status)}`,
         timestamp: event.timestamp,
         tone: status === "failed" ? "error" : "warning",
@@ -195,7 +201,7 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
         id: `${event.topic}:${event.entity_id}:${reasonText}`,
         title: `Live collector degraded for ${label}`,
         body: `${captureStatus}. ${reasonText}.`,
-        href: resolvePipelineHrefFromPayload(payload),
+        href: resolveOperatorHrefFromPayload(payload),
         summary: `Live ${label} degraded`,
         timestamp: event.timestamp,
         tone: "warning",
@@ -218,7 +224,7 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
           status === "succeeded"
             ? `The ${label} analysis${sessionDate ? ` for ${sessionDate}` : ""} finished successfully.`
             : `The ${label} analysis${sessionDate ? ` for ${sessionDate}` : ""} failed.`,
-        href: resolvePipelineHrefFromPayload(payload),
+        href: resolveOperatorHrefFromPayload(payload),
         summary: `Post-market ${label} ${humanizeToken(status)}`,
         timestamp: event.timestamp,
         tone: status === "succeeded" ? "success" : "error",
@@ -233,7 +239,7 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
         body:
           readText(payload.message) ??
           `${symbol} execution is now ${humanizeToken(status).toLowerCase()}.`,
-        href: resolvePipelineHrefFromPayload(payload),
+        href: resolveOperatorHrefFromPayload(payload),
         summary: `Execution ${symbol} ${humanizeToken(status)}`,
         timestamp: event.timestamp,
         tone:
@@ -295,22 +301,31 @@ function GlobalRealtimeBridge({
     const realtimeEvent = parseGlobalRealtimeEvent(payload);
     const sessionId = readText(realtimeEvent.payload.session_id);
     const pipelineId = readText(realtimeEvent.payload.pipeline_id);
+    const botId = readText(realtimeEvent.payload.bot_id);
+    const automationId = readText(realtimeEvent.payload.automation_id);
     switch (realtimeEvent.topic) {
       case "alert.event.created":
       case "alert.event.updated":
         queryClient.invalidateQueries({ queryKey: ["sessions"] });
         queryClient.invalidateQueries({ queryKey: ["pipelines"] });
+        queryClient.invalidateQueries({ queryKey: ["automations"] });
         queryClient.invalidateQueries({ queryKey: ["opportunities"] });
         if (sessionId) {
           queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
         }
         if (pipelineId) {
           queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
+        }
+        if (botId && automationId) {
+          queryClient.invalidateQueries({
+            queryKey: ["automations", botId, automationId],
+          });
         }
         break;
       case "live.cycle.updated":
         queryClient.invalidateQueries({ queryKey: ["sessions"] });
         queryClient.invalidateQueries({ queryKey: ["pipelines"] });
+        queryClient.invalidateQueries({ queryKey: ["automations"] });
         queryClient.invalidateQueries({ queryKey: ["opportunities"] });
         if (sessionId) {
           queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
@@ -318,47 +333,76 @@ function GlobalRealtimeBridge({
         if (pipelineId) {
           queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
         }
+        if (botId && automationId) {
+          queryClient.invalidateQueries({
+            queryKey: ["automations", botId, automationId],
+          });
+        }
         break;
       case "job.run.updated":
         queryClient.invalidateQueries({ queryKey: ["sessions"] });
         queryClient.invalidateQueries({ queryKey: ["pipelines"] });
+        queryClient.invalidateQueries({ queryKey: ["automations"] });
         if (sessionId) {
           queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
         }
         if (pipelineId) {
           queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
+        }
+        if (botId && automationId) {
+          queryClient.invalidateQueries({
+            queryKey: ["automations", botId, automationId],
+          });
         }
         break;
       case "live.collector.degraded":
         queryClient.invalidateQueries({ queryKey: ["sessions"] });
         queryClient.invalidateQueries({ queryKey: ["pipelines"] });
+        queryClient.invalidateQueries({ queryKey: ["automations"] });
         if (sessionId) {
           queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
         }
         if (pipelineId) {
           queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
+        }
+        if (botId && automationId) {
+          queryClient.invalidateQueries({
+            queryKey: ["automations", botId, automationId],
+          });
         }
         break;
       case "post_market.analysis.updated":
         queryClient.invalidateQueries({ queryKey: ["sessions"] });
         queryClient.invalidateQueries({ queryKey: ["pipelines"] });
+        queryClient.invalidateQueries({ queryKey: ["automations"] });
         if (sessionId) {
           queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
         }
         if (pipelineId) {
           queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
+        }
+        if (botId && automationId) {
+          queryClient.invalidateQueries({
+            queryKey: ["automations", botId, automationId],
+          });
         }
         break;
       case "execution.attempt.updated":
         queryClient.invalidateQueries({ queryKey: ["account-overview"] });
         queryClient.invalidateQueries({ queryKey: ["sessions"] });
         queryClient.invalidateQueries({ queryKey: ["pipelines"] });
+        queryClient.invalidateQueries({ queryKey: ["automations"] });
         queryClient.invalidateQueries({ queryKey: ["positions"] });
         if (sessionId) {
           queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
         }
         if (pipelineId) {
           queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
+        }
+        if (botId && automationId) {
+          queryClient.invalidateQueries({
+            queryKey: ["automations", botId, automationId],
+          });
         }
         break;
       default:
@@ -507,8 +551,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
     );
     const nextThemePreference = stored ?? DEFAULT_THEME_PREFERENCE;
     applyThemePreference(nextThemePreference, document.documentElement);
-    setThemePreferenceState(nextThemePreference);
-    setIsThemeReady(true);
+    queueMicrotask(() => {
+      setThemePreferenceState(nextThemePreference);
+      setIsThemeReady(true);
+    });
   }, []);
 
   const dismissNotice = (noticeId: string) => {

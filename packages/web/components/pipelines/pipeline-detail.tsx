@@ -375,10 +375,10 @@ export function PipelineDetailPageContent({
     return (
       <div className="flex flex-col gap-4">
         <div className="app-tone-error rounded-2xl border px-4 py-3 text-sm">
-          Pipeline detail could not be loaded.
+          Discovery session detail could not be loaded.
         </div>
         <Link href="/pipelines" className={buttonVariants({ variant: "outline" })}>
-          Back to pipelines
+          Back to discovery
         </Link>
       </div>
     );
@@ -398,10 +398,12 @@ export function PipelineDetailPageContent({
                 className="rounded-full border-border/70 bg-background/80 px-2.5 py-1 text-[11px] uppercase tracking-[0.18em] text-muted-foreground"
               >
                 <Radar data-icon="inline-start" />
-                Pipeline workspace
+                Discovery workspace
               </Badge>
               <SessionStatusBadge value={detail.status} />
-              <CaptureStatusBadge value={detail.latest_slot?.capture_status} />
+              <CaptureStatusBadge
+                value={readString(detail.latest_slot?.capture_status, "") || undefined}
+              />
               <TradeabilityBadge value={detail.tradeability_state} />
               {detail.latest_auto_execution ? (
                 <AutoExecutionStatusBadge value={detail.latest_auto_execution.status} />
@@ -412,8 +414,9 @@ export function PipelineDetailPageContent({
             </div>
             <div className="mt-2 text-sm text-foreground/70">
               Market date {formatDate(detail.market_date)}. Use this workspace
-              to inspect the latest cycle, execute opportunities, refresh broker
-              state, and manage open positions.
+              to inspect collector and cycle state first; linked automation
+              decisions, executions, and positions remain available here for
+              compatibility.
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -426,7 +429,7 @@ export function PipelineDetailPageContent({
               Refresh
             </Button>
             <Link href="/pipelines" className={buttonVariants({ variant: "outline" })}>
-              All pipelines
+              All discovery sessions
             </Link>
           </div>
         </div>
@@ -434,7 +437,7 @@ export function PipelineDetailPageContent({
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <MetricTile
-          label="Pipeline"
+          label="Discovery"
           value={detail.label}
           note={latestPipeline?.style_profile ?? "runtime"}
         />
@@ -462,7 +465,7 @@ export function PipelineDetailPageContent({
 
       <SectionSurface
         title="Latest Auto Execution"
-        description="Most recent planner decision recorded by the live collector for this pipeline."
+        description="Most recent owner-plane decision linked to this discovery session."
       >
         {detail.latest_auto_execution ? (
           <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
@@ -519,12 +522,12 @@ export function PipelineDetailPageContent({
       </SectionSurface>
 
       <SectionSurface
-        title="Pipeline Runs"
-        description="Switch between pipeline dates or inspect the latest runtime cycles."
+        title="Discovery Dates"
+        description="Switch between persisted discovery dates or inspect the latest runtime cycles."
       >
         {!pipelineRows.length ? (
           <div className="text-sm text-muted-foreground">
-            No persisted pipelines were found.
+            No persisted discovery sessions were found.
           </div>
         ) : (
           <div className="flex flex-wrap gap-2">
@@ -551,7 +554,7 @@ export function PipelineDetailPageContent({
       <div className="grid gap-4 xl:grid-cols-2">
         <SectionSurface
           title="Opportunities"
-          description="These are the current promotable and monitor ideas for this pipeline date."
+          description="These are the linked promotable and monitor ideas for this discovery date."
         >
           {!opportunityRows.length ? (
             <div className="flex flex-col items-center justify-center gap-3 px-6 py-12 text-center">
@@ -572,7 +575,7 @@ export function PipelineDetailPageContent({
 
         <SectionSurface
           title="Executions"
-          description="Refresh broker state without leaving the pipeline workspace."
+          description="Refresh broker state without leaving the discovery workspace."
         >
           {!executionRows.length ? (
             <div className="flex flex-col items-center justify-center gap-3 px-6 py-12 text-center">
@@ -594,7 +597,7 @@ export function PipelineDetailPageContent({
 
       <SectionSurface
         title="Positions"
-        description="Open and partially closed positions created by this pipeline date."
+        description="Open and partially closed positions linked to this discovery date."
       >
         {!positionRows.length ? (
           <div className="flex flex-col items-center justify-center gap-3 px-6 py-12 text-center">
@@ -615,7 +618,7 @@ export function PipelineDetailPageContent({
 
       <SectionSurface
         title="Cycle Timeline"
-        description="Recent collector cycles for this pipeline."
+        description="Recent collector cycles for this discovery session."
       >
         {!detail.cycles.length ? (
           <div className="text-sm text-muted-foreground">

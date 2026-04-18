@@ -228,7 +228,8 @@ def build_system_status(
                         severity="medium",
                         code="collector_unhealthy",
                         message=(
-                            f"Collector {job_key} is {str(row.get('status') or 'unknown')}."
+                            "Discovery collector "
+                            f"{job_key} is {str(row.get('status') or 'unknown')}."
                         ),
                     )
                 )
@@ -317,7 +318,11 @@ def build_system_status(
                 }
                 for row in actionable_recent_failures
             ],
+            "discovery_sessions": latest_collectors,
             "latest_collectors": latest_collectors,
+            "discovery_selection": _aggregate_selection_summaries(
+                [row.get("selection_summary") for row in latest_collectors]
+            ),
             "collector_selection": _aggregate_selection_summaries(
                 [row.get("selection_summary") for row in latest_collectors]
             ),
@@ -364,22 +369,6 @@ def build_system_status(
             Counter(str(row.get("job_type") or "unknown") for row in queued_jobs)
         ),
         "recent_failure_count": len(actionable_recent_failures),
-        "collector_count": len(latest_collectors),
-        "collector_degraded_count": sum(
-            1 for row in latest_collectors if row["needs_attention"]
-        ),
-        "collector_opportunity_count": _coerce_int(
-            collector_selection.get("opportunity_count")
-        )
-        or 0,
-        "collector_shadow_only_count": _coerce_int(
-            collector_selection.get("shadow_only_count")
-        )
-        or 0,
-        "collector_auto_live_eligible_count": _coerce_int(
-            collector_selection.get("auto_live_eligible_count")
-        )
-        or 0,
         "automation_opportunity_count": _coerce_int(
             automation_runtime.get("opportunity_count")
         )
@@ -409,6 +398,38 @@ def build_system_status(
         "automation_daily_pnl": _coerce_float(
             automation_performance.get("daily_total_pnl")
         ),
+        "discovery_session_count": len(latest_collectors),
+        "discovery_session_degraded_count": sum(
+            1 for row in latest_collectors if row["needs_attention"]
+        ),
+        "discovery_opportunity_count": _coerce_int(
+            collector_selection.get("opportunity_count")
+        )
+        or 0,
+        "discovery_shadow_only_count": _coerce_int(
+            collector_selection.get("shadow_only_count")
+        )
+        or 0,
+        "discovery_auto_live_eligible_count": _coerce_int(
+            collector_selection.get("auto_live_eligible_count")
+        )
+        or 0,
+        "collector_count": len(latest_collectors),
+        "collector_degraded_count": sum(
+            1 for row in latest_collectors if row["needs_attention"]
+        ),
+        "collector_opportunity_count": _coerce_int(
+            collector_selection.get("opportunity_count")
+        )
+        or 0,
+        "collector_shadow_only_count": _coerce_int(
+            collector_selection.get("shadow_only_count")
+        )
+        or 0,
+        "collector_auto_live_eligible_count": _coerce_int(
+            collector_selection.get("auto_live_eligible_count")
+        )
+        or 0,
         "broker_sync_status": broker_sync.get("status"),
         "alert_delivery_status": alert_delivery.get("status"),
         "market_session_status": market_session.get("status"),

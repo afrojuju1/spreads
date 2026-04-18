@@ -13,6 +13,7 @@ from core.cli.ops import (
     uoa_app,
 )
 from core.cli.runtime import (
+    automations_command,
     opportunities_command,
     pipelines_command,
     positions_command,
@@ -59,8 +60,14 @@ def _run_passthrough(
 
 app.command("status", help="Show system and runtime health.")(status_command)
 app.command("trading", help="Show live trading safety and readiness.")(trading_command)
-app.command("pipelines", help="List runtime pipelines or inspect one pipeline.")(
+app.command(
+    "pipelines",
+    help="List discovery sessions or inspect one pipeline compatibility view.",
+)(
     pipelines_command
+)
+app.command("automations", help="List bot automation runtimes or inspect one.")(
+    automations_command
 )
 app.command("opportunities", help="List opportunities or inspect one opportunity.")(
     opportunities_command

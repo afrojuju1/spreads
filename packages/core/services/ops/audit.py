@@ -17,6 +17,64 @@ from .shared import (
 )
 
 
+def _linked_automation_outcomes(
+    *,
+    selected_opportunities: list[dict[str, Any]],
+    execution_outcomes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    linked: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in selected_opportunities:
+        owner = row.get("owner") if isinstance(row.get("owner"), Mapping) else {}
+        bot_id = _as_text(owner.get("bot_id")) or _as_text(row.get("bot_id"))
+        automation_id = _as_text(owner.get("automation_id")) or _as_text(
+            row.get("automation_id")
+        )
+        if bot_id is None or automation_id is None:
+            continue
+        payload = linked.setdefault(
+            (bot_id, automation_id),
+            {
+                "bot_id": bot_id,
+                "automation_id": automation_id,
+                "selected_opportunity_count": 0,
+                "execution_count": 0,
+                "open_execution_count": 0,
+                "failed_execution_count": 0,
+            },
+        )
+        payload["selected_opportunity_count"] += 1
+
+    for row in execution_outcomes:
+        bot_id = _as_text(row.get("bot_id"))
+        automation_id = _as_text(row.get("automation_id"))
+        if bot_id is None or automation_id is None:
+            continue
+        payload = linked.setdefault(
+            (bot_id, automation_id),
+            {
+                "bot_id": bot_id,
+                "automation_id": automation_id,
+                "selected_opportunity_count": 0,
+                "execution_count": 0,
+                "open_execution_count": 0,
+                "failed_execution_count": 0,
+            },
+        )
+        payload["execution_count"] += 1
+        status = str(row.get("status") or "").strip().lower()
+        if status in OPEN_STATUSES:
+            payload["open_execution_count"] += 1
+        if _as_text(row.get("error_text")) is not None or status in {"failed", "rejected"}:
+            payload["failed_execution_count"] += 1
+    return sorted(
+        linked.values(),
+        key=lambda row: (
+            str(row.get("bot_id") or ""),
+            str(row.get("automation_id") or ""),
+        ),
+    )
+
+
 @with_storage()
 def build_audit_view(
     *,
@@ -110,6 +168,10 @@ def build_audit_view(
         for row in list(explanations.get("control_actions") or [])
         if isinstance(row, Mapping)
     ]
+    linked_automations = _linked_automation_outcomes(
+        selected_opportunities=selected_opportunities,
+        execution_outcomes=execution_outcomes,
+    )
 
     attention: list[dict[str, str]] = []
     statuses = [
@@ -124,7 +186,8 @@ def build_audit_view(
                 severity="high",
                 code="audit_pipeline_run_failed",
                 message=(
-                    f"Pipeline {target.get('pipeline_id') or pipeline_id} on "
+                    "Discovery session "
+                    f"{target.get('pipeline_id') or pipeline_id} on "
                     f"{target.get('market_date') or market_date} is recorded as failed."
                 ),
             )
@@ -135,7 +198,8 @@ def build_audit_view(
                 severity="medium",
                 code="audit_pipeline_run_degraded",
                 message=(
-                    f"Pipeline {target.get('pipeline_id') or pipeline_id} on "
+                    "Discovery session "
+                    f"{target.get('pipeline_id') or pipeline_id} on "
                     f"{target.get('market_date') or market_date} is degraded."
                 ),
             )
@@ -167,7 +231,7 @@ def build_audit_view(
                 severity="high",
                 code="audit_risk_blocked",
                 message=_as_text(target.get("risk_note"))
-                or "Pipeline run risk state was blocked.",
+                or "Discovery session risk state was blocked.",
             )
         )
     elif risk_status not in {"", "ok", "disabled"}:
@@ -183,7 +247,7 @@ def build_audit_view(
                 severity="medium",
                 code="audit_reconciliation_mismatch",
                 message=_as_text(target.get("reconciliation_note"))
-                or "Pipeline run reconciliation had mismatches.",
+                or "Discovery-session reconciliation had mismatches.",
             )
         )
 
@@ -275,7 +339,7 @@ def build_audit_view(
         "status": _combine_statuses(*statuses),
         "generated_at": generated_at,
         "summary": {
-            "view": "audit",
+            "view": "discovery_audit",
             "pipeline_id": target.get("pipeline_id") or pipeline_id,
             "label": target.get("label"),
             "market_date": target.get("market_date") or market_date,
@@ -293,16 +357,18 @@ def build_audit_view(
             ),
             "post_market_verdict": post_market.get("overall_verdict"),
             "net_pnl_total": portfolio_summary.get("net_pnl_total"),
+            "linked_automation_count": len(linked_automations),
         },
         "attention": attention[:10],
         "details": {
-            "view": "audit",
+            "view": "discovery_audit",
             "target": dict(target),
             "control": dict(control),
             "current_cycle": dict(current_cycle),
             "counts": dict(counts),
             "portfolio_summary": dict(portfolio_summary),
             "post_market": dict(post_market),
+            "linked_automations": linked_automations,
             "slot_runs": [
                 dict(row)
                 for row in list(audit_snapshot.get("slot_runs") or [])

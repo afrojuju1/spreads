@@ -7,6 +7,7 @@ import { BriefcaseBusiness, RefreshCw } from "lucide-react";
 
 import { DataTable } from "@/components/data-table";
 import {
+  buildAutomationHref,
   buildPipelineHref,
   closePosition,
   getPositions,
@@ -20,8 +21,69 @@ import {
   formatSignedCurrency,
   LoadingState,
   MetricTile,
+  readString,
   SectionSurface,
 } from "@/components/sessions/workspace-primitives";
+
+function positionRecord(position: Position): Record<string, unknown> {
+  return position as Record<string, unknown>;
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function getPositionOwner(position: Position): Record<string, unknown> {
+  return readRecord(positionRecord(position).owner);
+}
+
+function getPositionDiscovery(position: Position): Record<string, unknown> {
+  return readRecord(positionRecord(position).discovery);
+}
+
+function hasPositionAutomationOwner(position: Position): boolean {
+  const owner = getPositionOwner(position);
+  return Boolean(
+    typeof owner.bot_id === "string" &&
+      owner.bot_id &&
+      typeof owner.automation_id === "string" &&
+      owner.automation_id,
+  );
+}
+
+function getPositionAutomationLabel(position: Position): string {
+  const owner = getPositionOwner(position);
+  const botId = readString(owner.bot_id, "");
+  const automationId = readString(owner.automation_id, "");
+  if (botId && automationId) {
+    return `${botId} / ${automationId}`;
+  }
+  return "—";
+}
+
+function getPositionDiscoveryLabel(position: Position): string {
+  const discovery = getPositionDiscovery(position);
+  return readString(discovery.label, readString(position.pipeline_id));
+}
+
+function getPositionAutomationHref(position: Position): string {
+  const owner = getPositionOwner(position);
+  const botId = typeof owner.bot_id === "string" ? owner.bot_id : null;
+  const automationId =
+    typeof owner.automation_id === "string" ? owner.automation_id : null;
+  return buildAutomationHref(botId, automationId, position.market_date);
+}
+
+function getPositionDiscoveryHref(position: Position): string {
+  const discovery = getPositionDiscovery(position);
+  const pipelineId =
+    typeof discovery.pipeline_id === "string"
+      ? discovery.pipeline_id
+      : position.pipeline_id;
+  return buildPipelineHref(pipelineId, position.market_date);
+}
 
 const POSITION_COLUMNS: ColumnDef<Position>[] = [
   {
@@ -33,6 +95,20 @@ const POSITION_COLUMNS: ColumnDef<Position>[] = [
         <div className="text-xs text-muted-foreground">
           {row.original.strategy_family}
         </div>
+        {hasPositionAutomationOwner(row.original) ? (
+          <Link
+            href={getPositionAutomationHref(row.original)}
+            className="mt-1 inline-block text-xs text-foreground underline-offset-4 hover:underline"
+          >
+            {getPositionAutomationLabel(row.original)}
+          </Link>
+        ) : null}
+        <Link
+          href={getPositionDiscoveryHref(row.original)}
+          className="mt-1 inline-block text-xs text-muted-foreground underline-offset-4 hover:underline"
+        >
+          Discovery · {getPositionDiscoveryLabel(row.original)}
+        </Link>
       </div>
     ),
   },
@@ -62,12 +138,11 @@ const POSITION_COLUMNS: ColumnDef<Position>[] = [
     id: "pipeline",
     header: "",
     cell: ({ row }) => (
-      <Link
-        href={buildPipelineHref(row.original.pipeline_id, row.original.market_date)}
-        className="text-xs text-muted-foreground underline-offset-4 hover:underline"
-      >
-        View pipeline
-      </Link>
+      <span className="text-xs text-muted-foreground">
+        {hasPositionAutomationOwner(row.original)
+          ? "Automation-owned"
+          : "Discovery-owned"}
+      </span>
     ),
   },
 ];
@@ -82,6 +157,7 @@ export function PositionsIndexPageContent() {
     mutationFn: (positionId: string) => closePosition(positionId, {}),
     onSuccess: async () => {
       await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["automations"] }),
         queryClient.invalidateQueries({ queryKey: ["positions"] }),
         queryClient.invalidateQueries({ queryKey: ["pipelines"] }),
       ]);
@@ -113,8 +189,8 @@ export function PositionsIndexPageContent() {
               Open risk inventory
             </div>
             <div className="mt-2 text-sm text-foreground/70">
-              Inspect all runtime-owned positions and trigger closes from the
-              canonical position id.
+              Inspect all runtime-owned positions, jump to the owning
+              automation, and keep discovery lineage visible but secondary.
             </div>
           </div>
           <Button
@@ -158,7 +234,7 @@ export function PositionsIndexPageContent() {
 
       <SectionSurface
         title="Position List"
-        description="Use the pipeline workspace for deeper context, or close directly from here."
+        description="Use the automation runtime for owner context, or close directly from here."
       >
         <DataTable
           columns={[

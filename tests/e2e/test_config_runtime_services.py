@@ -7,6 +7,10 @@ from unittest.mock import patch
 
 from core.backtest import build_backtest_run, compare_backtest_runs
 from core.domain.backtest_models import BacktestAggregate, BacktestRun, BacktestTarget
+from core.services.automation_runtimes import (
+    get_automation_runtime_detail,
+    list_automation_runtimes,
+)
 from core.services.automation_runtime import (
     resolve_entry_runtime,
     resolve_management_runtime,
@@ -18,7 +22,9 @@ from core.services.collections.config import (
     build_scanner_args,
 )
 from core.services.management_planner import plan_position_management
+from core.services.opportunities import list_opportunities
 from core.services.opportunity_generation import build_runtime_opportunity_payload
+from core.services.positions import list_positions
 from core.services.scanners.config import parse_args as parse_scanner_args
 from core.services.signal_state import _build_opportunity_payload
 from core.services.strategy_builders import (
@@ -84,6 +90,76 @@ class StrategyBuilderServiceTests(unittest.TestCase):
         self.assertEqual(build_slice.call_count, 1)
         self.assertEqual(len(rows[owner_key][runtime.symbols[0]]), 1)
         self.assertEqual(rows[owner_key][runtime.symbols[0]][0]["width"], 2.0)
+
+    def test_build_entry_runtime_candidates_persists_runtime_runs_with_run_ids(
+        self,
+    ) -> None:
+        runtime = resolve_entry_runtime(
+            bot_id="short_dated_index_credit_bot",
+            automation_id="index_put_credit_entry",
+        )
+        runtime = replace(
+            runtime,
+            automation=replace(runtime.automation, symbols=(runtime.symbols[0],)),
+        )
+        base_args = parse_scanner_args([])
+
+        class _HistoryStore:
+            def __init__(self) -> None:
+                self.saved_runs: list[dict[str, object]] = []
+
+            def save_run(self, **kwargs: object) -> None:
+                self.saved_runs.append(dict(kwargs))
+
+        class _MarketSlice:
+            symbol = runtime.symbols[0]
+            spot_price = 500.0
+
+        history_store = _HistoryStore()
+        candidate = object()
+        with (
+            patch(
+                "core.services.strategy_builders.build_symbol_market_slice",
+                return_value=_MarketSlice(),
+            ),
+            patch(
+                "core.services.strategy_builders.build_candidates_from_market_slice",
+                return_value=([candidate], None),
+            ),
+            patch(
+                "core.services.strategy_builders._serialize_candidate",
+                return_value={
+                    "underlying_symbol": runtime.symbols[0],
+                    "strategy": "put_credit",
+                    "width": 2.0,
+                },
+            ),
+        ):
+            rows = build_entry_runtime_candidates(
+                entry_runtimes=[runtime],
+                base_scanner_args=base_args,
+                client=object(),
+                calendar_resolver=object(),
+                greeks_provider=object(),
+                per_runtime_limit=5,
+                history_store=history_store,
+                session_label="explore_10_put_credit_weekly_auto",
+            )
+
+        owner_key = (runtime.bot_id, runtime.automation_id)
+        self.assertEqual(len(history_store.saved_runs), 1)
+        self.assertEqual(
+            history_store.saved_runs[0]["session_label"],
+            "explore_10_put_credit_weekly_auto",
+        )
+        self.assertEqual(
+            rows[owner_key][runtime.symbols[0]][0]["run_id"],
+            history_store.saved_runs[0]["run_id"],
+        )
+        self.assertEqual(
+            history_store.saved_runs[0]["filters"]["min_return_on_risk"],
+            0.13,
+        )
 
 
 class ManagementPlannerTests(unittest.TestCase):
@@ -247,6 +323,328 @@ class OpportunityProjectionTests(unittest.TestCase):
             payload["blockers"],
             ["return_on_risk_below_promotable_floor"],
         )
+
+
+class RuntimeVisibilityTests(unittest.TestCase):
+    def test_list_automation_runtimes_summarizes_owner_scoped_state(self) -> None:
+        runtime = resolve_entry_runtime(
+            bot_id="short_dated_index_credit_bot",
+            automation_id="index_put_credit_entry",
+        )
+
+        class _SignalStore:
+            def schema_ready(self) -> bool:
+                return True
+
+            def automation_runtime_schema_ready(self) -> bool:
+                return True
+
+            def list_automation_runs(self, **kwargs: object) -> list[dict[str, object]]:
+                if (
+                    kwargs.get("bot_id") == runtime.bot_id
+                    and kwargs.get("automation_id") == runtime.automation_id
+                ):
+                    return [
+                        {
+                            "automation_run_id": "auto-run-1",
+                            "bot_id": runtime.bot_id,
+                            "automation_id": runtime.automation_id,
+                            "strategy_config_id": runtime.strategy_config_id,
+                            "cycle_id": "cycle-auto",
+                            "label": "explore_10_put_credit_weekly_auto",
+                            "session_date": "2026-04-17",
+                            "started_at": "2026-04-17T17:25:00Z",
+                            "status": "completed",
+                            "result": {"opportunity_count": 1},
+                        }
+                    ]
+                return []
+
+            def list_opportunities(self, **kwargs: object) -> list[dict[str, object]]:
+                if (
+                    kwargs.get("bot_id") == runtime.bot_id
+                    and kwargs.get("automation_id") == runtime.automation_id
+                ):
+                    return [
+                        {
+                            "opportunity_id": "opp-runtime-1",
+                            "pipeline_id": "pipeline:explore_10_put_credit_weekly_auto",
+                            "label": "explore_10_put_credit_weekly_auto",
+                            "market_date": "2026-04-17",
+                            "session_date": "2026-04-17",
+                            "cycle_id": "cycle-auto",
+                            "bot_id": runtime.bot_id,
+                            "automation_id": runtime.automation_id,
+                            "automation_run_id": "auto-run-1",
+                            "strategy_config_id": runtime.strategy_config_id,
+                            "strategy_id": runtime.strategy_id,
+                            "config_hash": runtime.config_hash,
+                            "strategy_family": runtime.strategy_family,
+                            "selection_state": "promotable",
+                            "selection_rank": 1,
+                            "lifecycle_state": "ready",
+                            "eligibility_state": "live",
+                            "underlying_symbol": runtime.symbols[0],
+                            "candidate_json": {
+                                "underlying_symbol": runtime.symbols[0],
+                                "strategy": "put_credit",
+                            },
+                            "economics_json": {"midpoint_credit": 1.1},
+                            "strategy_metrics_json": {"width": 2.0},
+                            "legs_json": [],
+                            "order_payload_json": {},
+                            "evidence_json": {},
+                        }
+                    ]
+                return []
+
+            def list_opportunity_decisions(
+                self, **kwargs: object
+            ) -> list[dict[str, object]]:
+                if (
+                    kwargs.get("bot_id") == runtime.bot_id
+                    and kwargs.get("automation_id") == runtime.automation_id
+                ):
+                    return [
+                        {
+                            "opportunity_decision_id": "decision-1",
+                            "opportunity_id": "opp-runtime-1",
+                            "bot_id": runtime.bot_id,
+                            "automation_id": runtime.automation_id,
+                            "state": "selected",
+                            "decided_at": "2026-04-17T17:26:00Z",
+                        }
+                    ]
+                return []
+
+        class _ExecutionStore:
+            def portfolio_schema_ready(self) -> bool:
+                return True
+
+            def intent_schema_ready(self) -> bool:
+                return True
+
+            def list_execution_intents(self, **kwargs: object) -> list[dict[str, object]]:
+                if (
+                    kwargs.get("bot_id") == runtime.bot_id
+                    and kwargs.get("automation_id") == runtime.automation_id
+                ):
+                    return [
+                        {
+                            "execution_intent_id": "intent-1",
+                            "bot_id": runtime.bot_id,
+                            "automation_id": runtime.automation_id,
+                            "action_type": "open",
+                            "state": "filled",
+                            "created_at": "2026-04-17T17:27:00Z",
+                        }
+                    ]
+                return []
+
+            def list_positions(self, **kwargs: object) -> list[dict[str, object]]:
+                if (
+                    kwargs.get("bot_id") == runtime.bot_id
+                    and kwargs.get("automation_id") == runtime.automation_id
+                ):
+                    return [
+                        {
+                            "position_id": "pos-1",
+                            "pipeline_id": "pipeline:explore_10_put_credit_weekly_auto",
+                            "bot_id": runtime.bot_id,
+                            "automation_id": runtime.automation_id,
+                            "strategy_config_id": runtime.strategy_config_id,
+                            "strategy_id": runtime.strategy_id,
+                            "config_hash": runtime.config_hash,
+                            "source_opportunity_id": "opp-runtime-1",
+                            "open_execution_attempt_id": "attempt-1",
+                            "root_symbol": runtime.symbols[0],
+                            "strategy_family": runtime.strategy_family,
+                            "market_date_opened": "2026-04-17",
+                            "status": "open",
+                            "legs": [],
+                            "economics": {
+                                "entry_credit": 1.1,
+                                "entry_notional": 110.0,
+                                "max_profit": 110.0,
+                                "max_loss": 90.0,
+                            },
+                            "strategy_metrics": {"width": 2.0},
+                            "requested_quantity": 1,
+                            "opened_quantity": 1,
+                            "remaining_quantity": 1,
+                            "realized_pnl": 0.0,
+                            "unrealized_pnl": 8.5,
+                        }
+                    ]
+                return []
+
+            def list_position_closes(self, **_: object) -> list[dict[str, object]]:
+                return []
+
+            def get_attempt(self, execution_attempt_id: str) -> dict[str, object] | None:
+                return {"execution_attempt_id": execution_attempt_id, "status": "filled"}
+
+        class _Storage:
+            def __init__(self) -> None:
+                self.signals = _SignalStore()
+                self.execution = _ExecutionStore()
+
+        storage = _Storage()
+        with (
+            patch(
+                "core.services.automation_runtimes.resolve_entry_runtimes",
+                return_value=[runtime],
+            ),
+            patch(
+                "core.services.automation_runtimes.resolve_management_runtimes",
+                return_value=[],
+            ),
+            patch(
+                "core.services.automation_runtimes.build_bot_metrics",
+                return_value={"daily_total_pnl": 8.5, "open_position_count": 1},
+            ),
+        ):
+            listing = list_automation_runtimes(
+                db_target="postgresql://example",
+                market_date="2026-04-17",
+                storage=storage,
+            )
+            detail = get_automation_runtime_detail(
+                db_target="postgresql://example",
+                bot_id=runtime.bot_id,
+                automation_id=runtime.automation_id,
+                market_date="2026-04-17",
+                storage=storage,
+            )
+
+        self.assertEqual(len(listing["automations"]), 1)
+        summary = listing["automations"][0]
+        self.assertEqual(summary["automation_type"], "entry")
+        self.assertEqual(summary["opportunity_count"], 1)
+        self.assertEqual(summary["decision_state_counts"]["selected"], 1)
+        self.assertEqual(summary["entry_intent_count"], 1)
+        self.assertEqual(summary["open_position_count"], 1)
+        self.assertEqual(summary["latest_discovery"]["label"], "explore_10_put_credit_weekly_auto")
+        self.assertEqual(
+            summary["latest_discovery"]["pipeline_id"],
+            "pipeline:explore_10_put_credit_weekly_auto",
+        )
+        self.assertEqual(detail["summary"]["opportunity_count"], 1)
+        self.assertEqual(detail["opportunities"][0]["owner"]["automation_id"], runtime.automation_id)
+        self.assertEqual(detail["positions"][0]["owner"]["bot_id"], runtime.bot_id)
+        self.assertEqual(len(detail["automation_runs"]), 1)
+
+    def test_owner_scoped_opportunities_and_positions_expose_lineage_blocks(self) -> None:
+        runtime = resolve_entry_runtime(
+            bot_id="short_dated_index_credit_bot",
+            automation_id="index_put_credit_entry",
+        )
+
+        class _SignalStore:
+            def schema_ready(self) -> bool:
+                return True
+
+            def list_opportunities(self, **kwargs: object) -> list[dict[str, object]]:
+                if kwargs.get("bot_id") != runtime.bot_id:
+                    return []
+                return [
+                    {
+                        "opportunity_id": "opp-runtime-2",
+                        "pipeline_id": "pipeline:explore_10_put_credit_weekly_auto",
+                        "label": "explore_10_put_credit_weekly_auto",
+                        "market_date": "2026-04-17",
+                        "session_date": "2026-04-17",
+                        "cycle_id": "cycle-auto-2",
+                        "bot_id": runtime.bot_id,
+                        "automation_id": runtime.automation_id,
+                        "strategy_config_id": runtime.strategy_config_id,
+                        "strategy_id": runtime.strategy_id,
+                        "config_hash": runtime.config_hash,
+                        "strategy_family": runtime.strategy_family,
+                        "selection_state": "monitor",
+                        "selection_rank": 2,
+                        "lifecycle_state": "candidate",
+                        "eligibility_state": "live",
+                        "underlying_symbol": runtime.symbols[0],
+                        "candidate_json": {
+                            "underlying_symbol": runtime.symbols[0],
+                            "strategy": "put_credit",
+                        },
+                        "economics_json": {},
+                        "strategy_metrics_json": {},
+                        "legs_json": [],
+                        "order_payload_json": {},
+                        "evidence_json": {},
+                    }
+                ]
+
+        class _ExecutionStore:
+            def portfolio_schema_ready(self) -> bool:
+                return True
+
+            def list_positions(self, **kwargs: object) -> list[dict[str, object]]:
+                if kwargs.get("automation_id") != runtime.automation_id:
+                    return []
+                return [
+                    {
+                        "position_id": "pos-2",
+                        "pipeline_id": "pipeline:explore_10_put_credit_weekly_auto",
+                        "bot_id": runtime.bot_id,
+                        "automation_id": runtime.automation_id,
+                        "strategy_config_id": runtime.strategy_config_id,
+                        "strategy_id": runtime.strategy_id,
+                        "config_hash": runtime.config_hash,
+                        "source_opportunity_id": "opp-runtime-2",
+                        "open_execution_attempt_id": "attempt-2",
+                        "root_symbol": runtime.symbols[0],
+                        "strategy_family": runtime.strategy_family,
+                        "market_date_opened": "2026-04-17",
+                        "status": "open",
+                        "legs": [],
+                        "economics": {},
+                        "strategy_metrics": {},
+                        "requested_quantity": 1,
+                        "opened_quantity": 1,
+                        "remaining_quantity": 1,
+                        "realized_pnl": 0.0,
+                        "unrealized_pnl": 0.0,
+                    }
+                ]
+
+            def list_position_closes(self, **_: object) -> list[dict[str, object]]:
+                return []
+
+            def get_attempt(self, execution_attempt_id: str) -> dict[str, object] | None:
+                return {"execution_attempt_id": execution_attempt_id, "status": "filled"}
+
+        class _Storage:
+            def __init__(self) -> None:
+                self.signals = _SignalStore()
+                self.execution = _ExecutionStore()
+
+        storage = _Storage()
+        opportunities = list_opportunities(
+            db_target="postgresql://example",
+            bot_id=runtime.bot_id,
+            automation_id=runtime.automation_id,
+            strategy_config_id=runtime.strategy_config_id,
+            storage=storage,
+        )
+        positions = list_positions(
+            db_target="postgresql://example",
+            bot_id=runtime.bot_id,
+            automation_id=runtime.automation_id,
+            strategy_config_id=runtime.strategy_config_id,
+            storage=storage,
+        )
+
+        opportunity = opportunities["opportunities"][0]
+        position = positions["positions"][0]
+        self.assertEqual(opportunity["owner"]["owner_kind"], "automation")
+        self.assertEqual(opportunity["discovery"]["label"], "explore_10_put_credit_weekly_auto")
+        self.assertEqual(position["owner"]["automation_id"], runtime.automation_id)
+        self.assertEqual(position["discovery"]["pipeline_id"], "pipeline:explore_10_put_credit_weekly_auto")
+        self.assertEqual(positions["summary"]["bot_id"], runtime.bot_id)
 
 
 class BacktestTests(unittest.TestCase):

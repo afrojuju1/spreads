@@ -11,7 +11,10 @@ from core.services.live_collector_health.enrichment import (
 from core.services.live_collector_health.selection import (
     build_selection_summary,
 )
-from core.services.live_pipelines import list_enabled_live_collector_pipelines
+from core.services.live_pipelines import (
+    list_enabled_live_collector_pipelines,
+    pipeline_uses_runtime_owned_opportunities,
+)
 from core.services.live_recovery import (
     list_session_slot_health_by_session_id,
     load_session_slot_health,
@@ -52,6 +55,7 @@ def list_latest_live_sessions(
     latest_cycle_by_pipeline_id = {
         str(row["pipeline_id"]): row for row in latest_cycles
     }
+    pipeline_by_id = {str(row["pipeline_id"]): dict(row) for row in pipeline_rows}
     session_ids = [
         build_live_run_scope_id(str(row["label"]), str(row["market_date"]))
         for row in latest_cycles
@@ -74,7 +78,28 @@ def list_latest_live_sessions(
     candidate_counts_by_cycle_id = _candidate_counts_by_cycle_id(
         collector_store=collector_store,
         signal_store=signal_store,
-        cycle_ids=[str(row["cycle_id"]) for row in latest_cycles],
+        cycle_ids=[
+            str(row["cycle_id"])
+            for row in latest_cycles
+            if not pipeline_uses_runtime_owned_opportunities(
+                pipeline_by_id.get(str(row["pipeline_id"]))
+            )
+        ],
+        runtime_owned=False,
+    )
+    candidate_counts_by_cycle_id.update(
+        _candidate_counts_by_cycle_id(
+            collector_store=collector_store,
+            signal_store=signal_store,
+            cycle_ids=[
+                str(row["cycle_id"])
+                for row in latest_cycles
+                if pipeline_uses_runtime_owned_opportunities(
+                    pipeline_by_id.get(str(row["pipeline_id"]))
+                )
+            ],
+            runtime_owned=True,
+        )
     )
 
     sessions: list[dict[str, Any]] = []
@@ -246,12 +271,18 @@ def _build_live_session_state(
     )
     latest_run = slot_runs[0] if slot_runs else None
     summary_run = _load_summary_run(job_store, cycle_id=cycle_id, label=label)
+    runtime_owned = pipeline_uses_runtime_owned_opportunities(
+        pipeline,
+        latest_run,
+        summary_run,
+    )
     opportunities = _cycle_opportunity_payloads(
         collector_store,
         signal_store,
         pipeline_id=pipeline_id,
         market_date=market_date,
         cycle_id=cycle_id,
+        runtime_owned=runtime_owned,
     )
     selection_counts = live_selection_counts(opportunities)
     candidate_counts = {
@@ -389,6 +420,9 @@ def _runtime_pipeline_row(catalog_entry: Mapping[str, Any]) -> dict[str, Any]:
             "greeks_source": payload.get("greeks_source"),
             "deployment_mode": execution_policy.get("deployment_mode"),
         },
+        "options_automation_enabled": bool(
+            payload.get("options_automation_enabled", False)
+        ),
         "updated_at": None,
     }
 
@@ -477,14 +511,22 @@ def _candidate_counts_by_cycle_id(
     collector_store: Any,
     signal_store: Any,
     cycle_ids: list[str],
+    runtime_owned: bool = False,
 ) -> dict[str, dict[str, int]]:
+    if not cycle_ids:
+        return {}
     if (
         signal_store is not None
         and hasattr(signal_store, "schema_ready")
         and signal_store.schema_ready()
         and hasattr(signal_store, "count_active_cycle_opportunities_by_cycle_ids")
     ):
-        return signal_store.count_active_cycle_opportunities_by_cycle_ids(cycle_ids)
+        return signal_store.count_active_cycle_opportunities_by_cycle_ids(
+            cycle_ids,
+            runtime_owned=runtime_owned,
+        )
+    if runtime_owned:
+        return {}
     return collector_store.count_cycle_candidates_by_cycle_ids(cycle_ids)
 
 
@@ -495,6 +537,7 @@ def _cycle_opportunity_payloads(
     pipeline_id: str,
     market_date: str,
     cycle_id: str,
+    runtime_owned: bool = False,
 ) -> list[dict[str, Any]]:
     signal_schema_ready = bool(
         signal_store is not None
@@ -506,9 +549,10 @@ def _cycle_opportunity_payloads(
         cycle_id=cycle_id,
         pipeline_id=pipeline_id,
         market_date=market_date,
+        runtime_owned=runtime_owned,
         limit=500,
     )
-    if not opportunities and not signal_schema_ready:
+    if not opportunities and not signal_schema_ready and not runtime_owned:
         opportunities = [
             dict(candidate)
             for candidate in collector_store.list_cycle_candidates(cycle_id)

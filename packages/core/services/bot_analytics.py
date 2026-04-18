@@ -305,6 +305,12 @@ def _bot_owned_positions(execution_store: Any, bot_id: str) -> list[dict[str, An
         or not execution_store.intent_schema_ready()
     ):
         return []
+    direct_positions = [
+        enrich_position_row(dict(row))
+        for row in execution_store.list_positions(bot_id=bot_id, limit=1000)
+    ]
+    if direct_positions:
+        return direct_positions
     positions = [
         enrich_position_row(dict(row))
         for row in execution_store.list_positions(limit=1000)

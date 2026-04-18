@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from typing import Any
 
 from core.db.decorators import with_storage
+from core.services.live_pipelines import pipeline_uses_runtime_owned_opportunities
+from core.services.opportunities import list_session_opportunity_rows
 from core.services.pipelines import (
     DEFAULT_ANALYSIS_PROFIT_TARGET,
     DEFAULT_ANALYSIS_STOP_MULTIPLE,
@@ -626,6 +628,14 @@ def build_audit_snapshot(
     )
     event_store = storage.events
     signal_store = storage.signals
+    runtime_owned_opportunities = pipeline_uses_runtime_owned_opportunities(
+        pipeline_run.get("pipeline")
+        if isinstance(pipeline_run.get("pipeline"), Mapping)
+        else None,
+        pipeline_run.get("latest_slot")
+        if isinstance(pipeline_run.get("latest_slot"), Mapping)
+        else None,
+    )
 
     raw_events: list[dict[str, Any]] = []
     if event_store.schema_ready():
@@ -658,14 +668,13 @@ def build_audit_snapshot(
                 limit=500,
             )
         ]
-        opportunities = [
-            dict(row)
-            for row in signal_store.list_opportunities(
-                label=label,
-                session_date=session_date,
-                limit=200,
-            )
-        ]
+        opportunities = list_session_opportunity_rows(
+            signal_store,
+            label=label,
+            session_date=session_date,
+            runtime_owned=runtime_owned_opportunities,
+            limit=200,
+        )
 
     timeline_items, collapsed_quote_count = _collapse_market_quote_events(raw_events)
     timeline_items.extend(

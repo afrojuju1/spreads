@@ -19,6 +19,10 @@ def _db_target(db: str | None) -> str:
 @router.get("/positions")
 def list_positions_route(
     pipeline_id: str | None = None,
+    label: str | None = None,
+    bot_id: str | None = None,
+    automation_id: str | None = None,
+    strategy_config_id: str | None = None,
     market_date: str | None = None,
     limit: int = Query(default=200, ge=1, le=500),
     db: str | None = None,
@@ -32,7 +36,11 @@ def list_positions_route(
     return list_positions(
         db_target=_db_target(db),
         pipeline_id=pipeline_id,
+        label=label,
         market_date=resolved_market_date,
+        bot_id=bot_id,
+        automation_id=automation_id,
+        strategy_config_id=strategy_config_id,
         limit=limit,
     )
 

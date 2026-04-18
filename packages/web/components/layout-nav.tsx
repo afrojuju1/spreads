@@ -2,15 +2,27 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, BriefcaseBusiness, CandlestickChart, Radar } from "lucide-react";
+import {
+  Activity,
+  Bot,
+  BriefcaseBusiness,
+  CandlestickChart,
+  Radar,
+} from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
 export const LAYOUT_NAV_ITEMS = [
   {
-    href: "/pipelines",
-    label: "Pipelines",
+    href: "/automations",
+    label: "Automations",
     caption: "runtime control",
+    icon: Bot,
+  },
+  {
+    href: "/pipelines",
+    label: "Discovery",
+    caption: "collector sessions",
     icon: CandlestickChart,
   },
   {

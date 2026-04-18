@@ -60,7 +60,7 @@ function buildPipelineRows(pipelines: PipelineListItem[]): PipelineListRow[] {
 const PIPELINE_COLUMNS: ColumnDef<PipelineListRow>[] = [
   {
     accessorKey: "label",
-    header: "Pipeline",
+    header: "Discovery",
     cell: ({ row }) => (
       <div>
         <div className="font-semibold tracking-[0.04em]">
@@ -163,11 +163,12 @@ export function PipelinesIndexPageContent() {
               ) : null}
             </div>
             <div className="mt-4 text-3xl font-semibold tracking-[0.02em]">
-              Live runtime pipelines
+              Discovery sessions
             </div>
             <div className="mt-2 text-sm text-foreground/70">
-              Browse active runtimes, then open a single pipeline workspace for
-              one market date.
+              Browse collector-owned discovery sessions. Automation-owned
+              runtime state now lives under Automations, while this surface
+              stays focused on session diagnostics.
             </div>
           </div>
           <Button
@@ -189,12 +190,12 @@ export function PipelinesIndexPageContent() {
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <MetricTile
-          label="Pipelines"
+          label="Sessions"
           value={String(pipelines.length)}
-          note="Persisted runtime configs"
+          note="Persisted discovery views"
         />
         <MetricTile
-          label="Latest Pipeline"
+          label="Latest discovery"
           value={latestPipeline?.label ?? "—"}
           note={
             latestPipeline
@@ -222,15 +223,15 @@ export function PipelinesIndexPageContent() {
       </div>
 
       <SectionSurface
-        title="Pipeline List"
-        description="Open a pipeline to inspect its latest cycle, opportunities, executions, and open positions."
+        title="Discovery Session List"
+        description="Open a discovery session to inspect its latest cycle, collector health, and linked runtime outcomes."
       >
         {!pipelines.length ? (
           <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
             <Rows3 className="size-10 text-muted-foreground" />
-            <div className="text-lg font-medium">No pipelines found</div>
+            <div className="text-lg font-medium">No discovery sessions found</div>
             <div className="max-w-[34rem] text-sm text-muted-foreground">
-              Runtime pipelines will appear here after collector cycles are
+              Discovery sessions will appear here after collector cycles are
               persisted.
             </div>
           </div>
@@ -239,7 +240,7 @@ export function PipelinesIndexPageContent() {
             columns={PIPELINE_COLUMNS}
             data={pipelineRows}
             getRowId={(row) => row.id}
-            emptyMessage="No pipelines matched the current query."
+            emptyMessage="No discovery sessions matched the current query."
           />
         )}
       </SectionSurface>

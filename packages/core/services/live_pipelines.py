@@ -50,6 +50,25 @@ def resolve_live_collector_label(payload: Mapping[str, Any]) -> str:
     )
 
 
+def pipeline_uses_runtime_owned_opportunities(
+    pipeline: Mapping[str, Any] | None,
+    *runs: Mapping[str, Any] | None,
+) -> bool:
+    if isinstance(pipeline, Mapping) and bool(
+        pipeline.get("options_automation_enabled", False)
+    ):
+        return True
+    for run in runs:
+        if not isinstance(run, Mapping):
+            continue
+        payload = run.get("payload")
+        if isinstance(payload, Mapping) and bool(
+            payload.get("options_automation_enabled", False)
+        ):
+            return True
+    return False
+
+
 def list_enabled_live_collector_pipelines(
     job_definitions: Iterable[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -114,6 +133,7 @@ __all__ = [
     "list_enabled_live_collector_pipelines",
     "parse_live_run_scope_id",
     "parse_pipeline_id",
+    "pipeline_uses_runtime_owned_opportunities",
     "resolve_horizon_intent",
     "resolve_live_collector_label",
     "resolve_pipeline_policy_fields",

@@ -1017,6 +1017,33 @@ def submit_live_session_execution(
                 "selection_state": opportunity.get("selection_state"),
             }
         )
+        owner_bot_id = (
+            None
+            if opportunity is None
+            else _as_text(opportunity.get("bot_id"))
+        ) or (
+            None
+            if not isinstance(request_metadata, Mapping)
+            else _as_text(request_metadata.get("bot_id"))
+        )
+        owner_automation_id = (
+            None
+            if opportunity is None
+            else _as_text(opportunity.get("automation_id"))
+        ) or (
+            None
+            if not isinstance(request_metadata, Mapping)
+            else _as_text(request_metadata.get("automation_id"))
+        )
+        owner_strategy_config_id = (
+            None
+            if opportunity is None
+            else _as_text(opportunity.get("strategy_config_id"))
+        ) or (
+            None
+            if not isinstance(request_metadata, Mapping)
+            else _as_text(request_metadata.get("strategy_config_id"))
+        )
 
         list_open_attempts = getattr(
             execution_store,
@@ -1216,6 +1243,9 @@ def submit_live_session_execution(
             session_date=str(cycle["session_date"]),
             label=str(cycle["label"]),
             pipeline_id=build_pipeline_id(str(cycle["label"])),
+            bot_id=owner_bot_id,
+            automation_id=owner_automation_id,
+            strategy_config_id=owner_strategy_config_id,
             market_date=str(cycle["session_date"]),
             cycle_id=_as_text(cycle.get("cycle_id")),
             opportunity_id=None
@@ -1494,6 +1524,9 @@ def submit_opportunity_execution(
             "opportunity_id": opportunity_id,
             "pipeline_id": opportunity.get("pipeline_id"),
             "market_date": market_date,
+            "bot_id": opportunity.get("bot_id"),
+            "automation_id": opportunity.get("automation_id"),
+            "strategy_config_id": opportunity.get("strategy_config_id"),
         },
         storage=storage,
     )
@@ -1579,6 +1612,9 @@ def submit_position_close_by_id(
             session_date=market_date,
             label=label,
             pipeline_id=pipeline_id,
+            bot_id=_as_text(position.get("bot_id")),
+            automation_id=_as_text(position.get("automation_id")),
+            strategy_config_id=_as_text(position.get("strategy_config_id")),
             market_date=market_date,
             cycle_id=None,
             opportunity_id=_as_text(position.get("source_opportunity_id")),

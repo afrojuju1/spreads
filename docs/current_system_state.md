@@ -8,7 +8,7 @@ If another planning or design document disagrees about current ownership, topolo
 
 Use planning documents for target-state design, subsystem specifications, migration plans, and historical context.
 
-Last updated: 2026-04-17
+Last updated: 2026-04-18
 
 Related:
 
@@ -25,7 +25,7 @@ Related:
 | Market-data capture and recovery | `services/market_recorder.py`, `services/live_recovery/`, `services/collections/capture/` | `market_recorder.py` remains the sole Alpaca option websocket owner in normal runtime. |
 | Discovery and collection | `services/scanners/`, `services/collections/`, `services/live_selection.py`, `services/opportunity_scoring.py`, `services/candidate_policy.py` | Owns symbol scanning, cycle orchestration, live ranking, and promotable/monitor state assignment. |
 | Canonical opportunity state | `services/signal_state.py`, `services/opportunity_generation.py`, `services/opportunities.py`, `storage/signal_repository.py` | Owns signal state, canonical opportunity rows, and runtime-owned projections derived from collector cycles. |
-| Runtime, pipeline, and ops read models | `services/live_runtime.py`, `services/live_collector_health/`, `services/pipelines.py`, `services/ops/` | Owns current session views, health summaries, pipeline projections, and operator CLI payloads. |
+| Runtime, automation, discovery-session, pipeline-compat, and ops read models | `services/automation_runtimes.py`, `services/discovery_sessions.py`, `services/live_runtime.py`, `services/live_collector_health/`, `services/pipelines.py`, `services/ops/` | Owns owner-plane automation runtime views, collector-owned discovery-session views, compatibility pipeline projections, and operator CLI payloads. |
 | Execution and portfolio state | `services/execution/`, `services/execution_portfolio.py`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py` | Owns broker submission, immutable execution ledger, day-local position ownership, reconciliation, and exit behavior. |
 | Historical backtest and evaluation | `backtest/`, `services/post_close/`, `services/post_market_analysis.py` | `backtest/` owns the canonical historical evaluation engine and artifacts; post-close services own legacy report rendering and closed-session analysis. |
 | Persistence and event transport | Postgres, Redis | Postgres is source of truth. Redis handles queues, leases, and pub/sub fanout. |
@@ -36,6 +36,7 @@ Related:
 - API routes, web surfaces, and ops views are read models over service-owned state. They are not business-logic owners.
 - The discovery path may persist collector-cycle artifacts, but canonical live selection state lives in `signal_states`, `signal_state_transitions`, and `opportunities`.
 - Runtime-owned automation opportunities are projections over canonical cycle opportunities, not a separate selection system.
+- Bot plus automation is the primary operator/product ownership plane. Discovery sessions remain collector-owned diagnostic surfaces, and `pipeline_id` is discovery lineage plus compatibility identity rather than the primary runtime owner.
 - `execution` is the immutable broker-facing ledger. `session_positions` is the mutable owner of day-local position attribution.
 - `broker_sync` reconciles broker reality and health, but it does not take ownership of session attribution away from `session_positions`.
 

@@ -203,6 +203,8 @@ def run_collection_cycle(
                 calendar_resolver=calendar_resolver,
                 greeks_provider=greeks_provider,
                 per_runtime_limit=max(args.top, 1),
+                history_store=history_store,
+                session_label=label,
             )
             merged_runtime_candidates = _merge_runtime_candidate_rows(
                 runtime_candidate_rows_by_owner

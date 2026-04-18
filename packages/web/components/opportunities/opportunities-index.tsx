@@ -23,6 +23,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
+  buildAutomationHref as buildAutomationRouteHref,
   buildPipelineHref,
   executeOpportunity,
   getOpportunities,
@@ -98,8 +99,59 @@ function getOpportunityGeneratedAt(opportunity: Opportunity): string | null {
   ) || null;
 }
 
-function getOpportunityPipelineLabel(opportunity: Opportunity): string {
-  return readString(opportunity.label, readString(opportunity.pipeline_id));
+function getOpportunityOwner(opportunity: Opportunity): Record<string, unknown> {
+  return readRecord(opportunityRecord(opportunity).owner);
+}
+
+function getOpportunityDiscovery(opportunity: Opportunity): Record<string, unknown> {
+  return readRecord(opportunityRecord(opportunity).discovery);
+}
+
+function getOpportunityAutomationLabel(opportunity: Opportunity): string {
+  const owner = getOpportunityOwner(opportunity);
+  const botId = readString(owner.bot_id, "");
+  const automationId = readString(owner.automation_id, "");
+  if (botId && automationId) {
+    return `${botId} / ${automationId}`;
+  }
+  return "—";
+}
+
+function getOpportunityDiscoveryLabel(opportunity: Opportunity): string {
+  const discovery = getOpportunityDiscovery(opportunity);
+  return readString(
+    discovery.label,
+    readString(opportunity.label, readString(opportunity.pipeline_id)),
+  );
+}
+
+function getOpportunityAutomationHref(opportunity: Opportunity): string {
+  const owner = getOpportunityOwner(opportunity);
+  const botId = typeof owner.bot_id === "string" ? owner.bot_id : null;
+  const automationId =
+    typeof owner.automation_id === "string" ? owner.automation_id : null;
+  return buildAutomationRouteHref(
+    botId,
+    automationId,
+    opportunity.market_date,
+  );
+}
+
+function hasOpportunityAutomationOwner(opportunity: Opportunity): boolean {
+  const owner = getOpportunityOwner(opportunity);
+  return Boolean(readString(owner.bot_id, "") && readString(owner.automation_id, ""));
+}
+
+function getOpportunityDiscoveryHref(opportunity: Opportunity): string {
+  const discovery = getOpportunityDiscovery(opportunity);
+  const pipelineId =
+    typeof discovery.pipeline_id === "string"
+      ? discovery.pipeline_id
+      : opportunity.pipeline_id;
+  return buildPipelineHref(
+    pipelineId,
+    opportunity.market_date,
+  );
 }
 
 function getOpportunityProfile(opportunity: Opportunity): string {
@@ -482,8 +534,12 @@ function ExpandedOpportunityPanel({
       <ExpandedSection title="Lineage">
         <div className="grid gap-2">
           <BoardMetric
-            label="Pipeline"
-            value={getOpportunityPipelineLabel(opportunity)}
+            label="Automation"
+            value={getOpportunityAutomationLabel(opportunity)}
+          />
+          <BoardMetric
+            label="Discovery"
+            value={getOpportunityDiscoveryLabel(opportunity)}
           />
           <BoardMetric
             label="State"
@@ -506,6 +562,9 @@ function ExpandedOpportunityPanel({
             </div>
             <div className="mt-2 break-all font-mono text-[11px] text-foreground/70">
               {getOpportunityCycleId(opportunity)}
+            </div>
+            <div className="mt-2 break-all font-mono text-[11px] text-foreground/60">
+              {readString(getOpportunityOwner(opportunity).automation_run_id, "No automation run id")}
             </div>
           </div>
         </div>
@@ -545,11 +604,19 @@ function UnderlyingCell({
       <div className="mt-1 font-mono text-xs text-foreground/85">
         {getOpportunityStrikes(opportunity)}
       </div>
+      {hasOpportunityAutomationOwner(opportunity) ? (
+        <Link
+          href={getOpportunityAutomationHref(opportunity)}
+          className="mt-1 inline-block text-xs text-foreground underline-offset-4 hover:underline"
+        >
+          {getOpportunityAutomationLabel(opportunity)}
+        </Link>
+      ) : null}
       <Link
-        href={buildPipelineHref(opportunity.pipeline_id ?? undefined, opportunity.market_date)}
+        href={getOpportunityDiscoveryHref(opportunity)}
         className="mt-1 inline-block text-xs text-muted-foreground underline-offset-4 hover:underline"
       >
-        {getOpportunityPipelineLabel(opportunity)}
+        Discovery · {getOpportunityDiscoveryLabel(opportunity)}
       </Link>
     </div>
   );
@@ -693,6 +760,7 @@ export function OpportunitiesIndexPageContent({
     mutationFn: (opportunityId: string) => executeOpportunity(opportunityId, {}),
     onSuccess: async () => {
       await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["automations"] }),
         queryClient.invalidateQueries({ queryKey: ["opportunities"] }),
         queryClient.invalidateQueries({ queryKey: ["pipelines"] }),
         queryClient.invalidateQueries({ queryKey: ["positions"] }),
@@ -715,8 +783,16 @@ export function OpportunitiesIndexPageContent({
     (row) => row.lifecycle_state === "ready",
   ).length;
   const consumedCount = opportunities.filter(isOpportunityConsumed).length;
-  const pipelineCount = new Set(
-    opportunities.flatMap((row) => (row.pipeline_id ? [row.pipeline_id] : [])),
+  const automationCount = new Set(
+    opportunities.flatMap((row) => {
+      const owner = getOpportunityOwner(row);
+      const botId = readString(owner.bot_id, "");
+      const automationId = readString(owner.automation_id, "");
+      if (botId && automationId) {
+        return [`${botId}:${automationId}`];
+      }
+      return [];
+    }),
   ).size;
   const latestTimestamp = opportunities.reduce<string | null>((latest, row) => {
     const candidate = getOpportunityGeneratedAt(row);
@@ -843,10 +919,10 @@ export function OpportunitiesIndexPageContent({
             <div className="mt-4 text-3xl font-semibold tracking-[0.02em]">
               Opportunity board
             </div>
-          <div className="mt-2 text-sm text-foreground/70">
-              Scan the live pool across pipelines, execute directly, and expand
-              any row for setup rationale, leg shape, and lineage. Current
-              scope: {scopeLabel}.
+            <div className="mt-2 text-sm text-foreground/70">
+              Scan the live pool across automation runtimes, execute directly,
+              and expand any row for setup rationale, leg shape, and linked
+              discovery lineage. Current scope: {scopeLabel}.
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -912,8 +988,8 @@ export function OpportunitiesIndexPageContent({
           note="Already used"
         />
         <MetricTile
-          label="Pipelines"
-          value={String(pipelineCount)}
+          label="Automations"
+          value={String(automationCount)}
           note={
             latestTimestamp
               ? `Updated ${formatTimestamp(latestTimestamp)}`

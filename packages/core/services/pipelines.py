@@ -11,6 +11,7 @@ from core.services.execution import (
     normalize_execution_policy,
 )
 from core.services.execution_portfolio import build_session_execution_portfolio
+from core.services.live_pipelines import pipeline_uses_runtime_owned_opportunities
 from core.services.live_collector_health.tradeability import (
     build_tradeability_summary,
 )
@@ -249,14 +250,22 @@ def _candidate_counts_by_cycle_id(
     collector_store: Any,
     signal_store: Any,
     cycle_ids: list[str],
+    runtime_owned: bool = False,
 ) -> dict[str, dict[str, int]]:
+    if not cycle_ids:
+        return {}
     if (
         signal_store is not None
         and hasattr(signal_store, "schema_ready")
         and signal_store.schema_ready()
         and hasattr(signal_store, "count_active_cycle_opportunities_by_cycle_ids")
     ):
-        return signal_store.count_active_cycle_opportunities_by_cycle_ids(cycle_ids)
+        return signal_store.count_active_cycle_opportunities_by_cycle_ids(
+            cycle_ids,
+            runtime_owned=runtime_owned,
+        )
+    if runtime_owned:
+        return {}
     return collector_store.count_cycle_candidates_by_cycle_ids(cycle_ids)
 
 
@@ -543,11 +552,16 @@ def get_pipeline_detail(
     recovery_slots = [
         dict(row) for row in list(live_session.get("recovery_slots") or [])
     ]
+    runtime_owned = pipeline_uses_runtime_owned_opportunities(
+        pipeline,
+        latest_run,
+    )
     cycle_rows = [dict(row) for row in collector_store.list_cycles(label, limit=50)]
     cycle_counts_by_cycle_id = _candidate_counts_by_cycle_id(
         collector_store=collector_store,
         signal_store=signal_store,
         cycle_ids=[str(row["cycle_id"]) for row in cycle_rows],
+        runtime_owned=runtime_owned,
     )
     cycles = [
         {

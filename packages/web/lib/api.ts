@@ -623,6 +623,30 @@ const pipelineDetailSchema = sessionDetailSchema
   })
   .passthrough();
 
+const ownerRefSchema = z
+  .object({
+    owner_kind: z.string().nullable().optional(),
+    bot_id: z.string().nullable().optional(),
+    automation_id: z.string().nullable().optional(),
+    strategy_config_id: z.string().nullable().optional(),
+    strategy_id: z.string().nullable().optional(),
+    config_hash: z.string().nullable().optional(),
+    automation_run_id: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+const discoveryRefSchema = z
+  .object({
+    label: z.string().nullable().optional(),
+    pipeline_id: z.string().nullable().optional(),
+    cycle_id: z.string().nullable().optional(),
+    session_id: z.string().nullable().optional(),
+    session_date: z.string().nullable().optional(),
+    candidate_id: z.union([z.string(), z.number()]).nullable().optional(),
+    source_opportunity_id: z.string().nullable().optional(),
+  })
+  .passthrough();
+
 const opportunitySchema = z
   .object({
     opportunity_id: z.string(),
@@ -646,6 +670,8 @@ const opportunitySchema = z
     economics: z.record(z.string(), z.unknown()).default({}),
     strategy_metrics: z.record(z.string(), z.unknown()).default({}),
     evidence: z.record(z.string(), z.unknown()).default({}),
+    owner: ownerRefSchema.optional(),
+    discovery: discoveryRefSchema.optional(),
   })
   .passthrough();
 
@@ -656,7 +682,7 @@ const opportunityListResponseSchema = z.object({
 const positionSchema = z
   .object({
     position_id: z.string(),
-    pipeline_id: z.string(),
+    pipeline_id: z.string().nullable().optional(),
     market_date: z.string().nullable().optional(),
     position_status: z.string(),
     root_symbol: z.string(),
@@ -678,6 +704,8 @@ const positionSchema = z
     strategy_metrics_json: z.record(z.string(), z.unknown()).default({}),
     open_execution_attempt: executionAttemptSchema.nullable().optional(),
     closes: z.array(z.record(z.string(), z.unknown())).default([]),
+    owner: ownerRefSchema.optional(),
+    discovery: discoveryRefSchema.optional(),
   })
   .passthrough();
 
@@ -685,6 +713,64 @@ const positionListResponseSchema = z.object({
   summary: z.record(z.string(), z.unknown()),
   positions: z.array(positionSchema),
 });
+
+const automationRuntimeListItemSchema = z
+  .object({
+    bot_id: z.string(),
+    bot_name: z.string(),
+    automation_id: z.string(),
+    automation_type: z.string(),
+    strategy_config_id: z.string().nullable().optional(),
+    strategy_id: z.string().nullable().optional(),
+    strategy_family: z.string().nullable().optional(),
+    config_hash: z.string().nullable().optional(),
+    symbols: z.array(z.string()).default([]),
+    schedule: z.record(z.string(), z.unknown()).default({}),
+    trigger_policy: z.record(z.string(), z.unknown()).default({}),
+    approval_mode: z.string().nullable().optional(),
+    execution_mode: z.string().nullable().optional(),
+    live_enabled: z.boolean().optional(),
+    max_open_positions: z.number().nullable().optional(),
+    max_daily_actions: z.number().nullable().optional(),
+    max_new_entries_per_day: z.number().nullable().optional(),
+    daily_loss_limit: z.number().nullable().optional(),
+    market_date: z.string().nullable().optional(),
+    opportunity_count: z.number().default(0),
+    live_opportunity_count: z.number().default(0),
+    decision_count: z.number().default(0),
+    decision_state_counts: z.record(z.string(), z.number()).default({}),
+    intent_count: z.number().default(0),
+    entry_intent_count: z.number().default(0),
+    management_intent_count: z.number().default(0),
+    other_intent_count: z.number().default(0),
+    position_count: z.number().default(0),
+    open_position_count: z.number().default(0),
+    closed_position_count: z.number().default(0),
+    daily_realized_pnl: z.number().default(0),
+    open_unrealized_pnl: z.number().default(0),
+    daily_total_pnl: z.number().default(0),
+    total_realized_pnl: z.number().default(0),
+    latest_automation_run: z.record(z.string(), z.unknown()).nullable().optional(),
+    latest_discovery: discoveryRefSchema.nullable().optional(),
+    bot_metrics: z.record(z.string(), z.unknown()).nullable().optional(),
+  })
+  .passthrough();
+
+const automationRuntimeListResponseSchema = z.object({
+  automations: z.array(automationRuntimeListItemSchema),
+});
+
+const automationRuntimeDetailSchema = automationRuntimeListItemSchema
+  .extend({
+    summary: z.record(z.string(), z.unknown()).default({}),
+    config: z.record(z.string(), z.unknown()).default({}),
+    automation_runs: z.array(z.record(z.string(), z.unknown())).default([]),
+    opportunities: z.array(opportunitySchema).default([]),
+    positions: z.array(positionSchema).default([]),
+    decisions: z.array(z.record(z.string(), z.unknown())).default([]),
+    intents: z.array(z.record(z.string(), z.unknown())).default([]),
+  })
+  .passthrough();
 
 const globalRealtimeEventSchema = z.object({
   type: z.string(),
@@ -719,8 +805,12 @@ export type SessionPortfolioPosition = z.infer<typeof sessionPortfolioPositionSc
 export type SessionPortfolioSummary = z.infer<typeof sessionPortfolioSummarySchema>;
 export type SessionPortfolio = z.infer<typeof sessionPortfolioSchema>;
 export type PipelineDetail = z.infer<typeof pipelineDetailSchema>;
+export type OwnerRef = z.infer<typeof ownerRefSchema>;
+export type DiscoveryRef = z.infer<typeof discoveryRefSchema>;
 export type Opportunity = z.infer<typeof opportunitySchema>;
 export type Position = z.infer<typeof positionSchema>;
+export type AutomationRuntimeListItem = z.infer<typeof automationRuntimeListItemSchema>;
+export type AutomationRuntimeDetail = z.infer<typeof automationRuntimeDetailSchema>;
 export type TuningBucket = z.infer<typeof tuningBucketSchema>;
 export type AutoExecutionSummary = z.infer<typeof autoExecutionSummarySchema>;
 export type SessionExecutionActionResponse = z.infer<typeof sessionExecutionActionResponseSchema>;
@@ -737,7 +827,7 @@ export type PositionCloseRequest = {
 async function fetchApi<T>(
   path: string,
   schema: z.ZodType<T>,
-  searchParams?: Record<string, string | number | undefined>,
+  searchParams?: Record<string, string | number | boolean | undefined>,
 ) {
   const url = new URL(`/api/backend/${path}`, window.location.origin);
 
@@ -773,7 +863,7 @@ async function postApi<TRequest, TResponse>(
   path: string,
   schema: z.ZodType<TResponse>,
   body: TRequest,
-  searchParams?: Record<string, string | number | undefined>,
+  searchParams?: Record<string, string | number | boolean | undefined>,
 ) {
   const url = new URL(`/api/backend/${path}`, window.location.origin);
 
@@ -839,17 +929,53 @@ export function getPipelineDetail(
   );
 }
 
+export function getAutomations(filters?: {
+  marketDate?: string;
+  limit?: number;
+}) {
+  return fetchApi("automations", automationRuntimeListResponseSchema, {
+    market_date: filters?.marketDate,
+    limit: filters?.limit,
+  });
+}
+
+export function getAutomationDetail(
+  botId: string,
+  automationId: string,
+  filters?: {
+    marketDate?: string;
+    limit?: number;
+  },
+) {
+  return fetchApi(
+    `automations/${encodeURIComponent(botId)}/${encodeURIComponent(automationId)}`,
+    automationRuntimeDetailSchema,
+    {
+      market_date: filters?.marketDate,
+      limit: filters?.limit,
+    },
+  );
+}
+
 export function getOpportunities(filters?: {
   pipelineId?: string;
+  label?: string;
   marketDate?: string;
   lifecycleState?: string;
+  botId?: string;
+  automationId?: string;
+  strategyConfigId?: string;
   includeAnalysisOnly?: boolean;
   limit?: number;
 }) {
   return fetchApi("opportunities", opportunityListResponseSchema, {
     pipeline_id: filters?.pipelineId,
+    label: filters?.label,
     market_date: filters?.marketDate,
     lifecycle_state: filters?.lifecycleState,
+    bot_id: filters?.botId,
+    automation_id: filters?.automationId,
+    strategy_config_id: filters?.strategyConfigId,
     include_analysis_only: filters?.includeAnalysisOnly,
     limit: filters?.limit,
   });
@@ -875,12 +1001,20 @@ export function executeOpportunity(
 
 export function getPositions(filters?: {
   pipelineId?: string;
+  label?: string;
   marketDate?: string;
+  botId?: string;
+  automationId?: string;
+  strategyConfigId?: string;
   limit?: number;
 }) {
   return fetchApi("positions", positionListResponseSchema, {
     pipeline_id: filters?.pipelineId,
+    label: filters?.label,
     market_date: filters?.marketDate,
+    bot_id: filters?.botId,
+    automation_id: filters?.automationId,
+    strategy_config_id: filters?.strategyConfigId,
     limit: filters?.limit,
   });
 }
@@ -912,7 +1046,10 @@ export function parseGlobalRealtimeEvent(payload: string) {
   return globalRealtimeEventSchema.parse(JSON.parse(payload));
 }
 
-export function buildPipelineHref(pipelineId?: string | null, marketDate?: string | null) {
+export function buildPipelineHref(
+  pipelineId?: string | null,
+  marketDate?: string | null,
+) {
   if (!pipelineId) {
     return "/pipelines";
   }
@@ -920,6 +1057,21 @@ export function buildPipelineHref(pipelineId?: string | null, marketDate?: strin
     return `/pipelines/${encodeURIComponent(pipelineId)}`;
   }
   return `/pipelines/${encodeURIComponent(pipelineId)}?marketDate=${encodeURIComponent(marketDate)}`;
+}
+
+export function buildAutomationHref(
+  botId?: string | null,
+  automationId?: string | null,
+  marketDate?: string | null,
+) {
+  if (!botId || !automationId) {
+    return "/automations";
+  }
+  const basePath = `/automations/${encodeURIComponent(botId)}/${encodeURIComponent(automationId)}`;
+  if (!marketDate) {
+    return basePath;
+  }
+  return `${basePath}?marketDate=${encodeURIComponent(marketDate)}`;
 }
 
 export function buildGlobalEventsWebSocketUrl() {

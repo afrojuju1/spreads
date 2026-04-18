@@ -13,8 +13,10 @@ from core.services.scanners.config import (
 )
 from core.services.scanners.runtime import (
     build_candidates_from_market_slice,
+    persist_scan_run,
     build_symbol_market_slice,
 )
+from core.storage.run_history_repository import RunHistoryRepository
 
 
 def runtime_owner_key(runtime: EntryRuntime) -> tuple[str, str]:
@@ -135,6 +137,8 @@ def build_entry_runtime_candidates(
     calendar_resolver: Any,
     greeks_provider: Any,
     per_runtime_limit: int = 6,
+    history_store: RunHistoryRepository | None = None,
+    session_label: str | None = None,
 ) -> dict[tuple[str, str], dict[str, list[dict[str, Any]]]]:
     candidates_by_runtime: dict[tuple[str, str], dict[str, list[dict[str, Any]]]] = {}
     runtimes_by_symbol: dict[str, list[EntryRuntime]] = {}
@@ -160,24 +164,38 @@ def build_entry_runtime_candidates(
                 base_scanner_args=base_scanner_args,
                 runtime=runtime,
             )
-            candidates, _setup_context = build_candidates_from_market_slice(
+            candidates, setup_context = build_candidates_from_market_slice(
                 market_slice=market_slice,
                 symbol_args=runtime_args,
                 calendar_resolver=calendar_resolver,
             )
             owner_key = runtime_owner_key(runtime)
+            matched_candidates: list[Any] = []
             rows: list[dict[str, Any]] = []
             for candidate in candidates:
                 row = _serialize_candidate(candidate)
                 if not _matches_build_settings(row, runtime.build_settings):
                     continue
+                matched_candidates.append(candidate)
                 rows.append(row)
-                if len(rows) >= max(int(per_runtime_limit), 1):
-                    break
             if not rows:
                 continue
+            run_id: str | None = None
+            if history_store is not None:
+                run_id = persist_scan_run(
+                    history_store=history_store,
+                    symbol_args=runtime_args,
+                    market_slice=market_slice,
+                    setup_context=setup_context,
+                    candidates=matched_candidates,
+                    session_label=session_label,
+                )
+            limited_rows = [dict(row) for row in rows[: max(int(per_runtime_limit), 1)]]
+            if run_id is not None:
+                for row in limited_rows:
+                    row["run_id"] = run_id
             runtime_rows = candidates_by_runtime.setdefault(owner_key, {})
-            runtime_rows[symbol] = rows
+            runtime_rows[symbol] = limited_rows
     return candidates_by_runtime
 
 

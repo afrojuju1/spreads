@@ -5,7 +5,7 @@ from typing import Any
 
 from core.db.decorators import with_storage
 from core.services.option_structures import position_legs, primary_short_long_symbols
-from core.services.runtime_identity import build_live_run_scope_id
+from core.services.runtime_identity import build_live_run_scope_id, build_pipeline_id
 
 OPEN_POSITION_STATUSES = {"open", "partial_open", "partial_close", "pending_open"}
 
@@ -58,7 +58,9 @@ def enrich_position_row(row: Mapping[str, Any]) -> dict[str, Any]:
     )
     short_symbol, long_symbol, expiration_date = _derive_position_legs(payload)
     pipeline_id = _as_text(payload.get("pipeline_id"))
-    label = None if pipeline_id is None else pipeline_id.partition(":")[2]
+    label = _as_text(payload.get("label"))
+    if label is None and pipeline_id is not None:
+        label = pipeline_id.partition(":")[2]
     market_date = _as_text(payload.get("market_date_opened"))
     payload.update(
         {
@@ -79,6 +81,26 @@ def enrich_position_row(row: Mapping[str, Any]) -> dict[str, Any]:
             "max_profit": _coerce_float(economics.get("max_profit")),
             "max_loss": _coerce_float(economics.get("max_loss")),
             "width": _coerce_float(strategy_metrics.get("width")),
+            "owner": {
+                "owner_kind": (
+                    "automation"
+                    if payload.get("bot_id") or payload.get("automation_id")
+                    else "discovery"
+                ),
+                "bot_id": payload.get("bot_id"),
+                "automation_id": payload.get("automation_id"),
+                "strategy_config_id": payload.get("strategy_config_id"),
+                "strategy_id": payload.get("strategy_id"),
+                "config_hash": payload.get("config_hash"),
+            },
+            "discovery": {
+                "label": label,
+                "pipeline_id": pipeline_id,
+                "session_id": None
+                if label is None or market_date is None
+                else build_live_run_scope_id(label, market_date),
+                "source_opportunity_id": payload.get("source_opportunity_id"),
+            },
         }
     )
     return payload
@@ -122,17 +144,30 @@ def list_positions(
     *,
     db_target: str,
     pipeline_id: str | None = None,
+    label: str | None = None,
     market_date: str | None = None,
+    bot_id: str | None = None,
+    automation_id: str | None = None,
+    strategy_config_id: str | None = None,
     limit: int = 200,
     storage: Any | None = None,
 ) -> dict[str, Any]:
     execution_store = storage.execution
+    resolved_pipeline_id = pipeline_id or (
+        None if label is None else build_pipeline_id(label)
+    )
     if not execution_store.portfolio_schema_ready():
         return {
             "summary": {
                 "position_count": 0,
                 "open_position_count": 0,
                 "closed_position_count": 0,
+                "pipeline_id": resolved_pipeline_id,
+                "label": label,
+                "market_date": market_date,
+                "bot_id": bot_id,
+                "automation_id": automation_id,
+                "strategy_config_id": strategy_config_id,
             },
             "positions": [],
         }
@@ -140,8 +175,11 @@ def list_positions(
     rows = [
         _serialize_position(dict(row), execution_store=execution_store)
         for row in execution_store.list_positions(
-            pipeline_id=pipeline_id,
+            pipeline_id=resolved_pipeline_id,
             market_date=market_date,
+            bot_id=bot_id,
+            automation_id=automation_id,
+            strategy_config_id=strategy_config_id,
             limit=limit,
         )
     ]
@@ -154,8 +192,12 @@ def list_positions(
             "position_count": len(rows),
             "open_position_count": open_count,
             "closed_position_count": closed_count,
-            "pipeline_id": pipeline_id,
+            "pipeline_id": resolved_pipeline_id,
+            "label": label,
             "market_date": market_date,
+            "bot_id": bot_id,
+            "automation_id": automation_id,
+            "strategy_config_id": strategy_config_id,
         },
         "positions": rows,
     }

@@ -26,6 +26,12 @@ class ExecutionAttemptModel(Base):
         Index(
             "idx_execution_attempts_pipeline_requested", "pipeline_id", "requested_at"
         ),
+        Index(
+            "idx_execution_attempts_bot_automation_requested",
+            "bot_id",
+            "automation_id",
+            "requested_at",
+        ),
         Index("idx_execution_attempts_status_requested", "status", "requested_at"),
         Index(
             "idx_execution_attempts_candidate_requested", "candidate_id", "requested_at"
@@ -52,6 +58,9 @@ class ExecutionAttemptModel(Base):
     session_date: Mapped[date] = mapped_column(Date, nullable=False)
     label: Mapped[str] = mapped_column(Text, nullable=False)
     pipeline_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    bot_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    automation_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    strategy_config_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     market_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     cycle_id: Mapped[str | None] = mapped_column(
         Text,

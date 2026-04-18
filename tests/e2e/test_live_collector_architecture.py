@@ -15,6 +15,7 @@ from core.services.collections.cycle import run_collection_cycle
 from core.services.collections.models import LiveCaptureSnapshot, LiveTickContext
 from core.services.bot_analytics import summarize_intent_counts
 from core.services.bots import load_active_bots
+from core.services.audit_snapshot import build_audit_snapshot
 from core.services.decision_engine import run_entry_automation_decision
 from core.services.execution_intents import (
     PRE_DISPATCH_EXPIRE_REASON,
@@ -446,9 +447,10 @@ class _PipelineSignalStore:
         *,
         eligibility_state: str | None = None,
         exclude_consumed: bool = True,
+        runtime_owned: bool = False,
         limit: int = 200,
     ) -> list[dict[str, object]]:
-        del cycle_id, eligibility_state, exclude_consumed, limit
+        del cycle_id, eligibility_state, exclude_consumed, runtime_owned, limit
         return [
             {
                 "opportunity_id": "opp-live",
@@ -472,9 +474,13 @@ class _PipelineSignalStore:
         return []
 
     def count_active_cycle_opportunities_by_cycle_ids(
-        self, cycle_ids: list[str], *, exclude_consumed: bool = True
+        self,
+        cycle_ids: list[str],
+        *,
+        exclude_consumed: bool = True,
+        runtime_owned: bool = False,
     ) -> dict[str, dict[str, int]]:
-        del exclude_consumed
+        del exclude_consumed, runtime_owned
         if cycle_ids != ["cycle-live"]:
             return {}
         return {
@@ -599,6 +605,293 @@ class _PipelineStorage:
         self.recovery = _PipelineRecoveryStore()
         self.signals = _PipelineSignalStore()
         self.risk = None
+
+
+class _AutomationPipelineCollectorStore:
+    def __init__(self) -> None:
+        self.list_cycle_candidates_calls = 0
+
+    def pipeline_schema_ready(self) -> bool:
+        return True
+
+    def get_cycle(self, cycle_id: str) -> dict[str, object] | None:
+        del cycle_id
+        return self.get_latest_cycle("explore_10_put_credit_weekly_auto")
+
+    def get_pipeline(self, pipeline_id: str) -> dict[str, object] | None:
+        return {
+            "pipeline_id": pipeline_id,
+            "label": "explore_10_put_credit_weekly_auto",
+            "name": "Explore 10 Put Credit Weekly Auto",
+            "style_profile": "active",
+            "default_horizon_intent": "short_dated",
+            "product_scope_json": {"product_class": "options"},
+            "policy_json": {"strategy_mode": "put_credit"},
+            "options_automation_enabled": True,
+            "updated_at": "2026-04-17T08:00:00Z",
+        }
+
+    def get_latest_cycle(self, label: str) -> dict[str, object] | None:
+        del label
+        return {
+            "cycle_id": "cycle-auto",
+            "label": "explore_10_put_credit_weekly_auto",
+            "session_date": "2026-04-17",
+            "generated_at": "2026-04-17T17:25:24Z",
+            "universe_label": "custom_symbols",
+            "strategy": "put_credit",
+            "profile": "weekly",
+            "greeks_source": "auto",
+            "symbols": ["SPY"],
+            "failures": [],
+            "selection_memory": {},
+        }
+
+    def list_cycles(
+        self, label: str, session_date: str | None = None, limit: int = 100
+    ) -> list[dict[str, object]]:
+        del label, limit
+        if session_date not in {None, "2026-04-17"}:
+            return []
+        return [self.get_latest_cycle("explore_10_put_credit_weekly_auto")]
+
+    def list_cycle_candidates(self, cycle_id: str) -> list[dict[str, object]]:
+        del cycle_id
+        self.list_cycle_candidates_calls += 1
+        return [
+            {
+                "candidate_id": 7,
+                "selection_state": "monitor",
+                "selection_rank": 1,
+                "eligibility": "live",
+                "candidate": {
+                    "underlying_symbol": "QQQ",
+                    "strategy": "put_credit",
+                },
+            }
+        ]
+
+    def list_events(self, **_: object) -> list[dict[str, object]]:
+        return []
+
+    def list_cycle_events(self, cycle_id: str) -> list[dict[str, object]]:
+        del cycle_id
+        return []
+
+
+class _AutomationPipelineSignalStore:
+    def __init__(self) -> None:
+        self.active_cycle_calls: list[dict[str, object]] = []
+        self.session_opportunity_calls: list[dict[str, object]] = []
+        self.count_calls: list[dict[str, object]] = []
+
+    def schema_ready(self) -> bool:
+        return True
+
+    def list_active_cycle_opportunities(
+        self,
+        cycle_id: str,
+        *,
+        eligibility_state: str | None = None,
+        exclude_consumed: bool = True,
+        runtime_owned: bool = False,
+        limit: int = 200,
+    ) -> list[dict[str, object]]:
+        self.active_cycle_calls.append(
+            {
+                "cycle_id": cycle_id,
+                "eligibility_state": eligibility_state,
+                "exclude_consumed": exclude_consumed,
+                "runtime_owned": runtime_owned,
+                "limit": limit,
+            }
+        )
+        if not runtime_owned:
+            return []
+        return [
+            {
+                "opportunity_id": "opp-runtime",
+                "pipeline_id": "pipeline:explore_10_put_credit_weekly_auto",
+                "market_date": "2026-04-17",
+                "session_date": "2026-04-17",
+                "cycle_id": "cycle-auto",
+                "selection_state": "promotable",
+                "selection_rank": 1,
+                "eligibility_state": "live",
+                "lifecycle_state": "ready",
+                "strategy_family": "put_credit_spread",
+                "underlying_symbol": "SPY",
+                "candidate": {
+                    "underlying_symbol": "SPY",
+                    "strategy": "put_credit",
+                    "return_on_risk": 0.15,
+                },
+                "source_candidate_id": None,
+            }
+        ]
+
+    def list_opportunities(self, **kwargs: object) -> list[dict[str, object]]:
+        self.session_opportunity_calls.append(dict(kwargs))
+        if not bool(kwargs.get("runtime_owned")):
+            return []
+        return [
+            {
+                "opportunity_id": "opp-runtime",
+                "pipeline_id": "pipeline:explore_10_put_credit_weekly_auto",
+                "market_date": "2026-04-17",
+                "session_date": "2026-04-17",
+                "cycle_id": "cycle-auto",
+                "selection_state": "promotable",
+                "selection_rank": 1,
+                "eligibility_state": "live",
+                "lifecycle_state": "ready",
+                "strategy_family": "put_credit_spread",
+                "underlying_symbol": "SPY",
+                "updated_at": "2026-04-17T17:25:24Z",
+                "reason_codes": ["selected_promotable"],
+                "candidate": {
+                    "underlying_symbol": "SPY",
+                    "strategy": "put_credit",
+                    "return_on_risk": 0.15,
+                },
+                "source_candidate_id": None,
+            }
+        ]
+
+    def count_active_cycle_opportunities_by_cycle_ids(
+        self,
+        cycle_ids: list[str],
+        *,
+        exclude_consumed: bool = True,
+        runtime_owned: bool = False,
+    ) -> dict[str, dict[str, int]]:
+        self.count_calls.append(
+            {
+                "cycle_ids": list(cycle_ids),
+                "exclude_consumed": exclude_consumed,
+                "runtime_owned": runtime_owned,
+            }
+        )
+        if not runtime_owned or cycle_ids != ["cycle-auto"]:
+            return {}
+        return {
+            "cycle-auto": {
+                "candidate_count": 1,
+                "promotable": 1,
+                "monitor": 0,
+            }
+        }
+
+    def list_signal_states(self, **_: object) -> list[dict[str, object]]:
+        return []
+
+    def list_signal_transitions(self, **_: object) -> list[dict[str, object]]:
+        return []
+
+
+class _AutomationPipelineJobStore:
+    def _latest_run(self) -> dict[str, object]:
+        return {
+            "job_run_id": "job-run-auto",
+            "job_key": "live_collector:options_automation_short_dated_index_put_credit",
+            "job_type": "live_collector",
+            "status": "succeeded",
+            "scheduled_for": "2026-04-17T17:25:00Z",
+            "started_at": "2026-04-17T17:25:01Z",
+            "finished_at": "2026-04-17T17:25:15Z",
+            "session_id": "live:explore_10_put_credit_weekly_auto:2026-04-17",
+            "slot_at": "2026-04-17T17:25:00Z",
+            "worker_name": "worker-discovery-1",
+            "payload": {
+                "label": "explore_10_put_credit_weekly_auto",
+                "session_date": "2026-04-17",
+                "universe": "explore_10",
+                "strategy": "put_credit",
+                "profile": "weekly",
+                "greeks_source": "auto",
+                "options_automation_enabled": True,
+            },
+            "result": {
+                "cycle_id": "cycle-auto",
+                "quote_capture": {},
+                "trade_capture": {},
+                "uoa_summary": {},
+                "uoa_quote_summary": {},
+                "uoa_decisions": {},
+                "selection_summary": {"promotable_count": 1, "monitor_count": 0},
+                "automation_summary": {
+                    "automation_runs_upserted": 1,
+                    "runtime_opportunities_upserted": 1,
+                    "runtime_opportunities_expired": 0,
+                },
+            },
+        }
+
+    def list_job_definitions(self, **_: object) -> list[dict[str, object]]:
+        return [
+            {
+                "job_key": "live_collector:options_automation_short_dated_index_put_credit",
+                "job_type": "live_collector",
+                "enabled": True,
+                "payload": {
+                    "universe": "explore_10",
+                    "strategy": "put_credit",
+                    "profile": "weekly",
+                    "greeks_source": "auto",
+                    "options_automation_enabled": True,
+                },
+            }
+        ]
+
+    def list_job_runs(self, **_: object) -> list[dict[str, object]]:
+        return [self._latest_run()]
+
+    def get_latest_live_collector_run(self, **_: object) -> dict[str, object] | None:
+        return self._latest_run()
+
+    def list_latest_runs_by_session_ids(
+        self,
+        *,
+        session_ids: list[str],
+        job_type: str | None = None,
+        statuses: list[str] | None = None,
+    ) -> list[dict[str, object]]:
+        del job_type, statuses
+        run = self._latest_run()
+        return [run] if str(run["session_id"]) in session_ids else []
+
+    def get_live_collector_run_by_cycle_id(
+        self,
+        *,
+        cycle_id: str,
+        label: str | None = None,
+        status: str | None = "succeeded",
+    ) -> dict[str, object] | None:
+        del label
+        if cycle_id != "cycle-auto" or status not in {"succeeded", None}:
+            return None
+        return self._latest_run()
+
+
+class _AutomationPipelineEventStore:
+    def schema_ready(self) -> bool:
+        return False
+
+    def list_events(self, **_: object) -> list[dict[str, object]]:
+        return []
+
+
+class _AutomationPipelineStorage:
+    def __init__(self) -> None:
+        self.collector = _AutomationPipelineCollectorStore()
+        self.jobs = _AutomationPipelineJobStore()
+        self.alerts = _PipelineAlertStore()
+        self.post_market = _PipelinePostMarketStore()
+        self.execution = _PipelineExecutionStore()
+        self.recovery = _PipelineRecoveryStore()
+        self.signals = _AutomationPipelineSignalStore()
+        self.risk = None
+        self.events = _AutomationPipelineEventStore()
 
 
 class LiveCollectorArchitectureE2ETests(unittest.TestCase):
@@ -1801,6 +2094,45 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         self.assertEqual(current_opportunity["candidate"]["underlying_symbol"], "MSFT")
         self.assertEqual(storage.collector.list_cycle_candidates_calls, 0)
 
+    def test_pipeline_detail_prefers_runtime_owned_opportunities_for_automation_labels(
+        self,
+    ) -> None:
+        storage = _AutomationPipelineStorage()
+        with (
+            patch(
+                "core.services.pipelines.build_session_execution_portfolio",
+                return_value={"positions": []},
+            ),
+            patch(
+                "core.services.pipelines.build_session_risk_snapshot",
+                return_value={"status": "healthy", "note": "ok"},
+            ),
+            patch(
+                "core.services.pipelines.get_control_state_snapshot",
+                return_value={"mode": "normal"},
+            ),
+            patch(
+                "core.services.pipelines.list_session_execution_attempts",
+                return_value=[],
+            ),
+        ):
+            detail = get_pipeline_detail(
+                db_target="postgresql://example",
+                pipeline_id="pipeline:explore_10_put_credit_weekly_auto",
+                market_date="2026-04-17",
+                profit_target=0.5,
+                stop_multiple=2.0,
+                storage=storage,
+            )
+
+        current_opportunity = detail["current_cycle"]["opportunities"][0]
+        self.assertEqual(current_opportunity["opportunity_id"], "opp-runtime")
+        self.assertEqual(current_opportunity["candidate"]["underlying_symbol"], "SPY")
+        self.assertEqual(detail["current_cycle"]["promotable_count"], 1)
+        self.assertEqual(storage.collector.list_cycle_candidates_calls, 0)
+        self.assertTrue(storage.signals.active_cycle_calls[0]["runtime_owned"])
+        self.assertTrue(storage.signals.count_calls[0]["runtime_owned"])
+
     def test_list_pipelines_uses_canonical_live_runtime_session_loader(self) -> None:
         storage = _PipelineStorage()
 
@@ -1817,6 +2149,62 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         )
         self.assertEqual(pipeline["promotable_count"], 1)
         self.assertEqual(pipeline["monitor_count"], 0)
+
+    def test_list_pipelines_counts_runtime_owned_opportunities_for_automation_labels(
+        self,
+    ) -> None:
+        storage = _AutomationPipelineStorage()
+
+        listing = list_pipelines(
+            db_target="postgresql://example",
+            market_date="2026-04-17",
+            storage=storage,
+        )
+
+        self.assertEqual(len(listing["pipelines"]), 1)
+        pipeline = listing["pipelines"][0]
+        self.assertEqual(
+            pipeline["pipeline_id"], "pipeline:explore_10_put_credit_weekly_auto"
+        )
+        self.assertEqual(pipeline["promotable_count"], 1)
+        self.assertEqual(pipeline["monitor_count"], 0)
+        self.assertTrue(storage.signals.count_calls[0]["runtime_owned"])
+
+    def test_audit_snapshot_uses_runtime_owned_session_opportunities_for_automation_labels(
+        self,
+    ) -> None:
+        storage = _AutomationPipelineStorage()
+        with (
+            patch(
+                "core.services.pipelines.build_session_execution_portfolio",
+                return_value={"positions": []},
+            ),
+            patch(
+                "core.services.pipelines.build_session_risk_snapshot",
+                return_value={"status": "healthy", "note": "ok"},
+            ),
+            patch(
+                "core.services.pipelines.get_control_state_snapshot",
+                return_value={"mode": "normal"},
+            ),
+            patch(
+                "core.services.pipelines.list_session_execution_attempts",
+                return_value=[],
+            ),
+        ):
+            snapshot = build_audit_snapshot(
+                db_target="postgresql://example",
+                pipeline_id="pipeline:explore_10_put_credit_weekly_auto",
+                market_date="2026-04-17",
+                storage=storage,
+            )
+
+        self.assertEqual(snapshot["state_summary"]["counts"]["opportunities"], 1)
+        self.assertEqual(
+            snapshot["explanations"]["selected_opportunities"][0]["opportunity_id"],
+            "opp-runtime",
+        )
+        self.assertTrue(storage.signals.session_opportunity_calls[0]["runtime_owned"])
 
     def test_job_run_view_surfaces_live_collector_automation_summary(self) -> None:
         run = {
