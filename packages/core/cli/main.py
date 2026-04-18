@@ -17,7 +17,6 @@ from core.cli.runtime import (
     pipelines_command,
     positions_command,
 )
-from core.cli.replay import replay_app
 from core.jobs.scheduler import main as scheduler_main
 from core.jobs.seed import main as seed_jobs_main
 from core.services.alpaca_research import main as research_alpaca_main
@@ -74,7 +73,6 @@ app.command("audit", help="Replay one pipeline date for operator investigation."
 )
 app.add_typer(jobs_app, name="jobs")
 app.add_typer(backtest_app, name="backtest")
-app.add_typer(replay_app, name="replay")
 app.add_typer(uoa_app, name="uoa")
 
 

@@ -43,6 +43,14 @@ class DailyBar:
 
 
 @dataclass(frozen=True)
+class OptionTrade:
+    symbol: str
+    price: float
+    size: int
+    timestamp: str
+
+
+@dataclass(frozen=True)
 class IntradayBar:
     timestamp: str
     open: float
@@ -242,6 +250,7 @@ __all__ = [
     "IntradayBar",
     "LiveOptionQuote",
     "OptionContract",
+    "OptionTrade",
     "OptionSnapshot",
     "SpreadCandidate",
     "SymbolMarketSlice",

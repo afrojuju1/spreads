@@ -340,95 +340,6 @@ const sessionTuningSchema = z.object({
   provisional_weakest_signals: z.array(tuningBucketSchema).optional(),
 });
 
-const replayGroupSchema = z
-  .object({
-    group_value: z.string(),
-    count: z.number(),
-    matched_count: z.number().optional(),
-    coverage_rate: z.number().nullable().optional(),
-    pooled_estimated_close_return_on_risk: z.number().nullable().optional(),
-    pooled_estimated_final_return_on_risk: z.number().nullable().optional(),
-    pooled_actual_net_return_on_risk: z.number().nullable().optional(),
-    pooled_actual_minus_estimated_close_return_on_risk: z
-      .number()
-      .nullable()
-      .optional(),
-    average_estimated_close_return_on_risk: z.number().nullable().optional(),
-    average_estimated_final_return_on_risk: z.number().nullable().optional(),
-    average_actual_net_return_on_risk: z.number().nullable().optional(),
-    average_actual_minus_estimated_close_return_on_risk: z
-      .number()
-      .nullable()
-      .optional(),
-  })
-  .passthrough();
-
-const replayDeploymentSliceSchema = z
-  .object({
-    count: z.number().optional(),
-    matched_count: z.number().optional(),
-    coverage_rate: z.number().nullable().optional(),
-    pooled_estimated_close_return_on_risk: z.number().nullable().optional(),
-    pooled_estimated_final_return_on_risk: z.number().nullable().optional(),
-    pooled_actual_net_return_on_risk: z.number().nullable().optional(),
-    pooled_actual_minus_estimated_close_return_on_risk: z
-      .number()
-      .nullable()
-      .optional(),
-    by_profile: z.array(replayGroupSchema).default([]),
-    by_strategy_family: z.array(replayGroupSchema).default([]),
-    by_entry_return_on_risk_bucket: z.array(replayGroupSchema).default([]),
-    by_midpoint_credit_bucket: z.array(replayGroupSchema).default([]),
-    by_width_bucket: z.array(replayGroupSchema).default([]),
-    by_dte_bucket: z.array(replayGroupSchema).default([]),
-  })
-  .passthrough();
-
-const replayDeploymentQualitySchema = z
-  .object({
-    allocator_selected: replayDeploymentSliceSchema.nullable().optional(),
-    actual_deployed: replayDeploymentSliceSchema.nullable().optional(),
-  })
-  .passthrough();
-
-const decisionReplaySchema = z
-  .object({
-    warnings: z.array(z.string()).default([]),
-    session: z.record(z.string(), z.unknown()).optional(),
-    scorecard: z
-      .object({
-        deployment_quality: replayDeploymentQualitySchema.nullable().optional(),
-      })
-      .passthrough()
-      .nullable()
-      .optional(),
-  })
-  .passthrough();
-
-const decisionReplayBatchSchema = z
-  .object({
-    warnings: z.array(z.string()).default([]),
-    aggregate: z
-      .object({
-        session_count: z.number().optional(),
-        deployment_quality: replayDeploymentQualitySchema.nullable().optional(),
-      })
-      .passthrough()
-      .nullable()
-      .optional(),
-  })
-  .passthrough();
-
-const pipelineReplaySchema = z
-  .object({
-    include_replay: z.string(),
-    recent_limit: z.number().optional(),
-    current: decisionReplaySchema.nullable().optional(),
-    recent: decisionReplayBatchSchema.nullable().optional(),
-    warnings: z.array(z.string()).default([]),
-  })
-  .passthrough();
-
 const autoExecutionSummarySchema = z
   .object({
     status: z.string(),
@@ -709,7 +620,6 @@ const pipelineDetailSchema = sessionDetailSchema
     market_date: z.string(),
     pipeline: z.record(z.string(), z.unknown()).nullable().optional(),
     cycles: z.array(z.record(z.string(), z.unknown())).default([]),
-    replay: pipelineReplaySchema.nullable().optional(),
   })
   .passthrough();
 
@@ -812,10 +722,6 @@ export type PipelineDetail = z.infer<typeof pipelineDetailSchema>;
 export type Opportunity = z.infer<typeof opportunitySchema>;
 export type Position = z.infer<typeof positionSchema>;
 export type TuningBucket = z.infer<typeof tuningBucketSchema>;
-export type ReplayGroup = z.infer<typeof replayGroupSchema>;
-export type ReplayDeploymentSlice = z.infer<typeof replayDeploymentSliceSchema>;
-export type ReplayDeploymentQuality = z.infer<typeof replayDeploymentQualitySchema>;
-export type PipelineReplay = z.infer<typeof pipelineReplaySchema>;
 export type AutoExecutionSummary = z.infer<typeof autoExecutionSummarySchema>;
 export type SessionExecutionActionResponse = z.infer<typeof sessionExecutionActionResponseSchema>;
 export type GlobalRealtimeEvent = z.infer<typeof globalRealtimeEventSchema>;
@@ -922,7 +828,6 @@ export function getPipelineDetail(
   pipelineId: string,
   filters?: {
     marketDate?: string;
-    includeReplay?: "none" | "current" | "recent" | "both";
   },
 ) {
   return fetchApi(
@@ -930,7 +835,6 @@ export function getPipelineDetail(
     pipelineDetailSchema,
     {
       market_date: filters?.marketDate,
-      include_replay: filters?.includeReplay,
     },
   );
 }

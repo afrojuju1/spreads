@@ -5,7 +5,7 @@
 - Add tests only for absolutely critical runtime flows and regressions.
 - Prefer one high-signal end-to-end validation through the canonical path over multiple narrow tests.
 - Do not add fake unit tests, helper tests, render-only tests, coercion tests, or mock-heavy tests that only prove implementation details.
-- Test behavior at the system boundary that matters in production: scheduler flow, collector flow, execution flow, replay decisions, API/runtime read models, and critical policy gates.
+- Test behavior at the system boundary that matters in production: scheduler flow, collector flow, execution flow, backtest decisions, API/runtime read models, and critical policy gates.
 - Mock only true external boundaries or hard-to-control infra surfaces. Do not mock the core service or flow you are claiming to validate.
 - Assert on real outcomes and invariants, not private helper calls or incidental intermediate structure.
 - If a change is not in a critical flow, prefer no new test over a low-value test.

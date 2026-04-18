@@ -6,7 +6,7 @@ Use these entrypoints:
 
 - [System Architecture](../current_system_state.md) as the canonical source of truth for the current overall runtime architecture and service boundaries
 - [Current-System Options Automation Implementation Approach](./2026-04-15_current_system_options_automation_implementation_approach.md) for the migration path that uses the existing backend instead of starting clean-sheet
-- [Backtest System Recommendation](./2026-04-16_backtest_system_recommendation.md) for the recommended split between replay and a new config-driven backtest engine
+- [Backtest System Recommendation](./2026-04-16_backtest_system_recommendation.md) for the design background behind the cutover to one canonical config-driven backtest engine
 - [Config-Driven Runtime Prerequisite Plan](./2026-04-16_config_driven_runtime_prerequisite_plan.md) for the implementation architecture needed before the improved backtest is meaningful
 - [Non-Web Large File Cleanup Audit](./2026-04-16_non_web_large_file_cleanup_audit.md) for the current backend cleanup priorities, thin-wrapper audit, and proposed service/module boundaries
 - [Workspace Packages Restructure Plan](./2026-04-16_workspace_packages_restructure_plan.md) for the completed workspace move into `packages/core`, `packages/api`, `packages/web`, and `packages/config`
@@ -16,9 +16,9 @@ Use these entrypoints:
 
 Implementation and evaluation companion:
 
-- use `uv run spreads replay` for single-session offline decision replays
-- use `uv run spreads replay recent --limit <N>` for batch policy comparison across recent sessions
-- treat `uv run spreads analyze` as the legacy post-close report surface, not the canonical replay/evaluation path
+- use `uv run spreads backtest run --bot-id <bot-id> --automation-id <automation-id>` for canonical historical evaluation
+- use `uv run spreads backtest compare --left-json <path> --right-json <path>` for artifact-to-artifact comparison
+- treat `uv run spreads analyze` as the legacy post-close report surface, not the canonical backtest/evaluation path
 
 Detailed design specifications:
 

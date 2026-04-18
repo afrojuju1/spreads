@@ -10,16 +10,13 @@ from typing import Any
 
 import typer
 
+from core.backtest import build_backtest_run, compare_backtest_runs
 from core.cli.ops_render import build_console, render_json_payload
 from core.domain.backtest_models import (
     BacktestArtifact,
     BacktestRun,
     BacktestTarget,
     new_backtest_artifact_id,
-)
-from core.services.bootstrap_backtest import (
-    build_bootstrap_backtest,
-    compare_bootstrap_backtests,
 )
 
 
@@ -78,8 +75,8 @@ def _read_backtest_run(path: str) -> BacktestRun:
     return BacktestRun.from_payload(_read_json_payload(path))
 
 
-def _bootstrap_output_dir(*, bot_id: str, automation_id: str) -> Path:
-    return BACKTEST_OUTPUT_ROOT / "bootstrap" / bot_id / automation_id
+def _run_output_dir(*, bot_id: str, automation_id: str) -> Path:
+    return BACKTEST_OUTPUT_ROOT / "run" / bot_id / automation_id
 
 
 def _compare_output_path() -> Path:
@@ -127,7 +124,7 @@ def _artifact_from_path(
     )
 
 
-def _write_bootstrap_artifacts(
+def _write_run_artifacts(
     *,
     output_dir: Path,
     run: BacktestRun,
@@ -231,14 +228,14 @@ def _write_compare_artifacts(*, run: BacktestRun) -> BacktestRun:
     return run_with_artifacts
 
 
-def _render_bootstrap_text(run: BacktestRun) -> str:
+def _render_run_text(run: BacktestRun) -> str:
     target = BacktestTarget() if run.target is None else run.target
     aggregate = run.aggregate.to_payload() if run.aggregate is not None else {}
     artifacts = run.artifact_paths
     sessions = [session.to_payload() for session in run.sessions]
     lines = [
-        f"Bootstrap backtest: {target.bot_id} / {target.automation_id} / {target.strategy_id}",
-        f"Sessions {aggregate.get('session_count')} | modeled selections {aggregate.get('modeled_selected_count')} | actual selections {aggregate.get('actual_selected_count')} | match rate {aggregate.get('selection_match_rate')}",
+        f"Backtest run: {target.bot_id} / {target.automation_id} / {target.strategy_id}",
+        f"Sessions {aggregate.get('session_count')} | fidelity {aggregate.get('fidelity')} | modeled selections {aggregate.get('modeled_selected_count')} | actual selections {aggregate.get('actual_selected_count')} | match rate {aggregate.get('selection_match_rate')}",
         f"Modeled fills {aggregate.get('modeled_fill_count')} | modeled closed {aggregate.get('modeled_closed_count')} | modeled realized pnl {aggregate.get('modeled_realized_pnl')} | modeled unrealized pnl {aggregate.get('modeled_unrealized_pnl')}",
         f"Actual positions {aggregate.get('position_count')} | realized pnl {aggregate.get('realized_pnl')} | unrealized pnl {aggregate.get('unrealized_pnl')}",
         *(
@@ -257,7 +254,7 @@ def _render_bootstrap_text(run: BacktestRun) -> str:
     for row in sessions[:20]:
         lines.append(
             "- "
-            f"{row.get('session_date')} | opportunities {row.get('opportunity_count')} | modeled {row.get('modeled_selected_opportunity_id') or 'n/a'} | actual {row.get('actual_selected_opportunity_id') or 'n/a'} | modeled_fill {row.get('modeled_fill_state') or 'n/a'} | match {row.get('selection_match')} | positions {row.get('position_count')} | realized {row.get('realized_pnl')}"
+            f"{row.get('session_date')} | fidelity {row.get('fidelity') or 'unsupported'} | opportunities {row.get('opportunity_count')} | modeled {row.get('modeled_selected_opportunity_id') or 'n/a'} | actual {row.get('actual_selected_opportunity_id') or 'n/a'} | modeled_fill {row.get('modeled_fill_state') or 'n/a'} | match {row.get('selection_match')} | positions {row.get('position_count')} | realized {row.get('realized_pnl')}"
         )
     return "\n".join(lines)
 
@@ -288,14 +285,14 @@ def _render_compare_text(run: BacktestRun) -> str:
 
 backtest_app = typer.Typer(
     add_completion=False,
-    help="Run bootstrap backtest workflows over config-owned automation runtime data.",
+    help="Run historical backtests over config-owned automation runtime data.",
 )
 
 
 @backtest_app.command(
-    "bootstrap", help="Backtest over automation runs and scoped opportunities."
+    "run", help="Backtest over automation runs and scoped opportunities."
 )
-def bootstrap_backtest_command(
+def run_backtest_command(
     bot_id: str = typer.Option(..., "--bot-id", help="Target bot id."),
     automation_id: str = typer.Option(
         ..., "--automation-id", help="Target automation id."
@@ -317,7 +314,7 @@ def bootstrap_backtest_command(
     ),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
-    run = build_bootstrap_backtest(
+    run = build_backtest_run(
         db_target=db or "",
         bot_id=bot_id,
         automation_id=automation_id,
@@ -325,8 +322,8 @@ def bootstrap_backtest_command(
         end_date=end_date,
         limit=limit,
     )
-    run = _write_bootstrap_artifacts(
-        output_dir=_bootstrap_output_dir(bot_id=bot_id, automation_id=automation_id),
+    run = _write_run_artifacts(
+        output_dir=_run_output_dir(bot_id=bot_id, automation_id=automation_id),
         run=run,
         export_json=export_json,
         export_csv=export_csv,
@@ -335,11 +332,11 @@ def bootstrap_backtest_command(
         render_json_payload(build_console(no_color=no_color), run.to_payload())
         return
     console = build_console(no_color=no_color)
-    console.print(_render_bootstrap_text(run))
+    console.print(_render_run_text(run))
 
 
 @backtest_app.command(
-    "compare", help="Compare two exported bootstrap backtest payloads."
+    "compare", help="Compare two exported backtest run payloads."
 )
 def compare_backtest_command(
     left_json: str = typer.Option(
@@ -351,7 +348,7 @@ def compare_backtest_command(
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
-    run = compare_bootstrap_backtests(
+    run = compare_backtest_runs(
         left_run=_read_backtest_run(left_json),
         right_run=_read_backtest_run(right_json),
     )

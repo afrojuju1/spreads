@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 from statistics import mean
 from typing import Any, Mapping
 
+from core.backtest import merge_option_bars_with_trades, summarize_market_outcomes
 from core.common import env_or_die, load_local_env
 from core.integrations.alpaca.client import AlpacaClient, infer_trading_base_url
 from core.services.analysis_helpers import (
@@ -13,7 +14,6 @@ from core.services.analysis_helpers import (
     score_bucket_label,
 )
 from core.services.market_dates import NEW_YORK
-from core.services.scanners.replay import summarize_replay
 from core.services.selection_terms import (
     MONITOR_SELECTION_STATE,
     PROMOTABLE_SELECTION_STATE,
@@ -211,13 +211,20 @@ def build_session_outcomes(
             replay_end.isoformat(),
         )
         if option_bars_key not in option_bars_cache:
-            option_bars_cache[option_bars_key] = client.get_option_bars(
-                list(option_symbols),
-                start=run_date.isoformat(),
-                end=replay_end.isoformat(),
+            option_bars_cache[option_bars_key] = merge_option_bars_with_trades(
+                bars_by_symbol=client.get_option_bars(
+                    list(option_symbols),
+                    start=run_date.isoformat(),
+                    end=replay_end.isoformat(),
+                ),
+                trades_by_symbol=client.get_option_trades(
+                    list(option_symbols),
+                    start=run_date.isoformat(),
+                    end=replay_end.isoformat(),
+                ),
             )
 
-        _, replay_rows = summarize_replay(
+        _, replay_rows = summarize_market_outcomes(
             run_payload=run_payload,
             candidates=[target_candidate],
             bars=bars_cache[bars_key],

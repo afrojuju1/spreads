@@ -1696,7 +1696,6 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                 db_target="postgresql://example",
                 pipeline_id="pipeline:explore_10_call_debit_weekly_auto",
                 market_date="2026-04-15",
-                include_replay="none",
                 profit_target=0.5,
                 stop_multiple=2.0,
                 storage=storage,

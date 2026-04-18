@@ -1,16 +1,25 @@
 from __future__ import annotations
 
+from collections import Counter
 from datetime import UTC, date, datetime
+import os
 from typing import Any
 
+from core.backtest.market_data import (
+    ALPACA_OPTIONS_HISTORY_START,
+    estimate_structure_bar,
+    merge_option_bars_with_trades,
+)
 from core.db.decorators import with_storage
 from core.domain.backtest_models import (
     BacktestAggregate,
+    BacktestFidelity,
     BacktestRun,
     BacktestSessionSummary,
     BacktestTarget,
     new_backtest_run_id,
 )
+from core.integrations.alpaca.client import AlpacaClient, infer_trading_base_url
 from core.services.automation_runtime import resolve_entry_runtime
 from core.services.bot_analytics import evaluate_entry_controls
 from core.services.entry_planner import plan_entry_selection, score_opportunity
@@ -29,8 +38,15 @@ from core.storage.run_history_repository import session_bounds
 from core.storage.serializers import parse_datetime
 
 
-ENGINE_NAME = "bootstrap_backtest"
+ENGINE_NAME = "backtest"
 ENGINE_VERSION = "v1"
+
+_FIDELITY_RANK = {
+    "high": 0,
+    "medium": 1,
+    "reduced": 2,
+    "unsupported": 3,
+}
 
 
 def _scope_key(bot_id: str, automation_id: str, session_date: str) -> str:
@@ -161,93 +177,51 @@ def _simulate_entry_execution(
     }
 
 
-def _simulate_position_lifecycle(
-    *,
-    history_store: Any,
-    runtime: Any,
-    opportunity: dict[str, Any] | None,
-    entry_execution: dict[str, Any] | None,
-    started_at: str,
-    session_date: str,
-    end_date: str | None,
-) -> dict[str, Any]:
-    if (
-        opportunity is None
-        or entry_execution is None
-        or not entry_execution.get("filled")
-        or not isinstance(entry_execution.get("position"), dict)
-    ):
-        return {
-            "position_state": "not_opened",
-            "exit_state": "not_opened",
-            "exit_reason": None,
-            "exit_at": None,
-            "exit_fill_price": None,
-            "realized_pnl": 0.0,
-            "unrealized_pnl": 0.0,
-            "final_close_mark": None,
-            "quote_event_count": 0,
-            "snapshot_count": 0,
-        }
-    if not hasattr(history_store, "list_option_quote_events_window"):
-        return {
-            "position_state": "open",
-            "exit_state": "quote_history_unavailable",
-            "exit_reason": "quote_history_unavailable",
-            "exit_at": None,
-            "exit_fill_price": None,
-            "realized_pnl": 0.0,
-            "unrealized_pnl": 0.0,
-            "final_close_mark": None,
-            "quote_event_count": 0,
-            "snapshot_count": 0,
-        }
-    if hasattr(history_store, "schema_ready") and not history_store.schema_ready():
-        return {
-            "position_state": "open",
-            "exit_state": "quote_history_unavailable",
-            "exit_reason": "quote_history_unavailable",
-            "exit_at": None,
-            "exit_fill_price": None,
-            "realized_pnl": 0.0,
-            "unrealized_pnl": 0.0,
-            "final_close_mark": None,
-            "quote_event_count": 0,
-            "snapshot_count": 0,
-        }
-
-    simulated_position = dict(entry_execution["position"])
-    opening_legs = candidate_legs(opportunity)
-    option_symbols = unique_leg_symbols(opening_legs)
-    if not option_symbols:
-        return {
-            "position_state": "open",
-            "exit_state": "missing_legs",
-            "exit_reason": "missing_legs",
-            "exit_at": None,
-            "exit_fill_price": None,
-            "realized_pnl": 0.0,
-            "unrealized_pnl": 0.0,
-            "final_close_mark": None,
-            "quote_event_count": 0,
-            "snapshot_count": 0,
-        }
-
-    _, session_end = session_bounds(end_date or session_date)
-    quote_rows = [
-        dict(row)
-        for row in history_store.list_option_quote_events_window(
-            option_symbols=option_symbols,
-            captured_from=started_at,
-            captured_to=session_end,
-        )
+def _build_lifecycle_result(**overrides: Any) -> dict[str, Any]:
+    payload = {
+        "position_state": "open",
+        "exit_state": "open",
+        "exit_reason": None,
+        "exit_recipe_ref": None,
+        "exit_at": None,
+        "exit_fill_price": None,
+        "realized_pnl": 0.0,
+        "unrealized_pnl": 0.0,
+        "final_close_mark": None,
+        "quote_event_count": 0,
+        "trade_event_count": 0,
+        "snapshot_count": 0,
+        "mark_source": None,
+        "fidelity": "unsupported",
+        "fidelity_reason": None,
+        "fidelity_sources": [],
+    }
+    payload.update(overrides)
+    payload["fidelity_sources"] = [
+        str(value)
+        for value in list(payload.get("fidelity_sources") or [])
+        if str(value).strip()
     ]
+    return payload
 
+
+def _history_store_ready(history_store: Any) -> bool:
+    if history_store is None:
+        return False
+    if hasattr(history_store, "schema_ready"):
+        return bool(history_store.schema_ready())
+    return True
+
+
+def _structure_marks_from_quote_rows(
+    *,
+    opportunity: dict[str, Any],
+    quote_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    opening_legs = candidate_legs(opportunity)
     quotes_by_symbol: dict[str, dict[str, Any]] = {}
     sources_by_symbol: dict[str, str] = {}
-    latest_snapshot: dict[str, Any] | None = None
-    snapshot_count = 0
-    recipe_refs = tuple(runtime.automation.strategy_config.management_recipe_refs)
+    marks: list[dict[str, Any]] = []
     for row in quote_rows:
         symbol = str(row.get("option_symbol") or "").strip()
         if not symbol:
@@ -269,58 +243,137 @@ def _simulate_position_lifecycle(
         )
         if snapshot is None:
             continue
-        latest_snapshot = snapshot
+        marks.append(
+            {
+                "captured_at": snapshot.get("captured_at"),
+                "close_mark": snapshot.get("close_mark"),
+                "source": "recorded_quotes",
+            }
+        )
+    return marks
+
+
+def _structure_marks_from_trade_rows(
+    *,
+    opportunity: dict[str, Any],
+    trade_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    opening_legs = candidate_legs(opportunity)
+    quotes_by_symbol: dict[str, dict[str, Any]] = {}
+    sources_by_symbol: dict[str, str] = {}
+    marks: list[dict[str, Any]] = []
+    for row in trade_rows:
+        symbol = str(row.get("option_symbol") or "").strip()
+        price = _coerce_float(row.get("price"))
+        if not symbol or price <= 0:
+            continue
+        quotes_by_symbol[symbol] = {
+            "bid": price,
+            "ask": price,
+            "midpoint": price,
+            "captured_at": row.get("captured_at"),
+            "timestamp": row.get("captured_at"),
+        }
+        if row.get("source") not in (None, ""):
+            sources_by_symbol[symbol] = str(row.get("source"))
+        snapshot = structure_quote_snapshot(
+            legs=opening_legs,
+            strategy_family=opportunity.get("strategy_family"),
+            quotes_by_symbol=quotes_by_symbol,
+            sources_by_symbol=sources_by_symbol,
+        )
+        if snapshot is None:
+            continue
+        marks.append(
+            {
+                "captured_at": snapshot.get("captured_at"),
+                "close_mark": snapshot.get("close_mark"),
+                "source": "recorded_trades",
+            }
+        )
+    return marks
+
+
+def _evaluate_structure_marks(
+    *,
+    runtime: Any,
+    opportunity: dict[str, Any],
+    entry_execution: dict[str, Any],
+    marks: list[dict[str, Any]],
+    session_end: datetime,
+    mark_source: str,
+    fidelity: BacktestFidelity,
+    fidelity_reason: str,
+    fidelity_sources: list[str],
+    quote_event_count: int = 0,
+    trade_event_count: int = 0,
+) -> dict[str, Any]:
+    simulated_position = dict(entry_execution["position"])
+    recipe_refs = tuple(runtime.automation.strategy_config.management_recipe_refs)
+    latest_mark: dict[str, Any] | None = None
+    snapshot_count = 0
+    for snapshot in marks:
+        close_mark = snapshot.get("close_mark")
+        captured_at = snapshot.get("captured_at")
+        if close_mark is None:
+            continue
+        latest_mark = dict(snapshot)
         snapshot_count += 1
-        simulated_position["close_mark"] = snapshot.get("close_mark")
-        simulated_position["close_marked_at"] = snapshot.get("captured_at")
+        simulated_position["close_mark"] = close_mark
+        simulated_position["close_marked_at"] = captured_at
         decision = evaluate_management_recipes(
             recipe_refs,
             position=simulated_position,
-            mark=_coerce_float(snapshot.get("close_mark")),
-            now=parse_datetime(snapshot.get("captured_at")) or session_end,
+            mark=_coerce_float(close_mark),
+            now=parse_datetime(captured_at) or session_end,
         )
         if decision.should_close:
             exit_fill_price = (
                 decision.limit_price
                 if decision.limit_price is not None
-                else _coerce_float(snapshot.get("close_mark"))
+                else _coerce_float(close_mark)
             )
-            return {
-                "position_state": "closed",
-                "exit_state": "closed",
-                "exit_reason": decision.reason,
-                "exit_recipe_ref": decision.recipe_ref,
-                "exit_at": snapshot.get("captured_at"),
-                "exit_fill_price": None
+            return _build_lifecycle_result(
+                position_state="closed",
+                exit_state="closed",
+                exit_reason=decision.reason,
+                exit_recipe_ref=decision.recipe_ref,
+                exit_at=captured_at,
+                exit_fill_price=None
                 if exit_fill_price <= 0
                 else round(exit_fill_price, 4),
-                "realized_pnl": _lifecycle_pnl(
+                realized_pnl=_lifecycle_pnl(
                     strategy_family=opportunity.get("strategy_family"),
                     entry_value=float(entry_execution["fill_price"]),
                     exit_value=exit_fill_price,
                 ),
-                "unrealized_pnl": 0.0,
-                "final_close_mark": snapshot.get("close_mark"),
-                "quote_event_count": len(quote_rows),
-                "snapshot_count": snapshot_count,
-            }
+                unrealized_pnl=0.0,
+                final_close_mark=close_mark,
+                quote_event_count=quote_event_count,
+                trade_event_count=trade_event_count,
+                snapshot_count=snapshot_count,
+                mark_source=mark_source,
+                fidelity=fidelity,
+                fidelity_reason=fidelity_reason,
+                fidelity_sources=fidelity_sources,
+            )
 
-    if latest_snapshot is None:
-        return {
-            "position_state": "open",
-            "exit_state": "no_quotes",
-            "exit_reason": "no_quotes",
-            "exit_at": None,
-            "exit_fill_price": None,
-            "realized_pnl": 0.0,
-            "unrealized_pnl": 0.0,
-            "final_close_mark": None,
-            "quote_event_count": len(quote_rows),
-            "snapshot_count": snapshot_count,
-        }
+    if latest_mark is None:
+        return _build_lifecycle_result(
+            position_state="open",
+            exit_state="no_market_data",
+            exit_reason="no_market_data",
+            quote_event_count=quote_event_count,
+            trade_event_count=trade_event_count,
+            snapshot_count=snapshot_count,
+            mark_source=mark_source,
+            fidelity=fidelity,
+            fidelity_reason=fidelity_reason,
+            fidelity_sources=fidelity_sources,
+        )
 
-    simulated_position["close_mark"] = latest_snapshot.get("close_mark")
-    simulated_position["close_marked_at"] = latest_snapshot.get("captured_at")
+    simulated_position["close_mark"] = latest_mark.get("close_mark")
+    simulated_position["close_marked_at"] = latest_mark.get("captured_at")
     forced_now = (
         parse_datetime(simulated_position.get("exit_policy", {}).get("force_close_at"))
         or session_end
@@ -328,60 +381,328 @@ def _simulate_position_lifecycle(
     final_decision = evaluate_management_recipes(
         recipe_refs,
         position=simulated_position,
-        mark=_coerce_float(latest_snapshot.get("close_mark")),
+        mark=_coerce_float(latest_mark.get("close_mark")),
         now=forced_now,
     )
     if final_decision.should_close:
         exit_fill_price = (
             final_decision.limit_price
             if final_decision.limit_price is not None
-            else _coerce_float(latest_snapshot.get("close_mark"))
+            else _coerce_float(latest_mark.get("close_mark"))
         )
-        return {
-            "position_state": "closed",
-            "exit_state": "closed",
-            "exit_reason": final_decision.reason,
-            "exit_recipe_ref": final_decision.recipe_ref,
-            "exit_at": latest_snapshot.get("captured_at")
-            if latest_snapshot.get("captured_at")
-            else forced_now.isoformat(),
-            "exit_fill_price": None
+        return _build_lifecycle_result(
+            position_state="closed",
+            exit_state="closed",
+            exit_reason=final_decision.reason,
+            exit_recipe_ref=final_decision.recipe_ref,
+            exit_at=latest_mark.get("captured_at") or forced_now.isoformat(),
+            exit_fill_price=None
             if exit_fill_price <= 0
             else round(exit_fill_price, 4),
-            "realized_pnl": _lifecycle_pnl(
+            realized_pnl=_lifecycle_pnl(
                 strategy_family=opportunity.get("strategy_family"),
                 entry_value=float(entry_execution["fill_price"]),
                 exit_value=exit_fill_price,
             ),
-            "unrealized_pnl": 0.0,
-            "final_close_mark": latest_snapshot.get("close_mark"),
-            "quote_event_count": len(quote_rows),
-            "snapshot_count": snapshot_count,
-        }
+            unrealized_pnl=0.0,
+            final_close_mark=latest_mark.get("close_mark"),
+            quote_event_count=quote_event_count,
+            trade_event_count=trade_event_count,
+            snapshot_count=snapshot_count,
+            mark_source=mark_source,
+            fidelity=fidelity,
+            fidelity_reason=fidelity_reason,
+            fidelity_sources=fidelity_sources,
+        )
 
-    final_close_mark = _coerce_float(latest_snapshot.get("close_mark"))
-    return {
-        "position_state": "open",
-        "exit_state": "open",
-        "exit_reason": str(final_decision.reason),
-        "exit_recipe_ref": final_decision.recipe_ref,
-        "exit_at": latest_snapshot.get("captured_at"),
-        "exit_fill_price": None,
-        "realized_pnl": 0.0,
-        "unrealized_pnl": _lifecycle_pnl(
+    final_close_mark = _coerce_float(latest_mark.get("close_mark"))
+    return _build_lifecycle_result(
+        position_state="open",
+        exit_state="open",
+        exit_reason=str(final_decision.reason),
+        exit_recipe_ref=final_decision.recipe_ref,
+        exit_at=latest_mark.get("captured_at"),
+        exit_fill_price=None,
+        realized_pnl=0.0,
+        unrealized_pnl=_lifecycle_pnl(
             strategy_family=opportunity.get("strategy_family"),
             entry_value=float(entry_execution["fill_price"]),
             exit_value=final_close_mark,
         )
         if final_close_mark > 0
         else 0.0,
-        "final_close_mark": latest_snapshot.get("close_mark"),
-        "quote_event_count": len(quote_rows),
-        "snapshot_count": snapshot_count,
+        final_close_mark=latest_mark.get("close_mark"),
+        quote_event_count=quote_event_count,
+        trade_event_count=trade_event_count,
+        snapshot_count=snapshot_count,
+        mark_source=mark_source,
+        fidelity=fidelity,
+        fidelity_reason=fidelity_reason,
+        fidelity_sources=fidelity_sources,
+    )
+
+
+def _build_alpaca_client() -> AlpacaClient | None:
+    key_id = os.getenv("APCA_API_KEY_ID") or os.getenv("ALPACA_API_KEY")
+    secret_key = os.getenv("APCA_API_SECRET_KEY") or os.getenv("ALPACA_SECRET_KEY")
+    if not key_id or not secret_key:
+        return None
+    return AlpacaClient(
+        key_id=key_id,
+        secret_key=secret_key,
+        trading_base_url=infer_trading_base_url(key_id, None),
+        data_base_url="https://data.alpaca.markets",
+    )
+
+
+def _alpaca_daily_marks(
+    *,
+    opportunity: dict[str, Any],
+    session_date: str,
+    target_date: str,
+    alpaca_client: AlpacaClient,
+    cache: dict[tuple[tuple[str, ...], str, str], dict[str, Any]],
+) -> tuple[list[dict[str, Any]], str] | None:
+    opening_legs = candidate_legs(opportunity)
+    option_symbols = tuple(unique_leg_symbols(opening_legs))
+    if not option_symbols:
+        return None
+    cache_key = (option_symbols, session_date, target_date)
+    cached = cache.get(cache_key)
+    if cached is None:
+        option_bars = alpaca_client.get_option_bars(
+            list(option_symbols),
+            start=session_date,
+            end=target_date,
+        )
+        option_trades = alpaca_client.get_option_trades(
+            list(option_symbols),
+            start=session_date,
+            end=target_date,
+        )
+        cached = {
+            "bars": option_bars,
+            "trades": option_trades,
+            "merged": merge_option_bars_with_trades(
+                bars_by_symbol=option_bars,
+                trades_by_symbol=option_trades,
+            ),
+        }
+        cache[cache_key] = cached
+
+    merged_bars = dict(cached.get("merged") or {})
+    direct_bars = dict(cached.get("bars") or {})
+    bars_by_date = {
+        symbol: {
+            datetime.fromisoformat(bar.timestamp.replace("Z", "+00:00")).date(): bar
+            for bar in list(bars)
+        }
+        for symbol, bars in merged_bars.items()
     }
+    if not bars_by_date:
+        return None
+    date_sets = [set(values) for values in bars_by_date.values() if values]
+    if not date_sets:
+        return None
+    start_on = date.fromisoformat(session_date)
+    end_on = date.fromisoformat(target_date)
+    path_dates = sorted(
+        value for value in set.intersection(*date_sets) if start_on <= value <= end_on
+    )
+    if not path_dates:
+        return None
+
+    mark_source = (
+        "alpaca_bars"
+        if all(
+            value in {
+                datetime.fromisoformat(bar.timestamp.replace("Z", "+00:00")).date()
+                for bar in list(direct_bars.get(symbol, []))
+            }
+            for symbol in option_symbols
+            for value in path_dates
+        )
+        else "alpaca_mixed"
+    )
+    marks: list[dict[str, Any]] = []
+    for path_date in path_dates:
+        daily_bars = {
+            symbol: symbol_bars[path_date]
+            for symbol, symbol_bars in bars_by_date.items()
+            if path_date in symbol_bars
+        }
+        spread_bar = estimate_structure_bar(
+            legs=opening_legs,
+            bars_by_symbol=daily_bars,
+            strategy=str(opportunity.get("strategy_family") or ""),
+        )
+        if spread_bar is None:
+            continue
+        marks.append(
+            {
+                "captured_at": max(
+                    bar.timestamp for bar in daily_bars.values() if bar.timestamp
+                ),
+                "close_mark": spread_bar.get("close"),
+                "source": mark_source,
+            }
+        )
+    return marks, mark_source
 
 
-def compare_bootstrap_backtests(
+def _simulate_position_lifecycle(
+    *,
+    history_store: Any,
+    runtime: Any,
+    opportunity: dict[str, Any] | None,
+    entry_execution: dict[str, Any] | None,
+    started_at: str,
+    session_date: str,
+    end_date: str | None,
+    alpaca_client: AlpacaClient | None,
+    alpaca_cache: dict[tuple[tuple[str, ...], str, str], dict[str, Any]],
+) -> dict[str, Any]:
+    if (
+        opportunity is None
+        or entry_execution is None
+        or not entry_execution.get("filled")
+        or not isinstance(entry_execution.get("position"), dict)
+    ):
+        return _build_lifecycle_result(
+            position_state="not_opened",
+            exit_state="not_opened",
+            fidelity="unsupported",
+            fidelity_reason="position_not_opened",
+        )
+
+    opening_legs = candidate_legs(opportunity)
+    option_symbols = unique_leg_symbols(opening_legs)
+    if not option_symbols:
+        return _build_lifecycle_result(
+            exit_state="missing_legs",
+            exit_reason="missing_legs",
+            fidelity="unsupported",
+            fidelity_reason="missing_structure_legs",
+        )
+
+    target_date = end_date or session_date
+    _, session_end = session_bounds(target_date)
+
+    quote_rows: list[dict[str, Any]] = []
+    trade_rows: list[dict[str, Any]] = []
+    if _history_store_ready(history_store):
+        if hasattr(history_store, "list_option_quote_events_window"):
+            quote_rows = [
+                dict(row)
+                for row in history_store.list_option_quote_events_window(
+                    option_symbols=option_symbols,
+                    captured_from=started_at,
+                    captured_to=session_end,
+                )
+            ]
+        if hasattr(history_store, "list_option_trade_events_window"):
+            trade_rows = [
+                dict(row)
+                for row in history_store.list_option_trade_events_window(
+                    option_symbols=option_symbols,
+                    captured_from=started_at,
+                    captured_to=session_end,
+                )
+            ]
+
+    if quote_rows:
+        return _evaluate_structure_marks(
+            runtime=runtime,
+            opportunity=opportunity,
+            entry_execution=entry_execution,
+            marks=_structure_marks_from_quote_rows(
+                opportunity=opportunity,
+                quote_rows=quote_rows,
+            ),
+            session_end=session_end,
+            mark_source="recorded_quotes",
+            fidelity="high",
+            fidelity_reason="repo_recorded_quote_window",
+            fidelity_sources=["recorded_quotes"],
+            quote_event_count=len(quote_rows),
+            trade_event_count=len(trade_rows),
+        )
+
+    if trade_rows:
+        return _evaluate_structure_marks(
+            runtime=runtime,
+            opportunity=opportunity,
+            entry_execution=entry_execution,
+            marks=_structure_marks_from_trade_rows(
+                opportunity=opportunity,
+                trade_rows=trade_rows,
+            ),
+            session_end=session_end,
+            mark_source="recorded_trades",
+            fidelity="high",
+            fidelity_reason="repo_recorded_trade_window",
+            fidelity_sources=["recorded_trades"],
+            quote_event_count=0,
+            trade_event_count=len(trade_rows),
+        )
+
+    session_day = date.fromisoformat(session_date)
+    if session_day < ALPACA_OPTIONS_HISTORY_START:
+        return _build_lifecycle_result(
+            exit_state="unsupported",
+            exit_reason="alpaca_history_unsupported_before_2024_02_01",
+            mark_source="unsupported",
+            fidelity="unsupported",
+            fidelity_reason="pre_2024_02_01_requires_recorded_repo_data",
+            fidelity_sources=[],
+        )
+
+    if alpaca_client is not None:
+        try:
+            alpaca_marks = _alpaca_daily_marks(
+                opportunity=opportunity,
+                session_date=session_date,
+                target_date=target_date,
+                alpaca_client=alpaca_client,
+                cache=alpaca_cache,
+            )
+        except Exception:
+            alpaca_marks = None
+        if alpaca_marks is not None:
+            marks, mark_source = alpaca_marks
+            if marks:
+                return _evaluate_structure_marks(
+                    runtime=runtime,
+                    opportunity=opportunity,
+                    entry_execution=entry_execution,
+                    marks=marks,
+                    session_end=session_end,
+                    mark_source=mark_source,
+                    fidelity="medium",
+                    fidelity_reason="alpaca_option_history",
+                    fidelity_sources=["alpaca_bars", "alpaca_trades"]
+                    if mark_source == "alpaca_mixed"
+                    else ["alpaca_bars"],
+                )
+
+    fill_price = _coerce_float(entry_execution.get("fill_price"))
+    return _build_lifecycle_result(
+        position_state="open",
+        exit_state="synthetic_fallback",
+        exit_reason=(
+            "alpaca_history_unavailable"
+            if alpaca_client is not None
+            else "alpaca_client_unavailable"
+        ),
+        final_close_mark=None if fill_price <= 0 else round(fill_price, 4),
+        mark_source="synthetic_midpoint",
+        fidelity="reduced",
+        fidelity_reason="synthetic_midpoint_fallback",
+        fidelity_sources=["synthetic_midpoint"],
+    )
+
+
+def compare_backtest_runs(
     *,
     left_run: BacktestRun,
     right_run: BacktestRun,
@@ -425,6 +746,11 @@ def compare_bootstrap_backtests(
                 else round(_coerce_float(left_value) - _coerce_float(right_value), 4)
             ),
         }
+    metrics["fidelity"] = {
+        "left": left_aggregate.get("fidelity"),
+        "right": right_aggregate.get("fidelity"),
+        "delta": None,
+    }
     started_at = datetime.now(UTC)
     return BacktestRun(
         id=new_backtest_run_id("compare"),
@@ -459,8 +785,17 @@ def _latest_runs_by_session(
     return [latest_by_session[key] for key in sorted(latest_by_session)]
 
 
+def _run_fidelity(sessions: list[BacktestSessionSummary]) -> tuple[BacktestFidelity, str, dict[str, int]]:
+    if not sessions:
+        return "unsupported", "no_sessions", {}
+    counts = Counter(session.fidelity for session in sessions)
+    worst = max(counts, key=lambda key: _FIDELITY_RANK.get(key, 99))
+    reason = ", ".join(f"{key}={counts[key]}" for key in sorted(counts))
+    return worst, reason, dict(sorted(counts.items()))
+
+
 @with_storage()
-def build_bootstrap_backtest(
+def build_backtest_run(
     *,
     db_target: str,
     bot_id: str,
@@ -475,6 +810,8 @@ def build_bootstrap_backtest(
     signal_store = storage.signals
     execution_store = storage.execution
     history_store = storage.history
+    alpaca_client = _build_alpaca_client()
+    alpaca_cache: dict[tuple[tuple[str, ...], str, str], dict[str, Any]] = {}
 
     runs = _latest_runs_by_session(
         [
@@ -554,6 +891,8 @@ def build_bootstrap_backtest(
             started_at=str(run.get("started_at") or session_date),
             session_date=session_date,
             end_date=end_date,
+            alpaca_client=alpaca_client,
+            alpaca_cache=alpaca_cache,
         )
         if str(modeled_lifecycle.get("position_state") or "") == "closed":
             modeled_closed_count += 1
@@ -642,6 +981,12 @@ def build_bootstrap_backtest(
             BacktestSessionSummary(
                 session_date=session_date,
                 automation_run_id=str(run["automation_run_id"]),
+                fidelity=str(modeled_lifecycle.get("fidelity") or "unsupported"),
+                fidelity_reason=modeled_lifecycle.get("fidelity_reason"),
+                fidelity_sources=[
+                    str(value)
+                    for value in list(modeled_lifecycle.get("fidelity_sources") or [])
+                ],
                 opportunity_count=len(opportunities),
                 modeled_selected_opportunity_id=modeled_selected_id,
                 actual_selected_opportunity_id=actual_selected_id,
@@ -684,9 +1029,13 @@ def build_bootstrap_backtest(
                 modeled_quote_event_count=int(
                     modeled_lifecycle.get("quote_event_count") or 0
                 ),
+                modeled_trade_event_count=int(
+                    modeled_lifecycle.get("trade_event_count") or 0
+                ),
                 modeled_snapshot_count=int(
                     modeled_lifecycle.get("snapshot_count") or 0
                 ),
+                modeled_mark_source=modeled_lifecycle.get("mark_source"),
                 selected_intent_count=len(selected_intents),
                 position_count=len(positions),
                 realized_pnl=round(realized_pnl, 2),
@@ -708,10 +1057,11 @@ def build_bootstrap_backtest(
             )
         )
 
+    run_fidelity, run_fidelity_reason, fidelity_counts = _run_fidelity(sessions)
     completed_at = datetime.now(UTC)
     return BacktestRun(
-        id=new_backtest_run_id("bootstrap"),
-        kind="bootstrap",
+        id=new_backtest_run_id("run"),
+        kind="run",
         status="completed",
         engine_name=ENGINE_NAME,
         engine_version=ENGINE_VERSION,
@@ -730,6 +1080,9 @@ def build_bootstrap_backtest(
         ),
         aggregate=BacktestAggregate(
             session_count=len(sessions),
+            fidelity=run_fidelity,
+            fidelity_reason=run_fidelity_reason,
+            fidelity_counts=fidelity_counts,
             modeled_selected_count=modeled_selected_count,
             modeled_fill_count=modeled_fill_count,
             modeled_position_count=modeled_position_count,
@@ -760,11 +1113,23 @@ def build_bootstrap_backtest(
         ),
         sessions=sessions,
         params={
+            "bot_id": runtime.bot_id,
+            "automation_id": runtime.automation_id,
             "start_date": start_date,
             "end_date": end_date,
             "limit": max(int(limit), 1),
         },
+        coverage={
+            "priority_ladder": [
+                "repo_recorded_option_quote_trade_windows",
+                "alpaca_historical_option_trades_and_bars",
+                "synthetic_midpoint_fallback",
+            ],
+            "alpaca_options_history_supported_from": ALPACA_OPTIONS_HISTORY_START.isoformat(),
+            "run_fidelity": run_fidelity,
+            "fidelity_counts": fidelity_counts,
+        },
     )
 
 
-__all__ = ["build_bootstrap_backtest", "compare_bootstrap_backtests"]
+__all__ = ["build_backtest_run", "compare_backtest_runs"]

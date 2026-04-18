@@ -8,11 +8,12 @@ from uuid import uuid4
 from core.storage.serializers import parse_datetime
 
 
-BacktestRunKind = Literal["bootstrap", "compare"]
+BacktestRunKind = Literal["run", "compare"]
 BacktestRunStatus = Literal["running", "completed", "failed"]
 BacktestArtifactType = Literal["summary_json", "sessions_csv", "comparison_json"]
 BacktestArtifactRole = Literal["latest", "run", "export"]
 BacktestArtifactFormat = Literal["json", "csv"]
+BacktestFidelity = Literal["high", "medium", "reduced", "unsupported"]
 
 
 def _parse_date(value: str | date | None) -> date | None:
@@ -84,6 +85,9 @@ class BacktestTarget:
 @dataclass(frozen=True)
 class BacktestAggregate:
     session_count: int = 0
+    fidelity: BacktestFidelity = "unsupported"
+    fidelity_reason: str | None = None
+    fidelity_counts: dict[str, int] = field(default_factory=dict)
     modeled_selected_count: int = 0
     modeled_fill_count: int = 0
     modeled_position_count: int = 0
@@ -103,6 +107,9 @@ class BacktestAggregate:
     def to_payload(self) -> dict[str, Any]:
         return {
             "session_count": self.session_count,
+            "fidelity": self.fidelity,
+            "fidelity_reason": self.fidelity_reason,
+            "fidelity_counts": dict(self.fidelity_counts),
             "modeled_selected_count": self.modeled_selected_count,
             "modeled_fill_count": self.modeled_fill_count,
             "modeled_position_count": self.modeled_position_count,
@@ -127,6 +134,12 @@ class BacktestAggregate:
         payload = dict(payload)
         return cls(
             session_count=int(payload.get("session_count") or 0),
+            fidelity=str(payload.get("fidelity") or "unsupported"),
+            fidelity_reason=payload.get("fidelity_reason"),
+            fidelity_counts={
+                str(key): int(value or 0)
+                for key, value in dict(payload.get("fidelity_counts") or {}).items()
+            },
             modeled_selected_count=int(payload.get("modeled_selected_count") or 0),
             modeled_fill_count=int(payload.get("modeled_fill_count") or 0),
             modeled_position_count=int(payload.get("modeled_position_count") or 0),
@@ -211,6 +224,9 @@ class BacktestArtifact:
 class BacktestSessionSummary:
     session_date: str
     automation_run_id: str | None = None
+    fidelity: BacktestFidelity = "unsupported"
+    fidelity_reason: str | None = None
+    fidelity_sources: list[str] = field(default_factory=list)
     opportunity_count: int = 0
     modeled_selected_opportunity_id: str | None = None
     actual_selected_opportunity_id: str | None = None
@@ -230,7 +246,9 @@ class BacktestSessionSummary:
     modeled_unrealized_pnl: float | None = None
     modeled_final_close_mark: float | None = None
     modeled_quote_event_count: int = 0
+    modeled_trade_event_count: int = 0
     modeled_snapshot_count: int = 0
+    modeled_mark_source: str | None = None
     selected_intent_count: int = 0
     position_count: int = 0
     realized_pnl: float = 0.0
@@ -241,6 +259,9 @@ class BacktestSessionSummary:
         return {
             "session_date": self.session_date,
             "automation_run_id": self.automation_run_id,
+            "fidelity": self.fidelity,
+            "fidelity_reason": self.fidelity_reason,
+            "fidelity_sources": list(self.fidelity_sources),
             "opportunity_count": self.opportunity_count,
             "modeled_selected_opportunity_id": self.modeled_selected_opportunity_id,
             "actual_selected_opportunity_id": self.actual_selected_opportunity_id,
@@ -260,7 +281,9 @@ class BacktestSessionSummary:
             "modeled_unrealized_pnl": self.modeled_unrealized_pnl,
             "modeled_final_close_mark": self.modeled_final_close_mark,
             "modeled_quote_event_count": self.modeled_quote_event_count,
+            "modeled_trade_event_count": self.modeled_trade_event_count,
             "modeled_snapshot_count": self.modeled_snapshot_count,
+            "modeled_mark_source": self.modeled_mark_source,
             "selected_intent_count": self.selected_intent_count,
             "position_count": self.position_count,
             "realized_pnl": self.realized_pnl,
@@ -274,6 +297,13 @@ class BacktestSessionSummary:
         return cls(
             session_date=str(payload["session_date"]),
             automation_run_id=payload.get("automation_run_id"),
+            fidelity=str(payload.get("fidelity") or "unsupported"),
+            fidelity_reason=payload.get("fidelity_reason"),
+            fidelity_sources=[
+                str(value)
+                for value in list(payload.get("fidelity_sources") or [])
+                if str(value).strip()
+            ],
             opportunity_count=int(payload.get("opportunity_count") or 0),
             modeled_selected_opportunity_id=payload.get(
                 "modeled_selected_opportunity_id"
@@ -319,7 +349,11 @@ class BacktestSessionSummary:
             modeled_quote_event_count=int(
                 payload.get("modeled_quote_event_count") or 0
             ),
+            modeled_trade_event_count=int(
+                payload.get("modeled_trade_event_count") or 0
+            ),
             modeled_snapshot_count=int(payload.get("modeled_snapshot_count") or 0),
+            modeled_mark_source=payload.get("modeled_mark_source"),
             selected_intent_count=int(payload.get("selected_intent_count") or 0),
             position_count=int(payload.get("position_count") or 0),
             realized_pnl=float(payload.get("realized_pnl") or 0.0),
@@ -397,7 +431,7 @@ class BacktestRun:
             "right_run_id": self.right_run_id,
             "error_text": self.error_text,
         }
-        if self.kind == "bootstrap":
+        if self.kind == "run":
             payload.update(
                 {
                     "target": None if self.target is None else self.target.to_payload(),
@@ -431,12 +465,12 @@ class BacktestRun:
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> BacktestRun:
         payload = dict(payload)
-        kind = str(payload.get("kind") or "bootstrap")
+        kind = str(payload.get("kind") or "run")
         return cls(
             id=str(payload.get("id") or new_backtest_run_id(kind)),
             kind=kind,
             status=str(payload.get("status") or "completed"),
-            engine_name=str(payload.get("engine_name") or "bootstrap_backtest"),
+            engine_name=str(payload.get("engine_name") or "backtest"),
             engine_version=str(payload.get("engine_version") or "v1"),
             created_at=parse_datetime(payload.get("created_at")) or datetime.now(UTC),
             started_at=parse_datetime(payload.get("started_at")) or datetime.now(UTC),
@@ -444,17 +478,17 @@ class BacktestRun:
             output_root=str(payload.get("output_root") or ""),
             target=(
                 None
-                if kind != "bootstrap"
+                if kind != "run"
                 else BacktestTarget.from_payload(payload.get("target"))
             ),
             aggregate=(
                 None
-                if kind != "bootstrap"
+                if kind != "run"
                 else BacktestAggregate.from_payload(payload.get("aggregate"))
             ),
             sessions=(
                 []
-                if kind != "bootstrap"
+                if kind != "run"
                 else [
                     BacktestSessionSummary.from_payload(dict(row))
                     for row in list(payload.get("sessions") or [])
@@ -496,6 +530,7 @@ __all__ = [
     "BacktestArtifactFormat",
     "BacktestArtifactRole",
     "BacktestArtifactType",
+    "BacktestFidelity",
     "BacktestRun",
     "BacktestRunKind",
     "BacktestRunStatus",

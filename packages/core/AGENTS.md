@@ -34,7 +34,7 @@
 
 - For operator visibility work, reuse these modules with thin adapters instead of introducing parallel API-only logic.
 - For session health and current runtime state, prefer `services/live_runtime.py`, `services/live_collector_health/`, `services/pipelines.py`, and `services/ops/` over creating new read-model owners.
-- For first-pass ops/runtime checks and replay workflows, follow the repo-level CLI guidance in [../../AGENTS.md](../../AGENTS.md). Keep the canonical command list there instead of repeating it in backend-specific instructions.
+- For first-pass ops/runtime checks and historical backtest workflows, follow the repo-level CLI guidance in [../../AGENTS.md](../../AGENTS.md). Keep the canonical command list there instead of repeating it in backend-specific instructions.
 - Treat `services/post_close/` as the canonical post-close reporting surface.
 - For closed-session investigations, check post-market analysis before tuning strategy thresholds from raw session counts alone.
 
@@ -46,7 +46,7 @@
   - pipeline/session runtime health: `services/pipelines.py` or `uv run spreads pipelines`
   - closed-session analysis: `storage/post_market_repository.py` / `services/post_market_analysis.py` or `http://localhost:58080/post-market/{session_date}/{label}`
 - Always distinguish actual account PnL from modeled post-market outcomes. Do not present modeled idea outcomes as realized account performance.
-- Replay output now includes modeled close/final PnL and actual traded-position PnL. Treat modeled and actual metrics as separate evaluation planes.
+- Backtest and post-close output now include modeled close/final PnL and actual traded-position PnL. Treat modeled and actual metrics as separate evaluation planes.
 - After market close, use exact dates in summaries.
 
 ## Rollout Checklist

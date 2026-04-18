@@ -12,6 +12,7 @@ from core.domain.models import (
     IntradayBar,
     LiveOptionQuote,
     OptionContract,
+    OptionTrade,
     OptionSnapshot,
 )
 
@@ -528,6 +529,54 @@ class AlpacaClient:
             if not page_token:
                 break
         return bars_by_symbol
+
+    def get_option_trades(
+        self,
+        symbols: list[str],
+        *,
+        start: str,
+        end: str,
+    ) -> dict[str, list[OptionTrade]]:
+        if not symbols:
+            return {}
+
+        trades_by_symbol: dict[str, list[OptionTrade]] = {
+            symbol: [] for symbol in symbols
+        }
+        page_token: str | None = None
+        while True:
+            payload = self.get_json(
+                self.data_base_url,
+                "/v1beta1/options/trades",
+                {
+                    "symbols": ",".join(symbols),
+                    "start": start,
+                    "end": end,
+                    "limit": 1000,
+                    "page_token": page_token,
+                },
+            )
+            raw_trades = payload.get("trades", {})
+            if isinstance(raw_trades, dict):
+                for symbol, trades in raw_trades.items():
+                    for item in trades:
+                        price = parse_float(pick(item, "p", "price"))
+                        size = parse_int(pick(item, "s", "size")) or 0
+                        timestamp = pick(item, "t", "timestamp")
+                        if price is None or price <= 0 or not timestamp:
+                            continue
+                        trades_by_symbol.setdefault(symbol, []).append(
+                            OptionTrade(
+                                symbol=str(symbol),
+                                price=price,
+                                size=size,
+                                timestamp=str(timestamp),
+                            )
+                        )
+            page_token = payload.get("next_page_token") or payload.get("page_token")
+            if not page_token:
+                break
+        return trades_by_symbol
 
     @staticmethod
     def _extract_symbol_payload(

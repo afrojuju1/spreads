@@ -38,12 +38,11 @@
   - `uv run spreads jobs`
   - `uv run spreads uoa`
   - `uv run spreads audit <pipeline-id> --date <YYYY-MM-DD>`
-- For offline selection research or policy tuning, prefer the replay CLI before ad hoc scripts or raw SQL:
-  - `uv run spreads replay`
-  - `uv run spreads replay --label <label> --date <YYYY-MM-DD>`
-  - `uv run spreads replay recent --limit <N>`
-- Treat `uv run spreads replay` as the canonical decision-evaluation path.
-- Treat `uv run spreads analyze` as a legacy post-close report surface, not the canonical replay or policy-tuning workflow.
+- For offline selection research or policy tuning, prefer the canonical backtest CLI before ad hoc scripts or raw SQL:
+  - `uv run spreads backtest run --bot-id <bot-id> --automation-id <automation-id>`
+  - `uv run spreads backtest compare --left-json <path> --right-json <path>`
+- Treat `uv run spreads backtest run` as the canonical historical decision-evaluation path.
+- Treat `uv run spreads analyze` as a legacy post-close report surface, not the canonical backtest or policy-tuning workflow.
 - Do not assume `uv run spreads doctor` exists; it is intentionally deferred.
 - For runtime verification of the API, workers, scheduler, or web app, prefer the existing `docker compose` services when they are already running instead of starting duplicate local processes.
 - Use `docker compose ps`, `docker compose logs`, and `docker compose restart` for stack-level checks before falling back to ad hoc local `uvicorn`, worker, or scheduler runs.

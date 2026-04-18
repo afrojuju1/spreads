@@ -11,6 +11,7 @@ from core.domain.models import (
     OptionContract,
     OptionSnapshot,
 )
+from core.backtest import mark_structure_on_date
 from core.services.execution import (
     _build_close_order_request,
     _build_order_request,
@@ -18,7 +19,6 @@ from core.services.execution import (
 )
 from core.services.opportunity_scoring import build_candidate_opportunity_score
 from core.services.scanners.builders.verticals import build_vertical_spreads
-from core.services.scanners.replay import mark_spread_on_date
 
 
 def _args() -> Namespace:
@@ -195,7 +195,7 @@ class VerticalDebitLiveFlowE2ETests(unittest.TestCase):
         self.assertEqual(close_request["legs"][0]["position_intent"], "buy_to_close")
         self.assertEqual(close_request["legs"][1]["position_intent"], "sell_to_close")
 
-    def test_put_debit_replay_marking_is_credit_for_gain(self) -> None:
+    def test_put_debit_backtest_marking_is_credit_for_gain(self) -> None:
         expiration = "2026-04-24"
         candidates = build_vertical_spreads(
             symbol="MSFT",
@@ -261,7 +261,7 @@ class VerticalDebitLiveFlowE2ETests(unittest.TestCase):
 
         self.assertEqual(len(candidates), 1)
         candidate = asdict(candidates[0])
-        replay_mark = mark_spread_on_date(
+        backtest_mark = mark_structure_on_date(
             candidate,
             option_bars={
                 candidate["short_symbol"]: [
@@ -288,9 +288,9 @@ class VerticalDebitLiveFlowE2ETests(unittest.TestCase):
             target_date=date(2026, 4, 15),
         )
 
-        self.assertEqual(replay_mark["status"], "mark_only")
-        self.assertAlmostEqual(replay_mark["spread_mark_close"], 3.8, places=4)
-        self.assertGreater(replay_mark["estimated_pnl"], 0.0)
+        self.assertEqual(backtest_mark["status"], "mark_only")
+        self.assertAlmostEqual(backtest_mark["spread_mark_close"], 3.8, places=4)
+        self.assertGreater(backtest_mark["estimated_pnl"], 0.0)
 
 
 if __name__ == "__main__":

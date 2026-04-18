@@ -41,29 +41,18 @@ def list_pipelines_route(
 def get_pipeline_route(
     pipeline_id: str,
     market_date: str | None = None,
-    include_replay: str = Query(default="none"),
-    replay_profit_target: float = Query(default=0.5, gt=0),
-    replay_stop_multiple: float = Query(default=2.0, gt=0),
     db: str | None = None,
 ) -> dict[str, object]:
     try:
         resolved_market_date = (
             None if market_date is None else resolve_market_date(market_date)
         )
-        resolved_include_replay = include_replay.strip().lower()
-        if resolved_include_replay not in {"none", "current", "recent", "both"}:
-            raise bad_request_error(
-                ValueError(
-                    "include_replay must be one of: none, current, recent, both."
-                )
-            )
         return get_pipeline_detail(
             db_target=_db_target(db),
             pipeline_id=pipeline_id,
             market_date=resolved_market_date,
-            include_replay=resolved_include_replay,
-            profit_target=replay_profit_target,
-            stop_multiple=replay_stop_multiple,
+            profit_target=0.5,
+            stop_multiple=2.0,
         )
     except ValueError as exc:
         raise not_found_error(exc) from exc
