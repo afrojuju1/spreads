@@ -29,11 +29,12 @@ Use these only for the roles they now own:
 - [docs/planning/2026-04-11_fresh_spread_system_design.md](../../../../docs/planning/2026-04-11_fresh_spread_system_design.md)
   - target opportunity-selection architecture inside the broader system
 - [docs/planning/2026-04-15_current_system_options_automation_implementation_approach.md](../../../../docs/planning/2026-04-15_current_system_options_automation_implementation_approach.md)
-  - migration path that reuses the current backend
+  - supporting migration path that reuses the current backend
 - [docs/planning/README.md](../../../../docs/planning/README.md)
   - planning-doc entrypoint and doc-role map
 
 Do not let these supporting docs become rival top-level architecture sources.
+Older planning docs may still mention pre-cutover `replay` or `audit_replay` surfaces; when they do, prefer the current names and boundaries from `docs/current_system_state.md`.
 
 ## Current Boundary Map
 
@@ -85,7 +86,7 @@ When editing repo instructions:
 When editing `plugins/spreads-ops` skills:
 
 - keep commands aligned with the real CLI surface under `uv run spreads ...`
-- prefer `status`, `trading`, `pipelines`, `jobs`, `uoa`, `audit`, and `replay`
+- prefer `status`, `trading`, `pipelines`, `jobs`, `uoa`, `audit`, and `backtest`
 - keep runtime ownership aligned with `docs/current_system_state.md`
 - refresh stale service references when package splits change ownership
 

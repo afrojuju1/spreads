@@ -19,6 +19,13 @@ Apply it only inside `/Users/adeb/Projects/spreads`.
 
 Use [docs/current_system_state.md](../../../../docs/current_system_state.md) as the canonical source of truth for current runtime ownership and boundary questions.
 
+Current product terminology note:
+
+- `backtest` is the canonical historical-evaluation product
+- `audit` is the canonical operator investigation surface
+- `analyze` and `post-market analyze` remain legacy closed-session report surfaces
+- do not tell operators to use the removed `spreads replay` command
+
 ## First Principle
 
 Start with the running system, not code inspection.
@@ -148,15 +155,18 @@ Do not present modeled session results as realized account performance.
 Use:
 
 ```bash
-uv run spreads replay --label <label> --date YYYY-MM-DD
+uv run spreads analyze --date YYYY-MM-DD --label <label>
+uv run spreads post-market analyze --date YYYY-MM-DD --label <label>
 curl -s 'http://localhost:58080/post-market/YYYY-MM-DD/<label>'
 ```
+
+If the question is automation-config historical evaluation rather than one session label's closed-session report, switch to the canonical `uv run spreads backtest ...` surface instead of ad hoc SQL.
 
 Look for:
 
 - overall verdict
 - recommendations
-- board versus watchlist modeled PnL
+- promotable versus monitor modeled PnL
 - top and bottom ideas
 
 This is the main way to distinguish:

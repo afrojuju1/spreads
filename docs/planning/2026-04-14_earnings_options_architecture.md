@@ -24,10 +24,16 @@ This spec focuses on:
 - policy boundaries
 - strategy-family scope
 - candidate and persistence shape
-- replay and evaluation requirements
+- backtest and evaluation requirements
 - phased rollout
 
 This spec does not define final thresholds or exact builder math.
+
+Current shipped-surface note:
+
+- `backtest` is the canonical historical-evaluation product.
+- `uv run spreads analyze` remains a legacy post-close report surface.
+- References below to `replay` reflect pre-cutover naming or generic replay semantics unless explicitly updated to the current shipped surface.
 
 ## Scope
 
@@ -87,7 +93,7 @@ Earnings support should extend the canonical opportunity path:
 5. family-specific candidate construction
 6. canonical opportunity ranking
 7. family-specific execution template
-8. replay and post-close evaluation
+8. backtest and post-close evaluation
 
 Do not build a separate earnings-specific scanner, ranking model, or execution path.
 
@@ -160,7 +166,7 @@ ASCII flow:
                    |                                 |
                    v                                 v
          +----------------------+         +----------------------+
-         | ranking / allocation |         | replay / evaluation  |
+         | ranking / allocation |         | backtest / evaluation|
          | promotion / gating   |         | by phase / family    |
          +----------+-----------+         +----------------------+
                     |
@@ -923,11 +929,11 @@ Practical initial product scope:
 - single-name earnings families: liquid single names sourced from the earnings calendar
 - post-event condors: no static held-symbol list; require much stricter quantitative liquidity and quote-quality gates than directional earnings families
 
-## Replay And Evaluation
+## Backtest And Evaluation
 
-Use `uv run spreads replay` as the canonical evaluation path.
+Use `uv run spreads backtest run` as the canonical evaluation path.
 
-Replay output should be able to segment results by:
+Backtest output should be able to segment results by:
 
 - `earnings_phase`
 - `strategy_family`
@@ -938,7 +944,7 @@ Replay output should be able to segment results by:
 - all-leg quote quality bucket
 - event timing confidence bucket
 
-Core questions replay should answer:
+Core questions backtest should answer:
 
 1. Which family wins by earnings phase?
 2. Does the best family change by IV regime?
@@ -1041,7 +1047,7 @@ Work:
 Modules:
 
 - `packages/core/domain/opportunity_models.py`
-- `packages/core/services/opportunity_replay.py`
+- `packages/core/backtest/`
 - `packages/core/services/opportunity_scoring.py`
 
 Work:
@@ -1082,12 +1088,12 @@ Work:
   - `long_straddle`
   - `long_strangle`
 
-### 5. Replay And Evaluation Contract
+### 5. Backtest And Evaluation Contract
 
 Modules:
 
-- `packages/core/services/opportunity_replay.py`
-- replay CLI surfaces
+- `packages/core/backtest/`
+- backtest CLI surfaces
 
 Work:
 

@@ -1,6 +1,6 @@
 ## Non-Web Large File Cleanup Audit
 
-Status: in progress
+Status: historical checkpoint; major package cutovers landed, with remaining cleanup notes preserved for follow-up
 
 As of: Thursday, April 16, 2026
 
@@ -21,6 +21,13 @@ Then propose a cleanup structure that fits the repo's existing rules:
 
 This document started as a cleanup and abstraction proposal and is now also serving as the running checkpoint for the implemented package cutovers below.
 
+Current shipped-surface note:
+
+- `packages/core/backtest/` now owns the canonical historical-evaluation engine.
+- `packages/core/services/opportunity_replay.py` and the scanner replay shim were removed during the replay-to-backtest cutover.
+- `packages/core/services/audit_replay.py` was replaced by `packages/core/services/audit_snapshot.py`.
+- References below to `services/replay/`, `opportunity_replay.py`, or `ops_visibility.py` reflect audit-time state unless explicitly updated.
+
 ## Progress Snapshot
 
 Completed clean cuts:
@@ -29,11 +36,12 @@ Completed clean cuts:
 - `services/collections/` now owns collector behavior; the old `jobs/live_collector.py` logic container was deleted.
 - `core.jobs.worker` is now a package split into lifecycle, managed execution, planner helpers, observability, and task entrypoints.
 - `services/ops/` is now the canonical operator visibility surface; the old `ops_visibility.py` module was replaced by a package-owned surface and its audit/UOA views were split into owned modules.
+- `backtest/` now owns canonical historical evaluation; the old replay modules were deleted and scanner historical mode routes through shared backtest helpers.
 
 Still open:
 
 - `services/execution/` cutover from `execution.py`
-- `services/replay/` and `services/post_close/` cutover from `opportunity_replay.py` and `analysis.py`
+- `services/post_close/` cutover from `analysis.py`
 - storage aggregate splits where they still buy clarity after the service cutovers
 
 ## Audit Method
@@ -429,7 +437,13 @@ This is mostly a packaging cleanup, but it materially improves navigability.
 
 ### E. Replace `analysis.py` and `opportunity_replay.py` with focused packages
 
-Recommended structure:
+Superseded outcome:
+
+- the replay side of this recommendation landed as `packages/core/backtest/`, not `services/replay/`
+- scanner historical helpers now route through `backtest/`
+- any remaining `analysis.py` split should stay focused on legacy post-close reporting instead of recreating a sibling replay package
+
+Recommended remaining structure:
 
 ```text
 packages/core/services/post_close/
@@ -437,12 +451,8 @@ packages/core/services/post_close/
   render.py                   # markdown/text rendering
   legacy_cli.py               # old `spreads analyze` implementation until retired
 
-packages/core/services/replay/
-  build.py                    # main replay builder entrypoint
-  reconstruction.py           # candidate / opportunity reconstruction
-  outcomes.py                 # execution and outcome matching
-  scorecard.py                # comparison and scorecard logic
-  batch.py                    # recent-session aggregation
+packages/core/backtest/       # canonical historical-evaluation engine
+  ...
 
 packages/core/services/market_dates.py            # resolve trading date helper
 ```
@@ -456,7 +466,7 @@ Then update:
 Implementation rule:
 
 - delete `packages/core/services/analysis.py` after moving its real owners
-- replace `packages/core/services/opportunity_replay.py` with `services/replay/`
+- do not recreate `packages/core/services/opportunity_replay.py` or a sibling `services/replay/` package
 
 ### F. Split repositories by aggregate, not by utility method count
 
@@ -497,8 +507,8 @@ These files are large, but they are lower-priority than the service monoliths be
 ### Phase 3: Canonical path hardening
 
 1. Replace `execution.py` with `services/execution/`.
-2. Replace `analysis.py` and `opportunity_replay.py` with `post_close/` and `replay/`.
-3. Reduce legacy board/watchlist vocabulary in replay and collector projections where safe.
+2. Keep moving `analysis.py` toward a narrower `post_close/` ownership model without rebuilding a second historical-evaluation surface.
+3. Reduce legacy board/watchlist vocabulary in backtest and collector projections where safe.
 
 ### Phase 4: Repository decomposition
 

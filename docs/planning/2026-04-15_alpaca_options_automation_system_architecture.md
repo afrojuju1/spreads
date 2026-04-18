@@ -21,7 +21,12 @@ This is intentionally slimmer than a full Options Alpha clone. It assumes curren
 - bot-based automation with clear limits
 - CLI-based operator control
 - paper and live execution
-- narrow replay and strategy evaluation
+- narrow backtest and strategy evaluation
+
+Current shipped-surface note:
+
+- `backtest` is the canonical historical-evaluation product.
+- References below to `replay` should be read as pre-cutover naming or generic deterministic historical-evaluation semantics unless explicitly updated.
 
 Out of scope for the first version:
 
@@ -44,7 +49,7 @@ The architecture should assume:
 - We use Alpaca multi-leg orders where supported, but we do not assume every roll or combo pattern is cleanly supported.
 - We support a narrow strategy set first: verticals and iron condors.
 - We target short-dated trades only in `v1`: `1-14` DTE.
-- Replay and backtest only promise fidelity over Alpaca's available history window.
+- Backtest only promises fidelity over Alpaca's available history window.
 
 ## Core Product Primitives
 
@@ -135,7 +140,7 @@ For `v1`:
 - `StrategyConfig` lives in checked-in YAML
 - `Automation` lives in checked-in YAML
 - `Bot` lives in checked-in YAML plus runtime state in Postgres
-- `StrategyPosition`, `Opportunity`, `OpportunityDecision`, `ExecutionIntent`, and replay records live in Postgres
+- `StrategyPosition`, `Opportunity`, `OpportunityDecision`, `ExecutionIntent`, and backtest run records live in Postgres
 
 ## Operator Model
 
@@ -148,7 +153,7 @@ The CLI should be the primary way to:
 - inspect shortlisted symbols and ranked opportunities
 - approve, reject, or pause execution
 - inspect positions, orders, and decision logs
-- run replay and paper-trading workflows
+- run backtest and paper-trading workflows
 
 This keeps the first build focused on runtime correctness, data quality, and automation semantics instead of UI concerns.
 
@@ -173,7 +178,7 @@ Rules:
 - checked-in YAML defines strategy configs, automations, bot specs, policy defaults, watchlists, and scheduling
 - `.env.local` holds Alpaca credentials and any local-only overrides
 - secrets do not live in checked-in YAML
-- every bot, automation run, opportunity, opportunity decision, execution intent, and replay run records the resolved config hash and policy version
+- every bot, automation run, opportunity, opportunity decision, execution intent, and backtest run records the resolved config hash and policy version
 - runtime state, approvals, and logs belong in Postgres, not local files
 
 Config precedence:
@@ -209,8 +214,8 @@ Recommended command families:
 - `uv run spreads positions`
 - `uv run spreads orders`
 - `uv run spreads logs decisions --bot <bot-id>`
-- `uv run spreads replay run <label>`
-- `uv run spreads replay show <run-id>`
+- `uv run spreads backtest run --bot-id <bot-id> --automation-id <automation-id>`
+- `uv run spreads backtest compare --left-json <path> --right-json <path>`
 
 Command rules:
 
@@ -243,7 +248,7 @@ Owns execution intents, smart pricing, Alpaca order submission, fills, reconcili
 
 6. `Research Platform`
 
-Owns deterministic replay, paper trading, narrow backtests, and strategy comparison within Alpaca's historical window.
+Owns deterministic backtests, paper trading, and strategy comparison within Alpaca's historical window.
 
 ## System View
 
@@ -275,8 +280,8 @@ Owns deterministic replay, paper trading, narrow backtests, and strategy compari
                             v                       v
                   +---------+---------+   +---------+---------+
                   | Research Platform |   | Alpaca Trading    |
-                  | replay, paper,    |   | orders, updates   |
-                  | backtests         |   | positions         |
+                  | backtest, paper,  |   | orders, updates   |
+                  | comparison        |   | positions         |
                   +-------------------+   +-------------------+
 ```
 
@@ -590,7 +595,7 @@ Fill model:
 - if the submitted limit is at or better than the midpoint for two consecutive quote observations, fill at midpoint
 - otherwise wait until later quotes make the order marketable or the smart-pricing state machine cancels it
 
-For replay windows without historical option quotes, use stored snapshots or synthetic midpoint estimates and mark the result as reduced fidelity.
+For backtest windows without historical option quotes, use stored snapshots or synthetic midpoint estimates and mark the result as reduced fidelity.
 
 Known differences from live behavior:
 
@@ -618,14 +623,14 @@ Reconciliation rules:
 - OTM expiry closes the `StrategyPosition` without downstream share exposure
 - ITM expiry must check for resulting stock exposure or broker-generated liquidation activity
 
-## Replay Guarantees
+## Backtest Guarantees
 
-Replay should be deterministic for the data it actually has and explicit about what it does not.
+Backtest should be deterministic for the data it actually has and explicit about what it does not.
 
 Guaranteed:
 
 - same dataset refs, config hash, and policy versions produce the same shortlist, builder outputs, and paper-simulated decisions
-- replayed paper fills are deterministic under the paper-fill model above
+- simulated paper fills are deterministic under the paper-fill model above
 
 Not guaranteed:
 
@@ -660,15 +665,15 @@ Fidelity labels:
 
 ### Phase 3
 
-- deterministic replay over Alpaca's historical window
+- deterministic backtest over Alpaca's historical window
 - richer event triggers such as earnings and calendar rules
-- template promotion from replay-tested strategy specs
+- template promotion from backtest-tested strategy specs
 
 ## Recommendation
 
 Start as a modular monolith with separate workers for ingestion, bot execution, and research jobs.
 
-That is the right shape for this system. The complexity is in deterministic state, quote budgeting, pricing logic, and replay parity, not in service count. Split into more services only after the event model, bot runtime, and execution semantics are stable.
+That is the right shape for this system. The complexity is in deterministic state, quote budgeting, pricing logic, and backtest parity, not in service count. Split into more services only after the event model, bot runtime, and execution semantics are stable.
 
 ## Sources
 

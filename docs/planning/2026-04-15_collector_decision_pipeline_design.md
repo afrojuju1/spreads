@@ -8,6 +8,8 @@ Incorporation note:
 - `OpportunityDecision` from this document is adopted by [Current-System Options Automation Implementation Approach](./2026-04-15_current_system_options_automation_implementation_approach.md)
 - the newer top-level runtime nouns are now `Bot`, `StrategyConfig`, `Automation`, and `StrategyPosition`
 - `opportunity_execution` in this document should be read as an entry-specific precursor to a broader `ExecutionIntent` concept, not the final universal action noun
+- operator visibility now lives under `services/ops/`, and historical evaluation now lives under `backtest/`
+- references below to `ops_visibility.py` or `opportunity_replay.py` are historical planning context unless explicitly updated
 
 As of: Wednesday, April 15, 2026
 
@@ -51,7 +53,7 @@ Its job is to:
 3. decide what is actionable at the portfolio level
 4. convert that selection into an `opportunity_execution` record
 5. submit and manage `opportunity_execution` safely
-6. support replay, audit, and operator visibility from the same artifacts
+6. support backtest, audit, and operator visibility from the same artifacts
 
 That means the stable core nouns should be:
 
@@ -91,7 +93,7 @@ The practical consequences are:
 3. Separate signal truth from `opportunity_decision` truth from `opportunity_execution` truth.
 4. Make portfolio-aware action selection a first-class runtime stage.
 5. Keep APIs, ops views, and UOA as read models, not business-logic owners.
-6. Persist the minimum `opportunity_decision` and `opportunity_execution` artifacts needed for audit, replay, and deterministic execution.
+6. Persist the minimum `opportunity_decision` and `opportunity_execution` artifacts needed for audit, backtest, and deterministic execution.
 7. Do not persist broad model hierarchies in the runtime unless they materially improve runtime decisions.
 8. Prefer a modular monolith with explicit service boundaries over new distributed runtime services.
 
@@ -164,8 +166,8 @@ The practical consequences are:
     live_runtime.py     -> collector-backed current runtime state
     pipelines.py        -> pipeline-facing runtime projection
     uoa_state.py        -> UOA projection
-    ops_visibility.py   -> operator summaries
-    opportunity_replay.py -> offline replay and evaluation
+    ops/               -> operator summaries
+    backtest/          -> historical evaluation and comparison
 ```
 
 ## Service Boundaries
@@ -333,7 +335,7 @@ Owners:
 - `services/live_runtime.py`
 - `services/pipelines.py`
 - `services/uoa_state.py`
-- `services/ops_visibility.py`
+- `services/ops/`
 
 Responsibilities:
 
@@ -1025,7 +1027,7 @@ Expose opportunity_decision and opportunity_execution state through:
 
 - `live_runtime.py`
 - `pipelines.py`
-- `ops_visibility.py`
+- `ops/`
 
 ### 6. Tighten alert ownership
 
@@ -1044,7 +1046,7 @@ This design is intentionally narrower than the earlier clean-sheet architecture.
 - It uses the canonical opportunity store that already exists.
 - It reuses current services instead of inventing a parallel platform.
 - It makes execution consume a durable `opportunity_execution` artifact.
-- It aligns runtime, ops, and replay around shared opportunity_decision outputs.
+- It aligns runtime, ops, and backtest around shared opportunity_decision outputs.
 
 ### Where It Is Still Not Ideal
 
@@ -1055,7 +1057,7 @@ This design is intentionally narrower than the earlier clean-sheet architecture.
 
 ### Why It Is Still The Right Next Design
 
-Because the main runtime weakness today is not missing market data, missing replay, or missing operator visibility.
+Because the main runtime weakness today is not missing market data, missing backtest coverage, or missing operator visibility.
 
 It is missing durable portfolio-aware action selection between opportunity generation and persisted opportunity_execution.
 
@@ -1063,7 +1065,7 @@ Fixing that gives the system:
 
 - a real scan-to-opportunity_decision-to-opportunity_execution pipeline
 - cleaner truth boundaries
-- better replayability
+- better backtestability
 - better operator explanation
 - a safer path to future regime or strategy-specific sophistication
 

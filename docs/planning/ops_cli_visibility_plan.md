@@ -1,6 +1,6 @@
 # Ops CLI Visibility Plan
 
-Status: implemented for current scope; phase 1, phase 2, phase 3, and phase 4 audit shipped, doctor deferred
+Status: historical implementation snapshot; original phase 1 through phase 4 audit scope shipped, doctor deferred
 
 Related:
 
@@ -8,6 +8,13 @@ Related:
 - [0DTE System Architecture](./0dte_system_architecture.md)
 - [Unusual Activity Scanner Design](./unusual_activity_scanner_design.md)
 - [Alert Delivery Refactor Plan](./alert_delivery_refactor_plan.md)
+
+Current shipped-surface note:
+
+- Current operator visibility ownership lives under `packages/core/services/ops/`.
+- The current audit builder lives in `packages/core/services/audit_snapshot.py`.
+- Use [System Architecture](../current_system_state.md) as the canonical source of truth for current ownership and CLI/runtime boundaries.
+- Module and command references below should be read as historical planning context unless they still match the current shipped surface.
 
 ## Shipped Scope
 
@@ -36,7 +43,7 @@ Define one operator-facing CLI for visibility into:
 - live collector health
 - UOA scanner state
 - alerts and executions
-- session investigation and replay
+- pipeline investigation and audit
 - post-market effectiveness and tuning signals
 
 This should give us a fast terminal-first view of what the system is doing right now without needing the web UI.
@@ -102,7 +109,7 @@ It should reuse existing service shapes where possible:
 
 - `account_state`
 - `sessions`
-- `audit_replay`
+- `audit_snapshot`
 - `control_plane`
 - `execution_portfolio`
 - `uoa_state`
@@ -373,9 +380,9 @@ Primary sources:
 Examples:
 
 - live collector slot status
-- board/watchlist state
+- promotable/monitor state
 - post-market verdicts and recommendations
-- board vs watchlist outcome spread
+- promotable vs monitor outcome spread
 - alerts
 - executions
 - risk decisions
@@ -384,7 +391,7 @@ Examples:
 Primary sources:
 
 - `sessions.py`
-- `audit_replay.py`
+- `audit_snapshot.py`
 - collector repository
 - alert repository
 - execution repository
@@ -642,16 +649,16 @@ Key outputs for list mode:
 - latest slot
 - capture status
 - websocket/baseline quote counts
-- board/watchlist counts
+- promotable/monitor counts
 - alert count
 - latest post-market verdict when analysis exists
-- board vs watchlist modeled PnL spread when analysis exists
+- promotable vs monitor modeled PnL spread when analysis exists
 - updated at
 
 Key outputs for detail mode:
 
 - current cycle summary
-- board/watchlist candidates
+- promotable/monitor candidates
 - latest slot runs
 - quote capture health and empty-capture flags
 - alerts
@@ -659,7 +666,7 @@ Key outputs for detail mode:
 - portfolio
 - risk snapshot
 - reconciliation snapshot
-- post-market verdict, recommendations, and board vs watchlist comparison when analysis exists
+- post-market verdict, recommendations, and promotable vs monitor comparison when analysis exists
 - top and bottom modeled ideas when analysis exists
 
 This is the main path for strategy-specific operational visibility.
@@ -858,7 +865,7 @@ It also gives the future web UI a reusable backend-friendly aggregation layer.
 ### Session / Investigation
 
 - session list/detail in [sessions.py](/Users/adeb/Projects/spreads/packages/core/services/sessions.py)
-- audit replay in [audit_replay.py](/Users/adeb/Projects/spreads/packages/core/services/audit_replay.py)
+- audit snapshot in [audit_snapshot.py](/Users/adeb/Projects/spreads/packages/core/services/audit_snapshot.py)
 - alerts via [alert_repository.py](/Users/adeb/Projects/spreads/packages/core/storage/alert_repository.py)
 - jobs via [job_repository.py](/Users/adeb/Projects/spreads/packages/core/storage/job_repository.py)
 - post-market runs via [post_market_repository.py](/Users/adeb/Projects/spreads/packages/core/storage/post_market_repository.py)

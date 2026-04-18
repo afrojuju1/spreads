@@ -8,11 +8,11 @@ Use these entrypoints:
 - [Current-System Options Automation Implementation Approach](./2026-04-15_current_system_options_automation_implementation_approach.md) for the migration path that uses the existing backend instead of starting clean-sheet
 - [Backtest System Recommendation](./2026-04-16_backtest_system_recommendation.md) for the design background behind the cutover to one canonical config-driven backtest engine
 - [Config-Driven Runtime Prerequisite Plan](./2026-04-16_config_driven_runtime_prerequisite_plan.md) for the implementation architecture needed before the improved backtest is meaningful
-- [Non-Web Large File Cleanup Audit](./2026-04-16_non_web_large_file_cleanup_audit.md) for the current backend cleanup priorities, thin-wrapper audit, and proposed service/module boundaries
+- [Non-Web Large File Cleanup Audit](./2026-04-16_non_web_large_file_cleanup_audit.md) for the backend cleanup audit and cutover notes around the large-file and thin-wrapper split work
 - [Workspace Packages Restructure Plan](./2026-04-16_workspace_packages_restructure_plan.md) for the completed workspace move into `packages/core`, `packages/api`, `packages/web`, and `packages/config`
 - [Fresh Spread Opportunity System Design](./2026-04-11_fresh_spread_system_design.md) for the target opportunity-selection architecture inside the broader system
 - [Spread Selection Review And Refactor Plan](./2026-04-11_spread_selection_refactor_plan.md) for the diagnosis of the current selection path
-- [Ops CLI Visibility Plan](./ops_cli_visibility_plan.md) for shipped and deferred operator tooling
+- [Ops CLI Visibility Plan](./ops_cli_visibility_plan.md) for historical operator-tooling design context and shipped/deferred visibility notes
 
 Implementation and evaluation companion:
 
@@ -35,6 +35,8 @@ Detailed design specifications:
 Legacy or earlier architecture context:
 
 These are historical context unless a task explicitly names one of them as the active source of truth.
+
+Older planning docs may still mention pre-cutover `replay`, `audit_replay`, `packages/core/cli/replay.py`, or `services/opportunity_replay.py` surfaces. Current shipped naming is `backtest` for historical evaluation and `audit_snapshot.py` behind the `spreads audit` operator view.
 
 - [0DTE System Architecture](./0dte_system_architecture.md)
 - [Trading Engine Architecture](./trading_engine_architecture.md)

@@ -1,6 +1,6 @@
 # Backtest System Recommendation
 
-Status: proposed
+Status: implemented direction; retained as design background for the backtest cutover
 
 As of: Thursday, April 16, 2026
 
@@ -19,12 +19,19 @@ Define a new config-driven backtest system that fits the current repo layout and
 
 The recommendation should optimize for runtime parity with this repo's actual system, not for generic backtesting convenience.
 
+Implementation note:
+
+- the recommended cutover has since landed
+- the current public CLI surface is `packages/core/cli/backtest.py`
+- the canonical historical-evaluation engine now lives in `packages/core/backtest/`
+- references below to the old `replay` CLI/service describe the pre-cutover baseline that motivated this recommendation unless explicitly updated
+
 ## Code Anchors Investigated
 
 Current recommendation is grounded in these code paths:
 
-- replay CLI: `packages/core/cli/replay.py`
-- current replay service: `packages/core/services/opportunity_replay.py`
+- current backtest CLI: `packages/core/cli/backtest.py`
+- canonical backtest engine: `packages/core/backtest/`
 - current config loading: `packages/core/services/bots.py`, `packages/core/services/automations.py`, `packages/core/services/strategy_configs.py`
 - current entry decision path: `packages/core/services/decision_engine.py`
 - current management decision path: `packages/core/services/strategy_positions.py`
@@ -35,13 +42,13 @@ Current recommendation is grounded in these code paths:
 - current historical quote and trade store: `packages/core/storage/models.py`, `packages/core/storage/run_history_repository.py`
 - current market recorder: `packages/core/services/market_recorder.py`
 
-## (1) What Replay Is Today
+## (1) Historical Evaluation Before The Cutover
 
-The current `replay` system is an offline reconstruction and evaluation surface, not a true backtest engine.
+Before the cutover, the `replay` system was an offline reconstruction and evaluation surface, not a true backtest engine.
 
 ### What it currently does
 
-`uv run spreads replay` calls `build_opportunity_replay()` in `packages/core/services/opportunity_replay.py`.
+Before the cutover, `uv run spreads replay` called `build_opportunity_replay()` in `packages/core/services/opportunity_replay.py`.
 
 That service:
 
@@ -191,7 +198,7 @@ The backtest system should:
 
 It should not:
 
-- rename current replay into backtest
+- keep a thin alias over the old replay surface and call that sufficient
 - write simulated rows into the live `opportunity_decisions`, `execution_intents`, or `portfolio_positions` tables by default
 - require translation into another engine's order model as the canonical runtime path
 - assume bar-only simulation is sufficient for multi-leg option execution quality
@@ -200,11 +207,11 @@ It should not:
 
 ## Recommendation Summary
 
-Build a custom in-repo event-driven backtest engine in `packages/core`.
+Use a custom in-repo event-driven backtest engine in `packages/core/backtest/`.
 
-Keep `replay` as replay.
+Do not keep `replay` as a public sibling product surface.
 
-Do not build the new engine by extending `packages/core/services/opportunity_replay.py`.
+Do not rebuild or extend the removed `packages/core/services/opportunity_replay.py` boundary.
 
 ### Why this is the right architecture
 
@@ -672,25 +679,20 @@ Goal:
 Work:
 
 - demote persisted-opportunity bootstrap mode to compatibility only
-- keep replay strictly for audit and reconstruction
+- keep audit and reconstruction as report or input-adapter layers inside `backtest`, not as sibling products
 - stop treating session-centric collector artifacts as the center of research workflows
 
 ## Final Recommendation
 
-The repo should have two separate historical surfaces.
+The repo should have one historical-evaluation surface: `backtest`.
 
-### Keep `replay` for:
-
-- session reconstruction
-- operator audit
-- allocator and outcome diagnosis
-
-### Build `backtest` for:
+Use `backtest` for:
 
 - config-driven historical simulation
 - bot-runtime parity
 - decision-to-intent-to-position research
 - execution-quality and management-quality evaluation
+- audit or reconstruction adapters when those inputs are needed
 
 Required dependency for that improved backtest:
 
@@ -698,8 +700,8 @@ Required dependency for that improved backtest:
 
 The best path for this repo is:
 
-1. keep `replay` as replay
-2. build a custom event-driven `backtest` engine inside `packages/core`
+1. make `backtest` the only public historical-evaluation surface
+2. keep the custom event-driven `backtest` engine inside `packages/core/backtest/`
 3. extract shared pure kernels from the current live runtime instead of reusing live orchestration directly
 4. make the runtime genuinely config-driven before calling the improved backtest complete
 5. use `packages/config/backtests/*.yaml` as thin run specs over the existing bot, automation, and strategy config system

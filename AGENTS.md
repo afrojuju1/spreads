@@ -63,6 +63,7 @@
 
 - For overall architecture, service-boundary, or ownership questions, start with `docs/current_system_state.md`.
 - If a planning document disagrees with `docs/current_system_state.md` about current ownership or runtime topology, `docs/current_system_state.md` wins.
+- Treat older planning-doc references to `replay`, `audit_replay`, `packages/core/cli/replay.py`, or `services/opportunity_replay.py` as pre-2026-04-17 historical context unless the document has been explicitly updated. The current shipped historical-evaluation product is `backtest`, and the current audit builder lives under `services/audit_snapshot.py`.
 - If a planning document is being used as an active checkpoint for implementation work, keep its completion status current when a milestone meaningfully changes.
 - For target opportunity-selection architecture, start with `docs/planning/2026-04-11_fresh_spread_system_design.md`.
 - For historical diagnosis of the older selection path, use `docs/planning/2026-04-11_spread_selection_refactor_plan.md`.

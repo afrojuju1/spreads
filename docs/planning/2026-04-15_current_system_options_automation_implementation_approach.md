@@ -23,6 +23,13 @@ This is not a clean-sheet design. It starts from the runtime that already exists
 
 This document is not the canonical source of truth for the overall current architecture. That role belongs to [System Architecture](../current_system_state.md). This document is the migration plan that explains how to evolve that runtime toward the options-automation model.
 
+Current shipped-surface note:
+
+- `backtest` is now the canonical historical-evaluation product.
+- `spreads replay`, `packages/core/cli/replay.py`, and `packages/core/services/opportunity_replay.py` were removed after this plan was written.
+- Operator visibility now lives under `packages/core/services/ops/`, and the audit builder lives in `packages/core/services/audit_snapshot.py`.
+- References below to `replay`, `ops_visibility.py`, or other removed surfaces are historical planning context unless explicitly updated.
+
 ## Executive Summary
 
 The repo already contains the hard infrastructure.
@@ -34,7 +41,7 @@ We do not need to rebuild:
 - ARQ scheduler and worker lanes
 - the recorder-owned Alpaca option stream path
 - a real execution ledger with broker sync and position reconciliation
-- a usable CLI and replay surface
+- a usable CLI and historical-evaluation surface
 
 The main problem is not missing infrastructure. The main problem is that the current product/runtime shape is still collector-centric and partially duplicated.
 
@@ -131,7 +138,7 @@ Shipped command families include:
 - `opportunities`
 - `positions`
 - `jobs`
-- `replay`
+- `backtest`
 - `uoa`
 
 Key modules:
@@ -139,8 +146,8 @@ Key modules:
 - `packages/core/cli/main.py`
 - `packages/core/cli/ops.py`
 - `packages/core/cli/runtime.py`
-- `packages/core/cli/replay.py`
-- `packages/core/services/ops_visibility.py`
+- `packages/core/cli/backtest.py`
+- `packages/core/services/ops/`
 
 ## What Is Structurally Wrong Today
 
@@ -167,7 +174,7 @@ The repo currently persists similar runtime facts into multiple places:
 - `collector_cycles` and `collector_cycle_candidates`
 - `signal_states` and `opportunities`
 
-That split makes implementation and replay harder than it should be.
+That split makes implementation and historical evaluation harder than it should be.
 
 ### 3. Product Vocabulary Is Still Old
 
@@ -318,18 +325,18 @@ That layer is required for the two-stage scanner to work in production.
 - signal and opportunity store: `services/signal_state.py`, `storage/signal_models.py`
 - execution ledger and broker sync: `services/execution.py`, `services/broker_sync.py`, `storage/execution_models.py`
 - control, risk, and exits: `services/control_plane.py`, `services/risk_manager.py`, `services/exit_manager.py`
-- CLI and replay foundations: `cli/*.py`, `services/ops_visibility.py`, `services/opportunity_replay.py`
+- CLI and historical-evaluation foundations: `cli/*.py`, `services/ops/`, `backtest/`
 
 ### Refactor Hard
 
 - `jobs/live_collector.py` into a discovery-only runtime stage
 - `jobs/registry.py` and job definitions so discovery jobs, bot-runtime jobs, and maintenance jobs are clearly separate
 - `services/scanner.py` into smaller shortlist, chain-enrichment, and builder boundaries
-- `services/live_runtime.py`, `services/pipelines.py`, and `services/ops_visibility.py` away from pipeline/session ownership toward bot/automation/runtime ownership
+- `services/live_runtime.py`, `services/pipelines.py`, and `services/ops/` away from pipeline/session ownership toward bot/automation/runtime ownership
 - `portfolio_positions` semantics into `StrategyPosition` semantics, even if the first cut is an adapter over current tables
 - current pipeline/session naming into bot/automation naming at the service layer while keeping pipeline reads as a compatibility projection
-- ops and replay surfaces so they consume bot decisions and execution truth rather than collector-centric status
-- current replay surface so it evaluates the new automation path, not legacy board/watchlist assumptions
+- ops and backtest surfaces so they consume bot decisions and execution truth rather than collector-centric status
+- current backtest surface so it evaluates the new automation path, not legacy board/watchlist assumptions
 
 ### Retire Or Demote
 
@@ -677,7 +684,7 @@ execution intents
 execution ledger
       |
       v
-strategy positions + broker sync + replay
+strategy positions + broker sync + backtest
 ```
 
 That means:
@@ -687,7 +694,7 @@ That means:
 - a separate bot runtime writes `OpportunityDecision` truth
 - decisioning emits `ExecutionIntent` records into the OMS path
 - execution consumes those actions
-- positions and replay read the same persisted truth
+- positions and backtest read the same persisted truth
 
 ## Collector And Infra Migration
 
@@ -809,14 +816,14 @@ Introduce explicit job types for:
 
 - bot entry evaluation
 - bot management evaluation
-- replay evaluation
+- backtest evaluation
 - recorder target refresh
 
 These should be scheduled through the existing job system and persisted through the existing `job_definitions` and `job_runs` tables.
 
-### Move Ops And Replay Up A Layer
+### Move Ops And Backtest Up A Layer
 
-Runtime views and replay should stop treating collector internals as the main business truth.
+Runtime views and backtest should stop treating collector internals as the main business truth.
 
 They should instead derive from:
 
@@ -978,7 +985,7 @@ This keeps the user-facing and operator-facing model clean without forcing an ea
 
 ### Phase 7: Delete The Parallel Legacy Paths
 
-After the new bot-runtime path is live and replayable, remove or demote:
+After the new bot-runtime path is live and backtestable, remove or demote:
 
 - legacy post-close planning reliance on `analysis.py`
 - legacy scan-history dependency for current runtime decisions
@@ -1009,7 +1016,7 @@ Prefer this module direction over adding more logic to existing mixed files.
 - `services/scanner.py`
 - `services/live_runtime.py`
 - `services/pipelines.py`
-- `services/ops_visibility.py`
+- `services/ops/`
 
 ### Add For The New Model
 
@@ -1095,7 +1102,7 @@ Concrete implementation order:
 5. add `decision_engine.py` to write `OpportunityDecision` rows for the entry automation
 6. link `ExecutionIntent` submission into the existing `execution_attempts` path
 7. add one management automation over existing `StrategyPosition` state
-8. run replay and paper validation before enabling live submission
+8. run backtest and paper validation before enabling live submission
 
 ## Non-Goals For This Implementation Track
 
