@@ -8,6 +8,7 @@ from core.backtest.market_data import (
     simulate_exit_path,
     summarize_market_outcomes,
 )
+from core.backtest.scanner import run_scanner_backtest
 from core.backtest.service import build_backtest_run, compare_backtest_runs
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     "latest_bar_on_or_before",
     "mark_structure_on_date",
     "merge_option_bars_with_trades",
+    "run_scanner_backtest",
     "simulate_exit_path",
     "summarize_market_outcomes",
 ]

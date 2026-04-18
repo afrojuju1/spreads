@@ -129,7 +129,7 @@ def render_outcome_summaries(outcomes: Mapping[str, Any]) -> list[str]:
             f"- Selection state: {idea['selection_state']} | latest score: {idea['latest_score']:.1f} ({idea['score_bucket']})"
         )
         lines.append(
-            f"- Outcome: {idea['replay_verdict']} | bucket: {idea['outcome_bucket']} | still in play: {'yes' if idea['still_in_play'] else 'no'}"
+            f"- Outcome: {idea['backtest_verdict']} | bucket: {idea['outcome_bucket']} | still in play: {'yes' if idea['still_in_play'] else 'no'}"
         )
         close_pnl = (
             "n/a"

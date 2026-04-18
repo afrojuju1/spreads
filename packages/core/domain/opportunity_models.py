@@ -156,45 +156,8 @@ class ExecutionIntent:
         return asdict(self)
 
 
-@dataclass(frozen=True)
-class DecisionReplay:
-    target: dict[str, Any]
-    session: dict[str, Any]
-    regime_snapshots: list[RegimeSnapshot] = field(default_factory=list)
-    strategy_intents: list[StrategyIntent] = field(default_factory=list)
-    horizon_intents: list[HorizonIntent] = field(default_factory=list)
-    opportunities: list[Opportunity] = field(default_factory=list)
-    allocation_decisions: list[AllocationDecision] = field(default_factory=list)
-    execution_intents: list[ExecutionIntent] = field(default_factory=list)
-    summary: dict[str, Any] = field(default_factory=dict)
-    comparison: dict[str, Any] = field(default_factory=dict)
-    scorecard: dict[str, Any] = field(default_factory=dict)
-    rows: list[dict[str, Any]] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
-
-    def to_payload(self) -> dict[str, Any]:
-        return {
-            "target": dict(self.target),
-            "session": dict(self.session),
-            "regime_snapshots": [item.to_payload() for item in self.regime_snapshots],
-            "strategy_intents": [item.to_payload() for item in self.strategy_intents],
-            "horizon_intents": [item.to_payload() for item in self.horizon_intents],
-            "opportunities": [item.to_payload() for item in self.opportunities],
-            "allocation_decisions": [
-                item.to_payload() for item in self.allocation_decisions
-            ],
-            "execution_intents": [item.to_payload() for item in self.execution_intents],
-            "summary": dict(self.summary),
-            "comparison": dict(self.comparison),
-            "scorecard": dict(self.scorecard),
-            "rows": [dict(row) for row in self.rows],
-            "warnings": list(self.warnings),
-        }
-
-
 __all__ = [
     "AllocationDecision",
-    "DecisionReplay",
     "ExecutionIntent",
     "HorizonIntent",
     "Opportunity",

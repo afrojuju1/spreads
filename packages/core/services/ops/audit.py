@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from core.db.decorators import with_storage
-from core.services.audit_replay import DEFAULT_EVENT_SCAN_LIMIT, build_audit_replay
+from core.services.audit_snapshot import DEFAULT_EVENT_SCAN_LIMIT, build_audit_snapshot
 from core.services.execution import OPEN_STATUSES
 from core.services.value_coercion import as_text as _as_text, utc_now_iso as _utc_now
 
@@ -29,7 +29,7 @@ def build_audit_view(
 ) -> dict[str, Any]:
     generated_at = _utc_now()
     try:
-        replay = build_audit_replay(
+        audit_snapshot = build_audit_snapshot(
             db_target=db_target or "",
             pipeline_id=pipeline_id,
             market_date=market_date,
@@ -40,20 +40,24 @@ def build_audit_view(
     except ValueError as exc:
         raise OpsLookupError(str(exc)) from exc
 
-    target = replay.get("target") if isinstance(replay.get("target"), Mapping) else {}
+    target = (
+        audit_snapshot.get("target")
+        if isinstance(audit_snapshot.get("target"), Mapping)
+        else {}
+    )
     timeline_stats = (
-        replay.get("timeline_stats")
-        if isinstance(replay.get("timeline_stats"), Mapping)
+        audit_snapshot.get("timeline_stats")
+        if isinstance(audit_snapshot.get("timeline_stats"), Mapping)
         else {}
     )
     state_summary = (
-        replay.get("state_summary")
-        if isinstance(replay.get("state_summary"), Mapping)
+        audit_snapshot.get("state_summary")
+        if isinstance(audit_snapshot.get("state_summary"), Mapping)
         else {}
     )
     explanations = (
-        replay.get("explanations")
-        if isinstance(replay.get("explanations"), Mapping)
+        audit_snapshot.get("explanations")
+        if isinstance(audit_snapshot.get("explanations"), Mapping)
         else {}
     )
     control = (
@@ -82,8 +86,8 @@ def build_audit_view(
         else {}
     )
     post_market = (
-        replay.get("post_market")
-        if isinstance(replay.get("post_market"), Mapping)
+        audit_snapshot.get("post_market")
+        if isinstance(audit_snapshot.get("post_market"), Mapping)
         else {}
     )
     selected_opportunities = [
@@ -261,7 +265,7 @@ def build_audit_view(
                 severity="low",
                 code="audit_event_scan_limited",
                 message=(
-                    f"Replay hit the event scan limit of {timeline_stats.get('event_scan_limit')}; "
+                    f"Audit hit the event scan limit of {timeline_stats.get('event_scan_limit')}; "
                     "older events may be omitted."
                 ),
             )
@@ -301,12 +305,12 @@ def build_audit_view(
             "post_market": dict(post_market),
             "slot_runs": [
                 dict(row)
-                for row in list(replay.get("slot_runs") or [])
+                for row in list(audit_snapshot.get("slot_runs") or [])
                 if isinstance(row, Mapping)
             ],
             "alerts": [
                 dict(row)
-                for row in list(replay.get("alerts") or [])
+                for row in list(audit_snapshot.get("alerts") or [])
                 if isinstance(row, Mapping)
             ],
             "selected_opportunities": selected_opportunities,
@@ -316,7 +320,7 @@ def build_audit_view(
             "timeline_stats": dict(timeline_stats),
             "timeline": [
                 dict(row)
-                for row in list(replay.get("timeline") or [])
+                for row in list(audit_snapshot.get("timeline") or [])
                 if isinstance(row, Mapping)
             ],
         },

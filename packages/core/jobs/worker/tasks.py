@@ -502,8 +502,12 @@ async def run_post_close_analysis_job(
                     "db": database_url,
                     "date": payload.get("date", "today"),
                     "label": payload["label"],
-                    "replay_profit_target": payload.get("replay_profit_target", 0.5),
-                    "replay_stop_multiple": payload.get("replay_stop_multiple", 2.0),
+                    "backtest_profit_target": payload.get(
+                        "backtest_profit_target", 0.5
+                    ),
+                    "backtest_stop_multiple": payload.get(
+                        "backtest_stop_multiple", 2.0
+                    ),
                 }
             )
             return run_post_close_analysis(args, emit_output=False)
@@ -551,10 +555,10 @@ async def run_post_market_analysis_job(
                     str(payload.get("date", "today")),
                     "--label",
                     str(payload["label"]),
-                    "--replay-profit-target",
-                    str(payload.get("replay_profit_target", 0.5)),
-                    "--replay-stop-multiple",
-                    str(payload.get("replay_stop_multiple", 2.0)),
+                    "--backtest-profit-target",
+                    str(payload.get("backtest_profit_target", 0.5)),
+                    "--backtest-stop-multiple",
+                    str(payload.get("backtest_stop_multiple", 2.0)),
                 ]
             )
             return run_post_market_analysis(

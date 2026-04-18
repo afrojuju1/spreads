@@ -50,8 +50,8 @@ def _planner_analysis_payload(
         "db": db_target,
         "date": str(base_payload.get("date", "today")),
         "label": label,
-        "replay_profit_target": base_payload.get("replay_profit_target", 0.5),
-        "replay_stop_multiple": base_payload.get("replay_stop_multiple", 2.0),
+        "backtest_profit_target": base_payload.get("backtest_profit_target", 0.5),
+        "backtest_stop_multiple": base_payload.get("backtest_stop_multiple", 2.0),
     }
 
 
@@ -158,10 +158,10 @@ def run_post_market_analysis_targets(
                         session_date,
                         "--label",
                         label,
-                        "--replay-profit-target",
-                        str(payload.get("replay_profit_target", 0.5)),
-                        "--replay-stop-multiple",
-                        str(payload.get("replay_stop_multiple", 2.0)),
+                        "--backtest-profit-target",
+                        str(payload.get("backtest_profit_target", 0.5)),
+                        "--backtest-stop-multiple",
+                        str(payload.get("backtest_stop_multiple", 2.0)),
                     ]
                 )
                 runs.append(

@@ -234,22 +234,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
-        "--replay-latest",
+        "--backtest-latest",
         action="store_true",
-        help="Replay the most recent stored run for the selected symbol instead of scanning live.",
+        help="Backtest the most recent stored run for the selected symbol instead of scanning live.",
     )
     parser.add_argument(
-        "--replay-run-id",
-        help="Replay a specific stored run id instead of scanning live.",
+        "--backtest-run-id",
+        help="Backtest a specific stored run id instead of scanning live.",
     )
     parser.add_argument(
-        "--replay-profit-target",
+        "--backtest-profit-target",
         type=float,
         default=0.50,
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
-        "--replay-stop-multiple",
+        "--backtest-stop-multiple",
         type=float,
         default=2.0,
         help=argparse.SUPPRESS,

@@ -22,16 +22,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--date", default="today", help="Trading date in YYYY-MM-DD or 'today'.")
     parser.add_argument("--label", required=True, help="Collector session label.")
     parser.add_argument(
-        "--replay-profit-target",
+        "--backtest-profit-target",
         type=float,
         default=0.5,
-        help="Replay profit target as a fraction of collected credit.",
+        help="Backtest profit target as a fraction of collected credit.",
     )
     parser.add_argument(
-        "--replay-stop-multiple",
+        "--backtest-stop-multiple",
         type=float,
         default=2.0,
-        help="Replay stop threshold as a multiple of collected credit.",
+        help="Backtest stop threshold as a multiple of collected credit.",
     )
     return parser.parse_args(argv)
 
@@ -501,8 +501,8 @@ def run_post_market_analysis(
             db_target=args.db,
             session_date=session_date,
             label=args.label,
-            profit_target=args.replay_profit_target,
-            stop_multiple=args.replay_stop_multiple,
+            profit_target=args.backtest_profit_target,
+            stop_multiple=args.backtest_stop_multiple,
         )
         completed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         repository.complete_run(

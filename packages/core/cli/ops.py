@@ -162,7 +162,7 @@ def audit_command(
     event_scan_limit: int = typer.Option(
         5000,
         "--event-scan-limit",
-        help="Maximum events to scan while building the replay.",
+        help="Maximum events to scan while building the audit view.",
     ),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),

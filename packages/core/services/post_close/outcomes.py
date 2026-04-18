@@ -32,7 +32,7 @@ from .tuning import (
 )
 
 
-def build_replay_client() -> AlpacaClient:
+def build_backtest_client() -> AlpacaClient:
     load_local_env()
     key_id = env_or_die("APCA_API_KEY_ID", "ALPACA_API_KEY")
     secret_key = env_or_die("APCA_API_SECRET_KEY", "ALPACA_SECRET_KEY")
@@ -99,11 +99,11 @@ def build_session_outcomes(
             state["first_monitor"] = row
 
     try:
-        client = build_replay_client()
-        replay_client_error = None
+        client = build_backtest_client()
+        backtest_client_error = None
     except Exception as exc:
         client = None
-        replay_client_error = str(exc)
+        backtest_client_error = str(exc)
 
     run_cache: dict[str, tuple[Mapping[str, Any] | None, list[Mapping[str, Any]]]] = {}
     bars_cache: dict[tuple[str, str, str, str], Any] = {}
@@ -134,12 +134,12 @@ def build_session_outcomes(
                 return candidate
         return None
 
-    def replay_outcome(entry_row: Mapping[str, Any]) -> dict[str, Any]:
+    def backtest_outcome(entry_row: Mapping[str, Any]) -> dict[str, Any]:
         if client is None:
             return {
                 "status": "unavailable",
-                "reason": replay_client_error,
-                "verdict": "replay unavailable",
+                "reason": backtest_client_error,
+                "verdict": "backtest unavailable",
                 "outcome_bucket": "unavailable",
                 "still_in_play": False,
                 "estimated_close_pnl": None,
@@ -180,20 +180,20 @@ def build_session_outcomes(
         )
         run_date = generated_at.astimezone(NEW_YORK).date()
         expiry_date = date.fromisoformat(str(target_candidate["expiration_date"]))
-        replay_end = max(run_date + timedelta(days=3), expiry_date)
+        evaluation_end = max(run_date + timedelta(days=3), expiry_date)
         stock_feed = str(run_payload["filters"].get("stock_feed", "sip"))
 
         bars_key = (
             str(run_payload["symbol"]),
             run_date.isoformat(),
-            replay_end.isoformat(),
+            evaluation_end.isoformat(),
             stock_feed,
         )
         if bars_key not in bars_cache:
             bars_cache[bars_key] = client.get_daily_bars(
                 str(run_payload["symbol"]),
                 start=(run_date - timedelta(days=2)).isoformat(),
-                end=replay_end.isoformat(),
+                end=evaluation_end.isoformat(),
                 stock_feed=stock_feed,
             )
 
@@ -208,23 +208,23 @@ def build_session_outcomes(
         option_bars_key = (
             option_symbols,
             run_date.isoformat(),
-            replay_end.isoformat(),
+            evaluation_end.isoformat(),
         )
         if option_bars_key not in option_bars_cache:
             option_bars_cache[option_bars_key] = merge_option_bars_with_trades(
                 bars_by_symbol=client.get_option_bars(
                     list(option_symbols),
                     start=run_date.isoformat(),
-                    end=replay_end.isoformat(),
+                    end=evaluation_end.isoformat(),
                 ),
                 trades_by_symbol=client.get_option_trades(
                     list(option_symbols),
                     start=run_date.isoformat(),
-                    end=replay_end.isoformat(),
+                    end=evaluation_end.isoformat(),
                 ),
             )
 
-        _, replay_rows = summarize_market_outcomes(
+        _, backtest_rows = summarize_market_outcomes(
             run_payload=run_payload,
             candidates=[target_candidate],
             bars=bars_cache[bars_key],
@@ -234,7 +234,7 @@ def build_session_outcomes(
         )
         rows_by_horizon = {
             row["horizon"]: row
-            for row in replay_rows
+            for row in backtest_rows
             if row.get("status") == "available"
         }
         entry_horizon = rows_by_horizon.get("entry")
@@ -304,7 +304,7 @@ def build_session_outcomes(
 
         return {
             "status": "pending",
-            "verdict": "replay data pending",
+            "verdict": "backtest data pending",
             "outcome_bucket": "still_open",
             "still_in_play": True,
             "estimated_close_pnl": None,
@@ -324,7 +324,7 @@ def build_session_outcomes(
             if state["first_promotable"] is not None
             else MONITOR_SELECTION_STATE
         )
-        outcome = replay_outcome(entry)
+        outcome = backtest_outcome(entry)
         entry_run_payload, _ = load_run_bundle(str(entry["run_id"]))
         entry_setup = (
             None if entry_run_payload is None else (entry_run_payload.get("setup") or {})
@@ -360,8 +360,8 @@ def build_session_outcomes(
                 "latest_score": latest["quality_score"],
                 "score_bucket": score_bucket_label(float(latest["quality_score"])),
                 "occurrence_count": state["occurrence_count"],
-                "replay_status": outcome["status"],
-                "replay_verdict": outcome["verdict"],
+                "backtest_status": outcome["status"],
+                "backtest_verdict": outcome["verdict"],
                 "outcome_bucket": outcome["outcome_bucket"],
                 "estimated_close_pnl": outcome["estimated_close_pnl"],
                 "estimated_expiry_pnl": outcome["estimated_expiry_pnl"],

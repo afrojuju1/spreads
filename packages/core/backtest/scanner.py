@@ -4,21 +4,35 @@ import argparse
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from core.backtest import (
+from core.backtest.market_data import (
     bars_through_date,
     latest_bar_on_or_before,
     mark_structure_on_date as mark_spread_on_date,
     merge_option_bars_with_trades,
     simulate_exit_path as simulate_exit_until_date,
-    summarize_market_outcomes as summarize_replay,
+    summarize_market_outcomes,
 )
 from core.integrations.alpaca.client import AlpacaClient
 from core.services.market_dates import NEW_YORK
-from core.services.scanners.output import format_table
 from core.storage.run_history_repository import RunHistoryRepository
 
 
-def print_replay_summary(
+def _format_table(headers: list[str], rows: list[list[str]]) -> str:
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for idx, cell in enumerate(row):
+            widths[idx] = max(widths[idx], len(cell))
+
+    def fmt_row(row: list[str]) -> str:
+        return " | ".join(cell.ljust(widths[idx]) for idx, cell in enumerate(row))
+
+    separator = "-+-".join("-" * width for width in widths)
+    rendered = [fmt_row(headers), separator]
+    rendered.extend(fmt_row(row) for row in rows)
+    return "\n".join(rendered)
+
+
+def print_scanner_backtest_summary(
     run_payload: dict[str, Any],
     summaries: list[dict[str, Any]],
     rows: list[dict[str, Any]],
@@ -27,7 +41,7 @@ def print_replay_summary(
         "strategy", "call_credit"
     )
     print(
-        f"Replay run: {run_payload['run_id']} | {run_payload['symbol']} | "
+        f"Backtest run: {run_payload['run_id']} | {run_payload['symbol']} | "
         f"strategy {strategy} | profile {run_payload['profile']} | generated {run_payload['generated_at']}"
     )
     print(f"Stored candidates: {run_payload['candidate_count']}")
@@ -73,7 +87,7 @@ def print_replay_summary(
                 "n/a" if summary["avg_pnl"] is None else f"{summary['avg_pnl']:.0f}",
             ]
         )
-    print(format_table(table_headers, table_rows))
+    print(_format_table(table_headers, table_rows))
     print()
 
     available_rows = [row for row in rows if row["status"] == "available"][:10]
@@ -111,40 +125,42 @@ def print_replay_summary(
             ]
             for row in available_rows
         ]
-        print(format_table(detail_headers, detail_rows))
+        print(_format_table(detail_headers, detail_rows))
     else:
-        print("Replay data is not available yet for the stored horizons.")
+        print("Backtest data is not available yet for the stored horizons.")
 
 
-def run_replay(
+def run_scanner_backtest(
     *,
     args: argparse.Namespace,
     client: AlpacaClient,
     history_store: RunHistoryRepository,
 ) -> int:
-    if args.replay_latest and args.strategy == "combined":
+    if args.backtest_latest and args.strategy == "combined":
         raise SystemExit(
-            "Replay latest requires a concrete strategy such as call_credit, put_credit, call_debit, put_debit, long_straddle, long_strangle, or iron_condor"
+            "Backtest latest requires a concrete strategy such as call_credit, put_credit, call_debit, put_debit, long_straddle, long_strangle, or iron_condor"
         )
-    if args.replay_run_id:
-        run_payload = history_store.get_run(args.replay_run_id)
+    if args.backtest_run_id:
+        run_payload = history_store.get_run(args.backtest_run_id)
     else:
         if not args.symbol:
-            raise SystemExit("Replay latest requires --symbol or use --replay-run-id")
+            raise SystemExit(
+                "Backtest latest requires --symbol or use --backtest-run-id"
+            )
         run_payload = history_store.get_latest_run(
             args.symbol.upper(), strategy=args.strategy
         )
 
     if not run_payload:
-        target = args.replay_run_id or args.symbol.upper()
-        raise SystemExit(f"No stored run found for replay target: {target}")
+        target = args.backtest_run_id or args.symbol.upper()
+        raise SystemExit(f"No stored run found for backtest target: {target}")
 
     candidates = history_store.list_candidates(run_payload["run_id"])
     generated_at = datetime.fromisoformat(
         run_payload["generated_at"].replace("Z", "+00:00")
     )
     run_date = generated_at.astimezone(NEW_YORK).date()
-    replay_end = max(
+    evaluation_end = max(
         [
             run_date + timedelta(days=3),
             *[
@@ -156,7 +172,7 @@ def run_replay(
     bars = client.get_daily_bars(
         run_payload["symbol"],
         start=(run_date - timedelta(days=2)).isoformat(),
-        end=replay_end.isoformat(),
+        end=evaluation_end.isoformat(),
         stock_feed=args.stock_feed,
     )
     option_symbols = sorted(
@@ -168,26 +184,26 @@ def run_replay(
     option_bars = client.get_option_bars(
         option_symbols,
         start=run_date.isoformat(),
-        end=replay_end.isoformat(),
+        end=evaluation_end.isoformat(),
     )
     option_trades = client.get_option_trades(
         option_symbols,
         start=run_date.isoformat(),
-        end=replay_end.isoformat(),
+        end=evaluation_end.isoformat(),
     )
     merged_option_bars = merge_option_bars_with_trades(
         bars_by_symbol=option_bars,
         trades_by_symbol=option_trades,
     )
-    summaries, rows = summarize_replay(
+    summaries, rows = summarize_market_outcomes(
         run_payload=run_payload,
         candidates=candidates,
         bars=bars,
         option_bars=merged_option_bars,
-        profit_target=args.replay_profit_target,
-        stop_multiple=args.replay_stop_multiple,
+        profit_target=args.backtest_profit_target,
+        stop_multiple=args.backtest_stop_multiple,
     )
-    print_replay_summary(run_payload, summaries, rows)
+    print_scanner_backtest_summary(run_payload, summaries, rows)
     return 0
 
 
@@ -195,7 +211,7 @@ __all__ = [
     "bars_through_date",
     "latest_bar_on_or_before",
     "mark_spread_on_date",
-    "run_replay",
+    "run_scanner_backtest",
     "simulate_exit_until_date",
-    "summarize_replay",
+    "summarize_market_outcomes",
 ]

@@ -8,9 +8,7 @@ from core.runtime.config import default_database_url
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description=(
-            "Summarize persisted intraday collector sessions and replay spread outcomes."
-        )
+        description="Summarize persisted intraday collector sessions and backtest spread outcomes."
     )
     parser.add_argument(
         "--db",
@@ -32,16 +30,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Collector label to summarize.",
     )
     parser.add_argument(
-        "--replay-profit-target",
+        "--backtest-profit-target",
         type=float,
         default=0.5,
-        help="Profit target used for replay verdicts. Default: 0.5",
+        help="Profit target used for backtest verdicts. Default: 0.5",
     )
     parser.add_argument(
-        "--replay-stop-multiple",
+        "--backtest-stop-multiple",
         type=float,
         default=2.0,
-        help="Stop multiple used for replay verdicts. Default: 2.0",
+        help="Stop multiple used for backtest verdicts. Default: 2.0",
     )
     return parser.parse_args(argv)
 

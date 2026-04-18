@@ -206,13 +206,6 @@ def _reconciliation_snapshot(portfolio: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _is_default_analysis_request(*, profit_target: float, stop_multiple: float) -> bool:
-    return (
-        abs(float(profit_target) - DEFAULT_ANALYSIS_PROFIT_TARGET) < 1e-9
-        and abs(float(stop_multiple) - DEFAULT_ANALYSIS_STOP_MULTIPLE) < 1e-9
-    )
-
-
 def _resolve_pipeline_analysis(
     *,
     analysis_run: Any,
@@ -224,19 +217,6 @@ def _resolve_pipeline_analysis(
     storage: Any,
 ) -> dict[str, Any]:
     analysis_run_payload = dict(analysis_run)
-    stored_summary = analysis_run_payload.get("summary")
-    if _is_default_analysis_request(
-        profit_target=profit_target,
-        stop_multiple=stop_multiple,
-    ) and isinstance(stored_summary, Mapping):
-        return {
-            **dict(stored_summary),
-            "diagnostics": analysis_run_payload.get("diagnostics"),
-            "recommendations": analysis_run_payload.get("recommendations"),
-            "report": analysis_run_payload.get("report_markdown"),
-            "analysis_run": analysis_run_payload,
-        }
-
     summary = build_session_summary(
         db_target=db_target,
         session_date=market_date,
@@ -245,10 +225,17 @@ def _resolve_pipeline_analysis(
         stop_multiple=stop_multiple,
         storage=storage,
     )
-    return {
+    payload = {
         **summary,
         "analysis_run": analysis_run_payload,
     }
+    if isinstance(analysis_run_payload.get("diagnostics"), Mapping):
+        payload["diagnostics"] = analysis_run_payload.get("diagnostics")
+    if isinstance(analysis_run_payload.get("recommendations"), list):
+        payload["recommendations"] = list(analysis_run_payload.get("recommendations"))
+    if isinstance(analysis_run_payload.get("report_markdown"), str):
+        payload["report"] = analysis_run_payload.get("report_markdown")
+    return payload
 
 
 def _collector_schema_ready(collector_store: Any) -> bool:

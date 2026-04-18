@@ -329,13 +329,13 @@ def _apply_timeline_limit(
     marker = {
         "at": items[head_count]["at"],
         "kind": "meta",
-        "topic": "replay.timeline.truncated",
-        "source": "audit_replay",
-        "entity_type": "replay",
+        "topic": "audit.timeline.truncated",
+        "source": "audit_snapshot",
+        "entity_type": "audit",
         "entity_id": "timeline",
         "correlation_id": None,
         "causation_id": None,
-        "summary": f"{hidden_count} timeline item(s) omitted from the middle of the replay.",
+        "summary": f"{hidden_count} timeline item(s) omitted from the middle of the audit timeline.",
         "details": {
             "hidden_count": hidden_count,
             "timeline_limit": timeline_limit,
@@ -599,7 +599,7 @@ def _resolve_audit_scope(
 
 
 @with_storage()
-def build_audit_replay(
+def build_audit_snapshot(
     *,
     db_target: str,
     pipeline_id: str,

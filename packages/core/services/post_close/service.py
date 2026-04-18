@@ -20,8 +20,8 @@ def run_post_close_analysis(
         db_target=args.db,
         session_date=session_date,
         label=args.label,
-        profit_target=args.replay_profit_target,
-        stop_multiple=args.replay_stop_multiple,
+        profit_target=args.backtest_profit_target,
+        stop_multiple=args.backtest_stop_multiple,
     )
     report = render_session_summary_markdown(summary)
     if emit_output:

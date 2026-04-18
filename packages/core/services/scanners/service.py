@@ -11,7 +11,7 @@ Required environment variables:
 Notes:
     - Uses Alpaca's Trading API for option contract metadata.
     - Uses Alpaca's Market Data API for underlying price and option chain snapshots.
-    - Supports call/put credit and debit vertical spreads with shared ranking/replay logic.
+    - Supports call/put credit and debit vertical spreads with shared ranking/backtest logic.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 
 from core.common import env_or_die, load_local_env
+from core.backtest import run_scanner_backtest
 from core.domain.models import SpreadCandidate, SymbolScanResult, UniverseScanFailure
 from core.integrations.alpaca.client import AlpacaClient, infer_trading_base_url
 from core.integrations.calendar_events import build_calendar_event_resolver
@@ -40,7 +41,6 @@ from core.services.scanners.output import (
     write_universe_csv,
     write_universe_json,
 )
-from core.services.scanners.replay import run_replay
 from core.services.scanners.runtime import (
     merge_strategy_candidates,
     scan_symbol_across_strategies,
@@ -72,8 +72,10 @@ def main(argv: list[str] | None = None) -> int:
     greeks_provider = build_local_greeks_provider()
 
     try:
-        if args.replay_latest or args.replay_run_id:
-            return run_replay(args=args, client=client, history_store=history_store)
+        if args.backtest_latest or args.backtest_run_id:
+            return run_scanner_backtest(
+                args=args, client=client, history_store=history_store
+            )
 
         if len(symbols) == 1:
             strategy_results, failures = scan_symbol_across_strategies(

@@ -68,7 +68,7 @@ app.command("opportunities", help="List opportunities or inspect one opportunity
 app.command("positions", help="List positions or inspect one position.")(
     positions_command
 )
-app.command("audit", help="Replay one pipeline date for operator investigation.")(
+app.command("audit", help="Audit one pipeline date for operator investigation.")(
     audit_command
 )
 app.add_typer(jobs_app, name="jobs")

@@ -381,13 +381,13 @@ def summarize_market_outcomes(
             if horizon_bar is None:
                 continue
             if label == "entry":
-                replay_path = mark_structure_on_date(
+                simulation_path = mark_structure_on_date(
                     candidate,
                     option_bars=option_bars,
                     target_date=target_date,
                 )
             else:
-                replay_path = simulate_exit_path(
+                simulation_path = simulate_exit_path(
                     candidate,
                     option_bars=option_bars,
                     start_date=run_date,
@@ -395,7 +395,7 @@ def summarize_market_outcomes(
                     profit_target=profit_target,
                     stop_multiple=stop_multiple,
                 )
-            if replay_path["status"] == "pending_option_bars":
+            if simulation_path["status"] == "pending_option_bars":
                 rows.append(
                     {
                         "horizon": label,
@@ -426,10 +426,10 @@ def summarize_market_outcomes(
             touched += int(touched_short)
             closed_past_short += int(closed_beyond_short)
             closed_past_breakeven += int(closed_beyond_breakeven)
-            profit_target_hits += int(replay_path["profit_target_hit"])
-            stop_hits += int(replay_path["stop_hit"])
-            conflicts += int(replay_path["status"] == "conflict")
-            total_pnl += replay_path["estimated_pnl"] or 0.0
+            profit_target_hits += int(simulation_path["profit_target_hit"])
+            stop_hits += int(simulation_path["stop_hit"])
+            conflicts += int(simulation_path["status"] == "conflict")
+            total_pnl += simulation_path["estimated_pnl"] or 0.0
             rows.append(
                 {
                     "horizon": label,
@@ -444,15 +444,15 @@ def summarize_market_outcomes(
                     "touched_short_strike": touched_short,
                     "closed_past_short_strike": closed_beyond_short,
                     "closed_past_breakeven": closed_beyond_breakeven,
-                    "spread_mark_close": replay_path["spread_mark_close"],
-                    "spread_mark_low": replay_path["spread_mark_low"],
-                    "spread_mark_high": replay_path["spread_mark_high"],
-                    "estimated_pnl": replay_path["estimated_pnl"],
-                    "estimated_profit_target_hit": replay_path["profit_target_hit"],
-                    "estimated_stop_hit": replay_path["stop_hit"],
-                    "exit_reason": replay_path["exit_reason"],
-                    "exit_date": replay_path["exit_date"],
-                    "replay_status": replay_path["status"],
+                    "spread_mark_close": simulation_path["spread_mark_close"],
+                    "spread_mark_low": simulation_path["spread_mark_low"],
+                    "spread_mark_high": simulation_path["spread_mark_high"],
+                    "estimated_pnl": simulation_path["estimated_pnl"],
+                    "estimated_profit_target_hit": simulation_path["profit_target_hit"],
+                    "estimated_stop_hit": simulation_path["stop_hit"],
+                    "exit_reason": simulation_path["exit_reason"],
+                    "exit_date": simulation_path["exit_date"],
+                    "simulation_status": simulation_path["status"],
                 }
             )
 
@@ -511,7 +511,7 @@ def summarize_market_outcomes(
         horizon_bar = latest_bar_on_or_before(bars, expiry_date)
         if horizon_bar is None:
             continue
-        replay_path = simulate_exit_path(
+        simulation_path = simulate_exit_path(
             candidate,
             option_bars=option_bars,
             start_date=run_date,
@@ -519,7 +519,7 @@ def summarize_market_outcomes(
             profit_target=profit_target,
             stop_multiple=stop_multiple,
         )
-        if replay_path["status"] == "pending_option_bars":
+        if simulation_path["status"] == "pending_option_bars":
             rows.append(
                 {
                     "horizon": "expiry",
@@ -547,10 +547,10 @@ def summarize_market_outcomes(
         expiry_touched += int(touched_short)
         expiry_closed_past_short += int(closed_beyond_short)
         expiry_closed_past_breakeven += int(closed_beyond_breakeven)
-        expiry_profit_targets += int(replay_path["profit_target_hit"])
-        expiry_stop_hits += int(replay_path["stop_hit"])
-        expiry_conflicts += int(replay_path["status"] == "conflict")
-        expiry_total_pnl += replay_path["estimated_pnl"] or 0.0
+        expiry_profit_targets += int(simulation_path["profit_target_hit"])
+        expiry_stop_hits += int(simulation_path["stop_hit"])
+        expiry_conflicts += int(simulation_path["status"] == "conflict")
+        expiry_total_pnl += simulation_path["estimated_pnl"] or 0.0
         rows.append(
             {
                 "horizon": "expiry",
@@ -565,15 +565,15 @@ def summarize_market_outcomes(
                 "touched_short_strike": touched_short,
                 "closed_past_short_strike": closed_beyond_short,
                 "closed_past_breakeven": closed_beyond_breakeven,
-                "spread_mark_close": replay_path["spread_mark_close"],
-                "spread_mark_low": replay_path["spread_mark_low"],
-                "spread_mark_high": replay_path["spread_mark_high"],
-                "estimated_pnl": replay_path["estimated_pnl"],
-                "estimated_profit_target_hit": replay_path["profit_target_hit"],
-                "estimated_stop_hit": replay_path["stop_hit"],
-                "exit_reason": replay_path["exit_reason"],
-                "exit_date": replay_path["exit_date"],
-                "replay_status": replay_path["status"],
+                "spread_mark_close": simulation_path["spread_mark_close"],
+                "spread_mark_low": simulation_path["spread_mark_low"],
+                "spread_mark_high": simulation_path["spread_mark_high"],
+                "estimated_pnl": simulation_path["estimated_pnl"],
+                "estimated_profit_target_hit": simulation_path["profit_target_hit"],
+                "estimated_stop_hit": simulation_path["stop_hit"],
+                "exit_reason": simulation_path["exit_reason"],
+                "exit_date": simulation_path["exit_date"],
+                "simulation_status": simulation_path["status"],
             }
         )
 
