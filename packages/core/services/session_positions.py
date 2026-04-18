@@ -324,6 +324,8 @@ def _sync_linked_execution_intent_position(
     attempt: Mapping[str, Any],
     position_id: str,
 ) -> None:
+    from core.services.execution_intents.shared import link_execution_intent_position
+
     if not execution_store.intent_schema_ready():
         return
     execution_intent_id = _attempt_execution_intent_id(attempt)
@@ -332,29 +334,11 @@ def _sync_linked_execution_intent_position(
     intent = execution_store.get_execution_intent(execution_intent_id)
     if intent is None:
         return
-    payload = (
-        intent.get("payload") if isinstance(intent.get("payload"), Mapping) else {}
-    )
-    execution_store.upsert_execution_intent(
-        execution_intent_id=str(intent["execution_intent_id"]),
-        bot_id=str(intent["bot_id"]),
-        automation_id=str(intent["automation_id"]),
-        opportunity_decision_id=_as_text(intent.get("opportunity_decision_id")),
-        strategy_position_id=position_id,
+    link_execution_intent_position(
+        execution_store,
+        intent=dict(intent),
+        position_id=position_id,
         execution_attempt_id=_as_text(attempt.get("execution_attempt_id")),
-        action_type=str(intent["action_type"]),
-        slot_key=str(intent["slot_key"]),
-        claim_token=_as_text(intent.get("claim_token")),
-        policy_ref=dict(intent.get("policy_ref") or {}),
-        config_hash=str(intent.get("config_hash") or ""),
-        state=str(intent.get("state") or ""),
-        expires_at=_as_text(intent.get("expires_at")),
-        superseded_by_id=_as_text(intent.get("superseded_by_id")),
-        payload={
-            **dict(payload),
-            "strategy_position_id": position_id,
-        },
-        created_at=str(intent["created_at"]),
         updated_at=_utc_now(),
     )
 

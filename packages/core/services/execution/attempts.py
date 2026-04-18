@@ -332,6 +332,8 @@ def _sync_linked_execution_intent(
     event_type: str,
     message: str,
 ) -> None:
+    from core.services.execution_intents.shared import sync_execution_intent_from_attempt
+
     execution_intent_id = _linked_execution_intent_id(attempt)
     if execution_intent_id is None or not execution_store.intent_schema_ready():
         return
@@ -341,44 +343,13 @@ def _sync_linked_execution_intent(
     resolved_state = state or _intent_state_from_attempt_status(
         str(attempt.get("status") or "")
     )
-    updated_at = _utc_now()
-    strategy_position_id = _as_text(attempt.get("position_id")) or _as_text(
-        intent.get("strategy_position_id")
-    )
-    execution_store.upsert_execution_intent(
-        execution_intent_id=str(intent["execution_intent_id"]),
-        bot_id=str(intent["bot_id"]),
-        automation_id=str(intent["automation_id"]),
-        opportunity_decision_id=_as_text(intent.get("opportunity_decision_id")),
-        strategy_position_id=strategy_position_id,
-        execution_attempt_id=_as_text(attempt.get("execution_attempt_id")),
-        action_type=str(intent["action_type"]),
-        slot_key=str(intent["slot_key"]),
-        claim_token=_as_text(intent.get("claim_token")),
-        policy_ref=dict(intent.get("policy_ref") or {}),
-        config_hash=str(intent.get("config_hash") or ""),
+    sync_execution_intent_from_attempt(
+        execution_store,
+        intent=dict(intent),
+        attempt=dict(attempt),
         state=resolved_state,
-        expires_at=_as_text(intent.get("expires_at")),
-        superseded_by_id=_as_text(intent.get("superseded_by_id")),
-        payload={
-            **dict(intent.get("payload") or {}),
-            "dispatch_status": resolved_state,
-            "execution_attempt_id": _as_text(attempt.get("execution_attempt_id")),
-            "attempt_status": str(attempt.get("status") or ""),
-            **(
-                {}
-                if strategy_position_id is None
-                else {"strategy_position_id": strategy_position_id}
-            ),
-        },
-        created_at=str(intent["created_at"]),
-        updated_at=updated_at,
-    )
-    execution_store.append_execution_intent_event(
-        execution_intent_id=execution_intent_id,
         event_type=event_type,
-        event_at=updated_at,
-        payload={
+        event_payload={
             "execution_attempt_id": _as_text(attempt.get("execution_attempt_id")),
             "message": message,
             "attempt_status": str(attempt.get("status") or ""),

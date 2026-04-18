@@ -20,7 +20,9 @@ from .shared import (
     _as_text,
     _intent_action_type,
     _intent_payload,
+    _update_intent,
     _utc_now,
+    link_execution_intent_position,
 )
 
 
@@ -162,27 +164,16 @@ def _cleanup_slot_conflicts(
                 continue
             if _as_text(intent.get("execution_attempt_id")):
                 continue
-            updated = execution_store.upsert_execution_intent(
-                execution_intent_id=intent_id,
-                bot_id=str(intent["bot_id"]),
-                automation_id=str(intent["automation_id"]),
-                opportunity_decision_id=_as_text(intent.get("opportunity_decision_id")),
-                strategy_position_id=_as_text(intent.get("strategy_position_id")),
-                execution_attempt_id=None,
-                action_type=str(intent["action_type"]),
-                slot_key=slot_key,
-                claim_token=_as_text(intent.get("claim_token")),
-                policy_ref=dict(intent.get("policy_ref") or {}),
-                config_hash=str(intent.get("config_hash") or ""),
+            updated = _update_intent(
+                execution_store,
+                intent,
                 state="revoked",
-                expires_at=_as_text(intent.get("expires_at")),
+                execution_attempt_id=None,
                 superseded_by_id=anchor_id,
-                payload={
-                    **_intent_payload(intent),
+                payload_updates={
                     "dispatch_status": "revoked",
                     "revoked_by_execution_intent_id": anchor_id,
                 },
-                created_at=str(intent["created_at"]),
                 updated_at=_utc_now(),
             )
             _append_event(
@@ -232,26 +223,11 @@ def _backfill_strategy_position_links(
             continue
         if _as_text(intent.get("strategy_position_id")) == position_id:
             continue
-        updated = execution_store.upsert_execution_intent(
-            execution_intent_id=str(intent["execution_intent_id"]),
-            bot_id=str(intent["bot_id"]),
-            automation_id=str(intent["automation_id"]),
-            opportunity_decision_id=_as_text(intent.get("opportunity_decision_id")),
-            strategy_position_id=position_id,
+        updated = link_execution_intent_position(
+            execution_store,
+            intent=dict(intent),
+            position_id=position_id,
             execution_attempt_id=_as_text(intent.get("execution_attempt_id")),
-            action_type=str(intent["action_type"]),
-            slot_key=str(intent["slot_key"]),
-            claim_token=_as_text(intent.get("claim_token")),
-            policy_ref=dict(intent.get("policy_ref") or {}),
-            config_hash=str(intent.get("config_hash") or ""),
-            state=str(intent.get("state") or ""),
-            expires_at=_as_text(intent.get("expires_at")),
-            superseded_by_id=_as_text(intent.get("superseded_by_id")),
-            payload={
-                **_intent_payload(intent),
-                "strategy_position_id": position_id,
-            },
-            created_at=str(intent["created_at"]),
             updated_at=_utc_now(),
         )
         linked += 1

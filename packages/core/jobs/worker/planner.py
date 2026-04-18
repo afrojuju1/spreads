@@ -4,14 +4,14 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from core.services.analysis.cli import build_analysis_args
-from core.services.analysis.service import run_post_close_analysis
 from core.services.live_pipelines import build_live_session_catalog, build_live_run_scope_id
 from core.services.market_dates import resolve_market_date
 from core.services.post_market_analysis import (
     parse_args as parse_post_market_args,
     run_post_market_analysis,
 )
+from core.services.post_close.cli import build_analysis_args
+from core.services.post_close.service import run_post_close_analysis
 from core.storage.factory import build_post_market_repository
 
 from .managed import ManagedJobFailure

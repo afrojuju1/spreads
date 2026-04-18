@@ -148,7 +148,7 @@ def build_opportunity_replay(
     allocator_metrics = scorecard.get("allocator_selected") or {}
     if int(allocator_metrics.get("count") or 0) == 0:
         warnings.append(
-            "No opportunities cleared the provisional allocator for this session, so allocator-vs-legacy-promotable-baseline comparisons are based on zero selected opportunities."
+            "No opportunities cleared the provisional allocator for this session, so allocator-vs-promotable-baseline comparisons are based on zero selected opportunities."
         )
     allocator_still_open_rate = allocator_metrics.get("still_open_rate")
     if (
@@ -247,9 +247,9 @@ def build_recent_opportunity_replay_batch(
 
     sessions: list[dict[str, Any]] = []
     verdict_counts: dict[str, int] = defaultdict(int)
-    promoted_from_legacy_monitor_total = 0
-    rejected_legacy_promotable_total = 0
-    allocator_vs_legacy_promotable_baseline_total = 0
+    promoted_monitor_total = 0
+    rejected_promotable_baseline_total = 0
+    allocator_vs_promotable_baseline_total = 0
     allocator_vs_rank_only_total = 0
     skipped_sessions: list[dict[str, Any]] = []
     all_rows: list[dict[str, Any]] = []
@@ -276,17 +276,15 @@ def build_recent_opportunity_replay_batch(
         scorecard = dict(payload.get("scorecard") or {})
         verdict = _as_text(summary.get("analysis_verdict")) or "unknown"
         verdict_counts[verdict] += 1
-        promoted_from_legacy_monitor = list(
-            comparison.get("promoted_from_legacy_monitor") or []
-        )
-        rejected_legacy_promotable = list(
-            comparison.get("rejected_legacy_promotable") or []
+        promoted_monitor = list(comparison.get("allocator_promoted_monitor") or [])
+        rejected_promotable_baseline = list(
+            comparison.get("allocator_rejected_promotable_baseline") or []
         )
         overlap = dict(comparison.get("overlap") or {})
-        promoted_from_legacy_monitor_total += len(promoted_from_legacy_monitor)
-        rejected_legacy_promotable_total += len(rejected_legacy_promotable)
-        allocator_vs_legacy_promotable_baseline_total += int(
-            overlap.get("allocator_vs_legacy_promotable_baseline_count") or 0
+        promoted_monitor_total += len(promoted_monitor)
+        rejected_promotable_baseline_total += len(rejected_promotable_baseline)
+        allocator_vs_promotable_baseline_total += int(
+            overlap.get("allocator_vs_promotable_baseline_count") or 0
         )
         allocator_vs_rank_only_total += int(
             overlap.get("allocator_vs_rank_only_count") or 0
@@ -301,8 +299,8 @@ def build_recent_opportunity_replay_batch(
                 "scorecard": scorecard,
                 "comparison": {
                     "comparison_size": comparison.get("comparison_size"),
-                    "legacy_promotable_baseline_candidate_ids": (
-                        comparison.get("legacy_promotable_baseline") or {}
+                    "promotable_baseline_candidate_ids": (
+                        comparison.get("promotable_baseline") or {}
                     ).get("candidate_ids", []),
                     "rank_only_candidate_ids": (
                         comparison.get("rank_only_top") or {}
@@ -310,8 +308,8 @@ def build_recent_opportunity_replay_batch(
                     "allocator_candidate_ids": (
                         comparison.get("provisional_allocator") or {}
                     ).get("candidate_ids", []),
-                    "promoted_from_legacy_monitor": promoted_from_legacy_monitor,
-                    "rejected_legacy_promotable": rejected_legacy_promotable,
+                    "allocator_promoted_monitor": promoted_monitor,
+                    "allocator_rejected_promotable_baseline": rejected_promotable_baseline,
                     "overlap": overlap,
                 },
                 "warnings": list(payload.get("warnings") or []),
@@ -340,13 +338,13 @@ def build_recent_opportunity_replay_batch(
             **metrics,
         }
 
-    legacy_promotable_baseline_metrics = pooled_metrics("is_legacy_promotable_baseline")
+    promotable_baseline_metrics = pooled_metrics("is_promotable_baseline")
     rank_only_top_metrics = pooled_metrics("is_rank_only_top")
     allocator_selected_metrics = pooled_metrics("is_allocator_selected")
-    promoted_from_legacy_monitor_metrics = pooled_metrics(
-        "is_promoted_from_legacy_monitor"
+    promoted_monitor_metrics = pooled_metrics("is_allocator_promoted_monitor")
+    rejected_promotable_baseline_metrics = pooled_metrics(
+        "is_allocator_rejected_promotable_baseline"
     )
-    rejected_legacy_promotable_metrics = pooled_metrics("is_rejected_legacy_promotable")
     sessions_with_allocator_selections = sum(
         1
         for item in sessions
@@ -359,33 +357,35 @@ def build_recent_opportunity_replay_batch(
         "verdict_counts": dict(sorted(verdict_counts.items())),
         "skipped_session_count": len(skipped_sessions),
         "sessions_with_allocator_selections": sessions_with_allocator_selections,
-        "sessions_with_legacy_monitor_promotions": sum(
-            1 for item in sessions if item["comparison"]["promoted_from_legacy_monitor"]
+        "sessions_with_monitor_promotions": sum(
+            1 for item in sessions if item["comparison"]["allocator_promoted_monitor"]
         ),
-        "sessions_with_rejected_legacy_promotable": sum(
-            1 for item in sessions if item["comparison"]["rejected_legacy_promotable"]
+        "sessions_with_rejected_promotable_baseline": sum(
+            1
+            for item in sessions
+            if item["comparison"]["allocator_rejected_promotable_baseline"]
         ),
-        "promoted_from_legacy_monitor_total": promoted_from_legacy_monitor_total,
-        "rejected_legacy_promotable_total": rejected_legacy_promotable_total,
-        "average_allocator_vs_legacy_promotable_baseline_overlap": round(
-            allocator_vs_legacy_promotable_baseline_total / session_count,
+        "promoted_monitor_total": promoted_monitor_total,
+        "rejected_promotable_baseline_total": rejected_promotable_baseline_total,
+        "average_allocator_vs_promotable_baseline_overlap": round(
+            allocator_vs_promotable_baseline_total / session_count,
             3,
         ),
         "average_allocator_vs_rank_only_overlap": round(
             allocator_vs_rank_only_total / session_count,
             3,
         ),
-        "legacy_promotable_baseline_metrics": legacy_promotable_baseline_metrics,
+        "promotable_baseline_metrics": promotable_baseline_metrics,
         "rank_only_top_metrics": rank_only_top_metrics,
         "allocator_selected_metrics": allocator_selected_metrics,
-        "promoted_from_legacy_monitor_metrics": promoted_from_legacy_monitor_metrics,
-        "rejected_legacy_promotable_metrics": rejected_legacy_promotable_metrics,
-        "allocator_minus_legacy_promotable_baseline_avg_estimated_pnl": None
+        "promoted_monitor_metrics": promoted_monitor_metrics,
+        "rejected_promotable_baseline_metrics": rejected_promotable_baseline_metrics,
+        "allocator_minus_promotable_baseline_avg_estimated_pnl": None
         if allocator_selected_metrics["average_estimated_pnl"] is None
-        or legacy_promotable_baseline_metrics["average_estimated_pnl"] is None
+        or promotable_baseline_metrics["average_estimated_pnl"] is None
         else round(
             float(allocator_selected_metrics["average_estimated_pnl"])
-            - float(legacy_promotable_baseline_metrics["average_estimated_pnl"]),
+            - float(promotable_baseline_metrics["average_estimated_pnl"]),
             4,
         ),
         "allocator_minus_rank_only_avg_estimated_pnl": None
@@ -396,12 +396,12 @@ def build_recent_opportunity_replay_batch(
             - float(rank_only_top_metrics["average_estimated_pnl"]),
             4,
         ),
-        "allocator_minus_legacy_promotable_baseline_avg_estimated_close_pnl": None
+        "allocator_minus_promotable_baseline_avg_estimated_close_pnl": None
         if allocator_selected_metrics["average_estimated_close_pnl"] is None
-        or legacy_promotable_baseline_metrics["average_estimated_close_pnl"] is None
+        or promotable_baseline_metrics["average_estimated_close_pnl"] is None
         else round(
             float(allocator_selected_metrics["average_estimated_close_pnl"])
-            - float(legacy_promotable_baseline_metrics["average_estimated_close_pnl"]),
+            - float(promotable_baseline_metrics["average_estimated_close_pnl"]),
             4,
         ),
         "allocator_minus_rank_only_avg_estimated_close_pnl": None
@@ -412,12 +412,12 @@ def build_recent_opportunity_replay_batch(
             - float(rank_only_top_metrics["average_estimated_close_pnl"]),
             4,
         ),
-        "allocator_minus_legacy_promotable_baseline_avg_actual_net_pnl": None
+        "allocator_minus_promotable_baseline_avg_actual_net_pnl": None
         if allocator_selected_metrics["average_actual_net_pnl"] is None
-        or legacy_promotable_baseline_metrics["average_actual_net_pnl"] is None
+        or promotable_baseline_metrics["average_actual_net_pnl"] is None
         else round(
             float(allocator_selected_metrics["average_actual_net_pnl"])
-            - float(legacy_promotable_baseline_metrics["average_actual_net_pnl"]),
+            - float(promotable_baseline_metrics["average_actual_net_pnl"]),
             4,
         ),
         "allocator_minus_rank_only_avg_actual_net_pnl": None
@@ -428,10 +428,10 @@ def build_recent_opportunity_replay_batch(
             - float(rank_only_top_metrics["average_actual_net_pnl"]),
             4,
         ),
-        "allocator_minus_legacy_promotable_baseline_avg_actual_minus_estimated_close_pnl": None
+        "allocator_minus_promotable_baseline_avg_actual_minus_estimated_close_pnl": None
         if allocator_selected_metrics["average_actual_minus_estimated_close_pnl"]
         is None
-        or legacy_promotable_baseline_metrics[
+        or promotable_baseline_metrics[
             "average_actual_minus_estimated_close_pnl"
         ]
         is None
@@ -440,7 +440,7 @@ def build_recent_opportunity_replay_batch(
                 allocator_selected_metrics["average_actual_minus_estimated_close_pnl"]
             )
             - float(
-                legacy_promotable_baseline_metrics[
+                promotable_baseline_metrics[
                     "average_actual_minus_estimated_close_pnl"
                 ]
             ),
@@ -457,10 +457,8 @@ def build_recent_opportunity_replay_batch(
             - float(rank_only_top_metrics["average_actual_minus_estimated_close_pnl"]),
             4,
         ),
-        "legacy_monitor_promotion_hit_rate": promoted_from_legacy_monitor_metrics[
-            "positive_rate"
-        ],
-        "rejected_legacy_promotable_miss_rate": rejected_legacy_promotable_metrics[
+        "monitor_promotion_hit_rate": promoted_monitor_metrics["positive_rate"],
+        "rejected_promotable_baseline_positive_rate": rejected_promotable_baseline_metrics[
             "positive_rate"
         ],
         "by_label": _aggregate_dimension_rows(all_rows, field="label"),
@@ -475,6 +473,44 @@ def build_recent_opportunity_replay_batch(
             ),
         },
     }
+    aggregate["legacy_promotable_baseline_metrics"] = aggregate["promotable_baseline_metrics"]
+    aggregate["promoted_from_legacy_monitor_metrics"] = aggregate["promoted_monitor_metrics"]
+    aggregate["rejected_legacy_promotable_metrics"] = aggregate[
+        "rejected_promotable_baseline_metrics"
+    ]
+    aggregate["sessions_with_legacy_monitor_promotions"] = aggregate[
+        "sessions_with_monitor_promotions"
+    ]
+    aggregate["sessions_with_rejected_legacy_promotable"] = aggregate[
+        "sessions_with_rejected_promotable_baseline"
+    ]
+    aggregate["promoted_from_legacy_monitor_total"] = aggregate[
+        "promoted_monitor_total"
+    ]
+    aggregate["rejected_legacy_promotable_total"] = aggregate[
+        "rejected_promotable_baseline_total"
+    ]
+    aggregate["average_allocator_vs_legacy_promotable_baseline_overlap"] = aggregate[
+        "average_allocator_vs_promotable_baseline_overlap"
+    ]
+    aggregate["allocator_minus_legacy_promotable_baseline_avg_estimated_pnl"] = aggregate[
+        "allocator_minus_promotable_baseline_avg_estimated_pnl"
+    ]
+    aggregate["allocator_minus_legacy_promotable_baseline_avg_estimated_close_pnl"] = aggregate[
+        "allocator_minus_promotable_baseline_avg_estimated_close_pnl"
+    ]
+    aggregate["allocator_minus_legacy_promotable_baseline_avg_actual_net_pnl"] = aggregate[
+        "allocator_minus_promotable_baseline_avg_actual_net_pnl"
+    ]
+    aggregate["allocator_minus_legacy_promotable_baseline_avg_actual_minus_estimated_close_pnl"] = aggregate[
+        "allocator_minus_promotable_baseline_avg_actual_minus_estimated_close_pnl"
+    ]
+    aggregate["legacy_monitor_promotion_hit_rate"] = aggregate[
+        "monitor_promotion_hit_rate"
+    ]
+    aggregate["rejected_legacy_promotable_miss_rate"] = aggregate[
+        "rejected_promotable_baseline_positive_rate"
+    ]
     warnings: list[str] = []
     if session_count < recent:
         warnings.append(

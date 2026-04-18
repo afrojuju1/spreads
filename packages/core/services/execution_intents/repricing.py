@@ -12,6 +12,7 @@ from .shared import (
     _append_event,
     _as_text,
     _intent_action_type,
+    issue_pending_execution_intent,
     _intent_payload,
     _next_reprice_limit,
     _reprice_count,
@@ -59,7 +60,8 @@ def _create_replacement_intent(
             "previous_execution_attempt_id": _as_text(attempt.get("execution_attempt_id")),
         }
     )
-    execution_store.upsert_execution_intent(
+    issue_pending_execution_intent(
+        execution_store,
         execution_intent_id=replacement_id,
         bot_id=str(intent["bot_id"]),
         automation_id=str(intent["automation_id"]),
@@ -75,30 +77,22 @@ def _create_replacement_intent(
         expires_at=_as_text(intent.get("expires_at")),
         superseded_by_id=None,
         payload=payload,
-        created_at=now,
-        updated_at=now,
+        created_event_payload={
+            "reprice_count": payload.get("reprice_count"),
+            "limit_price": next_limit,
+            "replaces_execution_intent_id": str(intent["execution_intent_id"]),
+        },
     )
-    updated = execution_store.upsert_execution_intent(
-        execution_intent_id=str(intent["execution_intent_id"]),
-        bot_id=str(intent["bot_id"]),
-        automation_id=str(intent["automation_id"]),
-        opportunity_decision_id=_as_text(intent.get("opportunity_decision_id")),
-        strategy_position_id=_as_text(intent.get("strategy_position_id")),
-        execution_attempt_id=_as_text(attempt.get("execution_attempt_id")),
-        action_type=str(intent["action_type"]),
-        slot_key=str(intent["slot_key"]),
-        claim_token=_as_text(intent.get("claim_token")),
-        policy_ref=dict(intent.get("policy_ref") or {}),
-        config_hash=str(intent.get("config_hash") or ""),
+    updated = _update_intent(
+        execution_store,
+        intent,
         state="canceled",
-        expires_at=_as_text(intent.get("expires_at")),
+        execution_attempt_id=_as_text(attempt.get("execution_attempt_id")),
         superseded_by_id=replacement_id,
-        payload={
-            **_intent_payload(intent),
+        payload_updates={
             "dispatch_status": "canceled_for_reprice",
             "replacement_execution_intent_id": replacement_id,
         },
-        created_at=str(intent["created_at"]),
         updated_at=now,
     )
     _append_event(
@@ -108,16 +102,6 @@ def _create_replacement_intent(
         payload={
             "replacement_execution_intent_id": replacement_id,
             "next_limit_price": next_limit,
-        },
-    )
-    _append_event(
-        execution_store,
-        execution_intent_id=replacement_id,
-        event_type="created",
-        payload={
-            "reprice_count": payload.get("reprice_count"),
-            "limit_price": next_limit,
-            "replaces_execution_intent_id": str(intent["execution_intent_id"]),
         },
     )
     return updated
@@ -235,27 +219,15 @@ def _manage_submitted_open_intents(
         )
         post_cancel_status = str(post_cancel_attempt.get("status") or "").strip().lower()
         if not active and post_cancel_status in {"canceled", "cancelled"}:
-            updated = execution_store.upsert_execution_intent(
-                execution_intent_id=str(intent["execution_intent_id"]),
-                bot_id=str(intent["bot_id"]),
-                automation_id=str(intent["automation_id"]),
-                opportunity_decision_id=_as_text(intent.get("opportunity_decision_id")),
-                strategy_position_id=_as_text(intent.get("strategy_position_id")),
-                execution_attempt_id=execution_attempt_id,
-                action_type=str(intent["action_type"]),
-                slot_key=str(intent["slot_key"]),
-                claim_token=_as_text(intent.get("claim_token")),
-                policy_ref=dict(intent.get("policy_ref") or {}),
-                config_hash=str(intent.get("config_hash") or ""),
+            updated = _update_intent(
+                execution_store,
+                intent,
                 state="revoked",
-                expires_at=_as_text(intent.get("expires_at")),
-                superseded_by_id=None,
-                payload={
-                    **_intent_payload(intent),
+                execution_attempt_id=execution_attempt_id,
+                payload_updates={
                     "dispatch_status": "revoked",
                     "revoke_reason": inactive_reason,
                 },
-                created_at=str(intent["created_at"]),
                 updated_at=_utc_now(),
             )
             _append_event(

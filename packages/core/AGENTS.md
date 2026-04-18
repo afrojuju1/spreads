@@ -35,7 +35,7 @@
 - For operator visibility work, reuse these modules with thin adapters instead of introducing parallel API-only logic.
 - For session health and current runtime state, prefer `services/live_runtime.py`, `services/live_collector_health/`, `services/pipelines.py`, and `services/ops/` over creating new read-model owners.
 - For first-pass ops/runtime checks and replay workflows, follow the repo-level CLI guidance in [../../AGENTS.md](../../AGENTS.md). Keep the canonical command list there instead of repeating it in backend-specific instructions.
-- Treat `services/analysis/` as the legacy post-close reporting surface, not the canonical decision-replay path.
+- Treat `services/post_close/` as the canonical post-close reporting surface.
 - For closed-session investigations, check post-market analysis before tuning strategy thresholds from raw session counts alone.
 
 ## End-Of-Day And Ops Queries

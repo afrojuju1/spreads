@@ -319,7 +319,9 @@ def build_session_outcomes(
         )
         outcome = replay_outcome(entry)
         entry_run_payload, _ = load_run_bundle(str(entry["run_id"]))
-        entry_setup = None if entry_run_payload is None else (entry_run_payload.get("setup") or {})
+        entry_setup = (
+            None if entry_run_payload is None else (entry_run_payload.get("setup") or {})
+        )
         entry_candidate = dict(entry["candidate"])
         latest_candidate = dict(latest["candidate"])
         setup_status = (

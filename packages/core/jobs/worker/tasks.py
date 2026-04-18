@@ -24,8 +24,6 @@ from core.services.alert_delivery import (
     reconcile_alert_delivery,
     run_alert_delivery,
 )
-from core.services.analysis.cli import build_analysis_args
-from core.services.analysis.service import run_post_close_analysis
 from core.services.broker_sync import run_broker_sync
 from core.services.collections.config import build_collection_args
 from core.services.collections.models import LiveTickContext
@@ -45,6 +43,8 @@ from core.services.post_market_analysis import (
     parse_args as parse_post_market_args,
     run_post_market_analysis,
 )
+from core.services.post_close.cli import build_analysis_args
+from core.services.post_close.service import run_post_close_analysis
 from core.services.strategy_positions import run_management_automation_decision
 
 from .managed import ManagedJobFailure, _execute_managed_job

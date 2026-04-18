@@ -27,7 +27,7 @@ Related:
 | Canonical opportunity state | `services/signal_state.py`, `services/opportunity_generation.py`, `services/opportunities.py`, `storage/signal_repository.py` | Owns signal state, canonical opportunity rows, and runtime-owned projections derived from collector cycles. |
 | Runtime, pipeline, and ops read models | `services/live_runtime.py`, `services/live_collector_health/`, `services/pipelines.py`, `services/ops/` | Owns current session views, health summaries, pipeline projections, and operator CLI payloads. |
 | Execution and portfolio state | `services/execution/`, `services/execution_portfolio.py`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py` | Owns broker submission, immutable execution ledger, day-local position ownership, reconciliation, and exit behavior. |
-| Replay and evaluation | `services/opportunity_replay/`, `services/post_market_analysis.py`, `services/analysis/` | Owns offline replay, scorecarding, diagnostics, and post-market evaluation. |
+| Replay and evaluation | `services/opportunity_replay/`, `services/post_close/`, `services/post_market_analysis.py` | Owns offline replay, scorecarding, diagnostics, and post-market evaluation. |
 | Persistence and event transport | Postgres, Redis | Postgres is source of truth. Redis handles queues, leases, and pub/sub fanout. |
 
 ## Non-Negotiable Boundary Rules

@@ -20,6 +20,7 @@ WORKING_REPRICE_ATTEMPT_STATUSES = {
     "replaced",
 }
 TERMINAL_INTENT_STATES = {"failed", "canceled", "revoked", "expired"}
+_UNCHANGED = object()
 
 
 def _utc_now() -> str:
@@ -80,32 +81,68 @@ def _update_intent(
     execution_store: Any,
     intent: dict[str, Any],
     *,
-    state: str,
+    state: str | object = _UNCHANGED,
     payload_updates: dict[str, Any] | None = None,
-    execution_attempt_id: str | None = None,
+    payload: dict[str, Any] | object = _UNCHANGED,
+    opportunity_decision_id: str | None | object = _UNCHANGED,
+    strategy_position_id: str | None | object = _UNCHANGED,
+    execution_attempt_id: str | None | object = _UNCHANGED,
+    claim_token: str | None | object = _UNCHANGED,
+    expires_at: str | None | object = _UNCHANGED,
+    superseded_by_id: str | None | object = _UNCHANGED,
     updated_at: str | None = None,
 ) -> dict[str, Any]:
-    payload = _intent_payload(intent)
+    resolved_payload = (
+        _intent_payload(intent)
+        if payload is _UNCHANGED
+        else dict(payload or {})
+    )
     if payload_updates:
-        payload.update(payload_updates)
+        resolved_payload.update(payload_updates)
     return execution_store.upsert_execution_intent(
         execution_intent_id=str(intent["execution_intent_id"]),
         bot_id=str(intent["bot_id"]),
         automation_id=str(intent["automation_id"]),
-        opportunity_decision_id=_as_text(intent.get("opportunity_decision_id")),
-        strategy_position_id=_as_text(intent.get("strategy_position_id")),
-        execution_attempt_id=execution_attempt_id
-        if execution_attempt_id is not None
-        else _as_text(intent.get("execution_attempt_id")),
+        opportunity_decision_id=(
+            _as_text(intent.get("opportunity_decision_id"))
+            if opportunity_decision_id is _UNCHANGED
+            else opportunity_decision_id
+        ),
+        strategy_position_id=(
+            _as_text(intent.get("strategy_position_id"))
+            if strategy_position_id is _UNCHANGED
+            else strategy_position_id
+        ),
+        execution_attempt_id=(
+            _as_text(intent.get("execution_attempt_id"))
+            if execution_attempt_id is _UNCHANGED
+            else execution_attempt_id
+        ),
         action_type=str(intent["action_type"]),
         slot_key=str(intent["slot_key"]),
-        claim_token=_as_text(intent.get("claim_token")),
+        claim_token=(
+            _as_text(intent.get("claim_token"))
+            if claim_token is _UNCHANGED
+            else claim_token
+        ),
         policy_ref=dict(intent.get("policy_ref") or {}),
         config_hash=str(intent.get("config_hash") or ""),
-        state=state,
-        expires_at=_as_text(intent.get("expires_at")),
-        superseded_by_id=_as_text(intent.get("superseded_by_id")),
-        payload=payload,
+        state=(
+            str(intent.get("state") or "")
+            if state is _UNCHANGED
+            else str(state)
+        ),
+        expires_at=(
+            _as_text(intent.get("expires_at"))
+            if expires_at is _UNCHANGED
+            else expires_at
+        ),
+        superseded_by_id=(
+            _as_text(intent.get("superseded_by_id"))
+            if superseded_by_id is _UNCHANGED
+            else superseded_by_id
+        ),
+        payload=resolved_payload,
         created_at=str(intent["created_at"]),
         updated_at=updated_at or _utc_now(),
     )
@@ -173,6 +210,71 @@ def issue_pending_execution_intent(
         payload=None if created_event_payload is None else dict(created_event_payload),
     )
     return intent
+
+
+def link_execution_intent_position(
+    execution_store: Any,
+    *,
+    intent: dict[str, Any],
+    position_id: str,
+    execution_attempt_id: str | None = None,
+    updated_at: str | None = None,
+) -> dict[str, Any]:
+    return _update_intent(
+        execution_store,
+        intent,
+        strategy_position_id=position_id,
+        execution_attempt_id=(
+            _UNCHANGED if execution_attempt_id is None else execution_attempt_id
+        ),
+        payload_updates={"strategy_position_id": position_id},
+        updated_at=updated_at,
+    )
+
+
+def sync_execution_intent_from_attempt(
+    execution_store: Any,
+    *,
+    intent: dict[str, Any],
+    attempt: dict[str, Any],
+    state: str,
+    event_type: str,
+    event_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    execution_attempt_id = _as_text(attempt.get("execution_attempt_id"))
+    strategy_position_id = _as_text(attempt.get("position_id")) or _as_text(
+        intent.get("strategy_position_id")
+    )
+    updated_at = _utc_now()
+    updated = _update_intent(
+        execution_store,
+        intent,
+        state=state,
+        strategy_position_id=(
+            _UNCHANGED if strategy_position_id is None else strategy_position_id
+        ),
+        execution_attempt_id=(
+            _UNCHANGED if execution_attempt_id is None else execution_attempt_id
+        ),
+        payload_updates={
+            "dispatch_status": state,
+            "execution_attempt_id": execution_attempt_id,
+            "attempt_status": str(attempt.get("status") or ""),
+            **(
+                {}
+                if strategy_position_id is None
+                else {"strategy_position_id": strategy_position_id}
+            ),
+        },
+        updated_at=updated_at,
+    )
+    _append_event(
+        execution_store,
+        execution_intent_id=str(intent["execution_intent_id"]),
+        event_type=event_type,
+        payload=None if event_payload is None else dict(event_payload),
+    )
+    return updated
 
 
 def _attempt_state(attempt: dict[str, Any] | None) -> str:
