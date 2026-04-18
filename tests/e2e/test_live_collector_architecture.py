@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from core.jobs.orchestration import isoformat_utc
 from core.jobs.scheduler import _enqueue_definition_jobs, _reconcile_live_collector_jobs
+from core.services.automation_runtime import resolve_entry_runtime
 from core.services.collections.capture.runtime import capture_live_option_market_state
 from core.services.collections.cycle import run_collection_cycle
 from core.services.collections.models import LiveCaptureSnapshot, LiveTickContext
@@ -23,6 +24,7 @@ from core.services.live_collector_health.capture import (
     build_quote_capture_summary,
     build_trade_capture_summary,
 )
+from core.services.opportunity_generation import sync_entry_runtime_opportunities
 from core.services.ops.jobs import build_job_run_view
 from core.services.pipelines import get_pipeline_detail, list_pipelines
 from core.services.live_recovery import LIVE_SLOT_STATUS_MISSED
@@ -883,6 +885,99 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
             len(signal_sync.call_args.kwargs["persisted_opportunities"]),
             1,
         )
+
+    def test_runtime_sync_fallback_filters_below_floor_return_on_risk(self) -> None:
+        signal_store = _AutomationRuntimeSignalStore()
+        runtime = resolve_entry_runtime(
+            bot_id="short_dated_index_credit_bot",
+            automation_id="index_put_credit_entry",
+        )
+        symbol = runtime.symbols[0]
+        low_ror_candidate = {
+            **_candidate_payload(symbol),
+            "strategy": "put_credit",
+            "profile": "weekly",
+            "setup_status": "favorable",
+            "days_to_expiration": 7,
+            "short_delta": 0.22,
+            "width": 2.0,
+            "short_open_interest": 1200,
+            "long_open_interest": 1100,
+            "short_relative_spread": 0.05,
+            "long_relative_spread": 0.04,
+            "return_on_risk": 0.12,
+            "short_symbol": f"{symbol}260424P00500000",
+            "long_symbol": f"{symbol}260424P00498000",
+            "short_strike": 500.0,
+            "long_strike": 498.0,
+        }
+        high_ror_candidate = {
+            **low_ror_candidate,
+            "return_on_risk": 0.15,
+            "short_symbol": f"{symbol}260424P00495000",
+            "long_symbol": f"{symbol}260424P00493000",
+            "short_strike": 495.0,
+            "long_strike": 493.0,
+        }
+        captured_symbol_candidates: list[dict[str, list[dict[str, object]]]] = []
+
+        def _fake_select_live_opportunities(**kwargs: object) -> dict[str, object]:
+            symbol_candidates = {
+                str(candidate_symbol): [dict(row) for row in rows]
+                for candidate_symbol, rows in dict(
+                    kwargs.get("symbol_candidates") or {}
+                ).items()
+            }
+            captured_symbol_candidates.append(symbol_candidates)
+            selected_rows = [
+                {
+                    **dict(row),
+                    "selection_state": "monitor",
+                    "selection_rank": index,
+                    "state_reason": "selected_monitor",
+                    "eligibility": "live",
+                    "candidate": dict(row),
+                }
+                for index, row in enumerate(symbol_candidates.get(symbol, []), start=1)
+            ]
+            return {
+                "symbol_candidates": symbol_candidates,
+                "promotable_candidates": [],
+                "monitor_candidates": [
+                    dict(row.get("candidate") or row) for row in selected_rows
+                ],
+                "opportunities": selected_rows,
+                "selection_memory": {},
+                "events": [],
+            }
+
+        with patch(
+            "core.services.opportunity_generation.select_live_opportunities",
+            side_effect=_fake_select_live_opportunities,
+        ):
+            result = sync_entry_runtime_opportunities(
+                signal_store=signal_store,
+                label="explore_10_put_credit_weekly_auto",
+                session_date="2026-04-17",
+                generated_at="2026-04-17T17:25:24Z",
+                cycle_id="cycle-1",
+                entry_runtimes=[runtime],
+                symbol_candidates={symbol: [low_ror_candidate, high_ror_candidate]},
+                runtime_candidate_rows_by_owner=None,
+                persisted_opportunities=[],
+                job_run_id=None,
+                top_promotable=1,
+                top_monitor=2,
+            )
+
+        self.assertEqual(len(captured_symbol_candidates), 1)
+        self.assertEqual(len(captured_symbol_candidates[0][symbol]), 1)
+        self.assertEqual(
+            captured_symbol_candidates[0][symbol][0]["return_on_risk"],
+            0.15,
+        )
+        self.assertEqual(result["runtime_opportunities_upserted"], 1)
+        self.assertEqual(signal_store.opportunities[0]["candidate"]["return_on_risk"], 0.15)
 
     def test_save_cycle_does_not_materialize_legacy_pipeline_rows(self) -> None:
         tracking_session = _TrackingSession()
@@ -2241,6 +2336,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
             )
 
         self.assertEqual(result["selected_opportunity_id"], "opp-scoped")
+        self.assertEqual(len(signals.list_calls), 1)
         self.assertTrue(signals.list_calls[0]["runtime_owned"])
         self.assertEqual(signals.list_calls[0]["bot_id"], bot.bot.bot_id)
         self.assertEqual(
@@ -2253,6 +2349,70 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
             ],
             0.5,
         )
+
+    def test_entry_decision_skips_blocked_scoped_opportunities(self) -> None:
+        bot = load_active_bots()["short_dated_index_credit_bot"]
+        runtime = next(
+            item
+            for item in bot.automations
+            if item.automation.automation_id == "index_put_credit_entry"
+        )
+        symbol = runtime.symbols[0]
+        scoped_row = {
+            "opportunity_id": "opp-scoped",
+            "underlying_symbol": symbol,
+            "strategy_family": runtime.strategy_config.strategy_family,
+            "lifecycle_state": "ready",
+            "consumed_by_execution_attempt_id": None,
+            "execution_score": 91.0,
+            "selection_rank": 1,
+            "label": "runtime_label",
+            "expires_at": "2026-04-15T15:30:00Z",
+            "candidate": {
+                "execution_blockers": ["return_on_risk_below_promotable_floor"]
+            },
+        }
+        generic_row = {
+            "opportunity_id": "opp-generic",
+            "underlying_symbol": symbol,
+            "strategy_family": runtime.strategy_config.strategy_family,
+            "lifecycle_state": "ready",
+            "consumed_by_execution_attempt_id": None,
+            "execution_score": 75.0,
+            "selection_rank": 1,
+            "label": "generic_label",
+            "expires_at": "2026-04-15T15:30:00Z",
+        }
+        signals = _DecisionSignalStore(scoped_row=scoped_row, generic_row=generic_row)
+        execution = _DecisionExecutionStore()
+        storage = _DecisionStorage(
+            signals=signals,
+            execution=execution,
+            jobs=_DecisionJobStore(),
+        )
+
+        with (
+            patch(
+                "core.services.decision_engine.automation_should_run_now",
+                return_value=True,
+            ),
+            patch(
+                "core.services.decision_engine.evaluate_entry_controls",
+                return_value=(True, None, {"open_positions": 0}),
+            ),
+        ):
+            result = run_entry_automation_decision(
+                db_target="postgresql://example",
+                bot_id=bot.bot.bot_id,
+                automation_id=runtime.automation.automation_id,
+                market_date="2026-04-15",
+                storage=storage,
+            )
+
+        self.assertIsNone(result["selected_opportunity_id"])
+        self.assertEqual(result["opportunity_count"], 0)
+        self.assertEqual(len(signals.list_calls), 1)
+        self.assertEqual(execution.upserted_intents, [])
 
     def test_entry_decision_sets_post_decision_intent_ttl(self) -> None:
         bot = load_active_bots()["short_dated_index_credit_bot"]

@@ -58,6 +58,30 @@ def _candidate_blockers(candidate: dict[str, Any]) -> list[str]:
     return blockers
 
 
+def _normalized_blockers(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    blockers: list[str] = []
+    for item in value:
+        rendered = str(item or "").strip()
+        if rendered and rendered not in blockers:
+            blockers.append(rendered)
+    return blockers
+
+
+def _opportunity_blockers(
+    candidate: dict[str, Any], *, eligibility: str | None = None
+) -> list[str]:
+    blockers: list[str] = []
+    if str(eligibility or "live").strip().lower() != "live":
+        blockers.append("analysis_only")
+    for field in ("scoring_blockers", "execution_blockers"):
+        for blocker in _normalized_blockers(candidate.get(field)):
+            if blocker not in blockers:
+                blockers.append(blocker)
+    return blockers
+
+
 def _signal_subject_key(label: str, symbol: str) -> str:
     return f"signal_subject:{label}:{symbol}"
 
@@ -306,6 +330,8 @@ def _build_opportunity_payload(
 ) -> dict[str, Any]:
     candidate = _candidate_with_payload(row)
     profile = str(candidate.get("profile") or default_profile)
+    eligibility = str(row.get("eligibility") or "live")
+    blockers = _opportunity_blockers(candidate, eligibility=eligibility)
     strategy_family = str(candidate.get("strategy") or default_strategy)
     policy_fields = resolve_pipeline_policy_fields(
         profile=profile,
@@ -342,8 +368,8 @@ def _build_opportunity_payload(
         ),
         "state_reason": str(row.get("state_reason") or "selected"),
         "origin": str(row.get("origin") or "live_scan"),
-        "eligibility": str(row.get("eligibility") or "live"),
-        "eligibility_state": str(row.get("eligibility") or "live"),
+        "eligibility": eligibility,
+        "eligibility_state": eligibility,
         "promotion_score": candidate.get("promotion_score"),
         "execution_score": candidate.get("execution_score"),
         "confidence": _candidate_confidence(candidate),
@@ -357,9 +383,7 @@ def _build_opportunity_payload(
         "updated_at": generated_at,
         "expires_at": _expires_at(generated_at, profile),
         "reason_codes": [str(row.get("state_reason") or "selected")],
-        "blockers": []
-        if str(row.get("eligibility") or "live") == "live"
-        else ["analysis_only"],
+        "blockers": blockers,
         "legs": _candidate_legs(candidate),
         "economics": _candidate_economics(candidate),
         "strategy_metrics": _candidate_strategy_metrics(candidate),

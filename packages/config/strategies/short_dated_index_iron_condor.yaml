@@ -19,5 +19,6 @@ liquidity_rules:
   max_leg_spread_pct_mid: 0.15
   max_quote_age_seconds: 30
 risk_defaults:
+  min_return_on_risk: 0.13
   max_risk_per_trade: 500
   max_credit_slippage_pct: 0.25

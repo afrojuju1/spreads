@@ -48,6 +48,9 @@ def _apply_build_settings(
     args.max_relative_spread = resolve_profile_value(
         settings.max_leg_spread_pct_mid, getattr(args, "max_relative_spread", None)
     )
+    args.min_return_on_risk = resolve_profile_value(
+        settings.min_return_on_risk, getattr(args, "min_return_on_risk", None)
+    )
     return args
 
 

@@ -165,6 +165,8 @@ def _apply_options_automation_overrides(args: argparse.Namespace) -> argparse.Na
     scanner_profile = scope.get("scanner_profile")
     if isinstance(scanner_profile, str) and scanner_profile:
         args.profile = scanner_profile
+    for key, value in dict(scope.get("scanner_args") or {}).items():
+        setattr(args, key, value)
     return args
 
 
@@ -274,15 +276,10 @@ def collection_window_is_open(
 
 def build_scanner_args(args: argparse.Namespace) -> argparse.Namespace:
     scanner_args = parse_scanner_args([])
+    for key in vars(scanner_args):
+        if hasattr(args, key):
+            setattr(scanner_args, key, getattr(args, key))
     scanner_args.symbol = None
-    scanner_args.symbols = args.symbols
-    scanner_args.symbols_file = args.symbols_file
-    scanner_args.universe = args.universe
-    scanner_args.strategy = args.strategy
-    scanner_args.profile = args.profile
-    scanner_args.greeks_source = args.greeks_source
-    scanner_args.top = args.top
-    scanner_args.per_symbol_top = args.per_symbol_top
     scanner_args.output = None
     scanner_args.json = False
     scanner_args.show_order_json = False

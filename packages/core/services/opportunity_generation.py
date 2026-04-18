@@ -56,6 +56,30 @@ def _candidate_identity(candidate: dict[str, Any]) -> str:
     )
 
 
+def _normalized_blockers(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    blockers: list[str] = []
+    for item in value:
+        rendered = str(item or "").strip()
+        if rendered and rendered not in blockers:
+            blockers.append(rendered)
+    return blockers
+
+
+def _opportunity_blockers(
+    candidate: dict[str, Any], *, eligibility: str | None = None
+) -> list[str]:
+    blockers: list[str] = []
+    if str(eligibility or "live").strip().lower() != "live":
+        blockers.append("analysis_only")
+    for field in ("scoring_blockers", "execution_blockers"):
+        for blocker in _normalized_blockers(candidate.get(field)):
+            if blocker not in blockers:
+                blockers.append(blocker)
+    return blockers
+
+
 def _candidate_matches_runtime(
     candidate: dict[str, Any],
     runtime: EntryRuntime,
@@ -112,6 +136,11 @@ def _candidate_matches_runtime(
         long_spread = _coerce_float(candidate.get("long_relative_spread")) or 0.0
         if max(short_spread, long_spread) > spread_ceiling:
             reasons.append("relative_spread_above_ceiling")
+    minimum_return_on_risk = runtime.build_settings.min_return_on_risk
+    if minimum_return_on_risk is not None:
+        return_on_risk = _coerce_float(candidate.get("return_on_risk"))
+        if return_on_risk is None or return_on_risk < minimum_return_on_risk:
+            reasons.append("return_on_risk_below_floor")
     recipe_result = evaluate_entry_recipes(candidate, runtime.entry_recipe_refs)
     if not recipe_result.passed:
         reasons.extend(recipe_result.reason_codes)
@@ -273,6 +302,8 @@ def build_runtime_opportunity_payload(
         if isinstance(row.get("candidate"), dict)
         else dict(row)
     )
+    eligibility = str(row.get("eligibility") or "live")
+    blockers = _opportunity_blockers(candidate, eligibility=eligibility)
     policy_fields = resolve_runtime_policy_fields(
         profile=runtime.build_settings.scanner_profile,
         root_symbol=str(candidate.get("underlying_symbol") or ""),
@@ -324,8 +355,8 @@ def build_runtime_opportunity_payload(
         ),
         "state_reason": str(row.get("state_reason") or "selected_runtime_candidate"),
         "origin": "config_runtime",
-        "eligibility": str(row.get("eligibility") or "live"),
-        "eligibility_state": str(row.get("eligibility") or "live"),
+        "eligibility": eligibility,
+        "eligibility_state": eligibility,
         "promotion_score": _coerce_float(candidate.get("promotion_score")),
         "execution_score": _coerce_float(candidate.get("execution_score")),
         "confidence": _coerce_float(candidate.get("confidence")),
@@ -339,7 +370,7 @@ def build_runtime_opportunity_payload(
         "updated_at": generated_at,
         "expires_at": source_row.get("expires_at") if source_row else None,
         "reason_codes": [str(row.get("state_reason") or "selected_runtime_candidate")],
-        "blockers": [],
+        "blockers": blockers,
         "legs": candidate_legs(candidate),
         "economics": _candidate_economics(candidate),
         "strategy_metrics": _candidate_strategy_metrics(candidate),

@@ -77,6 +77,19 @@ def resolve_deployment_quality_thresholds(
     return thresholds
 
 
+def resolve_strategy_min_return_on_risk(
+    profile: str | None,
+    *,
+    risk_defaults: Mapping[str, Any] | None = None,
+) -> float | None:
+    defaults = risk_defaults if isinstance(risk_defaults, Mapping) else {}
+    explicit = _coerce_float(defaults.get("min_return_on_risk"))
+    if explicit is not None:
+        return explicit
+    thresholds = resolve_deployment_quality_thresholds(profile)
+    return _coerce_float(thresholds.get("min_promotable_return_on_risk"))
+
+
 def candidate_meets_return_on_risk_floor(
     candidate: Mapping[str, Any],
     minimum_return_on_risk: float | None,
@@ -113,4 +126,5 @@ __all__ = [
     "resolve_candidate_profile",
     "resolve_candidate_return_on_risk",
     "resolve_deployment_quality_thresholds",
+    "resolve_strategy_min_return_on_risk",
 ]

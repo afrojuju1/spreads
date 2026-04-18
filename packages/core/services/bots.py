@@ -11,6 +11,7 @@ from core.services.automations import (
     load_automations,
     resolve_automation,
 )
+from core.services.candidate_policy import resolve_strategy_min_return_on_risk
 from core.services.strategy_configs import (
     _as_list,
     _as_text,
@@ -265,6 +266,17 @@ def build_collector_scope(
         if automation.strategy_config.liquidity_rules.get("max_leg_spread_pct_mid")
         is not None
     ]
+    return_on_risk_values = [
+        float(minimum_return_on_risk)
+        for _bot, automation in entries
+        if (
+            minimum_return_on_risk := resolve_strategy_min_return_on_risk(
+                automation.strategy_config.scanner_profile,
+                risk_defaults=automation.strategy_config.risk_defaults,
+            )
+        )
+        is not None
+    ]
     return {
         "enabled": True,
         "symbols": tuple(symbols),
@@ -301,6 +313,11 @@ def build_collector_scope(
                 {}
                 if not relative_spread_values
                 else {"max_relative_spread": max(relative_spread_values)}
+            ),
+            **(
+                {}
+                if not return_on_risk_values
+                else {"min_return_on_risk": min(return_on_risk_values)}
             ),
         },
         "entry_runtimes": entries,

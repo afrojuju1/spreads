@@ -40,6 +40,7 @@ from core.storage.serializers import parse_datetime
 
 ENGINE_NAME = "backtest"
 ENGINE_VERSION = "v1"
+_SESSION_RUN_FETCH_MULTIPLIER = 128
 
 _FIDELITY_RANK = {
     "high": 0,
@@ -51,6 +52,25 @@ _FIDELITY_RANK = {
 
 def _scope_key(bot_id: str, automation_id: str, session_date: str) -> str:
     return f"entry:{bot_id}:{automation_id}:{session_date}"
+
+
+def _automation_run_result_payload(run: dict[str, Any]) -> dict[str, Any]:
+    result = run.get("result")
+    if isinstance(result, dict):
+        return dict(result)
+    result_json = run.get("result_json")
+    if isinstance(result_json, dict):
+        return dict(result_json)
+    return {}
+
+
+def _automation_run_opportunity_count(run: dict[str, Any]) -> int:
+    payload = _automation_run_result_payload(run)
+    value = payload.get("opportunity_count")
+    try:
+        return max(int(value), 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _coerce_float(value: Any) -> float:
@@ -769,20 +789,45 @@ def compare_backtest_runs(
     )
 
 
-def _latest_runs_by_session(
+def _backtest_runs_by_session(
     runs: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    latest_by_session: dict[str, dict[str, Any]] = {}
+) -> dict[str, dict[str, Any]]:
+    grouped_by_session: dict[str, list[dict[str, Any]]] = {}
     for row in runs:
         session_date = str(row.get("session_date") or "")
         if not session_date:
             continue
-        current = latest_by_session.get(session_date)
-        if current is None or str(row.get("started_at") or "") > str(
-            current.get("started_at") or ""
-        ):
-            latest_by_session[session_date] = dict(row)
-    return [latest_by_session[key] for key in sorted(latest_by_session)]
+        grouped_by_session.setdefault(session_date, []).append(dict(row))
+
+    selected_by_session: dict[str, dict[str, Any]] = {}
+    for session_date, session_runs in grouped_by_session.items():
+        ordered_runs = sorted(
+            session_runs,
+            key=lambda row: str(row.get("started_at") or ""),
+            reverse=True,
+        )
+        selected_by_session[session_date] = next(
+            (
+                row
+                for row in ordered_runs
+                if _automation_run_opportunity_count(row) > 0
+            ),
+            ordered_runs[0],
+        )
+    return selected_by_session
+
+
+def _ordered_session_runs(
+    runs: list[dict[str, Any]],
+    *,
+    session_limit: int,
+) -> list[dict[str, Any]]:
+    selected_by_session = _backtest_runs_by_session(runs)
+    recent_first = [
+        selected_by_session[session_date]
+        for session_date in sorted(selected_by_session, reverse=True)
+    ][:session_limit]
+    return sorted(recent_first, key=lambda row: str(row.get("session_date") or ""))
 
 
 def _run_fidelity(sessions: list[BacktestSessionSummary]) -> tuple[BacktestFidelity, str, dict[str, int]]:
@@ -812,8 +857,9 @@ def build_backtest_run(
     history_store = storage.history
     alpaca_client = _build_alpaca_client()
     alpaca_cache: dict[tuple[tuple[str, ...], str, str], dict[str, Any]] = {}
+    session_limit = max(int(limit), 1)
 
-    runs = _latest_runs_by_session(
+    runs = _ordered_session_runs(
         [
             dict(row)
             for row in signal_store.list_automation_runs(
@@ -821,10 +867,11 @@ def build_backtest_run(
                 automation_id=runtime.automation_id,
                 start_date=start_date,
                 end_date=end_date,
-                limit=max(int(limit), 1) * 4,
+                limit=session_limit * _SESSION_RUN_FETCH_MULTIPLIER,
             )
-        ]
-    )[: max(int(limit), 1)]
+        ],
+        session_limit=session_limit,
+    )
 
     sessions: list[BacktestSessionSummary] = []
     matched_selection_count = 0
@@ -1076,7 +1123,7 @@ def build_backtest_run(
             config_hash=runtime.config_hash,
             start_date=(None if start_date is None else date.fromisoformat(start_date)),
             end_date=(None if end_date is None else date.fromisoformat(end_date)),
-            session_limit=max(int(limit), 1),
+            session_limit=session_limit,
         ),
         aggregate=BacktestAggregate(
             session_count=len(sessions),
@@ -1117,7 +1164,7 @@ def build_backtest_run(
             "automation_id": runtime.automation_id,
             "start_date": start_date,
             "end_date": end_date,
-            "limit": max(int(limit), 1),
+            "limit": session_limit,
         },
         coverage={
             "priority_ladder": [

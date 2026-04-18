@@ -11,7 +11,6 @@ from core.services.bots import load_active_bots
 from core.services.entry_planner import plan_entry_selection, score_opportunity
 from core.services.execution_intents import request_options_automation_dispatch
 from core.services.execution_intents.shared import issue_pending_execution_intent
-from core.services.live_pipelines import resolve_live_collector_label
 from core.services.management_recipes import build_exit_policy_from_recipe_refs
 from core.services.option_structures import normalize_strategy_family
 from core.services.runtime_policy import build_runtime_policy_ref
@@ -48,6 +47,33 @@ def _intent_id(opportunity_decision_id: str) -> str:
 
 def _slot_key(bot_id: str, strategy_config_id: str, underlying_symbol: str) -> str:
     return f"entry:{bot_id}:{strategy_config_id}:{underlying_symbol}"
+
+
+def _normalized_blockers(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    blockers: list[str] = []
+    for item in value:
+        rendered = str(item or "").strip()
+        if rendered and rendered not in blockers:
+            blockers.append(rendered)
+    return blockers
+
+
+def _opportunity_blockers(row: dict[str, Any]) -> list[str]:
+    blockers = _normalized_blockers(row.get("blockers"))
+    candidate = row.get("candidate")
+    if isinstance(candidate, dict):
+        for field in ("scoring_blockers", "execution_blockers"):
+            for blocker in _normalized_blockers(candidate.get(field)):
+                if blocker not in blockers:
+                    blockers.append(blocker)
+    evidence = row.get("evidence")
+    if isinstance(evidence, dict):
+        for blocker in _normalized_blockers(evidence.get("execution_blockers")):
+            if blocker not in blockers:
+                blockers.append(blocker)
+    return blockers
 
 
 def _matching_opportunities(
@@ -87,6 +113,7 @@ def _matching_opportunities(
             or str(row.get("underlying_symbol") or "").upper() in allowed_symbols
         )
         and (not allowed_labels or str(row.get("label") or "") in allowed_labels)
+        and not _opportunity_blockers(row)
         and str(row.get("lifecycle_state") or "") in {"candidate", "ready", "blocked"}
         and row.get("consumed_by_execution_attempt_id") in (None, "")
     ]
@@ -98,20 +125,6 @@ def _matching_opportunities(
         )
     )
     return filtered
-
-
-def _active_options_automation_labels(job_store: Any) -> set[str]:
-    labels: set[str] = set()
-    for definition in job_store.list_job_definitions(
-        enabled_only=True,
-        job_type="live_collector",
-    ):
-        payload = dict(definition.get("payload") or {})
-        if not bool(payload.get("options_automation_enabled", False)):
-            continue
-        labels.add(resolve_live_collector_label(payload))
-    return labels
-
 
 @with_storage()
 def run_entry_automation_decision(
@@ -157,15 +170,6 @@ def run_entry_automation_decision(
         strategy_config_id=runtime.strategy_config_id,
         runtime_owned=True,
     )
-    if not opportunities:
-        opportunities = _matching_opportunities(
-            signal_store=signal_store,
-            market_date=resolved_market_date,
-            symbols=runtime.symbols,
-            strategy_family=runtime.strategy_family,
-            allowed_labels=_active_options_automation_labels(job_store),
-            runtime_owned=False,
-        )
     min_score = float(runtime.trigger_policy.get("min_opportunity_score") or 0.0)
     controls_allowed, controls_reason, bot_metrics = evaluate_entry_controls(
         storage=storage,

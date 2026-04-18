@@ -5,6 +5,7 @@ from typing import Any
 
 from core.services.automations import ResolvedAutomation
 from core.services.bots import ResolvedBot, load_active_bots
+from core.services.candidate_policy import resolve_strategy_min_return_on_risk
 
 
 def _optional_int(value: Any) -> int | None:
@@ -38,6 +39,7 @@ class StrategyBuildSettings:
     width_points: tuple[float, ...]
     min_open_interest: int | None
     max_leg_spread_pct_mid: float | None
+    min_return_on_risk: float | None
     max_quote_age_seconds: int | None
     builder_params: dict[str, Any]
     liquidity_rules: dict[str, Any]
@@ -134,6 +136,10 @@ def build_strategy_build_settings(runtime: ResolvedAutomation) -> StrategyBuildS
         min_open_interest=_optional_int(liquidity_rules.get("min_open_interest")),
         max_leg_spread_pct_mid=_optional_float(
             liquidity_rules.get("max_leg_spread_pct_mid")
+        ),
+        min_return_on_risk=resolve_strategy_min_return_on_risk(
+            strategy_config.scanner_profile,
+            risk_defaults=strategy_config.risk_defaults,
         ),
         max_quote_age_seconds=_optional_int(
             liquidity_rules.get("max_quote_age_seconds")
