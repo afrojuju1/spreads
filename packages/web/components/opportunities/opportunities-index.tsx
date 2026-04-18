@@ -23,6 +23,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
+  buildOpportunitiesHref,
   buildAutomationHref as buildAutomationRouteHref,
   buildPipelineHref,
   executeOpportunity,
@@ -715,9 +716,17 @@ function TimingCell({
 
 export function OpportunitiesIndexPageContent({
   marketDate,
+  botId,
+  automationId,
+  strategyConfigId,
+  label,
   defaultMarketDate,
 }: {
   marketDate?: string;
+  botId?: string;
+  automationId?: string;
+  strategyConfigId?: string;
+  label?: string;
   defaultMarketDate: string;
 }) {
   const router = useRouter();
@@ -728,6 +737,12 @@ export function OpportunitiesIndexPageContent({
     null,
   );
   const scopeMode = marketDate === "all" ? "all" : "today";
+  const hasOwnerScope = Boolean(botId && automationId);
+  const ownerScopeLabel = hasOwnerScope
+    ? `${botId} / ${automationId}`
+    : label
+      ? `Discovery · ${label}`
+      : "All owners";
   const effectiveMarketDate =
     scopeMode === "all"
       ? undefined
@@ -749,10 +764,21 @@ export function OpportunitiesIndexPageContent({
   }, [defaultMarketDate, marketDate, pathname, router, searchParams]);
 
   const opportunitiesQuery = useQuery({
-    queryKey: ["opportunities", effectiveMarketDate ?? "all"],
+    queryKey: [
+      "opportunities",
+      effectiveMarketDate ?? "all",
+      botId ?? "",
+      automationId ?? "",
+      strategyConfigId ?? "",
+      label ?? "",
+    ],
     queryFn: () =>
       getOpportunities({
         marketDate: effectiveMarketDate,
+        botId,
+        automationId,
+        strategyConfigId,
+        label,
         limit: 200,
       }),
   });
@@ -813,6 +839,18 @@ export function OpportunitiesIndexPageContent({
     scopeMode === "all"
       ? "All dates"
       : `Today · ${formatDate(effectiveMarketDate ?? defaultMarketDate)}`;
+
+  function clearOwnerScope() {
+    startTransition(() => {
+      router.replace(
+        buildOpportunitiesHref({
+          marketDate:
+            scopeMode === "all" ? "all" : effectiveMarketDate ?? defaultMarketDate,
+        }),
+        { scroll: false },
+      );
+    });
+  }
 
   function setScope(nextScope: "today" | "all") {
     const nextParams = new URLSearchParams(searchParams.toString());
@@ -915,6 +953,12 @@ export function OpportunitiesIndexPageContent({
                 <Radar data-icon="inline-start" />
                 Opportunities
               </Badge>
+              {hasOwnerScope ? (
+                <Badge variant="outline">{ownerScopeLabel}</Badge>
+              ) : null}
+              {!hasOwnerScope && label ? (
+                <Badge variant="outline">{ownerScopeLabel}</Badge>
+              ) : null}
             </div>
             <div className="mt-4 text-3xl font-semibold tracking-[0.02em]">
               Opportunity board
@@ -922,7 +966,8 @@ export function OpportunitiesIndexPageContent({
             <div className="mt-2 text-sm text-foreground/70">
               Scan the live pool across automation runtimes, execute directly,
               and expand any row for setup rationale, leg shape, and linked
-              discovery lineage. Current scope: {scopeLabel}.
+              discovery lineage. Current date scope: {scopeLabel}. Current
+              owner scope: {ownerScopeLabel}.
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -948,19 +993,29 @@ export function OpportunitiesIndexPageContent({
               <RefreshCw data-icon="inline-start" />
               Refresh
             </Button>
+            {hasOwnerScope || label ? (
+              <Button type="button" variant="outline" onClick={clearOwnerScope}>
+                Clear scope
+              </Button>
+            ) : null}
           </div>
         </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-7">
         <MetricTile
-          label="Scope"
+          label="Date Scope"
           value={scopeMode === "all" ? "All dates" : "Today"}
           note={
             scopeMode === "all"
               ? "No market-date filter"
               : formatDate(effectiveMarketDate ?? defaultMarketDate)
           }
+        />
+        <MetricTile
+          label="Owner Scope"
+          value={ownerScopeLabel}
+          note={hasOwnerScope ? "Automation-scoped board" : label ? "Discovery-scoped board" : "Cross-owner board"}
         />
         <MetricTile
           label="Opportunities"
@@ -978,14 +1033,14 @@ export function OpportunitiesIndexPageContent({
           note="Still tracking"
         />
         <MetricTile
-          label="Ready"
-          value={String(readyCount)}
-          note="Lifecycle ready"
-        />
-        <MetricTile
           label="Consumed"
           value={String(consumedCount)}
           note="Already used"
+        />
+        <MetricTile
+          label="Ready"
+          value={String(readyCount)}
+          note="Lifecycle ready"
         />
         <MetricTile
           label="Automations"

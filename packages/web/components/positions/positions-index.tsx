@@ -1,13 +1,16 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
+import { startTransition } from "react";
 import { BriefcaseBusiness, RefreshCw } from "lucide-react";
 
 import { DataTable } from "@/components/data-table";
 import {
   buildAutomationHref,
+  buildPositionsHref,
   buildPipelineHref,
   closePosition,
   getPositions,
@@ -147,11 +150,45 @@ const POSITION_COLUMNS: ColumnDef<Position>[] = [
   },
 ];
 
-export function PositionsIndexPageContent() {
+export function PositionsIndexPageContent({
+  marketDate,
+  botId,
+  automationId,
+  strategyConfigId,
+  label,
+}: {
+  marketDate?: string;
+  botId?: string;
+  automationId?: string;
+  strategyConfigId?: string;
+  label?: string;
+}) {
+  const router = useRouter();
   const queryClient = useQueryClient();
+  const hasOwnerScope = Boolean(botId && automationId);
+  const ownerScopeLabel = hasOwnerScope
+    ? `${botId} / ${automationId}`
+    : label
+      ? `Discovery · ${label}`
+      : "All owners";
   const positionsQuery = useQuery({
-    queryKey: ["positions"],
-    queryFn: () => getPositions({ limit: 200 }),
+    queryKey: [
+      "positions",
+      marketDate ?? "",
+      botId ?? "",
+      automationId ?? "",
+      strategyConfigId ?? "",
+      label ?? "",
+    ],
+    queryFn: () =>
+      getPositions({
+        marketDate,
+        botId,
+        automationId,
+        strategyConfigId,
+        label,
+        limit: 200,
+      }),
   });
   const closeMutation = useMutation({
     mutationFn: (positionId: string) => closePosition(positionId, {}),
@@ -170,6 +207,30 @@ export function PositionsIndexPageContent() {
 
   const positions = positionsQuery.data?.positions ?? [];
   const summary = positionsQuery.data?.summary ?? {};
+  const automationCount = new Set(
+    positions.flatMap((row) => {
+      const owner = getPositionOwner(row);
+      const scopedBotId =
+        typeof owner.bot_id === "string" ? owner.bot_id : "";
+      const scopedAutomationId =
+        typeof owner.automation_id === "string" ? owner.automation_id : "";
+      if (scopedBotId && scopedAutomationId) {
+        return [`${scopedBotId}:${scopedAutomationId}`];
+      }
+      return [];
+    }),
+  ).size;
+
+  function clearOwnerScope() {
+    startTransition(() => {
+      router.replace(
+        buildPositionsHref({
+          marketDate: marketDate ?? null,
+        }),
+        { scroll: false },
+      );
+    });
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -184,6 +245,12 @@ export function PositionsIndexPageContent() {
                 <BriefcaseBusiness data-icon="inline-start" />
                 Positions
               </Badge>
+              {hasOwnerScope ? (
+                <Badge variant="outline">{ownerScopeLabel}</Badge>
+              ) : null}
+              {!hasOwnerScope && label ? (
+                <Badge variant="outline">{ownerScopeLabel}</Badge>
+              ) : null}
             </div>
             <div className="mt-4 text-3xl font-semibold tracking-[0.02em]">
               Open risk inventory
@@ -191,24 +258,37 @@ export function PositionsIndexPageContent() {
             <div className="mt-2 text-sm text-foreground/70">
               Inspect all runtime-owned positions, jump to the owning
               automation, and keep discovery lineage visible but secondary.
+              Current owner scope: {ownerScopeLabel}.
             </div>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void positionsQuery.refetch()}
-          >
-            <RefreshCw data-icon="inline-start" />
-            Refresh
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void positionsQuery.refetch()}
+            >
+              <RefreshCw data-icon="inline-start" />
+              Refresh
+            </Button>
+            {hasOwnerScope || label ? (
+              <Button type="button" variant="outline" onClick={clearOwnerScope}>
+                Clear scope
+              </Button>
+            ) : null}
+          </div>
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <MetricTile
           label="Positions"
           value={String(summary.position_count ?? 0)}
           note="Current runtime inventory"
+        />
+        <MetricTile
+          label="Owner Scope"
+          value={ownerScopeLabel}
+          note={hasOwnerScope ? "Automation-scoped inventory" : label ? "Discovery-scoped inventory" : `${automationCount} automations`}
         />
         <MetricTile
           label="Open"

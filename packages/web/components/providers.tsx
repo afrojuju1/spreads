@@ -122,7 +122,7 @@ function resolveOperatorHrefFromPayload(payload: Record<string, unknown>): strin
       return buildPipelineHref(`pipeline:${label}`, sessionDate);
     }
   }
-  return "/pipelines";
+  return "/automations";
 }
 
 function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null {

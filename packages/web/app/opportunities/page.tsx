@@ -3,6 +3,10 @@ import { OpportunitiesIndexPageContent } from "@/components/opportunities/opport
 type OpportunitiesPageProps = {
   searchParams: Promise<{
     marketDate?: string;
+    botId?: string;
+    automationId?: string;
+    strategyConfigId?: string;
+    label?: string;
   }>;
 };
 
@@ -15,11 +19,21 @@ function chicagoTodayDate(): string {
 export default async function OpportunitiesPage({
   searchParams,
 }: OpportunitiesPageProps) {
-  const { marketDate } = await searchParams;
+  const {
+    marketDate,
+    botId,
+    automationId,
+    strategyConfigId,
+    label,
+  } = await searchParams;
 
   return (
     <OpportunitiesIndexPageContent
       marketDate={marketDate}
+      botId={botId}
+      automationId={automationId}
+      strategyConfigId={strategyConfigId}
+      label={label}
       defaultMarketDate={chicagoTodayDate()}
     />
   );

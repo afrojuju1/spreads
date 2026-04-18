@@ -16,6 +16,8 @@ import { DataTable } from "@/components/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
+  buildOpportunitiesHref,
+  buildPositionsHref,
   buildPipelineHref,
   closePosition,
   executeOpportunity,
@@ -475,12 +477,59 @@ export function AutomationDetailPageContent({
           />
         </div>
         {discoveryHref ? (
-          <div className="mt-4">
+          <div className="mt-4 flex flex-wrap gap-2">
             <Link href={discoveryHref} className={buttonVariants({ variant: "outline" })}>
               Open linked discovery session
             </Link>
+            <Link
+              href={buildOpportunitiesHref({
+                marketDate: detail.market_date ?? null,
+                botId: detail.bot_id,
+                automationId: detail.automation_id,
+                strategyConfigId: detail.strategy_config_id ?? null,
+              })}
+              className={buttonVariants({ variant: "outline" })}
+            >
+              Open filtered opportunities
+            </Link>
+            <Link
+              href={buildPositionsHref({
+                marketDate: detail.market_date ?? null,
+                botId: detail.bot_id,
+                automationId: detail.automation_id,
+                strategyConfigId: detail.strategy_config_id ?? null,
+              })}
+              className={buttonVariants({ variant: "outline" })}
+            >
+              Open filtered positions
+            </Link>
           </div>
-        ) : null}
+        ) : (
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link
+              href={buildOpportunitiesHref({
+                marketDate: detail.market_date ?? null,
+                botId: detail.bot_id,
+                automationId: detail.automation_id,
+                strategyConfigId: detail.strategy_config_id ?? null,
+              })}
+              className={buttonVariants({ variant: "outline" })}
+            >
+              Open filtered opportunities
+            </Link>
+            <Link
+              href={buildPositionsHref({
+                marketDate: detail.market_date ?? null,
+                botId: detail.bot_id,
+                automationId: detail.automation_id,
+                strategyConfigId: detail.strategy_config_id ?? null,
+              })}
+              className={buttonVariants({ variant: "outline" })}
+            >
+              Open filtered positions
+            </Link>
+          </div>
+        )}
       </SectionSurface>
 
       <div className="grid gap-4 xl:grid-cols-2">

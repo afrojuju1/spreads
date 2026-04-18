@@ -150,7 +150,7 @@ export function PipelinesIndexPageContent() {
                 className="rounded-full border-border/70 bg-background/80 px-2.5 py-1 text-[11px] uppercase tracking-[0.18em] text-muted-foreground"
               >
                 <CandlestickChart data-icon="inline-start" />
-                Pipelines
+                Discovery
               </Badge>
               {latestPipeline ? (
                 <SessionStatusBadge value={latestPipeline.status} />

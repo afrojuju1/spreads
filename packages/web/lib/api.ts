@@ -1074,6 +1074,60 @@ export function buildAutomationHref(
   return `${basePath}?marketDate=${encodeURIComponent(marketDate)}`;
 }
 
+export function buildOpportunitiesHref(filters?: {
+  marketDate?: string | null;
+  botId?: string | null;
+  automationId?: string | null;
+  strategyConfigId?: string | null;
+  label?: string | null;
+}) {
+  const params = new URLSearchParams();
+  if (filters?.marketDate) {
+    params.set("marketDate", filters.marketDate);
+  }
+  if (filters?.botId) {
+    params.set("botId", filters.botId);
+  }
+  if (filters?.automationId) {
+    params.set("automationId", filters.automationId);
+  }
+  if (filters?.strategyConfigId) {
+    params.set("strategyConfigId", filters.strategyConfigId);
+  }
+  if (filters?.label) {
+    params.set("label", filters.label);
+  }
+  const query = params.toString();
+  return query ? `/opportunities?${query}` : "/opportunities";
+}
+
+export function buildPositionsHref(filters?: {
+  marketDate?: string | null;
+  botId?: string | null;
+  automationId?: string | null;
+  strategyConfigId?: string | null;
+  label?: string | null;
+}) {
+  const params = new URLSearchParams();
+  if (filters?.marketDate) {
+    params.set("marketDate", filters.marketDate);
+  }
+  if (filters?.botId) {
+    params.set("botId", filters.botId);
+  }
+  if (filters?.automationId) {
+    params.set("automationId", filters.automationId);
+  }
+  if (filters?.strategyConfigId) {
+    params.set("strategyConfigId", filters.strategyConfigId);
+  }
+  if (filters?.label) {
+    params.set("label", filters.label);
+  }
+  const query = params.toString();
+  return query ? `/positions?${query}` : "/positions";
+}
+
 export function buildGlobalEventsWebSocketUrl() {
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
   const host = window.location.hostname;
