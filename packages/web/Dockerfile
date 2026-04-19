@@ -5,13 +5,15 @@ WORKDIR /app
 FROM base AS dev
 
 COPY package.json package-lock.json ./
+COPY scripts/docker-dev-entrypoint.sh /usr/local/bin/web-dev-entrypoint
 
 RUN npm ci
+RUN chmod +x /usr/local/bin/web-dev-entrypoint
 
 ENV NODE_ENV=development
 ENV NEXT_TELEMETRY_DISABLED=1
 
-CMD ["npm", "run", "dev", "--", "--hostname", "0.0.0.0", "--port", "3000"]
+CMD ["web-dev-entrypoint"]
 
 FROM base AS deps
 

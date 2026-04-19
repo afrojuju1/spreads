@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, Space_Grotesk } from "next/font/google";
 
-import { LayoutHeader } from "@/components/layout-header";
-import { LayoutSidebar } from "@/components/layout-sidebar";
 import { Providers } from "@/components/providers";
 import { buildThemeInitScript, DEFAULT_THEME_PREFERENCE } from "@/lib/theme";
 import "./globals.css";
@@ -40,15 +38,7 @@ export default function RootLayout({
     >
       <body className="min-h-full font-sans">
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
-        <Providers>
-          <div className="min-h-dvh lg:flex">
-            <LayoutSidebar />
-            <div className="min-w-0 flex-1">
-              <LayoutHeader />
-              {children}
-            </div>
-          </div>
-        </Providers>
+        <Providers>{children}</Providers>
       </body>
     </html>
   );

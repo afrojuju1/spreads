@@ -446,92 +446,86 @@ export function AccountPageContent() {
   });
 
   if (accountOverviewQuery.isLoading && !accountOverviewQuery.data) {
-    return (
-      <main className="mx-auto max-w-[1680px] px-4 py-6 lg:px-6">
-        <LoadingState />
-      </main>
-    );
+    return <LoadingState />;
   }
 
   return (
-    <main className="mx-auto max-w-[1680px] px-4 py-6 lg:px-6">
-      <div className="flex flex-col gap-4">
-        <div className="app-hero">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge
-                  variant="outline"
-                  className="rounded-full border-border/70 bg-background/80 px-2.5 py-1 text-[11px] uppercase tracking-[0.18em] text-muted-foreground"
-                >
-                  <Wallet data-icon="inline-start" />
-                  Account
-                </Badge>
-                {accountOverviewQuery.data?.account.status ? (
-                  <SessionStatusBadge
-                    value={accountOverviewQuery.data.account.status.toLowerCase()}
-                  />
-                ) : null}
-                {accountOverviewQuery.data?.sync ? (
-                  <SessionStatusBadge value={accountOverviewQuery.data.sync.status} />
-                ) : null}
-              </div>
-              <div className="mt-4 text-3xl font-semibold tracking-[0.02em]">
-                Broker account
-              </div>
-              <div className="mt-2 text-sm text-foreground/70">
-                Read-only Alpaca balances, open positions, equity history, and sync
-                status.
-              </div>
+    <div className="flex flex-col gap-4">
+      <div className="app-hero">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge
+                variant="outline"
+                className="rounded-full border-border/70 bg-background/80 px-2.5 py-1 text-[11px] uppercase tracking-[0.18em] text-muted-foreground"
+              >
+                <Wallet data-icon="inline-start" />
+                Account
+              </Badge>
+              {accountOverviewQuery.data?.account.status ? (
+                <SessionStatusBadge
+                  value={accountOverviewQuery.data.account.status.toLowerCase()}
+                />
+              ) : null}
+              {accountOverviewQuery.data?.sync ? (
+                <SessionStatusBadge value={accountOverviewQuery.data.sync.status} />
+              ) : null}
             </div>
-            <div className="grid flex-1 gap-3 sm:grid-cols-2 xl:max-w-[640px] xl:grid-cols-4">
-              <MetricTile
-                label="Equity"
-                value={formatNullableCurrency(accountOverviewQuery.data?.account.equity)}
-                note={`Cash ${formatNullableCurrency(accountOverviewQuery.data?.account.cash)}`}
-              />
-              <MetricTile
-                label="Buying Power"
-                value={formatNullableCurrency(accountOverviewQuery.data?.account.buying_power)}
-                note={`Options ${formatNullableCurrency(accountOverviewQuery.data?.account.options_buying_power)}`}
-              />
-              <MetricTile
-                label="Positions"
-                value={String(accountOverviewQuery.data?.positions.length ?? 0)}
-                note="Currently open broker positions"
-              />
-              <MetricTile
-                label="Sync"
-                value={readString(accountOverviewQuery.data?.sync?.status, "unknown").toUpperCase()}
-                note={
-                  accountOverviewQuery.data?.sync?.updated_at
-                    ? formatTimestamp(accountOverviewQuery.data.sync.updated_at)
-                    : "Awaiting background sync"
-                }
-              />
+            <div className="mt-4 text-3xl font-semibold tracking-[0.02em]">
+              Broker account
+            </div>
+            <div className="mt-2 text-sm text-foreground/70">
+              Read-only Alpaca balances, open positions, equity history, and sync
+              status.
             </div>
           </div>
+          <div className="grid w-full gap-3 sm:grid-cols-2 xl:max-w-[760px] xl:grid-cols-4">
+            <MetricTile
+              label="Equity"
+              value={formatNullableCurrency(accountOverviewQuery.data?.account.equity)}
+              note={`Cash ${formatNullableCurrency(accountOverviewQuery.data?.account.cash)}`}
+            />
+            <MetricTile
+              label="Buying Power"
+              value={formatNullableCurrency(accountOverviewQuery.data?.account.buying_power)}
+              note={`Options ${formatNullableCurrency(accountOverviewQuery.data?.account.options_buying_power)}`}
+            />
+            <MetricTile
+              label="Positions"
+              value={String(accountOverviewQuery.data?.positions.length ?? 0)}
+              note="Currently open broker positions"
+            />
+            <MetricTile
+              label="Sync"
+              value={readString(accountOverviewQuery.data?.sync?.status, "unknown").toUpperCase()}
+              note={
+                accountOverviewQuery.data?.sync?.updated_at
+                  ? formatTimestamp(accountOverviewQuery.data.sync.updated_at)
+                  : "Awaiting background sync"
+              }
+            />
+          </div>
         </div>
-
-        <AccountOverviewSection
-          overview={accountOverviewQuery.data ?? null}
-          historyRange={accountHistoryRange}
-          onHistoryRangeChange={(nextRange) => {
-            startTransition(() => {
-              setAccountHistoryRange(nextRange);
-            });
-          }}
-          refreshing={accountOverviewQuery.isFetching}
-          onRefresh={() => {
-            void accountOverviewQuery.refetch();
-          }}
-          error={
-            accountOverviewQuery.isError
-              ? "Broker account data could not be loaded from Alpaca."
-              : null
-          }
-        />
       </div>
-    </main>
+
+      <AccountOverviewSection
+        overview={accountOverviewQuery.data ?? null}
+        historyRange={accountHistoryRange}
+        onHistoryRangeChange={(nextRange) => {
+          startTransition(() => {
+            setAccountHistoryRange(nextRange);
+          });
+        }}
+        refreshing={accountOverviewQuery.isFetching}
+        onRefresh={() => {
+          void accountOverviewQuery.refetch();
+        }}
+        error={
+          accountOverviewQuery.isError
+            ? "Broker account data could not be loaded from Alpaca."
+            : null
+        }
+      />
+    </div>
   );
 }

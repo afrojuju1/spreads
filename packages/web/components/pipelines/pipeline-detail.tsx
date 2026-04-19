@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
+  Activity,
   Radar,
   RefreshCw,
   RotateCw,
@@ -77,6 +78,165 @@ type PositionRow = {
   realizedPnl: number | null | undefined;
   unrealizedPnl: number | null | undefined;
 };
+
+type DetailRecord = Record<string, unknown>;
+
+function readRecord(value: unknown): DetailRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as DetailRecord)
+    : {};
+}
+
+function readRecordRows(value: unknown): DetailRecord[] {
+  return Array.isArray(value)
+    ? value.filter(
+        (item): item is DetailRecord =>
+          typeof item === "object" && item !== null && !Array.isArray(item),
+      )
+    : [];
+}
+
+function readOptionalNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function formatCompactPercent(value: number | null): string {
+  return value == null ? "—" : `${(value * 100).toFixed(0)}%`;
+}
+
+function formatCompactScore(value: number | null): string {
+  return value == null ? "—" : value.toFixed(1);
+}
+
+function formatUoaState(value: unknown): string {
+  return readString(value, "unknown").replaceAll("_", " ");
+}
+
+function UoaRootList({
+  title,
+  rows,
+  emptyMessage,
+}: {
+  title: string;
+  rows: DetailRecord[];
+  emptyMessage: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
+      <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+        {title}
+      </div>
+      {!rows.length ? (
+        <div className="mt-3 text-sm text-muted-foreground">{emptyMessage}</div>
+      ) : (
+        <div className="mt-3 flex flex-col gap-3">
+          {rows.slice(0, 3).map((row, index) => (
+            <div
+              key={`${readString(row.underlying_symbol, "root")}:${index}`}
+              className="rounded-2xl border border-border/70 bg-card/70 px-4 py-3"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="font-medium">
+                    {readString(row.underlying_symbol, "—")}
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {readString(row.dominant_flow, "mixed")} flow ·{" "}
+                    {formatCompactPercent(readOptionalNumber(row.dominant_flow_ratio))}
+                  </div>
+                </div>
+                {row.decision_state ? (
+                  <Badge variant="outline">{formatUoaState(row.decision_state)}</Badge>
+                ) : null}
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                <MetricTile
+                  label="score"
+                  value={formatCompactScore(
+                    readOptionalNumber(row.decision_score) ??
+                      readOptionalNumber(row.root_score),
+                  )}
+                  note={`quality ${readString(row.quality_state, "unknown")}`}
+                />
+                <MetricTile
+                  label="premium"
+                  value={formatNullableCurrency(readOptionalNumber(row.scoreable_premium))}
+                  note={`${readNumber(row.scoreable_trade_count)} trades`}
+                />
+                <MetricTile
+                  label="contracts"
+                  value={String(readNumber(row.scoreable_contract_count))}
+                  note={`best vol/oi ${formatCompactPercent(readOptionalNumber(row.max_volume_oi_ratio))}`}
+                />
+              </div>
+              {row.explanation ? (
+                <div className="mt-3 text-sm text-foreground/75">
+                  {readString(row.explanation)}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UoaContractList({ rows }: { rows: DetailRecord[] }) {
+  return (
+    <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
+      <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+        Top contracts
+      </div>
+      {!rows.length ? (
+        <div className="mt-3 text-sm text-muted-foreground">
+          No scoreable contracts were captured for this cycle.
+        </div>
+      ) : (
+        <div className="mt-3 flex flex-col gap-3">
+          {rows.slice(0, 4).map((row, index) => (
+            <div
+              key={`${readString(row.option_symbol, "contract")}:${index}`}
+              className="rounded-2xl border border-border/70 bg-card/70 px-4 py-3"
+            >
+              <div className="font-mono break-all text-[12px] font-medium">
+                {readString(row.option_symbol, "—")}
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {readString(row.underlying_symbol, "—")} ·{" "}
+                {readString(row.option_type, "option")} · DTE {readNumber(row.dte)}
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                <MetricTile
+                  label="premium"
+                  value={formatNullableCurrency(readOptionalNumber(row.scoreable_premium))}
+                  note={`${readNumber(row.scoreable_trade_count)} trades`}
+                />
+                <MetricTile
+                  label="quality"
+                  value={formatCompactScore(readOptionalNumber(row.quality_score))}
+                  note={readString(row.quality_state, "unknown")}
+                />
+                <MetricTile
+                  label="vol/oi"
+                  value={formatCompactScore(readOptionalNumber(row.volume_oi_ratio))}
+                  note={`age ${formatQuantity(readOptionalNumber(row.quote_age_seconds))}s`}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function autoExecutionTarget(summary: Record<string, unknown> | null | undefined): string {
   const symbol = readString(summary?.selected_symbol, "");
@@ -214,6 +374,26 @@ export function PipelineDetailPageContent({
     () => buildPositionRows(detail?.portfolio?.positions ?? []),
     [detail?.portfolio?.positions],
   );
+  const quoteCapture = readRecord(detail?.quote_capture);
+  const tradeCapture = readRecord(detail?.trade_capture);
+  const uoaSummary = readRecord(detail?.uoa_summary);
+  const uoaQuoteSummary = readRecord(detail?.uoa_quote_summary);
+  const uoaDecisions = readRecord(detail?.uoa_decisions);
+  const uoaOverview = readRecord(uoaSummary.overview);
+  const uoaQuoteOverview = readRecord(uoaQuoteSummary.overview);
+  const uoaDecisionOverview = readRecord(uoaDecisions.overview);
+  const topPromotableRoots = readRecordRows(uoaDecisions.top_promotable_roots);
+  const topHighRoots = readRecordRows(uoaDecisions.top_high_roots);
+  const topMonitorRoots = readRecordRows(uoaDecisions.top_monitor_roots);
+  const topContracts = readRecordRows(uoaSummary.top_contracts);
+  const secondaryRootRows = topHighRoots.length ? topHighRoots : topMonitorRoots;
+  const secondaryRootTitle = topHighRoots.length
+    ? "Top high roots"
+    : "Top monitor roots";
+  const hasUoaData =
+    Object.keys(uoaSummary).length > 0 ||
+    Object.keys(uoaQuoteSummary).length > 0 ||
+    Object.keys(uoaDecisions).length > 0;
 
   const opportunityColumns = useMemo<ColumnDef<OpportunityRow>[]>(
     () => [
@@ -462,6 +642,85 @@ export function PipelineDetailPageContent({
           note={readString(detail.risk_note)}
         />
       </div>
+
+      <SectionSurface
+        title="UOA"
+        description="Cycle-local unusual options activity, quote quality, and root decision diagnostics for this discovery session."
+      >
+        {!hasUoaData ? (
+          <div className="rounded-2xl border border-dashed border-border/70 bg-background/60 px-4 py-3 text-sm text-muted-foreground">
+            No UOA summary was recorded for this cycle.
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge
+                variant="outline"
+                className="rounded-full border-border/70 bg-background/80 px-2.5 py-1 text-[11px] uppercase tracking-[0.18em] text-muted-foreground"
+              >
+                <Activity data-icon="inline-start" />
+                UOA
+              </Badge>
+              {quoteCapture.capture_status ? (
+                <CaptureStatusBadge value={String(quoteCapture.capture_status)} />
+              ) : null}
+              {tradeCapture.capture_status ? (
+                <CaptureStatusBadge value={String(tradeCapture.capture_status)} />
+              ) : null}
+              {uoaOverview.summary_status ? (
+                <Badge variant="outline">{formatUoaState(uoaOverview.summary_status)}</Badge>
+              ) : null}
+              {uoaDecisionOverview.decision_status ? (
+                <Badge variant="outline">
+                  {formatUoaState(uoaDecisionOverview.decision_status)}
+                </Badge>
+              ) : null}
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+              <MetricTile
+                label="Trades"
+                value={String(readNumber(uoaOverview.scoreable_trade_count))}
+                note={`Raw ${readNumber(uoaOverview.raw_trade_count)} · Excluded ${readNumber(uoaOverview.excluded_trade_count)}`}
+              />
+              <MetricTile
+                label="Roots"
+                value={String(readNumber(uoaDecisionOverview.root_count))}
+                note={`${readNumber(uoaDecisionOverview.monitor_count)} monitor · ${readNumber(uoaDecisionOverview.promotable_count)} promotable`}
+              />
+              <MetricTile
+                label="Contracts"
+                value={String(readNumber(uoaOverview.observed_contract_count))}
+                note={`${readNumber(uoaQuoteOverview.fresh_contract_count)} fresh · ${readNumber(uoaQuoteOverview.liquid_contract_count)} liquid`}
+              />
+              <MetricTile
+                label="Top decision"
+                value={readString(uoaDecisionOverview.top_decision_symbol, "—")}
+                note={`${formatUoaState(uoaDecisionOverview.top_decision_state)} · score ${formatCompactScore(readOptionalNumber(uoaDecisionOverview.top_decision_score))}`}
+              />
+              <MetricTile
+                label="Premium"
+                value={formatNullableCurrency(readOptionalNumber(uoaOverview.scoreable_premium))}
+                note={`${readNumber(uoaOverview.scoreable_root_count)} scoreable roots`}
+              />
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-3">
+              <UoaRootList
+                title="Top promotable roots"
+                rows={topPromotableRoots}
+                emptyMessage="No promotable roots were recorded."
+              />
+              <UoaRootList
+                title={secondaryRootTitle}
+                rows={secondaryRootRows}
+                emptyMessage={`No ${secondaryRootTitle.toLowerCase()} were recorded.`}
+              />
+              <UoaContractList rows={topContracts} />
+            </div>
+          </div>
+        )}
+      </SectionSurface>
 
       <SectionSurface
         title="Latest Auto Execution"

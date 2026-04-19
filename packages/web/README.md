@@ -16,16 +16,49 @@ Operator dashboard for the `spreads` backend. The app is built with:
 - seeded job health and recent job runs
 - session outcomes and signal-tuning buckets
 
-## Local Run
+## Canonical Dev Run
 
-From [packages/web](./):
+The canonical frontend dev workflow for this repo is the repo-level Docker
+Compose stack.
+
+Start or rebuild the `web` service from the repo root:
+
+```bash
+docker compose up -d --build web
+```
+
+Open [http://localhost:53000](http://localhost:53000).
+
+The web container bind-mounts `packages/web` as source and keeps `node_modules`
+in a Docker volume. On startup, the dev entrypoint compares the current
+`package-lock.json` to the dependency volume and runs `npm ci` automatically when
+they diverge, so dependency changes are picked up without manual `docker compose exec`
+recovery commands.
+
+For normal source-only changes, the running dev server hot-reloads. If you change
+dependencies, restart or recreate the `web` service:
+
+```bash
+docker compose restart web
+```
+
+Or:
+
+```bash
+docker compose up -d --build web
+```
+
+## Secondary Local Run
+
+Running the Next.js app directly from [packages/web](./) is still possible for
+isolated frontend work, but it is not the canonical repo workflow:
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+That path serves the app on [http://localhost:3000](http://localhost:3000).
 
 ## Backend Requirement
 

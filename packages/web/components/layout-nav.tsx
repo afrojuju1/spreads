@@ -71,7 +71,7 @@ export function LayoutNav({
   const pathname = usePathname();
 
   return (
-    <nav className="flex flex-col gap-1.5">
+    <nav className={cn("flex flex-col gap-1", compact && "items-center")}>
       {LAYOUT_NAV_ITEMS.map((item) => {
         const isActive =
           pathname === item.href || pathname.startsWith(`${item.href}/`);
@@ -83,48 +83,46 @@ export function LayoutNav({
             href={item.href}
             onClick={onNavigate}
             aria-current={isActive ? "page" : undefined}
+            aria-label={compact ? item.label : undefined}
             className={cn(
-              "group flex items-center gap-3 rounded-2xl border transition-all",
-              compact ? "justify-center px-2 py-3" : "px-3 py-3",
+              "group relative text-sm transition-colors",
+              compact
+                ? "mx-auto grid size-11 place-items-center rounded-2xl"
+                : "flex min-h-11 items-center gap-3 rounded-xl px-3.5",
               isActive
-                ? "border-primary bg-primary text-primary-foreground shadow-[0_18px_48px_-34px_rgba(28,25,23,0.55)] dark:shadow-[0_18px_48px_-34px_rgba(0,0,0,0.78)]"
-                : "border-border/70 bg-background/70 text-foreground hover:border-border hover:bg-accent/60",
+                ? "bg-sidebar-accent/90 text-foreground"
+                : "text-muted-foreground hover:bg-sidebar-accent/55 hover:text-foreground",
             )}
             title={compact ? item.label : undefined}
           >
-            <div
-              className={cn(
-                "flex items-center justify-center rounded-xl",
-                isActive
-                  ? "bg-primary-foreground/12 text-primary-foreground"
-                  : "bg-accent/80 text-foreground/80 group-hover:text-foreground",
-                compact ? "size-10" : "size-9",
-              )}
-            >
-              <Icon />
-            </div>
-            <div
-              className={cn(
-                "min-w-0 flex-1 transition-[opacity,transform,width] duration-200",
-                compact
-                  ? "w-0 -translate-x-2 overflow-hidden opacity-0"
-                  : "w-auto translate-x-0 opacity-100",
-              )}
-            >
-              <div className="text-sm font-medium tracking-[0.01em]">
-                {item.label}
-              </div>
-              <div
+            {compact ? (
+              <Icon
                 className={cn(
-                  "mt-1 text-[11px] uppercase tracking-[0.18em]",
-                  isActive
-                    ? "text-primary-foreground/70"
-                    : "text-muted-foreground",
+                  "size-4 shrink-0",
+                  isActive ? "text-foreground" : "text-current",
                 )}
-              >
-                {item.caption}
+              />
+            ) : (
+              <>
+              <span
+                className={cn(
+                  "absolute left-1 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full transition-opacity",
+                  isActive ? "opacity-100" : "opacity-0 group-hover:opacity-40",
+                )}
+              />
+              <Icon
+                className={cn(
+                  "size-4 shrink-0",
+                  isActive ? "text-foreground" : "text-current",
+                )}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-medium tracking-[0.01em]">
+                  {item.label}
+                </div>
               </div>
-            </div>
+              </>
+            )}
           </Link>
         );
       })}

@@ -4,10 +4,11 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ChevronDown, ChevronRight, Radar, RefreshCw, TriangleAlert } from "lucide-react";
+import { Radar, RefreshCw, TriangleAlert, X } from "lucide-react";
 import { startTransition, useEffect, useState, type ReactNode } from "react";
 
 import { DataTable } from "@/components/data-table";
+import { MarketDateFilter } from "@/components/market-date-filter";
 import {
   formatDate,
   formatNullableCurrency,
@@ -21,7 +22,15 @@ import {
   SectionSurface,
 } from "@/components/sessions/workspace-primitives";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import {
   buildOpportunitiesHref,
   buildAutomationHref as buildAutomationRouteHref,
@@ -335,6 +344,25 @@ function isOpportunityConsumed(opportunity: Opportunity): boolean {
   return opportunity.lifecycle_state === "consumed";
 }
 
+function useDesktopInspector(query = "(min-width: 1280px)") {
+  const [matches, setMatches] = useState(false);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(query);
+    const updateMatches = () => {
+      setMatches(mediaQuery.matches);
+    };
+
+    updateMatches();
+    mediaQuery.addEventListener("change", updateMatches);
+    return () => {
+      mediaQuery.removeEventListener("change", updateMatches);
+    };
+  }, [query]);
+
+  return matches;
+}
+
 function selectionTone(value: string): string {
   switch (value) {
     case "promotable":
@@ -427,7 +455,7 @@ function BoardMetric({
   );
 }
 
-function ExpandedSection({
+function InspectorSection({
   title,
   children,
 }: {
@@ -435,7 +463,7 @@ function ExpandedSection({
   children: ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-border/70 bg-background/80 px-4 py-3">
+    <div className="px-5 py-4">
       <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
         {title}
       </div>
@@ -444,10 +472,75 @@ function ExpandedSection({
   );
 }
 
-function ExpandedOpportunityPanel({
+function InspectorReasonLine({
+  reason,
+  marker,
+  className,
+}: {
+  reason: string;
+  marker: "+" | "!";
+  className?: string;
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <span
+        className={cn(
+          "inline-flex size-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold",
+          className,
+        )}
+      >
+        {marker}
+      </span>
+      <span className="text-sm leading-5 text-foreground/90">{reason}</span>
+    </div>
+  );
+}
+
+function InspectorSummaryMetric({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-1 truncate text-lg font-semibold tracking-[0.01em] text-foreground">
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function OpportunityInspectorEmptyState() {
+  return (
+    <div className="flex min-h-[30rem] flex-col items-center justify-center rounded-[26px] border border-dashed border-border/70 bg-background/30 px-6 py-10 text-center">
+      <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+        Opportunity inspector
+      </div>
+      <div className="mt-3 text-xl font-semibold tracking-[0.01em] text-foreground">
+        Select a row to inspect
+      </div>
+      <div className="mt-2 max-w-[20rem] text-sm leading-6 text-muted-foreground">
+        Keep the board dense on the left and review structure, rationale, and lineage here.
+      </div>
+    </div>
+  );
+}
+
+function OpportunityInspectorPanel({
   opportunity,
+  executePending,
+  onExecute,
+  onClear,
 }: {
   opportunity: Opportunity;
+  executePending: boolean;
+  onExecute: (opportunityId: string) => void;
+  onClear?: () => void;
 }) {
   const setupReasons = getOpportunitySetupReasons(opportunity);
   const blockers = getOpportunityBlockers(opportunity);
@@ -456,50 +549,123 @@ function ExpandedOpportunityPanel({
   const generatedAt = getOpportunityGeneratedAt(opportunity);
   const orderLimitPrice = readString(orderPayload.limit_price, "");
   const orderQty = readString(orderPayload.qty, "");
+  const consumed = isOpportunityConsumed(opportunity);
 
   return (
-    <div className="grid gap-3 py-3 lg:grid-cols-[1.4fr_1fr_1fr]">
-      <ExpandedSection title="Setup Reasons">
-        <div className="grid gap-2">
+    <div className="overflow-hidden rounded-[26px] border border-border/70 bg-background/70">
+      <div className="flex items-start justify-between gap-4 px-5 pt-5 pb-4">
+        <div className="min-w-0">
+          <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+            {opportunity.underlying_symbol}
+          </div>
+          <div className="mt-2 text-xl font-semibold tracking-[0.01em] text-foreground">
+            {getOpportunityStrikes(opportunity)} {humanize(opportunity.strategy_family)}
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <OpportunitySelectionBadge value={opportunity.selection_state} />
+            <OpportunityLifecycleBadge value={opportunity.lifecycle_state} />
+            <span className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+              Age {formatAge(generatedAt)}
+            </span>
+          </div>
+          <div className="mt-3 text-sm text-muted-foreground">
+            {humanize(getOpportunityBias(opportunity))} bias · {humanize(getOpportunityProfile(opportunity))}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {!consumed ? (
+            <Button
+              type="button"
+              size="sm"
+              disabled={executePending}
+              onClick={() => onExecute(opportunity.opportunity_id)}
+            >
+              Execute
+            </Button>
+          ) : (
+            <Badge variant="outline" className="rounded-full">
+              Consumed
+            </Badge>
+          )}
+          {onClear ? (
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost"
+              aria-label="Clear inspector"
+              onClick={onClear}
+            >
+              <X />
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-x-4 gap-y-4 px-5 pb-5">
+        <InspectorSummaryMetric
+          label="Credit"
+          value={formatNullableCurrency(getOpportunityMidpointCredit(opportunity))}
+        />
+        <InspectorSummaryMetric
+          label="Max loss"
+          value={formatNullableCurrency(getOpportunityMaxLoss(opportunity))}
+        />
+        <InspectorSummaryMetric
+          label="RoR"
+          value={formatPercent(getOpportunityReturnOnRisk(opportunity))}
+        />
+        <InspectorSummaryMetric
+          label="Fill"
+          value={formatPercent(getOpportunityFillRatio(opportunity))}
+        />
+        <InspectorSummaryMetric
+          label="DTE"
+          value={
+            getOpportunityDte(opportunity) == null
+              ? "—"
+              : String(getOpportunityDte(opportunity))
+          }
+        />
+        <InspectorSummaryMetric
+          label="Date"
+          value={formatDate(opportunity.market_date)}
+        />
+      </div>
+
+      <Separator />
+
+      <InspectorSection title="Why">
+        <div className="grid gap-3">
           {setupReasons.length ? (
             setupReasons.map((reason) => (
-              <div
+              <InspectorReasonLine
                 key={reason}
-                className={cn(
-                  "rounded-xl border px-3 py-2 text-sm leading-5",
-                  reasonTone(reason),
-                )}
-              >
-                {reason}
-              </div>
+                reason={reason}
+                marker="+"
+                className={reasonTone(reason)}
+              />
             ))
           ) : (
-            <div className="rounded-xl border border-dashed border-border/70 px-3 py-2 text-sm text-muted-foreground">
+            <div className="text-sm text-muted-foreground">
               No setup rationale was captured for this opportunity.
             </div>
           )}
           {blockers.length ? (
-            <div className="rounded-xl border border-rose-300/70 bg-rose-100/70 px-3 py-2 text-sm text-rose-950 dark:border-rose-900/80 dark:bg-rose-950/35 dark:text-rose-100">
-              <div className="text-[11px] uppercase tracking-[0.18em]">
-                Blockers
-              </div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {blockers.map((blocker) => (
-                  <Badge
-                    key={blocker}
-                    variant="outline"
-                    className="rounded-full border-current/30 bg-transparent px-2 py-1 text-[11px] uppercase tracking-[0.16em]"
-                  >
-                    {humanize(blocker)}
-                  </Badge>
-                ))}
-              </div>
-            </div>
+            blockers.map((blocker) => (
+              <InspectorReasonLine
+                key={blocker}
+                reason={humanize(blocker)}
+                marker="!"
+                className="border-rose-300/80 bg-rose-100/80 text-rose-950 dark:border-rose-900/80 dark:bg-rose-950/35 dark:text-rose-100"
+              />
+            ))
           ) : null}
         </div>
-      </ExpandedSection>
+      </InspectorSection>
 
-      <ExpandedSection title="Execution Shape">
+      <Separator />
+
+      <InspectorSection title="Structure">
         <div className="grid gap-2">
           <BoardMetric
             label="Short leg"
@@ -530,9 +696,11 @@ function ExpandedOpportunityPanel({
             value={formatTimestamp(generatedAt)}
           />
         </div>
-      </ExpandedSection>
+      </InspectorSection>
 
-      <ExpandedSection title="Lineage">
+      <Separator />
+
+      <InspectorSection title="Lineage">
         <div className="grid gap-2">
           <BoardMetric
             label="Automation"
@@ -556,7 +724,23 @@ function ExpandedOpportunityPanel({
             label="Reason codes"
             value={reasonCodes.length ? reasonCodes.join(", ") : "—"}
           />
-          <div className="rounded-xl border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+          <div className="mt-3 flex flex-wrap gap-2">
+            {hasOpportunityAutomationOwner(opportunity) ? (
+              <Link
+                href={getOpportunityAutomationHref(opportunity)}
+                className={buttonVariants({ variant: "outline", size: "sm" })}
+              >
+                Open automation
+              </Link>
+            ) : null}
+            <Link
+              href={getOpportunityDiscoveryHref(opportunity)}
+              className={buttonVariants({ variant: "outline", size: "sm" })}
+            >
+              Open discovery
+            </Link>
+          </div>
+          <div className="mt-4 rounded-2xl border border-border/70 bg-muted/20 px-3 py-3 text-xs text-muted-foreground">
             <div className="uppercase tracking-[0.16em]">IDs</div>
             <div className="mt-2 break-all font-mono text-[11px] text-foreground/80">
               {opportunity.opportunity_id}
@@ -569,7 +753,7 @@ function ExpandedOpportunityPanel({
             </div>
           </div>
         </div>
-      </ExpandedSection>
+      </InspectorSection>
     </div>
   );
 }
@@ -733,18 +917,20 @@ export function OpportunitiesIndexPageContent({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
-  const [expandedOpportunityId, setExpandedOpportunityId] = useState<string | null>(
+  const [inspectedOpportunityId, setInspectedOpportunityId] = useState<string | null>(
     null,
   );
-  const scopeMode = marketDate === "all" ? "all" : "today";
+  const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
+  const isDesktopInspector = useDesktopInspector();
   const hasOwnerScope = Boolean(botId && automationId);
   const ownerScopeLabel = hasOwnerScope
     ? `${botId} / ${automationId}`
     : label
       ? `Discovery · ${label}`
       : "All owners";
-  const effectiveMarketDate =
-    scopeMode === "all"
+  const allDatesSelected = marketDate === "all";
+  const selectedMarketDate =
+    allDatesSelected
       ? undefined
       : isMarketDateValue(marketDate)
         ? marketDate
@@ -766,7 +952,7 @@ export function OpportunitiesIndexPageContent({
   const opportunitiesQuery = useQuery({
     queryKey: [
       "opportunities",
-      effectiveMarketDate ?? "all",
+      selectedMarketDate ?? "all",
       botId ?? "",
       automationId ?? "",
       strategyConfigId ?? "",
@@ -774,7 +960,7 @@ export function OpportunitiesIndexPageContent({
     ],
     queryFn: () =>
       getOpportunities({
-        marketDate: effectiveMarketDate,
+        marketDate: selectedMarketDate,
         botId,
         automationId,
         strategyConfigId,
@@ -799,6 +985,12 @@ export function OpportunitiesIndexPageContent({
   }
 
   const opportunities = opportunitiesQuery.data?.opportunities ?? [];
+  const inspectedOpportunity =
+    inspectedOpportunityId == null
+      ? null
+      : opportunities.find(
+          (row) => row.opportunity_id === inspectedOpportunityId,
+        ) ?? null;
   const promotableCount = opportunities.filter(
     (row) => row.selection_state === "promotable",
   ).length;
@@ -835,34 +1027,39 @@ export function OpportunitiesIndexPageContent({
     }
     return latest;
   }, null);
-  const scopeLabel =
-    scopeMode === "all"
-      ? "All dates"
-      : `Today · ${formatDate(effectiveMarketDate ?? defaultMarketDate)}`;
+  const scopeLabel = allDatesSelected
+    ? "All dates"
+    : formatDate(selectedMarketDate ?? defaultMarketDate);
+
+  function replaceMarketDate(nextMarketDate?: string) {
+    const nextParams = new URLSearchParams(searchParams.toString());
+    nextParams.set("marketDate", nextMarketDate ?? "all");
+    startTransition(() => {
+      router.replace(`${pathname}?${nextParams.toString()}`, {
+        scroll: false,
+      });
+    });
+  }
+
+  function inspectOpportunity(opportunity: Opportunity) {
+    setInspectedOpportunityId(opportunity.opportunity_id);
+    if (!isDesktopInspector) {
+      setMobileInspectorOpen(true);
+    }
+  }
+
+  function clearInspector() {
+    setInspectedOpportunityId(null);
+  }
 
   function clearOwnerScope() {
     startTransition(() => {
       router.replace(
         buildOpportunitiesHref({
-          marketDate:
-            scopeMode === "all" ? "all" : effectiveMarketDate ?? defaultMarketDate,
+          marketDate: allDatesSelected ? "all" : selectedMarketDate ?? defaultMarketDate,
         }),
         { scroll: false },
       );
-    });
-  }
-
-  function setScope(nextScope: "today" | "all") {
-    const nextParams = new URLSearchParams(searchParams.toString());
-    if (nextScope === "all") {
-      nextParams.set("marketDate", "all");
-    } else {
-      nextParams.set("marketDate", defaultMarketDate);
-    }
-    startTransition(() => {
-      router.replace(`${pathname}?${nextParams.toString()}`, {
-        scroll: false,
-      });
     });
   }
 
@@ -912,32 +1109,6 @@ export function OpportunitiesIndexPageContent({
           </Button>
         ),
     },
-    {
-      id: "expand",
-      header: "",
-      cell: ({ row }) => {
-        const expanded = expandedOpportunityId === row.original.opportunity_id;
-
-        return (
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            aria-expanded={expanded}
-            aria-label={expanded ? "Collapse details" : "Expand details"}
-            onClick={() =>
-              setExpandedOpportunityId((current) =>
-                current === row.original.opportunity_id
-                  ? null
-                  : row.original.opportunity_id,
-              )
-            }
-          >
-            {expanded ? <ChevronDown /> : <ChevronRight />}
-          </Button>
-        );
-      },
-    },
   ];
 
   return (
@@ -965,26 +1136,17 @@ export function OpportunitiesIndexPageContent({
             </div>
             <div className="mt-2 text-sm text-foreground/70">
               Scan the live pool across automation runtimes, execute directly,
-              and expand any row for setup rationale, leg shape, and linked
-              discovery lineage. Current date scope: {scopeLabel}. Current
-              owner scope: {ownerScopeLabel}.
+              and inspect one candidate at a time without breaking table
+              density. Current date scope: {scopeLabel}. Current owner scope:{" "}
+              {ownerScopeLabel}.
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant={scopeMode === "today" ? "default" : "outline"}
-              onClick={() => setScope("today")}
-            >
-              Today
-            </Button>
-            <Button
-              type="button"
-              variant={scopeMode === "all" ? "default" : "outline"}
-              onClick={() => setScope("all")}
-            >
-              All dates
-            </Button>
+            <MarketDateFilter
+              selectedMarketDate={selectedMarketDate}
+              defaultMarketDate={defaultMarketDate}
+              onSelectMarketDate={replaceMarketDate}
+            />
             <Button
               type="button"
               variant="outline"
@@ -1005,11 +1167,11 @@ export function OpportunitiesIndexPageContent({
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-7">
         <MetricTile
           label="Date Scope"
-          value={scopeMode === "all" ? "All dates" : "Today"}
+          value={allDatesSelected ? "All dates" : formatDate(selectedMarketDate ?? defaultMarketDate)}
           note={
-            scopeMode === "all"
+            allDatesSelected
               ? "No market-date filter"
-              : formatDate(effectiveMarketDate ?? defaultMarketDate)
+              : "Selected market date"
           }
         />
         <MetricTile
@@ -1020,7 +1182,7 @@ export function OpportunitiesIndexPageContent({
         <MetricTile
           label="Opportunities"
           value={String(opportunities.length)}
-          note={scopeMode === "all" ? "Cross-date live rows" : "Current live rows"}
+          note={allDatesSelected ? "Cross-date live rows" : "Current live rows"}
         />
         <MetricTile
           label="Promotable"
@@ -1068,19 +1230,60 @@ export function OpportunitiesIndexPageContent({
 
       <SectionSurface
         title="Opportunity Board"
-        description="Primary rows stay decision-oriented. Expand a row to inspect setup reasons, option legs, execution shape, and lineage without leaving this workspace."
+        description="Keep the board compact on the left. Select a row to inspect rationale, structure, and lineage in a dedicated panel."
       >
-        <DataTable
-          columns={columns}
-          data={opportunities}
-          emptyMessage="No opportunities were available."
-          getRowId={(row) => row.opportunity_id}
-          isExpanded={(row) => row.opportunity_id === expandedOpportunityId}
-          pageSize={20}
-          renderExpandedContent={(row) => (
-            <ExpandedOpportunityPanel opportunity={row} />
-          )}
-        />
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_24rem]">
+          <div className="min-w-0">
+            <DataTable
+              columns={columns}
+              data={opportunities}
+              emptyMessage="No opportunities were available."
+              getRowId={(row) => row.opportunity_id}
+              onSelect={inspectOpportunity}
+              selectedId={inspectedOpportunityId}
+              pageSize={20}
+            />
+          </div>
+          <div className="hidden xl:block">
+            <div className="sticky top-4">
+              {inspectedOpportunity ? (
+                <OpportunityInspectorPanel
+                  opportunity={inspectedOpportunity}
+                  executePending={executeMutation.isPending}
+                  onExecute={(opportunityId) => executeMutation.mutate(opportunityId)}
+                  onClear={clearInspector}
+                />
+              ) : (
+                <OpportunityInspectorEmptyState />
+              )}
+            </div>
+          </div>
+        </div>
+        <Sheet
+          open={!isDesktopInspector && mobileInspectorOpen && inspectedOpportunity != null}
+          onOpenChange={setMobileInspectorOpen}
+        >
+          <SheetContent
+            side="bottom"
+            className="xl:hidden max-h-[88svh] rounded-t-[26px] p-0 sm:max-w-none"
+          >
+            <SheetHeader className="sr-only">
+              <SheetTitle>Opportunity inspector</SheetTitle>
+              <SheetDescription>
+                Selected opportunity structure, rationale, and lineage.
+              </SheetDescription>
+            </SheetHeader>
+            {inspectedOpportunity ? (
+              <div className="overflow-y-auto px-4 pt-6 pb-4">
+                <OpportunityInspectorPanel
+                  opportunity={inspectedOpportunity}
+                  executePending={executeMutation.isPending}
+                  onExecute={(opportunityId) => executeMutation.mutate(opportunityId)}
+                />
+              </div>
+            ) : null}
+          </SheetContent>
+        </Sheet>
       </SectionSurface>
     </div>
   );

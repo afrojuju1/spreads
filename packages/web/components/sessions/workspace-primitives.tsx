@@ -421,13 +421,17 @@ export function MetricTile({
   note?: string;
 }) {
   return (
-    <div className="rounded-2xl border border-border/70 bg-card/80 px-4 py-3">
-      <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
+    <div className="min-w-0 rounded-2xl border border-border/70 bg-card/80 px-4 py-3">
+      <div className="break-words text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
         {label}
       </div>
-      <div className="mt-2 text-xl font-semibold">{value}</div>
+      <div className="mt-2 min-w-0 break-words text-lg leading-tight font-semibold sm:text-xl">
+        {value}
+      </div>
       {note ? (
-        <div className="mt-1 text-xs text-muted-foreground">{note}</div>
+        <div className="mt-1 break-words text-xs leading-snug text-muted-foreground">
+          {note}
+        </div>
       ) : null}
     </div>
   );

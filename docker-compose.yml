@@ -150,6 +150,7 @@ services:
       - ./packages/web:/app
       - web_node_modules:/app/node_modules
       - web_next_data:/app/.next
+      - web_npm_cache:/root/.npm
     ports:
       - "53000:3000"
 
@@ -157,3 +158,4 @@ volumes:
   spreads_postgres_data:
   web_node_modules:
   web_next_data:
+  web_npm_cache:

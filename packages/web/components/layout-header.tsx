@@ -4,7 +4,6 @@ import { usePathname } from "next/navigation";
 import {
   Activity,
   MoonStar,
-  PanelLeftClose,
   PanelLeftOpen,
   SunMedium,
 } from "lucide-react";
@@ -22,11 +21,7 @@ export function LayoutHeader() {
   const pathname = usePathname();
   const activeItem = resolveActiveLayoutItem(pathname);
   const { connectionState, latestSummary } = useRealtimeActivity();
-  const {
-    layoutNavOpen,
-    toggleLayoutNav,
-    setMobileLayoutNavOpen,
-  } = useLayoutChrome();
+  const { setMobileLayoutNavOpen } = useLayoutChrome();
   const { themePreference, isThemeReady, toggleThemePreference } =
     useThemePreference();
   const themeToggleLabel = !isThemeReady
@@ -47,16 +42,6 @@ export function LayoutHeader() {
           onClick={() => setMobileLayoutNavOpen(true)}
         >
           <PanelLeftOpen />
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="icon-sm"
-          className="hidden lg:inline-flex"
-          aria-label={layoutNavOpen ? "Collapse navigation" : "Expand navigation"}
-          onClick={toggleLayoutNav}
-        >
-          {layoutNavOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
         </Button>
 
         <div className="min-w-0 flex-1">
