@@ -120,6 +120,69 @@ def _serialize_candidate(candidate: Any) -> dict[str, Any]:
     raise TypeError("Unsupported candidate payload for runtime strategy builder")
 
 
+def build_entry_runtime_symbol_candidates_from_market_slice(
+    *,
+    runtime: EntryRuntime,
+    symbol: str,
+    base_scanner_args: argparse.Namespace,
+    calendar_resolver: Any,
+    market_slice: Any,
+    per_runtime_limit: int = 6,
+    history_store: RunHistoryRepository | None = None,
+    session_label: str | None = None,
+) -> dict[str, Any]:
+    runtime_args = build_runtime_scan_args(
+        symbol=symbol,
+        base_scanner_args=base_scanner_args,
+        runtime=runtime,
+    )
+    candidate_filter = _build_runtime_candidate_filter(runtime.build_settings)
+    candidates, setup_context, replay_details = build_candidates_with_details_from_market_slice(
+        market_slice=market_slice,
+        symbol_args=runtime_args,
+        calendar_resolver=calendar_resolver,
+    )
+    matched_candidates: list[Any] = []
+    all_rows: list[dict[str, Any]] = []
+    for candidate in candidates:
+        row = _serialize_candidate(candidate)
+        if not candidate_matches_filter(row, candidate_filter):
+            continue
+        matched_candidates.append(candidate)
+        all_rows.append(row)
+
+    run_id: str | None = None
+    if history_store is not None and matched_candidates:
+        run_id = persist_scan_run(
+            history_store=history_store,
+            symbol_args=runtime_args,
+            market_slice=market_slice,
+            setup_context=setup_context,
+            candidates=matched_candidates,
+            candidate_filter=candidate_filter,
+            calendar_decisions_by_expiration=replay_details.get(
+                "calendar_decisions_by_expiration"
+            ),
+            session_label=session_label,
+        )
+
+    rows = [dict(row) for row in all_rows[: max(int(per_runtime_limit), 1)]]
+    if run_id is not None:
+        for row in rows:
+            row["run_id"] = run_id
+
+    return {
+        "symbol": symbol,
+        "runtime_args": runtime_args,
+        "candidate_filter": candidate_filter,
+        "setup_context": setup_context,
+        "replay_details": replay_details,
+        "all_rows": all_rows,
+        "rows": rows,
+        "run_id": run_id,
+    }
+
+
 def build_entry_runtime_candidates_from_market_slices(
     *,
     entry_runtimes: list[EntryRuntime],
@@ -141,48 +204,22 @@ def build_entry_runtime_candidates_from_market_slices(
         if market_slice is None:
             continue
         for runtime in runtimes:
-            runtime_args = build_runtime_scan_args(
+            result = build_entry_runtime_symbol_candidates_from_market_slice(
+                runtime=runtime,
                 symbol=symbol,
                 base_scanner_args=base_scanner_args,
-                runtime=runtime,
-            )
-            candidate_filter = _build_runtime_candidate_filter(runtime.build_settings)
-            candidates, setup_context, replay_details = build_candidates_with_details_from_market_slice(
-                market_slice=market_slice,
-                symbol_args=runtime_args,
                 calendar_resolver=calendar_resolver,
+                market_slice=market_slice,
+                per_runtime_limit=per_runtime_limit,
+                history_store=history_store,
+                session_label=session_label,
             )
             owner_key = runtime_owner_key(runtime)
-            matched_candidates: list[Any] = []
-            rows: list[dict[str, Any]] = []
-            for candidate in candidates:
-                row = _serialize_candidate(candidate)
-                if not candidate_matches_filter(row, candidate_filter):
-                    continue
-                matched_candidates.append(candidate)
-                rows.append(row)
+            rows = list(result.get("rows") or [])
             if not rows:
                 continue
-            run_id: str | None = None
-            if history_store is not None:
-                run_id = persist_scan_run(
-                    history_store=history_store,
-                    symbol_args=runtime_args,
-                    market_slice=market_slice,
-                    setup_context=setup_context,
-                    candidates=matched_candidates,
-                    candidate_filter=candidate_filter,
-                    calendar_decisions_by_expiration=replay_details.get(
-                        "calendar_decisions_by_expiration"
-                    ),
-                    session_label=session_label,
-                )
-            limited_rows = [dict(row) for row in rows[: max(int(per_runtime_limit), 1)]]
-            if run_id is not None:
-                for row in limited_rows:
-                    row["run_id"] = run_id
             runtime_rows = candidates_by_runtime.setdefault(owner_key, {})
-            runtime_rows[symbol] = limited_rows
+            runtime_rows[symbol] = rows
     return candidates_by_runtime
 
 
@@ -230,6 +267,7 @@ def build_entry_runtime_candidates(
 __all__ = [
     "build_entry_runtime_candidates",
     "build_entry_runtime_candidates_from_market_slices",
+    "build_entry_runtime_symbol_candidates_from_market_slice",
     "build_market_slice_args",
     "build_runtime_scan_args",
     "runtime_owner_key",

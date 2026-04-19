@@ -116,13 +116,33 @@ def attach_data_quality(
     underlying_type: str,
     args: argparse.Namespace,
 ) -> list[SpreadCandidate]:
+    annotated = annotate_data_quality(
+        candidates=candidates,
+        underlying_type=underlying_type,
+        args=args,
+    )
+    if args.data_policy != "strict":
+        return annotated
+
+    enriched: list[SpreadCandidate] = []
+    for candidate in annotated:
+        if candidate.data_status == "blocked":
+            continue
+        enriched.append(candidate)
+    return enriched
+
+
+def annotate_data_quality(
+    *,
+    candidates: list[SpreadCandidate],
+    underlying_type: str,
+    args: argparse.Namespace,
+) -> list[SpreadCandidate]:
     enriched: list[SpreadCandidate] = []
     for candidate in candidates:
         status, reasons = assess_data_quality(
             candidate, underlying_type=underlying_type, args=args
         )
-        if args.data_policy == "strict" and status == "blocked":
-            continue
         enriched.append(replace(candidate, data_status=status, data_reasons=reasons))
     return enriched
 
@@ -332,6 +352,7 @@ __all__ = [
     "attach_calendar_decisions",
     "attach_calendar_decisions_from_map",
     "attach_data_quality",
+    "annotate_data_quality",
     "attach_selection_notes",
     "resolve_calendar_decisions_by_expiration",
     "deduplicate_candidates",

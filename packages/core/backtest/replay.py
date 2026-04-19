@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import asdict
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 import os
 from typing import Any, Mapping
 
@@ -11,6 +11,7 @@ from core.db.decorators import with_storage
 from core.integrations.calendar_events import build_calendar_event_resolver
 from core.integrations.greeks import build_local_greeks_provider
 from core.services.alpaca import create_alpaca_client_from_env
+from core.services.automations import cadence_minutes
 from core.services.automation_runtime import resolve_entry_runtime
 from core.services.bot_analytics import evaluate_entry_controls
 from core.services.entry_planner import plan_entry_selection, score_opportunity
@@ -22,7 +23,8 @@ from core.services.scanners.config import (
 )
 from core.services.scanners.historical import (
     ALPACA_OPTIONS_HISTORY_START,
-    build_historical_symbol_market_slice_from_alpaca,
+    build_historical_symbol_market_slice_from_session_data,
+    build_historical_symbol_session_data_from_alpaca,
 )
 from core.services.option_structures import candidate_legs, legs_identity_key
 from core.services.scanners.replay_artifacts import (
@@ -37,9 +39,8 @@ from core.services.scanners.runtime import (
     postprocess_market_slice_candidates,
 )
 from core.services.strategy_builders import (
-    build_entry_runtime_candidates_from_market_slices,
+    build_entry_runtime_symbol_candidates_from_market_slice,
     build_market_slice_args,
-    runtime_owner_key,
 )
 from core.services.market_dates import NEW_YORK
 
@@ -331,6 +332,374 @@ def _render_utc(value: datetime) -> str:
     return value.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _normalize_alpaca_sample_mode(sample_mode: str | None) -> str:
+    normalized = str(sample_mode or "intraday").strip().lower()
+    if normalized not in {"intraday", "eod"}:
+        raise ValueError(f"Unsupported Alpaca replay sample_mode: {sample_mode}")
+    return normalized
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    normalized = str(value).strip()
+    if not normalized:
+        return None
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    parsed = datetime.fromisoformat(normalized)
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def _parse_hhmm(value: str) -> tuple[int, int]:
+    hour_text, _, minute_text = str(value).partition(":")
+    if not _:
+        raise ValueError(f"Invalid HH:MM time: {value}")
+    return int(hour_text), int(minute_text)
+
+
+def _schedule_cycle_timestamps(
+    *,
+    session_day: date,
+    schedule: Mapping[str, Any],
+) -> list[datetime]:
+    cadence = max(int(cadence_minutes(dict(schedule))), 1)
+    start_text = str(schedule.get("start_time_et") or "09:30")
+    end_text = str(schedule.get("end_time_et") or "16:00")
+    start_hour, start_minute = _parse_hhmm(start_text)
+    end_hour, end_minute = _parse_hhmm(end_text)
+    current = datetime.combine(
+        session_day,
+        time(start_hour, start_minute),
+        tzinfo=NEW_YORK,
+    )
+    end_at = datetime.combine(
+        session_day,
+        time(end_hour, end_minute),
+        tzinfo=NEW_YORK,
+    )
+    timestamps: list[datetime] = []
+    while current <= end_at:
+        timestamps.append(current.astimezone(UTC))
+        current += timedelta(minutes=cadence)
+    return timestamps
+
+
+def _timestamp_within_schedule_window(
+    *,
+    schedule: Mapping[str, Any],
+    timestamp: datetime,
+) -> bool:
+    current = timestamp.astimezone(NEW_YORK)
+    if bool(schedule.get("market_hours_only", False)) and not (
+        (9, 30) <= (current.hour, current.minute) <= (16, 0)
+    ):
+        return False
+    start_time = schedule.get("start_time_et")
+    if start_time:
+        start_hour, start_minute = _parse_hhmm(str(start_time))
+        if (current.hour, current.minute) < (start_hour, start_minute):
+            return False
+    end_time = schedule.get("end_time_et")
+    if end_time:
+        end_hour, end_minute = _parse_hhmm(str(end_time))
+        if (current.hour, current.minute) > (end_hour, end_minute):
+            return False
+    return True
+
+
+def _recorded_cycle_specs(
+    *,
+    signal_store: Any,
+    bot_id: str,
+    automation_id: str,
+    session_date: str,
+    limit: int,
+    schedule: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], int]:
+    rows = [
+        dict(row)
+        for row in signal_store.list_automation_runs(
+            bot_id=bot_id,
+            automation_id=automation_id,
+            session_date=session_date,
+            limit=max(int(limit), 1),
+        )
+    ]
+    cycle_specs: list[dict[str, Any]] = []
+    clipped_count = 0
+    for row in rows:
+        started_at = _parse_datetime(row.get("started_at"))
+        if started_at is None:
+            continue
+        if not _timestamp_within_schedule_window(
+            schedule=schedule,
+            timestamp=started_at,
+        ):
+            clipped_count += 1
+            continue
+        cycle_specs.append(
+            {
+                "session_date": session_date,
+                "sample_source": "recorded",
+                "as_of": started_at.astimezone(UTC),
+                "generated_at": _render_utc(started_at.astimezone(UTC)),
+                "automation_run_id": row.get("automation_run_id"),
+                "cycle_id": row.get("cycle_id")
+                or (
+                    f"alpaca:recorded:{bot_id}:{automation_id}:{session_date}:"
+                    f"{started_at.astimezone(NEW_YORK).strftime('%H%M')}"
+                ),
+                "label": row.get("label")
+                or f"alpaca_replay:{bot_id}:{automation_id}",
+                "trigger_type": row.get("trigger_type") or "alpaca_historical_recorded",
+            }
+        )
+    return sorted(
+        cycle_specs,
+        key=lambda item: (
+            str(item.get("generated_at") or ""),
+            str(item.get("cycle_id") or ""),
+        ),
+    ), clipped_count
+
+
+def _eod_cycle_specs(
+    *,
+    bot_id: str,
+    automation_id: str,
+    session_date: str,
+) -> list[dict[str, Any]]:
+    session_day = date.fromisoformat(session_date)
+    timestamp = _market_close_timestamp(session_day)
+    return [
+        {
+            "session_date": session_date,
+            "sample_source": "eod",
+            "as_of": timestamp,
+            "generated_at": _render_utc(timestamp),
+            "automation_run_id": None,
+            "cycle_id": (
+                f"alpaca:eod:{bot_id}:{automation_id}:{session_date}:"
+                f"{timestamp.astimezone(NEW_YORK).strftime('%H%M')}"
+            ),
+            "label": f"alpaca_replay:{bot_id}:{automation_id}",
+            "trigger_type": "alpaca_historical_eod",
+        }
+    ]
+
+
+def _session_cycle_specs(
+    *,
+    signal_store: Any,
+    runtime: Any,
+    bot_id: str,
+    automation_id: str,
+    session_date: str,
+    limit: int,
+    sample_mode: str,
+) -> tuple[list[dict[str, Any]], int]:
+    normalized_sample_mode = _normalize_alpaca_sample_mode(sample_mode)
+    if normalized_sample_mode == "eod":
+        return _eod_cycle_specs(
+            bot_id=bot_id,
+            automation_id=automation_id,
+            session_date=session_date,
+        )[: max(int(limit), 1)], 0
+
+    recorded, clipped_count = _recorded_cycle_specs(
+        signal_store=signal_store,
+        bot_id=bot_id,
+        automation_id=automation_id,
+        session_date=session_date,
+        limit=limit,
+        schedule=runtime.automation.automation.schedule,
+    )
+    if recorded:
+        return recorded[: max(int(limit), 1)], clipped_count
+
+    session_day = date.fromisoformat(session_date)
+    cycle_specs: list[dict[str, Any]] = []
+    for timestamp in _schedule_cycle_timestamps(
+        session_day=session_day,
+        schedule=runtime.automation.automation.schedule,
+    )[: max(int(limit), 1)]:
+        cycle_specs.append(
+            {
+                "session_date": session_date,
+                "sample_source": "scheduled",
+                "as_of": timestamp,
+                "generated_at": _render_utc(timestamp),
+                "automation_run_id": None,
+                "cycle_id": (
+                    f"alpaca:scheduled:{bot_id}:{automation_id}:{session_date}:"
+                    f"{timestamp.astimezone(NEW_YORK).strftime('%H%M')}"
+                ),
+                "label": f"alpaca_replay:{bot_id}:{automation_id}",
+                "trigger_type": "alpaca_historical_schedule",
+            }
+        )
+    return cycle_specs, clipped_count
+
+
+def _merge_count_map(target: Counter[str], source: Mapping[str, Any] | None) -> None:
+    for key, value in dict(source or {}).items():
+        try:
+            amount = int(value)
+        except (TypeError, ValueError):
+            continue
+        target[str(key)] += amount
+
+
+def _count_row_field(rows: list[dict[str, Any]], *, field: str) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for row in rows:
+        value = row.get(field)
+        normalized = "unknown" if value in (None, "") else str(value)
+        counts[normalized] += 1
+    return dict(sorted(counts.items()))
+
+
+def _count_row_list_field(rows: list[dict[str, Any]], *, field: str) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for row in rows:
+        values = row.get(field)
+        if not isinstance(values, (list, tuple)):
+            continue
+        for value in values:
+            normalized = str(value or "").strip()
+            if normalized:
+                counts[normalized] += 1
+    return dict(sorted(counts.items()))
+
+
+def _build_cycle_diagnostics(
+    *,
+    symbol_bundles: list[dict[str, Any]],
+    selection: Mapping[str, Any],
+    opportunities: list[dict[str, Any]],
+    entry_eligible_opportunities: list[dict[str, Any]],
+) -> dict[str, Any]:
+    builder_setup_status_counts: Counter[str] = Counter()
+    builder_calendar_status_counts: Counter[str] = Counter()
+    builder_calendar_reason_counts: Counter[str] = Counter()
+    builder_data_status_counts: Counter[str] = Counter()
+    builder_data_reason_counts: Counter[str] = Counter()
+    symbol_raw_candidate_counts: dict[str, int] = {}
+    symbol_postprocess_candidate_counts: dict[str, int] = {}
+    symbol_candidate_counts: dict[str, int] = {}
+    symbol_selection_input_candidate_counts: dict[str, int] = {}
+    symbol_filter_rejected_counts: dict[str, int] = {}
+    builder_raw_candidate_count = 0
+    builder_postprocess_candidate_count = 0
+    candidate_count = 0
+    selection_input_candidate_count = 0
+
+    for bundle in symbol_bundles:
+        symbol = str(bundle.get("symbol") or "")
+        replay_details = dict(bundle.get("replay_details") or {})
+        all_rows = [dict(row) for row in list(bundle.get("all_rows") or [])]
+        input_rows = [dict(row) for row in list(bundle.get("rows") or [])]
+        raw_candidate_count = int(replay_details.get("raw_candidate_count") or 0)
+        postprocess_candidate_count = int(
+            replay_details.get("postprocess_candidate_count") or 0
+        )
+
+        builder_raw_candidate_count += raw_candidate_count
+        builder_postprocess_candidate_count += postprocess_candidate_count
+        candidate_count += len(all_rows)
+        selection_input_candidate_count += len(input_rows)
+
+        if symbol:
+            symbol_raw_candidate_counts[symbol] = raw_candidate_count
+            symbol_postprocess_candidate_counts[symbol] = postprocess_candidate_count
+            symbol_candidate_counts[symbol] = len(all_rows)
+            symbol_selection_input_candidate_counts[symbol] = len(input_rows)
+            symbol_filter_rejected_counts[symbol] = max(
+                postprocess_candidate_count - len(all_rows),
+                0,
+            )
+
+        _merge_count_map(
+            builder_setup_status_counts,
+            replay_details.get("setup_status_counts"),
+        )
+        _merge_count_map(
+            builder_calendar_status_counts,
+            replay_details.get("calendar_status_counts"),
+        )
+        _merge_count_map(
+            builder_calendar_reason_counts,
+            replay_details.get("calendar_reason_counts"),
+        )
+        _merge_count_map(
+            builder_data_status_counts,
+            replay_details.get("data_status_counts"),
+        )
+        _merge_count_map(
+            builder_data_reason_counts,
+            replay_details.get("data_reason_counts"),
+        )
+
+    scored_symbol_candidates = dict(selection.get("symbol_candidates") or {})
+    scored_candidates = [
+        dict(candidate)
+        for rows in scored_symbol_candidates.values()
+        for candidate in list(rows or [])
+    ]
+
+    return {
+        "builder_raw_candidate_count": builder_raw_candidate_count,
+        "builder_postprocess_candidate_count": builder_postprocess_candidate_count,
+        "candidate_count": candidate_count,
+        "selection_input_candidate_count": selection_input_candidate_count,
+        "entry_eligible_opportunity_count": len(entry_eligible_opportunities),
+        "symbol_raw_candidate_counts": dict(sorted(symbol_raw_candidate_counts.items())),
+        "symbol_postprocess_candidate_counts": dict(
+            sorted(symbol_postprocess_candidate_counts.items())
+        ),
+        "symbol_candidate_counts": dict(sorted(symbol_candidate_counts.items())),
+        "symbol_selection_input_candidate_counts": dict(
+            sorted(symbol_selection_input_candidate_counts.items())
+        ),
+        "symbol_filter_rejected_counts": dict(
+            sorted(symbol_filter_rejected_counts.items())
+        ),
+        "setup_status_counts": dict(sorted(builder_setup_status_counts.items())),
+        "calendar_status_counts": dict(sorted(builder_calendar_status_counts.items())),
+        "calendar_reason_counts": dict(sorted(builder_calendar_reason_counts.items())),
+        "data_status_counts": dict(sorted(builder_data_status_counts.items())),
+        "data_reason_counts": dict(sorted(builder_data_reason_counts.items())),
+        "selection_state_counts": _count_row_field(
+            opportunities,
+            field="selection_state",
+        ),
+        "entry_eligible_selection_state_counts": _count_row_field(
+            entry_eligible_opportunities,
+            field="selection_state",
+        ),
+        "eligibility_counts": _count_row_field(opportunities, field="eligibility"),
+        "scoring_state_counts": _count_row_field(
+            scored_candidates,
+            field="scoring_state",
+        ),
+        "scoring_state_reason_counts": _count_row_field(
+            scored_candidates,
+            field="scoring_state_reason",
+        ),
+        "scoring_blocker_counts": _count_row_list_field(
+            scored_candidates,
+            field="scoring_blockers",
+        ),
+        "execution_blocker_counts": _count_row_list_field(
+            scored_candidates,
+            field="execution_blockers",
+        ),
+    }
+
+
 def _opportunity_summary(row: Mapping[str, Any]) -> dict[str, Any]:
     candidate = (
         dict(row.get("candidate"))
@@ -398,7 +767,6 @@ def _alpaca_trading_dates(
     start_date: str,
     end_date: str,
     stock_feed: str,
-    limit: int,
 ) -> list[str]:
     bars = client.get_daily_bars(
         anchor_symbol,
@@ -415,7 +783,7 @@ def _alpaca_trading_dates(
             for bar in bars
         }
     )
-    return session_dates[: max(int(limit), 1)]
+    return session_dates
 
 
 def _alpaca_cycle_status(
@@ -439,6 +807,29 @@ def _alpaca_cycle_status(
     return "no_candidates"
 
 
+def _option_bar_timeframe(schedule: Mapping[str, Any]) -> str:
+    return _option_bar_timeframe_for_sample_mode(
+        schedule=schedule,
+        sample_mode="intraday",
+    )
+
+
+def _option_bar_timeframe_for_sample_mode(
+    *,
+    schedule: Mapping[str, Any],
+    sample_mode: str,
+) -> str:
+    normalized_sample_mode = _normalize_alpaca_sample_mode(sample_mode)
+    if normalized_sample_mode == "eod":
+        return "1Day"
+    cadence = max(int(cadence_minutes(dict(schedule))), 1)
+    if cadence < 60:
+        return f"{cadence}Min"
+    if cadence % 60 == 0 and cadence // 60 <= 23:
+        return f"{cadence // 60}Hour"
+    return "1Hour"
+
+
 def _build_alpaca_replay_range_payload(
     *,
     db_target: str,
@@ -448,8 +839,12 @@ def _build_alpaca_replay_range_payload(
     end_date: str,
     limit: int,
     storage: Any,
+    sample_mode: str = "intraday",
 ) -> dict[str, Any]:
+    signal_store = storage.signals
     runtime = resolve_entry_runtime(bot_id=bot_id, automation_id=automation_id)
+    cycle_limit = max(int(limit), 1)
+    normalized_sample_mode = _normalize_alpaca_sample_mode(sample_mode)
     if not runtime.symbols:
         return {
             "status": "no_cycles",
@@ -459,8 +854,8 @@ def _build_alpaca_replay_range_payload(
                 "automation_id": automation_id,
                 "start_date": start_date,
                 "end_date": end_date,
-                "cycle_limit": max(int(limit), 1),
-                "sample_mode": "market_close",
+                "cycle_limit": cycle_limit,
+                "sample_mode": normalized_sample_mode,
             },
             "summary": {"cycle_count": 0},
             "cycles": [],
@@ -477,184 +872,339 @@ def _build_alpaca_replay_range_payload(
         start_date=max(start_date, ALPACA_OPTIONS_HISTORY_START.isoformat()),
         end_date=end_date,
         stock_feed=str(getattr(scanner_args, "stock_feed", "sip") or "sip"),
-        limit=limit,
+    )
+    replay_label = f"alpaca_replay:{bot_id}:{automation_id}"
+    option_bar_timeframe = _option_bar_timeframe_for_sample_mode(
+        schedule=runtime.automation.automation.schedule,
+        sample_mode=normalized_sample_mode,
+    )
+    include_intraday_stock_bars = normalized_sample_mode == "intraday"
+    fidelity_reason = (
+        "alpaca_intraday_option_bars_with_synthetic_quotes_and_local_greeks"
+        if normalized_sample_mode == "intraday"
+        else "alpaca_daily_option_bars_with_synthetic_quotes_and_local_greeks"
     )
 
     cycle_rows: list[dict[str, Any]] = []
     cycle_status_counts: Counter[str] = Counter()
+    sample_source_counts: Counter[str] = Counter()
+    clipped_recorded_cycle_count = 0
     exact_match_run_count = 0
     mismatch_run_count = 0
     unsupported_run_count = 0
+    total_raw_candidate_count = 0
+    total_postprocess_candidate_count = 0
     total_candidate_count = 0
+    total_selection_input_candidate_count = 0
     total_opportunity_count = 0
+    total_entry_eligible_opportunity_count = 0
     selected_cycle_count = 0
+    cycles_with_raw_candidates_count = 0
     cycles_with_candidates_count = 0
     cycles_with_opportunities_count = 0
+    cycles_with_entry_eligible_opportunities_count = 0
 
     for session_date in session_dates:
+        if len(cycle_rows) >= cycle_limit:
+            break
         session_day = date.fromisoformat(session_date)
-        as_of = _market_close_timestamp(session_day)
-        generated_at = _render_utc(as_of)
-        session_scanner_args = apply_scan_evaluation_context(
-            parse_scanner_args([]),
-            evaluation_timestamp=as_of,
-            evaluation_date=session_date,
+        cycle_specs, clipped_count = _session_cycle_specs(
+            signal_store=signal_store,
+            runtime=runtime,
+            bot_id=bot_id,
+            automation_id=automation_id,
+            session_date=session_date,
+            limit=cycle_limit - len(cycle_rows),
+            sample_mode=normalized_sample_mode,
         )
-        market_slices_by_symbol: dict[str, Any] = {}
-        symbol_failures: list[dict[str, Any]] = []
+        clipped_recorded_cycle_count += clipped_count
+        if not cycle_specs:
+            continue
+
+        session_market_slice_args_by_symbol: dict[str, Any] = {}
+        session_data_by_symbol: dict[str, Any] = {}
+        session_symbol_failures: dict[str, dict[str, Any]] = {}
         for symbol in runtime.symbols:
             normalized_symbol = str(symbol).upper()
             try:
                 market_slice_args = build_market_slice_args(
                     symbol=normalized_symbol,
-                    base_scanner_args=session_scanner_args,
+                    base_scanner_args=parse_scanner_args([]),
                     runtimes=[runtime],
                 )
                 apply_scan_evaluation_context(
                     market_slice_args,
-                    evaluation_timestamp=as_of,
+                    evaluation_timestamp=_market_close_timestamp(session_day),
                     evaluation_date=session_date,
                 )
-                market_slices_by_symbol[normalized_symbol] = (
-                    build_historical_symbol_market_slice_from_alpaca(
+                session_market_slice_args_by_symbol[normalized_symbol] = market_slice_args
+                session_data_by_symbol[normalized_symbol] = (
+                    build_historical_symbol_session_data_from_alpaca(
                         symbol=normalized_symbol,
                         symbol_args=market_slice_args,
                         client=client,
-                        greeks_provider=greeks_provider,
-                        as_of=as_of,
+                        session_date=session_day,
+                        option_bar_timeframe=option_bar_timeframe,
+                        include_intraday_stock_bars=include_intraday_stock_bars,
                     )
                 )
             except Exception as exc:
-                symbol_failures.append(
-                    {
-                        "symbol": normalized_symbol,
-                        "error": str(exc).splitlines()[0],
-                    }
-                )
+                session_symbol_failures[normalized_symbol] = {
+                    "symbol": normalized_symbol,
+                    "error": str(exc).splitlines()[0],
+                }
 
-        runtime_candidate_rows_by_owner = (
-            build_entry_runtime_candidates_from_market_slices(
-                entry_runtimes=[runtime],
-                base_scanner_args=session_scanner_args,
-                calendar_resolver=calendar_resolver,
-                market_slices_by_symbol=market_slices_by_symbol,
-                per_runtime_limit=6,
-                history_store=None,
-                session_label=f"alpaca_replay:{bot_id}:{automation_id}",
+        previous_promotable: dict[str, dict[str, Any]] = {}
+        previous_selection_memory: dict[str, dict[str, Any]] = {}
+        for cycle_spec in cycle_specs:
+            as_of = cycle_spec["as_of"]
+            generated_at = str(cycle_spec["generated_at"])
+            session_scanner_args = apply_scan_evaluation_context(
+                parse_scanner_args([]),
+                evaluation_timestamp=as_of,
+                evaluation_date=session_date,
             )
-            if market_slices_by_symbol
-            else {}
-        )
-        owner_candidates = {
-            str(symbol): [dict(candidate) for candidate in rows]
-            for symbol, rows in dict(
-                runtime_candidate_rows_by_owner.get(runtime_owner_key(runtime)) or {}
-            ).items()
-        }
-        selection = select_live_opportunities(
-            label=f"alpaca_replay:{bot_id}:{automation_id}",
-            cycle_id=f"alpaca:{bot_id}:{automation_id}:{session_date}",
-            generated_at=generated_at,
-            symbol_candidates=owner_candidates,
-            previous_promotable={},
-            previous_selection_memory={},
-            top_promotable=max(int(getattr(session_scanner_args, "top", 10) or 10), 1),
-            top_monitor=max(int(getattr(session_scanner_args, "top", 10) or 10), 1),
-            profile=runtime.build_settings.scanner_profile,
-        )
-        opportunities = _with_opportunity_ids(
-            [dict(row) for row in list(selection.get("opportunities") or [])],
-            bot_id=bot_id,
-            automation_id=automation_id,
-            session_date=session_date,
-        )
-        controls_allowed, controls_reason, bot_metrics = evaluate_entry_controls(
-            storage=storage,
-            bot=runtime.bot.bot,
-            market_date=session_date,
-        )
-        plan = plan_entry_selection(
-            opportunities=opportunities,
-            controls_allowed=controls_allowed,
-            controls_reason=controls_reason,
-            bot_metrics=bot_metrics,
-            min_score=float(runtime.trigger_policy.get("min_opportunity_score") or 0.0),
-        )
-        selected = (
-            dict(plan["selected"])
-            if isinstance(plan.get("selected"), Mapping)
-            else None
-        )
-
-        flattened_candidates = [
-            dict(candidate)
-            for rows in owner_candidates.values()
-            for candidate in rows
-        ]
-        flattened_candidates.sort(key=_candidate_sort_key, reverse=True)
-        candidate_count = len(flattened_candidates)
-        opportunity_count = len(opportunities)
-        cycle_status = _alpaca_cycle_status(
-            selected=selected,
-            opportunities=opportunities,
-            candidate_count=candidate_count,
-            controls_allowed=controls_allowed,
-            symbol_failures=symbol_failures,
-        )
-        cycle_status_counts[cycle_status] += 1
-        total_candidate_count += candidate_count
-        total_opportunity_count += opportunity_count
-        if candidate_count > 0:
-            cycles_with_candidates_count += 1
-        if opportunity_count > 0:
-            cycles_with_opportunities_count += 1
-        if selected is not None:
-            selected_cycle_count += 1
-
-        cycle_rows.append(
-            {
-                "session_date": session_date,
-                "started_at": generated_at,
-                "completed_at": generated_at,
-                "automation_run_id": None,
-                "cycle_id": f"alpaca:{bot_id}:{automation_id}:{session_date}",
-                "label": f"alpaca_replay:{bot_id}:{automation_id}",
-                "status": cycle_status,
-                "exact_match": None,
-                "fidelity": "reduced",
-                "fidelity_reason": "alpaca_option_bars_with_synthetic_quotes_and_local_greeks",
-                "trigger_type": "alpaca_historical_market_close",
-                "candidate_symbol_count": len(owner_candidates),
-                "candidate_count": candidate_count,
-                "opportunity_count": opportunity_count,
-                "collector_candidate_count": candidate_count,
-                "scan_run_count": 0,
-                "controls_allowed": controls_allowed,
-                "controls_reason": controls_reason,
-                "selected": None if selected is None else _opportunity_summary(selected),
-                "top_opportunities": [
-                    _opportunity_summary(row) for row in opportunities[:10]
-                ],
-                "top_candidates": [
-                    _candidate_summary(row, rank=index)
-                    for index, row in enumerate(flattened_candidates[:10], start=1)
-                ],
-                "symbol_failures": symbol_failures,
-                "symbol_summaries": [
-                    {
-                        "symbol": symbol,
-                        "candidate_count": len(rows),
-                        "top_candidate": (
-                            None
-                            if not rows
-                            else _candidate_summary(rows[0], rank=1)
-                        ),
-                    }
-                    for symbol, rows in sorted(owner_candidates.items())
-                ],
-                "runs": [],
+            symbol_failures = [
+                dict(row) for row in sorted(session_symbol_failures.values(), key=lambda item: str(item.get("symbol") or ""))
+            ]
+            symbol_bundles: list[dict[str, Any]] = []
+            owner_candidates: dict[str, list[dict[str, Any]]] = {
+                str(symbol).upper(): [] for symbol in runtime.symbols
             }
-        )
+
+            for symbol in runtime.symbols:
+                normalized_symbol = str(symbol).upper()
+                session_data = session_data_by_symbol.get(normalized_symbol)
+                market_slice_args = session_market_slice_args_by_symbol.get(
+                    normalized_symbol
+                )
+                if session_data is None or market_slice_args is None:
+                    continue
+                try:
+                    market_slice = build_historical_symbol_market_slice_from_session_data(
+                        session_data=session_data,
+                        symbol_args=market_slice_args,
+                        greeks_provider=greeks_provider,
+                        as_of=as_of,
+                        use_latest_option_bar_snapshot=(
+                            normalized_sample_mode == "eod"
+                        ),
+                    )
+                    bundle = build_entry_runtime_symbol_candidates_from_market_slice(
+                        runtime=runtime,
+                        symbol=normalized_symbol,
+                        base_scanner_args=session_scanner_args,
+                        calendar_resolver=calendar_resolver,
+                        market_slice=market_slice,
+                        per_runtime_limit=25,
+                        history_store=None,
+                        session_label=replay_label,
+                    )
+                    symbol_bundles.append(bundle)
+                    owner_candidates[normalized_symbol] = [
+                        dict(candidate) for candidate in list(bundle.get("rows") or [])
+                    ]
+                except Exception as exc:
+                    symbol_failures.append(
+                        {
+                            "symbol": normalized_symbol,
+                            "error": str(exc).splitlines()[0],
+                        }
+                    )
+
+            selection = select_live_opportunities(
+                label=replay_label,
+                cycle_id=str(cycle_spec["cycle_id"]),
+                generated_at=generated_at,
+                symbol_candidates=owner_candidates,
+                previous_promotable=previous_promotable,
+                previous_selection_memory=previous_selection_memory,
+                top_promotable=max(
+                    int(getattr(session_scanner_args, "top", 10) or 10),
+                    1,
+                ),
+                top_monitor=max(
+                    int(getattr(session_scanner_args, "top", 10) or 10),
+                    1,
+                ),
+                profile=runtime.build_settings.scanner_profile,
+            )
+            opportunities = _with_opportunity_ids(
+                [dict(row) for row in list(selection.get("opportunities") or [])],
+                bot_id=bot_id,
+                automation_id=automation_id,
+                session_date=session_date,
+            )
+            entry_eligible_opportunities = [
+                dict(row)
+                for row in opportunities
+                if str(row.get("selection_state") or "").strip().lower()
+                == "promotable"
+            ]
+            controls_allowed, controls_reason, bot_metrics = evaluate_entry_controls(
+                storage=storage,
+                bot=runtime.bot.bot,
+                market_date=session_date,
+            )
+            plan = plan_entry_selection(
+                opportunities=opportunities,
+                controls_allowed=controls_allowed,
+                controls_reason=controls_reason,
+                bot_metrics=bot_metrics,
+                min_score=float(
+                    runtime.trigger_policy.get("min_opportunity_score") or 0.0
+                ),
+                eligible_selection_states=("promotable",),
+            )
+            selected = (
+                dict(plan["selected"])
+                if isinstance(plan.get("selected"), Mapping)
+                else None
+            )
+            entry_eligible_opportunity_count = int(
+                plan.get("eligible_opportunity_count") or 0
+            )
+
+            flattened_candidates = [
+                dict(candidate)
+                for bundle in symbol_bundles
+                for candidate in list(bundle.get("all_rows") or [])
+            ]
+            flattened_candidates.sort(key=_candidate_sort_key, reverse=True)
+            diagnostics = _build_cycle_diagnostics(
+                symbol_bundles=symbol_bundles,
+                selection=selection,
+                opportunities=opportunities,
+                entry_eligible_opportunities=entry_eligible_opportunities,
+            )
+            raw_candidate_count = int(
+                diagnostics.get("builder_raw_candidate_count") or 0
+            )
+            postprocess_candidate_count = int(
+                diagnostics.get("builder_postprocess_candidate_count") or 0
+            )
+            candidate_count = int(diagnostics.get("candidate_count") or 0)
+            selection_input_candidate_count = int(
+                diagnostics.get("selection_input_candidate_count") or 0
+            )
+            opportunity_count = len(opportunities)
+            cycle_status = _alpaca_cycle_status(
+                selected=selected,
+                opportunities=opportunities,
+                candidate_count=candidate_count,
+                controls_allowed=controls_allowed,
+                symbol_failures=symbol_failures,
+            )
+            cycle_status_counts[cycle_status] += 1
+            sample_source_counts[str(cycle_spec["sample_source"])] += 1
+            total_raw_candidate_count += raw_candidate_count
+            total_postprocess_candidate_count += postprocess_candidate_count
+            total_candidate_count += candidate_count
+            total_selection_input_candidate_count += selection_input_candidate_count
+            total_opportunity_count += opportunity_count
+            total_entry_eligible_opportunity_count += entry_eligible_opportunity_count
+            if raw_candidate_count > 0:
+                cycles_with_raw_candidates_count += 1
+            if candidate_count > 0:
+                cycles_with_candidates_count += 1
+            if opportunity_count > 0:
+                cycles_with_opportunities_count += 1
+            if entry_eligible_opportunity_count > 0:
+                cycles_with_entry_eligible_opportunities_count += 1
+            if selected is not None:
+                selected_cycle_count += 1
+
+            cycle_rows.append(
+                {
+                    "session_date": session_date,
+                    "started_at": generated_at,
+                    "completed_at": generated_at,
+                    "automation_run_id": cycle_spec.get("automation_run_id"),
+                    "cycle_id": cycle_spec.get("cycle_id"),
+                    "label": cycle_spec.get("label"),
+                    "status": cycle_status,
+                    "sample_source": cycle_spec.get("sample_source"),
+                    "exact_match": None,
+                    "fidelity": "reduced",
+                    "fidelity_reason": fidelity_reason,
+                    "trigger_type": cycle_spec.get("trigger_type"),
+                    "candidate_symbol_count": sum(
+                        1
+                        for rows in owner_candidates.values()
+                        if len(list(rows or [])) > 0
+                    ),
+                    "raw_candidate_count": raw_candidate_count,
+                    "postprocess_candidate_count": postprocess_candidate_count,
+                    "candidate_count": candidate_count,
+                    "selection_input_candidate_count": selection_input_candidate_count,
+                    "opportunity_count": opportunity_count,
+                    "entry_eligible_opportunity_count": entry_eligible_opportunity_count,
+                    "collector_candidate_count": candidate_count,
+                    "scan_run_count": 0,
+                    "controls_allowed": controls_allowed,
+                    "controls_reason": controls_reason,
+                    "selected": (
+                        None if selected is None else _opportunity_summary(selected)
+                    ),
+                    "top_opportunities": [
+                        _opportunity_summary(row) for row in opportunities[:10]
+                    ],
+                    "top_candidates": [
+                        _candidate_summary(row, rank=index)
+                        for index, row in enumerate(
+                            flattened_candidates[:10],
+                            start=1,
+                        )
+                    ],
+                    "symbol_failures": symbol_failures,
+                    "diagnostics": diagnostics,
+                    "symbol_summaries": [
+                        {
+                            "symbol": str(bundle.get("symbol") or ""),
+                            "raw_candidate_count": int(
+                                dict(bundle.get("replay_details") or {}).get(
+                                    "raw_candidate_count"
+                                )
+                                or 0
+                            ),
+                            "postprocess_candidate_count": int(
+                                dict(bundle.get("replay_details") or {}).get(
+                                    "postprocess_candidate_count"
+                                )
+                                or 0
+                            ),
+                            "candidate_count": len(list(bundle.get("all_rows") or [])),
+                            "selection_input_candidate_count": len(
+                                list(bundle.get("rows") or [])
+                            ),
+                            "top_candidate": (
+                                None
+                                if not list(bundle.get("all_rows") or [])
+                                else _candidate_summary(
+                                    list(bundle.get("all_rows") or [])[0],
+                                    rank=1,
+                                )
+                            ),
+                        }
+                        for bundle in sorted(
+                            symbol_bundles,
+                            key=lambda item: str(item.get("symbol") or ""),
+                        )
+                    ],
+                    "runs": [],
+                }
+            )
+
+            previous_promotable = {
+                str(candidate.get("underlying_symbol") or "").upper(): dict(candidate)
+                for candidate in list(selection.get("promotable_candidates") or [])
+                if str(candidate.get("underlying_symbol") or "").strip()
+            }
+            previous_selection_memory = {
+                str(symbol).upper(): dict(state)
+                for symbol, state in dict(selection.get("selection_memory") or {}).items()
+                if isinstance(symbol, str) and isinstance(state, Mapping)
+            }
 
     return {
         "status": "completed" if cycle_rows else "no_cycles",
@@ -664,17 +1214,25 @@ def _build_alpaca_replay_range_payload(
             "automation_id": automation_id,
             "start_date": start_date,
             "end_date": end_date,
-            "cycle_limit": max(int(limit), 1),
-            "sample_mode": "market_close",
+            "cycle_limit": cycle_limit,
+            "sample_mode": normalized_sample_mode,
             "fidelity": "reduced",
         },
         "summary": {
             "cycle_count": len(cycle_rows),
+            "cycle_with_raw_candidates_count": cycles_with_raw_candidates_count,
             "cycle_with_candidates_count": cycles_with_candidates_count,
             "cycle_with_opportunities_count": cycles_with_opportunities_count,
+            "cycle_with_entry_eligible_opportunities_count": (
+                cycles_with_entry_eligible_opportunities_count
+            ),
             "scan_run_count": 0,
+            "raw_candidate_count": total_raw_candidate_count,
+            "postprocess_candidate_count": total_postprocess_candidate_count,
             "candidate_count": total_candidate_count,
+            "selection_input_candidate_count": total_selection_input_candidate_count,
             "opportunity_count": total_opportunity_count,
+            "entry_eligible_opportunity_count": total_entry_eligible_opportunity_count,
             "selected_cycle_count": selected_cycle_count,
             "exact_match_cycle_count": 0,
             "mismatch_cycle_count": 0,
@@ -683,19 +1241,36 @@ def _build_alpaca_replay_range_payload(
             "exact_match_run_count": exact_match_run_count,
             "mismatch_run_count": mismatch_run_count,
             "unsupported_run_count": unsupported_run_count,
+            "clipped_recorded_cycle_count": clipped_recorded_cycle_count,
+            "sample_source_counts": dict(sorted(sample_source_counts.items())),
             "cycle_status_counts": dict(sorted(cycle_status_counts.items())),
             "run_status_counts": {},
             "run_fidelity_counts": {"reduced": len(cycle_rows)} if cycle_rows else {},
         },
         "cycles": cycle_rows,
         "coverage": {
-            "priority_ladder": [
-                "alpaca_historical_option_bars",
-                "inactive_option_contract_metadata",
-                "local_bsm_greeks",
-            ],
+            "priority_ladder": (
+                [
+                    "alpaca_historical_option_bars",
+                    "automation_schedule_or_recorded_run_timestamps",
+                    "inactive_option_contract_metadata",
+                    "local_bsm_greeks",
+                ]
+                if normalized_sample_mode == "intraday"
+                else [
+                    "alpaca_historical_daily_option_bars",
+                    "daily_market_close_sampling",
+                    "inactive_option_contract_metadata",
+                    "local_bsm_greeks",
+                ]
+            ),
             "alpaca_options_history_supported_from": ALPACA_OPTIONS_HISTORY_START.isoformat(),
-            "quote_reconstruction": "synthetic_from_bar_range",
+            "quote_reconstruction": "synthetic_from_option_bar_range",
+            "option_bar_timeframe": option_bar_timeframe,
+            "recorded_cycle_schedule_clipping": normalized_sample_mode == "intraday",
+            "stock_intraday_context": (
+                "enabled" if include_intraday_stock_bars else "disabled"
+            ),
         },
     }
 
@@ -731,6 +1306,7 @@ def build_replay_range_payload(
     end_date: str,
     limit: int = 500,
     source: str = "stored",
+    sample_mode: str = "intraday",
     storage: Any | None = None,
 ) -> dict[str, Any]:
     normalized_source = str(source or "stored").strip().lower()
@@ -743,9 +1319,12 @@ def build_replay_range_payload(
             end_date=end_date,
             limit=limit,
             storage=storage,
+            sample_mode=sample_mode,
         )
     if normalized_source != "stored":
         raise ValueError(f"Unsupported replay source: {source}")
+    if _normalize_alpaca_sample_mode(sample_mode) != "intraday":
+        raise ValueError("--sample-mode is only supported with --source alpaca")
 
     signal_store = storage.signals
     collector_store = storage.collector

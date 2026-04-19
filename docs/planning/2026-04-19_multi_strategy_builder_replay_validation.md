@@ -40,7 +40,9 @@ Current implementation status as of April 19, 2026:
 - shipped exact replay for stored scan artifacts via `uv run spreads backtest replay`
 - shipped stored-history range replay via `uv run spreads backtest replay-range --source stored`
 - shipped Alpaca-backed reduced-fidelity range replay via `uv run spreads backtest replay-range --source alpaca`
-- current Alpaca mode samples one market-close cycle per trading day, reconstructs quotes synthetically from option bars, and recomputes Greeks locally
+- current Alpaca intraday mode replays recorded automation timestamps when available, falls back to configured schedule timestamps otherwise, reconstructs quotes synthetically from option bars, and recomputes Greeks locally
+- current Alpaca EOD mode replays one market-close cycle per trading day without intraday stock context via `uv run spreads backtest replay-range --source alpaca --sample-mode eod`
+- current replay output includes raw-builder, postprocess, final-candidate, and selection-blocker diagnostics so missing trades can be explained without ad hoc debugging
 
 ## Strategy Applicability
 

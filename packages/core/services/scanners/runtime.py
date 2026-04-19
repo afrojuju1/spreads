@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
@@ -36,6 +37,7 @@ from core.services.scanners.market_data import (
     group_contracts_by_expiration,
 )
 from core.services.scanners.postprocess import (
+    annotate_data_quality,
     attach_calendar_decisions,
     attach_calendar_decisions_from_map,
     attach_data_quality,
@@ -385,6 +387,54 @@ def build_raw_candidates_from_market_slice(
     )
 
 
+def _count_candidate_field_values(
+    candidates: list[SpreadCandidate],
+    *,
+    field: str,
+) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for candidate in candidates:
+        value = getattr(candidate, field, None)
+        normalized = "unknown" if value in (None, "") else str(value)
+        counts[normalized] += 1
+    return dict(sorted(counts.items()))
+
+
+def _count_candidate_reason_values(
+    candidates: list[SpreadCandidate],
+    *,
+    field: str,
+) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for candidate in candidates:
+        values = getattr(candidate, field, ())
+        for value in values if isinstance(values, (tuple, list)) else ():
+            normalized = str(value or "").strip()
+            if normalized:
+                counts[normalized] += 1
+    return dict(sorted(counts.items()))
+
+
+def _calendar_reason_code_counts(
+    *,
+    candidates: list[SpreadCandidate],
+    calendar_decisions_by_expiration: dict[str, Any],
+) -> dict[str, int]:
+    counts_by_expiration = Counter(
+        candidate.expiration_date for candidate in candidates
+    )
+    reason_counts: Counter[str] = Counter()
+    for expiration_date, decision in calendar_decisions_by_expiration.items():
+        candidate_count = int(counts_by_expiration.get(expiration_date) or 0)
+        if candidate_count <= 0:
+            continue
+        for reason in list(getattr(decision, "reasons", ()) or ()):
+            code = str(getattr(reason, "code", "") or "").strip()
+            if code:
+                reason_counts[code] += candidate_count
+    return dict(sorted(reason_counts.items()))
+
+
 def postprocess_market_slice_candidates(
     *,
     market_slice: SymbolMarketSlice,
@@ -438,11 +488,12 @@ def build_candidates_with_details_from_market_slice(
         market_slice=market_slice,
         symbol_args=symbol_args,
     )
+    setup_candidates = attach_underlying_setup(raw_candidates, setup_context)
     calendar_decisions_by_expiration = resolve_calendar_decisions_by_expiration(
         symbol=market_slice.symbol,
         strategy=symbol_args.strategy,
         underlying_type=market_slice.underlying_type,
-        candidates=attach_underlying_setup(raw_candidates, setup_context),
+        candidates=setup_candidates,
         resolver=calendar_resolver,
         calendar_policy=symbol_args.calendar_policy,
         refresh_calendar_events=symbol_args.refresh_calendar_events,
@@ -451,6 +502,16 @@ def build_candidates_with_details_from_market_slice(
             if resolve_scan_reference_datetime(symbol_args) is None
             else resolve_scan_reference_datetime(symbol_args).isoformat()
         ),
+    )
+    calendar_annotated_candidates = attach_calendar_decisions_from_map(
+        candidates=setup_candidates,
+        decisions_by_expiration=calendar_decisions_by_expiration,
+        calendar_policy="warn",
+    )
+    diagnostic_candidates = annotate_data_quality(
+        candidates=calendar_annotated_candidates,
+        underlying_type=market_slice.underlying_type,
+        args=symbol_args,
     )
     all_candidates = postprocess_market_slice_candidates(
         market_slice=market_slice,
@@ -461,6 +522,28 @@ def build_candidates_with_details_from_market_slice(
     )
     return all_candidates, setup_context, {
         "calendar_decisions_by_expiration": calendar_decisions_by_expiration,
+        "raw_candidate_count": len(raw_candidates),
+        "postprocess_candidate_count": len(all_candidates),
+        "setup_status_counts": _count_candidate_field_values(
+            setup_candidates,
+            field="setup_status",
+        ),
+        "calendar_status_counts": _count_candidate_field_values(
+            calendar_annotated_candidates,
+            field="calendar_status",
+        ),
+        "calendar_reason_counts": _calendar_reason_code_counts(
+            candidates=setup_candidates,
+            calendar_decisions_by_expiration=calendar_decisions_by_expiration,
+        ),
+        "data_status_counts": _count_candidate_field_values(
+            diagnostic_candidates,
+            field="data_status",
+        ),
+        "data_reason_counts": _count_candidate_reason_values(
+            diagnostic_candidates,
+            field="data_reasons",
+        ),
     }
 
 

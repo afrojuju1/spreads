@@ -95,9 +95,22 @@ def _replay_range_output_dir(
     start_date: str,
     end_date: str,
     source: str = "stored",
+    sample_mode: str = "intraday",
 ) -> Path:
     normalized_source = str(source or "stored").strip().lower()
     if normalized_source != "stored":
+        normalized_sample_mode = str(sample_mode or "intraday").strip().lower()
+        if normalized_sample_mode != "intraday":
+            return (
+                BACKTEST_OUTPUT_ROOT
+                / "replay"
+                / "ranges"
+                / normalized_source
+                / normalized_sample_mode
+                / bot_id
+                / automation_id
+                / f"{start_date}_{end_date}"
+            )
         return (
             BACKTEST_OUTPUT_ROOT
             / "replay"
@@ -454,10 +467,11 @@ def _render_replay_range_text(payload: dict[str, Any]) -> str:
     summary = dict(payload.get("summary") or {})
     source = str(payload.get("source") or "stored")
     if source == "alpaca":
+        sample_mode = str(target.get("sample_mode") or "intraday")
         lines = [
-            f"Replay Range: {target.get('bot_id')} / {target.get('automation_id')} | {target.get('start_date')} -> {target.get('end_date')} | source alpaca",
-            f"Status {payload.get('status')} | cycles {summary.get('cycle_count')} | candidates {summary.get('candidate_count')} | opportunities {summary.get('opportunity_count')} | selected cycles {summary.get('selected_cycle_count')}",
-            f"Cycles with candidates {summary.get('cycle_with_candidates_count')} | cycles with opportunities {summary.get('cycle_with_opportunities_count')} | unsupported cycles {summary.get('unsupported_cycle_count')}",
+            f"Replay Range: {target.get('bot_id')} / {target.get('automation_id')} | {target.get('start_date')} -> {target.get('end_date')} | source alpaca | mode {sample_mode}",
+            f"Status {payload.get('status')} | cycles {summary.get('cycle_count')} | raw {summary.get('raw_candidate_count')} | candidates {summary.get('candidate_count')} | opportunities {summary.get('opportunity_count')} | entry-eligible {summary.get('entry_eligible_opportunity_count')} | selected cycles {summary.get('selected_cycle_count')}",
+            f"Cycles with candidates {summary.get('cycle_with_candidates_count')} | cycles with opportunities {summary.get('cycle_with_opportunities_count')} | entry-eligible cycles {summary.get('cycle_with_entry_eligible_opportunities_count')} | unsupported cycles {summary.get('unsupported_cycle_count')}",
             "",
             "Cycles:",
         ]
@@ -469,8 +483,9 @@ def _render_replay_range_text(payload: dict[str, Any]) -> str:
             )
             lines.append(
                 "- "
-                f"{cycle.get('session_date')} | status {cycle.get('status')} | candidates {cycle.get('candidate_count')} | "
-                f"opportunities {cycle.get('opportunity_count')} | selected {selected.get('underlying_symbol') or 'n/a'} | "
+                f"{cycle.get('session_date')} {cycle.get('started_at')} | source {cycle.get('sample_source')} | status {cycle.get('status')} | "
+                f"raw {cycle.get('raw_candidate_count')} | candidates {cycle.get('candidate_count')} | opportunities {cycle.get('opportunity_count')} | "
+                f"eligible {cycle.get('entry_eligible_opportunity_count')} | selected {selected.get('underlying_symbol') or 'n/a'} | "
                 f"score {selected.get('execution_score') or selected.get('promotion_score') or 'n/a'}"
             )
         return "\n".join(lines)
@@ -636,6 +651,11 @@ def replay_range_backtest_command(
         "--source",
         help="Replay source. Use stored for exact artifact replay or alpaca for historical Alpaca regeneration.",
     ),
+    sample_mode: str = typer.Option(
+        "intraday",
+        "--sample-mode",
+        help="Alpaca replay sampling mode. intraday uses recorded or scheduled cycle timestamps with intraday bars; eod uses one market-close daily sample without intraday data.",
+    ),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
     export_json: str | None = typer.Option(
@@ -654,6 +674,7 @@ def replay_range_backtest_command(
         end_date=end_date,
         limit=limit,
         source=source,
+        sample_mode=sample_mode,
     )
     output_dir = _replay_range_output_dir(
         bot_id=bot_id,
@@ -661,6 +682,7 @@ def replay_range_backtest_command(
         start_date=start_date,
         end_date=end_date,
         source=source,
+        sample_mode=sample_mode,
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = output_dir / "summary.json"

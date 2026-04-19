@@ -3,6 +3,19 @@ from __future__ import annotations
 from typing import Any
 
 
+def _normalized_selection_states(
+    selection_states: tuple[str, ...] | list[str] | None,
+) -> set[str] | None:
+    if selection_states in (None, ()):
+        return None
+    normalized = {
+        str(value).strip().lower()
+        for value in list(selection_states or [])
+        if str(value).strip()
+    }
+    return normalized or None
+
+
 def score_opportunity(row: dict[str, Any]) -> float:
     for key in ("execution_score", "promotion_score"):
         value = row.get(key)
@@ -21,14 +34,23 @@ def plan_entry_selection(
     controls_reason: str | None,
     bot_metrics: dict[str, Any],
     min_score: float,
+    eligible_selection_states: tuple[str, ...] | list[str] | None = None,
 ) -> dict[str, Any]:
+    eligible_states = _normalized_selection_states(eligible_selection_states)
+    eligible_opportunities = [
+        opportunity
+        for opportunity in opportunities
+        if eligible_states is None
+        or str(opportunity.get("selection_state") or "").strip().lower()
+        in eligible_states
+    ]
     selected: dict[str, Any] | None = None
     if (
         controls_allowed
-        and opportunities
-        and score_opportunity(opportunities[0]) >= min_score
+        and eligible_opportunities
+        and score_opportunity(eligible_opportunities[0]) >= min_score
     ):
-        selected = opportunities[0]
+        selected = eligible_opportunities[0]
 
     decisions: list[dict[str, Any]] = []
     for rank, opportunity in enumerate(opportunities, start=1):
@@ -36,6 +58,16 @@ def plan_entry_selection(
         if not controls_allowed:
             state = "blocked"
             reason_codes = [controls_reason or "bot_entry_blocked"]
+        elif (
+            eligible_states is not None
+            and str(opportunity.get("selection_state") or "").strip().lower()
+            not in eligible_states
+        ):
+            state = "rejected"
+            reason_codes = ["selection_state_not_entry_eligible"]
+        elif selected is None and score_opportunity(opportunity) < min_score:
+            state = "rejected"
+            reason_codes = ["score_below_min_opportunity_score"]
         else:
             state = (
                 "selected"
@@ -69,7 +101,11 @@ def plan_entry_selection(
                 },
             }
         )
-    return {"selected": selected, "decisions": decisions}
+    return {
+        "selected": selected,
+        "decisions": decisions,
+        "eligible_opportunity_count": len(eligible_opportunities),
+    }
 
 
 __all__ = ["plan_entry_selection", "score_opportunity"]
