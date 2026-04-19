@@ -8,6 +8,8 @@ builder_params:
   short_delta_max: 0.22
   width_points: [2, 3, 5]
   symmetric_wings_only: true
+  min_short_vs_expected_move_ratio: -0.30
+  min_breakeven_vs_expected_move_ratio: -0.35
 entry_recipe_refs:
   - neutral_range
 management_recipe_refs:

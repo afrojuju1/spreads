@@ -6,7 +6,8 @@ from typing import Any
 
 from core.integrations.alpaca.client import AlpacaClient
 from core.services.automation_runtime import EntryRuntime, StrategyBuildSettings
-from core.services.replay_filters import build_candidate_filter, candidate_matches_filter
+from core.services.replay_filters import build_candidate_filter
+from core.services.runtime_candidate_filters import match_runtime_candidate
 from core.services.scanners.config import (
     clone_args,
     resolve_profile_value,
@@ -53,6 +54,17 @@ def _apply_build_settings(
     )
     args.min_return_on_risk = resolve_profile_value(
         settings.min_return_on_risk, getattr(args, "min_return_on_risk", None)
+    )
+    args.min_fill_ratio = resolve_profile_value(
+        settings.min_fill_ratio, getattr(args, "min_fill_ratio", None)
+    )
+    args.min_short_vs_expected_move_ratio = resolve_profile_value(
+        settings.min_short_vs_expected_move_ratio,
+        getattr(args, "min_short_vs_expected_move_ratio", None),
+    )
+    args.min_breakeven_vs_expected_move_ratio = resolve_profile_value(
+        settings.min_breakeven_vs_expected_move_ratio,
+        getattr(args, "min_breakeven_vs_expected_move_ratio", None),
     )
     return args
 
@@ -144,10 +156,15 @@ def build_entry_runtime_symbol_candidates_from_market_slice(
     )
     matched_candidates: list[Any] = []
     all_rows: list[dict[str, Any]] = []
+    filter_reason_counts: dict[str, int] = {}
     for candidate in candidates:
         row = _serialize_candidate(candidate)
-        if not candidate_matches_filter(row, candidate_filter):
+        matched, reasons = match_runtime_candidate(row, runtime)
+        if not matched:
+            for reason in reasons:
+                filter_reason_counts[reason] = filter_reason_counts.get(reason, 0) + 1
             continue
+        row["runtime_recipe_refs"] = list(runtime.entry_recipe_refs)
         matched_candidates.append(candidate)
         all_rows.append(row)
 
@@ -180,6 +197,7 @@ def build_entry_runtime_symbol_candidates_from_market_slice(
         "all_rows": all_rows,
         "rows": rows,
         "run_id": run_id,
+        "runtime_filter_reason_counts": dict(sorted(filter_reason_counts.items())),
     }
 
 

@@ -40,6 +40,9 @@ class StrategyBuildSettings:
     min_open_interest: int | None
     max_leg_spread_pct_mid: float | None
     min_return_on_risk: float | None
+    min_fill_ratio: float | None
+    min_short_vs_expected_move_ratio: float | None
+    min_breakeven_vs_expected_move_ratio: float | None
     max_quote_age_seconds: int | None
     builder_params: dict[str, Any]
     liquidity_rules: dict[str, Any]
@@ -140,6 +143,13 @@ def build_strategy_build_settings(runtime: ResolvedAutomation) -> StrategyBuildS
         min_return_on_risk=resolve_strategy_min_return_on_risk(
             strategy_config.scanner_profile,
             risk_defaults=strategy_config.risk_defaults,
+        ),
+        min_fill_ratio=_optional_float(builder_params.get("min_fill_ratio")),
+        min_short_vs_expected_move_ratio=_optional_float(
+            builder_params.get("min_short_vs_expected_move_ratio")
+        ),
+        min_breakeven_vs_expected_move_ratio=_optional_float(
+            builder_params.get("min_breakeven_vs_expected_move_ratio")
         ),
         max_quote_age_seconds=_optional_int(
             liquidity_rules.get("max_quote_age_seconds")

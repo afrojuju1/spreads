@@ -1272,6 +1272,103 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         self.assertEqual(result["runtime_opportunities_upserted"], 1)
         self.assertEqual(signal_store.opportunities[0]["candidate"]["return_on_risk"], 0.15)
 
+    def test_runtime_sync_owner_candidates_still_apply_runtime_filters(self) -> None:
+        signal_store = _AutomationRuntimeSignalStore()
+        runtime = resolve_entry_runtime(
+            bot_id="short_dated_index_credit_bot",
+            automation_id="index_put_credit_entry",
+        )
+        symbol = runtime.symbols[0]
+        low_ror_candidate = {
+            **_candidate_payload(symbol),
+            "strategy": "put_credit",
+            "profile": "weekly",
+            "setup_status": "favorable",
+            "days_to_expiration": 7,
+            "short_delta": 0.22,
+            "width": 2.0,
+            "short_open_interest": 1200,
+            "long_open_interest": 1100,
+            "short_relative_spread": 0.05,
+            "long_relative_spread": 0.04,
+            "return_on_risk": 0.12,
+            "short_symbol": f"{symbol}260424P00500000",
+            "long_symbol": f"{symbol}260424P00498000",
+            "short_strike": 500.0,
+            "long_strike": 498.0,
+        }
+        high_ror_candidate = {
+            **low_ror_candidate,
+            "return_on_risk": 0.15,
+            "short_symbol": f"{symbol}260424P00495000",
+            "long_symbol": f"{symbol}260424P00493000",
+            "short_strike": 495.0,
+            "long_strike": 493.0,
+        }
+        captured_symbol_candidates: list[dict[str, list[dict[str, object]]]] = []
+
+        def _fake_select_live_opportunities(**kwargs: object) -> dict[str, object]:
+            symbol_candidates = {
+                str(candidate_symbol): [dict(row) for row in rows]
+                for candidate_symbol, rows in dict(
+                    kwargs.get("symbol_candidates") or {}
+                ).items()
+            }
+            captured_symbol_candidates.append(symbol_candidates)
+            selected_rows = [
+                {
+                    **dict(row),
+                    "selection_state": "monitor",
+                    "selection_rank": index,
+                    "state_reason": "selected_monitor",
+                    "eligibility": "live",
+                    "candidate": dict(row),
+                }
+                for index, row in enumerate(symbol_candidates.get(symbol, []), start=1)
+            ]
+            return {
+                "symbol_candidates": symbol_candidates,
+                "promotable_candidates": [],
+                "monitor_candidates": [
+                    dict(row.get("candidate") or row) for row in selected_rows
+                ],
+                "opportunities": selected_rows,
+                "selection_memory": {},
+                "events": [],
+            }
+
+        with patch(
+            "core.services.opportunity_generation.select_live_opportunities",
+            side_effect=_fake_select_live_opportunities,
+        ):
+            result = sync_entry_runtime_opportunities(
+                signal_store=signal_store,
+                label="explore_10_put_credit_weekly_auto",
+                session_date="2026-04-17",
+                generated_at="2026-04-17T17:25:24Z",
+                cycle_id="cycle-1",
+                entry_runtimes=[runtime],
+                symbol_candidates={},
+                runtime_candidate_rows_by_owner={
+                    (runtime.bot_id, runtime.automation_id): {
+                        symbol: [low_ror_candidate, high_ror_candidate]
+                    }
+                },
+                persisted_opportunities=[],
+                job_run_id=None,
+                top_promotable=1,
+                top_monitor=2,
+            )
+
+        self.assertEqual(len(captured_symbol_candidates), 1)
+        self.assertEqual(len(captured_symbol_candidates[0][symbol]), 1)
+        self.assertEqual(
+            captured_symbol_candidates[0][symbol][0]["return_on_risk"],
+            0.15,
+        )
+        self.assertEqual(result["runtime_opportunities_upserted"], 1)
+        self.assertEqual(signal_store.opportunities[0]["candidate"]["return_on_risk"], 0.15)
+
     def test_save_cycle_does_not_materialize_legacy_pipeline_rows(self) -> None:
         tracking_session = _TrackingSession()
         repo = _CollectorRepositoryWithoutLegacyPipelineWrites(tracking_session)

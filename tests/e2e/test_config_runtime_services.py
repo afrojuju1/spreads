@@ -49,6 +49,22 @@ class StrategyBuilderServiceTests(unittest.TestCase):
 
         self.assertEqual(args.min_return_on_risk, 0.13)
 
+    def test_build_runtime_scan_args_uses_strategy_data_quality_overrides(self) -> None:
+        runtime = resolve_entry_runtime(
+            bot_id="short_dated_index_iron_condor_bot",
+            automation_id="index_iron_condor_entry",
+        )
+        base_args = parse_scanner_args([])
+
+        args = build_runtime_scan_args(
+            symbol=runtime.symbols[0],
+            base_scanner_args=base_args,
+            runtime=runtime,
+        )
+
+        self.assertEqual(args.min_short_vs_expected_move_ratio, -0.30)
+        self.assertEqual(args.min_breakeven_vs_expected_move_ratio, -0.35)
+
     def test_build_entry_runtime_candidates_filters_to_exact_widths(self) -> None:
         runtime = resolve_entry_runtime(
             bot_id="short_dated_index_credit_bot",
@@ -66,14 +82,40 @@ class StrategyBuilderServiceTests(unittest.TestCase):
                 return_value=fake_market_slice,
             ) as build_slice,
             patch(
-                "core.services.strategy_builders.build_candidates_from_market_slice",
-                return_value=([object(), object()], None),
+                "core.services.strategy_builders.build_candidates_with_details_from_market_slice",
+                return_value=([object(), object()], None, {}),
             ),
             patch(
                 "core.services.strategy_builders._serialize_candidate",
                 side_effect=[
-                    {"underlying_symbol": runtime.symbols[0], "width": 2.0},
-                    {"underlying_symbol": runtime.symbols[0], "width": 99.0},
+                    {
+                        "underlying_symbol": runtime.symbols[0],
+                        "strategy": "put_credit",
+                        "profile": "weekly",
+                        "setup_status": "neutral",
+                        "days_to_expiration": 7,
+                        "short_delta": 0.22,
+                        "width": 2.0,
+                        "short_open_interest": 1200,
+                        "long_open_interest": 1100,
+                        "short_relative_spread": 0.05,
+                        "long_relative_spread": 0.04,
+                        "return_on_risk": 0.15,
+                    },
+                    {
+                        "underlying_symbol": runtime.symbols[0],
+                        "strategy": "put_credit",
+                        "profile": "weekly",
+                        "setup_status": "blocked",
+                        "days_to_expiration": 7,
+                        "short_delta": 0.22,
+                        "width": 2.0,
+                        "short_open_interest": 1200,
+                        "long_open_interest": 1100,
+                        "short_relative_spread": 0.05,
+                        "long_relative_spread": 0.04,
+                        "return_on_risk": 0.15,
+                    },
                 ],
             ),
         ):
@@ -89,7 +131,7 @@ class StrategyBuilderServiceTests(unittest.TestCase):
         owner_key = (runtime.bot_id, runtime.automation_id)
         self.assertEqual(build_slice.call_count, 1)
         self.assertEqual(len(rows[owner_key][runtime.symbols[0]]), 1)
-        self.assertEqual(rows[owner_key][runtime.symbols[0]][0]["width"], 2.0)
+        self.assertEqual(rows[owner_key][runtime.symbols[0]][0]["setup_status"], "neutral")
 
     def test_build_entry_runtime_candidates_persists_runtime_runs_with_run_ids(
         self,
@@ -104,18 +146,10 @@ class StrategyBuilderServiceTests(unittest.TestCase):
         )
         base_args = parse_scanner_args([])
 
-        class _HistoryStore:
-            def __init__(self) -> None:
-                self.saved_runs: list[dict[str, object]] = []
-
-            def save_run(self, **kwargs: object) -> None:
-                self.saved_runs.append(dict(kwargs))
-
         class _MarketSlice:
             symbol = runtime.symbols[0]
             spot_price = 500.0
 
-        history_store = _HistoryStore()
         candidate = object()
         with (
             patch(
@@ -123,17 +157,30 @@ class StrategyBuilderServiceTests(unittest.TestCase):
                 return_value=_MarketSlice(),
             ),
             patch(
-                "core.services.strategy_builders.build_candidates_from_market_slice",
-                return_value=([candidate], None),
+                "core.services.strategy_builders.build_candidates_with_details_from_market_slice",
+                return_value=([candidate], None, {}),
             ),
             patch(
                 "core.services.strategy_builders._serialize_candidate",
                 return_value={
                     "underlying_symbol": runtime.symbols[0],
                     "strategy": "put_credit",
+                    "profile": "weekly",
+                    "setup_status": "neutral",
+                    "days_to_expiration": 7,
+                    "short_delta": 0.22,
                     "width": 2.0,
+                    "short_open_interest": 1200,
+                    "long_open_interest": 1100,
+                    "short_relative_spread": 0.05,
+                    "long_relative_spread": 0.04,
+                    "return_on_risk": 0.15,
                 },
             ),
+            patch(
+                "core.services.strategy_builders.persist_scan_run",
+                return_value="runtime-run-1",
+            ) as persist_run,
         ):
             rows = build_entry_runtime_candidates(
                 entry_runtimes=[runtime],
@@ -142,22 +189,22 @@ class StrategyBuilderServiceTests(unittest.TestCase):
                 calendar_resolver=object(),
                 greeks_provider=object(),
                 per_runtime_limit=5,
-                history_store=history_store,
+                history_store=object(),
                 session_label="explore_10_put_credit_weekly_auto",
             )
 
         owner_key = (runtime.bot_id, runtime.automation_id)
-        self.assertEqual(len(history_store.saved_runs), 1)
+        self.assertEqual(persist_run.call_count, 1)
         self.assertEqual(
-            history_store.saved_runs[0]["session_label"],
+            persist_run.call_args.kwargs["session_label"],
             "explore_10_put_credit_weekly_auto",
         )
         self.assertEqual(
             rows[owner_key][runtime.symbols[0]][0]["run_id"],
-            history_store.saved_runs[0]["run_id"],
+            "runtime-run-1",
         )
         self.assertEqual(
-            history_store.saved_runs[0]["filters"]["min_return_on_risk"],
+            persist_run.call_args.kwargs["symbol_args"].min_return_on_risk,
             0.13,
         )
 

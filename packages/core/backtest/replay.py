@@ -587,6 +587,7 @@ def _build_cycle_diagnostics(
     builder_calendar_reason_counts: Counter[str] = Counter()
     builder_data_status_counts: Counter[str] = Counter()
     builder_data_reason_counts: Counter[str] = Counter()
+    builder_runtime_filter_reason_counts: Counter[str] = Counter()
     symbol_raw_candidate_counts: dict[str, int] = {}
     symbol_postprocess_candidate_counts: dict[str, int] = {}
     symbol_candidate_counts: dict[str, int] = {}
@@ -642,6 +643,10 @@ def _build_cycle_diagnostics(
             builder_data_reason_counts,
             replay_details.get("data_reason_counts"),
         )
+        _merge_count_map(
+            builder_runtime_filter_reason_counts,
+            bundle.get("runtime_filter_reason_counts"),
+        )
 
     scored_symbol_candidates = dict(selection.get("symbol_candidates") or {})
     scored_candidates = [
@@ -672,6 +677,9 @@ def _build_cycle_diagnostics(
         "calendar_reason_counts": dict(sorted(builder_calendar_reason_counts.items())),
         "data_status_counts": dict(sorted(builder_data_status_counts.items())),
         "data_reason_counts": dict(sorted(builder_data_reason_counts.items())),
+        "runtime_filter_reason_counts": dict(
+            sorted(builder_runtime_filter_reason_counts.items())
+        ),
         "selection_state_counts": _count_row_field(
             opportunities,
             field="selection_state",

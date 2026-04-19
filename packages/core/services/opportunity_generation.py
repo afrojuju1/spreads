@@ -2,16 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.services.entry_recipes import evaluate_entry_recipes
 from core.services.live_selection import select_live_opportunities
 from core.services.option_structures import candidate_legs, legs_identity_key
+from core.services.runtime_candidate_filters import filter_runtime_symbol_candidates
 from core.services.runtime_identity import build_pipeline_id
 from core.services.runtime_policy import (
     build_runtime_policy_ref,
     resolve_runtime_policy_fields,
 )
 from core.services.automation_runtime import EntryRuntime
-from core.services.strategy_registry import resolve_strategy_definition
 from core.services.strategy_builders import runtime_owner_key
 
 
@@ -44,11 +43,6 @@ def _coerce_float(value: Any) -> float | None:
         return None
 
 
-def _coerce_int(value: Any) -> int | None:
-    numeric = _coerce_float(value)
-    return None if numeric is None else int(numeric)
-
-
 def _candidate_identity(candidate: dict[str, Any]) -> str:
     return legs_identity_key(
         strategy=candidate.get("strategy"),
@@ -78,95 +72,6 @@ def _opportunity_blockers(
             if blocker not in blockers:
                 blockers.append(blocker)
     return blockers
-
-
-def _candidate_matches_runtime(
-    candidate: dict[str, Any],
-    runtime: EntryRuntime,
-) -> tuple[bool, list[str]]:
-    reasons: list[str] = []
-    strategy = resolve_strategy_definition(runtime.strategy_id)
-    if not strategy.matches_candidate(candidate):
-        reasons.append("strategy_family_mismatch")
-    underlying_symbol = str(candidate.get("underlying_symbol") or "").upper()
-    if runtime.symbols and underlying_symbol not in set(runtime.symbols):
-        reasons.append("symbol_out_of_scope")
-    days_to_expiration = _coerce_int(candidate.get("days_to_expiration"))
-    if (
-        runtime.build_settings.dte_min is not None
-        and days_to_expiration is not None
-        and days_to_expiration < runtime.build_settings.dte_min
-    ):
-        reasons.append("dte_below_min")
-    if (
-        runtime.build_settings.dte_max is not None
-        and days_to_expiration is not None
-        and days_to_expiration > runtime.build_settings.dte_max
-    ):
-        reasons.append("dte_above_max")
-    short_delta = _coerce_float(candidate.get("short_delta"))
-    if short_delta is not None:
-        short_delta = abs(short_delta)
-        if (
-            runtime.build_settings.short_delta_min is not None
-            and short_delta < runtime.build_settings.short_delta_min
-        ):
-            reasons.append("short_delta_below_min")
-        if (
-            runtime.build_settings.short_delta_max is not None
-            and short_delta > runtime.build_settings.short_delta_max
-        ):
-            reasons.append("short_delta_above_max")
-    width = _coerce_float(candidate.get("width"))
-    if width is not None and runtime.build_settings.width_points:
-        allowed_widths = {
-            round(value, 4) for value in runtime.build_settings.width_points
-        }
-        if round(width, 4) not in allowed_widths:
-            reasons.append("width_not_allowed")
-    open_interest_floor = runtime.build_settings.min_open_interest
-    if open_interest_floor is not None:
-        short_oi = _coerce_int(candidate.get("short_open_interest")) or 0
-        long_oi = _coerce_int(candidate.get("long_open_interest")) or 0
-        if min(short_oi, long_oi) < open_interest_floor:
-            reasons.append("open_interest_below_floor")
-    spread_ceiling = runtime.build_settings.max_leg_spread_pct_mid
-    if spread_ceiling is not None:
-        short_spread = _coerce_float(candidate.get("short_relative_spread")) or 0.0
-        long_spread = _coerce_float(candidate.get("long_relative_spread")) or 0.0
-        if max(short_spread, long_spread) > spread_ceiling:
-            reasons.append("relative_spread_above_ceiling")
-    minimum_return_on_risk = runtime.build_settings.min_return_on_risk
-    if minimum_return_on_risk is not None:
-        return_on_risk = _coerce_float(candidate.get("return_on_risk"))
-        if return_on_risk is None or return_on_risk < minimum_return_on_risk:
-            reasons.append("return_on_risk_below_floor")
-    recipe_result = evaluate_entry_recipes(candidate, runtime.entry_recipe_refs)
-    if not recipe_result.passed:
-        reasons.extend(recipe_result.reason_codes)
-    return not reasons, reasons
-
-
-def _filtered_symbol_candidates(
-    *,
-    symbol_candidates: dict[str, list[dict[str, Any]]],
-    runtime: EntryRuntime,
-) -> dict[str, list[dict[str, Any]]]:
-    filtered: dict[str, list[dict[str, Any]]] = {}
-    for symbol, rows in symbol_candidates.items():
-        candidates: list[dict[str, Any]] = []
-        for row in rows:
-            candidate = dict(row)
-            matched, reasons = _candidate_matches_runtime(candidate, runtime)
-            if not matched:
-                continue
-            candidate["runtime_recipe_refs"] = list(runtime.entry_recipe_refs)
-            if reasons:
-                candidate["runtime_filter_reasons"] = list(reasons)
-            candidates.append(candidate)
-        if candidates:
-            filtered[str(symbol)] = candidates
-    return filtered
 
 
 def _candidate_economics(candidate: dict[str, Any]) -> dict[str, Any]:
@@ -445,14 +350,20 @@ def sync_entry_runtime_opportunities(
             owner_candidates = runtime_candidate_rows_by_owner.get(
                 runtime_owner_key(runtime)
             )
-        filtered_candidates = (
+        source_candidates = (
             {
                 str(symbol): [dict(candidate) for candidate in rows]
                 for symbol, rows in owner_candidates.items()
             }
             if owner_candidates
-            else _filtered_symbol_candidates(
-                symbol_candidates=symbol_candidates,
+            else {
+                str(symbol): [dict(candidate) for candidate in rows]
+                for symbol, rows in symbol_candidates.items()
+            }
+        )
+        filtered_candidates, _runtime_filter_reason_counts = (
+            filter_runtime_symbol_candidates(
+                symbol_candidates=source_candidates,
                 runtime=runtime,
             )
         )

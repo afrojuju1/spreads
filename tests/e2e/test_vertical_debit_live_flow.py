@@ -152,6 +152,7 @@ class VerticalDebitLiveFlowE2ETests(unittest.TestCase):
         scorecard = build_candidate_opportunity_score(candidate_payload)
         self.assertEqual(scorecard["strategy_family"], "call_debit_spread")
         self.assertEqual(scorecard["earnings_phase"], "pre_event_runup")
+        self.assertEqual(scorecard["promotion_floor"], 72.0)
         self.assertTrue(scorecard["signal_gate"]["active"])
         self.assertTrue(scorecard["signal_gate"]["eligible"])
 

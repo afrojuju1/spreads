@@ -124,6 +124,190 @@ class _InMemoryExecutionStore:
 
 
 class IronCondorLiveFlowE2ETests(unittest.TestCase):
+    def test_iron_condor_tactical_scoring_rewards_balanced_neutral_setups(self) -> None:
+        expiration = "2026-04-24"
+        candidates = build_iron_condors(
+            symbol="SPY",
+            spot_price=510.0,
+            call_contracts_by_expiration={
+                expiration: [
+                    OptionContract(
+                        symbol="SPY260424C517",
+                        expiration_date=expiration,
+                        strike_price=517.0,
+                        open_interest=2400,
+                        close_price=None,
+                    ),
+                    OptionContract(
+                        symbol="SPY260424C522",
+                        expiration_date=expiration,
+                        strike_price=522.0,
+                        open_interest=1800,
+                        close_price=None,
+                    ),
+                ]
+            },
+            put_contracts_by_expiration={
+                expiration: [
+                    OptionContract(
+                        symbol="SPY260424P498",
+                        expiration_date=expiration,
+                        strike_price=498.0,
+                        open_interest=1850,
+                        close_price=None,
+                    ),
+                    OptionContract(
+                        symbol="SPY260424P503",
+                        expiration_date=expiration,
+                        strike_price=503.0,
+                        open_interest=2500,
+                        close_price=None,
+                    ),
+                ]
+            },
+            call_snapshots_by_expiration={
+                expiration: {
+                    "SPY260424C517": OptionSnapshot(
+                        symbol="SPY260424C517",
+                        bid=0.95,
+                        ask=1.05,
+                        bid_size=60,
+                        ask_size=55,
+                        midpoint=1.00,
+                        delta=0.19,
+                        gamma=None,
+                        theta=None,
+                        vega=None,
+                        implied_volatility=0.34,
+                        last_trade_price=None,
+                        daily_volume=1400,
+                        greeks_source="alpaca",
+                    ),
+                    "SPY260424C522": OptionSnapshot(
+                        symbol="SPY260424C522",
+                        bid=0.35,
+                        ask=0.45,
+                        bid_size=50,
+                        ask_size=52,
+                        midpoint=0.40,
+                        delta=0.08,
+                        gamma=None,
+                        theta=None,
+                        vega=None,
+                        implied_volatility=0.31,
+                        last_trade_price=None,
+                        daily_volume=900,
+                        greeks_source="alpaca",
+                    ),
+                }
+            },
+            put_snapshots_by_expiration={
+                expiration: {
+                    "SPY260424P498": OptionSnapshot(
+                        symbol="SPY260424P498",
+                        bid=0.35,
+                        ask=0.45,
+                        bid_size=52,
+                        ask_size=54,
+                        midpoint=0.40,
+                        delta=-0.08,
+                        gamma=None,
+                        theta=None,
+                        vega=None,
+                        implied_volatility=0.30,
+                        last_trade_price=None,
+                        daily_volume=950,
+                        greeks_source="alpaca",
+                    ),
+                    "SPY260424P503": OptionSnapshot(
+                        symbol="SPY260424P503",
+                        bid=0.95,
+                        ask=1.05,
+                        bid_size=62,
+                        ask_size=58,
+                        midpoint=1.00,
+                        delta=-0.18,
+                        gamma=None,
+                        theta=None,
+                        vega=None,
+                        implied_volatility=0.35,
+                        last_trade_price=None,
+                        daily_volume=1500,
+                        greeks_source="alpaca",
+                    ),
+                }
+            },
+            expected_moves_by_expiration={
+                expiration: ExpectedMoveEstimate(
+                    expiration_date=expiration,
+                    amount=6.0,
+                    percent_of_spot=6.0 / 510.0,
+                    reference_strike=510.0,
+                )
+            },
+            args=_args(),
+        )
+        self.assertEqual(len(candidates), 1)
+
+        base_payload = asdict(candidates[0])
+        base_payload.update(
+            {
+                "quality_score": 65.0,
+                "setup_score": 57.0,
+                "setup_intraday_score": 61.0,
+                "setup_status": "neutral",
+                "data_status": "clean",
+                "calendar_status": "clean",
+                "earnings_phase": "clean",
+                "setup_spot_vs_vwap_pct": 0.0004,
+                "setup_intraday_return_pct": 0.0007,
+                "setup_distance_to_session_extreme_pct": 0.011,
+                "setup_opening_range_break_pct": 0.0002,
+                "setup_latest_close": 510.2,
+                "setup_opening_range_high": 510.9,
+                "setup_opening_range_low": 509.8,
+                "dominant_flow": "mixed",
+            }
+        )
+
+        strong_payload = dict(base_payload)
+        strong_payload.update(
+            {
+                "neutral_regime_signal": 0.74,
+                "residual_iv_richness": 0.68,
+            }
+        )
+        strong_scorecard = build_candidate_opportunity_score(strong_payload)
+
+        weak_payload = dict(base_payload)
+        weak_payload.update(
+            {
+                "side_balance_score": 0.52,
+                "neutral_regime_signal": 0.58,
+                "residual_iv_richness": 0.57,
+            }
+        )
+        weak_scorecard = build_candidate_opportunity_score(weak_payload)
+
+        self.assertEqual(strong_scorecard["promotion_floor"], 71.5)
+        self.assertEqual(strong_scorecard["state"], "promotable")
+        self.assertGreaterEqual(strong_scorecard["promotion_score"], 71.5)
+        self.assertIn(
+            "tactical_condor_balance_delta",
+            strong_scorecard["profile_score_components"],
+        )
+        self.assertIn(
+            "tactical_condor_regime_delta",
+            strong_scorecard["profile_score_components"],
+        )
+        self.assertEqual(weak_scorecard["promotion_floor"], 71.5)
+        self.assertEqual(weak_scorecard["state"], "monitor")
+        self.assertLess(weak_scorecard["promotion_score"], 71.5)
+        self.assertNotIn(
+            "tactical_condor_balance_delta",
+            weak_scorecard["profile_score_components"],
+        )
+
     def test_iron_condor_scanner_scoring_execution_and_position_sync(self) -> None:
         expiration = "2026-04-24"
         candidates = build_iron_condors(

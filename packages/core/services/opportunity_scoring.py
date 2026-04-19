@@ -569,6 +569,17 @@ def style_score_thresholds(style_profile: str) -> dict[str, float]:
     }
 
 
+def family_score_thresholds(
+    *,
+    style_profile: str,
+    family: str,
+) -> dict[str, float]:
+    thresholds = dict(style_score_thresholds(style_profile))
+    if style_profile == "tactical" and family == "iron_condor":
+        thresholds["promotion_floor"] = 71.5
+    return thresholds
+
+
 def _parse_datetime(value: Any) -> datetime | None:
     text = _as_text(value)
     if text is None:
@@ -620,6 +631,7 @@ def profile_specific_score_components(
     candidate: Mapping[str, Any],
     style_profile: str,
     cycle: Mapping[str, Any] | None,
+    signal_bundle: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, float], dict[str, Any]]:
     components: dict[str, float] = {}
     evidence: dict[str, Any] = {}
@@ -640,7 +652,10 @@ def profile_specific_score_components(
         if setup_status == "favorable":
             components["tactical_setup_delta"] = 2.5
         elif setup_status == "neutral":
-            components["tactical_setup_penalty"] = 3.0
+            if family == "iron_condor":
+                evidence["neutral_setup_supported"] = True
+            else:
+                components["tactical_setup_penalty"] = 3.0
         elif setup_status not in {"", "unknown"}:
             penalty = 8.0
             if family == "call_credit_spread" and product_class_value in {
@@ -675,6 +690,61 @@ def profile_specific_score_components(
             if buffer_delta > 0.0:
                 components["tactical_buffer_delta"] = round(buffer_delta, 3)
             evidence["buffer_ratio"] = round(tactical_buffer_ratio, 4)
+
+        if family == "iron_condor":
+            side_balance_score = _as_float(candidate.get("side_balance_score"))
+            if side_balance_score is not None:
+                balance_delta = _clamp(
+                    (side_balance_score - 0.55) * 9.0,
+                    0.0,
+                    3.5,
+                )
+                if balance_delta > 0.0:
+                    components["tactical_condor_balance_delta"] = round(
+                        balance_delta,
+                        3,
+                    )
+                evidence["side_balance_score"] = round(side_balance_score, 4)
+
+            bundle = signal_bundle if isinstance(signal_bundle, Mapping) else {}
+            neutral_regime_signal = _as_float(
+                bundle.get("neutral_regime_signal")
+                if bundle
+                else candidate.get("neutral_regime_signal")
+            )
+            if neutral_regime_signal is not None:
+                regime_delta = _clamp(
+                    (neutral_regime_signal - 0.60) * 12.0,
+                    0.0,
+                    2.0,
+                )
+                if regime_delta > 0.0:
+                    components["tactical_condor_regime_delta"] = round(
+                        regime_delta,
+                        3,
+                    )
+                evidence["neutral_regime_signal"] = round(
+                    neutral_regime_signal,
+                    4,
+                )
+
+            residual_iv_richness = _as_float(
+                bundle.get("residual_iv_richness")
+                if bundle
+                else candidate.get("residual_iv_richness")
+            )
+            if residual_iv_richness is not None:
+                iv_delta = _clamp(
+                    (residual_iv_richness - 0.60) * 10.0,
+                    0.0,
+                    1.5,
+                )
+                if iv_delta > 0.0:
+                    components["tactical_condor_iv_delta"] = round(iv_delta, 3)
+                evidence["residual_iv_richness"] = round(
+                    residual_iv_richness,
+                    4,
+                )
 
         if str(candidate.get("calendar_status") or "").strip().lower() == "penalized":
             days_to_event = int(
@@ -933,6 +1003,7 @@ def build_candidate_opportunity_score(
         candidate=candidate,
         style_profile=resolved_style,
         cycle=cycle,
+        signal_bundle=signal_gate["bundle"],
     )
     component_boost = sum(
         value
@@ -963,7 +1034,10 @@ def build_candidate_opportunity_score(
     )
     promotion_score = round(_clamp(raw_promotion_score, 0.0, 100.0), 1)
     execution_score = promotion_score
-    thresholds = style_score_thresholds(resolved_style)
+    thresholds = family_score_thresholds(
+        style_profile=resolved_style,
+        family=family,
+    )
     promotion_floor = thresholds["promotion_floor"]
     monitor_floor = thresholds["monitor_floor"]
 
