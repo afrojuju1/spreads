@@ -493,23 +493,24 @@ def _position_common_payload(
         if isinstance(attempt.get("candidate"), Mapping)
         else {}
     )
+    existing_payload = existing if isinstance(existing, Mapping) else {}
     root_symbol = str(
-        attempt.get("underlying_symbol") or existing.get("root_symbol") or ""
+        attempt.get("underlying_symbol") or existing_payload.get("root_symbol") or ""
     )
     pipeline_id = (
         _as_text(attempt.get("pipeline_id"))
-        or _as_text(existing.get("pipeline_id"))
+        or _as_text(existing_payload.get("pipeline_id"))
         or build_pipeline_id(str(attempt.get("label") or ""))
     )
     market_date = (
         _as_text(attempt.get("market_date"))
         or _as_text(attempt.get("session_date"))
-        or _as_text(existing.get("market_date_opened"))
+        or _as_text(existing_payload.get("market_date_opened"))
     )
     policy_fields = resolve_pipeline_policy_fields(
         profile=candidate.get("profile")
         or _as_text(attempt.get("style_profile"))
-        or _as_text(existing.get("style_profile")),
+        or _as_text(existing_payload.get("style_profile")),
         root_symbol=root_symbol,
     )
     width = _resolve_width(attempt) or _position_width(existing or {})
