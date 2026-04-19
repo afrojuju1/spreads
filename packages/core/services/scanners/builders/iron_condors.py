@@ -12,7 +12,7 @@ from core.domain.models import (
 
 from .orders import make_iron_condor_order_payload
 from .shared import (
-    days_from_today,
+    days_from_reference,
     effective_min_credit,
     relative_spread,
     relative_spread_exceeds,
@@ -37,7 +37,7 @@ def build_iron_condors(
     delta_window = max(args.short_delta_max - args.short_delta_min, 0.08)
 
     for expiration_date in common_expirations:
-        days_to_expiration = days_from_today(expiration_date)
+        days_to_expiration = days_from_reference(expiration_date, args)
         if days_to_expiration <= 0:
             continue
 

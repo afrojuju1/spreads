@@ -7,6 +7,7 @@ Use these entrypoints:
 - [System Architecture](../current_system_state.md) as the canonical source of truth for the current overall runtime architecture and service boundaries
 - [Current-System Options Automation Implementation Approach](./2026-04-15_current_system_options_automation_implementation_approach.md) for the migration path that uses the existing backend instead of starting clean-sheet
 - [Backtest System Recommendation](./2026-04-16_backtest_system_recommendation.md) for the design background behind the cutover to one canonical config-driven backtest engine
+- [Multi-Strategy Builder Replay Validation](./2026-04-19_multi_strategy_builder_replay_validation.md) for the shared framework to confirm builder behavior across strategy families against scan-time artifacts and Alpaca history without adding a parallel replay subsystem
 - [Config-Driven Runtime Prerequisite Plan](./2026-04-16_config_driven_runtime_prerequisite_plan.md) for the implementation architecture needed before the improved backtest is meaningful
 - [Non-Web Large File Cleanup Audit](./2026-04-16_non_web_large_file_cleanup_audit.md) for the backend cleanup audit and cutover notes around the large-file and thin-wrapper split work
 - [Workspace Packages Restructure Plan](./2026-04-16_workspace_packages_restructure_plan.md) for the completed workspace move into `packages/core`, `packages/api`, `packages/web`, and `packages/config`

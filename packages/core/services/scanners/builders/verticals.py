@@ -14,7 +14,7 @@ from core.services.scanners.config import strategy_option_type
 
 from .orders import make_order_payload
 from .shared import (
-    days_from_today,
+    days_from_reference,
     effective_min_credit,
     relative_spread,
     relative_spread_exceeds,
@@ -39,7 +39,7 @@ def build_vertical_spreads(
         snapshot_map = snapshots_by_expiration.get(expiration_date, {})
         sorted_contracts = sorted(contracts, key=lambda contract: contract.strike_price)
         expected_move = expected_moves_by_expiration.get(expiration_date)
-        days_to_expiration = days_from_today(expiration_date)
+        days_to_expiration = days_from_reference(expiration_date, args)
 
         short_contracts = (
             sorted_contracts

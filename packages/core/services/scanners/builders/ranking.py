@@ -8,8 +8,8 @@ from core.domain.models import SpreadCandidate
 from core.domain.profiles import (
     LONG_VOL_STRATEGIES,
     zero_dte_delta_target,
-    zero_dte_session_bucket,
 )
+from core.services.scanners.config import resolve_scan_session_bucket
 from core.services.option_structures import net_premium_kind
 
 from .shared import log_scaled_score
@@ -18,7 +18,9 @@ from .shared import log_scaled_score
 def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> float:
     premium_kind = net_premium_kind(candidate.strategy)
     long_vol = candidate.strategy in LONG_VOL_STRATEGIES
-    session_bucket = zero_dte_session_bucket() if args.profile == "0dte" else None
+    session_bucket = (
+        resolve_scan_session_bucket(args) if args.profile == "0dte" else None
+    )
     if args.profile == "0dte":
         delta_target = zero_dte_delta_target(session_bucket or "off_hours")
     elif candidate.strategy == "long_straddle":

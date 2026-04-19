@@ -10,11 +10,11 @@ from core.domain.profiles import (
     LONG_VOL_STRATEGIES,
     format_session_bucket,
     zero_dte_delta_target,
-    zero_dte_session_bucket,
 )
 from core.integrations.calendar_events.models import CalendarPolicyDecision
 from core.integrations.calendar_events.policy import apply_strategy_calendar_policy
 from core.services.scanners.market_data import option_expiry_close
+from core.services.scanners.config import resolve_scan_session_bucket
 from core.services.option_structures import candidate_legs, legs_identity_key
 
 
@@ -134,7 +134,7 @@ def build_selection_notes(
     long_vol = candidate.strategy in LONG_VOL_STRATEGIES
     delta_target = args.short_delta_target
     if args.profile == "0dte":
-        session_bucket = zero_dte_session_bucket()
+        session_bucket = resolve_scan_session_bucket(args) or "off_hours"
         notes.append(f"session-{format_session_bucket(session_bucket)}")
         delta_target = zero_dte_delta_target(session_bucket)
     if candidate.strategy == "long_straddle":
@@ -220,7 +220,7 @@ def build_calendar_reason_messages(decision: CalendarPolicyDecision) -> tuple[st
     return tuple(reason.message for reason in decision.reasons)
 
 
-def attach_calendar_decisions(
+def resolve_calendar_decisions_by_expiration(
     *,
     symbol: str,
     strategy: str,
@@ -229,11 +229,12 @@ def attach_calendar_decisions(
     resolver: Any,
     calendar_policy: str,
     refresh_calendar_events: bool,
-) -> list[SpreadCandidate]:
+    window_start: str | None = None,
+) -> dict[str, CalendarPolicyDecision]:
     if calendar_policy == "off" or not candidates:
-        return candidates
+        return {}
 
-    window_start = datetime.now(UTC).isoformat()
+    resolved_window_start = window_start or datetime.now(UTC).isoformat()
     decisions_by_expiration: dict[str, CalendarPolicyDecision] = {}
     for expiration_date in sorted(
         {candidate.expiration_date for candidate in candidates}, reverse=True
@@ -241,7 +242,7 @@ def attach_calendar_decisions(
         context = resolver.resolve_calendar_context(
             symbol=symbol,
             strategy=strategy,
-            window_start=window_start,
+            window_start=resolved_window_start,
             window_end=option_expiry_close(expiration_date).isoformat(),
             underlying_type=underlying_type,
             refresh=refresh_calendar_events,
@@ -252,10 +253,24 @@ def attach_calendar_decisions(
             underlying_type=underlying_type,
             mode=calendar_policy,
         )
+    return decisions_by_expiration
+
+
+def attach_calendar_decisions_from_map(
+    *,
+    candidates: list[SpreadCandidate],
+    decisions_by_expiration: dict[str, CalendarPolicyDecision],
+    calendar_policy: str,
+) -> list[SpreadCandidate]:
+    if calendar_policy == "off" or not candidates:
+        return candidates
 
     filtered_candidates: list[SpreadCandidate] = []
     for candidate in candidates:
-        decision = decisions_by_expiration[candidate.expiration_date]
+        decision = decisions_by_expiration.get(candidate.expiration_date)
+        if decision is None:
+            filtered_candidates.append(candidate)
+            continue
         if calendar_policy == "strict" and decision.status == "blocked":
             continue
         filtered_candidates.append(
@@ -284,9 +299,40 @@ def attach_calendar_decisions(
     return filtered_candidates
 
 
+def attach_calendar_decisions(
+    *,
+    symbol: str,
+    strategy: str,
+    underlying_type: str,
+    candidates: list[SpreadCandidate],
+    resolver: Any,
+    calendar_policy: str,
+    refresh_calendar_events: bool,
+) -> list[SpreadCandidate]:
+    if calendar_policy == "off" or not candidates:
+        return candidates
+
+    decisions_by_expiration = resolve_calendar_decisions_by_expiration(
+        symbol=symbol,
+        strategy=strategy,
+        underlying_type=underlying_type,
+        candidates=candidates,
+        resolver=resolver,
+        calendar_policy=calendar_policy,
+        refresh_calendar_events=refresh_calendar_events,
+    )
+    return attach_calendar_decisions_from_map(
+        candidates=candidates,
+        decisions_by_expiration=decisions_by_expiration,
+        calendar_policy=calendar_policy,
+    )
+
+
 __all__ = [
     "attach_calendar_decisions",
+    "attach_calendar_decisions_from_map",
     "attach_data_quality",
     "attach_selection_notes",
+    "resolve_calendar_decisions_by_expiration",
     "deduplicate_candidates",
 ]

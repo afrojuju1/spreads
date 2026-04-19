@@ -22,6 +22,8 @@ from core.services.scanners.config import (
     build_filter_payload,
     clone_args,
     concrete_strategies,
+    resolve_scan_reference_date,
+    resolve_scan_reference_datetime,
     resolve_symbol_scan_args,
     strategy_option_type,
 )
@@ -35,10 +37,13 @@ from core.services.scanners.market_data import (
 )
 from core.services.scanners.postprocess import (
     attach_calendar_decisions,
+    attach_calendar_decisions_from_map,
     attach_data_quality,
     attach_selection_notes,
     deduplicate_candidates,
+    resolve_calendar_decisions_by_expiration,
 )
+from core.services.scanners.replay_artifacts import write_scan_replay_artifact
 from core.services.scanners.setup import (
     analyze_underlying_setup,
     attach_underlying_setup,
@@ -69,6 +74,8 @@ def persist_scan_run(
     market_slice: SymbolMarketSlice,
     setup_context: UnderlyingSetupContext | None,
     candidates: list[SpreadCandidate],
+    candidate_filter: dict[str, Any] | None = None,
+    calendar_decisions_by_expiration: dict[str, Any] | None = None,
     session_label: str | None = None,
 ) -> str:
     run_id = build_scan_run_id(
@@ -79,6 +86,15 @@ def persist_scan_run(
     generated_at = (
         datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
     )
+    output_path = write_scan_replay_artifact(
+        run_id=run_id,
+        generated_at=generated_at,
+        symbol_args=symbol_args,
+        market_slice=market_slice,
+        setup_context=setup_context,
+        candidate_filter=candidate_filter,
+        calendar_decisions_by_expiration=calendar_decisions_by_expiration,
+    )
     history_store.save_run(
         run_id=run_id,
         generated_at=generated_at,
@@ -88,7 +104,7 @@ def persist_scan_run(
         or getattr(symbol_args, "session_label", None),
         profile=symbol_args.profile,
         spot_price=market_slice.spot_price,
-        output_path="",
+        output_path=output_path,
         filters=build_filter_payload(symbol_args),
         setup_status=None if setup_context is None else setup_context.status,
         setup_score=None if setup_context is None else setup_context.score,
@@ -96,6 +112,62 @@ def persist_scan_run(
         candidates=candidates,
     )
     return run_id
+
+
+def build_market_slice_from_loaded_data(
+    *,
+    symbol: str,
+    underlying_type: str,
+    spot_price: float,
+    daily_bars: list[DailyBar],
+    intraday_bars: list[IntradayBar],
+    call_contracts_by_expiration: dict[str, list[Any]],
+    put_contracts_by_expiration: dict[str, list[Any]],
+    call_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
+    put_snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
+    greeks_provider: Any,
+    greeks_as_of: datetime,
+    greeks_source_mode: str,
+) -> SymbolMarketSlice:
+    resolved_call_snapshots = enrich_missing_greeks(
+        symbol=symbol,
+        option_type="call",
+        spot_price=spot_price,
+        contracts_by_expiration=call_contracts_by_expiration,
+        snapshots_by_expiration=call_snapshots_by_expiration,
+        greeks_provider=greeks_provider,
+        as_of=greeks_as_of,
+        source_mode=greeks_source_mode,
+    )
+    resolved_put_snapshots = enrich_missing_greeks(
+        symbol=symbol,
+        option_type="put",
+        spot_price=spot_price,
+        contracts_by_expiration=put_contracts_by_expiration,
+        snapshots_by_expiration=put_snapshots_by_expiration,
+        greeks_provider=greeks_provider,
+        as_of=greeks_as_of,
+        source_mode=greeks_source_mode,
+    )
+    expected_moves_by_expiration = build_expected_move_estimates(
+        spot_price=spot_price,
+        call_contracts_by_expiration=call_contracts_by_expiration,
+        put_contracts_by_expiration=put_contracts_by_expiration,
+        call_snapshots_by_expiration=resolved_call_snapshots,
+        put_snapshots_by_expiration=resolved_put_snapshots,
+    )
+    return SymbolMarketSlice(
+        symbol=symbol,
+        underlying_type=underlying_type,
+        spot_price=spot_price,
+        daily_bars=tuple(daily_bars),
+        intraday_bars=tuple(intraday_bars),
+        call_contracts_by_expiration=call_contracts_by_expiration,
+        put_contracts_by_expiration=put_contracts_by_expiration,
+        call_snapshots_by_expiration=resolved_call_snapshots,
+        put_snapshots_by_expiration=resolved_put_snapshots,
+        expected_moves_by_expiration=expected_moves_by_expiration,
+    )
 
 
 def build_symbol_market_slice(
@@ -107,8 +179,16 @@ def build_symbol_market_slice(
 ) -> SymbolMarketSlice:
     normalized_symbol = symbol.upper()
     underlying_type = classify_underlying_type(normalized_symbol)
-    min_expiration = (date.today() + timedelta(days=symbol_args.min_dte)).isoformat()
-    max_expiration = (date.today() + timedelta(days=symbol_args.max_dte)).isoformat()
+    reference_date = resolve_scan_reference_date(symbol_args)
+    reference_timestamp = resolve_scan_reference_datetime(symbol_args) or datetime.now(
+        UTC
+    )
+    min_expiration = (
+        reference_date + timedelta(days=symbol_args.min_dte)
+    ).isoformat()
+    max_expiration = (
+        reference_date + timedelta(days=symbol_args.max_dte)
+    ).isoformat()
 
     spot_price = client.get_underlying_price(normalized_symbol, symbol_args.stock_feed)
     daily_bars: list[DailyBar] = []
@@ -116,15 +196,15 @@ def build_symbol_market_slice(
     if symbol_args.setup_filter == "on":
         daily_bars = client.get_daily_bars(
             normalized_symbol,
-            start=(date.today() - timedelta(days=120)).isoformat(),
-            end=date.today().isoformat(),
+            start=(reference_date - timedelta(days=120)).isoformat(),
+            end=reference_date.isoformat(),
             stock_feed=symbol_args.stock_feed,
         )
         try:
             session_start = datetime.combine(
-                date.today(), time(9, 30), tzinfo=NEW_YORK
+                reference_date, time(9, 30), tzinfo=NEW_YORK
             ).astimezone(UTC)
-            session_end = datetime.now(UTC)
+            session_end = reference_timestamp
             intraday_bars = client.get_intraday_bars(
                 normalized_symbol,
                 start=session_start.isoformat(),
@@ -163,45 +243,19 @@ def build_symbol_market_slice(
             )
         )
 
-    snapshot_timestamp = datetime.now(UTC)
-    call_snapshots_by_expiration = enrich_missing_greeks(
-        symbol=normalized_symbol,
-        option_type="call",
-        spot_price=spot_price,
-        contracts_by_expiration=call_contracts_by_expiration,
-        snapshots_by_expiration=call_snapshots_by_expiration,
-        greeks_provider=greeks_provider,
-        as_of=snapshot_timestamp,
-        source_mode=symbol_args.greeks_source,
-    )
-    put_snapshots_by_expiration = enrich_missing_greeks(
-        symbol=normalized_symbol,
-        option_type="put",
-        spot_price=spot_price,
-        contracts_by_expiration=put_contracts_by_expiration,
-        snapshots_by_expiration=put_snapshots_by_expiration,
-        greeks_provider=greeks_provider,
-        as_of=snapshot_timestamp,
-        source_mode=symbol_args.greeks_source,
-    )
-    expected_moves_by_expiration = build_expected_move_estimates(
-        spot_price=spot_price,
-        call_contracts_by_expiration=call_contracts_by_expiration,
-        put_contracts_by_expiration=put_contracts_by_expiration,
-        call_snapshots_by_expiration=call_snapshots_by_expiration,
-        put_snapshots_by_expiration=put_snapshots_by_expiration,
-    )
-    return SymbolMarketSlice(
+    return build_market_slice_from_loaded_data(
         symbol=normalized_symbol,
         underlying_type=underlying_type,
         spot_price=spot_price,
-        daily_bars=tuple(daily_bars),
-        intraday_bars=tuple(intraday_bars),
+        daily_bars=daily_bars,
+        intraday_bars=intraday_bars,
         call_contracts_by_expiration=call_contracts_by_expiration,
         put_contracts_by_expiration=put_contracts_by_expiration,
         call_snapshots_by_expiration=call_snapshots_by_expiration,
         put_snapshots_by_expiration=put_snapshots_by_expiration,
-        expected_moves_by_expiration=expected_moves_by_expiration,
+        greeks_provider=greeks_provider,
+        greeks_as_of=reference_timestamp,
+        greeks_source_mode=symbol_args.greeks_source,
     )
 
 
@@ -271,18 +325,13 @@ def count_market_slice_coverage(
     )
 
 
-def build_candidates_from_market_slice(
+def build_raw_candidates_from_market_slice(
     *,
     market_slice: SymbolMarketSlice,
     symbol_args: argparse.Namespace,
-    calendar_resolver: Any,
-) -> tuple[list[SpreadCandidate], UnderlyingSetupContext | None]:
-    setup_context = build_setup_context_from_market_slice(
-        market_slice=market_slice,
-        symbol_args=symbol_args,
-    )
+) -> list[SpreadCandidate]:
     if symbol_args.strategy == "iron_condor":
-        all_candidates = build_iron_condors(
+        return build_iron_condors(
             symbol=market_slice.symbol,
             spot_price=market_slice.spot_price,
             call_contracts_by_expiration=market_slice.call_contracts_by_expiration,
@@ -292,8 +341,8 @@ def build_candidates_from_market_slice(
             expected_moves_by_expiration=market_slice.expected_moves_by_expiration,
             args=symbol_args,
         )
-    elif symbol_args.strategy == "long_straddle":
-        all_candidates = build_long_straddles(
+    if symbol_args.strategy == "long_straddle":
+        return build_long_straddles(
             symbol=market_slice.symbol,
             spot_price=market_slice.spot_price,
             call_contracts_by_expiration=market_slice.call_contracts_by_expiration,
@@ -303,8 +352,8 @@ def build_candidates_from_market_slice(
             expected_moves_by_expiration=market_slice.expected_moves_by_expiration,
             args=symbol_args,
         )
-    elif symbol_args.strategy == "long_strangle":
-        all_candidates = build_long_strangles(
+    if symbol_args.strategy == "long_strangle":
+        return build_long_strangles(
             symbol=market_slice.symbol,
             spot_price=market_slice.spot_price,
             call_contracts_by_expiration=market_slice.call_contracts_by_expiration,
@@ -314,37 +363,54 @@ def build_candidates_from_market_slice(
             expected_moves_by_expiration=market_slice.expected_moves_by_expiration,
             args=symbol_args,
         )
-    else:
-        option_type = strategy_option_type(symbol_args.strategy)
-        option_contracts_by_expiration = (
-            market_slice.call_contracts_by_expiration
-            if option_type == "call"
-            else market_slice.put_contracts_by_expiration
-        )
-        option_snapshots_by_expiration = (
-            market_slice.call_snapshots_by_expiration
-            if option_type == "call"
-            else market_slice.put_snapshots_by_expiration
-        )
-        all_candidates = build_vertical_spreads(
-            symbol=market_slice.symbol,
-            strategy=symbol_args.strategy,
-            spot_price=market_slice.spot_price,
-            contracts_by_expiration=option_contracts_by_expiration,
-            snapshots_by_expiration=option_snapshots_by_expiration,
-            expected_moves_by_expiration=market_slice.expected_moves_by_expiration,
-            args=symbol_args,
-        )
-    all_candidates = attach_underlying_setup(all_candidates, setup_context)
-    all_candidates = attach_calendar_decisions(
+    option_type = strategy_option_type(symbol_args.strategy)
+    option_contracts_by_expiration = (
+        market_slice.call_contracts_by_expiration
+        if option_type == "call"
+        else market_slice.put_contracts_by_expiration
+    )
+    option_snapshots_by_expiration = (
+        market_slice.call_snapshots_by_expiration
+        if option_type == "call"
+        else market_slice.put_snapshots_by_expiration
+    )
+    return build_vertical_spreads(
         symbol=market_slice.symbol,
         strategy=symbol_args.strategy,
-        underlying_type=market_slice.underlying_type,
-        candidates=all_candidates,
-        resolver=calendar_resolver,
-        calendar_policy=symbol_args.calendar_policy,
-        refresh_calendar_events=symbol_args.refresh_calendar_events,
+        spot_price=market_slice.spot_price,
+        contracts_by_expiration=option_contracts_by_expiration,
+        snapshots_by_expiration=option_snapshots_by_expiration,
+        expected_moves_by_expiration=market_slice.expected_moves_by_expiration,
+        args=symbol_args,
     )
+
+
+def postprocess_market_slice_candidates(
+    *,
+    market_slice: SymbolMarketSlice,
+    symbol_args: argparse.Namespace,
+    raw_candidates: list[SpreadCandidate],
+    setup_context: UnderlyingSetupContext | None,
+    calendar_resolver: Any | None = None,
+    calendar_decisions_by_expiration: dict[str, Any] | None = None,
+) -> list[SpreadCandidate]:
+    all_candidates = attach_underlying_setup(raw_candidates, setup_context)
+    if calendar_decisions_by_expiration is not None:
+        all_candidates = attach_calendar_decisions_from_map(
+            candidates=all_candidates,
+            decisions_by_expiration=calendar_decisions_by_expiration,
+            calendar_policy=symbol_args.calendar_policy,
+        )
+    else:
+        all_candidates = attach_calendar_decisions(
+            symbol=market_slice.symbol,
+            strategy=symbol_args.strategy,
+            underlying_type=market_slice.underlying_type,
+            candidates=all_candidates,
+            resolver=calendar_resolver,
+            calendar_policy=symbol_args.calendar_policy,
+            refresh_calendar_events=symbol_args.refresh_calendar_events,
+        )
     all_candidates = attach_data_quality(
         candidates=all_candidates,
         underlying_type=market_slice.underlying_type,
@@ -355,7 +421,61 @@ def build_candidates_from_market_slice(
     all_candidates = deduplicate_candidates(
         all_candidates, symbol_args.expand_duplicates
     )
-    return all_candidates, setup_context
+    return all_candidates
+
+
+def build_candidates_with_details_from_market_slice(
+    *,
+    market_slice: SymbolMarketSlice,
+    symbol_args: argparse.Namespace,
+    calendar_resolver: Any,
+) -> tuple[list[SpreadCandidate], UnderlyingSetupContext | None, dict[str, Any]]:
+    setup_context = build_setup_context_from_market_slice(
+        market_slice=market_slice,
+        symbol_args=symbol_args,
+    )
+    raw_candidates = build_raw_candidates_from_market_slice(
+        market_slice=market_slice,
+        symbol_args=symbol_args,
+    )
+    calendar_decisions_by_expiration = resolve_calendar_decisions_by_expiration(
+        symbol=market_slice.symbol,
+        strategy=symbol_args.strategy,
+        underlying_type=market_slice.underlying_type,
+        candidates=attach_underlying_setup(raw_candidates, setup_context),
+        resolver=calendar_resolver,
+        calendar_policy=symbol_args.calendar_policy,
+        refresh_calendar_events=symbol_args.refresh_calendar_events,
+        window_start=(
+            None
+            if resolve_scan_reference_datetime(symbol_args) is None
+            else resolve_scan_reference_datetime(symbol_args).isoformat()
+        ),
+    )
+    all_candidates = postprocess_market_slice_candidates(
+        market_slice=market_slice,
+        symbol_args=symbol_args,
+        raw_candidates=raw_candidates,
+        setup_context=setup_context,
+        calendar_decisions_by_expiration=calendar_decisions_by_expiration,
+    )
+    return all_candidates, setup_context, {
+        "calendar_decisions_by_expiration": calendar_decisions_by_expiration,
+    }
+
+
+def build_candidates_from_market_slice(
+    *,
+    market_slice: SymbolMarketSlice,
+    symbol_args: argparse.Namespace,
+    calendar_resolver: Any,
+) -> tuple[list[SpreadCandidate], UnderlyingSetupContext | None]:
+    candidates, setup_context, _details = build_candidates_with_details_from_market_slice(
+        market_slice=market_slice,
+        symbol_args=symbol_args,
+        calendar_resolver=calendar_resolver,
+    )
+    return candidates, setup_context
 
 
 def scan_symbol_live(
@@ -383,7 +503,7 @@ def scan_symbol_live(
         delta_contract_count,
         local_delta_contract_count,
     ) = count_market_slice_coverage(market_slice=market_slice, symbol_args=symbol_args)
-    all_candidates, setup_context = build_candidates_from_market_slice(
+    all_candidates, setup_context, replay_details = build_candidates_with_details_from_market_slice(
         market_slice=market_slice,
         symbol_args=symbol_args,
         calendar_resolver=calendar_resolver,
@@ -395,6 +515,9 @@ def scan_symbol_live(
         market_slice=market_slice,
         setup_context=setup_context,
         candidates=all_candidates,
+        calendar_decisions_by_expiration=replay_details.get(
+            "calendar_decisions_by_expiration"
+        ),
         session_label=getattr(symbol_args, "session_label", None),
     )
 
@@ -465,12 +588,16 @@ def merge_strategy_candidates(
 
 
 __all__ = [
+    "build_market_slice_from_loaded_data",
+    "build_candidates_with_details_from_market_slice",
     "build_candidates_from_market_slice",
+    "build_raw_candidates_from_market_slice",
     "build_scan_run_id",
     "build_setup_context_from_market_slice",
     "build_symbol_market_slice",
     "count_market_slice_coverage",
     "merge_strategy_candidates",
+    "postprocess_market_slice_candidates",
     "persist_scan_run",
     "scan_symbol_across_strategies",
     "scan_symbol_live",

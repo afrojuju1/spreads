@@ -63,6 +63,18 @@ class AlpacaClient:
             "User-Agent": "call-credit-spread-scanner/1.0",
         }
 
+    @staticmethod
+    def _symbol_batches(
+        symbols: list[str],
+        *,
+        batch_size: int = 100,
+    ) -> list[list[str]]:
+        normalized = [str(symbol).strip() for symbol in symbols if str(symbol).strip()]
+        return [
+            normalized[index : index + batch_size]
+            for index in range(0, len(normalized), batch_size)
+        ]
+
     def request_json(
         self,
         method: str,
@@ -407,6 +419,7 @@ class AlpacaClient:
         max_expiration: str,
         *,
         option_type: str = "call",
+        status: str = "active",
     ) -> list[OptionContract]:
         contracts: list[OptionContract] = []
         page_token: str | None = None
@@ -417,7 +430,7 @@ class AlpacaClient:
                 {
                     "underlying_symbols": symbol,
                     "type": option_type,
-                    "status": "active",
+                    "status": status,
                     "expiration_date_gte": min_expiration,
                     "expiration_date_lte": max_expiration,
                     "limit": 1000,
@@ -481,53 +494,65 @@ class AlpacaClient:
         *,
         start: str,
         end: str,
+        timeframe: str = "1Day",
+        sort: str | None = None,
     ) -> dict[str, list[DailyBar]]:
         if not symbols:
             return {}
 
         bars_by_symbol: dict[str, list[DailyBar]] = {symbol: [] for symbol in symbols}
-        page_token: str | None = None
-        while True:
-            payload = self.get_json(
-                self.data_base_url,
-                "/v1beta1/options/bars",
-                {
-                    "symbols": ",".join(symbols),
-                    "timeframe": "1Day",
-                    "start": start,
-                    "end": end,
-                    "limit": 1000,
-                    "page_token": page_token,
-                },
-            )
-            raw_bars = payload.get("bars", {})
-            if isinstance(raw_bars, dict):
-                for symbol, bars in raw_bars.items():
-                    for item in bars:
-                        open_price = parse_float(pick(item, "o", "open"))
-                        high_price = parse_float(pick(item, "h", "high"))
-                        low_price = parse_float(pick(item, "l", "low"))
-                        close_price = parse_float(pick(item, "c", "close"))
-                        volume = parse_int(pick(item, "v", "volume")) or 0
-                        timestamp = pick(item, "t", "timestamp")
-                        if (
-                            None in (open_price, high_price, low_price, close_price)
-                            or not timestamp
-                        ):
-                            continue
-                        bars_by_symbol.setdefault(symbol, []).append(
-                            DailyBar(
-                                timestamp=str(timestamp),
-                                open=open_price,
-                                high=high_price,
-                                low=low_price,
-                                close=close_price,
-                                volume=volume,
+        for symbol_batch in self._symbol_batches(symbols):
+            page_token: str | None = None
+            while True:
+                payload = self.get_json(
+                    self.data_base_url,
+                    "/v1beta1/options/bars",
+                    {
+                        "symbols": ",".join(symbol_batch),
+                        "timeframe": timeframe,
+                        "start": start,
+                        "end": end,
+                        "limit": 1000,
+                        "page_token": page_token,
+                        "sort": sort,
+                    },
+                )
+                raw_bars = payload.get("bars", {})
+                if isinstance(raw_bars, dict):
+                    for symbol, bars in raw_bars.items():
+                        for item in bars:
+                            open_price = parse_float(pick(item, "o", "open"))
+                            high_price = parse_float(pick(item, "h", "high"))
+                            low_price = parse_float(pick(item, "l", "low"))
+                            close_price = parse_float(pick(item, "c", "close"))
+                            volume = parse_int(pick(item, "v", "volume")) or 0
+                            timestamp = pick(item, "t", "timestamp")
+                            if (
+                                None
+                                in (open_price, high_price, low_price, close_price)
+                                or not timestamp
+                            ):
+                                continue
+                            bars_by_symbol.setdefault(symbol, []).append(
+                                DailyBar(
+                                    timestamp=str(timestamp),
+                                    open=open_price,
+                                    high=high_price,
+                                    low=low_price,
+                                    close=close_price,
+                                    volume=volume,
+                                )
                             )
-                        )
-            page_token = payload.get("next_page_token") or payload.get("page_token")
-            if not page_token:
-                break
+                page_token = payload.get("next_page_token") or payload.get(
+                    "page_token"
+                )
+                if not page_token:
+                    break
+        for symbol in list(bars_by_symbol):
+            bars_by_symbol[symbol] = sorted(
+                bars_by_symbol.get(symbol, []),
+                key=lambda item: item.timestamp,
+            )
         return bars_by_symbol
 
     def get_option_trades(
@@ -543,39 +568,47 @@ class AlpacaClient:
         trades_by_symbol: dict[str, list[OptionTrade]] = {
             symbol: [] for symbol in symbols
         }
-        page_token: str | None = None
-        while True:
-            payload = self.get_json(
-                self.data_base_url,
-                "/v1beta1/options/trades",
-                {
-                    "symbols": ",".join(symbols),
-                    "start": start,
-                    "end": end,
-                    "limit": 1000,
-                    "page_token": page_token,
-                },
-            )
-            raw_trades = payload.get("trades", {})
-            if isinstance(raw_trades, dict):
-                for symbol, trades in raw_trades.items():
-                    for item in trades:
-                        price = parse_float(pick(item, "p", "price"))
-                        size = parse_int(pick(item, "s", "size")) or 0
-                        timestamp = pick(item, "t", "timestamp")
-                        if price is None or price <= 0 or not timestamp:
-                            continue
-                        trades_by_symbol.setdefault(symbol, []).append(
-                            OptionTrade(
-                                symbol=str(symbol),
-                                price=price,
-                                size=size,
-                                timestamp=str(timestamp),
+        for symbol_batch in self._symbol_batches(symbols):
+            page_token: str | None = None
+            while True:
+                payload = self.get_json(
+                    self.data_base_url,
+                    "/v1beta1/options/trades",
+                    {
+                        "symbols": ",".join(symbol_batch),
+                        "start": start,
+                        "end": end,
+                        "limit": 1000,
+                        "page_token": page_token,
+                    },
+                )
+                raw_trades = payload.get("trades", {})
+                if isinstance(raw_trades, dict):
+                    for symbol, trades in raw_trades.items():
+                        for item in trades:
+                            price = parse_float(pick(item, "p", "price"))
+                            size = parse_int(pick(item, "s", "size")) or 0
+                            timestamp = pick(item, "t", "timestamp")
+                            if price is None or price <= 0 or not timestamp:
+                                continue
+                            trades_by_symbol.setdefault(symbol, []).append(
+                                OptionTrade(
+                                    symbol=str(symbol),
+                                    price=price,
+                                    size=size,
+                                    timestamp=str(timestamp),
+                                )
                             )
-                        )
-            page_token = payload.get("next_page_token") or payload.get("page_token")
-            if not page_token:
-                break
+                page_token = payload.get("next_page_token") or payload.get(
+                    "page_token"
+                )
+                if not page_token:
+                    break
+        for symbol in list(trades_by_symbol):
+            trades_by_symbol[symbol] = sorted(
+                trades_by_symbol.get(symbol, []),
+                key=lambda item: item.timestamp,
+            )
         return trades_by_symbol
 
     @staticmethod

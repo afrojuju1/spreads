@@ -11,7 +11,7 @@ from core.domain.models import (
 )
 
 from .orders import make_long_vol_order_payload
-from .shared import days_from_today, relative_spread, relative_spread_exceeds
+from .shared import days_from_reference, relative_spread, relative_spread_exceeds
 
 
 def _ratio_or_none(numerator: float | None, denominator: float | None) -> float | None:
@@ -39,7 +39,7 @@ def build_long_straddles(
         put_snapshot_map = put_snapshots_by_expiration.get(expiration_date, {})
         put_by_strike = {contract.strike_price: contract for contract in put_contracts}
         expected_move = expected_moves_by_expiration.get(expiration_date)
-        days_to_expiration = days_from_today(expiration_date)
+        days_to_expiration = days_from_reference(expiration_date, args)
 
         shared_contracts = sorted(
             (
@@ -218,7 +218,7 @@ def build_long_strangles(
         call_snapshot_map = call_snapshots_by_expiration.get(expiration_date, {})
         put_snapshot_map = put_snapshots_by_expiration.get(expiration_date, {})
         expected_move = expected_moves_by_expiration.get(expiration_date)
-        days_to_expiration = days_from_today(expiration_date)
+        days_to_expiration = days_from_reference(expiration_date, args)
 
         eligible_calls = [
             contract

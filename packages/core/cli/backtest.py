@@ -11,6 +11,7 @@ from typing import Any
 import typer
 
 from core.backtest import build_backtest_run, compare_backtest_runs
+from core.backtest.replay import build_replay_payload, build_replay_range_payload
 from core.cli.ops_render import build_console, render_json_payload
 from core.domain.backtest_models import (
     BacktestArtifact,
@@ -81,6 +82,39 @@ def _run_output_dir(*, bot_id: str, automation_id: str) -> Path:
 
 def _compare_output_path() -> Path:
     return BACKTEST_OUTPUT_ROOT / "compare" / "latest.json"
+
+
+def _replay_output_dir(*, run_id: str) -> Path:
+    return BACKTEST_OUTPUT_ROOT / "replay" / "runs" / run_id
+
+
+def _replay_range_output_dir(
+    *,
+    bot_id: str,
+    automation_id: str,
+    start_date: str,
+    end_date: str,
+    source: str = "stored",
+) -> Path:
+    normalized_source = str(source or "stored").strip().lower()
+    if normalized_source != "stored":
+        return (
+            BACKTEST_OUTPUT_ROOT
+            / "replay"
+            / "ranges"
+            / normalized_source
+            / bot_id
+            / automation_id
+            / f"{start_date}_{end_date}"
+        )
+    return (
+        BACKTEST_OUTPUT_ROOT
+        / "replay"
+        / "ranges"
+        / bot_id
+        / automation_id
+        / f"{start_date}_{end_date}"
+    )
 
 
 def _relative_repo_path(path: Path) -> str:
@@ -283,6 +317,188 @@ def _render_compare_text(run: BacktestRun) -> str:
     return "\n".join(lines)
 
 
+def _render_replay_text(payload: dict[str, Any]) -> str:
+    run = dict(payload.get("run") or {})
+    summary = dict(payload.get("summary") or {})
+    lines = [
+        f"Replay: {run.get('run_id')} | {run.get('symbol')} | strategy {run.get('strategy')} | profile {run.get('profile')}",
+        f"Status {payload.get('status')} | fidelity {payload.get('fidelity')} | exact match {summary.get('exact_match')}",
+    ]
+    reason = payload.get("reason")
+    if reason:
+        lines.append(f"Reason: {reason}")
+    if run.get("artifact_path"):
+        lines.append(f"Artifact: {run.get('artifact_path')}")
+    if summary:
+        lines.append(
+            "Stored "
+            f"{summary.get('stored_candidate_count')} | replayed {summary.get('replayed_candidate_count')} | "
+            f"matched {summary.get('matched_candidate_count')} | stored-only {summary.get('stored_only_count')} | "
+            f"replayed-only {summary.get('replayed_only_count')} | rank changes {summary.get('rank_change_count')} | "
+            f"field drifts {summary.get('field_drift_count')}"
+        )
+    lines.append("")
+    lines.append("Stored Top:")
+    for row in list(payload.get("stored_top") or [])[:10]:
+        lines.append(
+            "- "
+            f"{row.get('rank')}. {row.get('short_symbol')} -> {row.get('long_symbol')} | "
+            f"expiry {row.get('expiration_date')} | credit {row.get('midpoint_credit')} | "
+            f"ror {row.get('return_on_risk')}"
+        )
+    lines.append("")
+    lines.append("Replayed Top:")
+    for row in list(payload.get("replayed_top") or [])[:10]:
+        lines.append(
+            "- "
+            f"{row.get('rank')}. {row.get('short_symbol')} -> {row.get('long_symbol')} | "
+            f"expiry {row.get('expiration_date')} | credit {row.get('midpoint_credit')} | "
+            f"ror {row.get('return_on_risk')}"
+        )
+    if payload.get("stored_only"):
+        lines.append("")
+        lines.append("Stored Only:")
+        for row in list(payload.get("stored_only") or [])[:10]:
+            lines.append(
+                "- "
+                f"{row.get('rank')}. {row.get('short_symbol')} -> {row.get('long_symbol')} | "
+                f"expiry {row.get('expiration_date')}"
+            )
+    if payload.get("replayed_only"):
+        lines.append("")
+        lines.append("Replayed Only:")
+        for row in list(payload.get("replayed_only") or [])[:10]:
+            lines.append(
+                "- "
+                f"{row.get('rank')}. {row.get('short_symbol')} -> {row.get('long_symbol')} | "
+                f"expiry {row.get('expiration_date')}"
+            )
+    if payload.get("rank_changes"):
+        lines.append("")
+        lines.append("Rank Changes:")
+        for row in list(payload.get("rank_changes") or [])[:10]:
+            lines.append(
+                "- "
+                f"{row.get('identity')} | stored {row.get('stored_rank')} | replayed {row.get('replayed_rank')}"
+            )
+    if payload.get("field_drifts"):
+        lines.append("")
+        lines.append("Field Drifts:")
+        for row in list(payload.get("field_drifts") or [])[:10]:
+            lines.append(
+                "- "
+                f"{row.get('identity')} | {row.get('field')} | stored {row.get('stored')} | replayed {row.get('replayed')}"
+            )
+    return "\n".join(lines)
+
+
+def _flatten_replay_cycles(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    target = dict(payload.get("target") or {})
+    source = str(payload.get("source") or "stored")
+    for cycle in list(payload.get("cycles") or []):
+        cycle_row = dict(cycle)
+        run_rows = list(cycle_row.pop("runs", []) or [])
+        if not run_rows:
+            rows.append(
+                {
+                    "source": source,
+                    "bot_id": target.get("bot_id"),
+                    "automation_id": target.get("automation_id"),
+                    **cycle_row,
+                    "run_id": None,
+                    "symbol": None,
+                    "strategy": None,
+                    "run_status": None,
+                    "run_fidelity": None,
+                    "run_reason": None,
+                    "run_exact_match": None,
+                    "stored_candidate_count": None,
+                    "replayed_candidate_count": None,
+                    "matched_candidate_count": None,
+                    "stored_only_count": None,
+                    "replayed_only_count": None,
+                    "rank_change_count": None,
+                    "field_drift_count": None,
+                }
+            )
+            continue
+        for run in run_rows:
+            rows.append(
+                {
+                    "source": source,
+                    "bot_id": target.get("bot_id"),
+                    "automation_id": target.get("automation_id"),
+                    **cycle_row,
+                    "run_id": run.get("run_id"),
+                    "symbol": run.get("symbol"),
+                    "strategy": run.get("strategy"),
+                    "run_status": run.get("status"),
+                    "run_fidelity": run.get("fidelity"),
+                    "run_reason": run.get("reason"),
+                    "run_exact_match": run.get("exact_match"),
+                    "stored_candidate_count": run.get("stored_candidate_count"),
+                    "replayed_candidate_count": run.get("replayed_candidate_count"),
+                    "matched_candidate_count": run.get("matched_candidate_count"),
+                    "stored_only_count": run.get("stored_only_count"),
+                    "replayed_only_count": run.get("replayed_only_count"),
+                    "rank_change_count": run.get("rank_change_count"),
+                    "field_drift_count": run.get("field_drift_count"),
+                }
+            )
+    return rows
+
+
+def _render_replay_range_text(payload: dict[str, Any]) -> str:
+    target = dict(payload.get("target") or {})
+    summary = dict(payload.get("summary") or {})
+    source = str(payload.get("source") or "stored")
+    if source == "alpaca":
+        lines = [
+            f"Replay Range: {target.get('bot_id')} / {target.get('automation_id')} | {target.get('start_date')} -> {target.get('end_date')} | source alpaca",
+            f"Status {payload.get('status')} | cycles {summary.get('cycle_count')} | candidates {summary.get('candidate_count')} | opportunities {summary.get('opportunity_count')} | selected cycles {summary.get('selected_cycle_count')}",
+            f"Cycles with candidates {summary.get('cycle_with_candidates_count')} | cycles with opportunities {summary.get('cycle_with_opportunities_count')} | unsupported cycles {summary.get('unsupported_cycle_count')}",
+            "",
+            "Cycles:",
+        ]
+        for cycle in list(payload.get("cycles") or [])[:20]:
+            selected = (
+                dict(cycle.get("selected") or {})
+                if isinstance(cycle.get("selected"), dict)
+                else {}
+            )
+            lines.append(
+                "- "
+                f"{cycle.get('session_date')} | status {cycle.get('status')} | candidates {cycle.get('candidate_count')} | "
+                f"opportunities {cycle.get('opportunity_count')} | selected {selected.get('underlying_symbol') or 'n/a'} | "
+                f"score {selected.get('execution_score') or selected.get('promotion_score') or 'n/a'}"
+            )
+        return "\n".join(lines)
+    lines = [
+        f"Replay Range: {target.get('bot_id')} / {target.get('automation_id')} | {target.get('start_date')} -> {target.get('end_date')}",
+        f"Status {payload.get('status')} | cycles {summary.get('cycle_count')} | scan runs {summary.get('scan_run_count')}",
+        f"Exact cycles {summary.get('exact_match_cycle_count')} | mismatch cycles {summary.get('mismatch_cycle_count')} | unsupported cycles {summary.get('unsupported_cycle_count')} | no-scan cycles {summary.get('no_scan_run_cycle_count')}",
+        f"Exact runs {summary.get('exact_match_run_count')} | mismatch runs {summary.get('mismatch_run_count')} | unsupported runs {summary.get('unsupported_run_count')}",
+        "",
+        "Cycles:",
+    ]
+    for cycle in list(payload.get("cycles") or [])[:20]:
+        lines.append(
+            "- "
+            f"{cycle.get('session_date')} {cycle.get('started_at')} | cycle {cycle.get('cycle_id')} | "
+            f"status {cycle.get('status')} | opportunities {cycle.get('opportunity_count')} | "
+            f"collector candidates {cycle.get('collector_candidate_count')} | scan runs {cycle.get('scan_run_count')}"
+        )
+        for run in list(cycle.get("runs") or [])[:5]:
+            lines.append(
+                "  "
+                f"run {run.get('run_id')} | {run.get('symbol')} | status {run.get('status')} | "
+                f"exact {run.get('exact_match')} | stored {run.get('stored_candidate_count')} | "
+                f"replayed {run.get('replayed_candidate_count')}"
+            )
+    return "\n".join(lines)
+
+
 backtest_app = typer.Typer(
     add_completion=False,
     help="Run historical backtests over config-owned automation runtime data.",
@@ -358,6 +574,108 @@ def compare_backtest_command(
         return
     console = build_console(no_color=no_color)
     console.print(_render_compare_text(run))
+
+
+@backtest_app.command(
+    "replay", help="Replay a stored scan run from its persisted scan artifact."
+)
+def replay_backtest_command(
+    run_id: str | None = typer.Option(None, "--run-id", help="Stored scan run id."),
+    symbol: str | None = typer.Option(
+        None, "--symbol", help="Underlying symbol when using --latest."
+    ),
+    strategy: str | None = typer.Option(
+        None, "--strategy", help="Optional strategy filter when using --latest."
+    ),
+    latest: bool = typer.Option(
+        False, "--latest", help="Replay the latest stored scan run for the target symbol."
+    ),
+    db: str | None = typer.Option(None, "--db", help="Database URL override."),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
+    export_json: str | None = typer.Option(
+        None, "--export-json", help="Write replay payload to JSON file."
+    ),
+    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
+) -> None:
+    payload = build_replay_payload(
+        db_target=db or "",
+        run_id=run_id,
+        symbol=symbol,
+        strategy=strategy,
+        latest=latest,
+    )
+    resolved_run_id = str((payload.get("run") or {}).get("run_id") or "latest")
+    output_dir = _replay_output_dir(run_id=resolved_run_id)
+    summary_path = output_dir / "summary.json"
+    _write_json_export(str(summary_path), payload)
+    if export_json:
+        _write_json_export(export_json, payload)
+    if json_output:
+        render_json_payload(build_console(no_color=no_color), payload)
+        return
+    console = build_console(no_color=no_color)
+    console.print(_render_replay_text(payload))
+
+
+@backtest_app.command(
+    "replay-range",
+    help="Replay historical automation cycles over a date range, cycle by cycle.",
+)
+def replay_range_backtest_command(
+    bot_id: str = typer.Option(..., "--bot-id", help="Target bot id."),
+    automation_id: str = typer.Option(
+        ..., "--automation-id", help="Target automation id."
+    ),
+    start_date: str = typer.Option(..., "--start-date", help="Start date YYYY-MM-DD."),
+    end_date: str = typer.Option(..., "--end-date", help="End date YYYY-MM-DD."),
+    limit: int = typer.Option(
+        500, "--limit", help="Maximum automation cycles to include."
+    ),
+    source: str = typer.Option(
+        "stored",
+        "--source",
+        help="Replay source. Use stored for exact artifact replay or alpaca for historical Alpaca regeneration.",
+    ),
+    db: str | None = typer.Option(None, "--db", help="Database URL override."),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
+    export_json: str | None = typer.Option(
+        None, "--export-json", help="Write replay payload to JSON file."
+    ),
+    export_csv: str | None = typer.Option(
+        None, "--export-csv", help="Write replay cycle rows to CSV file."
+    ),
+    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
+) -> None:
+    payload = build_replay_range_payload(
+        db_target=db or "",
+        bot_id=bot_id,
+        automation_id=automation_id,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+        source=source,
+    )
+    output_dir = _replay_range_output_dir(
+        bot_id=bot_id,
+        automation_id=automation_id,
+        start_date=start_date,
+        end_date=end_date,
+        source=source,
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = output_dir / "summary.json"
+    cycles_path = output_dir / "cycles.csv"
+    _write_json_export(str(summary_path), payload)
+    _write_csv_export(str(cycles_path), _flatten_replay_cycles(payload))
+    if export_json:
+        _write_json_export(export_json, payload)
+    if export_csv:
+        _write_csv_export(export_csv, _flatten_replay_cycles(payload))
+    if json_output:
+        render_json_payload(build_console(no_color=no_color), payload)
+        return
+    console = build_console(no_color=no_color)
+    console.print(_render_replay_range_text(payload))
 
 
 def main() -> None:

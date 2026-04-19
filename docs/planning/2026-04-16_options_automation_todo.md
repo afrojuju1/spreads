@@ -2,10 +2,11 @@
 
 Status: active
 
-As of: Thursday, April 16, 2026
+As of: Sunday, April 19, 2026
 
 ## Next Steps
 
+- [x] Add phase-1 replay validation for `call_credit_spread`, including exact stored-artifact replay and reduced-fidelity Alpaca historical range replay. See [Multi-Strategy Builder Replay Validation](./2026-04-19_multi_strategy_builder_replay_validation.md).
 - [ ] Prove the new `call_credit_spread` lane through a full paper lifecycle: opportunity, decision, intent, submit, fill, position creation, management, and close.
 - [ ] Tune selection thresholds, sizing, and risk caps for both short-dated credit bots using the new automation analytics and live paper observations.
 - [ ] Define the paper-to-live promotion checklist for each bot, including explicit go/no-go criteria, manual approval expectations, and required safety limits.
