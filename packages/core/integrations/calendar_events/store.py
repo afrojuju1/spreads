@@ -155,7 +155,14 @@ class CalendarEventStore:
         row = self.get_refresh_state(source=source, scope_key=scope_key)
         if row is None:
             return False
-        if row["coverage_start"] > coverage_start or row["coverage_end"] < coverage_end:
+        stored_coverage_start = _parse_datetime(row["coverage_start"])
+        stored_coverage_end = _parse_datetime(row["coverage_end"])
+        requested_coverage_start = _parse_datetime(coverage_start)
+        requested_coverage_end = _parse_datetime(coverage_end)
+        if (
+            stored_coverage_start > requested_coverage_start
+            or stored_coverage_end < requested_coverage_end
+        ):
             return False
         if freshness_hours <= 0:
             return True
