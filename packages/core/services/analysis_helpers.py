@@ -15,7 +15,7 @@ SCORE_BUCKETS = (
 
 def candidate_identity(candidate: Mapping[str, Any]) -> tuple[str, str, str, str]:
     return (
-        str(candidate["underlying_symbol"]),
+        str(candidate.get("underlying_symbol") or candidate.get("symbol") or ""),
         str(candidate["strategy"]),
         str(candidate["expiration_date"]),
         str(payload_structure_identity(candidate, strategy=candidate.get("strategy")) or ""),

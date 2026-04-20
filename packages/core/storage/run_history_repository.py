@@ -212,18 +212,22 @@ class RunHistoryRepository(RepositoryBase):
 
     def list_candidates(self, run_id: str) -> list[ScanCandidateRecord]:
         statement = (
-            select(ScanCandidateModel)
+            select(ScanCandidateModel, ScanRunModel.symbol)
+            .join(ScanRunModel, ScanRunModel.run_id == ScanCandidateModel.run_id)
             .where(ScanCandidateModel.run_id == run_id)
             .order_by(ScanCandidateModel.rank.asc())
         )
         with self.session_factory() as session:
-            rows = session.scalars(statement).all()
+            rows = session.execute(statement).all()
         return [
             self.row(
-                row,
-                extra=self._scan_candidate_extra(row),
+                candidate,
+                extra={
+                    **self._scan_candidate_extra(candidate),
+                    "underlying_symbol": underlying_symbol,
+                },
             )
-            for row in rows
+            for candidate, underlying_symbol in rows
         ]
 
     def list_runs(
