@@ -621,7 +621,7 @@ def build_jobs_overview(
         _combine_statuses(
             "blocked" if status_counts.get("failed", 0) else "healthy",
             "degraded"
-            if status_counts.get("skipped", 0)
+            if actionable_skipped_count
             or stale_running_count
             or degraded_capture_count
             else "healthy",

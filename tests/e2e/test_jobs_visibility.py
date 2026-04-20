@@ -132,6 +132,119 @@ class JobsVisibilityTests(unittest.TestCase):
         self.assertEqual(lanes["discovery"]["active_worker_count"], 1)
         self.assertEqual(payload["summary"]["stale_queued_job_count"], 1)
 
+    def test_build_jobs_overview_ignores_benign_skipped_runs_in_status(self) -> None:
+        now = datetime.now(UTC)
+
+        class _JobStore:
+            def schema_ready(self) -> bool:
+                return True
+
+            def list_job_definitions(self, **_: object) -> list[dict[str, object]]:
+                return [
+                    {
+                        "job_key": "collector_recovery:global",
+                        "job_type": "collector_recovery",
+                        "enabled": True,
+                        "schedule_type": "interval_minutes",
+                        "schedule": {"minutes": 1},
+                        "payload": {"singleton_scope": "global"},
+                        "singleton_scope": "global",
+                    }
+                ]
+
+            def list_latest_runs_by_job_keys(
+                self, **_: object
+            ) -> list[dict[str, object]]:
+                return [
+                    {
+                        "job_run_id": "collector_recovery:start:1",
+                        "job_key": "collector_recovery:global",
+                        "job_type": "collector_recovery",
+                        "status": "skipped",
+                        "scheduled_for": now.isoformat(),
+                        "finished_at": now.isoformat(),
+                        "heartbeat_at": now.isoformat(),
+                        "payload": {"singleton_scope": "global"},
+                        "result": {
+                            "status": "skipped",
+                            "reason": "singleton_lease_unavailable",
+                        },
+                    }
+                ]
+
+            def list_job_runs(
+                self, *, status: str | None = None, **_: object
+            ) -> list[dict[str, object]]:
+                if status in {"queued", "running"}:
+                    return []
+                return [
+                    {
+                        "job_run_id": "collector_recovery:start:1",
+                        "job_key": "collector_recovery:global",
+                        "job_type": "collector_recovery",
+                        "status": "skipped",
+                        "scheduled_for": now.isoformat(),
+                        "finished_at": now.isoformat(),
+                        "heartbeat_at": now.isoformat(),
+                        "payload": {"singleton_scope": "global"},
+                        "result": {
+                            "status": "skipped",
+                            "reason": "singleton_lease_unavailable",
+                        },
+                    }
+                ]
+
+            def get_lease(self, lease_key: str) -> dict[str, object] | None:
+                if lease_key != SCHEDULER_RUNTIME_LEASE_KEY:
+                    return None
+                return {
+                    "lease_key": lease_key,
+                    "owner": "scheduler",
+                    "expires_at": (now + timedelta(minutes=1)).isoformat(),
+                    "job_run_id": None,
+                }
+
+            def list_active_leases(
+                self, *, prefix: str | None = None
+            ) -> list[dict[str, object]]:
+                if prefix != WORKER_RUNTIME_LEASE_PREFIX:
+                    return []
+                return [
+                    {
+                        "lease_key": f"{WORKER_RUNTIME_LEASE_PREFIX}worker-runtime-1",
+                        "owner": "worker-runtime-1",
+                        "expires_at": (now + timedelta(minutes=1)).isoformat(),
+                        "lease_state": {
+                            "kind": "worker",
+                            "lane": "runtime",
+                            "settings_name": "RuntimeWorkerSettings",
+                            "queue_name": "arq:queue:runtime",
+                        },
+                    },
+                    {
+                        "lease_key": f"{WORKER_RUNTIME_LEASE_PREFIX}worker-discovery-1",
+                        "owner": "worker-discovery-1",
+                        "expires_at": (now + timedelta(minutes=1)).isoformat(),
+                        "lease_state": {
+                            "kind": "worker",
+                            "lane": "discovery",
+                            "settings_name": "DiscoveryWorkerSettings",
+                            "queue_name": "arq:queue:discovery",
+                        },
+                    }
+                ]
+
+        class _Storage:
+            def __init__(self) -> None:
+                self.jobs = _JobStore()
+
+        payload = build_jobs_overview(storage=_Storage())
+
+        self.assertEqual(payload["status"], "healthy")
+        self.assertEqual(payload["summary"]["status_counts"], {"skipped": 1})
+        self.assertEqual(payload["summary"]["operator_status_counts"], {"healthy": 1})
+        self.assertEqual(payload["attention"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

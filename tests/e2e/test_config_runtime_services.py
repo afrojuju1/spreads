@@ -244,6 +244,16 @@ class CollectionConfigTests(unittest.TestCase):
 
         self.assertEqual(scope["scanner_args"]["min_return_on_risk"], 0.13)
 
+    def test_build_collector_scope_sets_short_delta_target_within_band(self) -> None:
+        scope = build_collector_scope(
+            scanner_strategy="put_credit",
+            scanner_profile="weekly",
+        )
+
+        self.assertEqual(scope["scanner_args"]["short_delta_min"], 0.18)
+        self.assertEqual(scope["scanner_args"]["short_delta_max"], 0.28)
+        self.assertAlmostEqual(scope["scanner_args"]["short_delta_target"], 0.23)
+
     def test_build_scanner_args_preserves_seeded_scanner_overrides(self) -> None:
         args = build_collection_args(
             {

@@ -244,6 +244,18 @@ def build_collector_scope(
         for _bot, automation in entries
         if automation.strategy_config.builder_params.get("short_delta_max") is not None
     ]
+    short_delta_targets = [
+        float(
+            automation.strategy_config.builder_params.get("short_delta_target") or 0.0
+        )
+        for _bot, automation in entries
+        if automation.strategy_config.builder_params.get("short_delta_target") is not None
+    ]
+    short_delta_target = None
+    if short_delta_targets:
+        short_delta_target = sum(short_delta_targets) / len(short_delta_targets)
+    elif short_delta_mins and short_delta_maxs:
+        short_delta_target = (min(short_delta_mins) + max(short_delta_maxs)) / 2.0
     widths = [
         float(width)
         for _bot, automation in entries
@@ -298,6 +310,11 @@ def build_collector_scope(
                 {}
                 if not short_delta_maxs
                 else {"short_delta_max": max(short_delta_maxs)}
+            ),
+            **(
+                {}
+                if short_delta_target is None
+                else {"short_delta_target": short_delta_target}
             ),
             **(
                 {}
