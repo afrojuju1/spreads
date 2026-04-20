@@ -199,10 +199,6 @@ class SpreadCandidate:
     long_implied_volatility: float | None = None
     short_volume: int | None = None
     long_volume: int | None = None
-    secondary_short_symbol: str | None = None
-    secondary_long_symbol: str | None = None
-    secondary_short_strike: float | None = None
-    secondary_long_strike: float | None = None
     lower_breakeven: float | None = None
     upper_breakeven: float | None = None
     side_balance_score: float | None = None

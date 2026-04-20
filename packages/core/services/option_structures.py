@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -124,7 +125,7 @@ def normalize_legs(
     *,
     expiration_date: str | None = None,
 ) -> list[dict[str, Any]]:
-    if not isinstance(legs_payload, list):
+    if not isinstance(legs_payload, (list, tuple)):
         return []
     built: list[dict[str, Any]] = []
     for leg in legs_payload:
@@ -255,6 +256,70 @@ def structure_symbol_path(legs: list[Mapping[str, Any]]) -> str:
     if len(symbols) == 1:
         return symbols[0]
     return " / ".join(symbols)
+
+
+def _option_type_from_value(value: Any) -> str | None:
+    rendered = _as_text(value)
+    if rendered is None:
+        return None
+    normalized = rendered.lower()
+    if normalized in {"call", "put"}:
+        return normalized
+    match = re.search(r"([cp])(?=\d+(?:\.\d+)?$)", rendered, re.IGNORECASE)
+    if match:
+        return "call" if match.group(1).lower() == "c" else "put"
+    return None
+
+
+def structure_strike_path(
+    legs: list[Mapping[str, Any]],
+    *,
+    strategy: Any = None,
+) -> str:
+    normalized_strategy = normalize_strategy_family(strategy)
+    if normalized_strategy == "iron_condor":
+        grouped: dict[str, dict[str, float | None]] = {
+            "put": {"short": None, "long": None},
+            "call": {"short": None, "long": None},
+        }
+        for leg in legs:
+            option_type = _option_type_from_value(
+                leg.get("option_type")
+            ) or _option_type_from_value(leg.get("symbol"))
+            role = _as_text(leg.get("role")) or leg_role(
+                side=leg.get("side"),
+                position_intent=leg.get("position_intent"),
+            )
+            strike = _as_float(leg.get("strike"))
+            if (
+                option_type in {"call", "put"}
+                and role in {"short", "long"}
+                and strike is not None
+                and grouped[option_type][role] is None
+            ):
+                grouped[option_type][role] = strike
+        put_long = grouped["put"]["long"]
+        put_short = grouped["put"]["short"]
+        call_short = grouped["call"]["short"]
+        call_long = grouped["call"]["long"]
+        if None not in (put_long, put_short, call_short, call_long):
+            return (
+                f"{put_long:.2f}-{put_short:.2f}"
+                f" / {call_short:.2f}-{call_long:.2f}"
+            )
+
+    strikes = [
+        strike
+        for strike in (_as_float(leg.get("strike")) for leg in legs)
+        if strike is not None
+    ]
+    if not strikes:
+        return "n/a"
+    if len(strikes) == 1:
+        return f"{strikes[0]:.2f}"
+    if len(strikes) == 2:
+        return f"{strikes[0]:.2f}/{strikes[1]:.2f}"
+    return " / ".join(f"{strike:.2f}" for strike in strikes)
 
 
 def structure_display_fields(legs: list[Mapping[str, Any]]) -> dict[str, str | None]:
@@ -671,6 +736,7 @@ __all__ = [
     "payload_display_fields",
     "structure_quote_snapshot",
     "structure_display_fields",
+    "structure_strike_path",
     "structure_symbol_path",
     "signed_net_limit_price",
     "unique_leg_symbols",

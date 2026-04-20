@@ -363,10 +363,6 @@ def build_iron_condors(
                             + (short_call_snapshot.daily_volume or 0),
                             long_volume=(long_put_snapshot.daily_volume or 0)
                             + (long_call_snapshot.daily_volume or 0),
-                            secondary_short_symbol=short_call.symbol,
-                            secondary_long_symbol=long_call.symbol,
-                            secondary_short_strike=short_call.strike_price,
-                            secondary_long_strike=long_call.strike_price,
                             lower_breakeven=lower_breakeven,
                             upper_breakeven=upper_breakeven,
                             side_balance_score=side_balance_score,

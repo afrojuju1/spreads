@@ -110,7 +110,7 @@ from .shared import (
 
 def _opportunity_legs_from_row(opportunity: Mapping[str, Any]) -> list[OpportunityLeg]:
     legs_payload = opportunity.get("legs")
-    if not isinstance(legs_payload, list):
+    if not isinstance(legs_payload, (list, tuple)):
         execution_shape = opportunity.get("execution_shape")
         if isinstance(execution_shape, Mapping):
             order_payload = execution_shape.get("order_payload")

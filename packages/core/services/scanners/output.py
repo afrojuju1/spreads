@@ -17,7 +17,11 @@ from core.domain.models import (
 from core.domain.profiles import format_session_bucket, zero_dte_session_bucket
 from core.integrations.alpaca.client import AlpacaClient
 from core.integrations.alpaca.streaming import AlpacaOptionQuoteStreamer
-from core.services.option_structures import candidate_legs, structure_quote_snapshot
+from core.services.option_structures import (
+    candidate_legs,
+    structure_quote_snapshot,
+    structure_strike_path,
+)
 from core.services.scanners.config import build_filter_payload, strategy_display_label
 from core.services.scanners.setup import serialize_setup_context
 
@@ -515,22 +519,17 @@ def build_live_spread_rows(
     rows: list[list[str]] = []
     for candidate in candidates:
         payload = candidate.to_payload()
+        legs = candidate_legs(payload)
         live_snapshot = structure_quote_snapshot(
-            legs=candidate_legs(payload),
+            legs=legs,
             strategy_family=payload.get("strategy"),
             quotes_by_symbol=live_quotes,
         )
         if live_snapshot is None:
             continue
         primary_label = f"{candidate.short_strike:.2f}/{candidate.long_strike:.2f}"
-        if (
-            candidate.secondary_short_strike is not None
-            and candidate.secondary_long_strike is not None
-        ):
-            primary_label = (
-                f"{candidate.long_strike:.2f}-{candidate.short_strike:.2f}"
-                f" / {candidate.secondary_short_strike:.2f}-{candidate.secondary_long_strike:.2f}"
-            )
+        if candidate.strategy == "iron_condor":
+            primary_label = structure_strike_path(legs, strategy=candidate.strategy)
         rows.append(
             [
                 strategy_display_label(candidate.strategy),

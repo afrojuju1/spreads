@@ -19,6 +19,7 @@ from core.domain.models import (
 )
 from core.services.opportunity_scoring import build_candidate_opportunity_score
 from core.services.scanners.builders.iron_condors import build_iron_condors
+from core.services.scanners.output import build_live_spread_rows
 from core.services.session_positions import sync_session_position_from_attempt
 
 
@@ -437,8 +438,19 @@ class IronCondorLiveFlowE2ETests(unittest.TestCase):
         self.assertEqual(candidate.strategy, "iron_condor")
         self.assertEqual(candidate.short_symbol, "SPY260424P503")
         self.assertEqual(candidate.long_symbol, "SPY260424P498")
-        self.assertEqual(candidate.secondary_short_symbol, "SPY260424C517")
-        self.assertEqual(candidate.secondary_long_symbol, "SPY260424C522")
+        self.assertEqual(
+            candidate.symbol_path,
+            "SPY260424P503 / SPY260424P498 / SPY260424C517 / SPY260424C522",
+        )
+        self.assertEqual(
+            [leg["symbol"] for leg in candidate.legs],
+            [
+                "SPY260424P503",
+                "SPY260424P498",
+                "SPY260424C517",
+                "SPY260424C522",
+            ],
+        )
         self.assertAlmostEqual(candidate.midpoint_credit, 1.2, places=4)
         self.assertAlmostEqual(candidate.natural_credit, 1.0, places=4)
         self.assertAlmostEqual(candidate.max_profit, 120.0, places=4)
@@ -447,6 +459,10 @@ class IronCondorLiveFlowE2ETests(unittest.TestCase):
         self.assertEqual(len(candidate.order_payload["legs"]), 4)
 
         candidate_payload = asdict(candidate)
+        self.assertNotIn("secondary_short_symbol", candidate_payload)
+        self.assertNotIn("secondary_long_symbol", candidate_payload)
+        self.assertNotIn("secondary_short_strike", candidate_payload)
+        self.assertNotIn("secondary_long_strike", candidate_payload)
         candidate_payload.update(
             {
                 "quality_score": 91.0,
@@ -519,6 +535,9 @@ class IronCondorLiveFlowE2ETests(unittest.TestCase):
         )
         self.assertTrue(quality_check["ok"])
         self.assertGreater(float(quality_check["live_quote"]["close_mark"]), 0.0)
+        live_rows = build_live_spread_rows([candidate], live_quotes)
+        self.assertEqual(len(live_rows), 1)
+        self.assertEqual(live_rows[0][2], "498.00-503.00 / 517.00-522.00")
 
         live_candidate = {
             "underlying_symbol": candidate.underlying_symbol,
