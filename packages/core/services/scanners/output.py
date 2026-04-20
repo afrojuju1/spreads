@@ -184,7 +184,7 @@ def print_human_readable(
 
     for index, candidate in enumerate(candidates, start=1):
         print(
-            f"{index}. [{strategy_display_label(candidate.strategy)}] {candidate.short_symbol} -> {candidate.long_symbol} | "
+            f"{index}. [{strategy_display_label(candidate.strategy)}] {candidate.symbol_path} | "
             f"score {candidate.quality_score:.1f} | "
             f"breakeven {candidate.breakeven:.2f} | "
             f"calendar {candidate.calendar_status}"
@@ -227,6 +227,8 @@ def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
         "underlying_price",
         "short_symbol",
         "long_symbol",
+        "symbol_path",
+        "structure_identity",
         "short_strike",
         "long_strike",
         "width",
@@ -304,7 +306,7 @@ def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
         writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         for candidate in candidates:
-            row = asdict(candidate)
+            row = candidate.to_payload()
             row["calendar_reasons"] = "; ".join(candidate.calendar_reasons)
             row["calendar_sources"] = ", ".join(candidate.calendar_sources)
             row["setup_reasons"] = "; ".join(candidate.setup_reasons)
@@ -336,7 +338,7 @@ def write_json(
         "run_id": run_id,
         "filters": build_filter_payload(args),
         "setup": serialize_setup_context(setup),
-        "candidates": [asdict(candidate) for candidate in candidates],
+        "candidates": [candidate.to_payload() for candidate in candidates],
     }
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
@@ -440,7 +442,7 @@ def print_ranked_candidates(
     for index, candidate in enumerate(ranked_candidates, start=1):
         print(
             f"{index}. {candidate.underlying_symbol} [{strategy_display_label(candidate.strategy)}] "
-            f"{candidate.short_symbol} -> {candidate.long_symbol} | "
+            f"{candidate.symbol_path} | "
             f"score {candidate.quality_score:.1f} | breakeven {candidate.breakeven:.2f}"
         )
         if candidate.selection_notes:
@@ -483,7 +485,7 @@ def write_universe_json(
         .replace("+00:00", "Z"),
         "candidate_count": len(candidates),
         "failures": [asdict(failure) for failure in failures],
-        "candidates": [asdict(candidate) for candidate in candidates],
+        "candidates": [candidate.to_payload() for candidate in candidates],
     }
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
@@ -495,7 +497,7 @@ def build_stream_symbols(
     symbols: list[str] = []
     seen: set[str] = set()
     for candidate in candidates:
-        for leg in candidate_legs(asdict(candidate)):
+        for leg in candidate_legs(candidate.to_payload()):
             symbol = str(leg.get("symbol") or "").strip()
             if symbol in seen:
                 continue
@@ -512,7 +514,7 @@ def build_live_spread_rows(
 ) -> list[list[str]]:
     rows: list[list[str]] = []
     for candidate in candidates:
-        payload = asdict(candidate)
+        payload = candidate.to_payload()
         live_snapshot = structure_quote_snapshot(
             legs=candidate_legs(payload),
             strategy_family=payload.get("strategy"),

@@ -101,8 +101,6 @@ class ExecutionAttemptModel(Base):
     underlying_symbol: Mapped[str] = mapped_column(Text, nullable=False)
     strategy: Mapped[str] = mapped_column(Text, nullable=False)
     expiration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    short_symbol: Mapped[str | None] = mapped_column(Text, nullable=True)
-    long_symbol: Mapped[str | None] = mapped_column(Text, nullable=True)
     structure_identity: Mapped[str | None] = mapped_column(Text, nullable=True)
     trade_intent: Mapped[str] = mapped_column(Text, nullable=False, default="open")
     position_id: Mapped[str | None] = mapped_column(

@@ -6,7 +6,11 @@ from typing import Any
 
 from core.domain.models import DailyBar, OptionTrade
 from core.services.market_dates import NEW_YORK
-from core.services.option_structures import candidate_legs, net_premium_kind
+from core.services.option_structures import (
+    candidate_legs,
+    net_premium_kind,
+    payload_display_fields,
+)
 from core.services.scanners.config import strategy_option_type
 
 
@@ -365,12 +369,12 @@ def summarize_market_outcomes(
         total_pnl = 0.0
 
         for candidate in candidates:
+            candidate_display = payload_display_fields(candidate)
             if latest_available_date is None or latest_available_date < target_date:
                 rows.append(
                     {
                         "horizon": label,
-                        "short_symbol": candidate["short_symbol"],
-                        "long_symbol": candidate["long_symbol"],
+                        **candidate_display,
                         "expiration_date": candidate["expiration_date"],
                         "status": "pending",
                     }
@@ -399,8 +403,7 @@ def summarize_market_outcomes(
                 rows.append(
                     {
                         "horizon": label,
-                        "short_symbol": candidate["short_symbol"],
-                        "long_symbol": candidate["long_symbol"],
+                        **candidate_display,
                         "expiration_date": candidate["expiration_date"],
                         "status": "pending_option_bars",
                     }
@@ -433,8 +436,7 @@ def summarize_market_outcomes(
             rows.append(
                 {
                     "horizon": label,
-                    "short_symbol": candidate["short_symbol"],
-                    "long_symbol": candidate["long_symbol"],
+                    **candidate_display,
                     "expiration_date": candidate["expiration_date"],
                     "status": "available",
                     "spot_at_horizon": horizon_bar.close,
@@ -495,13 +497,13 @@ def summarize_market_outcomes(
     expiry_conflicts = 0
     expiry_total_pnl = 0.0
     for candidate in candidates:
+        candidate_display = payload_display_fields(candidate)
         expiry_date = date.fromisoformat(candidate["expiration_date"])
         if latest_available_date is None or latest_available_date < expiry_date:
             rows.append(
                 {
                     "horizon": "expiry",
-                    "short_symbol": candidate["short_symbol"],
-                    "long_symbol": candidate["long_symbol"],
+                    **candidate_display,
                     "expiration_date": candidate["expiration_date"],
                     "status": "pending",
                 }
@@ -523,8 +525,7 @@ def summarize_market_outcomes(
             rows.append(
                 {
                     "horizon": "expiry",
-                    "short_symbol": candidate["short_symbol"],
-                    "long_symbol": candidate["long_symbol"],
+                    **candidate_display,
                     "expiration_date": candidate["expiration_date"],
                     "status": "pending_option_bars",
                 }
@@ -554,8 +555,7 @@ def summarize_market_outcomes(
         rows.append(
             {
                 "horizon": "expiry",
-                "short_symbol": candidate["short_symbol"],
-                "long_symbol": candidate["long_symbol"],
+                **candidate_display,
                 "expiration_date": candidate["expiration_date"],
                 "status": "available",
                 "spot_at_horizon": horizon_bar.close,

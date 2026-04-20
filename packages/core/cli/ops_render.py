@@ -202,8 +202,7 @@ def _render_raw_candidate_summary(
     table.add_column("Underlying")
     table.add_column("Strategy")
     table.add_column("Expiry")
-    table.add_column("Short")
-    table.add_column("Long")
+    table.add_column("Structure")
     table.add_column("Quality", justify="right")
     table.add_column("Credit", justify="right")
     table.add_column("ROR", justify="right")
@@ -213,8 +212,7 @@ def _render_raw_candidate_summary(
             str(row.get("underlying_symbol") or "-"),
             str(row.get("strategy") or "-"),
             str(row.get("expiration_date") or "-"),
-            _truncate(row.get("short_symbol"), length=24),
-            _truncate(row.get("long_symbol"), length=24),
+            _truncate(row.get("symbol_path"), length=40),
             _render_value(row.get("quality_score")),
             _render_money(row.get("midpoint_credit")),
             _render_value(row.get("return_on_risk")),

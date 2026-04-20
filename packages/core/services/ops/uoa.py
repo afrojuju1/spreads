@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from core.db.decorators import with_storage
+from core.services.option_structures import payload_display_fields, payload_structure_identity
 from core.services.selection_terms import (
     MONITOR_SELECTION_STATE,
     PROMOTABLE_SELECTION_STATE,
@@ -106,14 +107,23 @@ def _summarize_uoa_candidate(candidate: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(candidate.get("candidate"), Mapping)
         else {}
     )
+    display = payload_display_fields(candidate)
+    if display["symbol_path"] in {None, "n/a"}:
+        display = payload_display_fields(payload)
     return {
         "candidate_id": candidate.get("candidate_id"),
         "selection_state": candidate.get("selection_state"),
         "selection_rank": _coerce_int(candidate.get("selection_rank")),
         "underlying_symbol": candidate.get("underlying_symbol"),
         "strategy": candidate.get("strategy") or payload.get("strategy"),
-        "short_symbol": candidate.get("short_symbol") or payload.get("short_symbol"),
-        "long_symbol": candidate.get("long_symbol") or payload.get("long_symbol"),
+        "short_symbol": display.get("short_symbol"),
+        "long_symbol": display.get("long_symbol"),
+        "symbol_path": display.get("symbol_path"),
+        "structure_identity": payload_structure_identity(
+            candidate,
+            strategy=candidate.get("strategy") or payload.get("strategy"),
+        )
+        or payload_structure_identity(payload, strategy=payload.get("strategy")),
         "expiration_date": candidate.get("expiration_date")
         or payload.get("expiration_date"),
         "dte": _coerce_int(payload.get("days_to_expiration")),

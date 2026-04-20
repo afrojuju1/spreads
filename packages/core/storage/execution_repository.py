@@ -6,11 +6,11 @@ from sqlalchemy import select
 
 from core.services.option_structures import (
     common_expiration_date,
-    fallback_vertical_legs,
     legs_identity_key,
     normalize_legs,
     normalize_strategy_family,
     primary_short_long_symbols,
+    structure_symbol_path,
 )
 from core.storage.base import RepositoryBase
 from core.storage.execution_models import (
@@ -59,6 +59,30 @@ class ExecutionRepository(RepositoryBase):
             "execution_attempts", "portfolio_positions", "position_closes"
         )
 
+    def _attempt_extra(self, row: ExecutionAttemptModel | None) -> dict[str, Any]:
+        if row is None:
+            return {
+                "short_symbol": None,
+                "long_symbol": None,
+                "symbol_path": None,
+            }
+        legs = list(row.legs_json or [])
+        short_symbol, long_symbol = primary_short_long_symbols(legs)
+        return {
+            "short_symbol": short_symbol,
+            "long_symbol": long_symbol,
+            "symbol_path": structure_symbol_path(legs),
+        }
+
+    def _attempt_row(self, row: ExecutionAttemptModel) -> ExecutionAttemptRecord:
+        return self.row(row, extra=self._attempt_extra(row))
+
+    def _attempt_rows(
+        self,
+        rows: list[ExecutionAttemptModel],
+    ) -> list[ExecutionAttemptRecord]:
+        return [self._attempt_row(row) for row in rows]
+
     def create_attempt(
         self,
         *,
@@ -82,8 +106,6 @@ class ExecutionRepository(RepositoryBase):
         underlying_symbol: str,
         strategy: str,
         expiration_date: str | None,
-        short_symbol: str | None,
-        long_symbol: str | None,
         structure_identity: str | None = None,
         legs: list[dict[str, Any]] | None = None,
         order_payload: dict[str, Any] | None = None,
@@ -110,14 +132,7 @@ class ExecutionRepository(RepositoryBase):
     ) -> ExecutionAttemptRecord:
         resolved_legs = normalize_legs(legs, expiration_date=expiration_date)
         if not resolved_legs:
-            resolved_legs = fallback_vertical_legs(
-                short_symbol=short_symbol,
-                long_symbol=long_symbol,
-                expiration_date=expiration_date,
-            )
-        compatibility_short_symbol, compatibility_long_symbol = primary_short_long_symbols(
-            resolved_legs
-        )
+            raise ValueError("Execution attempt requires canonical legs")
         resolved_expiration_date = common_expiration_date(resolved_legs) or expiration_date
         resolved_strategy_family = normalize_strategy_family(strategy_family or strategy)
         resolved_structure_identity = structure_identity
@@ -126,6 +141,8 @@ class ExecutionRepository(RepositoryBase):
                 strategy=resolved_strategy_family,
                 legs=resolved_legs,
             )
+        if resolved_structure_identity is None:
+            raise ValueError("Execution attempt requires structure identity")
         with self.session_scope() as session:
             row = ExecutionAttemptModel(
                 execution_attempt_id=execution_attempt_id,
@@ -148,8 +165,6 @@ class ExecutionRepository(RepositoryBase):
                 underlying_symbol=underlying_symbol,
                 strategy=strategy,
                 expiration_date=_optional_date(resolved_expiration_date),
-                short_symbol=compatibility_short_symbol or short_symbol,
-                long_symbol=compatibility_long_symbol or long_symbol,
                 structure_identity=resolved_structure_identity,
                 trade_intent=trade_intent,
                 position_id=position_id,
@@ -179,14 +194,14 @@ class ExecutionRepository(RepositoryBase):
             session.add(row)
             session.flush()
             session.refresh(row)
-            return self.row(row)
+            return self._attempt_row(row)
 
     def get_attempt(self, execution_attempt_id: str) -> ExecutionAttemptRecord | None:
         with self.session_factory() as session:
             row = session.get(ExecutionAttemptModel, execution_attempt_id)
         if row is None:
             return None
-        return self.row(row)
+        return self._attempt_row(row)
 
     def list_attempts(
         self,
@@ -205,7 +220,7 @@ class ExecutionRepository(RepositoryBase):
         )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return self.rows(rows)
+        return self._attempt_rows(rows)
 
     def list_pipeline_attempts(
         self,
@@ -227,7 +242,7 @@ class ExecutionRepository(RepositoryBase):
         ).limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return self.rows(rows)
+        return self._attempt_rows(rows)
 
     def list_session_attempts_by_status(
         self,
@@ -252,7 +267,7 @@ class ExecutionRepository(RepositoryBase):
         ).limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return self.rows(rows)
+        return self._attempt_rows(rows)
 
     def list_attempts_by_status(
         self,
@@ -274,16 +289,14 @@ class ExecutionRepository(RepositoryBase):
         ).limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return self.rows(rows)
+        return self._attempt_rows(rows)
 
     def list_open_attempts_for_identity(
         self,
         *,
         session_id: str,
         strategy: str,
-        short_symbol: str | None,
-        long_symbol: str | None,
-        structure_identity: str | None = None,
+        structure_identity: str,
         statuses: list[str],
     ) -> list[ExecutionAttemptRecord]:
         statement = (
@@ -292,18 +305,12 @@ class ExecutionRepository(RepositoryBase):
             .where(ExecutionAttemptModel.strategy == strategy)
             .where(ExecutionAttemptModel.trade_intent == "open")
             .where(ExecutionAttemptModel.status.in_(statuses))
+            .where(ExecutionAttemptModel.structure_identity == structure_identity)
             .order_by(ExecutionAttemptModel.requested_at.desc())
         )
-        if structure_identity is not None:
-            statement = statement.where(
-                ExecutionAttemptModel.structure_identity == structure_identity
-            )
-        else:
-            statement = statement.where(ExecutionAttemptModel.short_symbol == short_symbol)
-            statement = statement.where(ExecutionAttemptModel.long_symbol == long_symbol)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return self.rows(rows)
+        return self._attempt_rows(rows)
 
     def list_open_attempts_for_position(
         self,
@@ -320,7 +327,7 @@ class ExecutionRepository(RepositoryBase):
         )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return self.rows(rows)
+        return self._attempt_rows(rows)
 
     def get_execution_intent(
         self, execution_intent_id: str
@@ -510,7 +517,7 @@ class ExecutionRepository(RepositoryBase):
                 row.error_text = None
             session.flush()
             session.refresh(row)
-            return self.row(row)
+            return self._attempt_row(row)
 
     def list_orders(
         self,

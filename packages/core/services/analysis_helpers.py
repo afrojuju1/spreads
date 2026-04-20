@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from core.services.option_structures import payload_display_fields, payload_structure_identity
+
 SCORE_BUCKETS = (
     (85.0, "85+"),
     (75.0, "75-84"),
@@ -11,14 +13,23 @@ SCORE_BUCKETS = (
 )
 
 
-def candidate_identity(candidate: Mapping[str, Any]) -> tuple[str, str, str, str, str]:
+def candidate_identity(candidate: Mapping[str, Any]) -> tuple[str, str, str, str]:
     return (
         str(candidate["underlying_symbol"]),
         str(candidate["strategy"]),
         str(candidate["expiration_date"]),
-        str(candidate["short_symbol"]),
-        str(candidate["long_symbol"]),
+        str(payload_structure_identity(candidate, strategy=candidate.get("strategy")) or ""),
     )
+
+
+def candidate_display(candidate: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        **payload_display_fields(candidate),
+        "structure_identity": payload_structure_identity(
+            candidate,
+            strategy=candidate.get("strategy"),
+        ),
+    }
 
 
 def score_bucket_label(score: float | None) -> str:
@@ -49,6 +60,7 @@ def candidate_session_phase(candidate: Mapping[str, Any]) -> str:
 
 
 __all__ = [
+    "candidate_display",
     "candidate_session_phase",
     "candidate_identity",
     "resolved_estimated_pnl",

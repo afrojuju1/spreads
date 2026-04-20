@@ -257,6 +257,19 @@ def structure_symbol_path(legs: list[Mapping[str, Any]]) -> str:
     return " / ".join(symbols)
 
 
+def structure_display_fields(legs: list[Mapping[str, Any]]) -> dict[str, str | None]:
+    short_symbol, long_symbol = primary_short_long_symbols(legs)
+    return {
+        "short_symbol": short_symbol,
+        "long_symbol": long_symbol,
+        "symbol_path": structure_symbol_path(legs),
+    }
+
+
+def payload_display_fields(payload: Mapping[str, Any]) -> dict[str, str | None]:
+    return structure_display_fields(candidate_legs(payload))
+
+
 def primary_short_long_symbols(
     legs: list[Mapping[str, Any]],
 ) -> tuple[str | None, str | None]:
@@ -655,7 +668,9 @@ __all__ = [
     "position_legs",
     "primary_short_long_symbols",
     "payload_structure_identity",
+    "payload_display_fields",
     "structure_quote_snapshot",
+    "structure_display_fields",
     "structure_symbol_path",
     "signed_net_limit_price",
     "unique_leg_symbols",

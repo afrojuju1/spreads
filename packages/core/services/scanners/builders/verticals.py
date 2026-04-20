@@ -12,13 +12,13 @@ from core.domain.models import (
 from core.services.option_structures import net_premium_kind
 from core.services.scanners.config import strategy_option_type
 
-from .orders import make_order_payload
 from .shared import (
     days_from_reference,
     effective_min_credit,
     relative_spread,
     relative_spread_exceeds,
 )
+from .structures import build_vertical_candidate_structure
 
 
 def build_vertical_spreads(
@@ -205,6 +205,12 @@ def build_vertical_spreads(
                             else expected_move_boundary - breakeven
                         )
 
+                structure = build_vertical_candidate_structure(
+                    strategy=strategy,
+                    short_contract=short_contract,
+                    long_contract=long_contract,
+                    limit_price=midpoint_credit,
+                )
                 candidates.append(
                     SpreadCandidate(
                         underlying_symbol=symbol,
@@ -213,8 +219,8 @@ def build_vertical_spreads(
                         expiration_date=expiration_date,
                         days_to_expiration=days_to_expiration,
                         underlying_price=spot_price,
-                        short_symbol=short_contract.symbol,
-                        long_symbol=long_contract.symbol,
+                        legs=tuple(structure["legs"]),
+                        structure_identity=str(structure["structure_identity"]),
                         short_strike=short_contract.strike_price,
                         long_strike=long_contract.strike_price,
                         width=width,
@@ -253,12 +259,7 @@ def build_vertical_spreads(
                         expected_move_source_strike=expected_move_source_strike,
                         short_vs_expected_move=short_vs_expected_move,
                         breakeven_vs_expected_move=breakeven_vs_expected_move,
-                        order_payload=make_order_payload(
-                            short_contract.symbol,
-                            long_contract.symbol,
-                            midpoint_credit,
-                            strategy=strategy,
-                        ),
+                        order_payload=dict(structure["order_payload"]),
                         short_bid_size=short_snapshot.bid_size,
                         short_ask_size=short_snapshot.ask_size,
                         long_bid_size=long_snapshot.bid_size,

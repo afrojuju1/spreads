@@ -116,7 +116,7 @@ def render_outcome_summaries(outcomes: Mapping[str, Any]) -> list[str]:
     ]
     for idea in ideas[:20]:
         lines.append(
-            f"### {idea['underlying_symbol']} {idea['strategy']} {idea['short_symbol']} / {idea['long_symbol']}"
+            f"### {idea['underlying_symbol']} {idea['strategy']} {idea['symbol_path']}"
         )
         timing_line = f"- First seen: {idea['first_seen']} | entry seen: {idea['entry_seen']}"
         if (

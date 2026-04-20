@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
@@ -117,8 +117,8 @@ class SpreadCandidate:
     expiration_date: str
     days_to_expiration: int
     underlying_price: float
-    short_symbol: str
-    long_symbol: str
+    legs: tuple[dict[str, Any], ...]
+    structure_identity: str
     short_strike: float
     long_strike: float
     width: float
@@ -207,6 +207,36 @@ class SpreadCandidate:
     upper_breakeven: float | None = None
     side_balance_score: float | None = None
     wing_symmetry_ratio: float | None = None
+    short_symbol: str | None = field(init=False)
+    long_symbol: str | None = field(init=False)
+    symbol_path: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        normalized_legs = tuple(dict(leg) for leg in self.legs)
+        object.__setattr__(self, "legs", normalized_legs)
+        short_symbol = None
+        long_symbol = None
+        symbols: list[str] = []
+        for leg in self.legs:
+            symbol = str(leg.get("symbol") or "").strip()
+            role = str(leg.get("role") or "").strip().lower()
+            if role == "short" and short_symbol is None and symbol:
+                short_symbol = symbol
+            elif role == "long" and long_symbol is None and symbol:
+                long_symbol = symbol
+            if symbol and symbol not in symbols:
+                symbols.append(symbol)
+        object.__setattr__(self, "short_symbol", short_symbol)
+        object.__setattr__(self, "long_symbol", long_symbol)
+        if not symbols:
+            object.__setattr__(self, "symbol_path", "n/a")
+        elif len(symbols) == 1:
+            object.__setattr__(self, "symbol_path", symbols[0])
+        else:
+            object.__setattr__(self, "symbol_path", " / ".join(symbols))
+
+    def to_payload(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -244,6 +274,10 @@ class UniverseScanFailure:
     error: str
 
 
+def serialize_spread_candidate(candidate: SpreadCandidate) -> dict[str, Any]:
+    return candidate.to_payload()
+
+
 __all__ = [
     "DailyBar",
     "ExpectedMoveEstimate",
@@ -252,6 +286,7 @@ __all__ = [
     "OptionContract",
     "OptionTrade",
     "OptionSnapshot",
+    "serialize_spread_candidate",
     "SpreadCandidate",
     "SymbolMarketSlice",
     "SymbolScanResult",

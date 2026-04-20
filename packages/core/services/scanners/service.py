@@ -138,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
                                 ],
                                 "failures": [asdict(failure) for failure in failures],
                                 "candidates": [
-                                    asdict(candidate) for candidate in candidates
+                                    candidate.to_payload() for candidate in candidates
                                 ],
                                 "output_file": output_path,
                             },
@@ -222,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
                                     "reasons": list(result.setup.reasons),
                                 },
                                 "candidates": [
-                                    asdict(candidate) for candidate in candidates
+                                    candidate.to_payload() for candidate in candidates
                                 ],
                                 "output_file": output_path,
                             },
@@ -310,7 +310,7 @@ def main(argv: list[str] | None = None) -> int:
                             "candidate_count": len(ranked_candidates),
                             "failures": [asdict(failure) for failure in failures],
                             "candidates": [
-                                asdict(candidate) for candidate in ranked_candidates
+                                candidate.to_payload() for candidate in ranked_candidates
                             ],
                             "output_file": output_path,
                         },

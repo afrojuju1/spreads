@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import asdict
 from datetime import UTC, date, datetime, time, timedelta
 import os
 from typing import Any, Mapping
@@ -14,7 +13,7 @@ from core.services.alpaca import create_alpaca_client_from_env
 from core.services.automations import cadence_minutes
 from core.services.automation_runtime import resolve_entry_runtime
 from core.services.bot_analytics import evaluate_entry_controls
-from core.services.entry_planner import plan_entry_selection, score_opportunity
+from core.services.entry_planner import plan_entry_selection
 from core.services.live_selection import select_live_opportunities
 from core.services.replay_filters import candidate_matches_filter
 from core.services.scanners.config import (
@@ -26,7 +25,11 @@ from core.services.scanners.historical import (
     build_historical_symbol_market_slice_from_session_data,
     build_historical_symbol_session_data_from_alpaca,
 )
-from core.services.option_structures import candidate_legs, legs_identity_key
+from core.services.option_structures import (
+    candidate_legs,
+    legs_identity_key,
+    payload_display_fields,
+)
 from core.services.scanners.replay_artifacts import (
     deserialize_calendar_decisions_by_expiration,
     deserialize_market_slice,
@@ -94,8 +97,7 @@ def _candidate_summary(candidate: Mapping[str, Any], *, rank: int | None = None)
         "underlying_symbol": payload.get("underlying_symbol"),
         "strategy": payload.get("strategy"),
         "expiration_date": payload.get("expiration_date"),
-        "short_symbol": payload.get("short_symbol"),
-        "long_symbol": payload.get("long_symbol"),
+        **payload_display_fields(payload),
         "width": payload.get("width"),
         "midpoint_credit": payload.get("midpoint_credit"),
         "return_on_risk": payload.get("return_on_risk"),
@@ -199,9 +201,9 @@ def _build_replay_payload_for_run(
         calendar_decisions_by_expiration=calendar_decisions_by_expiration,
     )
     replayed_rows = [
-        dict(asdict(candidate))
+        dict(candidate.to_payload())
         for candidate in replayed_candidates
-        if candidate_matches_filter(dict(asdict(candidate)), candidate_filter)
+        if candidate_matches_filter(dict(candidate.to_payload()), candidate_filter)
     ]
 
     stored_rank_by_identity: dict[str, int] = {}

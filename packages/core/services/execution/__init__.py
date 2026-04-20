@@ -38,7 +38,6 @@ from core.services.option_structures import (
     legs_identity_key,
     net_premium_kind,
     normalize_legs,
-    primary_short_long_symbols,
     structure_quote_snapshot,
 )
 from core.services.opportunity_execution_plan import build_execution_plan
@@ -250,16 +249,25 @@ def _plan_opportunity_from_signal_row(
     if style_profile not in {"reactive", "tactical", "carry"}:
         style_profile = "tactical"
     opportunity_legs = _opportunity_legs_from_row(opportunity)
-    primary_short_symbol, primary_long_symbol = primary_short_long_symbols(
-        [
-            {
-                "symbol": leg.symbol,
-                "side": leg.side,
-                "position_intent": leg.position_intent,
-                "ratio_qty": leg.ratio_qty,
-            }
-            for leg in opportunity_legs
-        ]
+    opportunity_leg_payloads = [
+        {
+            "symbol": leg.symbol,
+            "side": leg.side,
+            "position_intent": leg.position_intent,
+            "ratio_qty": leg.ratio_qty,
+            "role": leg.role,
+            "expiration_date": opportunity.get("expiration_date")
+            or candidate.get("expiration_date"),
+        }
+        for leg in opportunity_legs
+    ]
+    opportunity_structure_identity = str(
+        opportunity.get("candidate_identity")
+        or candidate.get("structure_identity")
+        or legs_identity_key(
+            strategy=opportunity.get("strategy_family") or candidate.get("strategy"),
+            legs=opportunity_leg_payloads,
+        )
     )
     return Opportunity(
         opportunity_id=opportunity_id,
@@ -277,8 +285,7 @@ def _plan_opportunity_from_signal_row(
         expiration_date=str(
             opportunity.get("expiration_date") or candidate.get("expiration_date") or ""
         ),
-        short_symbol=str(primary_short_symbol or candidate.get("short_symbol") or ""),
-        long_symbol=str(primary_long_symbol or candidate.get("long_symbol") or ""),
+        structure_identity=opportunity_structure_identity,
         style_profile=style_profile,
         strategy_family=str(
             opportunity.get("strategy_family") or candidate.get("strategy") or "unknown"
@@ -1077,8 +1084,6 @@ def submit_live_session_execution(
             existing_attempts = execution_store.list_open_attempts_for_identity(
                 session_id=session_id,
                 strategy=str(candidate["strategy"]),
-                short_symbol=None,
-                long_symbol=None,
                 structure_identity=candidate_identity,
                 statuses=sorted(OPEN_STATUSES),
             )
@@ -1092,7 +1097,7 @@ def submit_live_session_execution(
                 "changed": False,
                 "message": (
                     f"An active execution already exists for "
-                    f"{payload['short_symbol']} / {payload['long_symbol']} in this session."
+                    f"{payload['symbol_path']} in this session."
                 ),
                 "attempt": payload,
             }
@@ -1246,9 +1251,6 @@ def submit_live_session_execution(
         attempt_legs = normalize_legs(order_request.get("legs")) or candidate_legs(
             candidate_payload
         )
-        compatibility_short_symbol, compatibility_long_symbol = (
-            primary_short_long_symbols(attempt_legs)
-        )
         attempt_id = _execution_attempt_id()
         attempt = execution_store.create_attempt(
             execution_attempt_id=attempt_id,
@@ -1277,12 +1279,6 @@ def submit_live_session_execution(
             underlying_symbol=str(candidate["underlying_symbol"]),
             strategy=str(candidate["strategy"]),
             expiration_date=_as_text(candidate.get("expiration_date")),
-            short_symbol=str(
-                compatibility_short_symbol or candidate.get("short_symbol") or ""
-            ),
-            long_symbol=str(
-                compatibility_long_symbol or candidate.get("long_symbol") or ""
-            ),
             structure_identity=candidate_identity,
             legs=attempt_legs,
             order_payload=dict(order_request),
@@ -1626,9 +1622,6 @@ def submit_position_close_by_id(
         attempt_legs = normalize_legs(order_request.get("legs")) or normalize_legs(
             position.get("legs")
         )
-        compatibility_short_symbol, compatibility_long_symbol = (
-            primary_short_long_symbols(attempt_legs)
-        )
         attempt_id = _execution_attempt_id()
         attempt_structure_identity = (
             legs_identity_key(
@@ -1659,12 +1652,6 @@ def submit_position_close_by_id(
             underlying_symbol=str(position["underlying_symbol"]),
             strategy=str(position["strategy"]),
             expiration_date=_as_text(position.get("expiration_date")),
-            short_symbol=str(
-                compatibility_short_symbol or position.get("short_symbol") or ""
-            ),
-            long_symbol=str(
-                compatibility_long_symbol or position.get("long_symbol") or ""
-            ),
             structure_identity=attempt_structure_identity,
             legs=attempt_legs,
             order_payload=dict(order_request),

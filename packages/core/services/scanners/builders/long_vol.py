@@ -10,8 +10,8 @@ from core.domain.models import (
     SpreadCandidate,
 )
 
-from .orders import make_long_vol_order_payload
 from .shared import days_from_reference, relative_spread, relative_spread_exceeds
+from .structures import build_long_candidate_structure
 
 
 def _ratio_or_none(numerator: float | None, denominator: float | None) -> float | None:
@@ -119,6 +119,11 @@ def build_long_straddles(
                 short_vs_expected_move = expected_move.amount - midpoint_credit
                 breakeven_vs_expected_move = expected_move.amount - break_even_move
 
+            structure = build_long_candidate_structure(
+                strategy="long_straddle",
+                contracts=[put_contract, call_contract],
+                limit_price=midpoint_credit,
+            )
             candidates.append(
                 SpreadCandidate(
                     underlying_symbol=symbol,
@@ -127,8 +132,8 @@ def build_long_straddles(
                     expiration_date=expiration_date,
                     days_to_expiration=days_to_expiration,
                     underlying_price=spot_price,
-                    short_symbol=put_contract.symbol,
-                    long_symbol=call_contract.symbol,
+                    legs=tuple(structure["legs"]),
+                    structure_identity=str(structure["structure_identity"]),
                     short_strike=put_contract.strike_price,
                     long_strike=call_contract.strike_price,
                     width=0.0,
@@ -169,11 +174,7 @@ def build_long_straddles(
                         call_snapshot.bid_size,
                         call_snapshot.ask_size,
                     ),
-                    order_payload=make_long_vol_order_payload(
-                        symbols=(put_contract.symbol, call_contract.symbol),
-                        limit_price=midpoint_credit,
-                        strategy="long_straddle",
-                    ),
+                    order_payload=dict(structure["order_payload"]),
                     expected_move=expected_move_amount,
                     expected_move_pct=expected_move_pct,
                     expected_move_source_strike=expected_move_source_strike,
@@ -337,6 +338,11 @@ def build_long_strangles(
                     )
                     breakeven_vs_expected_move = expected_move.amount - break_even_move
 
+                structure = build_long_candidate_structure(
+                    strategy="long_strangle",
+                    contracts=[put_contract, call_contract],
+                    limit_price=midpoint_credit,
+                )
                 candidates.append(
                     SpreadCandidate(
                         underlying_symbol=symbol,
@@ -345,8 +351,8 @@ def build_long_strangles(
                         expiration_date=expiration_date,
                         days_to_expiration=days_to_expiration,
                         underlying_price=spot_price,
-                        short_symbol=put_contract.symbol,
-                        long_symbol=call_contract.symbol,
+                        legs=tuple(structure["legs"]),
+                        structure_identity=str(structure["structure_identity"]),
                         short_strike=put_contract.strike_price,
                         long_strike=call_contract.strike_price,
                         width=round(
@@ -390,11 +396,7 @@ def build_long_strangles(
                             call_snapshot.bid_size,
                             call_snapshot.ask_size,
                         ),
-                        order_payload=make_long_vol_order_payload(
-                            symbols=(put_contract.symbol, call_contract.symbol),
-                            limit_price=midpoint_credit,
-                            strategy="long_strangle",
-                        ),
+                        order_payload=dict(structure["order_payload"]),
                         expected_move=expected_move_amount,
                         expected_move_pct=expected_move_pct,
                         expected_move_source_strike=expected_move_source_strike,

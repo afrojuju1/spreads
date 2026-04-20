@@ -377,17 +377,12 @@ def _publish_risk_decision_event(risk_decision: dict[str, Any]) -> None:
 
 
 def _submission_message(attempt: dict[str, Any], *, queued: bool) -> str:
+    symbol_path = str(attempt.get("symbol_path") or "n/a")
     if str(attempt.get("trade_intent") or OPEN_TRADE_INTENT) == CLOSE_TRADE_INTENT:
         prefix = "Queued close for" if queued else "Submitted close for"
-        return (
-            f"{prefix} {attempt['underlying_symbol']} "
-            f"{attempt['short_symbol']} / {attempt['long_symbol']}."
-        )
+        return f"{prefix} {attempt['underlying_symbol']} {symbol_path}."
     prefix = "Queued" if queued else "Submitted"
-    return (
-        f"{prefix} {attempt['underlying_symbol']} {attempt['strategy']} "
-        f"{attempt['short_symbol']} / {attempt['long_symbol']}."
-    )
+    return f"{prefix} {attempt['underlying_symbol']} {attempt['strategy']} {symbol_path}."
 
 
 def _queue_execution_attempt(

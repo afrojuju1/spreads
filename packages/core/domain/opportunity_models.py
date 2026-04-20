@@ -90,8 +90,7 @@ class Opportunity:
     symbol: str
     legacy_strategy: str
     expiration_date: str
-    short_symbol: str
-    long_symbol: str
+    structure_identity: str
     style_profile: str
     strategy_family: str
     regime_snapshot_id: str
@@ -110,6 +109,30 @@ class Opportunity:
     baseline_selection_state: str | None = None
     evidence: dict[str, Any] = field(default_factory=dict)
     legs: list[OpportunityLeg] = field(default_factory=list)
+    short_symbol: str | None = field(init=False)
+    long_symbol: str | None = field(init=False)
+    symbol_path: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        short_symbol = None
+        long_symbol = None
+        symbols: list[str] = []
+        for leg in self.legs:
+            symbol = str(leg.symbol or "").strip()
+            if leg.role == "short" and short_symbol is None and symbol:
+                short_symbol = symbol
+            elif leg.role == "long" and long_symbol is None and symbol:
+                long_symbol = symbol
+            if symbol and symbol not in symbols:
+                symbols.append(symbol)
+        object.__setattr__(self, "short_symbol", short_symbol)
+        object.__setattr__(self, "long_symbol", long_symbol)
+        if not symbols:
+            object.__setattr__(self, "symbol_path", "n/a")
+        elif len(symbols) == 1:
+            object.__setattr__(self, "symbol_path", symbols[0])
+        else:
+            object.__setattr__(self, "symbol_path", " / ".join(symbols))
 
     def to_payload(self) -> dict[str, Any]:
         payload = asdict(self)

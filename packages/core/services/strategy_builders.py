@@ -131,7 +131,11 @@ def _serialize_candidate(
     short_delta_target: float | None = None,
 ) -> dict[str, Any]:
     if hasattr(candidate, "__dataclass_fields__"):
-        row = dict(asdict(candidate))
+        row = (
+            dict(candidate.to_payload())
+            if hasattr(candidate, "to_payload")
+            else dict(asdict(candidate))
+        )
         row["legs"] = candidate_legs(row)
         row["structure_identity"] = payload_structure_identity(row)
         if short_delta_target is not None:

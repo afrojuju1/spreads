@@ -9,11 +9,13 @@ from core.backtest import merge_option_bars_with_trades, summarize_market_outcom
 from core.common import env_or_die, load_local_env
 from core.integrations.alpaca.client import AlpacaClient, infer_trading_base_url
 from core.services.analysis_helpers import (
+    candidate_display,
     candidate_identity,
     candidate_session_phase,
     score_bucket_label,
 )
 from core.services.market_dates import NEW_YORK
+from core.services.option_structures import candidate_legs, unique_leg_symbols
 from core.services.selection_terms import (
     MONITOR_SELECTION_STATE,
     PROMOTABLE_SELECTION_STATE,
@@ -58,7 +60,7 @@ def build_session_outcomes(
         session_date=session_date,
     )
 
-    grouped: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+    grouped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     for row in session_candidates:
         selection_state = normalize_selection_state(
             row.get("selection_state", row.get("bucket"))
@@ -73,8 +75,7 @@ def build_session_outcomes(
                     "underlying_symbol": row["underlying_symbol"],
                     "strategy": row["strategy"],
                     "expiration_date": row["expiration_date"],
-                    "short_symbol": row["short_symbol"],
-                    "long_symbol": row["long_symbol"],
+                    **candidate_display(row),
                 },
                 "first_seen": row["generated_at"],
                 "latest_seen": row["generated_at"],
@@ -124,13 +125,9 @@ def build_session_outcomes(
         candidates: list[Mapping[str, Any]],
         entry_candidate: Mapping[str, Any],
     ) -> Mapping[str, Any] | None:
+        entry_identity = candidate_identity(entry_candidate)
         for candidate in candidates:
-            if (
-                candidate["strategy"] == entry_candidate["strategy"]
-                and candidate["expiration_date"] == entry_candidate["expiration_date"]
-                and candidate["short_symbol"] == entry_candidate["short_symbol"]
-                and candidate["long_symbol"] == entry_candidate["long_symbol"]
-            ):
+            if candidate_identity(candidate) == entry_identity:
                 return candidate
         return None
 
@@ -197,14 +194,7 @@ def build_session_outcomes(
                 stock_feed=stock_feed,
             )
 
-        option_symbols = tuple(
-            sorted(
-                {
-                    str(target_candidate["short_symbol"]),
-                    str(target_candidate["long_symbol"]),
-                }
-            )
-        )
+        option_symbols = tuple(sorted(unique_leg_symbols(candidate_legs(target_candidate))))
         option_bars_key = (
             option_symbols,
             run_date.isoformat(),

@@ -355,7 +355,7 @@ def _render_replay_text(payload: dict[str, Any]) -> str:
     for row in list(payload.get("stored_top") or [])[:10]:
         lines.append(
             "- "
-            f"{row.get('rank')}. {row.get('short_symbol')} -> {row.get('long_symbol')} | "
+            f"{row.get('rank')}. {row.get('symbol_path')} | "
             f"expiry {row.get('expiration_date')} | credit {row.get('midpoint_credit')} | "
             f"ror {row.get('return_on_risk')}"
         )
@@ -364,7 +364,7 @@ def _render_replay_text(payload: dict[str, Any]) -> str:
     for row in list(payload.get("replayed_top") or [])[:10]:
         lines.append(
             "- "
-            f"{row.get('rank')}. {row.get('short_symbol')} -> {row.get('long_symbol')} | "
+            f"{row.get('rank')}. {row.get('symbol_path')} | "
             f"expiry {row.get('expiration_date')} | credit {row.get('midpoint_credit')} | "
             f"ror {row.get('return_on_risk')}"
         )
@@ -374,7 +374,7 @@ def _render_replay_text(payload: dict[str, Any]) -> str:
         for row in list(payload.get("stored_only") or [])[:10]:
             lines.append(
                 "- "
-                f"{row.get('rank')}. {row.get('short_symbol')} -> {row.get('long_symbol')} | "
+                f"{row.get('rank')}. {row.get('symbol_path')} | "
                 f"expiry {row.get('expiration_date')}"
             )
     if payload.get("replayed_only"):
@@ -383,7 +383,7 @@ def _render_replay_text(payload: dict[str, Any]) -> str:
         for row in list(payload.get("replayed_only") or [])[:10]:
             lines.append(
                 "- "
-                f"{row.get('rank')}. {row.get('short_symbol')} -> {row.get('long_symbol')} | "
+                f"{row.get('rank')}. {row.get('symbol_path')} | "
                 f"expiry {row.get('expiration_date')}"
             )
     if payload.get("rank_changes"):

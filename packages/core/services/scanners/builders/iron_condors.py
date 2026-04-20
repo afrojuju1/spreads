@@ -10,13 +10,13 @@ from core.domain.models import (
     SpreadCandidate,
 )
 
-from .orders import make_iron_condor_order_payload
 from .shared import (
     days_from_reference,
     effective_min_credit,
     relative_spread,
     relative_spread_exceeds,
 )
+from .structures import build_iron_condor_candidate_structure
 
 
 def build_iron_condors(
@@ -214,6 +214,13 @@ def build_iron_condors(
                         4,
                     )
 
+                    structure = build_iron_condor_candidate_structure(
+                        short_put_contract=short_put,
+                        long_put_contract=long_put,
+                        short_call_contract=short_call,
+                        long_call_contract=long_call,
+                        limit_price=midpoint_credit,
+                    )
                     candidates.append(
                         SpreadCandidate(
                             underlying_symbol=symbol,
@@ -222,8 +229,8 @@ def build_iron_condors(
                             expiration_date=expiration_date,
                             days_to_expiration=days_to_expiration,
                             underlying_price=spot_price,
-                            short_symbol=short_put.symbol,
-                            long_symbol=long_put.symbol,
+                            legs=tuple(structure["legs"]),
+                            structure_identity=str(structure["structure_identity"]),
                             short_strike=short_put.strike_price,
                             long_strike=long_put.strike_price,
                             width=width,
@@ -314,13 +321,7 @@ def build_iron_condors(
                                 long_call_snapshot.bid_size,
                                 long_call_snapshot.ask_size,
                             ),
-                            order_payload=make_iron_condor_order_payload(
-                                short_put_symbol=short_put.symbol,
-                                long_put_symbol=long_put.symbol,
-                                short_call_symbol=short_call.symbol,
-                                long_call_symbol=long_call.symbol,
-                                limit_price=midpoint_credit,
-                            ),
+                            order_payload=dict(structure["order_payload"]),
                             expected_move=expected_move_amount,
                             expected_move_pct=expected_move_pct,
                             expected_move_source_strike=expected_move_source_strike,

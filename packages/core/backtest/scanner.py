@@ -14,6 +14,7 @@ from core.backtest.market_data import (
 )
 from core.integrations.alpaca.client import AlpacaClient
 from core.services.market_dates import NEW_YORK
+from core.services.option_structures import candidate_legs, unique_leg_symbols
 from core.storage.run_history_repository import RunHistoryRepository
 
 
@@ -94,8 +95,7 @@ def print_scanner_backtest_summary(
     if available_rows:
         detail_headers = [
             "Horizon",
-            "Short",
-            "Long",
+            "Structure",
             "Expiry",
             "Spot",
             "Sprd",
@@ -110,8 +110,7 @@ def print_scanner_backtest_summary(
         detail_rows = [
             [
                 row["horizon"],
-                row["short_symbol"],
-                row["long_symbol"],
+                row["symbol_path"],
                 row["expiration_date"],
                 f"{row['spot_at_horizon']:.2f}",
                 f"{row['spread_mark_close']:.2f}",
@@ -177,8 +176,9 @@ def run_scanner_backtest(
     )
     option_symbols = sorted(
         {
-            *[candidate["short_symbol"] for candidate in candidates],
-            *[candidate["long_symbol"] for candidate in candidates],
+            symbol
+            for candidate in candidates
+            for symbol in unique_leg_symbols(candidate_legs(candidate))
         }
     )
     option_bars = client.get_option_bars(

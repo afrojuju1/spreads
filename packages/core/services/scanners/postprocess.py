@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict, replace
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -227,7 +227,7 @@ def deduplicate_candidates(
     for candidate in candidates:
         identity = legs_identity_key(
             strategy=candidate.strategy,
-            legs=candidate_legs(asdict(candidate)),
+            legs=candidate_legs(candidate.to_payload()),
         )
         if identity in seen_leg_sets:
             continue
