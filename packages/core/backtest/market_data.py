@@ -10,6 +10,7 @@ from core.services.option_structures import (
     candidate_legs,
     net_premium_kind,
     payload_display_fields,
+    structure_barrier_strike,
 )
 from core.services.scanners.config import strategy_option_type
 
@@ -370,6 +371,10 @@ def summarize_market_outcomes(
 
         for candidate in candidates:
             candidate_display = payload_display_fields(candidate)
+            barrier_strike = structure_barrier_strike(
+                candidate_legs(candidate),
+                strategy=candidate.get("strategy"),
+            )
             if latest_available_date is None or latest_available_date < target_date:
                 rows.append(
                     {
@@ -419,12 +424,20 @@ def summarize_market_outcomes(
                 min(bar.low for bar in path_bars) if path_bars else horizon_bar.low
             )
             if option_type == "put":
-                touched_short = path_low <= candidate["short_strike"]
-                closed_beyond_short = horizon_bar.close <= candidate["short_strike"]
+                touched_short = (
+                    barrier_strike is not None and path_low <= barrier_strike
+                )
+                closed_beyond_short = (
+                    barrier_strike is not None and horizon_bar.close <= barrier_strike
+                )
                 closed_beyond_breakeven = horizon_bar.close <= candidate["breakeven"]
             else:
-                touched_short = path_high >= candidate["short_strike"]
-                closed_beyond_short = horizon_bar.close >= candidate["short_strike"]
+                touched_short = (
+                    barrier_strike is not None and path_high >= barrier_strike
+                )
+                closed_beyond_short = (
+                    barrier_strike is not None and horizon_bar.close >= barrier_strike
+                )
                 closed_beyond_breakeven = horizon_bar.close >= candidate["breakeven"]
             touched += int(touched_short)
             closed_past_short += int(closed_beyond_short)
@@ -498,6 +511,10 @@ def summarize_market_outcomes(
     expiry_total_pnl = 0.0
     for candidate in candidates:
         candidate_display = payload_display_fields(candidate)
+        barrier_strike = structure_barrier_strike(
+            candidate_legs(candidate),
+            strategy=candidate.get("strategy"),
+        )
         expiry_date = date.fromisoformat(candidate["expiration_date"])
         if latest_available_date is None or latest_available_date < expiry_date:
             rows.append(
@@ -538,12 +555,16 @@ def summarize_market_outcomes(
         )
         path_low = min(bar.low for bar in path_bars) if path_bars else horizon_bar.low
         if option_type == "put":
-            touched_short = path_low <= candidate["short_strike"]
-            closed_beyond_short = horizon_bar.close <= candidate["short_strike"]
+            touched_short = barrier_strike is not None and path_low <= barrier_strike
+            closed_beyond_short = (
+                barrier_strike is not None and horizon_bar.close <= barrier_strike
+            )
             closed_beyond_breakeven = horizon_bar.close <= candidate["breakeven"]
         else:
-            touched_short = path_high >= candidate["short_strike"]
-            closed_beyond_short = horizon_bar.close >= candidate["short_strike"]
+            touched_short = barrier_strike is not None and path_high >= barrier_strike
+            closed_beyond_short = (
+                barrier_strike is not None and horizon_bar.close >= barrier_strike
+            )
             closed_beyond_breakeven = horizon_bar.close >= candidate["breakeven"]
         expiry_touched += int(touched_short)
         expiry_closed_past_short += int(closed_beyond_short)

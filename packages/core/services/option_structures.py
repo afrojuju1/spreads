@@ -59,6 +59,24 @@ def normalize_strategy_family(value: Any) -> str:
     }.get(normalized, normalized or "unknown")
 
 
+def _strike_from_symbol(value: Any) -> float | None:
+    rendered = _as_text(value)
+    if rendered is None:
+        return None
+    match = re.search(r"([cp])(\d+(?:\.\d+)?)$", rendered, re.IGNORECASE)
+    if match is None:
+        return None
+    raw_strike = match.group(2)
+    try:
+        if "." in raw_strike:
+            return float(raw_strike)
+        if len(raw_strike) >= 8:
+            return round(int(raw_strike) / 1000.0, 4)
+        return float(raw_strike)
+    except (TypeError, ValueError):
+        return None
+
+
 def net_premium_kind(strategy_family: Any) -> str | None:
     family = normalize_strategy_family(strategy_family)
     if family in NET_CREDIT_FAMILIES:
@@ -146,6 +164,12 @@ def normalize_legs(
             if str(leg.get("position_intent") or "").strip().lower() == "close"
             else "open",
         )
+        option_type = _option_type_from_value(leg.get("option_type")) or (
+            _option_type_from_value(symbol)
+        )
+        strike = _as_float(leg.get("strike"))
+        if strike is None:
+            strike = _strike_from_symbol(symbol)
         built.append(
             {
                 "symbol": symbol,
@@ -155,7 +179,8 @@ def normalize_legs(
                 "role": role or leg_role(side=side, position_intent=position_intent),
                 "expiration_date": _as_text(leg.get("expiration_date"))
                 or expiration_date,
-                "strike": leg.get("strike"),
+                "strike": strike,
+                "option_type": option_type,
             }
         )
     return built
@@ -276,13 +301,14 @@ def structure_strike_path(
     *,
     strategy: Any = None,
 ) -> str:
+    normalized_legs = normalize_legs(legs)
     normalized_strategy = normalize_strategy_family(strategy)
     if normalized_strategy == "iron_condor":
         grouped: dict[str, dict[str, float | None]] = {
             "put": {"short": None, "long": None},
             "call": {"short": None, "long": None},
         }
-        for leg in legs:
+        for leg in normalized_legs:
             option_type = _option_type_from_value(
                 leg.get("option_type")
             ) or _option_type_from_value(leg.get("symbol"))
@@ -304,22 +330,119 @@ def structure_strike_path(
         call_long = grouped["call"]["long"]
         if None not in (put_long, put_short, call_short, call_long):
             return (
-                f"{put_long:.2f}-{put_short:.2f}"
-                f" / {call_short:.2f}-{call_long:.2f}"
+                f"{put_long:.2f}-{put_short:.2f}P"
+                f" / {call_short:.2f}-{call_long:.2f}C"
             )
 
-    strikes = [
-        strike
-        for strike in (_as_float(leg.get("strike")) for leg in legs)
-        if strike is not None
-    ]
-    if not strikes:
+    rendered_parts: list[str] = []
+    for leg in normalized_legs:
+        strike = _as_float(leg.get("strike"))
+        if strike is None:
+            continue
+        option_type = _option_type_from_value(leg.get("option_type")) or (
+            _option_type_from_value(leg.get("symbol"))
+        )
+        suffix = {"call": "C", "put": "P"}.get(option_type, "")
+        rendered_parts.append(f"{strike:.2f}{suffix}")
+    if not rendered_parts:
         return "n/a"
-    if len(strikes) == 1:
-        return f"{strikes[0]:.2f}"
-    if len(strikes) == 2:
-        return f"{strikes[0]:.2f}/{strikes[1]:.2f}"
-    return " / ".join(f"{strike:.2f}" for strike in strikes)
+    if len(rendered_parts) == 1:
+        return rendered_parts[0]
+    return " / ".join(rendered_parts)
+
+
+def structure_width(
+    legs: list[Mapping[str, Any]],
+    *,
+    strategy: Any = None,
+) -> float | None:
+    normalized_legs = normalize_legs(legs)
+    if not normalized_legs:
+        return None
+    normalized_strategy = normalize_strategy_family(strategy)
+    if normalized_strategy in {"long_call", "long_put", "long_straddle"}:
+        return 0.0
+    widths: list[float] = []
+    grouped: dict[str | None, list[float]] = {}
+    for leg in normalized_legs:
+        strike = _as_float(leg.get("strike"))
+        if strike is None:
+            continue
+        option_type = _option_type_from_value(leg.get("option_type")) or (
+            _option_type_from_value(leg.get("symbol"))
+        )
+        grouped.setdefault(option_type, []).append(strike)
+    for strikes in grouped.values():
+        unique_strikes = sorted({round(strike, 4) for strike in strikes})
+        if len(unique_strikes) < 2:
+            continue
+        widths.append(round(unique_strikes[-1] - unique_strikes[0], 4))
+    if widths:
+        return max(widths)
+    strikes = sorted(
+        {
+            round(strike, 4)
+            for strike in (
+                _as_float(leg.get("strike")) for leg in normalized_legs
+            )
+            if strike is not None
+        }
+    )
+    if len(strikes) <= 1:
+        return 0.0 if strikes else None
+    return round(strikes[-1] - strikes[0], 4)
+
+
+def structure_barrier_strike(
+    legs: list[Mapping[str, Any]],
+    *,
+    strategy: Any = None,
+) -> float | None:
+    normalized_legs = normalize_legs(legs)
+    if not normalized_legs:
+        return None
+    normalized_strategy = normalize_strategy_family(strategy)
+    target_option_type = None
+    if normalized_strategy in {
+        "call_credit_spread",
+        "call_debit_spread",
+        "long_call",
+    }:
+        target_option_type = "call"
+    elif normalized_strategy in {
+        "put_credit_spread",
+        "put_debit_spread",
+        "long_put",
+    }:
+        target_option_type = "put"
+
+    ordered_legs = normalized_legs
+    if target_option_type is not None:
+        matching_legs = [
+            leg
+            for leg in normalized_legs
+            if (
+                _option_type_from_value(leg.get("option_type"))
+                or _option_type_from_value(leg.get("symbol"))
+            )
+            == target_option_type
+        ]
+        if matching_legs:
+            ordered_legs = matching_legs
+
+    for leg in ordered_legs:
+        role = _as_text(leg.get("role")) or leg_role(
+            side=leg.get("side"),
+            position_intent=leg.get("position_intent"),
+        )
+        strike = _as_float(leg.get("strike"))
+        if role == "short" and strike is not None:
+            return strike
+    for leg in ordered_legs:
+        strike = _as_float(leg.get("strike"))
+        if strike is not None:
+            return strike
+    return None
 
 
 def structure_display_fields(legs: list[Mapping[str, Any]]) -> dict[str, str | None]:
@@ -328,6 +451,7 @@ def structure_display_fields(legs: list[Mapping[str, Any]]) -> dict[str, str | N
         "short_symbol": short_symbol,
         "long_symbol": long_symbol,
         "symbol_path": structure_symbol_path(legs),
+        "strike_path": structure_strike_path(legs),
     }
 
 
@@ -410,6 +534,7 @@ def closing_legs(legs: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
                 "role": _as_text(leg.get("role")),
                 "expiration_date": _as_text(leg.get("expiration_date")),
                 "strike": leg.get("strike"),
+                "option_type": leg.get("option_type"),
             }
         )
     return built
@@ -736,7 +861,9 @@ __all__ = [
     "payload_display_fields",
     "structure_quote_snapshot",
     "structure_display_fields",
+    "structure_barrier_strike",
     "structure_strike_path",
+    "structure_width",
     "structure_symbol_path",
     "signed_net_limit_price",
     "unique_leg_symbols",

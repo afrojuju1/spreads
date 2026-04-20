@@ -33,6 +33,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "put_credit",
             "call_debit",
             "put_debit",
+            "long_call",
+            "long_put",
             "long_straddle",
             "long_strangle",
             "iron_condor",

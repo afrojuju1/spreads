@@ -44,6 +44,8 @@ def default_output_path(symbol: str, strategy: str, output_format: str) -> str:
         "put_credit": "put_credit_spreads",
         "call_debit": "call_debit_spreads",
         "put_debit": "put_debit_spreads",
+        "long_call": "long_calls",
+        "long_put": "long_puts",
         "long_straddle": "long_straddles",
         "long_strangle": "long_strangles",
         "iron_condor": "iron_condors",
@@ -86,8 +88,7 @@ def build_table_rows(
             [
                 candidate.expiration_date,
                 format_dte_label(candidate.days_to_expiration),
-                f"{candidate.short_strike:.2f}",
-                f"{candidate.long_strike:.2f}",
+                candidate.strike_path,
                 f"{candidate.width:.2f}",
                 f"{candidate.midpoint_credit:.2f}",
                 f"{candidate.return_on_risk * 100:.1f}",
@@ -165,8 +166,7 @@ def print_human_readable(
     headers = [
         "Expiry",
         "DTE",
-        "Short",
-        "Long",
+        "Structure",
         "Width",
         "Entry",
         "ROR%",
@@ -188,7 +188,8 @@ def print_human_readable(
 
     for index, candidate in enumerate(candidates, start=1):
         print(
-            f"{index}. [{strategy_display_label(candidate.strategy)}] {candidate.symbol_path} | "
+            f"{index}. [{strategy_display_label(candidate.strategy)}] {candidate.strike_path} | "
+            f"{candidate.symbol_path} | "
             f"score {candidate.quality_score:.1f} | "
             f"breakeven {candidate.breakeven:.2f} | "
             f"calendar {candidate.calendar_status}"
@@ -232,6 +233,7 @@ def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
         "short_symbol",
         "long_symbol",
         "symbol_path",
+        "strike_path",
         "structure_identity",
         "short_strike",
         "long_strike",
@@ -361,8 +363,7 @@ def build_ranked_candidate_rows(
                 candidate.expiration_date,
                 format_dte_label(candidate.days_to_expiration),
                 f"{candidate.underlying_price:.2f}",
-                f"{candidate.short_strike:.2f}",
-                f"{candidate.long_strike:.2f}",
+                candidate.strike_path,
                 f"{candidate.midpoint_credit:.2f}",
                 f"{candidate.quality_score:.1f}",
                 "n/a"
@@ -416,8 +417,7 @@ def print_ranked_candidates(
             "Expiry",
             "DTE",
             "Spot",
-            "Short",
-            "Long",
+            "Structure",
             "MidCr",
             "Score",
             "Δ",
@@ -446,7 +446,7 @@ def print_ranked_candidates(
     for index, candidate in enumerate(ranked_candidates, start=1):
         print(
             f"{index}. {candidate.underlying_symbol} [{strategy_display_label(candidate.strategy)}] "
-            f"{candidate.symbol_path} | "
+            f"{candidate.strike_path} | {candidate.symbol_path} | "
             f"score {candidate.quality_score:.1f} | breakeven {candidate.breakeven:.2f}"
         )
         if candidate.selection_notes:
@@ -527,9 +527,10 @@ def build_live_spread_rows(
         )
         if live_snapshot is None:
             continue
-        primary_label = f"{candidate.short_strike:.2f}/{candidate.long_strike:.2f}"
-        if candidate.strategy == "iron_condor":
-            primary_label = structure_strike_path(legs, strategy=candidate.strategy)
+        primary_label = candidate.strike_path or structure_strike_path(
+            legs,
+            strategy=candidate.strategy,
+        )
         rows.append(
             [
                 strategy_display_label(candidate.strategy),
@@ -590,7 +591,7 @@ def maybe_stream_live_quotes(
     headers = [
         "Side",
         "Expiry",
-        "Strikes",
+        "Structure",
         "Width",
         "LiveMid",
         "LiveNat",

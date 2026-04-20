@@ -11,6 +11,7 @@ from core.services.option_structures import (
     legs_identity_key,
     normalize_legs,
     primary_short_long_symbols,
+    structure_strike_path,
     structure_symbol_path,
 )
 from core.storage.base import RepositoryBase
@@ -90,6 +91,7 @@ class RunHistoryRepository(RepositoryBase):
                 "short_symbol": None,
                 "long_symbol": None,
                 "symbol_path": None,
+                "strike_path": None,
             }
         legs = list(candidate.legs_json or [])
         short_symbol, long_symbol = primary_short_long_symbols(legs)
@@ -97,6 +99,7 @@ class RunHistoryRepository(RepositoryBase):
             "short_symbol": short_symbol,
             "long_symbol": long_symbol,
             "symbol_path": structure_symbol_path(legs),
+            "strike_path": structure_strike_path(legs, strategy=candidate.strategy),
         }
 
     def _session_top_run_row(

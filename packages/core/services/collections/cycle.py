@@ -46,6 +46,7 @@ from core.services.live_recovery import (
     refresh_live_session_capture_targets,
 )
 from core.services.live_selection import read_previous_selection, select_live_opportunities
+from core.services.option_structures import payload_display_fields
 from core.services.opportunity_generation import sync_entry_runtime_opportunities
 from core.services.signal_state import sync_live_collector_signal_layer
 from core.services.strategy_builders import build_entry_runtime_candidates
@@ -111,10 +112,11 @@ def print_cycle_summary(
     if promotable_candidates:
         print("Promotable:")
         for index, candidate in enumerate(promotable_candidates, start=1):
+            display_fields = payload_display_fields(candidate)
             print(
                 f"- {index}. {candidate['underlying_symbol']} "
                 f"[{candidate['strategy']}] "
-                f"{candidate['short_strike']:.2f}/{candidate['long_strike']:.2f} "
+                f"{candidate.get('strike_path') or display_fields.get('strike_path') or 'n/a'} "
                 f"score {candidate['quality_score']:.1f} "
                 f"mid {candidate['midpoint_credit']:.2f}"
             )

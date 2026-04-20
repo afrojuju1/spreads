@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from core.services.option_structures import payload_structure_identity
+from core.services.option_structures import payload_display_fields, payload_structure_identity
 from core.storage.collector_repository import CollectorRepository
 from core.storage.records import CollectorCycleCandidateRecord
 
@@ -91,6 +91,17 @@ def candidate_profile(label: str, candidate: dict[str, Any] | CollectorCycleCand
         if profile in lowered:
             return profile
     return "unknown"
+
+
+def _candidate_structure_text(
+    candidate: dict[str, Any] | CollectorCycleCandidateRecord,
+) -> str:
+    if isinstance(candidate, dict):
+        explicit = str(candidate.get("strike_path") or "").strip()
+        if explicit:
+            return explicit
+    display_fields = payload_display_fields(candidate)
+    return str(display_fields.get("strike_path") or "n/a")
 
 
 def alert_score_floor_for_profile(profile: str) -> float:
@@ -290,7 +301,10 @@ def build_score_breakout_decisions(
                     alert_type="score_breakout",
                     dedupe_key=threshold_dedupe_key(label, session_date, candidate, threshold_to_alert),
                     symbol=symbol,
-                    description=f"{symbol} score breakout to {score:.1f} on {candidate['strategy']} {candidate['short_strike']:.2f}/{candidate['long_strike']:.2f}",
+                    description=(
+                        f"{symbol} score breakout to {score:.1f} on "
+                        f"{candidate['strategy']} {_candidate_structure_text(candidate)}"
+                    ),
                     candidate=candidate,
                     dedupe_state={
                         "score": score,
@@ -314,7 +328,11 @@ def build_score_breakout_decisions(
                 alert_type="score_breakout",
                 dedupe_key=delta_breakout_key(label, session_date, candidate),
                 symbol=symbol,
-                description=f"{symbol} score improved from {float(last_score):.1f} to {score:.1f} on {candidate['strategy']} {candidate['short_strike']:.2f}/{candidate['long_strike']:.2f}",
+                description=(
+                    f"{symbol} score improved from {float(last_score):.1f} to "
+                    f"{score:.1f} on {candidate['strategy']} "
+                    f"{_candidate_structure_text(candidate)}"
+                ),
                 candidate=candidate,
                 dedupe_state={
                     "score": score,

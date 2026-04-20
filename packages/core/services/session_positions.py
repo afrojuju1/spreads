@@ -14,6 +14,7 @@ from core.services.option_structures import (
     net_premium_kind,
     normalize_legs,
     position_legs as canonical_position_legs,
+    structure_width,
 )
 from core.services.runtime_identity import (
     build_pipeline_id,
@@ -81,7 +82,7 @@ def _derive_live_exposure(
         else round(entry_value * 100.0 * normalized_quantity, 2)
     )
     normalized_family = str(strategy_family or "").strip().lower()
-    if normalized_family in {"long_straddle", "long_strangle"}:
+    if normalized_family in {"long_call", "long_put", "long_straddle", "long_strangle"}:
         return {
             "entry_notional": entry_notional,
             "max_profit": None,
@@ -361,11 +362,13 @@ def _resolve_width(attempt: Mapping[str, Any]) -> float | None:
     candidate = attempt.get("candidate")
     if not isinstance(candidate, Mapping):
         return None
-    short_strike = _coerce_float(candidate.get("short_strike"))
-    long_strike = _coerce_float(candidate.get("long_strike"))
-    if short_strike is None or long_strike is None:
-        return None
-    return abs(short_strike - long_strike)
+    width = _coerce_float(candidate.get("width"))
+    if width is not None:
+        return width
+    return structure_width(
+        candidate_legs(candidate),
+        strategy=candidate.get("strategy_family") or candidate.get("strategy"),
+    )
 
 
 def _position_legs(position: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -403,7 +406,15 @@ def _resolved_position_exposure(
         quantity=quantity,
     )
     existing_economics = _position_economics(existing or {})
-    if explicit_candidate.get("max_profit") is not None:
+    uncapped_upside = str(strategy_family or "").strip().lower() in {
+        "long_call",
+        "long_put",
+        "long_straddle",
+        "long_strangle",
+    }
+    if uncapped_upside:
+        exposure["max_profit"] = None
+    elif explicit_candidate.get("max_profit") is not None:
         exposure["max_profit"] = explicit_candidate["max_profit"]
     elif existing_economics.get("max_profit") is not None:
         exposure["max_profit"] = existing_economics.get("max_profit")

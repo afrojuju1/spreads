@@ -206,30 +206,18 @@ class SpreadCandidate:
     short_symbol: str | None = field(init=False)
     long_symbol: str | None = field(init=False)
     symbol_path: str = field(init=False)
+    strike_path: str = field(init=False)
 
     def __post_init__(self) -> None:
+        from core.services.option_structures import structure_display_fields
+
         normalized_legs = tuple(dict(leg) for leg in self.legs)
         object.__setattr__(self, "legs", normalized_legs)
-        short_symbol = None
-        long_symbol = None
-        symbols: list[str] = []
-        for leg in self.legs:
-            symbol = str(leg.get("symbol") or "").strip()
-            role = str(leg.get("role") or "").strip().lower()
-            if role == "short" and short_symbol is None and symbol:
-                short_symbol = symbol
-            elif role == "long" and long_symbol is None and symbol:
-                long_symbol = symbol
-            if symbol and symbol not in symbols:
-                symbols.append(symbol)
-        object.__setattr__(self, "short_symbol", short_symbol)
-        object.__setattr__(self, "long_symbol", long_symbol)
-        if not symbols:
-            object.__setattr__(self, "symbol_path", "n/a")
-        elif len(symbols) == 1:
-            object.__setattr__(self, "symbol_path", symbols[0])
-        else:
-            object.__setattr__(self, "symbol_path", " / ".join(symbols))
+        display_fields = structure_display_fields(list(self.legs))
+        object.__setattr__(self, "short_symbol", display_fields["short_symbol"])
+        object.__setattr__(self, "long_symbol", display_fields["long_symbol"])
+        object.__setattr__(self, "symbol_path", display_fields["symbol_path"] or "n/a")
+        object.__setattr__(self, "strike_path", display_fields["strike_path"] or "n/a")
 
     def to_payload(self) -> dict[str, Any]:
         return asdict(self)

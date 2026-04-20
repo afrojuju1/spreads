@@ -44,7 +44,12 @@ ACTIVE_EARNINGS_PHASES = {
     "post_event_fresh",
 }
 LONG_VOL_FAMILIES = {"long_straddle", "long_strangle"}
-DIRECTIONAL_DEBIT_FAMILIES = {"call_debit_spread", "put_debit_spread"}
+DIRECTIONAL_DEBIT_FAMILIES = {
+    "call_debit_spread",
+    "put_debit_spread",
+    "long_call",
+    "long_put",
+}
 SHORT_PREMIUM_FAMILIES = {
     "call_credit_spread",
     "put_credit_spread",

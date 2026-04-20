@@ -126,6 +126,7 @@ def _opportunity_legs_from_row(opportunity: Mapping[str, Any]) -> list[Opportuni
                 leg_index=index,
                 symbol=str(leg["symbol"]),
                 side=str(leg["side"] or ""),
+                role=_as_text(leg.get("role")),
                 position_intent=_as_text(leg.get("position_intent")),
                 ratio_qty=_as_text(leg.get("ratio_qty")),
             )

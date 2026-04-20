@@ -5,6 +5,8 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from core.services.option_structures import candidate_legs, payload_display_fields
+
 
 SUCCESS_GREEN = 0x2ECC71
 BEARISH_RED = 0xE74C3C
@@ -17,7 +19,12 @@ def strategy_color(strategy: str, *, alert_type: str) -> int:
         return NEUTRAL_YELLOW
     if alert_type == "score_breakout":
         return INFO_BLUE
-    return SUCCESS_GREEN if strategy == "put_credit" else BEARISH_RED
+    normalized = str(strategy or "").strip().lower()
+    if normalized in {"put_credit", "call_debit", "long_call"}:
+        return SUCCESS_GREEN
+    if normalized in {"call_credit", "put_debit", "long_put"}:
+        return BEARISH_RED
+    return NEUTRAL_YELLOW
 
 
 def compact_value(value: Any, *, fallback: str = "n/a") -> str:
@@ -85,18 +92,6 @@ def compact_signed_money(value: Any, *, fallback: str = "n/a") -> str:
     return f"{rendered:+.2f}"
 
 
-def _spread_leg_line(candidate: dict[str, Any], *, leg: str) -> str:
-    prefix = "short" if leg == "short" else "long"
-    strike = compact_strike(candidate.get(f"{prefix}_strike"))
-    option_type = "C" if str(candidate.get("strategy") or "") == "call_credit" else "P"
-    delta = candidate.get(f"{prefix}_delta")
-    delta_text = "n/a" if delta is None else f"{abs(float(delta)):.2f}Δ"
-    open_interest = int(candidate.get(f"{prefix}_open_interest") or 0)
-    relative_spread = compact_pct(candidate.get(f"{prefix}_relative_spread"))
-    midpoint = compact_money(candidate.get(f"{prefix}_midpoint"))
-    return f"{strike}{option_type} {delta_text} oi {open_interest} mid {midpoint} spr {relative_spread}"
-
-
 def _spread_expected_move_line(candidate: dict[str, Any]) -> str | None:
     expected_move = candidate.get("expected_move")
     if expected_move is None:
@@ -107,15 +102,20 @@ def _spread_expected_move_line(candidate: dict[str, Any]) -> str | None:
     if candidate.get("expected_move_pct") is not None:
         parts.append(compact_pct(candidate.get("expected_move_pct")))
     if candidate.get("short_vs_expected_move") is not None:
-        parts.append(f"short {compact_signed_money(candidate.get('short_vs_expected_move'))}")
+        parts.append(
+            f"strike {compact_signed_money(candidate.get('short_vs_expected_move'))}"
+        )
     if candidate.get("breakeven_vs_expected_move") is not None:
-        parts.append(f"BE {compact_signed_money(candidate.get('breakeven_vs_expected_move'))}")
+        parts.append(
+            f"BE {compact_signed_money(candidate.get('breakeven_vs_expected_move'))}"
+        )
     return " | ".join(parts)
 
 
 def _build_spread_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
     candidate = alert["candidate"]
     strategy = str(candidate["strategy"])
+    display_fields = payload_display_fields(candidate)
     setup_status = str(candidate.get("setup_status") or "unknown")
     calendar_status = str(candidate.get("calendar_status") or "unknown")
     data_status = str(candidate.get("data_status") or "unknown")
@@ -125,18 +125,26 @@ def _build_spread_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
     )
     description = alert["description"]
     fields = [
-        {"name": "Strikes", "value": f"{candidate['short_strike']:.2f} / {candidate['long_strike']:.2f}", "inline": True},
+        {
+            "name": "Structure",
+            "value": str(display_fields.get("strike_path") or "n/a"),
+            "inline": True,
+        },
+        {
+            "name": "Symbols",
+            "value": str(display_fields.get("symbol_path") or "n/a"),
+            "inline": True,
+        },
         {"name": "DTE", "value": compact_dte(candidate.get("days_to_expiration")), "inline": True},
         {"name": "Score", "value": f"{candidate['quality_score']:.1f}", "inline": True},
-        {"name": "Credit", "value": compact_money(candidate.get("midpoint_credit")), "inline": True},
+        {"name": "Entry", "value": compact_money(candidate.get("midpoint_credit")), "inline": True},
         {"name": "RoR", "value": compact_pct(candidate.get("return_on_risk")), "inline": True},
         {"name": "Breakeven", "value": compact_strike(candidate.get("breakeven")), "inline": True},
         {"name": "OI Floor", "value": str(min(int(candidate.get("short_open_interest") or 0), int(candidate.get("long_open_interest") or 0))), "inline": True},
         {"name": "Fill", "value": compact_pct(candidate.get("fill_ratio")), "inline": True},
         {"name": "Min Size", "value": str(int(candidate.get("min_quote_size") or 0)), "inline": True},
+        {"name": "Legs", "value": str(len(candidate_legs(candidate))), "inline": True},
         {"name": "Statuses", "value": f"{setup_status} | {calendar_status} | {data_status}", "inline": False},
-        {"name": "Short Leg", "value": _spread_leg_line(candidate, leg='short'), "inline": False},
-        {"name": "Long Leg", "value": _spread_leg_line(candidate, leg='long'), "inline": False},
     ]
     expected_move_line = _spread_expected_move_line(candidate)
     if expected_move_line is not None:

@@ -62,7 +62,7 @@ def assess_data_quality(
         ) / candidate.expected_move
         if short_ratio < args.min_short_vs_expected_move_ratio:
             reason = (
-                f"Short strike sits too far inside expected move "
+                f"Structure strike sits too far inside expected move "
                 f"({short_ratio:.2f} < {args.min_short_vs_expected_move_ratio:.2f})"
             )
             if args.data_policy == "strict":
@@ -161,6 +161,10 @@ def build_selection_notes(
         notes.append("atm-move")
     elif candidate.strategy == "long_strangle":
         notes.append("winged-move")
+    elif candidate.strategy == "long_call":
+        notes.append("directional-call")
+    elif candidate.strategy == "long_put":
+        notes.append("directional-put")
     elif (
         candidate.short_delta is not None
         and abs(abs(candidate.short_delta) - delta_target) <= 0.02
@@ -172,7 +176,12 @@ def build_selection_notes(
         else:
             notes.append("move-rich")
     elif candidate.expected_move and candidate.short_vs_expected_move is not None:
-        if candidate.short_vs_expected_move >= 0:
+        if candidate.strategy in {"long_call", "long_put"}:
+            if (candidate.breakeven_vs_expected_move or 0.0) >= 0:
+                notes.append("em-cleared")
+            else:
+                notes.append("em-short")
+        elif candidate.short_vs_expected_move >= 0:
             notes.append("outside-em")
         else:
             notes.append("inside-em")

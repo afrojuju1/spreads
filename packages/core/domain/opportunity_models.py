@@ -74,6 +74,7 @@ class OpportunityLeg:
     leg_index: int
     symbol: str
     side: str
+    role: str | None = None
     position_intent: str | None = None
     ratio_qty: str | None = None
 

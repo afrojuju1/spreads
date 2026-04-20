@@ -3,20 +3,13 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any, Mapping, Sequence
 
+from core.services.option_structures import normalize_strategy_family
+
 from .shared import _normalize_text_list, _read_int
 
 
 def _strategy_family(strategy: Any) -> str:
-    normalized = str(strategy or "").strip().lower()
-    return {
-        "call_credit": "call_credit_spread",
-        "put_credit": "put_credit_spread",
-        "call_debit": "call_debit_spread",
-        "put_debit": "put_debit_spread",
-        "long_straddle": "long_straddle",
-        "long_strangle": "long_strangle",
-        "iron_condor": "iron_condor",
-    }.get(normalized, normalized or "unknown")
+    return normalize_strategy_family(strategy)
 
 
 def _candidate_payload(row: Mapping[str, Any]) -> Mapping[str, Any]:

@@ -18,12 +18,21 @@ from core.integrations.alpaca.client import DEFAULT_DATA_BASE_URL
 from core.integrations.calendar_events import classify_underlying_type
 from core.runtime.config import default_database_url
 from core.services.market_dates import NEW_YORK
+from core.services.option_structures import normalize_strategy_family
 from core.services.strategy_specs import (
     concrete_strategies,
     strategy_direction,
     strategy_display_label,
     strategy_option_type,
 )
+
+DIRECTIONAL_LONG_DELTA_DEFAULTS: dict[str, tuple[float, float, float]] = {
+    "0dte": (0.18, 0.35, 0.25),
+    "micro": (0.18, 0.35, 0.25),
+    "weekly": (0.20, 0.40, 0.30),
+    "swing": (0.25, 0.45, 0.35),
+    "core": (0.30, 0.50, 0.40),
+}
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -52,6 +61,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "put_credit",
             "call_debit",
             "put_debit",
+            "long_call",
+            "long_put",
             "long_straddle",
             "long_strangle",
             "iron_condor",
@@ -395,21 +406,44 @@ def apply_scan_evaluation_context(
 def apply_profile_defaults(args: argparse.Namespace, underlying_type: str) -> None:
     profile = PROFILE_CONFIGS[args.profile]
     underlying_key = infer_underlying_key(underlying_type)
+    normalized_strategy = normalize_strategy_family(args.strategy)
+    directional_long_defaults = (
+        DIRECTIONAL_LONG_DELTA_DEFAULTS.get(args.profile)
+        if normalized_strategy in {"long_call", "long_put"}
+        else None
+    )
 
     args.min_dte = resolve_profile_value(args.min_dte, profile.min_dte)
     args.max_dte = resolve_profile_value(args.max_dte, profile.max_dte)
     args.short_delta_min = resolve_profile_value(
-        args.short_delta_min, profile.short_delta_min
+        args.short_delta_min,
+        profile.short_delta_min
+        if directional_long_defaults is None
+        else directional_long_defaults[0],
     )
     args.short_delta_max = resolve_profile_value(
-        args.short_delta_max, profile.short_delta_max
+        args.short_delta_max,
+        profile.short_delta_max
+        if directional_long_defaults is None
+        else directional_long_defaults[1],
     )
     args.short_delta_target = resolve_profile_value(
-        args.short_delta_target, profile.short_delta_target
+        args.short_delta_target,
+        profile.short_delta_target
+        if directional_long_defaults is None
+        else directional_long_defaults[2],
     )
-    args.min_width = resolve_profile_value(args.min_width, profile.min_width)
+    args.min_width = resolve_profile_value(
+        args.min_width,
+        0.0
+        if normalized_strategy in {"long_call", "long_put"}
+        else profile.min_width,
+    )
     args.max_width = resolve_profile_value(
-        args.max_width, profile.max_width_by_underlying[underlying_key]
+        args.max_width,
+        0.0
+        if normalized_strategy in {"long_call", "long_put"}
+        else profile.max_width_by_underlying[underlying_key],
     )
     args.min_credit = resolve_profile_value(args.min_credit, profile.min_credit)
     args.min_open_interest = resolve_profile_value(

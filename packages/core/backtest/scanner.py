@@ -53,7 +53,7 @@ def print_scanner_backtest_summary(
         "Avail",
         "Pending",
         "Touch%",
-        "PastShort%",
+        "PastBarrier%",
         "PastBE%",
         "PT%",
         "Stop%",
@@ -101,7 +101,7 @@ def print_scanner_backtest_summary(
             "Sprd",
             "PnL$",
             "Touch",
-            "PastShort",
+            "PastBarrier",
             "PastBE",
             "Exit",
             "PT",
@@ -110,7 +110,7 @@ def print_scanner_backtest_summary(
         detail_rows = [
             [
                 row["horizon"],
-                row["symbol_path"],
+                row.get("strike_path") or row["symbol_path"],
                 row["expiration_date"],
                 f"{row['spot_at_horizon']:.2f}",
                 f"{row['spread_mark_close']:.2f}",
@@ -137,7 +137,9 @@ def run_scanner_backtest(
 ) -> int:
     if args.backtest_latest and args.strategy == "combined":
         raise SystemExit(
-            "Backtest latest requires a concrete strategy such as call_credit, put_credit, call_debit, put_debit, long_straddle, long_strangle, or iron_condor"
+            "Backtest latest requires a concrete strategy such as call_credit, "
+            "put_credit, call_debit, put_debit, long_call, long_put, "
+            "long_straddle, long_strangle, or iron_condor"
         )
     if args.backtest_run_id:
         run_payload = history_store.get_run(args.backtest_run_id)

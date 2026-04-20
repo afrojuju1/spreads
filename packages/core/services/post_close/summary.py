@@ -174,8 +174,7 @@ def build_symbol_breakdown(
             "best_idea": None
             if best_row is None
             else {
-                "short_strike": best_row["short_strike"],
-                "long_strike": best_row["long_strike"],
+                "strike_path": best_row.get("strike_path") or "n/a",
                 "quality_score": best_row["quality_score"],
                 "midpoint_credit": best_row["midpoint_credit"],
                 "generated_at": best_row["generated_at"],

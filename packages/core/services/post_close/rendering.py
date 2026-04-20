@@ -50,7 +50,7 @@ def render_symbol_summaries(symbol_breakdown: list[dict[str, Any]]) -> list[str]
         else:
             lines.append(
                 "- Best idea: "
-                f"{best_idea['short_strike']:.2f}/{best_idea['long_strike']:.2f} "
+                f"{best_idea['strike_path']} "
                 f"score {best_idea['quality_score']:.1f} mid {best_idea['midpoint_credit']:.2f} "
                 f"at {best_idea['generated_at']}"
             )

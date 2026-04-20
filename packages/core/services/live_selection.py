@@ -8,7 +8,11 @@ from core.services.candidate_policy import (
     candidate_requires_favorable_setup,
     resolve_deployment_quality_thresholds,
 )
-from core.services.option_structures import candidate_legs, legs_identity_key
+from core.services.option_structures import (
+    candidate_legs,
+    legs_identity_key,
+    payload_display_fields,
+)
 from core.services.opportunity_scoring import build_candidate_opportunity_score
 
 DEFAULT_SELECTION_THRESHOLDS = {
@@ -59,8 +63,13 @@ def candidate_identity(candidate: dict[str, Any]) -> str:
 
 
 def summarize_candidate(candidate: dict[str, Any]) -> str:
+    display_fields = payload_display_fields(candidate)
+    strike_path = (
+        str(candidate.get("strike_path") or "").strip()
+        or str(display_fields.get("strike_path") or "n/a")
+    )
     return (
-        f"{candidate['strategy']} {candidate['short_strike']:.2f}/{candidate['long_strike']:.2f} "
+        f"{candidate['strategy']} {strike_path} "
         f"score {_selection_score(candidate):.1f}"
     )
 

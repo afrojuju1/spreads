@@ -17,6 +17,10 @@ from core.services.scanners.builders.long_vol import (
     build_long_straddles,
     build_long_strangles,
 )
+from core.services.scanners.builders.single_legs import (
+    build_long_calls,
+    build_long_puts,
+)
 from core.services.session_positions import sync_session_position_from_attempt
 
 
@@ -106,6 +110,134 @@ class _InMemoryExecutionStore:
 
 
 class LongVolLiveFlowE2ETests(unittest.TestCase):
+    def test_long_call_scanner_order_and_position_flow(self) -> None:
+        expiration = "2026-04-24"
+        candidates = build_long_calls(
+            symbol="NVDA",
+            spot_price=900.0,
+            contracts_by_expiration={
+                expiration: [
+                    OptionContract(
+                        symbol="NVDA260424C915",
+                        expiration_date=expiration,
+                        strike_price=915.0,
+                        open_interest=2200,
+                        close_price=None,
+                    ),
+                ]
+            },
+            snapshots_by_expiration={
+                expiration: {
+                    "NVDA260424C915": OptionSnapshot(
+                        symbol="NVDA260424C915",
+                        bid=4.30,
+                        ask=4.90,
+                        bid_size=45,
+                        ask_size=45,
+                        midpoint=4.60,
+                        delta=0.24,
+                        gamma=None,
+                        theta=None,
+                        vega=None,
+                        implied_volatility=0.48,
+                        last_trade_price=None,
+                        daily_volume=1100,
+                        greeks_source="alpaca",
+                    ),
+                }
+            },
+            expected_moves_by_expiration={
+                expiration: ExpectedMoveEstimate(
+                    expiration_date=expiration,
+                    amount=26.0,
+                    percent_of_spot=26.0 / 900.0,
+                    reference_strike=900.0,
+                )
+            },
+            args=_args(),
+        )
+
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        self.assertEqual(candidate.strategy, "long_call")
+        self.assertEqual(candidate.strike_path, "915.00C")
+        self.assertEqual(len(candidate.order_payload["legs"]), 1)
+        self.assertEqual(candidate.order_payload["legs"][0]["side"], "buy")
+
+        candidate_payload = asdict(candidate)
+        candidate_payload.update(
+            {
+                "quality_score": 87.0,
+                "setup_score": 58.0,
+                "setup_intraday_score": 54.0,
+                "setup_status": "favorable",
+                "data_status": "clean",
+                "calendar_status": "clean",
+                "earnings_phase": "pre_event_runup",
+                "earnings_timing_confidence": "high",
+                "earnings_event_date": "2026-04-23",
+                "pricing_signal": 0.74,
+                "pricing_signal_subsignal_count": 2,
+                "jump_risk_signal": 0.69,
+                "jump_risk_signal_subsignal_count": 2,
+            }
+        )
+        scorecard = build_candidate_opportunity_score(candidate_payload)
+        self.assertEqual(scorecard["strategy_family"], "long_call")
+
+        order_request, resolved_quantity, resolved_limit_price = _build_order_request(
+            candidate={"candidate": candidate_payload},
+            quantity=1,
+            limit_price=candidate_payload["midpoint_credit"],
+            execution_policy=_execution_policy(),
+            client_order_id="test-long-call-open",
+        )
+        self.assertEqual(resolved_quantity, 1)
+        self.assertEqual(len(order_request["legs"]), 1)
+        self.assertEqual(order_request["limit_price"], "4.60")
+        self.assertEqual(resolved_limit_price, 4.6)
+
+        store = _InMemoryExecutionStore()
+        position = sync_session_position_from_attempt(
+            execution_store=store,
+            attempt={
+                "execution_attempt_id": "attempt-long-call-open",
+                "session_date": "2026-04-14",
+                "market_date": "2026-04-14",
+                "label": "explore_10_long_call_weekly_auto",
+                "pipeline_id": "pipeline:explore_10_long_call_weekly_auto",
+                "underlying_symbol": "NVDA",
+                "strategy": "long_call",
+                "strategy_family": "long_call",
+                "expiration_date": expiration,
+                "quantity": 1,
+                "status": "filled",
+                "requested_at": "2026-04-14T15:00:00Z",
+                "submitted_at": "2026-04-14T15:00:01Z",
+                "completed_at": "2026-04-14T15:00:05Z",
+                "request": {"trade_intent": "open", "order": order_request},
+                "candidate": candidate_payload,
+                "orders": [
+                    {
+                        "broker_order_id": "broker-long-call-open",
+                        "filled_qty": 1,
+                        "filled_avg_price": 4.6,
+                    }
+                ],
+                "fills": [
+                    {"symbol": "NVDA260424C915", "price": 4.6, "quantity": 1},
+                ],
+            },
+        )
+        self.assertIsNotNone(position)
+        assert position is not None
+        self.assertEqual(position["status"], "open")
+        self.assertEqual(position["strategy_family"], "long_call")
+        self.assertEqual(len(position["legs"]), 1)
+        self.assertAlmostEqual(position["entry_value"], 4.6, places=4)
+        self.assertIsNone(position["economics"]["max_profit"])
+        self.assertAlmostEqual(position["economics"]["max_loss"], 460.0, places=2)
+
     def test_long_straddle_scanner_scoring_order_and_position_flow(self) -> None:
         expiration = "2026-04-24"
         candidates = build_long_straddles(
@@ -389,6 +521,93 @@ class LongVolLiveFlowE2ETests(unittest.TestCase):
         self.assertEqual(summary["selection_state_counts"]["monitor"], 1)
         self.assertEqual(summary["timing_confidence_counts"]["high"], 1)
         self.assertEqual(summary["shadow_only_count"], 1)
+
+    def test_long_put_surfaces_in_selection_summary(self) -> None:
+        expiration = "2026-04-24"
+        candidates = build_long_puts(
+            symbol="TSLA",
+            spot_price=180.0,
+            contracts_by_expiration={
+                expiration: [
+                    OptionContract(
+                        symbol="TSLA260424P172",
+                        expiration_date=expiration,
+                        strike_price=172.0,
+                        open_interest=1900,
+                        close_price=None,
+                    ),
+                ]
+            },
+            snapshots_by_expiration={
+                expiration: {
+                    "TSLA260424P172": OptionSnapshot(
+                        symbol="TSLA260424P172",
+                        bid=3.10,
+                        ask=3.40,
+                        bid_size=52,
+                        ask_size=54,
+                        midpoint=3.25,
+                        delta=-0.24,
+                        gamma=None,
+                        theta=None,
+                        vega=None,
+                        implied_volatility=0.52,
+                        last_trade_price=None,
+                        daily_volume=980,
+                        greeks_source="alpaca",
+                    ),
+                }
+            },
+            expected_moves_by_expiration={
+                expiration: ExpectedMoveEstimate(
+                    expiration_date=expiration,
+                    amount=14.0,
+                    percent_of_spot=14.0 / 180.0,
+                    reference_strike=180.0,
+                )
+            },
+            args=_args(),
+        )
+
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        candidate_payload = asdict(candidate)
+        candidate_payload.update(
+            {
+                "quality_score": 82.0,
+                "setup_score": 51.0,
+                "setup_intraday_score": 48.0,
+                "setup_status": "neutral",
+                "data_status": "clean",
+                "calendar_status": "clean",
+                "earnings_phase": "through_event",
+                "earnings_timing_confidence": "high",
+                "earnings_event_date": "2026-04-23",
+                "pricing_signal": 0.66,
+                "pricing_signal_subsignal_count": 2,
+                "jump_risk_signal": 0.71,
+                "jump_risk_signal_subsignal_count": 2,
+            }
+        )
+        scorecard = build_candidate_opportunity_score(candidate_payload)
+        self.assertEqual(scorecard["strategy_family"], "long_put")
+
+        summary = build_selection_summary(
+            [
+                {
+                    "selection_state": "monitor",
+                    "eligibility": "analysis_only",
+                    "candidate": {
+                        **candidate_payload,
+                        "score_evidence": {
+                            "signal_gate": scorecard["signal_gate"],
+                        },
+                    },
+                }
+            ]
+        )
+        self.assertEqual(summary["strategy_family_counts"]["long_put"], 1)
+        self.assertEqual(summary["earnings_phase_counts"]["through_event"], 1)
 
 
 if __name__ == "__main__":
