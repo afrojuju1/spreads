@@ -12,13 +12,13 @@ Use this skill inside `/Users/adeb/Projects/spreads` when the task is about:
 - consolidating overlapping architecture docs
 - deciding which doc is the source of truth
 - aligning `AGENTS.md` files to the current architecture
-- refreshing plugin skills that encode repo architecture or ops ownership
+- refreshing repo-local skills that encode repo architecture or ops ownership
 
 ## Canonical Source Of Truth
 
 For the current overall runtime architecture, service ownership, and top-level boundaries, use:
 
-- [docs/current_system_state.md](../../../../docs/current_system_state.md)
+- [docs/current_system_state.md](../../../docs/current_system_state.md)
 
 If another design or planning doc disagrees about current ownership, `docs/current_system_state.md` wins.
 
@@ -26,11 +26,11 @@ If another design or planning doc disagrees about current ownership, `docs/curre
 
 Use these only for the roles they now own:
 
-- [docs/planning/2026-04-11_fresh_spread_system_design.md](../../../../docs/planning/2026-04-11_fresh_spread_system_design.md)
+- [docs/planning/2026-04-11_fresh_spread_system_design.md](../../../docs/planning/2026-04-11_fresh_spread_system_design.md)
   - target opportunity-selection architecture inside the broader system
-- [docs/planning/2026-04-15_current_system_options_automation_implementation_approach.md](../../../../docs/planning/2026-04-15_current_system_options_automation_implementation_approach.md)
+- [docs/planning/2026-04-15_current_system_options_automation_implementation_approach.md](../../../docs/planning/2026-04-15_current_system_options_automation_implementation_approach.md)
   - supporting migration path that reuses the current backend
-- [docs/planning/README.md](../../../../docs/planning/README.md)
+- [docs/planning/README.md](../../../docs/planning/README.md)
   - planning-doc entrypoint and doc-role map
 
 Do not let these supporting docs become rival top-level architecture sources.
@@ -69,7 +69,7 @@ When the current architecture changes, update docs in this order:
 
 1. `docs/current_system_state.md`
 2. `AGENTS.md` files that encode current ownership or canonical docs
-3. plugin skills that encode repo ops or architecture assumptions
+3. repo-local skills that encode repo ops or architecture assumptions
 4. planning doc statuses, cross-links, and entrypoint wording in `docs/planning/README.md`
 5. supporting architecture docs if their implementation-map sections need refresh
 
@@ -81,9 +81,9 @@ When editing repo instructions:
 - package-level `AGENTS.md` files should name the real current owners, not stale monoliths
 - avoid stale references to old surfaces like `scanner.py`, `live_collector.py`, `execution.py`, or `ops_visibility.py` as if they still own the split responsibilities
 
-## Plugin Skill Rules
+## Repo Skill Rules
 
-When editing `plugins/spreads-ops` skills:
+When editing repo-local skills under `.agents/skills`:
 
 - keep commands aligned with the real CLI surface under `uv run spreads ...`
 - prefer `status`, `trading`, `pipelines`, `jobs`, `uoa`, `audit`, and `backtest`

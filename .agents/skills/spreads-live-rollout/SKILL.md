@@ -7,7 +7,7 @@ description: Roll out spreads backend or live-ops changes that touch schema, job
 
 Use this skill inside `/Users/adeb/Projects/spreads` when the user wants a change to be made live, applied to the running stack, or verified end to end.
 
-Use [docs/current_system_state.md](../../../../docs/current_system_state.md) as the canonical source of truth for current runtime ownership and restart boundaries.
+Use [docs/current_system_state.md](../../../docs/current_system_state.md) as the canonical source of truth for current runtime ownership and restart boundaries.
 
 Typical prompts:
 

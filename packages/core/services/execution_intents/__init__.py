@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from core.alerts.ops import plan_dispatch_gap_open_alerts
 from core.db.decorators import with_storage
 from core.jobs.adhoc import ensure_manual_job_definition, enqueue_ad_hoc_job
 from core.jobs.registry import (
@@ -415,11 +417,13 @@ def dispatch_pending_execution_intents(
     failed = 0
     reviewed = 0
     results: list[dict[str, Any]] = []
+    expired_entry_automations_by_bot: dict[str, set[str]] = defaultdict(set)
     for intent in intents:
         if reviewed >= batch_limit:
             break
         reviewed += 1
         execution_intent_id = str(intent["execution_intent_id"])
+        action_type = _intent_action_type(intent)
         expires_at = parse_datetime(_as_text(intent.get("expires_at")))
         if expires_at is not None and expires_at <= datetime.now(UTC):
             updated = _update_intent(
@@ -447,6 +451,14 @@ def dispatch_pending_execution_intents(
                     "intent": updated,
                 }
             )
+            if action_type == "open":
+                bot_id = _as_text(intent.get("bot_id"))
+                if bot_id is not None:
+                    automation_id = _as_text(intent.get("automation_id"))
+                    if automation_id is not None:
+                        expired_entry_automations_by_bot[bot_id].add(automation_id)
+                    else:
+                        expired_entry_automations_by_bot[bot_id]
             continue
 
         allowed, reason = _auto_execution_gate(
@@ -544,6 +556,19 @@ def dispatch_pending_execution_intents(
             }
         )
 
+    dispatch_gap_alerts: list[dict[str, Any]] = []
+    if expired_entry_automations_by_bot:
+        try:
+            dispatch_gap_alerts = plan_dispatch_gap_open_alerts(
+                storage=storage,
+                alert_store=getattr(storage, "alerts", None),
+                job_store=getattr(storage, "jobs", None),
+                bot_automation_ids=expired_entry_automations_by_bot,
+                market_date=market_date,
+            )
+        except Exception as exc:
+            dispatch_gap_alerts = [{"status": "failed", "error": str(exc)}]
+
     return {
         "status": "ok",
         "trading_environment": trading_environment,
@@ -557,6 +582,7 @@ def dispatch_pending_execution_intents(
         "skipped": skipped,
         "expired": expired,
         "failed": failed,
+        "dispatch_gap_alerts": dispatch_gap_alerts,
         "results": results[:25],
     }
 

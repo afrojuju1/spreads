@@ -258,7 +258,71 @@ def _build_uoa_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
     return {"embeds": [embed]}
 
 
+def _build_ops_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
+    details = alert.get("details") if isinstance(alert.get("details"), dict) else {}
+    bot_name = str(
+        details.get("bot_name") or details.get("bot_id") or alert.get("symbol") or "ops"
+    )
+    automation_ids = [
+        str(value)
+        for value in list(details.get("automation_ids") or [])
+        if str(value).strip()
+    ]
+    fields = [
+        {"name": "Bot", "value": bot_name, "inline": False},
+        {
+            "name": "Market Date",
+            "value": str(details.get("market_date") or alert.get("session_date") or "n/a"),
+            "inline": True,
+        },
+        {
+            "name": "Selected",
+            "value": compact_count(details.get("selected_count")),
+            "inline": True,
+        },
+        {
+            "name": "Intents",
+            "value": compact_count(details.get("intent_count")),
+            "inline": True,
+        },
+        {
+            "name": "Submitted",
+            "value": compact_count(details.get("submitted_count")),
+            "inline": True,
+        },
+        {
+            "name": "Aged Out",
+            "value": compact_count(details.get("dispatch_window_elapsed_count")),
+            "inline": True,
+        },
+        {
+            "name": "Pending Gap",
+            "value": compact_count(details.get("pending_submission_gap_count")),
+            "inline": True,
+        },
+    ]
+    if automation_ids:
+        fields.append(
+            {
+                "name": "Automations",
+                "value": "\n".join(automation_ids[:5]),
+                "inline": False,
+            }
+        )
+    embed = {
+        "title": f"Automation Dispatch Gap | {bot_name}",
+        "description": alert["description"],
+        "color": NEUTRAL_YELLOW,
+        "fields": fields,
+        "footer": {"text": f"{alert['label']} | {alert['profile']} | {alert['strategy_mode']}"},
+        "timestamp": alert["created_at"],
+    }
+    return {"embeds": [embed]}
+
+
 def build_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
+    if str(alert.get("alert_type") or "").startswith("ops_"):
+        return _build_ops_discord_payload(alert)
     if str(alert.get("alert_type") or "").startswith("uoa_"):
         return _build_uoa_discord_payload(alert)
     return _build_spread_discord_payload(alert)

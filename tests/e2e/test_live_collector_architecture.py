@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from core.jobs.orchestration import isoformat_utc
 from core.jobs.scheduler import _enqueue_definition_jobs, _reconcile_live_collector_jobs
+from core.alerts.ops import OPS_DISPATCH_GAP_OPEN_ALERT_TYPE
 from core.services.automation_runtime import resolve_entry_runtime
 from core.services.collections.capture.runtime import capture_live_option_market_state
 from core.services.collections.cycle import run_collection_cycle
@@ -21,6 +22,7 @@ from core.services.execution_intents import (
     PRE_DISPATCH_EXPIRE_REASON,
     dispatch_pending_execution_intents,
 )
+from core.services.execution_intents.repricing import _manage_submitted_open_intents
 from core.services.live_collector_health.capture import (
     build_quote_capture_summary,
     build_trade_capture_summary,
@@ -1676,11 +1678,46 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
             def list_job_definitions(self, **_: object) -> list[dict[str, object]]:
                 return []
 
+        class _AlertStore:
+            def __init__(self) -> None:
+                self.rows: list[dict[str, object]] = []
+
+            def schema_ready(self) -> bool:
+                return True
+
+            def plan_delivery_event(self, **kwargs: object) -> tuple[dict[str, object], bool]:
+                for row in self.rows:
+                    if (
+                        str(row["dedupe_key"]) == str(kwargs["dedupe_key"])
+                        and str(row["delivery_target"]) == str(kwargs["delivery_target"])
+                    ):
+                        return dict(row), False
+                row = {
+                    "alert_id": len(self.rows) + 1,
+                    "record_kind": "delivery",
+                    "created_at": kwargs["created_at"],
+                    "updated_at": kwargs["created_at"],
+                    "session_date": kwargs["session_date"],
+                    "label": kwargs["label"],
+                    "session_id": kwargs["session_id"],
+                    "cycle_id": kwargs["cycle_id"],
+                    "symbol": kwargs["symbol"],
+                    "alert_type": kwargs["alert_type"],
+                    "dedupe_key": kwargs["dedupe_key"],
+                    "delivery_target": kwargs["delivery_target"],
+                    "status": kwargs["status"],
+                    "payload": kwargs["payload"],
+                    "state": kwargs["state"],
+                }
+                self.rows.append(row)
+                return dict(row), True
+
         class _Storage:
             def __init__(self) -> None:
                 self.signals = _SignalStore()
                 self.execution = _ExecutionStore()
                 self.jobs = _JobStore()
+                self.alerts = _AlertStore()
 
         storage = _Storage()
 
@@ -1709,6 +1746,27 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                 "core.services.execution_intents._manage_submitted_open_intents",
                 return_value={"managed": 0, "results": []},
             ),
+            patch(
+                "core.alerts.ops.build_bot_metrics",
+                return_value={
+                    "entry_funnel": {
+                        "overall": {
+                            "selected": 1,
+                            "intents_created": 1,
+                            "submitted": 0,
+                            "blocker_reasons": {"dispatch_window_elapsed": 1},
+                        }
+                    }
+                },
+            ),
+            patch(
+                "core.services.alert_delivery.resolve_delivery_webhook_url",
+                return_value=None,
+            ),
+            patch(
+                "core.services.alert_delivery.publish_alert_event",
+                return_value=None,
+            ),
         ):
             result = dispatch_pending_execution_intents(
                 db_target="postgresql://example",
@@ -1727,6 +1785,29 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         self.assertEqual(
             storage.execution.events[-1]["payload"]["reason"],
             PRE_DISPATCH_EXPIRE_REASON,
+        )
+        self.assertEqual(len(result["dispatch_gap_alerts"]), 1)
+        self.assertEqual(
+            result["dispatch_gap_alerts"][0]["alert_type"],
+            OPS_DISPATCH_GAP_OPEN_ALERT_TYPE,
+        )
+        self.assertTrue(
+            str(result["dispatch_gap_alerts"][0]["dedupe_key"]).endswith(
+                "|short_dated_index_credit_bot"
+            )
+        )
+        self.assertEqual(len(storage.alerts.rows), 1)
+        self.assertEqual(
+            storage.alerts.rows[0]["alert_type"],
+            OPS_DISPATCH_GAP_OPEN_ALERT_TYPE,
+        )
+        self.assertEqual(
+            storage.alerts.rows[0]["payload"]["details"]["dispatch_window_elapsed_count"],
+            1,
+        )
+        self.assertEqual(
+            storage.alerts.rows[0]["payload"]["details"]["automation_ids"],
+            ["index_put_credit_entry"],
         )
 
     def test_dispatch_revokes_close_intent_when_position_is_already_closed(self) -> None:
@@ -1853,6 +1934,383 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         )
         self.assertEqual(result["results"][0]["status"], "revoked")
         self.assertEqual(storage.execution.events[-1]["event_type"], "revoked")
+
+    def test_execute_job_batches_dispatch_gap_alerts_per_bot(self) -> None:
+        intents = [
+            {
+                "execution_intent_id": "execution_intent:entry-expired-1",
+                "bot_id": "short_dated_index_credit_bot",
+                "automation_id": "index_put_credit_entry",
+                "opportunity_decision_id": "opportunity_decision:1",
+                "strategy_position_id": None,
+                "execution_attempt_id": None,
+                "action_type": "open",
+                "slot_key": "entry:short_dated_index_credit_bot:cfg:GLD",
+                "claim_token": None,
+                "policy_ref": {},
+                "config_hash": "cfg-1",
+                "state": "pending",
+                "expires_at": "2026-04-17T16:30:00Z",
+                "superseded_by_id": None,
+                "payload": {
+                    "dispatch_status": "pending",
+                    "approval_mode": "auto",
+                    "execution_mode": "paper",
+                },
+                "created_at": "2026-04-17T16:25:00Z",
+                "updated_at": "2026-04-17T16:25:00Z",
+            },
+            {
+                "execution_intent_id": "execution_intent:entry-expired-2",
+                "bot_id": "short_dated_index_credit_bot",
+                "automation_id": "index_call_credit_entry",
+                "opportunity_decision_id": "opportunity_decision:2",
+                "strategy_position_id": None,
+                "execution_attempt_id": None,
+                "action_type": "open",
+                "slot_key": "entry:short_dated_index_credit_bot:cfg:SLV",
+                "claim_token": None,
+                "policy_ref": {},
+                "config_hash": "cfg-2",
+                "state": "pending",
+                "expires_at": "2026-04-17T16:31:00Z",
+                "superseded_by_id": None,
+                "payload": {
+                    "dispatch_status": "pending",
+                    "approval_mode": "auto",
+                    "execution_mode": "paper",
+                },
+                "created_at": "2026-04-17T16:26:00Z",
+                "updated_at": "2026-04-17T16:26:00Z",
+            },
+        ]
+
+        class _SignalStore:
+            def schema_ready(self) -> bool:
+                return True
+
+            def list_opportunities(self, **_: object) -> list[dict[str, object]]:
+                return []
+
+        class _ExecutionStore:
+            def __init__(self) -> None:
+                self.rows = [dict(row) for row in intents]
+                self.events: list[dict[str, object]] = []
+
+            def intent_schema_ready(self) -> bool:
+                return True
+
+            def list_execution_intents(
+                self, **kwargs: object
+            ) -> list[dict[str, object]]:
+                states = kwargs.get("states")
+                if states == ["pending"]:
+                    return [
+                        dict(row)
+                        for row in self.rows
+                        if str(row.get("state") or "") == "pending"
+                    ]
+                return []
+
+            def upsert_execution_intent(self, **kwargs: object) -> dict[str, object]:
+                row = dict(kwargs)
+                for index, existing in enumerate(self.rows):
+                    if (
+                        str(existing["execution_intent_id"])
+                        == str(row["execution_intent_id"])
+                    ):
+                        self.rows[index] = row
+                        return dict(row)
+                self.rows.append(row)
+                return dict(row)
+
+            def append_execution_intent_event(self, **kwargs: object) -> dict[str, object]:
+                row = dict(kwargs)
+                self.events.append(row)
+                return row
+
+        class _JobStore:
+            def schema_ready(self) -> bool:
+                return True
+
+            def list_job_definitions(self, **_: object) -> list[dict[str, object]]:
+                return []
+
+        class _AlertStore:
+            def __init__(self) -> None:
+                self.rows: list[dict[str, object]] = []
+
+            def schema_ready(self) -> bool:
+                return True
+
+            def plan_delivery_event(self, **kwargs: object) -> tuple[dict[str, object], bool]:
+                for row in self.rows:
+                    if (
+                        str(row["dedupe_key"]) == str(kwargs["dedupe_key"])
+                        and str(row["delivery_target"]) == str(kwargs["delivery_target"])
+                    ):
+                        return dict(row), False
+                row = {
+                    "alert_id": len(self.rows) + 1,
+                    "record_kind": "delivery",
+                    "created_at": kwargs["created_at"],
+                    "updated_at": kwargs["created_at"],
+                    "session_date": kwargs["session_date"],
+                    "label": kwargs["label"],
+                    "session_id": kwargs["session_id"],
+                    "cycle_id": kwargs["cycle_id"],
+                    "symbol": kwargs["symbol"],
+                    "alert_type": kwargs["alert_type"],
+                    "dedupe_key": kwargs["dedupe_key"],
+                    "delivery_target": kwargs["delivery_target"],
+                    "status": kwargs["status"],
+                    "payload": kwargs["payload"],
+                    "state": kwargs["state"],
+                }
+                self.rows.append(row)
+                return dict(row), True
+
+        class _Storage:
+            def __init__(self) -> None:
+                self.signals = _SignalStore()
+                self.execution = _ExecutionStore()
+                self.jobs = _JobStore()
+                self.alerts = _AlertStore()
+
+        storage = _Storage()
+
+        with (
+            patch(
+                "core.services.execution_intents.create_alpaca_client_from_env",
+                return_value=type("Client", (), {"trading_base_url": "paper"})(),
+            ),
+            patch(
+                "core.services.execution_intents.resolve_trading_environment",
+                return_value="paper",
+            ),
+            patch(
+                "core.services.execution_intents._cleanup_terminal_intent_history",
+                return_value={"deleted": 0, "results": []},
+            ),
+            patch(
+                "core.services.execution_intents._backfill_strategy_position_links",
+                return_value={"linked": 0, "results": []},
+            ),
+            patch(
+                "core.services.execution_intents._cleanup_slot_conflicts",
+                return_value={"revoked": 0, "results": []},
+            ),
+            patch(
+                "core.services.execution_intents._manage_submitted_open_intents",
+                return_value={"managed": 0, "results": []},
+            ),
+            patch(
+                "core.alerts.ops.build_bot_metrics",
+                return_value={
+                    "entry_funnel": {
+                        "overall": {
+                            "selected": 2,
+                            "intents_created": 2,
+                            "submitted": 0,
+                            "blocker_reasons": {"dispatch_window_elapsed": 2},
+                        }
+                    }
+                },
+            ),
+            patch(
+                "core.services.alert_delivery.resolve_delivery_webhook_url",
+                return_value=None,
+            ),
+            patch(
+                "core.services.alert_delivery.publish_alert_event",
+                return_value=None,
+            ),
+        ):
+            result = dispatch_pending_execution_intents(
+                db_target="postgresql://example",
+                storage=storage,
+                limit=10,
+            )
+
+        self.assertEqual(result["expired"], 2)
+        self.assertEqual(len(result["dispatch_gap_alerts"]), 1)
+        self.assertEqual(
+            storage.alerts.rows[0]["payload"]["details"]["automation_ids"],
+            ["index_call_credit_entry", "index_put_credit_entry"],
+        )
+
+    def test_reprice_replacement_intent_keeps_remaining_dispatch_window(self) -> None:
+        intent_id = "execution_intent:submitted-call-credit-1"
+        expires_at = (
+            datetime.now(UTC) + timedelta(minutes=4)
+        ).isoformat(timespec="seconds").replace("+00:00", "Z")
+        submitted_at = (
+            datetime.now(UTC) - timedelta(seconds=90)
+        ).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+        class _SignalStore:
+            def get_opportunity_decision(
+                self, opportunity_decision_id: str
+            ) -> dict[str, object] | None:
+                if opportunity_decision_id != "opportunity_decision:call-credit-1":
+                    return None
+                return {
+                    "opportunity_decision_id": opportunity_decision_id,
+                    "opportunity_id": "opportunity:call-credit-1",
+                }
+
+            def get_opportunity(
+                self, opportunity_id: str
+            ) -> dict[str, object] | None:
+                if opportunity_id != "opportunity:call-credit-1":
+                    return None
+                return {
+                    "opportunity_id": opportunity_id,
+                    "lifecycle_state": "ready",
+                    "eligibility_state": "live",
+                    "consumed_by_execution_attempt_id": None,
+                }
+
+        class _ExecutionStore:
+            def __init__(self) -> None:
+                self.rows = {
+                    intent_id: {
+                        "execution_intent_id": intent_id,
+                        "bot_id": "short_dated_index_call_credit_bot",
+                        "automation_id": "index_call_credit_entry",
+                        "opportunity_decision_id": "opportunity_decision:call-credit-1",
+                        "strategy_position_id": None,
+                        "execution_attempt_id": "execution-attempt:call-credit-1",
+                        "action_type": "open",
+                        "slot_key": (
+                            "entry:short_dated_index_call_credit_bot:"
+                            "short_dated_index_call_credit:GLD"
+                        ),
+                        "claim_token": None,
+                        "policy_ref": {},
+                        "config_hash": "cfg-call-credit",
+                        "state": "submitted",
+                        "expires_at": expires_at,
+                        "superseded_by_id": None,
+                        "payload": {
+                            "dispatch_status": "submitted",
+                            "approval_mode": "auto",
+                            "execution_mode": "paper",
+                            "opportunity_id": "opportunity:call-credit-1",
+                        },
+                        "created_at": submitted_at,
+                        "updated_at": submitted_at,
+                    }
+                }
+                self.events: list[dict[str, object]] = []
+
+            def list_execution_intents(
+                self, **kwargs: object
+            ) -> list[dict[str, object]]:
+                states = kwargs.get("states")
+                rows = [dict(row) for row in self.rows.values()]
+                if not states:
+                    return rows
+                allowed_states = set(states)
+                return [
+                    row for row in rows if str(row.get("state") or "") in allowed_states
+                ]
+
+            def upsert_execution_intent(self, **kwargs: object) -> dict[str, object]:
+                row = dict(kwargs)
+                self.rows[str(row["execution_intent_id"])] = row
+                return dict(row)
+
+            def append_execution_intent_event(self, **kwargs: object) -> dict[str, object]:
+                row = dict(kwargs)
+                self.events.append(row)
+                return row
+
+        class _Storage:
+            def __init__(self) -> None:
+                self.signals = _SignalStore()
+
+        class _Client:
+            def __init__(self) -> None:
+                self.canceled_order_ids: list[str] = []
+
+            def cancel_order(self, broker_order_id: str) -> None:
+                self.canceled_order_ids.append(broker_order_id)
+
+        execution_store = _ExecutionStore()
+        storage = _Storage()
+        client = _Client()
+        working_attempt = {
+            "execution_attempt_id": "execution-attempt:call-credit-1",
+            "status": "new",
+            "submitted_at": submitted_at,
+            "broker_order_id": "broker-order-1",
+            "requested_limit_price": 0.90,
+            "strategy": "call_credit",
+            "strategy_family": "call_credit_spread",
+            "request": {
+                "candidate": {"natural_credit": 0.82},
+                "execution_policy": {"max_credit_concession": 0.10},
+            },
+        }
+        canceled_attempt = {
+            **working_attempt,
+            "status": "canceled",
+        }
+
+        with (
+            patch(
+                "core.services.execution_intents.repricing.create_alpaca_client_from_env",
+                return_value=client,
+            ),
+            patch(
+                "core.services.execution_intents.repricing.refresh_execution_attempt",
+                side_effect=[
+                    {"attempt": working_attempt},
+                    {"attempt": canceled_attempt},
+                ],
+            ),
+        ):
+            result = _manage_submitted_open_intents(
+                db_target="postgresql://example",
+                storage=storage,
+                execution_store=execution_store,
+                limit=10,
+            )
+
+        self.assertEqual(result["reviewed"], 1)
+        self.assertEqual(result["refreshed"], 1)
+        self.assertEqual(result["cancel_requested"], 1)
+        self.assertEqual(result["repriced"], 1)
+        self.assertEqual(client.canceled_order_ids, ["broker-order-1"])
+
+        original_intent = execution_store.rows[intent_id]
+        self.assertEqual(original_intent["state"], "canceled")
+        replacement_intent_id = str(original_intent["superseded_by_id"])
+        self.assertTrue(replacement_intent_id.startswith("execution_intent:"))
+        self.assertNotEqual(replacement_intent_id, intent_id)
+
+        replacement_intent = execution_store.rows[replacement_intent_id]
+        replacement_created_at = parse_datetime(str(replacement_intent["created_at"]))
+        replacement_expires_at = parse_datetime(str(replacement_intent["expires_at"]))
+
+        self.assertEqual(replacement_intent["state"], "pending")
+        self.assertEqual(replacement_intent["expires_at"], expires_at)
+        self.assertIsNotNone(replacement_created_at)
+        self.assertIsNotNone(replacement_expires_at)
+        assert replacement_created_at is not None
+        assert replacement_expires_at is not None
+        self.assertGreater(replacement_expires_at, replacement_created_at)
+        self.assertGreaterEqual(
+            replacement_expires_at - replacement_created_at,
+            timedelta(minutes=2),
+        )
+        self.assertEqual(
+            replacement_intent["payload"]["previous_execution_attempt_id"],
+            "execution-attempt:call-credit-1",
+        )
+        self.assertEqual(replacement_intent["payload"]["reprice_count"], 1)
+        self.assertEqual(replacement_intent["payload"]["limit_price"], 0.89)
 
     def test_management_automation_skips_positions_missing_after_refresh(self) -> None:
         position_id = "position-1"

@@ -17,7 +17,7 @@ Use this skill when the task is to figure out what broke in `spreads`, especiall
 
 Apply it only inside `/Users/adeb/Projects/spreads`.
 
-Use [docs/current_system_state.md](../../../../docs/current_system_state.md) as the canonical source of truth for current runtime ownership and boundary questions.
+Use [docs/current_system_state.md](../../../docs/current_system_state.md) as the canonical source of truth for current runtime ownership and boundary questions.
 
 Current product terminology note:
 
@@ -194,6 +194,45 @@ Typical split:
 - session blocked with healthy capture and blocked risk note: policy issue
 - session degraded, alerts thin: upstream capture or selection issue
 - session healthy, analysis weak: strategy issue
+
+### Alert Delivery Triage
+
+Treat Discord delivery as a job-backed outbox, not an inline webhook send.
+
+For “why were alerts missing?” questions, check in this order:
+
+1. confirm the planner created a `delivery` row in `alert_events`
+2. inspect the delivery status
+3. confirm `alert_delivery` worker jobs are running or retrying
+4. confirm the scheduled `alert_reconcile` job is seeded and healthy
+
+Interpret delivery statuses this way:
+
+- `delivered`: Discord send succeeded
+- `pending`: planned and waiting for delivery job pickup
+- `dispatching`: currently claimed by a worker; if stale, `alert_reconcile` should reset and requeue it
+- `retry_wait`: delivery failed and is waiting for backoff/requeue
+- `dead_letter`: delivery exhausted retries and needs operator attention
+- `suppressed`: delivery was intentionally not queued, usually because webhook configuration was unavailable at plan time
+
+When drilling deeper, prefer:
+
+```bash
+uv run spreads jobs
+docker compose logs --tail=100 scheduler worker-runtime
+```
+
+Then inspect:
+
+- `/Users/adeb/Projects/spreads/packages/core/storage/alert_repository.py`
+- `/Users/adeb/Projects/spreads/packages/core/services/alert_delivery.py`
+
+Classify missing alerts this way:
+
+- row missing: planner or upstream selection issue
+- row `pending` or stale `dispatching`: orchestration or worker issue
+- row `retry_wait` or `dead_letter`: delivery failure, including rate limits or webhook errors
+- row `suppressed`: configuration issue, not a worker failure
 
 ## Recorder And Recovery Notes
 

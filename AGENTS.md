@@ -27,7 +27,7 @@
 ## Dev Workflow
 
 - This repo is in active development by default.
-- This repo has a local Codex plugin at `plugins/spreads-ops`. Prefer its repo-specific skills when the task matches:
+- This repo has repo-local Codex skills under `.agents/skills`. Prefer these direct repo skills when the task matches:
   - `spreads-incident-triage` for runtime incidents, degraded collectors, trading blocks, and "what broke?" questions
   - `spreads-live-rollout` for changes that must be applied to the running Docker-backed system
   - `spreads-architecture-docs` for architecture-doc maintenance, boundary updates, and source-of-truth consolidation
