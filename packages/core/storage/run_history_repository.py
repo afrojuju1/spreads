@@ -112,8 +112,6 @@ class RunHistoryRepository(RepositoryBase):
             aliases={"setup_json": "setup_json"},
             extra={
                 **self._scan_candidate_extra(candidate),
-                "short_strike": None if candidate is None else candidate.short_strike,
-                "long_strike": None if candidate is None else candidate.long_strike,
                 "midpoint_credit": None if candidate is None else candidate.midpoint_credit,
                 "quality_score": None if candidate is None else candidate.quality_score,
                 "calendar_status": None if candidate is None else candidate.calendar_status,
@@ -179,8 +177,6 @@ class RunHistoryRepository(RepositoryBase):
             expiration_date=parse_date(candidate.expiration_date),
             structure_identity=structure_identity,
             legs_json=list(legs),
-            short_strike=candidate.short_strike,
-            long_strike=candidate.long_strike,
             width=candidate.width,
             midpoint_credit=candidate.midpoint_credit,
             natural_credit=candidate.natural_credit,

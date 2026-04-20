@@ -88,8 +88,6 @@ def _serialize_recovered_candidate(
             strategy=candidate.get("strategy"),
         ),
         **payload_display_fields(candidate),
-        "short_strike": _as_float(candidate.get("short_strike")),
-        "long_strike": _as_float(candidate.get("long_strike")),
         "width": _as_float(candidate.get("width")),
         "midpoint_credit": float(_as_float(candidate.get("midpoint_credit")) or 0.0),
         "natural_credit": _as_float(candidate.get("natural_credit")),

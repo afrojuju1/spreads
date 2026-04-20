@@ -60,8 +60,6 @@ class ScanCandidateModel(Base):
     expiration_date: Mapped[date] = mapped_column(Date, nullable=False)
     structure_identity: Mapped[str] = mapped_column(Text, nullable=False)
     legs_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
-    short_strike: Mapped[float] = mapped_column(Float, nullable=False)
-    long_strike: Mapped[float] = mapped_column(Float, nullable=False)
     width: Mapped[float] = mapped_column(Float, nullable=False, default=0)
     midpoint_credit: Mapped[float] = mapped_column(Float, nullable=False, default=0)
     natural_credit: Mapped[float] = mapped_column(Float, nullable=False, default=0)

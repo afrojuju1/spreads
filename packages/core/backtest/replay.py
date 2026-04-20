@@ -50,8 +50,6 @@ from core.services.market_dates import NEW_YORK
 
 _COMPARABLE_FIELDS = (
     "width",
-    "short_strike",
-    "long_strike",
     "midpoint_credit",
     "natural_credit",
     "breakeven",
