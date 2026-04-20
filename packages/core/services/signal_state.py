@@ -13,6 +13,8 @@ from core.services.runtime_identity import (
     build_pipeline_id,
     resolve_pipeline_policy_fields,
 )
+from core.services.strategy_specs import strategy_direction
+from core.services.option_structures import normalize_strategy_family
 from core.storage.signal_repository import SignalRepository
 
 PROMOTABLE_SCORE_FLOOR = 65.0
@@ -100,12 +102,8 @@ def build_opportunity_id(
 
 
 def _opportunity_side(candidate: dict[str, Any]) -> str | None:
-    strategy = str(candidate.get("strategy") or "").lower()
-    if strategy == "call_credit":
-        return "bearish"
-    if strategy == "put_credit":
-        return "bullish"
-    return None
+    direction = strategy_direction(str(candidate.get("strategy") or ""))
+    return None if direction == "unknown" else direction
 
 
 def _candidate_confidence(candidate: dict[str, Any] | None) -> float | None:
@@ -332,7 +330,9 @@ def _build_opportunity_payload(
     profile = str(candidate.get("profile") or default_profile)
     eligibility = str(row.get("eligibility") or "live")
     blockers = _opportunity_blockers(candidate, eligibility=eligibility)
-    strategy_family = str(candidate.get("strategy") or default_strategy)
+    strategy_family = normalize_strategy_family(
+        candidate.get("strategy_family") or candidate.get("strategy") or default_strategy
+    )
     policy_fields = resolve_pipeline_policy_fields(
         profile=profile,
         universe_label=label.split("_", 1)[0] if label else None,
@@ -530,8 +530,10 @@ def _derive_symbol_slice(
         "signal_state": {
             "signal_state_id": build_signal_state_id(label, symbol),
             "label": label,
-            "strategy_family": str(
-                (candidate or {}).get("strategy") or default_strategy
+            "strategy_family": normalize_strategy_family(
+                (candidate or {}).get("strategy_family")
+                or (candidate or {}).get("strategy")
+                or default_strategy
             ),
             "profile": str((candidate or {}).get("profile") or default_profile),
             "entity_type": "signal_subject",

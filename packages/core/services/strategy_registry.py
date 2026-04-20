@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from core.services.option_structures import normalize_strategy_family
+from core.services.strategy_specs import resolve_strategy_spec
 
 
 @dataclass(frozen=True)
@@ -12,18 +12,14 @@ class StrategyDefinition:
     strategy_family: str
 
     def matches_candidate(self, candidate: dict[str, Any]) -> bool:
-        return (
-            normalize_strategy_family(
-                candidate.get("strategy_family") or candidate.get("strategy")
-            )
-            == self.strategy_family
-        )
+        return resolve_strategy_spec(self.strategy_family).matches_candidate(candidate)
 
 
 def resolve_strategy_definition(strategy_id: str) -> StrategyDefinition:
+    spec = resolve_strategy_spec(strategy_id)
     return StrategyDefinition(
-        strategy_id=str(strategy_id),
-        strategy_family=normalize_strategy_family(strategy_id),
+        strategy_id=spec.strategy_family,
+        strategy_family=spec.strategy_family,
     )
 
 

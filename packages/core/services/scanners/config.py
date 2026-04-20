@@ -18,7 +18,12 @@ from core.integrations.alpaca.client import DEFAULT_DATA_BASE_URL
 from core.integrations.calendar_events import classify_underlying_type
 from core.runtime.config import default_database_url
 from core.services.market_dates import NEW_YORK
-from core.services.option_structures import normalize_strategy_family
+from core.services.strategy_specs import (
+    concrete_strategies,
+    strategy_direction,
+    strategy_display_label,
+    strategy_option_type,
+)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -312,46 +317,6 @@ def resolve_symbols(args: argparse.Namespace) -> tuple[list[str], str]:
         seen.add(symbol)
         deduped.append(symbol)
     return deduped, label
-
-
-def concrete_strategies(strategy: str) -> tuple[str, ...]:
-    if strategy == "combined":
-        return ("call_credit", "put_credit")
-    return (strategy,)
-
-
-def strategy_display_label(strategy: str) -> str:
-    return {
-        "call_credit": "Call Credit",
-        "put_credit": "Put Credit",
-        "call_debit": "Call Debit",
-        "put_debit": "Put Debit",
-        "long_straddle": "Long Straddle",
-        "long_strangle": "Long Strangle",
-        "iron_condor": "Iron Condor",
-        "combined": "Combined",
-    }.get(strategy, strategy)
-
-
-def strategy_option_type(strategy: str) -> str:
-    normalized = normalize_strategy_family(strategy)
-    if normalized in {"call_credit_spread", "call_debit_spread", "long_call"}:
-        return "call"
-    if normalized in {"put_credit_spread", "put_debit_spread", "long_put"}:
-        return "put"
-    return "call"
-
-
-def strategy_direction(strategy: str) -> str:
-    normalized = normalize_strategy_family(strategy)
-    if normalized in {"put_credit_spread", "call_debit_spread", "long_call"}:
-        return "bullish"
-    if normalized in {"call_credit_spread", "put_debit_spread", "long_put"}:
-        return "bearish"
-    if normalized in LONG_VOL_STRATEGIES or normalized == "iron_condor":
-        return "neutral"
-    return "unknown"
-
 
 def infer_underlying_key(underlying_type: str) -> str:
     return (

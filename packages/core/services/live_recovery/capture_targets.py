@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from core.jobs.orchestration import NEW_YORK, _market_schedule
+from core.services.option_structures import normalize_legs, position_legs
 from core.services.option_quote_records import build_quote_symbol_metadata
 from core.services.option_trade_records import build_trade_symbol_metadata
 from core.services.positions import enrich_position_row
@@ -206,11 +207,16 @@ def _execution_attempt_capture_rows(
     attempt: Mapping[str, Any], *, expires_at: str
 ) -> list[dict[str, Any]]:
     rows = []
-    for leg_role, option_symbol in (
-        ("short", attempt.get("short_symbol")),
-        ("long", attempt.get("long_symbol")),
-    ):
-        rendered_symbol = _as_text(option_symbol)
+    attempt_legs = normalize_legs(attempt.get("legs"))
+    if not attempt_legs:
+        attempt_legs = normalize_legs(
+            [
+                {"symbol": attempt.get("short_symbol"), "role": "short"},
+                {"symbol": attempt.get("long_symbol"), "role": "long"},
+            ]
+        )
+    for leg in attempt_legs:
+        rendered_symbol = _as_text(leg.get("symbol"))
         if rendered_symbol is None:
             continue
         rows.append(
@@ -218,7 +224,7 @@ def _execution_attempt_capture_rows(
                 "option_symbol": rendered_symbol,
                 "underlying_symbol": _as_text(attempt.get("underlying_symbol")),
                 "strategy": _as_text(attempt.get("strategy")),
-                "leg_role": leg_role,
+                "leg_role": _as_text(leg.get("role")),
                 "quote_enabled": True,
                 "trade_enabled": True,
                 "feed": "opra",
@@ -237,11 +243,8 @@ def _session_position_capture_rows(
     position: Mapping[str, Any], *, expires_at: str
 ) -> list[dict[str, Any]]:
     rows = []
-    for leg_role, option_symbol in (
-        ("short", position.get("short_symbol")),
-        ("long", position.get("long_symbol")),
-    ):
-        rendered_symbol = _as_text(option_symbol)
+    for leg in position_legs(position):
+        rendered_symbol = _as_text(leg.get("symbol"))
         if rendered_symbol is None:
             continue
         rows.append(
@@ -249,7 +252,7 @@ def _session_position_capture_rows(
                 "option_symbol": rendered_symbol,
                 "underlying_symbol": _as_text(position.get("underlying_symbol")),
                 "strategy": _as_text(position.get("strategy")),
-                "leg_role": leg_role,
+                "leg_role": _as_text(leg.get("role")),
                 "quote_enabled": True,
                 "trade_enabled": True,
                 "feed": "opra",

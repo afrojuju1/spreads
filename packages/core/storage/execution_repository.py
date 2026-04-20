@@ -4,6 +4,14 @@ from typing import Any
 
 from sqlalchemy import select
 
+from core.services.option_structures import (
+    common_expiration_date,
+    fallback_vertical_legs,
+    legs_identity_key,
+    normalize_legs,
+    normalize_strategy_family,
+    primary_short_long_symbols,
+)
 from core.storage.base import RepositoryBase
 from core.storage.execution_models import (
     ExecutionAttemptModel,
@@ -73,9 +81,13 @@ class ExecutionRepository(RepositoryBase):
         job_run_id: str | None,
         underlying_symbol: str,
         strategy: str,
-        expiration_date: str,
-        short_symbol: str,
-        long_symbol: str,
+        expiration_date: str | None,
+        short_symbol: str | None,
+        long_symbol: str | None,
+        structure_identity: str | None = None,
+        legs: list[dict[str, Any]] | None = None,
+        order_payload: dict[str, Any] | None = None,
+        economics: dict[str, Any] | None = None,
         trade_intent: str,
         position_id: str | None = None,
         root_symbol: str | None = None,
@@ -96,6 +108,24 @@ class ExecutionRepository(RepositoryBase):
         completed_at: str | None = None,
         error_text: str | None = None,
     ) -> ExecutionAttemptRecord:
+        resolved_legs = normalize_legs(legs, expiration_date=expiration_date)
+        if not resolved_legs:
+            resolved_legs = fallback_vertical_legs(
+                short_symbol=short_symbol,
+                long_symbol=long_symbol,
+                expiration_date=expiration_date,
+            )
+        compatibility_short_symbol, compatibility_long_symbol = primary_short_long_symbols(
+            resolved_legs
+        )
+        resolved_expiration_date = common_expiration_date(resolved_legs) or expiration_date
+        resolved_strategy_family = normalize_strategy_family(strategy_family or strategy)
+        resolved_structure_identity = structure_identity
+        if resolved_structure_identity is None and resolved_legs:
+            resolved_structure_identity = legs_identity_key(
+                strategy=resolved_strategy_family,
+                legs=resolved_legs,
+            )
         with self.session_scope() as session:
             row = ExecutionAttemptModel(
                 execution_attempt_id=execution_attempt_id,
@@ -117,13 +147,14 @@ class ExecutionRepository(RepositoryBase):
                 job_run_id=job_run_id,
                 underlying_symbol=underlying_symbol,
                 strategy=strategy,
-                expiration_date=parse_date(expiration_date),
-                short_symbol=short_symbol,
-                long_symbol=long_symbol,
+                expiration_date=_optional_date(resolved_expiration_date),
+                short_symbol=compatibility_short_symbol or short_symbol,
+                long_symbol=compatibility_long_symbol or long_symbol,
+                structure_identity=resolved_structure_identity,
                 trade_intent=trade_intent,
                 position_id=position_id,
                 root_symbol=root_symbol or underlying_symbol,
-                strategy_family=strategy_family or strategy,
+                strategy_family=resolved_strategy_family,
                 style_profile=style_profile,
                 horizon_intent=horizon_intent,
                 product_class=product_class,
@@ -140,6 +171,9 @@ class ExecutionRepository(RepositoryBase):
                 client_order_id=client_order_id,
                 request_json=request,
                 candidate_json=candidate,
+                legs_json=list(resolved_legs),
+                order_payload_json=dict(order_payload or {}),
+                economics_json=dict(economics or {}),
                 error_text=error_text,
             )
             session.add(row)
@@ -247,20 +281,26 @@ class ExecutionRepository(RepositoryBase):
         *,
         session_id: str,
         strategy: str,
-        short_symbol: str,
-        long_symbol: str,
+        short_symbol: str | None,
+        long_symbol: str | None,
+        structure_identity: str | None = None,
         statuses: list[str],
     ) -> list[ExecutionAttemptRecord]:
         statement = (
             select(ExecutionAttemptModel)
             .where(ExecutionAttemptModel.session_id == session_id)
             .where(ExecutionAttemptModel.strategy == strategy)
-            .where(ExecutionAttemptModel.short_symbol == short_symbol)
-            .where(ExecutionAttemptModel.long_symbol == long_symbol)
             .where(ExecutionAttemptModel.trade_intent == "open")
             .where(ExecutionAttemptModel.status.in_(statuses))
             .order_by(ExecutionAttemptModel.requested_at.desc())
         )
+        if structure_identity is not None:
+            statement = statement.where(
+                ExecutionAttemptModel.structure_identity == structure_identity
+            )
+        else:
+            statement = statement.where(ExecutionAttemptModel.short_symbol == short_symbol)
+            statement = statement.where(ExecutionAttemptModel.long_symbol == long_symbol)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
         return self.rows(rows)

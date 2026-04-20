@@ -6,6 +6,12 @@ from typing import Any
 from core.services.automations import ResolvedAutomation
 from core.services.bots import ResolvedBot, load_active_bots
 from core.services.candidate_policy import resolve_strategy_min_return_on_risk
+from core.services.options_automation_models import (
+    StrategyBuildConfig,
+    StrategyLiquidityRules,
+    StrategyRiskDefaults,
+)
+from core.services.strategy_specs import StrategySpec
 
 
 def _optional_int(value: Any) -> int | None:
@@ -30,6 +36,10 @@ def _float_tuple(values: Any) -> tuple[float, ...]:
 class StrategyBuildSettings:
     strategy_id: str
     strategy_family: str
+    strategy_spec: StrategySpec
+    build: StrategyBuildConfig
+    liquidity: StrategyLiquidityRules
+    risk: StrategyRiskDefaults
     scanner_strategy: str
     scanner_profile: str
     dte_min: int | None
@@ -129,6 +139,10 @@ def build_strategy_build_settings(runtime: ResolvedAutomation) -> StrategyBuildS
     return StrategyBuildSettings(
         strategy_id=strategy_config.strategy_id,
         strategy_family=strategy_config.strategy_family,
+        strategy_spec=strategy_config.strategy_spec,
+        build=strategy_config.build,
+        liquidity=strategy_config.liquidity,
+        risk=strategy_config.risk,
         scanner_strategy=strategy_config.scanner_strategy,
         scanner_profile=strategy_config.scanner_profile,
         dte_min=_optional_int(builder_params.get("dte_min")),

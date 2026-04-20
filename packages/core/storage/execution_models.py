@@ -32,6 +32,12 @@ class ExecutionAttemptModel(Base):
             "automation_id",
             "requested_at",
         ),
+        Index(
+            "idx_execution_attempts_session_structure_requested",
+            "session_id",
+            "structure_identity",
+            "requested_at",
+        ),
         Index("idx_execution_attempts_status_requested", "status", "requested_at"),
         Index(
             "idx_execution_attempts_candidate_requested", "candidate_id", "requested_at"
@@ -94,9 +100,10 @@ class ExecutionAttemptModel(Base):
     )
     underlying_symbol: Mapped[str] = mapped_column(Text, nullable=False)
     strategy: Mapped[str] = mapped_column(Text, nullable=False)
-    expiration_date: Mapped[date] = mapped_column(Date, nullable=False)
-    short_symbol: Mapped[str] = mapped_column(Text, nullable=False)
-    long_symbol: Mapped[str] = mapped_column(Text, nullable=False)
+    expiration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    short_symbol: Mapped[str | None] = mapped_column(Text, nullable=True)
+    long_symbol: Mapped[str | None] = mapped_column(Text, nullable=True)
+    structure_identity: Mapped[str | None] = mapped_column(Text, nullable=True)
     trade_intent: Mapped[str] = mapped_column(Text, nullable=False, default="open")
     position_id: Mapped[str | None] = mapped_column(
         Text,
@@ -127,6 +134,15 @@ class ExecutionAttemptModel(Base):
     client_order_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     request_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     candidate_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    legs_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    order_payload_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    economics_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
     error_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 

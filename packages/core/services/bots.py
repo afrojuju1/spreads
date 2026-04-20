@@ -12,6 +12,7 @@ from core.services.automations import (
     resolve_automation,
 )
 from core.services.candidate_policy import resolve_strategy_min_return_on_risk
+from core.services.options_automation_models import BotLimits, BotRuntimePolicy
 from core.services.strategy_configs import (
     _as_list,
     _as_text,
@@ -27,18 +28,47 @@ NEW_YORK = ZoneInfo("America/New_York")
 class BotConfig:
     bot_id: str
     name: str
-    capital_limit: float
-    max_open_positions: int
-    max_daily_actions: int
-    max_new_entries_per_day: int | None
-    daily_loss_limit: float | None
-    live_enabled: bool
-    cancel_pending_entries_after_et: str | None
-    flatten_positions_at_et: str | None
+    limits: BotLimits
+    runtime: BotRuntimePolicy
     automation_ids: tuple[str, ...]
-    paused: bool
     config_path: Path
     config_hash: str
+
+    @property
+    def capital_limit(self) -> float:
+        return self.limits.capital_limit
+
+    @property
+    def max_open_positions(self) -> int:
+        return self.limits.max_open_positions
+
+    @property
+    def max_daily_actions(self) -> int:
+        return self.limits.max_daily_actions
+
+    @property
+    def max_new_entries_per_day(self) -> int | None:
+        return self.limits.max_new_entries_per_day
+
+    @property
+    def daily_loss_limit(self) -> float | None:
+        return self.limits.daily_loss_limit
+
+    @property
+    def live_enabled(self) -> bool:
+        return self.runtime.live_enabled
+
+    @property
+    def cancel_pending_entries_after_et(self) -> str | None:
+        return self.runtime.cancel_pending_entries_after_et
+
+    @property
+    def flatten_positions_at_et(self) -> str | None:
+        return self.runtime.flatten_positions_at_et
+
+    @property
+    def paused(self) -> bool:
+        return self.runtime.paused
 
 
 @dataclass(frozen=True)
@@ -48,23 +78,25 @@ class ResolvedBot:
     config_hash: str
 
 
-def _optional_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    return float(value)
-
-
-def _optional_int(value: Any) -> int | None:
-    if value in (None, ""):
-        return None
-    return int(value)
-
-
-def _optional_text(value: Any) -> str | None:
-    if value in (None, ""):
-        return None
-    rendered = str(value).strip()
-    return rendered or None
+def _bot_payload(bot: BotConfig) -> dict[str, Any]:
+    return {
+        "bot_id": bot.bot_id,
+        "name": bot.name,
+        "limits": {
+            "capital_limit": bot.limits.capital_limit,
+            "max_open_positions": bot.limits.max_open_positions,
+            "max_daily_actions": bot.limits.max_daily_actions,
+            "max_new_entries_per_day": bot.limits.max_new_entries_per_day,
+            "daily_loss_limit": bot.limits.daily_loss_limit,
+        },
+        "runtime": {
+            "live_enabled": bot.runtime.live_enabled,
+            "cancel_pending_entries_after_et": bot.runtime.cancel_pending_entries_after_et,
+            "flatten_positions_at_et": bot.runtime.flatten_positions_at_et,
+            "paused": bot.runtime.paused,
+        },
+        "automations": list(bot.automation_ids),
+    }
 
 
 def _parse_hhmm(value: str) -> tuple[int, int]:
@@ -97,27 +129,20 @@ def load_bots(config_root: str | Path | None = None) -> dict[str, BotConfig]:
         bot = BotConfig(
             bot_id=_as_text(payload.get("bot_id"), field_name="bot_id"),
             name=_as_text(payload.get("name"), field_name="name"),
-            capital_limit=float(payload.get("capital_limit") or 0.0),
-            max_open_positions=int(payload.get("max_open_positions") or 0),
-            max_daily_actions=int(payload.get("max_daily_actions") or 0),
-            max_new_entries_per_day=_optional_int(
-                payload.get("max_new_entries_per_day")
-            ),
-            daily_loss_limit=_optional_float(payload.get("daily_loss_limit")),
-            live_enabled=bool(payload.get("live_enabled", False)),
-            cancel_pending_entries_after_et=_optional_text(
-                payload.get("cancel_pending_entries_after_et")
-            ),
-            flatten_positions_at_et=_optional_text(
-                payload.get("flatten_positions_at_et")
-            ),
-            automation_ids=_as_list(
-                payload.get("automation_ids"), field_name="automation_ids"
-            ),
-            paused=bool(payload.get("paused", False)),
+            limits=BotLimits.from_payload(payload.get("limits")),
+            runtime=BotRuntimePolicy.from_payload(payload.get("runtime")),
+            automation_ids=_as_list(payload.get("automations"), field_name="automations"),
             config_path=path,
-            config_hash=_canonical_hash(payload),
+            config_hash="",
         )
+        bot = BotConfig(
+            **{
+                **bot.__dict__,
+                "config_hash": _canonical_hash(_bot_payload(bot)),
+            }
+        )
+        if bot.bot_id in bots:
+            raise ValueError(f"Duplicate bot_id {bot.bot_id}")
         bots[bot.bot_id] = bot
     return bots
 
@@ -354,7 +379,7 @@ def build_collector_scopes(
         groups.setdefault(key, []).append((bot, automation))
 
     scopes: list[dict[str, Any]] = []
-    for (scanner_strategy, scanner_profile), entries in sorted(groups.items()):
+    for (scanner_strategy, scanner_profile), _entries in sorted(groups.items()):
         scope = build_collector_scope(
             config_root,
             scanner_strategy=scanner_strategy,

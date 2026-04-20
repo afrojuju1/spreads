@@ -1067,6 +1067,7 @@ def submit_live_session_execution(
                 strategy=str(candidate["strategy"]),
                 short_symbol=str(candidate["short_symbol"]),
                 long_symbol=str(candidate["long_symbol"]),
+                structure_identity=candidate_identity,
                 statuses=sorted(OPEN_STATUSES),
             )
         if existing_attempts:
@@ -1263,13 +1264,24 @@ def submit_live_session_execution(
             job_run_id=_as_text(cycle.get("job_run_id")),
             underlying_symbol=str(candidate["underlying_symbol"]),
             strategy=str(candidate["strategy"]),
-            expiration_date=str(candidate["expiration_date"]),
+            expiration_date=_as_text(candidate.get("expiration_date")),
             short_symbol=str(
                 compatibility_short_symbol or candidate.get("short_symbol") or ""
             ),
             long_symbol=str(
                 compatibility_long_symbol or candidate.get("long_symbol") or ""
             ),
+            structure_identity=candidate_identity,
+            legs=attempt_legs,
+            order_payload=dict(order_request),
+            economics={
+                "midpoint_credit": candidate_payload.get("midpoint_credit"),
+                "natural_credit": candidate_payload.get("natural_credit"),
+                "max_profit": candidate_payload.get("max_profit"),
+                "max_loss": candidate_payload.get("max_loss"),
+                "return_on_risk": candidate_payload.get("return_on_risk"),
+                "fill_ratio": candidate_payload.get("fill_ratio"),
+            },
             trade_intent=OPEN_TRADE_INTENT,
             position_id=None,
             root_symbol=str(candidate["underlying_symbol"]),
@@ -1606,6 +1618,14 @@ def submit_position_close_by_id(
             primary_short_long_symbols(attempt_legs)
         )
         attempt_id = _execution_attempt_id()
+        attempt_structure_identity = (
+            legs_identity_key(
+                strategy=_strategy_family_from_payload(position),
+                legs=attempt_legs,
+            )
+            if attempt_legs
+            else None
+        )
         attempt = execution_store.create_attempt(
             execution_attempt_id=attempt_id,
             session_id=build_live_run_scope_id(label, market_date),
@@ -1626,13 +1646,17 @@ def submit_position_close_by_id(
             job_run_id=None,
             underlying_symbol=str(position["underlying_symbol"]),
             strategy=str(position["strategy"]),
-            expiration_date=str(position["expiration_date"]),
+            expiration_date=_as_text(position.get("expiration_date")),
             short_symbol=str(
                 compatibility_short_symbol or position.get("short_symbol") or ""
             ),
             long_symbol=str(
                 compatibility_long_symbol or position.get("long_symbol") or ""
             ),
+            structure_identity=attempt_structure_identity,
+            legs=attempt_legs,
+            order_payload=dict(order_request),
+            economics=dict(position.get("economics") or {}),
             trade_intent=trade_intent,
             position_id=position_id,
             root_symbol=str(position["underlying_symbol"]),

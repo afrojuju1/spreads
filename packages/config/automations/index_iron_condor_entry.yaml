@@ -1,15 +1,17 @@
 automation_id: index_iron_condor_entry
-strategy_config_id: short_dated_index_iron_condor
-automation_type: entry
+strategy_config: short_dated_index_iron_condor
+kind: entry
 schedule:
-  cadence: 5m
+  cadence_minutes: 5
   market_hours_only: true
-  start_time_et: "09:50"
-  end_time_et: "15:15"
-universe_ref: liquid_index_etfs
-trigger_policy:
+  window:
+    start_et: "09:50"
+    end_et: "15:15"
+universe: liquid_index_etfs
+triggers:
   min_opportunity_score: 60
   replan_on_new_cycle: true
-approval_mode: auto
-execution_mode: paper
+execution:
+  approval_mode: auto
+  mode: paper
 enabled: true

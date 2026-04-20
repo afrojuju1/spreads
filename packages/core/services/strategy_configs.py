@@ -8,7 +8,14 @@ from typing import Any
 
 import yaml
 
+from core.services.options_automation_models import (
+    StrategyBuildConfig,
+    StrategyLiquidityRules,
+    StrategyRecipes,
+    StrategyRiskDefaults,
+)
 from core.services.option_structures import normalize_strategy_family
+from core.services.strategy_specs import StrategySpec, resolve_strategy_spec
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_OPTIONS_AUTOMATION_CONFIG_ROOT = REPO_ROOT / "packages" / "config"
@@ -47,37 +54,102 @@ def default_config_root(config_root: str | Path | None = None) -> Path:
     return Path(config_root).resolve()
 
 
+def _strategy_config_payload(strategy_config: StrategyConfig) -> dict[str, Any]:
+    return {
+        "strategy_config_id": strategy_config.strategy_config_id,
+        "strategy": {
+            "family": strategy_config.strategy_family,
+        },
+        "enabled": strategy_config.enabled,
+        "build": strategy_config.build_payload,
+        "recipes": strategy_config.recipes_payload,
+        "liquidity": strategy_config.liquidity.as_dict(),
+        "risk": strategy_config.risk.as_dict(),
+    }
+
+
 @dataclass(frozen=True)
 class StrategyConfig:
     strategy_config_id: str
-    strategy_id: str
-    builder_params: dict[str, Any]
-    entry_recipe_refs: tuple[str, ...]
-    management_recipe_refs: tuple[str, ...]
-    liquidity_rules: dict[str, Any]
-    risk_defaults: dict[str, Any]
+    strategy_family: str
+    strategy_spec: StrategySpec
+    build: StrategyBuildConfig
+    recipes: StrategyRecipes
+    liquidity: StrategyLiquidityRules
+    risk: StrategyRiskDefaults
     enabled: bool
     config_path: Path
     config_hash: str
 
     @property
-    def strategy_family(self) -> str:
-        return normalize_strategy_family(self.strategy_id)
+    def strategy_id(self) -> str:
+        return self.strategy_family
+
+    @property
+    def builder_params(self) -> dict[str, Any]:
+        return dict(self.build.as_builder_params())
+
+    @property
+    def build_payload(self) -> dict[str, Any]:
+        build_payload = {
+            "dte": {
+                "min": self.build.dte.minimum,
+                "max": self.build.dte.maximum,
+            },
+            "min_fill_ratio": self.build.min_fill_ratio,
+            "expected_move": {
+                "min_short_vs_expected_move_ratio": self.build.expected_move.min_short_vs_expected_move_ratio,
+                "min_breakeven_vs_expected_move_ratio": self.build.expected_move.min_breakeven_vs_expected_move_ratio,
+            },
+        }
+        if hasattr(self.build, "short_delta"):
+            build_payload["short_delta"] = {
+                "min": self.build.short_delta.minimum,
+                "max": self.build.short_delta.maximum,
+                "target": self.build.short_delta.target,
+            }
+        if hasattr(self.build, "widths"):
+            build_payload["widths"] = list(self.build.widths)
+        if hasattr(self.build, "entry_delta"):
+            build_payload["entry_delta"] = {
+                "min": self.build.entry_delta.minimum,
+                "max": self.build.entry_delta.maximum,
+                "target": self.build.entry_delta.target,
+            }
+        if hasattr(self.build, "symmetric_wings_only"):
+            build_payload["symmetric_wings_only"] = self.build.symmetric_wings_only
+        return build_payload
+
+    @property
+    def recipes_payload(self) -> dict[str, Any]:
+        return {
+            "entry": list(self.recipes.entry),
+            "management": list(self.recipes.management),
+        }
+
+    @property
+    def entry_recipe_refs(self) -> tuple[str, ...]:
+        return self.recipes.entry
+
+    @property
+    def management_recipe_refs(self) -> tuple[str, ...]:
+        return self.recipes.management
+
+    @property
+    def liquidity_rules(self) -> dict[str, Any]:
+        return self.liquidity.as_dict()
+
+    @property
+    def risk_defaults(self) -> dict[str, Any]:
+        return self.risk.as_dict()
 
     @property
     def scanner_strategy(self) -> str:
-        family = self.strategy_family
-        return {
-            "put_credit_spread": "put_credit",
-            "call_credit_spread": "call_credit",
-            "put_debit_spread": "put_debit",
-            "call_debit_spread": "call_debit",
-        }.get(family, family)
+        return self.strategy_spec.scanner_strategy
 
     @property
     def scanner_profile(self) -> str:
-        dte_min = int(self.builder_params.get("dte_min", 0) or 0)
-        dte_max = int(self.builder_params.get("dte_max", 0) or 0)
+        dte_max = int(self.build.dte.maximum)
         if dte_max <= 3:
             return "micro"
         if dte_max <= 10:
@@ -96,28 +168,41 @@ def load_strategy_configs(
     configs: dict[str, StrategyConfig] = {}
     for path in sorted(root.glob("*.yaml")):
         payload = _load_yaml_file(path)
+        strategy_payload = payload.get("strategy")
+        if not isinstance(strategy_payload, dict):
+            raise ValueError(f"strategy must be a mapping in {path}")
+        strategy_family = normalize_strategy_family(
+            _as_text(strategy_payload.get("family"), field_name="strategy.family")
+        )
+        strategy_spec = resolve_strategy_spec(strategy_family)
         strategy_config = StrategyConfig(
             strategy_config_id=_as_text(
-                payload.get("strategy_config_id"), field_name="strategy_config_id"
+                payload.get("strategy_config_id"),
+                field_name="strategy_config_id",
             ),
-            strategy_id=_as_text(payload.get("strategy_id"), field_name="strategy_id"),
-            builder_params=dict(payload.get("builder_params") or {}),
-            entry_recipe_refs=_as_list(
-                payload.get("entry_recipe_refs"), field_name="entry_recipe_refs"
-            ),
-            management_recipe_refs=_as_list(
-                payload.get("management_recipe_refs"),
-                field_name="management_recipe_refs",
-            ),
-            liquidity_rules=dict(payload.get("liquidity_rules") or {}),
-            risk_defaults=dict(payload.get("risk_defaults") or {}),
+            strategy_family=strategy_family,
+            strategy_spec=strategy_spec,
+            build=strategy_spec.validate_build(payload.get("build")),
+            recipes=StrategyRecipes.from_payload(payload.get("recipes")),
+            liquidity=StrategyLiquidityRules.from_payload(payload.get("liquidity")),
+            risk=StrategyRiskDefaults.from_payload(payload.get("risk")),
             enabled=bool(payload.get("enabled", True)),
             config_path=path,
-            config_hash=_canonical_hash(payload),
+            config_hash="",
+        )
+        strategy_config = StrategyConfig(
+            **{
+                **strategy_config.__dict__,
+                "config_hash": _canonical_hash(
+                    _strategy_config_payload(strategy_config)
+                ),
+            }
         )
         if strategy_config.strategy_family == "unknown":
+            raise ValueError(f"Unsupported strategy family in {path}")
+        if strategy_config.strategy_config_id in configs:
             raise ValueError(
-                f"Unsupported strategy_id in {path}: {strategy_config.strategy_id}"
+                f"Duplicate strategy_config_id {strategy_config.strategy_config_id}"
             )
         configs[strategy_config.strategy_config_id] = strategy_config
     return configs
@@ -126,6 +211,10 @@ def load_strategy_configs(
 __all__ = [
     "DEFAULT_OPTIONS_AUTOMATION_CONFIG_ROOT",
     "StrategyConfig",
+    "_as_list",
+    "_as_text",
+    "_canonical_hash",
+    "_load_yaml_file",
     "default_config_root",
     "load_strategy_configs",
 ]

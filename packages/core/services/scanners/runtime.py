@@ -28,6 +28,7 @@ from core.services.scanners.config import (
     resolve_symbol_scan_args,
     strategy_option_type,
 )
+from core.services.strategy_specs import resolve_strategy_spec
 from core.services.scanners.market_data import (
     build_expected_move_estimates,
     count_alpaca_greeks_coverage,
@@ -279,52 +280,8 @@ def build_setup_context_from_market_slice(
 def count_market_slice_coverage(
     *, market_slice: SymbolMarketSlice, symbol_args: argparse.Namespace
 ) -> tuple[int, int, int, int]:
-    if (
-        symbol_args.strategy == "iron_condor"
-        or symbol_args.strategy in LONG_VOL_STRATEGIES
-    ):
-        call_quoted_count, call_delta_count = count_snapshot_delta_coverage(
-            market_slice.call_snapshots_by_expiration
-        )
-        put_quoted_count, put_delta_count = count_snapshot_delta_coverage(
-            market_slice.put_snapshots_by_expiration
-        )
-        quoted_contract_count = call_quoted_count + put_quoted_count
-        alpaca_delta_contract_count = count_alpaca_greeks_coverage(
-            market_slice.call_snapshots_by_expiration
-        ) + count_alpaca_greeks_coverage(market_slice.put_snapshots_by_expiration)
-        delta_contract_count = call_delta_count + put_delta_count
-        local_delta_contract_count = count_local_greeks_coverage(
-            market_slice.call_snapshots_by_expiration
-        ) + count_local_greeks_coverage(market_slice.put_snapshots_by_expiration)
-        return (
-            quoted_contract_count,
-            alpaca_delta_contract_count,
-            delta_contract_count,
-            local_delta_contract_count,
-        )
-
-    option_type = strategy_option_type(symbol_args.strategy)
-    option_snapshots_by_expiration = (
-        market_slice.call_snapshots_by_expiration
-        if option_type == "call"
-        else market_slice.put_snapshots_by_expiration
-    )
-    quoted_contract_count, delta_contract_count = count_snapshot_delta_coverage(
-        option_snapshots_by_expiration
-    )
-    alpaca_delta_contract_count = count_alpaca_greeks_coverage(
-        option_snapshots_by_expiration
-    )
-    local_delta_contract_count = count_local_greeks_coverage(
-        option_snapshots_by_expiration
-    )
-    return (
-        quoted_contract_count,
-        alpaca_delta_contract_count,
-        delta_contract_count,
-        local_delta_contract_count,
-    )
+    spec = resolve_strategy_spec(symbol_args.strategy)
+    return spec.count_coverage(market_slice=market_slice)
 
 
 def build_raw_candidates_from_market_slice(
@@ -332,59 +289,8 @@ def build_raw_candidates_from_market_slice(
     market_slice: SymbolMarketSlice,
     symbol_args: argparse.Namespace,
 ) -> list[SpreadCandidate]:
-    if symbol_args.strategy == "iron_condor":
-        return build_iron_condors(
-            symbol=market_slice.symbol,
-            spot_price=market_slice.spot_price,
-            call_contracts_by_expiration=market_slice.call_contracts_by_expiration,
-            put_contracts_by_expiration=market_slice.put_contracts_by_expiration,
-            call_snapshots_by_expiration=market_slice.call_snapshots_by_expiration,
-            put_snapshots_by_expiration=market_slice.put_snapshots_by_expiration,
-            expected_moves_by_expiration=market_slice.expected_moves_by_expiration,
-            args=symbol_args,
-        )
-    if symbol_args.strategy == "long_straddle":
-        return build_long_straddles(
-            symbol=market_slice.symbol,
-            spot_price=market_slice.spot_price,
-            call_contracts_by_expiration=market_slice.call_contracts_by_expiration,
-            put_contracts_by_expiration=market_slice.put_contracts_by_expiration,
-            call_snapshots_by_expiration=market_slice.call_snapshots_by_expiration,
-            put_snapshots_by_expiration=market_slice.put_snapshots_by_expiration,
-            expected_moves_by_expiration=market_slice.expected_moves_by_expiration,
-            args=symbol_args,
-        )
-    if symbol_args.strategy == "long_strangle":
-        return build_long_strangles(
-            symbol=market_slice.symbol,
-            spot_price=market_slice.spot_price,
-            call_contracts_by_expiration=market_slice.call_contracts_by_expiration,
-            put_contracts_by_expiration=market_slice.put_contracts_by_expiration,
-            call_snapshots_by_expiration=market_slice.call_snapshots_by_expiration,
-            put_snapshots_by_expiration=market_slice.put_snapshots_by_expiration,
-            expected_moves_by_expiration=market_slice.expected_moves_by_expiration,
-            args=symbol_args,
-        )
-    option_type = strategy_option_type(symbol_args.strategy)
-    option_contracts_by_expiration = (
-        market_slice.call_contracts_by_expiration
-        if option_type == "call"
-        else market_slice.put_contracts_by_expiration
-    )
-    option_snapshots_by_expiration = (
-        market_slice.call_snapshots_by_expiration
-        if option_type == "call"
-        else market_slice.put_snapshots_by_expiration
-    )
-    return build_vertical_spreads(
-        symbol=market_slice.symbol,
-        strategy=symbol_args.strategy,
-        spot_price=market_slice.spot_price,
-        contracts_by_expiration=option_contracts_by_expiration,
-        snapshots_by_expiration=option_snapshots_by_expiration,
-        expected_moves_by_expiration=market_slice.expected_moves_by_expiration,
-        args=symbol_args,
-    )
+    spec = resolve_strategy_spec(symbol_args.strategy)
+    return spec.build_candidates(market_slice=market_slice, symbol_args=symbol_args)
 
 
 def _count_candidate_field_values(

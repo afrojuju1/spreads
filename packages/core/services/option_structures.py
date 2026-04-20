@@ -249,6 +249,17 @@ def unique_leg_symbols(legs: list[Mapping[str, Any]]) -> list[str]:
     return symbols
 
 
+def common_expiration_date(legs: list[Mapping[str, Any]]) -> str | None:
+    expirations = {
+        expiration
+        for expiration in (_as_text(leg.get("expiration_date")) for leg in legs)
+        if expiration is not None
+    }
+    if len(expirations) != 1:
+        return None
+    return next(iter(expirations))
+
+
 def reverse_position_intent(position_intent: Any) -> str | None:
     intent = str(position_intent or "").strip().lower()
     return {
@@ -593,6 +604,7 @@ __all__ = [
     "build_multileg_order_payload",
     "candidate_legs",
     "closing_legs",
+    "common_expiration_date",
     "fallback_vertical_legs",
     "iron_condor_opening_legs",
     "legs_identity_key",
