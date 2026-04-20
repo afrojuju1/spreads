@@ -551,16 +551,8 @@ def build_selection_events(
         if previous is None or current is None:
             continue
 
-        previous_identity = (
-            previous["strategy"],
-            previous["short_symbol"],
-            previous["long_symbol"],
-        )
-        current_identity = (
-            current["strategy"],
-            current["short_symbol"],
-            current["long_symbol"],
-        )
+        previous_identity = candidate_identity(previous)
+        current_identity = candidate_identity(current)
         if previous["strategy"] != current["strategy"]:
             event_type = "promotable_side_flip"
             message = (

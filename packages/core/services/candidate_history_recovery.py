@@ -3,7 +3,11 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Any, Mapping
 
-from core.services.option_structures import candidate_legs, legs_identity_key
+from core.services.option_structures import (
+    candidate_legs,
+    legs_identity_key,
+    payload_structure_identity,
+)
 
 
 def _as_float(value: Any) -> float | None:
@@ -77,6 +81,11 @@ def _serialize_recovered_candidate(
         "underlying_symbol": str(run_payload["symbol"]),
         "strategy": str(candidate["strategy"]),
         "expiration_date": expiration_date,
+        "legs": candidate_legs(candidate),
+        "structure_identity": payload_structure_identity(
+            candidate,
+            strategy=candidate.get("strategy"),
+        ),
         "short_symbol": str(candidate["short_symbol"]),
         "long_symbol": str(candidate["long_symbol"]),
         "short_strike": _as_float(candidate.get("short_strike")),

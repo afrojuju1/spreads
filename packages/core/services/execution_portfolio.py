@@ -7,7 +7,6 @@ from core.db.decorators import with_storage
 from core.services.alpaca import create_alpaca_client_from_env
 from core.services.option_structures import (
     net_premium_kind,
-    normalize_strategy_family,
     structure_quote_snapshot,
     position_legs,
     primary_short_long_symbols,
@@ -375,8 +374,8 @@ def build_session_execution_portfolio(
             strategy_family = str(
                 persisted.get("strategy") or persisted.get("strategy_family") or ""
             )
-            short_symbol = str(persisted["short_symbol"])
-            long_symbol = str(persisted["long_symbol"])
+            persisted_legs = position_legs(persisted)
+            short_symbol, long_symbol = primary_short_long_symbols(persisted_legs)
             spread_mark_midpoint = None
             spread_mark_close = _coerce_float(persisted.get("close_mark"))
             estimated_midpoint_pnl = None
@@ -418,6 +417,7 @@ def build_session_execution_portfolio(
                     "strategy": str(persisted["strategy"]),
                     "short_symbol": short_symbol,
                     "long_symbol": long_symbol,
+                    "legs": persisted_legs,
                     "expiration_date": _as_text(persisted.get("expiration_date")),
                     "position_status": status,
                     "broker_status": _as_text(persisted.get("last_broker_status"))

@@ -41,6 +41,13 @@ class ScanCandidateModel(Base):
     __tablename__ = "scan_candidates"
     __table_args__ = (
         Index("idx_scan_candidates_run_id", "run_id"),
+        Index(
+            "idx_scan_candidates_structure",
+            "run_id",
+            "strategy",
+            "expiration_date",
+            "structure_identity",
+        ),
     )
 
     run_id: Mapped[str] = mapped_column(
@@ -51,8 +58,8 @@ class ScanCandidateModel(Base):
     rank: Mapped[int] = mapped_column(Integer, primary_key=True)
     strategy: Mapped[str] = mapped_column(Text, nullable=False, default="call_credit")
     expiration_date: Mapped[date] = mapped_column(Date, nullable=False)
-    short_symbol: Mapped[str] = mapped_column(Text, nullable=False)
-    long_symbol: Mapped[str] = mapped_column(Text, nullable=False)
+    structure_identity: Mapped[str] = mapped_column(Text, nullable=False)
+    legs_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
     short_strike: Mapped[float] = mapped_column(Float, nullable=False)
     long_strike: Mapped[float] = mapped_column(Float, nullable=False)
     width: Mapped[float] = mapped_column(Float, nullable=False, default=0)

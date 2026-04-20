@@ -13,7 +13,7 @@ from core.services.execution import (
     refresh_live_session_execution,
 )
 from core.services.execution_lifecycle import SUBMIT_UNKNOWN_STATUS
-from core.services.option_structures import position_legs
+from core.services.option_structures import position_legs, unique_leg_symbols
 from core.services.execution_portfolio import refresh_session_position_marks
 from core.services.positions import enrich_position_row
 from core.services.session_positions import sync_session_position_from_attempt
@@ -411,7 +411,7 @@ def run_broker_sync(
         tracked_symbols = {
             symbol
             for position in open_positions
-            for symbol in (str(position["short_symbol"]), str(position["long_symbol"]))
+            for symbol in unique_leg_symbols(position_legs(position))
         }
         orphan_broker_positions = [
             position

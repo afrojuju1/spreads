@@ -8,13 +8,16 @@ from core.services.candidate_policy import (
     candidate_has_intraday_setup_context,
     candidate_requires_favorable_setup,
 )
-from core.services.option_structures import candidate_legs, legs_identity_key
+from core.services.option_structures import (
+    candidate_legs,
+    normalize_strategy_family,
+    payload_structure_identity,
+)
 from core.services.runtime_identity import (
     build_pipeline_id,
     resolve_pipeline_policy_fields,
 )
 from core.services.strategy_specs import strategy_direction
-from core.services.option_structures import normalize_strategy_family
 from core.storage.signal_repository import SignalRepository
 
 PROMOTABLE_SCORE_FLOOR = 65.0
@@ -23,10 +26,7 @@ PROMOTABLE_STRONG_SCORE = 82.0
 
 
 def _candidate_identity(candidate: dict[str, Any]) -> str:
-    return legs_identity_key(
-        strategy=candidate.get("strategy"),
-        legs=candidate_legs(candidate),
-    )
+    return str(payload_structure_identity(candidate, strategy=candidate.get("strategy")) or "")
 
 
 def _candidate_with_payload(candidate: dict[str, Any]) -> dict[str, Any]:
@@ -277,8 +277,8 @@ def _risk_hints(candidate: dict[str, Any]) -> dict[str, Any]:
 def _execution_shape(candidate: dict[str, Any]) -> dict[str, Any]:
     return {
         "underlying_symbol": candidate.get("underlying_symbol"),
-        "short_symbol": candidate.get("short_symbol"),
-        "long_symbol": candidate.get("long_symbol"),
+        "structure_identity": _candidate_identity(candidate),
+        "legs": candidate_legs(candidate),
         "order_payload": dict(candidate.get("order_payload") or {}),
     }
 

@@ -6,6 +6,12 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import Integer, and_, delete, func, select
 
+from core.services.option_structures import (
+    candidate_legs,
+    payload_structure_identity,
+    primary_short_long_symbols,
+    structure_symbol_path,
+)
 from core.storage.base import RepositoryBase
 from core.storage.collector_models import (
     CollectorCycleCandidateModel,
@@ -48,12 +54,17 @@ class CollectorRepository(RepositoryBase):
         session_date: date,
         generated_at: datetime,
     ) -> CollectorCycleCandidateRecord:
+        legs = list(model.legs_json or [])
+        short_symbol, long_symbol = primary_short_long_symbols(legs)
         return self.row(
             model,
             extra={
                 "label": label,
                 "session_date": session_date,
                 "generated_at": generated_at,
+                "short_symbol": short_symbol,
+                "long_symbol": long_symbol,
+                "symbol_path": structure_symbol_path(legs),
             },
         )
 
@@ -105,6 +116,18 @@ class CollectorRepository(RepositoryBase):
                             "candidate",
                         }
                     }
+                structure_identity = payload_structure_identity(
+                    payload,
+                    strategy=payload.get("strategy"),
+                ) or payload_structure_identity(
+                    stored_candidate,
+                    strategy=payload.get("strategy"),
+                )
+                legs = candidate_legs(payload) or candidate_legs(stored_candidate)
+                if structure_identity is None or not legs:
+                    raise ValueError(
+                        "Persisted collector candidate is missing canonical legs or structure identity"
+                    )
                 models.append(
                     CollectorCycleCandidateModel(
                         cycle_id=cycle_id,
@@ -117,8 +140,8 @@ class CollectorRepository(RepositoryBase):
                         underlying_symbol=str(payload["underlying_symbol"]),
                         strategy=str(payload["strategy"]),
                         expiration_date=parse_date(payload["expiration_date"]),
-                        short_symbol=str(payload["short_symbol"]),
-                        long_symbol=str(payload["long_symbol"]),
+                        structure_identity=structure_identity,
+                        legs_json=list(legs),
                         quality_score=float(payload["quality_score"]),
                         midpoint_credit=float(payload["midpoint_credit"]),
                         candidate_json=stored_candidate,

@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from core.db.decorators import with_storage
+from core.services.option_structures import payload_structure_identity
 from core.services.runtime_identity import build_live_run_scope_id
 
 
@@ -64,6 +65,8 @@ def serialize_opportunity_row(row: Mapping[str, Any]) -> dict[str, Any]:
         },
         "candidate": candidate_payload,
         "candidate_id": row.get("source_candidate_id"),
+        "structure_identity": row.get("candidate_identity")
+        or payload_structure_identity(candidate_payload),
         "eligibility": row.get("eligibility_state") or row.get("eligibility"),
         "order_payload": order_payload,
         "legs": row.get("legs_json") or row.get("legs") or [],

@@ -115,8 +115,7 @@ class CollectorCycleCandidateModel(Base):
             "underlying_symbol",
             "strategy",
             "expiration_date",
-            "short_symbol",
-            "long_symbol",
+            "structure_identity",
         ),
     )
 
@@ -135,8 +134,10 @@ class CollectorCycleCandidateModel(Base):
     underlying_symbol: Mapped[str] = mapped_column(Text, nullable=False)
     strategy: Mapped[str] = mapped_column(Text, nullable=False)
     expiration_date: Mapped[date] = mapped_column(Date, nullable=False)
-    short_symbol: Mapped[str] = mapped_column(Text, nullable=False)
-    long_symbol: Mapped[str] = mapped_column(Text, nullable=False)
+    structure_identity: Mapped[str] = mapped_column(Text, nullable=False)
+    legs_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
     quality_score: Mapped[float] = mapped_column(Float, nullable=False)
     midpoint_credit: Mapped[float] = mapped_column(Float, nullable=False)
     candidate_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)

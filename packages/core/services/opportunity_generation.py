@@ -3,7 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from core.services.live_selection import select_live_opportunities
-from core.services.option_structures import candidate_legs, legs_identity_key
+from core.services.option_structures import (
+    candidate_legs,
+    payload_structure_identity,
+)
 from core.services.runtime_candidate_filters import filter_runtime_symbol_candidates
 from core.services.runtime_identity import build_pipeline_id
 from core.services.runtime_policy import (
@@ -24,9 +27,9 @@ def build_runtime_opportunity_id(
     session_date: str,
     candidate: dict[str, Any],
 ) -> str:
-    candidate_identity = legs_identity_key(
+    candidate_identity = payload_structure_identity(
+        candidate,
         strategy=candidate.get("strategy"),
-        legs=candidate_legs(candidate),
     )
     return (
         f"opportunity:{runtime.bot_id}:{runtime.automation_id}:{session_date}:"
@@ -44,10 +47,7 @@ def _coerce_float(value: Any) -> float | None:
 
 
 def _candidate_identity(candidate: dict[str, Any]) -> str:
-    return legs_identity_key(
-        strategy=candidate.get("strategy"),
-        legs=candidate_legs(candidate),
-    )
+    return str(payload_structure_identity(candidate, strategy=candidate.get("strategy")) or "")
 
 
 def _normalized_blockers(value: Any) -> list[str]:
@@ -111,8 +111,8 @@ def _risk_hints(candidate: dict[str, Any]) -> dict[str, Any]:
 def _execution_shape(candidate: dict[str, Any]) -> dict[str, Any]:
     return {
         "underlying_symbol": candidate.get("underlying_symbol"),
-        "short_symbol": candidate.get("short_symbol"),
-        "long_symbol": candidate.get("long_symbol"),
+        "structure_identity": _candidate_identity(candidate),
+        "legs": candidate_legs(candidate),
         "order_payload": dict(candidate.get("order_payload") or {}),
     }
 

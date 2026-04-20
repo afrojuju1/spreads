@@ -7,7 +7,7 @@ from typing import Any
 from core.services.automations import ResolvedAutomation
 from core.services.bots import ResolvedBot
 from core.services.live_recovery import build_capture_target_rows_for_candidates
-from core.services.option_structures import normalize_strategy_family
+from core.services.option_structures import normalize_strategy_family, payload_structure_identity
 
 CAPTURE_OWNER_BOT = "bot"
 CAPTURE_TARGET_REASON_BOT_WARM = "bot_warm"
@@ -87,8 +87,7 @@ def _matching_candidates(
         key=lambda item: (
             -float(item.get("execution_score") or 0.0),
             str(item.get("underlying_symbol") or ""),
-            str(item.get("short_symbol") or ""),
-            str(item.get("long_symbol") or ""),
+            str(payload_structure_identity(item, strategy=item.get("strategy")) or ""),
         )
     )
     return filtered

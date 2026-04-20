@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from core.services.option_structures import payload_structure_identity
 from core.storage.collector_repository import CollectorRepository
 from core.storage.records import CollectorCycleCandidateRecord
 
@@ -36,18 +37,19 @@ def parse_utc_timestamp(value: str) -> datetime:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-def candidate_identity(candidate: dict[str, Any] | CollectorCycleCandidateRecord) -> tuple[str, str, str, str]:
+def candidate_identity(
+    candidate: dict[str, Any] | CollectorCycleCandidateRecord,
+) -> tuple[str, str, str]:
     return (
         str(candidate["strategy"]),
         str(candidate["expiration_date"]),
-        str(candidate["short_symbol"]),
-        str(candidate["long_symbol"]),
+        str(payload_structure_identity(candidate, strategy=candidate.get("strategy")) or ""),
     )
 
 
 def idea_fragment(candidate: dict[str, Any] | CollectorCycleCandidateRecord) -> str:
-    strategy, expiration_date, short_symbol, long_symbol = candidate_identity(candidate)
-    return f"{strategy}|{expiration_date}|{short_symbol}|{long_symbol}"
+    strategy, expiration_date, structure_identity = candidate_identity(candidate)
+    return f"{strategy}|{expiration_date}|{structure_identity}"
 
 
 def score_anchor_key(label: str, session_date: str, candidate: dict[str, Any]) -> str:
@@ -133,10 +135,10 @@ def build_history_indexes(
     session_date: str,
     current_cycle_id: str,
     current_generated_at: str,
-) -> tuple[set[tuple[str, str, str, str]], set[tuple[str, str, str, str]], set[str]]:
+) -> tuple[set[tuple[str, str, str]], set[tuple[str, str, str]], set[str]]:
     rows = collector_store.list_session_candidates(label=label, session_date=session_date)
-    prior_promotable_identities: set[tuple[str, str, str, str]] = set()
-    prior_monitor_identities: set[tuple[str, str, str, str]] = set()
+    prior_promotable_identities: set[tuple[str, str, str]] = set()
+    prior_monitor_identities: set[tuple[str, str, str]] = set()
     prior_promotable_symbols: set[str] = set()
 
     for row in rows:
@@ -155,8 +157,8 @@ def build_history_indexes(
 def resolve_event_alert_type(
     event: dict[str, Any],
     *,
-    prior_promotable_identities: set[tuple[str, str, str, str]],
-    prior_monitor_identities: set[tuple[str, str, str, str]],
+    prior_promotable_identities: set[tuple[str, str, str]],
+    prior_monitor_identities: set[tuple[str, str, str]],
     prior_promotable_symbols: set[str],
 ) -> str | None:
     event_type = str(event["event_type"])

@@ -6,6 +6,7 @@ from typing import Any
 
 from core.integrations.alpaca.client import AlpacaClient
 from core.services.automation_runtime import EntryRuntime, StrategyBuildSettings
+from core.services.option_structures import candidate_legs, payload_structure_identity
 from core.services.replay_filters import build_candidate_filter
 from core.services.runtime_candidate_filters import match_runtime_candidate
 from core.services.scanners.config import (
@@ -131,11 +132,15 @@ def _serialize_candidate(
 ) -> dict[str, Any]:
     if hasattr(candidate, "__dataclass_fields__"):
         row = dict(asdict(candidate))
+        row["legs"] = candidate_legs(row)
+        row["structure_identity"] = payload_structure_identity(row)
         if short_delta_target is not None:
             row["short_delta_target"] = float(short_delta_target)
         return row
     if isinstance(candidate, dict):
         row = dict(candidate)
+        row["legs"] = candidate_legs(row)
+        row["structure_identity"] = payload_structure_identity(row)
         if short_delta_target is not None:
             row["short_delta_target"] = float(short_delta_target)
         return row

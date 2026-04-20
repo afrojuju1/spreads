@@ -190,6 +190,12 @@ def fallback_vertical_legs(
 
 
 def candidate_legs(candidate: Mapping[str, Any]) -> list[dict[str, Any]]:
+    resolved = normalize_legs(
+        candidate.get("legs"),
+        expiration_date=_as_text(candidate.get("expiration_date")),
+    )
+    if resolved:
+        return resolved
     order_payload = candidate.get("order_payload")
     if isinstance(order_payload, Mapping):
         resolved = normalize_legs(
@@ -217,6 +223,38 @@ def position_legs(position: Mapping[str, Any]) -> list[dict[str, Any]]:
         long_symbol=position.get("long_symbol"),
         expiration_date=position.get("expiration_date"),
     )
+
+
+def payload_structure_identity(
+    payload: Mapping[str, Any],
+    *,
+    strategy: Any = None,
+) -> str | None:
+    existing = _as_text(payload.get("structure_identity")) or _as_text(
+        payload.get("candidate_identity")
+    )
+    if existing is not None:
+        return existing
+    legs = candidate_legs(payload)
+    if not legs:
+        return None
+    return legs_identity_key(
+        strategy=(
+            strategy
+            if strategy is not None
+            else payload.get("strategy_family") or payload.get("strategy")
+        ),
+        legs=legs,
+    )
+
+
+def structure_symbol_path(legs: list[Mapping[str, Any]]) -> str:
+    symbols = unique_leg_symbols(legs)
+    if not symbols:
+        return "n/a"
+    if len(symbols) == 1:
+        return symbols[0]
+    return " / ".join(symbols)
 
 
 def primary_short_long_symbols(
@@ -616,7 +654,9 @@ __all__ = [
     "normalize_strategy_family",
     "position_legs",
     "primary_short_long_symbols",
+    "payload_structure_identity",
     "structure_quote_snapshot",
+    "structure_symbol_path",
     "signed_net_limit_price",
     "unique_leg_symbols",
     "vertical_opening_legs",

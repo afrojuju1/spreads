@@ -6,6 +6,13 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, delete, func, select
 
+from core.services.option_structures import (
+    fallback_vertical_legs,
+    legs_identity_key,
+    normalize_legs,
+    primary_short_long_symbols,
+    structure_symbol_path,
+)
 from core.storage.base import RepositoryBase
 from core.storage.models import OptionQuoteEventModel, OptionTradeEventModel, ScanCandidateModel, ScanRunModel
 from core.storage.records import (
@@ -47,6 +54,51 @@ class RunHistoryRepository(RepositoryBase):
             session.execute(delete(ScanCandidateModel))
             session.execute(delete(ScanRunModel))
 
+    def _candidate_structure_payload(
+        self,
+        candidate: Any,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        expiration_date = getattr(candidate, "expiration_date", None)
+        legs = normalize_legs(getattr(candidate, "legs", None), expiration_date=expiration_date)
+        if not legs:
+            order_payload = getattr(candidate, "order_payload", None)
+            if isinstance(order_payload, dict):
+                legs = normalize_legs(
+                    order_payload.get("legs"),
+                    expiration_date=expiration_date,
+                )
+        if not legs:
+            legs = fallback_vertical_legs(
+                short_symbol=getattr(candidate, "short_symbol", None),
+                long_symbol=getattr(candidate, "long_symbol", None),
+                expiration_date=expiration_date,
+            )
+        structure_identity = getattr(candidate, "structure_identity", None)
+        if structure_identity is None and legs:
+            structure_identity = legs_identity_key(
+                strategy=getattr(candidate, "strategy", None),
+                legs=legs,
+            )
+        return legs, structure_identity
+
+    def _scan_candidate_extra(
+        self,
+        candidate: ScanCandidateModel | None,
+    ) -> dict[str, Any]:
+        if candidate is None:
+            return {
+                "short_symbol": None,
+                "long_symbol": None,
+                "symbol_path": None,
+            }
+        legs = list(candidate.legs_json or [])
+        short_symbol, long_symbol = primary_short_long_symbols(legs)
+        return {
+            "short_symbol": short_symbol,
+            "long_symbol": long_symbol,
+            "symbol_path": structure_symbol_path(legs),
+        }
+
     def _session_top_run_row(
         self,
         run: ScanRunModel,
@@ -56,8 +108,7 @@ class RunHistoryRepository(RepositoryBase):
             run,
             aliases={"setup_json": "setup_json"},
             extra={
-                "short_symbol": None if candidate is None else candidate.short_symbol,
-                "long_symbol": None if candidate is None else candidate.long_symbol,
+                **self._scan_candidate_extra(candidate),
                 "short_strike": None if candidate is None else candidate.short_strike,
                 "long_strike": None if candidate is None else candidate.long_strike,
                 "midpoint_credit": None if candidate is None else candidate.midpoint_credit,
@@ -104,31 +155,43 @@ class RunHistoryRepository(RepositoryBase):
             run.setup_score = setup_score
             run.setup_json = setup_payload
             run.candidates = [
-                ScanCandidateModel(
-                    run_id=run_id,
-                    rank=rank,
-                    strategy=candidate.strategy,
-                    expiration_date=parse_date(candidate.expiration_date),
-                    short_symbol=candidate.short_symbol,
-                    long_symbol=candidate.long_symbol,
-                    short_strike=candidate.short_strike,
-                    long_strike=candidate.long_strike,
-                    width=candidate.width,
-                    midpoint_credit=candidate.midpoint_credit,
-                    natural_credit=candidate.natural_credit,
-                    breakeven=candidate.breakeven,
-                    max_profit=candidate.max_profit,
-                    max_loss=candidate.max_loss,
-                    quality_score=candidate.quality_score,
-                    return_on_risk=candidate.return_on_risk,
-                    short_otm_pct=candidate.short_otm_pct,
-                    calendar_status=candidate.calendar_status,
-                    setup_status=getattr(candidate, "setup_status", None),
-                    expected_move=candidate.expected_move,
-                    short_vs_expected_move=candidate.short_vs_expected_move,
-                )
+                self._build_scan_candidate_model(run_id=run_id, rank=rank, candidate=candidate)
                 for rank, candidate in enumerate(candidates, start=1)
             ]
+
+    def _build_scan_candidate_model(
+        self,
+        *,
+        run_id: str,
+        rank: int,
+        candidate: Any,
+    ) -> ScanCandidateModel:
+        legs, structure_identity = self._candidate_structure_payload(candidate)
+        if structure_identity is None:
+            raise ValueError("Scan candidate is missing canonical structure identity")
+        return ScanCandidateModel(
+            run_id=run_id,
+            rank=rank,
+            strategy=candidate.strategy,
+            expiration_date=parse_date(candidate.expiration_date),
+            structure_identity=structure_identity,
+            legs_json=list(legs),
+            short_strike=candidate.short_strike,
+            long_strike=candidate.long_strike,
+            width=candidate.width,
+            midpoint_credit=candidate.midpoint_credit,
+            natural_credit=candidate.natural_credit,
+            breakeven=candidate.breakeven,
+            max_profit=candidate.max_profit,
+            max_loss=candidate.max_loss,
+            quality_score=candidate.quality_score,
+            return_on_risk=candidate.return_on_risk,
+            short_otm_pct=candidate.short_otm_pct,
+            calendar_status=candidate.calendar_status,
+            setup_status=getattr(candidate, "setup_status", None),
+            expected_move=candidate.expected_move,
+            short_vs_expected_move=candidate.short_vs_expected_move,
+        )
 
     def get_run(self, run_id: str) -> ScanRunRecord | None:
         with self.session_factory() as session:
@@ -156,7 +219,13 @@ class RunHistoryRepository(RepositoryBase):
         )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return self.rows(rows)
+        return [
+            self.row(
+                row,
+                extra=self._scan_candidate_extra(row),
+            )
+            for row in rows
+        ]
 
     def list_runs(
         self,

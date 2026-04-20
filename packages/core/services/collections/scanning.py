@@ -6,6 +6,11 @@ from typing import Any
 
 from core.domain.models import SpreadCandidate, SymbolScanResult, UniverseScanFailure
 from core.services.live_pipelines import build_live_snapshot_label
+from core.services.option_structures import (
+    candidate_legs,
+    payload_structure_identity,
+    primary_short_long_symbols,
+)
 from core.services.scanners.builders.ranking import sort_candidates_for_display
 from core.services.scanners.config import resolve_symbols
 from core.services.scanners.runtime import (
@@ -71,6 +76,8 @@ def serialize_candidate(
     short_delta_target: float | None = None,
 ) -> dict[str, Any]:
     payload = asdict(candidate)
+    payload["legs"] = candidate_legs(payload)
+    payload["structure_identity"] = payload_structure_identity(payload)
     payload["run_id"] = run_id
     if short_delta_target is not None:
         payload["short_delta_target"] = float(short_delta_target)
@@ -114,6 +121,8 @@ def build_raw_candidate_summary(
         symbol_counts[str(symbol)] = len(candidates)
         total += len(candidates)
         for candidate in candidates:
+            legs = candidate_legs(candidate)
+            short_symbol, long_symbol = primary_short_long_symbols(legs)
             strategy = str(candidate.get("strategy") or "unknown")
             strategy_counts[strategy] = int(strategy_counts.get(strategy) or 0) + 1
             ranked_rows.append(
@@ -123,8 +132,9 @@ def build_raw_candidate_summary(
                     ),
                     "strategy": strategy,
                     "expiration_date": candidate.get("expiration_date"),
-                    "short_symbol": candidate.get("short_symbol"),
-                    "long_symbol": candidate.get("long_symbol"),
+                    "short_symbol": short_symbol,
+                    "long_symbol": long_symbol,
+                    "structure_identity": payload_structure_identity(candidate),
                     "quality_score": float(candidate.get("quality_score") or 0.0),
                     "midpoint_credit": float(candidate.get("midpoint_credit") or 0.0),
                     "return_on_risk": float(candidate.get("return_on_risk") or 0.0),

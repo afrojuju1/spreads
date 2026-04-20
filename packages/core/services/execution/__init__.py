@@ -249,6 +249,18 @@ def _plan_opportunity_from_signal_row(
         style_profile = str(policy_fields["style_profile"])
     if style_profile not in {"reactive", "tactical", "carry"}:
         style_profile = "tactical"
+    opportunity_legs = _opportunity_legs_from_row(opportunity)
+    primary_short_symbol, primary_long_symbol = primary_short_long_symbols(
+        [
+            {
+                "symbol": leg.symbol,
+                "side": leg.side,
+                "position_intent": leg.position_intent,
+                "ratio_qty": leg.ratio_qty,
+            }
+            for leg in opportunity_legs
+        ]
+    )
     return Opportunity(
         opportunity_id=opportunity_id,
         cycle_id=cycle_id,
@@ -265,8 +277,8 @@ def _plan_opportunity_from_signal_row(
         expiration_date=str(
             opportunity.get("expiration_date") or candidate.get("expiration_date") or ""
         ),
-        short_symbol=str(candidate.get("short_symbol") or ""),
-        long_symbol=str(candidate.get("long_symbol") or ""),
+        short_symbol=str(primary_short_symbol or candidate.get("short_symbol") or ""),
+        long_symbol=str(primary_long_symbol or candidate.get("long_symbol") or ""),
         style_profile=style_profile,
         strategy_family=str(
             opportunity.get("strategy_family") or candidate.get("strategy") or "unknown"
@@ -296,7 +308,7 @@ def _plan_opportunity_from_signal_row(
         or str(policy_fields["product_class"]),
         baseline_selection_state=_as_text(opportunity.get("selection_state")),
         evidence=evidence,
-        legs=_opportunity_legs_from_row(opportunity),
+        legs=opportunity_legs,
     )
 
 
@@ -1065,8 +1077,8 @@ def submit_live_session_execution(
             existing_attempts = execution_store.list_open_attempts_for_identity(
                 session_id=session_id,
                 strategy=str(candidate["strategy"]),
-                short_symbol=str(candidate["short_symbol"]),
-                long_symbol=str(candidate["long_symbol"]),
+                short_symbol=None,
+                long_symbol=None,
                 structure_identity=candidate_identity,
                 statuses=sorted(OPEN_STATUSES),
             )
