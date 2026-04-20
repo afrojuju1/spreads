@@ -5,6 +5,7 @@ import os
 import unittest
 from argparse import Namespace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from core.jobs.orchestration import isoformat_utc
@@ -30,6 +31,7 @@ from core.services.live_collector_health.capture import (
 from core.services.opportunity_generation import sync_entry_runtime_opportunities
 from core.services.ops.jobs import build_job_run_view
 from core.services.pipelines import get_pipeline_detail, list_pipelines
+from core.services.post_close.summary import build_session_summary
 from core.services.live_recovery import LIVE_SLOT_STATUS_MISSED
 from core.services.risk_manager import evaluate_open_execution
 from core.services.strategy_positions import run_management_automation_decision
@@ -148,6 +150,29 @@ def _same_slot_capture_snapshot(symbol: str = "AAPL") -> LiveCaptureSnapshot:
         stream_quote_error=None,
         stream_trade_error=None,
     )
+
+
+def _collector_cycle_event(
+    *,
+    event_id: int,
+    generated_at: str,
+    label: str = "explore_10_call_debit_weekly_auto",
+    session_date: str = "2026-04-15",
+    cycle_id: str = "cycle-live",
+    symbol: str = "MSFT",
+    event_type: str = "candidate_updated",
+    message: str | None = None,
+) -> dict[str, object]:
+    return {
+        "event_id": event_id,
+        "label": label,
+        "session_date": session_date,
+        "cycle_id": cycle_id,
+        "generated_at": generated_at,
+        "symbol": symbol,
+        "event_type": event_type,
+        "message": message or f"{symbol} {event_type} #{event_id}",
+    }
 
 
 class _CollectorStore:
@@ -354,8 +379,10 @@ class _JobStoreThatMustNotServeStaleContext:
 
 
 class _PipelineCollectorStore:
-    def __init__(self) -> None:
+    def __init__(self, *, events: list[dict[str, object]] | None = None) -> None:
         self.list_cycle_candidates_calls = 0
+        self.list_events_calls: list[dict[str, object]] = []
+        self._events = [dict(event) for event in list(events or [])]
 
     def pipeline_schema_ready(self) -> bool:
         return True
@@ -431,8 +458,28 @@ class _PipelineCollectorStore:
             }
         ]
 
-    def list_events(self, **_: object) -> list[dict[str, object]]:
-        return []
+    def list_events(
+        self,
+        label: str | None = None,
+        session_date: str | None = None,
+        limit: int = 500,
+        *,
+        ascending: bool = False,
+        **kwargs: object,
+    ) -> list[dict[str, object]]:
+        self.list_events_calls.append(
+            {
+                "label": label,
+                "session_date": session_date,
+                "limit": limit,
+                "ascending": ascending,
+                **dict(kwargs),
+            }
+        )
+        rows = [dict(row) for row in self._events]
+        if not ascending:
+            rows = list(reversed(rows))
+        return rows[:limit]
 
     def list_cycle_events(self, cycle_id: str) -> list[dict[str, object]]:
         del cycle_id
@@ -595,6 +642,14 @@ class _PipelineRecoveryStore:
 
 class _PipelineExecutionStore:
     pass
+
+
+class _PostCloseHistoryStore:
+    def list_session_top_runs(self, **_: object) -> list[dict[str, object]]:
+        return []
+
+    def list_session_quote_events(self, **_: object) -> list[dict[str, object]]:
+        return []
 
 
 class _PipelineStorage:
@@ -881,6 +936,79 @@ class _AutomationPipelineEventStore:
 
     def list_events(self, **_: object) -> list[dict[str, object]]:
         return []
+
+
+class _AuditWindowEventStore:
+    def __init__(self, events: list[dict[str, object]] | None = None) -> None:
+        self.calls: list[dict[str, object]] = []
+        self._events = [dict(row) for row in list(events or self._default_events())]
+
+    def schema_ready(self) -> bool:
+        return True
+
+    @staticmethod
+    def _default_events() -> list[dict[str, object]]:
+        return [
+            {
+                "event_id": "event-1",
+                "event_class": "signal_event",
+                "topic": "signal.state.updated",
+                "occurred_at": "2026-04-17T17:00:00Z",
+                "source": "signals",
+                "entity_type": "signal_state",
+                "entity_key": "AAPL",
+                "correlation_id": None,
+                "causation_id": None,
+                "payload": {
+                    "label": "explore_10_put_credit_weekly_auto",
+                    "session_date": "2026-04-17",
+                    "underlying_symbol": "AAPL",
+                    "state": "IDLE",
+                },
+            },
+            {
+                "event_id": "event-2",
+                "event_class": "signal_event",
+                "topic": "signal.state.updated",
+                "occurred_at": "2026-04-17T17:05:00Z",
+                "source": "signals",
+                "entity_type": "signal_state",
+                "entity_key": "QQQ",
+                "correlation_id": None,
+                "causation_id": None,
+                "payload": {
+                    "label": "explore_10_put_credit_weekly_auto",
+                    "session_date": "2026-04-17",
+                    "underlying_symbol": "QQQ",
+                    "state": "ARMING",
+                },
+            },
+            {
+                "event_id": "event-3",
+                "event_class": "signal_event",
+                "topic": "signal.state.updated",
+                "occurred_at": "2026-04-17T17:10:00Z",
+                "source": "signals",
+                "entity_type": "signal_state",
+                "entity_key": "SPY",
+                "correlation_id": None,
+                "causation_id": None,
+                "payload": {
+                    "label": "explore_10_put_credit_weekly_auto",
+                    "session_date": "2026-04-17",
+                    "underlying_symbol": "SPY",
+                    "state": "BLOCKED",
+                },
+            },
+        ]
+
+    def list_events(self, **kwargs: object) -> list[dict[str, object]]:
+        self.calls.append(dict(kwargs))
+        limit = int(kwargs.get("limit", len(self._events)))
+        newest_first = bool(kwargs.get("newest_first"))
+        if newest_first:
+            return [dict(row) for row in list(reversed(self._events))[:limit]]
+        return [dict(row) for row in list(self._events)[:limit]]
 
 
 class _AutomationPipelineStorage:
@@ -2688,6 +2816,52 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         self.assertTrue(storage.signals.active_cycle_calls[0]["runtime_owned"])
         self.assertTrue(storage.signals.count_calls[0]["runtime_owned"])
 
+    def test_pipeline_detail_prefers_newest_collector_events_under_cap(self) -> None:
+        events = [
+            _collector_cycle_event(
+                event_id=event_id,
+                generated_at=isoformat_utc(
+                    datetime(2026, 4, 15, 14, 0, tzinfo=UTC)
+                    + timedelta(seconds=event_id)
+                ),
+            )
+            for event_id in range(1, 403)
+        ]
+        storage = _PipelineStorage()
+        storage.collector = _PipelineCollectorStore(events=events)
+        with (
+            patch(
+                "core.services.pipelines.build_session_execution_portfolio",
+                return_value={"positions": []},
+            ),
+            patch(
+                "core.services.pipelines.build_session_risk_snapshot",
+                return_value={"status": "healthy", "note": "ok"},
+            ),
+            patch(
+                "core.services.pipelines.get_control_state_snapshot",
+                return_value={"mode": "normal"},
+            ),
+            patch(
+                "core.services.pipelines.list_session_execution_attempts",
+                return_value=[],
+            ),
+        ):
+            detail = get_pipeline_detail(
+                db_target="postgresql://example",
+                pipeline_id="pipeline:explore_10_call_debit_weekly_auto",
+                market_date="2026-04-15",
+                profit_target=0.5,
+                stop_multiple=2.0,
+                storage=storage,
+            )
+
+        returned_event_ids = [int(event["event_id"]) for event in detail["events"]]
+        self.assertEqual(len(returned_event_ids), 400)
+        self.assertEqual(returned_event_ids[0], 3)
+        self.assertEqual(returned_event_ids[-1], 402)
+        self.assertEqual(returned_event_ids, list(range(3, 403)))
+
     def test_list_pipelines_uses_canonical_live_runtime_session_loader(self) -> None:
         storage = _PipelineStorage()
 
@@ -2760,6 +2934,124 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
             "opp-runtime",
         )
         self.assertTrue(storage.signals.session_opportunity_calls[0]["runtime_owned"])
+
+    def test_audit_snapshot_prefers_newest_events_when_scan_limited(self) -> None:
+        storage = _AutomationPipelineStorage()
+        storage.events = _AuditWindowEventStore()
+        with (
+            patch(
+                "core.services.pipelines.build_session_execution_portfolio",
+                return_value={"positions": []},
+            ),
+            patch(
+                "core.services.pipelines.build_session_risk_snapshot",
+                return_value={"status": "healthy", "note": "ok"},
+            ),
+            patch(
+                "core.services.pipelines.get_control_state_snapshot",
+                return_value={"mode": "normal"},
+            ),
+            patch(
+                "core.services.pipelines.list_session_execution_attempts",
+                return_value=[],
+            ),
+        ):
+            snapshot = build_audit_snapshot(
+                db_target="postgresql://example",
+                pipeline_id="pipeline:explore_10_put_credit_weekly_auto",
+                market_date="2026-04-17",
+                event_scan_limit=2,
+                storage=storage,
+            )
+
+        self.assertTrue(storage.events.calls)
+        self.assertTrue(storage.events.calls[0]["newest_first"])
+        self.assertTrue(snapshot["timeline_stats"]["event_scan_limit_hit"])
+        summaries = [str(item.get("summary") or "") for item in snapshot["timeline"]]
+        self.assertIn("QQQ signal is ARMING.", summaries)
+        self.assertIn("SPY signal is BLOCKED.", summaries)
+        self.assertNotIn("AAPL signal is IDLE.", summaries)
+
+    def test_audit_snapshot_does_not_flag_scan_limit_hit_on_exact_boundary(
+        self,
+    ) -> None:
+        storage = _AutomationPipelineStorage()
+        storage.events = _AuditWindowEventStore(
+            events=_AuditWindowEventStore._default_events()[:2]
+        )
+        with (
+            patch(
+                "core.services.pipelines.build_session_execution_portfolio",
+                return_value={"positions": []},
+            ),
+            patch(
+                "core.services.pipelines.build_session_risk_snapshot",
+                return_value={"status": "healthy", "note": "ok"},
+            ),
+            patch(
+                "core.services.pipelines.get_control_state_snapshot",
+                return_value={"mode": "normal"},
+            ),
+            patch(
+                "core.services.pipelines.list_session_execution_attempts",
+                return_value=[],
+            ),
+        ):
+            snapshot = build_audit_snapshot(
+                db_target="postgresql://example",
+                pipeline_id="pipeline:explore_10_put_credit_weekly_auto",
+                market_date="2026-04-17",
+                event_scan_limit=2,
+                storage=storage,
+            )
+
+        summaries = [str(item.get("summary") or "") for item in snapshot["timeline"]]
+        self.assertFalse(snapshot["timeline_stats"]["event_scan_limit_hit"])
+        self.assertEqual(snapshot["state_summary"]["counts"]["events_scanned"], 2)
+        self.assertIn("AAPL signal is IDLE.", summaries)
+        self.assertIn("QQQ signal is ARMING.", summaries)
+
+    def test_post_close_summary_prefers_newest_collector_events_under_cap(self) -> None:
+        events = [
+            _collector_cycle_event(
+                event_id=event_id,
+                generated_at=isoformat_utc(
+                    datetime(2026, 4, 15, 14, 0, tzinfo=UTC)
+                    + timedelta(seconds=event_id)
+                ),
+                event_type="candidate_repriced",
+                message=f"MSFT candidate repriced #{event_id}",
+            )
+            for event_id in range(1, 5003)
+        ]
+        storage = SimpleNamespace(
+            history=_PostCloseHistoryStore(),
+            collector=_PipelineCollectorStore(events=events),
+        )
+        with (
+            patch(
+                "core.services.post_close.summary.build_session_outcomes",
+                return_value={},
+            ),
+            patch(
+                "core.services.post_close.summary.build_signal_tuning",
+                return_value={},
+            ),
+        ):
+            summary = build_session_summary(
+                db_target="postgresql://example",
+                session_date="2026-04-15",
+                label="explore_10_call_debit_weekly_auto",
+                profit_target=0.5,
+                stop_multiple=2.0,
+                storage=storage,
+            )
+
+        recent_event_ids = [
+            int(event["event_id"]) for event in summary["event_overview"]["recent_events"]
+        ]
+        self.assertEqual(len(summary["event_overview"]["recent_events"]), 10)
+        self.assertEqual(recent_event_ids, list(range(4993, 5003)))
 
     def test_job_run_view_surfaces_live_collector_automation_summary(self) -> None:
         run = {

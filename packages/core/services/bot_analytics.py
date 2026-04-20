@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from collections.abc import Mapping
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
@@ -11,11 +11,48 @@ from core.services.bots import BotConfig, load_active_bots
 from core.services.positions import enrich_position_row
 from core.storage.execution_models import (
     ExecutionAttemptModel,
+    ExecutionIntentEventModel,
     ExecutionIntentModel,
 )
 from core.storage.signal_models import OpportunityDecisionModel
+from core.storage.serializers import parse_datetime
 
 OPEN_POSITION_STATUSES = {"open", "partial_open", "partial_close"}
+ENTRY_DECISION_AUDIT_SAMPLE_LIMIT = 12
+ENTRY_DECISION_AUDIT_COUNT_KEYS = (
+    "selected_count",
+    "intent_created_count",
+    "no_intent_count",
+    "pending_dispatch_count",
+    "submitted_working_count",
+    "filled_count",
+    "failed_count",
+    "revoked_count",
+    "expired_count",
+    "canceled_count",
+    "repriced_count",
+    "row_count",
+)
+ENTRY_DECISION_AUDIT_BUCKET_TO_COUNT_KEY = {
+    "no_intent": "no_intent_count",
+    "pending_dispatch": "pending_dispatch_count",
+    "submitted_working": "submitted_working_count",
+    "filled": "filled_count",
+    "failed": "failed_count",
+    "revoked": "revoked_count",
+    "expired": "expired_count",
+    "canceled": "canceled_count",
+}
+ENTRY_DECISION_AUDIT_BUCKET_PRIORITY = {
+    "no_intent": 0,
+    "revoked": 1,
+    "expired": 2,
+    "failed": 3,
+    "canceled": 4,
+    "pending_dispatch": 5,
+    "submitted_working": 6,
+    "filled": 7,
+}
 
 
 def _as_text(value: Any) -> str | None:
@@ -32,6 +69,23 @@ def _coerce_float(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _coerce_int_value(value: Any) -> int:
+    if value in (None, ""):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _coerce_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if value in (None, ""):
+        return None
+    return parse_datetime(str(value))
 
 
 def _average(values: list[float]) -> float | None:
@@ -91,6 +145,14 @@ def summarize_intent_counts(
     }
 
 
+def _empty_entry_decision_audit_summary() -> dict[str, Any]:
+    return {
+        **{key: 0 for key in ENTRY_DECISION_AUDIT_COUNT_KEYS},
+        "sample_count": 0,
+        "terminal_reason_counts": {},
+    }
+
+
 def _funnel_row(name: str) -> dict[str, Any]:
     return {
         "name": name,
@@ -138,25 +200,18 @@ def _finalize_funnel(
     return row
 
 
-def _build_entry_funnel(
+def _load_entry_automation_context(
     *,
     signal_store: Any,
     execution_store: Any,
     bot_id: str,
     window_start: datetime,
     window_end: datetime,
-) -> dict[str, Any]:
-    overall = _funnel_row("overall")
-    overall_timings: dict[str, list[float]] = defaultdict(list)
-    strategy_rows: dict[str, dict[str, Any]] = {}
-    strategy_timings: dict[str, dict[str, list[float]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
-
-    decisions_by_id: dict[str, OpportunityDecisionModel] = {}
+) -> dict[str, list[dict[str, Any]]]:
+    decisions: list[dict[str, Any]] = []
     if signal_store.schema_ready():
         with signal_store.session_factory() as session:
-            decisions = list(
+            decision_models = list(
                 session.scalars(
                     select(OpportunityDecisionModel)
                     .where(OpportunityDecisionModel.bot_id == bot_id)
@@ -164,27 +219,24 @@ def _build_entry_funnel(
                     .where(OpportunityDecisionModel.decided_at < window_end)
                 ).all()
             )
-        for decision in decisions:
-            strategy_name = _strategy_name_from_payload(
-                policy_ref=decision.policy_ref_json,
-                payload=decision.payload_json,
-            )
-            decisions_by_id[str(decision.opportunity_decision_id)] = decision
-            row = strategy_rows.setdefault(strategy_name, _funnel_row(strategy_name))
-            state = str(decision.state or "")
-            _increment_counts(overall, "considered")
-            _increment_counts(row, "considered")
-            if state in {"selected", "rejected", "blocked"}:
-                _increment_counts(overall, state)
-                _increment_counts(row, state)
-            for reason in list(decision.reason_codes_json or []):
-                if state != "selected":
-                    _increment_counts(overall["blocker_reasons"], str(reason))
-                    _increment_counts(row["blocker_reasons"], str(reason))
+        decisions = [
+            {
+                "opportunity_decision_id": str(row.opportunity_decision_id),
+                "state": str(row.state or ""),
+                "decided_at": row.decided_at,
+                "policy_ref": dict(row.policy_ref_json or {}),
+                "payload": dict(row.payload_json or {}),
+                "reason_codes": list(row.reason_codes_json or []),
+            }
+            for row in decision_models
+        ]
 
+    intents: list[dict[str, Any]] = []
+    attempts: list[dict[str, Any]] = []
+    events: list[dict[str, Any]] = []
     if execution_store.intent_schema_ready():
         with execution_store.session_factory() as session:
-            intents = list(
+            intent_models = list(
                 session.scalars(
                     select(ExecutionIntentModel)
                     .where(ExecutionIntentModel.bot_id == bot_id)
@@ -193,93 +245,203 @@ def _build_entry_funnel(
                     .where(ExecutionIntentModel.action_type == "open")
                 ).all()
             )
-            attempts = {
-                str(row.execution_attempt_id): row
-                for row in session.scalars(
-                    select(ExecutionAttemptModel).where(
-                        ExecutionAttemptModel.execution_attempt_id.in_(
-                            [
-                                intent.execution_attempt_id
-                                for intent in intents
-                                if intent.execution_attempt_id is not None
-                            ]
+            intent_ids = [str(intent.execution_intent_id) for intent in intent_models]
+            attempt_ids = [
+                str(intent.execution_attempt_id)
+                for intent in intent_models
+                if intent.execution_attempt_id is not None
+            ]
+            attempt_models = (
+                []
+                if not attempt_ids
+                else list(
+                    session.scalars(
+                        select(ExecutionAttemptModel).where(
+                            ExecutionAttemptModel.execution_attempt_id.in_(attempt_ids)
                         )
-                    )
-                ).all()
+                    ).all()
+                )
+            )
+            event_models = (
+                []
+                if not intent_ids
+                else list(
+                    session.scalars(
+                        select(ExecutionIntentEventModel).where(
+                            ExecutionIntentEventModel.execution_intent_id.in_(intent_ids)
+                        )
+                    ).all()
+                )
+            )
+        intents = [
+            {
+                "execution_intent_id": str(row.execution_intent_id),
+                "opportunity_decision_id": _as_text(row.opportunity_decision_id),
+                "execution_attempt_id": _as_text(row.execution_attempt_id),
+                "action_type": str(row.action_type or ""),
+                "state": str(row.state or ""),
+                "superseded_by_id": _as_text(row.superseded_by_id),
+                "slot_key": str(row.slot_key or ""),
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+                "expires_at": row.expires_at,
+                "policy_ref": dict(row.policy_ref_json or {}),
+                "payload": dict(row.payload_json or {}),
             }
-        for intent in intents:
-            strategy_name = _strategy_name_from_payload(
-                policy_ref=intent.policy_ref_json,
-                payload=intent.payload_json,
-            )
-            row = strategy_rows.setdefault(strategy_name, _funnel_row(strategy_name))
-            _increment_counts(overall, "intents_created")
-            _increment_counts(row, "intents_created")
+            for row in intent_models
+        ]
+        attempts = [
+            {
+                "execution_attempt_id": str(row.execution_attempt_id),
+                "status": str(row.status or ""),
+                "requested_at": row.requested_at,
+                "submitted_at": row.submitted_at,
+                "completed_at": row.completed_at,
+                "error_text": row.error_text,
+                "broker_order_id": row.broker_order_id,
+                "position_id": row.position_id,
+            }
+            for row in attempt_models
+        ]
+        events = [
+            {
+                "execution_intent_id": str(row.execution_intent_id),
+                "event_type": str(row.event_type or ""),
+                "event_at": row.event_at,
+                "payload": dict(row.payload_json or {}),
+            }
+            for row in event_models
+        ]
+    return {
+        "decisions": decisions,
+        "intents": intents,
+        "attempts": attempts,
+        "events": events,
+    }
 
-            state = str(intent.state or "")
-            if state in {"submitted", "filled", "canceled", "failed"}:
-                _increment_counts(overall, "submitted")
-                _increment_counts(row, "submitted")
-            if state in {"canceled"}:
-                _increment_counts(overall, "canceled")
-                _increment_counts(row, "canceled")
-            if state in {"failed"}:
-                _increment_counts(overall, "failed")
-                _increment_counts(row, "failed")
-            if state == "filled":
-                _increment_counts(overall, "filled")
-                _increment_counts(row, "filled")
-            reprice_count = int((intent.payload_json or {}).get("reprice_count") or 0)
-            if reprice_count > 0:
-                _increment_counts(overall, "repriced")
-                _increment_counts(row, "repriced")
-            payload = dict(intent.payload_json or {})
-            for key in ("revoke_reason", "expire_reason", "error"):
-                reason = _as_text(payload.get(key))
-                if reason:
-                    _increment_counts(overall["blocker_reasons"], reason)
-                    _increment_counts(row["blocker_reasons"], reason)
 
-            decision = None
-            if intent.opportunity_decision_id is not None:
-                decision = decisions_by_id.get(str(intent.opportunity_decision_id))
-            if decision is not None:
-                overall_timings["decision_to_intent"].append(
-                    max((intent.created_at - decision.decided_at).total_seconds(), 0.0)
-                )
-                strategy_timings[strategy_name]["decision_to_intent"].append(
-                    max((intent.created_at - decision.decided_at).total_seconds(), 0.0)
-                )
-            attempt = (
-                None
-                if intent.execution_attempt_id is None
-                else attempts.get(str(intent.execution_attempt_id))
+def _build_entry_funnel(
+    *,
+    decisions: list[dict[str, Any]],
+    intents: list[dict[str, Any]],
+    attempts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    overall = _funnel_row("overall")
+    overall_timings: dict[str, list[float]] = defaultdict(list)
+    strategy_rows: dict[str, dict[str, Any]] = {}
+    strategy_timings: dict[str, dict[str, list[float]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+
+    decisions_by_id = {
+        str(row["opportunity_decision_id"]): dict(row) for row in decisions
+    }
+    attempts_by_id = {
+        str(row["execution_attempt_id"]): dict(row)
+        for row in attempts
+        if _as_text(row.get("execution_attempt_id")) is not None
+    }
+    for decision in decisions:
+        strategy_name = _strategy_name_from_payload(
+            policy_ref=decision.get("policy_ref"),
+            payload=decision.get("payload"),
+        )
+        row = strategy_rows.setdefault(strategy_name, _funnel_row(strategy_name))
+        state = str(decision.get("state") or "")
+        _increment_counts(overall, "considered")
+        _increment_counts(row, "considered")
+        if state in {"selected", "rejected", "blocked"}:
+            _increment_counts(overall, state)
+            _increment_counts(row, state)
+        for reason in list(decision.get("reason_codes") or []):
+            if state != "selected":
+                _increment_counts(overall["blocker_reasons"], str(reason))
+                _increment_counts(row["blocker_reasons"], str(reason))
+
+    for intent in intents:
+        strategy_name = _strategy_name_from_payload(
+            policy_ref=intent.get("policy_ref"),
+            payload=intent.get("payload"),
+        )
+        row = strategy_rows.setdefault(strategy_name, _funnel_row(strategy_name))
+        _increment_counts(overall, "intents_created")
+        _increment_counts(row, "intents_created")
+
+        state = str(intent.get("state") or "")
+        if state in {"submitted", "filled", "canceled", "failed"}:
+            _increment_counts(overall, "submitted")
+            _increment_counts(row, "submitted")
+        if state == "canceled":
+            _increment_counts(overall, "canceled")
+            _increment_counts(row, "canceled")
+        if state == "failed":
+            _increment_counts(overall, "failed")
+            _increment_counts(row, "failed")
+        if state == "filled":
+            _increment_counts(overall, "filled")
+            _increment_counts(row, "filled")
+        reprice_count = _coerce_int_value(
+            (intent.get("payload") or {}).get("reprice_count")
+        )
+        if reprice_count > 0:
+            _increment_counts(overall, "repriced")
+            _increment_counts(row, "repriced")
+        payload = dict(intent.get("payload") or {})
+        for key in ("revoke_reason", "expire_reason", "error"):
+            reason = _as_text(payload.get(key))
+            if reason:
+                _increment_counts(overall["blocker_reasons"], reason)
+                _increment_counts(row["blocker_reasons"], reason)
+
+        decision = None
+        opportunity_decision_id = _as_text(intent.get("opportunity_decision_id"))
+        if opportunity_decision_id is not None:
+            decision = decisions_by_id.get(opportunity_decision_id)
+        decision_at = None if decision is None else _coerce_datetime(decision.get("decided_at"))
+        intent_created_at = _coerce_datetime(intent.get("created_at"))
+        if decision_at is not None and intent_created_at is not None:
+            decision_to_intent_seconds = max(
+                (intent_created_at - decision_at).total_seconds(),
+                0.0,
             )
-            if attempt is not None and attempt.submitted_at is not None:
-                overall_timings["intent_to_submit"].append(
-                    max((attempt.submitted_at - intent.created_at).total_seconds(), 0.0)
-                )
-                strategy_timings[strategy_name]["intent_to_submit"].append(
-                    max((attempt.submitted_at - intent.created_at).total_seconds(), 0.0)
-                )
-            if (
-                attempt is not None
-                and attempt.submitted_at is not None
-                and attempt.completed_at is not None
-                and str(attempt.status or "") == "filled"
-            ):
-                overall_timings["submit_to_fill"].append(
-                    max(
-                        (attempt.completed_at - attempt.submitted_at).total_seconds(),
-                        0.0,
-                    )
-                )
-                strategy_timings[strategy_name]["submit_to_fill"].append(
-                    max(
-                        (attempt.completed_at - attempt.submitted_at).total_seconds(),
-                        0.0,
-                    )
-                )
+            overall_timings["decision_to_intent"].append(decision_to_intent_seconds)
+            strategy_timings[strategy_name]["decision_to_intent"].append(
+                decision_to_intent_seconds
+            )
+        execution_attempt_id = _as_text(intent.get("execution_attempt_id"))
+        attempt = (
+            None
+            if execution_attempt_id is None
+            else attempts_by_id.get(execution_attempt_id)
+        )
+        attempt_submitted_at = (
+            None if attempt is None else _coerce_datetime(attempt.get("submitted_at"))
+        )
+        if intent_created_at is not None and attempt_submitted_at is not None:
+            intent_to_submit_seconds = max(
+                (attempt_submitted_at - intent_created_at).total_seconds(),
+                0.0,
+            )
+            overall_timings["intent_to_submit"].append(intent_to_submit_seconds)
+            strategy_timings[strategy_name]["intent_to_submit"].append(
+                intent_to_submit_seconds
+            )
+        attempt_completed_at = (
+            None if attempt is None else _coerce_datetime(attempt.get("completed_at"))
+        )
+        if (
+            attempt_submitted_at is not None
+            and attempt_completed_at is not None
+            and str(attempt.get("status") or "") == "filled"
+        ):
+            submit_to_fill_seconds = max(
+                (attempt_completed_at - attempt_submitted_at).total_seconds(),
+                0.0,
+            )
+            overall_timings["submit_to_fill"].append(submit_to_fill_seconds)
+            strategy_timings[strategy_name]["submit_to_fill"].append(
+                submit_to_fill_seconds
+            )
 
     finalized_strategies = [
         _finalize_funnel(row, timings=strategy_timings.get(name, {}))
@@ -291,12 +453,315 @@ def _build_entry_funnel(
     }
 
 
-def _window_bounds(market_date: str | None) -> tuple[str, date, datetime, datetime]:
+def _decision_underlying_symbol(decision: Mapping[str, Any]) -> str | None:
+    payload = decision.get("payload")
+    if not isinstance(payload, Mapping):
+        return None
+    opportunity = payload.get("opportunity")
+    if isinstance(opportunity, Mapping):
+        return _as_text(opportunity.get("underlying_symbol"))
+    return _as_text(payload.get("underlying_symbol"))
+
+
+def _decision_opportunity_id(decision: Mapping[str, Any]) -> str | None:
+    payload = decision.get("payload")
+    if not isinstance(payload, Mapping):
+        return None
+    opportunity = payload.get("opportunity")
+    if not isinstance(opportunity, Mapping):
+        return None
+    return _as_text(opportunity.get("opportunity_id"))
+
+
+def _decision_terminal_reason(
+    *,
+    latest_intent: Mapping[str, Any] | None,
+    latest_event: Mapping[str, Any] | None,
+    latest_attempt: Mapping[str, Any] | None,
+) -> str | None:
+    if latest_intent is None:
+        return "intent_not_created"
+    payload = (
+        latest_intent.get("payload")
+        if isinstance(latest_intent.get("payload"), Mapping)
+        else {}
+    )
+    for key in ("revoke_reason", "expire_reason", "error"):
+        reason = _as_text(payload.get(key))
+        if reason:
+            return reason
+    if latest_event is not None:
+        event_payload = (
+            latest_event.get("payload")
+            if isinstance(latest_event.get("payload"), Mapping)
+            else {}
+        )
+        for key in ("reason", "error"):
+            reason = _as_text(event_payload.get(key))
+            if reason:
+                return reason
+    if latest_attempt is not None:
+        reason = _as_text(latest_attempt.get("error_text"))
+        if reason:
+            return reason
+    return None
+
+
+def _decision_outcome_bucket(
+    *,
+    latest_intent: Mapping[str, Any] | None,
+) -> str:
+    if latest_intent is None:
+        return "no_intent"
+    state = str(latest_intent.get("state") or "").strip().lower()
+    if state == "filled":
+        return "filled"
+    if state == "failed":
+        return "failed"
+    if state == "revoked":
+        return "revoked"
+    if state == "expired":
+        return "expired"
+    if state == "canceled":
+        return "canceled"
+    if state in {"pending", "claimed"}:
+        return "pending_dispatch"
+    if state == "submitted":
+        return "submitted_working"
+    return "pending_dispatch"
+
+
+def _entry_decision_audit_sort_key(row: Mapping[str, Any]) -> tuple[int, float]:
+    decision_at = _coerce_datetime(row.get("decision_at")) or datetime(
+        1970, 1, 1, tzinfo=UTC
+    )
+    bucket = str(row.get("outcome_bucket") or "")
+    return (
+        ENTRY_DECISION_AUDIT_BUCKET_PRIORITY.get(bucket, 99),
+        -decision_at.timestamp(),
+    )
+
+
+def _build_entry_decision_audit(
+    *,
+    decisions: list[dict[str, Any]],
+    intents: list[dict[str, Any]],
+    attempts: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+    sample_limit: int = ENTRY_DECISION_AUDIT_SAMPLE_LIMIT,
+) -> dict[str, Any]:
+    summary = _empty_entry_decision_audit_summary()
+    selected_decisions = [
+        dict(row) for row in decisions if str(row.get("state") or "") == "selected"
+    ]
+    summary["selected_count"] = len(selected_decisions)
+    summary["row_count"] = len(selected_decisions)
+    if not selected_decisions:
+        return {"summary": summary, "samples": []}
+
+    intents_by_decision: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for intent in intents:
+        opportunity_decision_id = _as_text(intent.get("opportunity_decision_id"))
+        if opportunity_decision_id is None:
+            continue
+        intents_by_decision[opportunity_decision_id].append(dict(intent))
+    attempts_by_id = {
+        str(row["execution_attempt_id"]): dict(row)
+        for row in attempts
+        if _as_text(row.get("execution_attempt_id")) is not None
+    }
+    events_by_intent: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for event in events:
+        execution_intent_id = _as_text(event.get("execution_intent_id"))
+        if execution_intent_id is None:
+            continue
+        events_by_intent[execution_intent_id].append(dict(event))
+
+    reason_counts: Counter[str] = Counter()
+    rows: list[dict[str, Any]] = []
+    for decision in selected_decisions:
+        opportunity_decision_id = str(decision["opportunity_decision_id"])
+        ordered_intents = sorted(
+            intents_by_decision.get(opportunity_decision_id, []),
+            key=lambda row: _coerce_datetime(row.get("created_at"))
+            or datetime(1970, 1, 1, tzinfo=UTC),
+        )
+        first_intent = None if not ordered_intents else ordered_intents[0]
+        latest_intent = None if not ordered_intents else ordered_intents[-1]
+        latest_attempt = (
+            None
+            if latest_intent is None
+            else attempts_by_id.get(str(latest_intent.get("execution_attempt_id") or ""))
+        )
+        all_events = sorted(
+            [
+                event
+                for intent in ordered_intents
+                for event in events_by_intent.get(
+                    str(intent.get("execution_intent_id") or ""),
+                    [],
+                )
+            ],
+            key=lambda row: _coerce_datetime(row.get("event_at"))
+            or datetime(1970, 1, 1, tzinfo=UTC),
+        )
+        latest_event = None if not all_events else all_events[-1]
+        reprice_count = max(
+            [max(len(ordered_intents) - 1, 0)]
+            + [
+                _coerce_int_value((intent.get("payload") or {}).get("reprice_count"))
+                for intent in ordered_intents
+            ]
+        )
+        bucket = _decision_outcome_bucket(latest_intent=latest_intent)
+        summary["intent_created_count"] += 1 if ordered_intents else 0
+        count_key = ENTRY_DECISION_AUDIT_BUCKET_TO_COUNT_KEY.get(bucket)
+        if count_key is not None:
+            summary[count_key] += 1
+        summary["repriced_count"] += 1 if reprice_count > 0 else 0
+
+        decision_at = _coerce_datetime(decision.get("decided_at"))
+        first_intent_at = (
+            None if first_intent is None else _coerce_datetime(first_intent.get("created_at"))
+        )
+        latest_attempt_submitted_at = (
+            None
+            if latest_attempt is None
+            else _coerce_datetime(latest_attempt.get("submitted_at"))
+        )
+        latest_terminal_at = (
+            None
+            if latest_attempt is None
+            else _coerce_datetime(latest_attempt.get("completed_at"))
+        )
+        terminal_reason = _decision_terminal_reason(
+            latest_intent=latest_intent,
+            latest_event=latest_event,
+            latest_attempt=latest_attempt,
+        )
+        if terminal_reason:
+            reason_counts.update([terminal_reason])
+        rows.append(
+            {
+                "opportunity_decision_id": opportunity_decision_id,
+                "opportunity_id": _decision_opportunity_id(decision),
+                "underlying_symbol": _decision_underlying_symbol(decision),
+                "strategy": _strategy_name_from_payload(
+                    policy_ref=decision.get("policy_ref"),
+                    payload=decision.get("payload"),
+                ),
+                "decision_at": decision.get("decided_at"),
+                "decision_reason_codes": list(decision.get("reason_codes") or []),
+                "intent_count": len(ordered_intents),
+                "execution_intent_id": None
+                if latest_intent is None
+                else latest_intent.get("execution_intent_id"),
+                "intent_state": None
+                if latest_intent is None
+                else latest_intent.get("state"),
+                "dispatch_status": None
+                if latest_intent is None
+                else (latest_intent.get("payload") or {}).get("dispatch_status"),
+                "latest_event_type": None
+                if latest_event is None
+                else latest_event.get("event_type"),
+                "latest_event_at": None
+                if latest_event is None
+                else latest_event.get("event_at"),
+                "execution_attempt_id": None
+                if latest_attempt is None
+                else latest_attempt.get("execution_attempt_id"),
+                "attempt_status": None
+                if latest_attempt is None
+                else latest_attempt.get("status"),
+                "reprice_count": reprice_count,
+                "outcome_bucket": bucket,
+                "terminal_reason": terminal_reason,
+                "decision_to_intent_seconds": None
+                if decision_at is None or first_intent_at is None
+                else round(
+                    max((first_intent_at - decision_at).total_seconds(), 0.0),
+                    2,
+                ),
+                "intent_to_submit_seconds": None
+                if first_intent_at is None or latest_attempt_submitted_at is None
+                else round(
+                    max(
+                        (latest_attempt_submitted_at - first_intent_at).total_seconds(),
+                        0.0,
+                    ),
+                    2,
+                ),
+                "submit_to_terminal_seconds": None
+                if latest_attempt_submitted_at is None or latest_terminal_at is None
+                else round(
+                    max(
+                        (latest_terminal_at - latest_attempt_submitted_at).total_seconds(),
+                        0.0,
+                    ),
+                    2,
+                ),
+            }
+        )
+
+    rows.sort(key=_entry_decision_audit_sort_key)
+    summary["terminal_reason_counts"] = dict(sorted(reason_counts.items()))
+    summary["sample_count"] = min(len(rows), max(int(sample_limit), 0))
+    return {
+        "summary": summary,
+        "samples": rows[: max(int(sample_limit), 0)],
+    }
+
+
+def _aggregate_entry_decision_audit(
+    bot_rows: list[dict[str, Any]],
+    *,
+    sample_limit: int = ENTRY_DECISION_AUDIT_SAMPLE_LIMIT,
+) -> dict[str, Any]:
+    summary = _empty_entry_decision_audit_summary()
+    reason_counts: Counter[str] = Counter()
+    samples: list[dict[str, Any]] = []
+    for row in bot_rows:
+        audit = (
+            row.get("entry_decision_audit")
+            if isinstance(row.get("entry_decision_audit"), Mapping)
+            else {}
+        )
+        audit_summary = (
+            audit.get("summary") if isinstance(audit.get("summary"), Mapping) else {}
+        )
+        for key in ENTRY_DECISION_AUDIT_COUNT_KEYS:
+            summary[key] += _coerce_int_value(audit_summary.get(key))
+        reason_counts.update(
+            {
+                str(reason): _coerce_int_value(count)
+                for reason, count in (
+                    audit_summary.get("terminal_reason_counts") or {}
+                ).items()
+            }
+        )
+        for sample in list(audit.get("samples") or []):
+            samples.append(
+                {
+                    "bot_id": row.get("bot_id"),
+                    "bot_name": row.get("bot_name"),
+                    **dict(sample),
+                }
+            )
+    samples.sort(key=_entry_decision_audit_sort_key)
+    summary["sample_count"] = min(len(samples), max(int(sample_limit), 0))
+    summary["terminal_reason_counts"] = dict(sorted(reason_counts.items()))
+    return {
+        "summary": summary,
+        "samples": samples[: max(int(sample_limit), 0)],
+    }
+
+
+def _window_bounds(market_date: str | None) -> tuple[str, datetime, datetime]:
     resolved_market_date = market_date or datetime.now(UTC).date().isoformat()
-    market_day = date.fromisoformat(resolved_market_date)
     window_start = datetime.fromisoformat(resolved_market_date).replace(tzinfo=UTC)
     window_end = window_start + timedelta(days=1)
-    return resolved_market_date, market_day, window_start, window_end
+    return resolved_market_date, window_start, window_end
 
 
 def _bot_owned_positions(execution_store: Any, bot_id: str) -> list[dict[str, Any]]:
@@ -344,9 +809,7 @@ def build_bot_metrics(
     bot_id: str,
     market_date: str | None = None,
 ) -> dict[str, Any]:
-    resolved_market_date, market_day, window_start, window_end = _window_bounds(
-        market_date
-    )
+    resolved_market_date, window_start, window_end = _window_bounds(market_date)
     signal_store = storage.signals
     execution_store = storage.execution
 
@@ -496,12 +959,23 @@ def build_bot_metrics(
             + symbol_stats[symbol]["unrealized_pnl"]
         )
 
-    entry_funnel = _build_entry_funnel(
+    entry_context = _load_entry_automation_context(
         signal_store=signal_store,
         execution_store=execution_store,
         bot_id=bot_id,
         window_start=window_start,
         window_end=window_end,
+    )
+    entry_funnel = _build_entry_funnel(
+        decisions=list(entry_context.get("decisions") or []),
+        intents=list(entry_context.get("intents") or []),
+        attempts=list(entry_context.get("attempts") or []),
+    )
+    entry_decision_audit = _build_entry_decision_audit(
+        decisions=list(entry_context.get("decisions") or []),
+        intents=list(entry_context.get("intents") or []),
+        attempts=list(entry_context.get("attempts") or []),
+        events=list(entry_context.get("events") or []),
     )
 
     return {
@@ -526,6 +1000,7 @@ def build_bot_metrics(
         "closed_win_rate": closed_win_rate,
         "symbol_stats": dict(sorted(symbol_stats.items())),
         "entry_funnel": entry_funnel,
+        "entry_decision_audit": entry_decision_audit,
     }
 
 
@@ -663,6 +1138,7 @@ def build_automation_performance_summary(
                 for row in bot_rows
             ],
         },
+        "entry_decision_audit": _aggregate_entry_decision_audit(bot_rows),
         "bots": bot_rows,
     }
 

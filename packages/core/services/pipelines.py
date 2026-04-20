@@ -55,6 +55,18 @@ def _latest_activity_timestamp(*values: str | None) -> str | None:
     return best_value
 
 
+def _collector_event_sort_key(event: Mapping[str, Any]) -> tuple[Any, int]:
+    timestamp = parse_datetime(str(event.get("generated_at") or ""))
+    try:
+        event_id = int(event.get("event_id") or 0)
+    except (TypeError, ValueError):
+        event_id = 0
+    return (
+        timestamp or parse_datetime("1970-01-01T00:00:00Z"),
+        event_id,
+    )
+
+
 def _derive_runtime_status(
     *,
     latest_run: Mapping[str, Any] | None,
@@ -484,9 +496,10 @@ def get_pipeline_detail(
             label=label,
             session_date=resolved_market_date,
             limit=400,
-            ascending=True,
+            ascending=False,
         )
     ]
+    events.sort(key=_collector_event_sort_key)
 
     analysis_run = post_market_store.get_latest_run(
         label=label,

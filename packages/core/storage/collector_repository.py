@@ -780,10 +780,15 @@ class CollectorRepository(RepositoryBase):
         *,
         ascending: bool = False,
     ) -> list[CollectorCycleEventRecord]:
-        order_column = (
+        generated_at_order = (
             CollectorCycleEventModel.generated_at.asc()
             if ascending
             else CollectorCycleEventModel.generated_at.desc()
+        )
+        event_id_order = (
+            CollectorCycleEventModel.event_id.asc()
+            if ascending
+            else CollectorCycleEventModel.event_id.desc()
         )
         statement = (
             select(CollectorCycleEventModel)
@@ -792,7 +797,7 @@ class CollectorRepository(RepositoryBase):
                 CollectorCycleEventModel.session_date
                 == date.fromisoformat(session_date)
             )
-            .order_by(order_column, CollectorCycleEventModel.event_id.asc())
+            .order_by(generated_at_order, event_id_order)
             .limit(limit)
         )
         with self.session_factory() as session:

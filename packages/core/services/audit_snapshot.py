@@ -58,6 +58,16 @@ def _timeline_sort_key(item: Mapping[str, Any]) -> tuple[Any, str, str, str]:
     )
 
 
+def _event_log_sort_key(event: Mapping[str, Any]) -> tuple[Any, str]:
+    timestamp = parse_datetime(
+        _as_text(event.get("occurred_at")) or "1970-01-01T00:00:00Z"
+    )
+    return (
+        timestamp,
+        str(event.get("event_id") or ""),
+    )
+
+
 def _detail_subset(payload: Mapping[str, Any]) -> dict[str, Any]:
     detail_keys = (
         "session_id",
@@ -638,15 +648,25 @@ def build_audit_snapshot(
     )
 
     raw_events: list[dict[str, Any]] = []
+    event_scan_limit_hit = False
     if event_store.schema_ready():
-        raw_events = [
-            dict(row)
-            for row in event_store.list_events(
-                label=label,
-                session_date=session_date,
-                limit=event_scan_limit,
-            )
-        ]
+        normalized_event_scan_limit = max(int(event_scan_limit), 0)
+        raw_event_rows = (
+            []
+            if normalized_event_scan_limit <= 0
+            else [
+                dict(row)
+                for row in event_store.list_events(
+                    label=label,
+                    session_date=session_date,
+                    limit=normalized_event_scan_limit + 1,
+                    newest_first=True,
+                )
+            ]
+        )
+        event_scan_limit_hit = len(raw_event_rows) > normalized_event_scan_limit
+        raw_events = raw_event_rows[:normalized_event_scan_limit]
+        raw_events.sort(key=_event_log_sort_key)
 
     signal_states: list[dict[str, Any]] = []
     signal_transitions: list[dict[str, Any]] = []
@@ -750,7 +770,7 @@ def build_audit_snapshot(
             "timeline_truncated": timeline_truncated,
             "omitted_timeline_item_count": hidden_count,
             "event_scan_limit": event_scan_limit,
-            "event_scan_limit_hit": len(raw_events) >= event_scan_limit,
+            "event_scan_limit_hit": event_scan_limit_hit,
             "collapsed_market_quote_event_count": collapsed_quote_count,
             "timeline_window": {
                 "started_at": None

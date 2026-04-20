@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from core.db.decorators import with_storage
+from core.jobs.seed import default_job_definitions
 from core.jobs.orchestration import (
     SCHEDULER_RUNTIME_LEASE_KEY,
     SINGLETON_LEASE_PREFIX,
@@ -37,6 +38,15 @@ from .shared import (
     _sorted_by_activity,
     _stream_quote_events_saved,
     _stream_trade_events_saved,
+)
+
+JOB_DEFINITION_COMPARISON_FIELDS = (
+    "job_type",
+    "enabled",
+    "schedule_type",
+    "schedule",
+    "payload",
+    "singleton_scope",
 )
 
 
@@ -301,6 +311,61 @@ def _summarize_job_definition(
     }
 
 
+def _definition_comparison_payload(definition: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "job_type": definition.get("job_type"),
+        "enabled": bool(definition.get("enabled")),
+        "schedule_type": definition.get("schedule_type"),
+        "schedule": dict(definition.get("schedule") or {}),
+        "payload": dict(definition.get("payload") or {}),
+        "singleton_scope": definition.get("singleton_scope"),
+    }
+
+
+def _seed_drift_payload(
+    definitions: list[dict[str, Any]],
+    *,
+    job_type: str | None = None,
+) -> dict[str, Any]:
+    canonical_rows = [
+        dict(row)
+        for row in default_job_definitions()
+        if job_type is None or str(row.get("job_type") or "") == job_type
+    ]
+    live_by_key = {
+        str(row.get("job_key") or ""): _definition_comparison_payload(row)
+        for row in definitions
+    }
+    canonical_by_key = {
+        str(row.get("job_key") or ""): _definition_comparison_payload(row)
+        for row in canonical_rows
+    }
+
+    missing = sorted(key for key in canonical_by_key if key not in live_by_key)
+    extra = sorted(key for key in live_by_key if key not in canonical_by_key)
+    mismatched: list[dict[str, Any]] = []
+    for job_key in sorted(set(live_by_key).intersection(canonical_by_key)):
+        live_row = live_by_key[job_key]
+        canonical_row = canonical_by_key[job_key]
+        fields = [
+            field
+            for field in JOB_DEFINITION_COMPARISON_FIELDS
+            if live_row.get(field) != canonical_row.get(field)
+        ]
+        if fields:
+            mismatched.append({"job_key": job_key, "fields": fields})
+    drift_count = len(missing) + len(extra) + len(mismatched)
+    return {
+        "drift_count": drift_count,
+        "missing_count": len(missing),
+        "extra_count": len(extra),
+        "mismatched_count": len(mismatched),
+        "missing": [{"job_key": job_key} for job_key in missing[:25]],
+        "extra": [{"job_key": job_key} for job_key in extra[:25]],
+        "mismatched": mismatched[:25],
+    }
+
+
 def _worker_lane_rows(
     *,
     workers: list[dict[str, Any]],
@@ -405,6 +470,10 @@ def build_jobs_overview(
                 "enabled_definition_count": 0,
                 "run_count": 0,
                 "singleton_lease_count": 0,
+                "seed_drift_count": 0,
+                "seed_missing_count": 0,
+                "seed_extra_count": 0,
+                "seed_mismatched_count": 0,
             },
             "attention": attention,
             "details": {
@@ -412,6 +481,15 @@ def build_jobs_overview(
                 "scheduler": None,
                 "workers": [],
                 "singleton_leases": [],
+                "seed_drift": {
+                    "drift_count": 0,
+                    "missing_count": 0,
+                    "extra_count": 0,
+                    "mismatched_count": 0,
+                    "missing": [],
+                    "extra": [],
+                    "mismatched": [],
+                },
                 "job_definitions": [],
                 "job_runs": [],
             },
@@ -439,6 +517,7 @@ def build_jobs_overview(
         )
         for definition in definitions
     ]
+    seed_drift = _seed_drift_payload(definitions, job_type=job_type)
     run_rows = [
         _summarize_job_run(dict(row), now=now)
         for row in job_store.list_job_runs(
@@ -577,6 +656,19 @@ def build_jobs_overview(
                 ),
             )
         )
+    if int(seed_drift.get("drift_count") or 0) > 0:
+        attention.append(
+            _attention(
+                severity="medium",
+                code="job_definition_seed_drift",
+                message=(
+                    f"{seed_drift['drift_count']} job definition drift item(s) detected: "
+                    f"{seed_drift['missing_count']} missing, "
+                    f"{seed_drift['extra_count']} extra, "
+                    f"{seed_drift['mismatched_count']} mismatched."
+                ),
+            )
+        )
 
     lane_rows = _worker_lane_rows(
         workers=workers,
@@ -630,6 +722,7 @@ def build_jobs_overview(
             or actionable_definition_status_counts.get("blocked", 0)
             else "healthy",
             "degraded" if stale_singleton_leases else "healthy",
+            "degraded" if int(seed_drift.get("drift_count") or 0) > 0 else "healthy",
         )
     )
 
@@ -654,6 +747,10 @@ def build_jobs_overview(
             "stale_running_count": stale_running_count,
             "stale_queued_job_count": len(stale_queued_run_rows),
             "degraded_capture_count": degraded_capture_count,
+            "seed_drift_count": seed_drift.get("drift_count"),
+            "seed_missing_count": seed_drift.get("missing_count"),
+            "seed_extra_count": seed_drift.get("extra_count"),
+            "seed_mismatched_count": seed_drift.get("mismatched_count"),
         },
         "attention": attention,
         "details": {
@@ -664,6 +761,7 @@ def build_jobs_overview(
             "singleton_leases": singleton_leases,
             "stale_singleton_leases": stale_singleton_leases,
             "stale_queued_job_runs": stale_queued_run_rows,
+            "seed_drift": seed_drift,
             "job_definitions": definition_rows,
             "job_runs": run_rows,
         },

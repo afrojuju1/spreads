@@ -584,6 +584,83 @@ def _render_automation_performance(
             )
         console.print(table)
 
+    entry_decision_audit = (
+        value.get("entry_decision_audit")
+        if isinstance(value.get("entry_decision_audit"), dict)
+        else {}
+    )
+    audit_summary = (
+        entry_decision_audit.get("summary")
+        if isinstance(entry_decision_audit.get("summary"), dict)
+        else {}
+    )
+    if audit_summary and int(audit_summary.get("row_count") or 0) > 0:
+        overview = Table(
+            title="Selected Decision Audit", show_edge=False, header_style="bold"
+        )
+        overview.add_column("Metric", style="bold")
+        overview.add_column("Value")
+        overview.add_row("Selected", _render_value(audit_summary.get("selected_count")))
+        overview.add_row("With Intent", _render_value(audit_summary.get("intent_created_count")))
+        overview.add_row("No Intent", _render_value(audit_summary.get("no_intent_count")))
+        overview.add_row(
+            "Pending Dispatch",
+            _render_value(audit_summary.get("pending_dispatch_count")),
+        )
+        overview.add_row(
+            "Working Submit",
+            _render_value(audit_summary.get("submitted_working_count")),
+        )
+        overview.add_row("Filled", _render_value(audit_summary.get("filled_count")))
+        overview.add_row("Failed", _render_value(audit_summary.get("failed_count")))
+        overview.add_row("Revoked", _render_value(audit_summary.get("revoked_count")))
+        overview.add_row("Expired", _render_value(audit_summary.get("expired_count")))
+        overview.add_row("Canceled", _render_value(audit_summary.get("canceled_count")))
+        overview.add_row("Repriced", _render_value(audit_summary.get("repriced_count")))
+        overview.add_row(
+            "Reasons",
+            _render_count_map(
+                audit_summary.get("terminal_reason_counts"),
+                limit=6,
+                item_length=80,
+            ),
+        )
+        console.print(overview)
+
+    audit_samples = (
+        entry_decision_audit.get("samples")
+        if isinstance(entry_decision_audit.get("samples"), list)
+        else []
+    )
+    if audit_samples:
+        table = Table(title="Selected Decision Samples", header_style="bold")
+        table.add_column("Bot")
+        table.add_column("Strategy")
+        table.add_column("Symbol")
+        table.add_column("Outcome")
+        table.add_column("Intent")
+        table.add_column("Attempt")
+        table.add_column("Reprice", justify="right")
+        table.add_column("D->I", justify="right")
+        table.add_column("I->S", justify="right")
+        table.add_column("S->T", justify="right")
+        table.add_column("Reason")
+        for row in audit_samples[:10]:
+            table.add_row(
+                str(row.get("bot_name") or row.get("bot_id") or "-"),
+                str(row.get("strategy") or "-"),
+                str(row.get("underlying_symbol") or "-"),
+                str(row.get("outcome_bucket") or "-"),
+                str(row.get("intent_state") or "-"),
+                str(row.get("attempt_status") or "-"),
+                _render_value(row.get("reprice_count")),
+                _render_duration(row.get("decision_to_intent_seconds")),
+                _render_duration(row.get("intent_to_submit_seconds")),
+                _render_duration(row.get("submit_to_terminal_seconds")),
+                str(row.get("terminal_reason") or "-"),
+            )
+        console.print(table)
+
 
 def _job_run_status_text(status: str | None) -> Text:
     normalized = str(status or "unknown").strip().lower()
@@ -1004,6 +1081,14 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
         "Singleton Leases", _render_value(summary.get("singleton_lease_count"))
     )
     overview.add_row("Worker Lanes", _render_value(summary.get("worker_lane_count")))
+    overview.add_row(
+        "Seed Drift",
+        (
+            f"missing {_render_value(summary.get('seed_missing_count'))} | "
+            f"extra {_render_value(summary.get('seed_extra_count'))} | "
+            f"mismatch {_render_value(summary.get('seed_mismatched_count'))}"
+        ),
+    )
     console.print(
         Panel(
             overview,
@@ -1066,6 +1151,29 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
                 latest_text,
                 _render_value(row.get("latest_capture_status")),
                 _render_value(row.get("singleton_scope")),
+            )
+        console.print(table)
+
+    seed_drift = (
+        details.get("seed_drift") if isinstance(details.get("seed_drift"), dict) else {}
+    )
+    drift_rows: list[dict[str, Any]] = []
+    for row in list(seed_drift.get("missing") or []):
+        drift_rows.append({"kind": "missing", **dict(row)})
+    for row in list(seed_drift.get("extra") or []):
+        drift_rows.append({"kind": "extra", **dict(row)})
+    for row in list(seed_drift.get("mismatched") or []):
+        drift_rows.append({"kind": "mismatched", **dict(row)})
+    if drift_rows:
+        table = Table(title="Seed Drift", header_style="bold")
+        table.add_column("Kind")
+        table.add_column("Job Key")
+        table.add_column("Fields")
+        for row in drift_rows[:15]:
+            table.add_row(
+                str(row.get("kind") or "-"),
+                str(row.get("job_key") or "-"),
+                ", ".join(str(field) for field in list(row.get("fields") or [])) or "-",
             )
         console.print(table)
 

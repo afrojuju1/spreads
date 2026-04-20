@@ -110,6 +110,7 @@ class EventRepository(RepositoryBase):
         occurred_from: str | None = None,
         occurred_to: str | None = None,
         limit: int = 200,
+        newest_first: bool = False,
     ) -> list[EventLogRecord]:
         statement = select(EventLogModel)
         if event_class:
@@ -132,7 +133,17 @@ class EventRepository(RepositoryBase):
         occurred_to_dt = parse_datetime(occurred_to)
         if occurred_to_dt is not None:
             statement = statement.where(EventLogModel.occurred_at <= occurred_to_dt)
-        statement = statement.order_by(EventLogModel.occurred_at.asc(), EventLogModel.event_id.asc()).limit(limit)
+        if newest_first:
+            statement = statement.order_by(
+                EventLogModel.occurred_at.desc(),
+                EventLogModel.event_id.desc(),
+            )
+        else:
+            statement = statement.order_by(
+                EventLogModel.occurred_at.asc(),
+                EventLogModel.event_id.asc(),
+            )
+        statement = statement.limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
         return self.rows(rows)

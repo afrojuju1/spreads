@@ -8,7 +8,7 @@ If another planning or design document disagrees about current ownership, topolo
 
 Use planning documents for target-state design, subsystem specifications, migration plans, and historical context.
 
-Last updated: 2026-04-18
+Last updated: 2026-04-20
 
 Related:
 
@@ -80,7 +80,7 @@ ARQ workers
   +--> consume Redis queues
   +--> publish global events to Redis
   +--> call Alpaca REST and recorder-backed market-data reads
-  +--> deliver alerts to Discord when configured
+  +--> manage alert outbox delivery and Discord webhook sends when configured
 
 Postgres = source of truth
 Redis = transport, queueing, leases, and pub/sub fanout
@@ -139,10 +139,14 @@ Redis = transport, queueing, leases, and pub/sub fanout
                                              | runs              | runs
                                              |                   |
                                              | broker_sync       | live_collector
-                                             | execution_submit  | collections + scanners
-                                             | alert_delivery    | live_selection + signal sync
-                                             | alert_reconcile   | recorder-backed quote/trade reads
-                                             | session_exit_mgr  | UOA + live_action_gate
+                                             | collector_recovery| collections + scanners
+                                             | execution_submit  | live_selection + signal sync
+                                             | alert_delivery    | recorder-backed quote/trade reads
+                                             | alert_reconcile   | UOA + live_action_gate
+                                             | options_automation_entry
+                                             | options_automation_management
+                                             | options_automation_execute
+                                             | position_exit_manager
                                              | post_close        |
                                              | post_market       |
                                              v                   v
@@ -182,10 +186,14 @@ Redis = transport, queueing, leases, and pub/sub fanout
                  | runs              | runs
                  |                   |
                  | broker_sync       | live_collector
+                 | collector_recovery|
                  | execution_submit  |
                  | alert_delivery    |
                  | alert_reconcile   |
-                 | session_exit_mgr  |
+                 | options_automation_entry
+                 | options_automation_management
+                 | options_automation_execute
+                 | position_exit_manager
                  | post_close        |
                  | post_market       |
                  v                   v
@@ -386,10 +394,14 @@ Current main job types are:
 
 - `live_collector`
 - `broker_sync`
+- `collector_recovery`
 - `execution_submit`
 - `alert_delivery`
 - `alert_reconcile`
-- `session_exit_manager`
+- `options_automation_entry`
+- `options_automation_management`
+- `options_automation_execute`
+- `position_exit_manager`
 - `post_close_analysis`
 - `post_market_analysis`
 
@@ -415,7 +427,7 @@ At a high level it:
 5. computes and persists UOA, signal-state, and opportunity data
 6. applies `live_action_gate` behavior before alerts or auto-execution
 7. optionally auto-submits an open execution through the normal execution service
-8. dispatches alerts when the gate allows it
+8. plans persisted alerts and asynchronous delivery when the gate allows it
 
 Its persistent outputs live mainly in:
 
@@ -532,6 +544,8 @@ The user-facing read model is assembled from multiple domains.
 
 Current service owners here are:
 
+- `services/automation_runtimes.py` for bot-and-automation-oriented runtime summaries and detail views
+- `services/discovery_sessions.py` for collector-owned discovery-session detail and compatibility reads
 - `services/live_runtime.py` for session detail and current collector-backed runtime state
 - `services/live_collector_health/` for capture, selection, enrichment, and tradeability summaries
 - `services/pipelines.py` for pipeline-facing runtime projections
@@ -560,9 +574,11 @@ These are adjacent subsystems, not part of the core trade ownership model.
 
 Alerts:
 
-- create persisted `alert_events`
-- maintain `alert_state` for dedupe
-- optionally deliver to Discord
+- persist score-anchor and delivery rows in `alert_events`
+- keep dedupe state, delivery status, attempts, and responses on those rows; there is no separate `alert_state` table
+- queue asynchronous `alert_delivery` jobs for pending deliveries
+- use `alert_reconcile` to reclaim stale `dispatching` rows and requeue due `retry_wait` deliveries
+- optionally deliver to Discord webhook sinks when configured
 
 Post-close and post-market analysis:
 
@@ -610,7 +626,6 @@ jobs:
 
 alerts:
   alert_events
-  alert_state
 
 analysis:
   post_market_analysis_runs

@@ -8,11 +8,24 @@ from core.db.decorators import with_storage
 from core.services.selection_summary import live_selection_counts
 from core.storage.collector_repository import CollectorRepository
 from core.storage.run_history_repository import RunHistoryRepository
+from core.storage.serializers import parse_datetime
 
 from .outcomes import build_session_outcomes
 from .tuning import build_signal_tuning
 
 MAX_EVENTS = 5000
+
+
+def _collector_event_sort_key(event: Mapping[str, Any]) -> tuple[Any, int]:
+    timestamp = parse_datetime(str(event.get("generated_at") or ""))
+    try:
+        event_id = int(event.get("event_id") or 0)
+    except (TypeError, ValueError):
+        event_id = 0
+    return (
+        timestamp or parse_datetime("1970-01-01T00:00:00Z"),
+        event_id,
+    )
 
 
 def parse_setup_json(value: dict[str, Any] | str | None) -> dict[str, Any] | None:
@@ -201,8 +214,10 @@ def build_session_summary(
         label,
         session_date,
         limit=MAX_EVENTS,
-        ascending=True,
+        ascending=False,
     )
+    events = [dict(event) for event in events]
+    events.sort(key=_collector_event_sort_key)
     latest_cycle = cycles[0] if cycles else None
     latest_cycle_payload = None
     if latest_cycle is not None:
