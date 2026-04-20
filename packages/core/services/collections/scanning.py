@@ -65,10 +65,15 @@ def run_universe_cycle(
 
 
 def serialize_candidate(
-    candidate: SpreadCandidate, run_id: str | None
+    candidate: SpreadCandidate,
+    run_id: str | None,
+    *,
+    short_delta_target: float | None = None,
 ) -> dict[str, Any]:
     payload = asdict(candidate)
     payload["run_id"] = run_id
+    if short_delta_target is not None:
+        payload["short_delta_target"] = float(short_delta_target)
     return payload
 
 
@@ -86,6 +91,7 @@ def build_symbol_strategy_candidates(
             payload = serialize_candidate(
                 candidate,
                 run_ids.get((result.symbol, result.args.strategy)),
+                short_delta_target=getattr(result.args, "short_delta_target", None),
             )
             grouped.setdefault(result.symbol, []).append(payload)
     for symbol in grouped:

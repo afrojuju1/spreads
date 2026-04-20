@@ -612,6 +612,22 @@ def _carry_buffer_ratio(candidate: Mapping[str, Any] | None) -> float | None:
     return _clamp(short_vs_expected_move / expected_move, 0.0, 1.5)
 
 
+def _resolve_tactical_delta_fit_target(
+    candidate: Mapping[str, Any] | None,
+    *,
+    cycle: Mapping[str, Any] | None,
+) -> float:
+    if isinstance(candidate, Mapping):
+        candidate_target = _as_float(candidate.get("short_delta_target"))
+        if candidate_target not in (None, 0.0):
+            return abs(float(candidate_target))
+    if isinstance(cycle, Mapping):
+        cycle_target = _as_float(cycle.get("short_delta_target"))
+        if cycle_target not in (None, 0.0):
+            return abs(float(cycle_target))
+    return 0.13
+
+
 def profile_specific_blockers(
     *,
     candidate: Mapping[str, Any],
@@ -673,10 +689,19 @@ def profile_specific_score_components(
 
         short_delta = abs(_as_float(candidate.get("short_delta")) or 0.0)
         if short_delta > 0.0:
-            delta_fit = _clamp(1.5 - abs(short_delta - 0.13) * 60.0, 0.0, 1.5)
+            delta_fit_target = _resolve_tactical_delta_fit_target(
+                candidate,
+                cycle=cycle,
+            )
+            delta_fit = _clamp(
+                1.5 - abs(short_delta - delta_fit_target) * 60.0,
+                0.0,
+                1.5,
+            )
             if delta_fit > 0.0:
                 components["tactical_delta_fit_delta"] = round(delta_fit, 3)
             evidence["short_delta"] = round(short_delta, 4)
+            evidence["delta_fit_target"] = round(delta_fit_target, 4)
 
         expected_move = _as_float(candidate.get("expected_move"))
         short_vs_expected_move = _as_float(candidate.get("short_vs_expected_move"))

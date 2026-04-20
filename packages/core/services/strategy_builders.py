@@ -124,11 +124,21 @@ def _build_runtime_candidate_filter(settings: StrategyBuildSettings) -> dict[str
     return build_candidate_filter(allowed_widths=settings.width_points)
 
 
-def _serialize_candidate(candidate: Any) -> dict[str, Any]:
+def _serialize_candidate(
+    candidate: Any,
+    *,
+    short_delta_target: float | None = None,
+) -> dict[str, Any]:
     if hasattr(candidate, "__dataclass_fields__"):
-        return dict(asdict(candidate))
+        row = dict(asdict(candidate))
+        if short_delta_target is not None:
+            row["short_delta_target"] = float(short_delta_target)
+        return row
     if isinstance(candidate, dict):
-        return dict(candidate)
+        row = dict(candidate)
+        if short_delta_target is not None:
+            row["short_delta_target"] = float(short_delta_target)
+        return row
     raise TypeError("Unsupported candidate payload for runtime strategy builder")
 
 
@@ -158,7 +168,10 @@ def build_entry_runtime_symbol_candidates_from_market_slice(
     all_rows: list[dict[str, Any]] = []
     filter_reason_counts: dict[str, int] = {}
     for candidate in candidates:
-        row = _serialize_candidate(candidate)
+        row = _serialize_candidate(
+            candidate,
+            short_delta_target=getattr(runtime_args, "short_delta_target", None),
+        )
         matched, reasons = match_runtime_candidate(row, runtime)
         if not matched:
             for reason in reasons:

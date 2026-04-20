@@ -147,6 +147,7 @@ def list_opportunities(
     automation_id: str | None = None,
     strategy_config_id: str | None = None,
     include_analysis_only: bool = False,
+    include_expired: bool = False,
     limit: int = 200,
     storage: Any | None = None,
 ) -> dict[str, Any]:
@@ -162,6 +163,7 @@ def list_opportunities(
             automation_id=automation_id,
             strategy_config_id=strategy_config_id,
             eligibility_state=None if include_analysis_only else "live",
+            active_only=lifecycle_state is None and not include_expired,
             limit=limit,
         )
     ]

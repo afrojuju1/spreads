@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from core.backtest import build_backtest_run, compare_backtest_runs
 from core.domain.backtest_models import BacktestAggregate, BacktestRun, BacktestTarget
+from core.domain.models import SymbolScanResult
 from core.services.automation_runtimes import (
     get_automation_runtime_detail,
     list_automation_runtimes,
@@ -16,6 +17,7 @@ from core.services.automation_runtime import (
     resolve_management_runtime,
 )
 from core.services.bots import build_collector_scope
+from core.services.collections.scanning import build_symbol_strategy_candidates
 from core.services.collections.config import (
     _apply_options_automation_overrides,
     build_collection_args,
@@ -117,7 +119,7 @@ class StrategyBuilderServiceTests(unittest.TestCase):
                         "return_on_risk": 0.15,
                     },
                 ],
-            ),
+            ) as serialize_candidate,
         ):
             rows = build_entry_runtime_candidates(
                 entry_runtimes=[runtime],
@@ -130,6 +132,10 @@ class StrategyBuilderServiceTests(unittest.TestCase):
 
         owner_key = (runtime.bot_id, runtime.automation_id)
         self.assertEqual(build_slice.call_count, 1)
+        self.assertAlmostEqual(
+            serialize_candidate.call_args.kwargs["short_delta_target"],
+            0.23,
+        )
         self.assertEqual(len(rows[owner_key][runtime.symbols[0]]), 1)
         self.assertEqual(rows[owner_key][runtime.symbols[0]][0]["setup_status"], "neutral")
 
@@ -236,6 +242,45 @@ class ManagementPlannerTests(unittest.TestCase):
 
 
 class CollectionConfigTests(unittest.TestCase):
+    def test_build_symbol_strategy_candidates_carries_short_delta_target(self) -> None:
+        scan_result = SymbolScanResult(
+            symbol="SPY",
+            underlying_type="etf_index_proxy",
+            spot_price=500.0,
+            args=parse_scanner_args(
+                [
+                    "--symbol",
+                    "SPY",
+                    "--strategy",
+                    "put_credit",
+                    "--short-delta-target",
+                    "0.23",
+                ]
+            ),
+            setup=None,
+            candidates=[object()],
+            run_id="run-1",
+        )
+
+        with patch(
+            "core.services.collections.scanning.serialize_candidate",
+            return_value={
+                "underlying_symbol": "SPY",
+                "strategy": "put_credit",
+                "quality_score": 70.0,
+            },
+        ) as serialize_candidate:
+            grouped = build_symbol_strategy_candidates(
+                [scan_result],
+                {("SPY", "put_credit"): "run-1"},
+            )
+
+        self.assertAlmostEqual(
+            serialize_candidate.call_args.kwargs["short_delta_target"],
+            0.23,
+        )
+        self.assertEqual(grouped["SPY"][0]["underlying_symbol"], "SPY")
+
     def test_build_collector_scope_includes_runtime_min_return_on_risk(self) -> None:
         scope = build_collector_scope(
             scanner_strategy="put_credit",
@@ -383,6 +428,167 @@ class OpportunityProjectionTests(unittest.TestCase):
 
 
 class RuntimeVisibilityTests(unittest.TestCase):
+    def test_list_opportunities_excludes_expired_rows_by_default(self) -> None:
+        class _SignalStore:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            def list_opportunities(self, **kwargs: object) -> list[dict[str, object]]:
+                self.calls.append(dict(kwargs))
+                rows = [
+                    {
+                        "opportunity_id": "opp-active",
+                        "pipeline_id": "pipeline:explore_10_put_credit_weekly_auto",
+                        "label": "explore_10_put_credit_weekly_auto",
+                        "market_date": "2026-04-20",
+                        "session_date": "2026-04-20",
+                        "lifecycle_state": "ready",
+                        "selection_state": "promotable",
+                        "selection_rank": 1,
+                        "underlying_symbol": "SPY",
+                    },
+                    {
+                        "opportunity_id": "opp-expired",
+                        "pipeline_id": "pipeline:explore_10_put_credit_weekly_auto",
+                        "label": "explore_10_put_credit_weekly_auto",
+                        "market_date": "2026-04-20",
+                        "session_date": "2026-04-20",
+                        "lifecycle_state": "expired",
+                        "selection_state": "monitor",
+                        "selection_rank": 2,
+                        "underlying_symbol": "QQQ",
+                    },
+                ]
+                lifecycle_state = kwargs.get("lifecycle_state")
+                if lifecycle_state is not None:
+                    return [
+                        row
+                        for row in rows
+                        if row["lifecycle_state"] == lifecycle_state
+                    ]
+                if kwargs.get("active_only"):
+                    return [
+                        row
+                        for row in rows
+                        if row["lifecycle_state"] in ("candidate", "ready", "blocked")
+                    ]
+                return rows
+
+        class _Storage:
+            def __init__(self) -> None:
+                self.signals = _SignalStore()
+
+        storage = _Storage()
+
+        payload = list_opportunities(
+            db_target="postgresql://example",
+            pipeline_id="pipeline:explore_10_put_credit_weekly_auto",
+            market_date="2026-04-20",
+            storage=storage,
+        )
+
+        self.assertEqual(
+            [row["opportunity_id"] for row in payload["opportunities"]],
+            ["opp-active"],
+        )
+        self.assertTrue(storage.signals.calls[0]["active_only"])
+        self.assertIsNone(storage.signals.calls[0]["lifecycle_state"])
+
+    def test_list_opportunities_can_include_expired_rows(self) -> None:
+        class _SignalStore:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            def list_opportunities(self, **kwargs: object) -> list[dict[str, object]]:
+                self.calls.append(dict(kwargs))
+                return [
+                    {
+                        "opportunity_id": "opp-active",
+                        "pipeline_id": "pipeline:explore_10_put_credit_weekly_auto",
+                        "label": "explore_10_put_credit_weekly_auto",
+                        "market_date": "2026-04-20",
+                        "session_date": "2026-04-20",
+                        "lifecycle_state": "ready",
+                        "selection_state": "promotable",
+                        "selection_rank": 1,
+                        "underlying_symbol": "SPY",
+                    },
+                    {
+                        "opportunity_id": "opp-expired",
+                        "pipeline_id": "pipeline:explore_10_put_credit_weekly_auto",
+                        "label": "explore_10_put_credit_weekly_auto",
+                        "market_date": "2026-04-20",
+                        "session_date": "2026-04-20",
+                        "lifecycle_state": "expired",
+                        "selection_state": "monitor",
+                        "selection_rank": 2,
+                        "underlying_symbol": "QQQ",
+                    },
+                ]
+
+        class _Storage:
+            def __init__(self) -> None:
+                self.signals = _SignalStore()
+
+        storage = _Storage()
+
+        payload = list_opportunities(
+            db_target="postgresql://example",
+            pipeline_id="pipeline:explore_10_put_credit_weekly_auto",
+            market_date="2026-04-20",
+            include_expired=True,
+            storage=storage,
+        )
+
+        self.assertEqual(
+            [row["opportunity_id"] for row in payload["opportunities"]],
+            ["opp-active", "opp-expired"],
+        )
+        self.assertFalse(storage.signals.calls[0]["active_only"])
+
+    def test_list_opportunities_respects_explicit_lifecycle_filter(self) -> None:
+        class _SignalStore:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            def list_opportunities(self, **kwargs: object) -> list[dict[str, object]]:
+                self.calls.append(dict(kwargs))
+                lifecycle_state = kwargs.get("lifecycle_state")
+                return [
+                    {
+                        "opportunity_id": "opp-expired",
+                        "pipeline_id": "pipeline:explore_10_put_credit_weekly_auto",
+                        "label": "explore_10_put_credit_weekly_auto",
+                        "market_date": "2026-04-20",
+                        "session_date": "2026-04-20",
+                        "lifecycle_state": lifecycle_state,
+                        "selection_state": "monitor",
+                        "selection_rank": 2,
+                        "underlying_symbol": "QQQ",
+                    }
+                ]
+
+        class _Storage:
+            def __init__(self) -> None:
+                self.signals = _SignalStore()
+
+        storage = _Storage()
+
+        payload = list_opportunities(
+            db_target="postgresql://example",
+            pipeline_id="pipeline:explore_10_put_credit_weekly_auto",
+            market_date="2026-04-20",
+            lifecycle_state="expired",
+            storage=storage,
+        )
+
+        self.assertEqual(
+            [row["opportunity_id"] for row in payload["opportunities"]],
+            ["opp-expired"],
+        )
+        self.assertEqual(storage.signals.calls[0]["lifecycle_state"], "expired")
+        self.assertFalse(storage.signals.calls[0]["active_only"])
+
     def test_list_automation_runtimes_summarizes_owner_scoped_state(self) -> None:
         runtime = resolve_entry_runtime(
             bot_id="short_dated_index_credit_bot",

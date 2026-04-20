@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import func, select
@@ -22,6 +22,8 @@ from core.storage.signal_models import (
     SignalStateModel,
     SignalStateTransitionModel,
 )
+
+ACTIVE_OPPORTUNITY_LIFECYCLE_STATES = ("candidate", "ready", "blocked")
 
 
 def _optional_date(value: str | date | None) -> date | None:
@@ -829,6 +831,7 @@ class SignalRepository(RepositoryBase):
         strategy_config_id: str | None = None,
         automation_run_id: str | None = None,
         runtime_owned: bool | None = False,
+        active_only: bool = False,
         limit: int = 200,
     ) -> list[OpportunityRecord]:
         statement = select(OpportunityModel)
@@ -855,6 +858,12 @@ class SignalRepository(RepositoryBase):
         if lifecycle_state:
             statement = statement.where(
                 OpportunityModel.lifecycle_state == lifecycle_state
+            )
+        elif active_only:
+            statement = statement.where(
+                OpportunityModel.lifecycle_state.in_(
+                    ACTIVE_OPPORTUNITY_LIFECYCLE_STATES
+                )
             )
         if eligibility_state:
             statement = statement.where(
@@ -909,7 +918,7 @@ class SignalRepository(RepositoryBase):
         elif runtime_owned is True or any([bot_id, automation_id, strategy_config_id]):
             statement = statement.where(OpportunityModel.bot_id.is_not(None))
         statement = statement.where(
-            OpportunityModel.lifecycle_state.in_(("candidate", "ready", "blocked"))
+            OpportunityModel.lifecycle_state.in_(ACTIVE_OPPORTUNITY_LIFECYCLE_STATES)
         )
         if eligibility_state:
             statement = statement.where(
@@ -953,7 +962,7 @@ class SignalRepository(RepositoryBase):
         statement = select(OpportunityModel).where(
             OpportunityModel.label == label,
             OpportunityModel.session_date == session_date_value,
-            OpportunityModel.lifecycle_state.in_(("candidate", "ready", "blocked")),
+            OpportunityModel.lifecycle_state.in_(ACTIVE_OPPORTUNITY_LIFECYCLE_STATES),
         )
         if runtime_owned is False and not any(
             [bot_id, automation_id, strategy_config_id]
@@ -998,7 +1007,7 @@ class SignalRepository(RepositoryBase):
             select(OpportunityModel)
             .where(OpportunityModel.source_candidate_id == candidate_id)
             .where(
-                OpportunityModel.lifecycle_state.in_(("candidate", "ready", "blocked"))
+                OpportunityModel.lifecycle_state.in_(ACTIVE_OPPORTUNITY_LIFECYCLE_STATES)
             )
             .where(
                 OpportunityModel.bot_id.is_not(None)
@@ -1034,7 +1043,7 @@ class SignalRepository(RepositoryBase):
             )
             .where(OpportunityModel.cycle_id.in_(cycle_ids))
             .where(
-                OpportunityModel.lifecycle_state.in_(("candidate", "ready", "blocked"))
+                OpportunityModel.lifecycle_state.in_(ACTIVE_OPPORTUNITY_LIFECYCLE_STATES)
             )
         )
         statement = statement.where(

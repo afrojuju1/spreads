@@ -94,6 +94,11 @@ def opportunities_command(
         help="Optional strategy-config owner filter.",
     ),
     date: str | None = typer.Option(None, "--date", help="Optional market date."),
+    include_expired: bool = typer.Option(
+        False,
+        "--include-expired",
+        help="Include expired opportunities in list output.",
+    ),
     limit: int = typer.Option(50, "--limit", help="Maximum opportunities to list."),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
@@ -107,6 +112,7 @@ def opportunities_command(
             bot_id=bot_id,
             automation_id=automation_id,
             strategy_config_id=strategy_config_id,
+            include_expired=include_expired,
             limit=limit,
         )
         if opportunity_id is None

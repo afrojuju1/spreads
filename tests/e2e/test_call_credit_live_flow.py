@@ -131,6 +131,49 @@ class _InMemoryExecutionStore:
 
 
 class CallCreditLiveFlowE2ETests(unittest.TestCase):
+    def test_tactical_delta_fit_uses_strategy_short_delta_target(self) -> None:
+        candidate_payload = {
+            "underlying_symbol": "SPY",
+            "strategy": "put_credit",
+            "profile": "weekly",
+            "days_to_expiration": 7,
+            "quality_score": 65.0,
+            "setup_score": 72.0,
+            "setup_status": "favorable",
+            "data_status": "clean",
+            "calendar_status": "clean",
+            "fill_ratio": 0.92,
+            "short_delta": -0.23,
+            "expected_move": 10.0,
+            "short_vs_expected_move": 0.8,
+            "earnings_phase": "clean",
+        }
+
+        default_scorecard = build_candidate_opportunity_score(candidate_payload)
+        aligned_scorecard = build_candidate_opportunity_score(
+            {
+                **candidate_payload,
+                "short_delta_target": 0.23,
+            }
+        )
+
+        self.assertNotIn(
+            "tactical_delta_fit_delta",
+            default_scorecard["profile_score_components"],
+        )
+        self.assertAlmostEqual(
+            aligned_scorecard["profile_score_components"]["tactical_delta_fit_delta"],
+            1.5,
+        )
+        self.assertAlmostEqual(
+            aligned_scorecard["profile_score_evidence"]["delta_fit_target"],
+            0.23,
+        )
+        self.assertGreater(
+            aligned_scorecard["promotion_score"],
+            default_scorecard["promotion_score"],
+        )
+
     def test_call_credit_scanner_scoring_execution_management_and_position_sync(
         self,
     ) -> None:
