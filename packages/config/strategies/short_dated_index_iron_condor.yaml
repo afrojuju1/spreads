@@ -14,6 +14,18 @@ build:
   expected_move:
     min_short_vs_expected_move_ratio: -0.30
     min_breakeven_vs_expected_move_ratio: -0.35
+  ranking:
+    min_probability_of_profit: 0.64
+    min_expected_value_dollars: 12
+    min_slippage_adjusted_expected_value_dollars: 10
+    max_entry_slippage_dollars: 16
+    min_model_implied_volatility: 0.20
+    weights:
+      probability_of_profit: 0.48
+      expected_value_dollars: 0.12
+      slippage_adjusted_expected_value_dollars: 0.22
+      entry_slippage_dollars: 0.10
+      model_implied_volatility: 0.08
 recipes:
   entry:
     - neutral_range

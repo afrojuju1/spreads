@@ -10,6 +10,18 @@ build:
     min: 0.10
     max: 0.28
   widths: [2, 3, 5]
+  ranking:
+    min_probability_of_profit: 0.60
+    min_expected_value_dollars: 10
+    min_slippage_adjusted_expected_value_dollars: 8
+    max_entry_slippage_dollars: 12
+    min_model_implied_volatility: 0.18
+    weights:
+      probability_of_profit: 0.42
+      expected_value_dollars: 0.16
+      slippage_adjusted_expected_value_dollars: 0.24
+      entry_slippage_dollars: 0.10
+      model_implied_volatility: 0.08
 recipes:
   entry:
     - trend_resistance

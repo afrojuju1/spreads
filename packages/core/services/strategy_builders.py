@@ -10,6 +10,7 @@ from core.services.option_structures import candidate_legs, payload_structure_id
 from core.services.replay_filters import build_candidate_filter
 from core.services.runtime_candidate_filters import match_runtime_candidate
 from core.services.scanners.config import (
+    RANKING_POLICY_ARG_KEYS,
     clone_args,
     resolve_profile_value,
     resolve_symbol_scan_args,
@@ -36,8 +37,13 @@ def _apply_build_settings(
     args.max_dte = settings.dte_max
     args.short_delta_min = settings.short_delta_min
     args.short_delta_max = settings.short_delta_max
+    args.short_delta_target = resolve_profile_value(
+        settings.short_delta_target,
+        getattr(args, "short_delta_target", None),
+    )
     if (
-        settings.short_delta_min is not None
+        args.short_delta_target is None
+        and settings.short_delta_min is not None
         and settings.short_delta_max is not None
         and settings.short_delta_min <= settings.short_delta_max
     ):
@@ -67,6 +73,15 @@ def _apply_build_settings(
         settings.min_breakeven_vs_expected_move_ratio,
         getattr(args, "min_breakeven_vs_expected_move_ratio", None),
     )
+    for key in RANKING_POLICY_ARG_KEYS:
+        setattr(
+            args,
+            key,
+            resolve_profile_value(
+                settings.ranking_policy.get(key),
+                getattr(args, key, None),
+            ),
+        )
     return args
 
 

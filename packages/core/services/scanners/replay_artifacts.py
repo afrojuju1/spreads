@@ -50,6 +50,17 @@ _SYMBOL_ARG_KEYS = (
     "min_fill_ratio",
     "min_short_vs_expected_move_ratio",
     "min_breakeven_vs_expected_move_ratio",
+    "ranking_min_probability_of_profit",
+    "ranking_min_expected_value_dollars",
+    "ranking_min_slippage_adjusted_expected_value_dollars",
+    "ranking_max_entry_slippage_dollars",
+    "ranking_min_model_implied_volatility",
+    "ranking_max_model_implied_volatility",
+    "ranking_weight_probability_of_profit",
+    "ranking_weight_expected_value_dollars",
+    "ranking_weight_slippage_adjusted_expected_value_dollars",
+    "ranking_weight_entry_slippage_dollars",
+    "ranking_weight_model_implied_volatility",
 )
 
 

@@ -11,6 +11,7 @@ from core.services.options_automation_models import (
     StrategyLiquidityRules,
     StrategyRiskDefaults,
 )
+from core.services.scanners.config import RANKING_POLICY_ARG_KEYS
 from core.services.strategy_specs import StrategySpec
 
 
@@ -46,6 +47,7 @@ class StrategyBuildSettings:
     dte_max: int | None
     short_delta_min: float | None
     short_delta_max: float | None
+    short_delta_target: float | None
     width_points: tuple[float, ...]
     min_open_interest: int | None
     max_leg_spread_pct_mid: float | None
@@ -54,6 +56,7 @@ class StrategyBuildSettings:
     min_short_vs_expected_move_ratio: float | None
     min_breakeven_vs_expected_move_ratio: float | None
     max_quote_age_seconds: int | None
+    ranking_policy: dict[str, Any]
     builder_params: dict[str, Any]
     liquidity_rules: dict[str, Any]
     risk_defaults: dict[str, Any]
@@ -136,6 +139,11 @@ def build_strategy_build_settings(runtime: ResolvedAutomation) -> StrategyBuildS
     strategy_config = runtime.strategy_config
     builder_params = dict(strategy_config.builder_params)
     liquidity_rules = dict(strategy_config.liquidity_rules)
+    ranking_policy = {
+        key: builder_params[key]
+        for key in RANKING_POLICY_ARG_KEYS
+        if builder_params.get(key) is not None
+    }
     return StrategyBuildSettings(
         strategy_id=strategy_config.strategy_id,
         strategy_family=strategy_config.strategy_family,
@@ -149,6 +157,7 @@ def build_strategy_build_settings(runtime: ResolvedAutomation) -> StrategyBuildS
         dte_max=_optional_int(builder_params.get("dte_max")),
         short_delta_min=_optional_float(builder_params.get("short_delta_min")),
         short_delta_max=_optional_float(builder_params.get("short_delta_max")),
+        short_delta_target=_optional_float(builder_params.get("short_delta_target")),
         width_points=_float_tuple(builder_params.get("width_points")),
         min_open_interest=_optional_int(liquidity_rules.get("min_open_interest")),
         max_leg_spread_pct_mid=_optional_float(
@@ -168,6 +177,7 @@ def build_strategy_build_settings(runtime: ResolvedAutomation) -> StrategyBuildS
         max_quote_age_seconds=_optional_int(
             liquidity_rules.get("max_quote_age_seconds")
         ),
+        ranking_policy=ranking_policy,
         builder_params=builder_params,
         liquidity_rules=liquidity_rules,
         risk_defaults=dict(strategy_config.risk_defaults),

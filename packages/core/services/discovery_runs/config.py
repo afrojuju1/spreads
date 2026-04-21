@@ -9,7 +9,10 @@ from core.services.bots import build_discovery_run_scope
 from core.services.live_pipelines import build_live_snapshot_label
 from core.services.market_dates import NEW_YORK
 from core.services.option_structures import normalize_strategy_family
-from core.services.scanners.config import parse_args as parse_scanner_args
+from core.services.scanners.config import (
+    RANKING_POLICY_ARG_KEYS,
+    parse_args as parse_scanner_args,
+)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -112,6 +115,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=default_database_url(),
         help=argparse.SUPPRESS,
     )
+    for key in RANKING_POLICY_ARG_KEYS:
+        parser.add_argument(
+            f"--{key.replace('_', '-')}",
+            dest=key,
+            type=float,
+            help=argparse.SUPPRESS,
+        )
     return parser.parse_args(argv)
 
 

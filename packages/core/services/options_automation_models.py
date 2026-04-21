@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, TypeAlias
 
+from core.domain.profiles import RankingPolicyConfig, RankingWeightsConfig
+
 
 def _require_mapping(value: Any, *, field_name: str) -> Mapping[str, Any]:
     if value is None:
@@ -147,6 +149,50 @@ class ExpectedMoveGuard:
         return payload
 
 
+def _ranking_weights_from_payload(
+    payload: Mapping[str, Any] | None,
+) -> RankingWeightsConfig:
+    mapping = _require_mapping(payload, field_name="build.ranking.weights")
+    return RankingWeightsConfig(
+        probability_of_profit=_optional_float(mapping.get("probability_of_profit")),
+        expected_value_dollars=_optional_float(mapping.get("expected_value_dollars")),
+        slippage_adjusted_expected_value_dollars=_optional_float(
+            mapping.get("slippage_adjusted_expected_value_dollars")
+        ),
+        entry_slippage_dollars=_optional_float(mapping.get("entry_slippage_dollars")),
+        model_implied_volatility=_optional_float(
+            mapping.get("model_implied_volatility")
+        ),
+    )
+
+
+def _ranking_policy_from_payload(
+    payload: Mapping[str, Any] | None,
+) -> RankingPolicyConfig:
+    mapping = _require_mapping(payload, field_name="build.ranking")
+    return RankingPolicyConfig(
+        min_probability_of_profit=_optional_float(
+            mapping.get("min_probability_of_profit")
+        ),
+        min_expected_value_dollars=_optional_float(
+            mapping.get("min_expected_value_dollars")
+        ),
+        min_slippage_adjusted_expected_value_dollars=_optional_float(
+            mapping.get("min_slippage_adjusted_expected_value_dollars")
+        ),
+        max_entry_slippage_dollars=_optional_float(
+            mapping.get("max_entry_slippage_dollars")
+        ),
+        min_model_implied_volatility=_optional_float(
+            mapping.get("min_model_implied_volatility")
+        ),
+        max_model_implied_volatility=_optional_float(
+            mapping.get("max_model_implied_volatility")
+        ),
+        weights=_ranking_weights_from_payload(mapping.get("weights")),
+    )
+
+
 @dataclass(frozen=True)
 class VerticalSpreadBuildConfig:
     dte: DteRange
@@ -154,6 +200,7 @@ class VerticalSpreadBuildConfig:
     widths: tuple[float, ...]
     min_fill_ratio: float | None = None
     expected_move: ExpectedMoveGuard = field(default_factory=ExpectedMoveGuard)
+    ranking: RankingPolicyConfig = field(default_factory=RankingPolicyConfig)
 
     def __post_init__(self) -> None:
         if self.min_fill_ratio is not None and (
@@ -191,6 +238,7 @@ class VerticalSpreadBuildConfig:
             expected_move=ExpectedMoveGuard.from_payload(
                 mapping.get("expected_move")
             ),
+            ranking=_ranking_policy_from_payload(mapping.get("ranking")),
         )
 
     def as_builder_params(self) -> dict[str, Any]:
@@ -206,6 +254,7 @@ class VerticalSpreadBuildConfig:
         if self.min_fill_ratio is not None:
             payload["min_fill_ratio"] = self.min_fill_ratio
         payload.update(self.expected_move.as_builder_params())
+        payload.update(self.ranking.as_builder_params())
         return payload
 
 
@@ -226,6 +275,7 @@ class IronCondorBuildConfig(VerticalSpreadBuildConfig):
             widths=base.widths,
             min_fill_ratio=base.min_fill_ratio,
             expected_move=base.expected_move,
+            ranking=base.ranking,
             symmetric_wings_only=bool(mapping.get("symmetric_wings_only", False)),
         )
 
@@ -241,6 +291,7 @@ class LongVolBuildConfig:
     entry_delta: DeltaRange
     min_fill_ratio: float | None = None
     expected_move: ExpectedMoveGuard = field(default_factory=ExpectedMoveGuard)
+    ranking: RankingPolicyConfig = field(default_factory=RankingPolicyConfig)
 
     def __post_init__(self) -> None:
         if self.min_fill_ratio is not None and (
@@ -273,6 +324,7 @@ class LongVolBuildConfig:
             expected_move=ExpectedMoveGuard.from_payload(
                 mapping.get("expected_move")
             ),
+            ranking=_ranking_policy_from_payload(mapping.get("ranking")),
         )
 
     def as_builder_params(self) -> dict[str, Any]:
@@ -287,6 +339,7 @@ class LongVolBuildConfig:
         if self.min_fill_ratio is not None:
             payload["min_fill_ratio"] = self.min_fill_ratio
         payload.update(self.expected_move.as_builder_params())
+        payload.update(self.ranking.as_builder_params())
         return payload
 
 

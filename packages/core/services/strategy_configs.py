@@ -102,6 +102,9 @@ class StrategyConfig:
                 "min_breakeven_vs_expected_move_ratio": self.build.expected_move.min_breakeven_vs_expected_move_ratio,
             },
         }
+        ranking_payload = self.build.ranking.as_payload()
+        if ranking_payload:
+            build_payload["ranking"] = ranking_payload
         if hasattr(self.build, "short_delta"):
             build_payload["short_delta"] = {
                 "min": self.build.short_delta.minimum,

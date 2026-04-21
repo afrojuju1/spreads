@@ -8,15 +8,16 @@ from typing import Any
 
 from core.domain.profiles import (
     DEFAULT_BOARD_UNIVERSE,
-    LONG_VOL_STRATEGIES,
     PROFILE_CONFIGS,
     UNIVERSE_PRESETS,
     ZERO_DTE_ALLOWED_SYMBOLS,
+    resolve_ranking_policy,
     zero_dte_session_bucket,
 )
 from core.integrations.alpaca.client import DEFAULT_DATA_BASE_URL
 from core.integrations.calendar_events import classify_underlying_type
 from core.runtime.config import default_database_url
+from core.services.automations import load_universe_symbols
 from core.services.market_dates import NEW_YORK
 from core.services.option_structures import normalize_strategy_family
 from core.services.strategy_specs import (
@@ -25,6 +26,7 @@ from core.services.strategy_specs import (
     strategy_display_label,
     strategy_option_type,
 )
+from core.services.strategy_configs import default_config_root
 
 DIRECTIONAL_LONG_DELTA_DEFAULTS: dict[str, tuple[float, float, float]] = {
     "0dte": (0.18, 0.35, 0.25),
@@ -33,6 +35,38 @@ DIRECTIONAL_LONG_DELTA_DEFAULTS: dict[str, tuple[float, float, float]] = {
     "swing": (0.25, 0.45, 0.35),
     "core": (0.30, 0.50, 0.40),
 }
+
+RANKING_POLICY_ARG_KEYS = (
+    "ranking_min_probability_of_profit",
+    "ranking_min_expected_value_dollars",
+    "ranking_min_slippage_adjusted_expected_value_dollars",
+    "ranking_max_entry_slippage_dollars",
+    "ranking_min_model_implied_volatility",
+    "ranking_max_model_implied_volatility",
+    "ranking_weight_probability_of_profit",
+    "ranking_weight_expected_value_dollars",
+    "ranking_weight_slippage_adjusted_expected_value_dollars",
+    "ranking_weight_entry_slippage_dollars",
+    "ranking_weight_model_implied_volatility",
+)
+
+
+def available_universe_labels() -> tuple[str, ...]:
+    labels = set(UNIVERSE_PRESETS)
+    root = default_config_root() / "universes"
+    if root.exists():
+        labels.update(path.stem for path in root.glob("*.yaml"))
+    return tuple(sorted(labels))
+
+
+def resolve_universe_symbols(universe_label: str) -> tuple[str, ...]:
+    normalized = str(universe_label or "").strip()
+    if not normalized:
+        return ()
+    preset = UNIVERSE_PRESETS.get(normalized)
+    if preset is not None:
+        return preset
+    return load_universe_symbols(normalized)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -50,7 +84,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--universe",
-        choices=tuple(sorted(UNIVERSE_PRESETS)),
+        choices=available_universe_labels(),
         help="Use a curated symbol preset for multi-symbol scanning.",
     )
     parser.add_argument(
@@ -243,6 +277,61 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
+        "--ranking-min-probability-of-profit",
+        type=float,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--ranking-min-expected-value-dollars",
+        type=float,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--ranking-min-slippage-adjusted-expected-value-dollars",
+        type=float,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--ranking-max-entry-slippage-dollars",
+        type=float,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--ranking-min-model-implied-volatility",
+        type=float,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--ranking-max-model-implied-volatility",
+        type=float,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--ranking-weight-probability-of-profit",
+        type=float,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--ranking-weight-expected-value-dollars",
+        type=float,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--ranking-weight-slippage-adjusted-expected-value-dollars",
+        type=float,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--ranking-weight-entry-slippage-dollars",
+        type=float,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--ranking-weight-model-implied-volatility",
+        type=float,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
         "--history-db",
         default=default_database_url(),
         help=argparse.SUPPRESS,
@@ -295,23 +384,30 @@ def resolve_symbols(args: argparse.Namespace) -> tuple[list[str], str]:
     symbols: list[str] = []
     default_label = "0dte_core" if args.profile == "0dte" else DEFAULT_BOARD_UNIVERSE
     label = args.symbol.upper() if args.symbol else default_label
+    universe_symbols: tuple[str, ...] = ()
 
     if args.universe:
-        symbols.extend(UNIVERSE_PRESETS[args.universe])
+        universe_symbols = resolve_universe_symbols(str(args.universe))
+        symbols.extend(universe_symbols)
         label = args.universe
     if args.symbols:
-        symbols.extend(
-            [
-                token.strip().upper()
-                for token in args.symbols.split(",")
-                if token.strip()
-            ]
-        )
-        if args.symbols.strip():
+        explicit_symbols = [
+            token.strip().upper() for token in args.symbols.split(",") if token.strip()
+        ]
+        symbols.extend(explicit_symbols)
+        if explicit_symbols and (
+            not args.universe
+            or {symbol.upper() for symbol in explicit_symbols}
+            != {symbol.upper() for symbol in universe_symbols}
+        ):
             label = "custom_symbols"
     if args.symbols_file:
-        symbols.extend(load_symbols_file(args.symbols_file))
-        label = Path(args.symbols_file).stem.lower()
+        file_symbols = load_symbols_file(args.symbols_file)
+        symbols.extend(file_symbols)
+        if not args.universe or {symbol.upper() for symbol in file_symbols} != {
+            symbol.upper() for symbol in universe_symbols
+        }:
+            label = Path(args.symbols_file).stem.lower()
 
     if args.symbol:
         symbols.append(args.symbol.upper())
@@ -407,6 +503,7 @@ def apply_profile_defaults(args: argparse.Namespace, underlying_type: str) -> No
     profile = PROFILE_CONFIGS[args.profile]
     underlying_key = infer_underlying_key(underlying_type)
     normalized_strategy = normalize_strategy_family(args.strategy)
+    ranking_policy = resolve_ranking_policy(args.profile, normalized_strategy)
     directional_long_defaults = (
         DIRECTIONAL_LONG_DELTA_DEFAULTS.get(args.profile)
         if normalized_strategy in {"long_call", "long_put"}
@@ -468,6 +565,12 @@ def apply_profile_defaults(args: argparse.Namespace, underlying_type: str) -> No
         args.min_breakeven_vs_expected_move_ratio,
         profile.min_breakeven_vs_expected_move_ratio,
     )
+    for key, value in ranking_policy.as_builder_params().items():
+        setattr(
+            args,
+            key,
+            resolve_profile_value(getattr(args, key, None), value),
+        )
 
 
 def validate_profile_scope(
@@ -513,6 +616,33 @@ def build_filter_payload(args: argparse.Namespace) -> dict[str, Any]:
         "min_fill_ratio": args.min_fill_ratio,
         "min_short_vs_expected_move_ratio": args.min_short_vs_expected_move_ratio,
         "min_breakeven_vs_expected_move_ratio": args.min_breakeven_vs_expected_move_ratio,
+        "ranking_min_probability_of_profit": args.ranking_min_probability_of_profit,
+        "ranking_min_expected_value_dollars": args.ranking_min_expected_value_dollars,
+        "ranking_min_slippage_adjusted_expected_value_dollars": (
+            args.ranking_min_slippage_adjusted_expected_value_dollars
+        ),
+        "ranking_max_entry_slippage_dollars": args.ranking_max_entry_slippage_dollars,
+        "ranking_min_model_implied_volatility": (
+            args.ranking_min_model_implied_volatility
+        ),
+        "ranking_max_model_implied_volatility": (
+            args.ranking_max_model_implied_volatility
+        ),
+        "ranking_weight_probability_of_profit": (
+            args.ranking_weight_probability_of_profit
+        ),
+        "ranking_weight_expected_value_dollars": (
+            args.ranking_weight_expected_value_dollars
+        ),
+        "ranking_weight_slippage_adjusted_expected_value_dollars": (
+            args.ranking_weight_slippage_adjusted_expected_value_dollars
+        ),
+        "ranking_weight_entry_slippage_dollars": (
+            args.ranking_weight_entry_slippage_dollars
+        ),
+        "ranking_weight_model_implied_volatility": (
+            args.ranking_weight_model_implied_volatility
+        ),
     }
 
 
@@ -564,6 +694,38 @@ def validate_resolved_args(args: argparse.Namespace) -> None:
         raise SystemExit(
             "Expected min-breakeven-vs-expected-move-ratio to be between -1 and 1"
         )
+    if (
+        args.ranking_min_probability_of_profit is not None
+        and (
+            args.ranking_min_probability_of_profit < 0
+            or args.ranking_min_probability_of_profit > 1
+        )
+    ):
+        raise SystemExit("Expected ranking-min-probability-of-profit in [0, 1]")
+    for key in (
+        "ranking_min_expected_value_dollars",
+        "ranking_min_slippage_adjusted_expected_value_dollars",
+        "ranking_max_entry_slippage_dollars",
+        "ranking_min_model_implied_volatility",
+        "ranking_max_model_implied_volatility",
+        "ranking_weight_probability_of_profit",
+        "ranking_weight_expected_value_dollars",
+        "ranking_weight_slippage_adjusted_expected_value_dollars",
+        "ranking_weight_entry_slippage_dollars",
+        "ranking_weight_model_implied_volatility",
+    ):
+        value = getattr(args, key, None)
+        if value is not None and value < 0:
+            raise SystemExit(f"Expected {key.replace('_', '-')} >= 0")
+    if (
+        args.ranking_min_model_implied_volatility is not None
+        and args.ranking_max_model_implied_volatility is not None
+        and args.ranking_max_model_implied_volatility
+        < args.ranking_min_model_implied_volatility
+    ):
+        raise SystemExit(
+            "Expected ranking-max-model-implied-volatility >= ranking-min-model-implied-volatility"
+        )
 
 
 def resolve_symbol_scan_args(
@@ -588,6 +750,7 @@ __all__ = [
     "infer_underlying_key",
     "load_symbols_file",
     "parse_args",
+    "RANKING_POLICY_ARG_KEYS",
     "resolve_profile_value",
     "resolve_scan_reference_date",
     "resolve_scan_reference_datetime",

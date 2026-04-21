@@ -13,6 +13,7 @@ from core.services.automations import (
 )
 from core.services.candidate_policy import resolve_strategy_min_return_on_risk
 from core.services.options_automation_models import BotLimits, BotRuntimePolicy
+from core.services.scanners.config import RANKING_POLICY_ARG_KEYS
 from core.services.strategy_configs import (
     _as_list,
     _as_text,
@@ -22,6 +23,31 @@ from core.services.strategy_configs import (
 )
 
 NEW_YORK = ZoneInfo("America/New_York")
+
+
+def _aggregate_scope_ranking_policy(
+    entries: list[tuple["ResolvedBot", ResolvedAutomation]],
+) -> dict[str, float]:
+    values_by_key: dict[str, list[float]] = {key: [] for key in RANKING_POLICY_ARG_KEYS}
+    for _bot, automation in entries:
+        builder_params = automation.strategy_config.builder_params
+        for key in RANKING_POLICY_ARG_KEYS:
+            value = builder_params.get(key)
+            if value is None:
+                continue
+            values_by_key[key].append(float(value))
+
+    payload: dict[str, float] = {}
+    for key, values in values_by_key.items():
+        if not values:
+            continue
+        if key.startswith("ranking_weight_"):
+            payload[key] = sum(values) / len(values)
+        elif key.startswith("ranking_max_"):
+            payload[key] = max(values)
+        else:
+            payload[key] = min(values)
+    return payload
 
 
 @dataclass(frozen=True)
@@ -249,6 +275,11 @@ def build_discovery_run_scope(
     scanner_profiles = {
         automation.strategy_config.scanner_profile for _bot, automation in entries
     }
+    universe_refs = {
+        str(automation.automation.universe_ref).strip()
+        for _bot, automation in entries
+        if str(automation.automation.universe_ref or "").strip()
+    }
     dte_mins = [
         int(automation.strategy_config.builder_params.get("dte_min") or 0)
         for _bot, automation in entries
@@ -314,6 +345,7 @@ def build_discovery_run_scope(
         )
         is not None
     ]
+    ranking_policy = _aggregate_scope_ranking_policy(entries)
     return {
         "enabled": True,
         "symbols": tuple(symbols),
@@ -323,6 +355,7 @@ def build_discovery_run_scope(
         "scanner_profile": None
         if len(scanner_profiles) != 1
         else next(iter(scanner_profiles)),
+        "universe_ref": None if len(universe_refs) != 1 else next(iter(universe_refs)),
         "scanner_args": {
             **({} if not dte_mins else {"min_dte": min(dte_mins)}),
             **({} if not dte_maxs else {"max_dte": max(dte_maxs)}),
@@ -361,6 +394,7 @@ def build_discovery_run_scope(
                 if not return_on_risk_values
                 else {"min_return_on_risk": min(return_on_risk_values)}
             ),
+            **ranking_policy,
         },
         "entry_runtimes": entries,
     }
