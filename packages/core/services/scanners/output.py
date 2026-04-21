@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import shutil
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -76,6 +77,62 @@ def format_dte_label(days_to_expiration: int) -> str:
     return "0D" if days_to_expiration == 0 else str(days_to_expiration)
 
 
+def _format_optional_percent(value: float | None) -> str:
+    return "n/a" if value is None else f"{value * 100:.1f}"
+
+
+def _format_optional_dollars(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.0f}"
+
+
+def _analytics_summary(candidate: SpreadCandidate) -> str | None:
+    metrics: list[str] = []
+    if candidate.probability_of_profit is not None:
+        metrics.append(f"PoP {candidate.probability_of_profit * 100:.1f}%")
+    if candidate.breakeven_touch_probability is not None:
+        metrics.append(f"BE touch {candidate.breakeven_touch_probability * 100:.1f}%")
+    if candidate.expected_value_dollars is not None:
+        metrics.append(f"EV ${candidate.expected_value_dollars:.0f}")
+    if candidate.slippage_adjusted_expected_value_dollars is not None:
+        metrics.append(
+            f"EV(nat) ${candidate.slippage_adjusted_expected_value_dollars:.0f}"
+        )
+    if candidate.entry_slippage_dollars is not None:
+        metrics.append(f"slip ${candidate.entry_slippage_dollars:.0f}")
+    if candidate.model_implied_volatility is not None:
+        metrics.append(f"model IV {candidate.model_implied_volatility * 100:.1f}%")
+    if (
+        candidate.average_implied_volatility is not None
+        and (
+            candidate.model_implied_volatility is None
+            or not math.isclose(
+                candidate.average_implied_volatility,
+                candidate.model_implied_volatility,
+                abs_tol=5e-4,
+            )
+        )
+    ):
+        metrics.append(f"avg IV {candidate.average_implied_volatility * 100:.1f}%")
+    if not metrics:
+        return None
+    return " | ".join(metrics)
+
+
+def _net_greeks_summary(candidate: SpreadCandidate) -> str | None:
+    metrics: list[str] = []
+    if candidate.net_delta is not None:
+        metrics.append(f"Δ {candidate.net_delta:.2f}")
+    if candidate.net_gamma is not None:
+        metrics.append(f"Γ {candidate.net_gamma:.3f}")
+    if candidate.net_theta is not None:
+        metrics.append(f"Θ {candidate.net_theta:.2f}")
+    if candidate.net_vega is not None:
+        metrics.append(f"V {candidate.net_vega:.2f}")
+    if not metrics:
+        return None
+    return " | ".join(metrics)
+
+
 def build_table_rows(
     candidates: list[SpreadCandidate], *, include_strategy: bool = False
 ) -> list[list[str]]:
@@ -93,6 +150,8 @@ def build_table_rows(
                 f"{candidate.midpoint_credit:.2f}",
                 f"{candidate.return_on_risk * 100:.1f}",
                 f"{candidate.quality_score:.1f}",
+                _format_optional_percent(candidate.probability_of_profit),
+                _format_optional_dollars(candidate.expected_value_dollars),
                 "n/a"
                 if candidate.short_delta is None
                 else f"{candidate.short_delta:.2f}",
@@ -171,6 +230,8 @@ def print_human_readable(
         "Entry",
         "ROR%",
         "Score",
+        "PoP%",
+        "EV$",
         "Δ",
         "OTM%",
         "BE%",
@@ -202,6 +263,12 @@ def print_human_readable(
                 f"{candidate.expected_move:.2f} ({candidate.expected_move_pct * 100:.2f}% of spot) "
                 f"from {candidate.expected_move_source_strike:.2f} strike"
             )
+        analytics_summary = _analytics_summary(candidate)
+        if analytics_summary:
+            print(f"   analytics: {analytics_summary}")
+        net_greeks_summary = _net_greeks_summary(candidate)
+        if net_greeks_summary:
+            print(f"   net greeks: {net_greeks_summary}")
         if candidate.calendar_reasons:
             print(f"   reasons: {'; '.join(candidate.calendar_reasons)}")
         if candidate.data_reasons:
@@ -306,6 +373,21 @@ def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
         "data_status",
         "data_reasons",
         "selection_notes",
+        "average_implied_volatility",
+        "model_implied_volatility",
+        "net_delta",
+        "net_gamma",
+        "net_theta",
+        "net_vega",
+        "probability_of_profit",
+        "breakeven_touch_probability",
+        "expected_value_dollars",
+        "slippage_adjusted_expected_value_dollars",
+        "entry_slippage_dollars",
+        "lower_breakeven",
+        "upper_breakeven",
+        "side_balance_score",
+        "wing_symmetry_ratio",
         "order_payload",
     ]
     with open(path, "w", newline="", encoding="utf-8") as handle:
@@ -366,6 +448,8 @@ def build_ranked_candidate_rows(
                 candidate.strike_path,
                 f"{candidate.midpoint_credit:.2f}",
                 f"{candidate.quality_score:.1f}",
+                _format_optional_percent(candidate.probability_of_profit),
+                _format_optional_dollars(candidate.expected_value_dollars),
                 "n/a"
                 if candidate.short_delta is None
                 else f"{candidate.short_delta:.2f}",
@@ -420,6 +504,8 @@ def print_ranked_candidates(
             "Structure",
             "MidCr",
             "Score",
+            "PoP%",
+            "EV$",
             "Δ",
             "BE%",
             "S-EM",
@@ -451,6 +537,12 @@ def print_ranked_candidates(
         )
         if candidate.selection_notes:
             print(f"   why: {', '.join(candidate.selection_notes)}")
+        analytics_summary = _analytics_summary(candidate)
+        if analytics_summary:
+            print(f"   analytics: {analytics_summary}")
+        net_greeks_summary = _net_greeks_summary(candidate)
+        if net_greeks_summary:
+            print(f"   net greeks: {net_greeks_summary}")
         if candidate.calendar_reasons:
             print(f"   calendar: {'; '.join(candidate.calendar_reasons)}")
         if candidate.data_reasons:

@@ -7,6 +7,12 @@ from core.services.option_structures import (
     candidate_legs,
     payload_structure_identity,
 )
+from core.services.opportunity_fields import (
+    candidate_economics,
+    candidate_evidence_metrics,
+    candidate_strategy_metrics,
+    risk_hints,
+)
 from core.services.runtime_candidate_filters import filter_runtime_symbol_candidates
 from core.services.runtime_identity import build_pipeline_id
 from core.services.runtime_policy import (
@@ -72,40 +78,6 @@ def _opportunity_blockers(
             if blocker not in blockers:
                 blockers.append(blocker)
     return blockers
-
-
-def _candidate_economics(candidate: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "midpoint_credit": candidate.get("midpoint_credit"),
-        "natural_credit": candidate.get("natural_credit"),
-        "max_profit": candidate.get("max_profit"),
-        "max_loss": candidate.get("max_loss"),
-        "return_on_risk": candidate.get("return_on_risk"),
-        "fill_ratio": candidate.get("fill_ratio"),
-    }
-
-
-def _candidate_strategy_metrics(candidate: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "width": candidate.get("width"),
-        "short_strike": candidate.get("short_strike"),
-        "long_strike": candidate.get("long_strike"),
-        "expected_move": candidate.get("expected_move"),
-        "underlying_price": candidate.get("underlying_price"),
-        "side_balance_score": candidate.get("side_balance_score"),
-        "wing_symmetry_ratio": candidate.get("wing_symmetry_ratio"),
-    }
-
-
-def _risk_hints(candidate: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "midpoint_credit": candidate.get("midpoint_credit"),
-        "natural_credit": candidate.get("natural_credit"),
-        "max_loss": candidate.get("max_loss"),
-        "return_on_risk": candidate.get("return_on_risk"),
-        "fill_ratio": candidate.get("fill_ratio"),
-        "width": candidate.get("width"),
-    }
 
 
 def _execution_shape(candidate: dict[str, Any]) -> dict[str, Any]:
@@ -277,8 +249,8 @@ def build_runtime_opportunity_payload(
         "reason_codes": [str(row.get("state_reason") or "selected_runtime_candidate")],
         "blockers": blockers,
         "legs": candidate_legs(candidate),
-        "economics": _candidate_economics(candidate),
-        "strategy_metrics": _candidate_strategy_metrics(candidate),
+        "economics": candidate_economics(candidate),
+        "strategy_metrics": candidate_strategy_metrics(candidate),
         "order_payload": dict(candidate.get("order_payload") or {}),
         "evidence": {
             "runtime_kind": "entry",
@@ -287,12 +259,13 @@ def build_runtime_opportunity_payload(
             "selection_state": row.get("selection_state"),
             "selection_rank": row.get("selection_rank"),
             "generated_at": generated_at,
+            **candidate_evidence_metrics(candidate),
             "source_opportunity_id": None
             if source_row is None
             else source_row.get("opportunity_id"),
         },
         "execution_shape": _execution_shape(candidate),
-        "risk_hints": _risk_hints(candidate),
+        "risk_hints": risk_hints(candidate),
         "source_cycle_id": cycle_id,
         "source_candidate_id": None
         if source_row is None or source_row.get("candidate_id") in (None, "")

@@ -13,6 +13,12 @@ from core.services.option_structures import (
     normalize_strategy_family,
     payload_structure_identity,
 )
+from core.services.opportunity_fields import (
+    candidate_economics,
+    candidate_evidence_metrics,
+    candidate_strategy_metrics,
+    risk_hints,
+)
 from core.services.runtime_identity import (
     build_pipeline_id,
     resolve_pipeline_policy_fields,
@@ -253,6 +259,7 @@ def _candidate_evidence(
                 "execution_blockers": candidate.get("execution_blockers"),
                 "return_on_risk": candidate.get("return_on_risk"),
                 "midpoint_credit": candidate.get("midpoint_credit"),
+                **candidate_evidence_metrics(candidate),
                 "setup_status": candidate.get("setup_status"),
                 "data_status": candidate.get("data_status"),
                 "calendar_status": candidate.get("calendar_status"),
@@ -263,52 +270,12 @@ def _candidate_evidence(
     return evidence
 
 
-def _risk_hints(candidate: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "midpoint_credit": candidate.get("midpoint_credit"),
-        "natural_credit": candidate.get("natural_credit"),
-        "max_loss": candidate.get("max_loss"),
-        "return_on_risk": candidate.get("return_on_risk"),
-        "fill_ratio": candidate.get("fill_ratio"),
-        "width": candidate.get("width"),
-    }
-
-
 def _execution_shape(candidate: dict[str, Any]) -> dict[str, Any]:
     return {
         "underlying_symbol": candidate.get("underlying_symbol"),
         "structure_identity": _candidate_identity(candidate),
         "legs": candidate_legs(candidate),
         "order_payload": dict(candidate.get("order_payload") or {}),
-    }
-
-
-def _candidate_legs(candidate: dict[str, Any]) -> list[dict[str, Any]]:
-    return candidate_legs(candidate)
-
-
-def _candidate_economics(candidate: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "midpoint_credit": candidate.get("midpoint_credit"),
-        "natural_credit": candidate.get("natural_credit"),
-        "max_profit": candidate.get("max_profit"),
-        "max_loss": candidate.get("max_loss"),
-        "return_on_risk": candidate.get("return_on_risk"),
-        "fill_ratio": candidate.get("fill_ratio"),
-    }
-
-
-def _candidate_strategy_metrics(candidate: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "width": candidate.get("width"),
-        "short_strike": candidate.get("short_strike"),
-        "long_strike": candidate.get("long_strike"),
-        "lower_breakeven": candidate.get("lower_breakeven"),
-        "upper_breakeven": candidate.get("upper_breakeven"),
-        "side_balance_score": candidate.get("side_balance_score"),
-        "wing_symmetry_ratio": candidate.get("wing_symmetry_ratio"),
-        "expected_move": candidate.get("expected_move"),
-        "underlying_price": candidate.get("underlying_price"),
     }
 
 
@@ -380,9 +347,9 @@ def _build_opportunity_payload(
         "expires_at": _expires_at(generated_at, profile),
         "reason_codes": [str(row.get("state_reason") or "selected")],
         "blockers": blockers,
-        "legs": _candidate_legs(candidate),
-        "economics": _candidate_economics(candidate),
-        "strategy_metrics": _candidate_strategy_metrics(candidate),
+        "legs": candidate_legs(candidate),
+        "economics": candidate_economics(candidate),
+        "strategy_metrics": candidate_strategy_metrics(candidate),
         "order_payload": dict(candidate.get("order_payload") or {}),
         "evidence": {
             "selection_state": row.get("selection_state"),
@@ -396,9 +363,10 @@ def _build_opportunity_payload(
             "scoring_state": candidate.get("scoring_state"),
             "scoring_state_reason": candidate.get("scoring_state_reason"),
             "execution_blockers": candidate.get("execution_blockers"),
+            **candidate_evidence_metrics(candidate),
         },
         "execution_shape": _execution_shape(candidate),
-        "risk_hints": _risk_hints(candidate),
+        "risk_hints": risk_hints(candidate),
         "source_cycle_id": cycle_id,
         "source_candidate_id": (
             None if row.get("candidate_id") in (None, "") else int(row["candidate_id"])

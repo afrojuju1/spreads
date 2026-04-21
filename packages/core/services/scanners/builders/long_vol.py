@@ -10,6 +10,7 @@ from core.domain.models import (
     SpreadCandidate,
 )
 
+from .analytics import attach_structure_analytics
 from .shared import days_from_reference, relative_spread, relative_spread_exceeds
 from .structures import build_long_candidate_structure
 
@@ -124,76 +125,81 @@ def build_long_straddles(
                 contracts=[put_contract, call_contract],
                 limit_price=midpoint_credit,
             )
+            candidate = SpreadCandidate(
+                underlying_symbol=symbol,
+                strategy="long_straddle",
+                profile=args.profile,
+                expiration_date=expiration_date,
+                days_to_expiration=days_to_expiration,
+                underlying_price=spot_price,
+                legs=tuple(structure["legs"]),
+                structure_identity=str(structure["structure_identity"]),
+                short_strike=put_contract.strike_price,
+                long_strike=call_contract.strike_price,
+                width=0.0,
+                short_delta=average_delta,
+                long_delta=average_delta,
+                greeks_source=call_snapshot.greeks_source
+                if call_snapshot.greeks_source == put_snapshot.greeks_source
+                else "mixed",
+                short_midpoint=put_snapshot.midpoint,
+                long_midpoint=call_snapshot.midpoint,
+                short_bid=put_snapshot.bid,
+                short_ask=put_snapshot.ask,
+                long_bid=call_snapshot.bid,
+                long_ask=call_snapshot.ask,
+                midpoint_credit=midpoint_credit,
+                natural_credit=natural_credit,
+                max_profit=round(
+                    max((expected_move_amount or midpoint_credit) - midpoint_credit, 0.01)
+                    * 100.0,
+                    2,
+                ),
+                max_loss=round(midpoint_credit * 100.0, 2),
+                return_on_risk=return_on_risk,
+                breakeven=strike,
+                breakeven_cushion_pct=breakeven_cushion_pct,
+                short_otm_pct=short_otm_pct,
+                short_open_interest=put_contract.open_interest,
+                long_open_interest=call_contract.open_interest,
+                short_relative_spread=relative_spread(put_snapshot),
+                long_relative_spread=relative_spread(call_snapshot),
+                fill_ratio=fill_ratio,
+                min_quote_size=min(
+                    put_snapshot.bid_size,
+                    put_snapshot.ask_size,
+                    call_snapshot.bid_size,
+                    call_snapshot.ask_size,
+                ),
+                order_payload=dict(structure["order_payload"]),
+                expected_move=expected_move_amount,
+                expected_move_pct=expected_move_pct,
+                expected_move_source_strike=expected_move_source_strike,
+                modeled_move_vs_implied_move=modeled_move_vs_implied_move,
+                modeled_move_vs_break_even_move=modeled_move_vs_break_even_move,
+                short_vs_expected_move=short_vs_expected_move,
+                breakeven_vs_expected_move=breakeven_vs_expected_move,
+                short_bid_size=put_snapshot.bid_size,
+                short_ask_size=put_snapshot.ask_size,
+                long_bid_size=call_snapshot.bid_size,
+                long_ask_size=call_snapshot.ask_size,
+                short_implied_volatility=put_snapshot.implied_volatility,
+                long_implied_volatility=call_snapshot.implied_volatility,
+                short_volume=put_snapshot.daily_volume,
+                long_volume=call_snapshot.daily_volume,
+                lower_breakeven=round(strike - midpoint_credit, 4),
+                upper_breakeven=round(strike + midpoint_credit, 4),
+                side_balance_score=side_balance_score,
+                wing_symmetry_ratio=1.0,
+            )
             candidates.append(
-                SpreadCandidate(
-                    underlying_symbol=symbol,
-                    strategy="long_straddle",
-                    profile=args.profile,
-                    expiration_date=expiration_date,
-                    days_to_expiration=days_to_expiration,
-                    underlying_price=spot_price,
-                    legs=tuple(structure["legs"]),
-                    structure_identity=str(structure["structure_identity"]),
-                    short_strike=put_contract.strike_price,
-                    long_strike=call_contract.strike_price,
-                    width=0.0,
-                    short_delta=average_delta,
-                    long_delta=average_delta,
-                    greeks_source=call_snapshot.greeks_source
-                    if call_snapshot.greeks_source == put_snapshot.greeks_source
-                    else "mixed",
-                    short_midpoint=put_snapshot.midpoint,
-                    long_midpoint=call_snapshot.midpoint,
-                    short_bid=put_snapshot.bid,
-                    short_ask=put_snapshot.ask,
-                    long_bid=call_snapshot.bid,
-                    long_ask=call_snapshot.ask,
-                    midpoint_credit=midpoint_credit,
-                    natural_credit=natural_credit,
-                    max_profit=round(
-                        max(
-                            (expected_move_amount or midpoint_credit) - midpoint_credit,
-                            0.01,
-                        )
-                        * 100.0,
-                        2,
-                    ),
-                    max_loss=round(midpoint_credit * 100.0, 2),
-                    return_on_risk=return_on_risk,
-                    breakeven=strike,
-                    breakeven_cushion_pct=breakeven_cushion_pct,
-                    short_otm_pct=short_otm_pct,
-                    short_open_interest=put_contract.open_interest,
-                    long_open_interest=call_contract.open_interest,
-                    short_relative_spread=relative_spread(put_snapshot),
-                    long_relative_spread=relative_spread(call_snapshot),
-                    fill_ratio=fill_ratio,
-                    min_quote_size=min(
-                        put_snapshot.bid_size,
-                        put_snapshot.ask_size,
-                        call_snapshot.bid_size,
-                        call_snapshot.ask_size,
-                    ),
-                    order_payload=dict(structure["order_payload"]),
-                    expected_move=expected_move_amount,
-                    expected_move_pct=expected_move_pct,
-                    expected_move_source_strike=expected_move_source_strike,
-                    modeled_move_vs_implied_move=modeled_move_vs_implied_move,
-                    modeled_move_vs_break_even_move=modeled_move_vs_break_even_move,
-                    short_vs_expected_move=short_vs_expected_move,
-                    breakeven_vs_expected_move=breakeven_vs_expected_move,
-                    short_bid_size=put_snapshot.bid_size,
-                    short_ask_size=put_snapshot.ask_size,
-                    long_bid_size=call_snapshot.bid_size,
-                    long_ask_size=call_snapshot.ask_size,
-                    short_implied_volatility=put_snapshot.implied_volatility,
-                    long_implied_volatility=call_snapshot.implied_volatility,
-                    short_volume=put_snapshot.daily_volume,
-                    long_volume=call_snapshot.daily_volume,
-                    lower_breakeven=round(strike - midpoint_credit, 4),
-                    upper_breakeven=round(strike + midpoint_credit, 4),
-                    side_balance_score=side_balance_score,
-                    wing_symmetry_ratio=1.0,
+                attach_structure_analytics(
+                    candidate,
+                    snapshots_by_symbol={
+                        put_contract.symbol: put_snapshot,
+                        call_contract.symbol: call_snapshot,
+                    },
+                    args=args,
                 )
             )
 
@@ -343,83 +349,91 @@ def build_long_strangles(
                     contracts=[put_contract, call_contract],
                     limit_price=midpoint_credit,
                 )
+                candidate = SpreadCandidate(
+                    underlying_symbol=symbol,
+                    strategy="long_strangle",
+                    profile=args.profile,
+                    expiration_date=expiration_date,
+                    days_to_expiration=days_to_expiration,
+                    underlying_price=spot_price,
+                    legs=tuple(structure["legs"]),
+                    structure_identity=str(structure["structure_identity"]),
+                    short_strike=put_contract.strike_price,
+                    long_strike=call_contract.strike_price,
+                    width=round(
+                        call_contract.strike_price - put_contract.strike_price, 4
+                    ),
+                    short_delta=average_delta,
+                    long_delta=average_delta,
+                    greeks_source=call_snapshot.greeks_source
+                    if call_snapshot.greeks_source == put_snapshot.greeks_source
+                    else "mixed",
+                    short_midpoint=put_snapshot.midpoint,
+                    long_midpoint=call_snapshot.midpoint,
+                    short_bid=put_snapshot.bid,
+                    short_ask=put_snapshot.ask,
+                    long_bid=call_snapshot.bid,
+                    long_ask=call_snapshot.ask,
+                    midpoint_credit=midpoint_credit,
+                    natural_credit=natural_credit,
+                    max_profit=round(
+                        max(
+                            (expected_move_amount or break_even_move)
+                            - break_even_move,
+                            0.01,
+                        )
+                        * 100.0,
+                        2,
+                    ),
+                    max_loss=round(midpoint_credit * 100.0, 2),
+                    return_on_risk=return_on_risk,
+                    breakeven=spot_price,
+                    breakeven_cushion_pct=breakeven_cushion_pct,
+                    short_otm_pct=short_otm_pct,
+                    short_open_interest=put_contract.open_interest,
+                    long_open_interest=call_contract.open_interest,
+                    short_relative_spread=relative_spread(put_snapshot),
+                    long_relative_spread=relative_spread(call_snapshot),
+                    fill_ratio=fill_ratio,
+                    min_quote_size=min(
+                        put_snapshot.bid_size,
+                        put_snapshot.ask_size,
+                        call_snapshot.bid_size,
+                        call_snapshot.ask_size,
+                    ),
+                    order_payload=dict(structure["order_payload"]),
+                    expected_move=expected_move_amount,
+                    expected_move_pct=expected_move_pct,
+                    expected_move_source_strike=expected_move_source_strike,
+                    modeled_move_vs_implied_move=modeled_move_vs_implied_move,
+                    modeled_move_vs_break_even_move=modeled_move_vs_break_even_move,
+                    short_vs_expected_move=short_vs_expected_move,
+                    breakeven_vs_expected_move=breakeven_vs_expected_move,
+                    short_bid_size=put_snapshot.bid_size,
+                    short_ask_size=put_snapshot.ask_size,
+                    long_bid_size=call_snapshot.bid_size,
+                    long_ask_size=call_snapshot.ask_size,
+                    short_implied_volatility=put_snapshot.implied_volatility,
+                    long_implied_volatility=call_snapshot.implied_volatility,
+                    short_volume=put_snapshot.daily_volume,
+                    long_volume=call_snapshot.daily_volume,
+                    lower_breakeven=round(
+                        put_contract.strike_price - midpoint_credit, 4
+                    ),
+                    upper_breakeven=round(
+                        call_contract.strike_price + midpoint_credit, 4
+                    ),
+                    side_balance_score=side_balance_score,
+                    wing_symmetry_ratio=wing_symmetry_ratio,
+                )
                 candidates.append(
-                    SpreadCandidate(
-                        underlying_symbol=symbol,
-                        strategy="long_strangle",
-                        profile=args.profile,
-                        expiration_date=expiration_date,
-                        days_to_expiration=days_to_expiration,
-                        underlying_price=spot_price,
-                        legs=tuple(structure["legs"]),
-                        structure_identity=str(structure["structure_identity"]),
-                        short_strike=put_contract.strike_price,
-                        long_strike=call_contract.strike_price,
-                        width=round(
-                            call_contract.strike_price - put_contract.strike_price, 4
-                        ),
-                        short_delta=average_delta,
-                        long_delta=average_delta,
-                        greeks_source=call_snapshot.greeks_source
-                        if call_snapshot.greeks_source == put_snapshot.greeks_source
-                        else "mixed",
-                        short_midpoint=put_snapshot.midpoint,
-                        long_midpoint=call_snapshot.midpoint,
-                        short_bid=put_snapshot.bid,
-                        short_ask=put_snapshot.ask,
-                        long_bid=call_snapshot.bid,
-                        long_ask=call_snapshot.ask,
-                        midpoint_credit=midpoint_credit,
-                        natural_credit=natural_credit,
-                        max_profit=round(
-                            max(
-                                (expected_move_amount or break_even_move)
-                                - break_even_move,
-                                0.01,
-                            )
-                            * 100.0,
-                            2,
-                        ),
-                        max_loss=round(midpoint_credit * 100.0, 2),
-                        return_on_risk=return_on_risk,
-                        breakeven=spot_price,
-                        breakeven_cushion_pct=breakeven_cushion_pct,
-                        short_otm_pct=short_otm_pct,
-                        short_open_interest=put_contract.open_interest,
-                        long_open_interest=call_contract.open_interest,
-                        short_relative_spread=relative_spread(put_snapshot),
-                        long_relative_spread=relative_spread(call_snapshot),
-                        fill_ratio=fill_ratio,
-                        min_quote_size=min(
-                            put_snapshot.bid_size,
-                            put_snapshot.ask_size,
-                            call_snapshot.bid_size,
-                            call_snapshot.ask_size,
-                        ),
-                        order_payload=dict(structure["order_payload"]),
-                        expected_move=expected_move_amount,
-                        expected_move_pct=expected_move_pct,
-                        expected_move_source_strike=expected_move_source_strike,
-                        modeled_move_vs_implied_move=modeled_move_vs_implied_move,
-                        modeled_move_vs_break_even_move=modeled_move_vs_break_even_move,
-                        short_vs_expected_move=short_vs_expected_move,
-                        breakeven_vs_expected_move=breakeven_vs_expected_move,
-                        short_bid_size=put_snapshot.bid_size,
-                        short_ask_size=put_snapshot.ask_size,
-                        long_bid_size=call_snapshot.bid_size,
-                        long_ask_size=call_snapshot.ask_size,
-                        short_implied_volatility=put_snapshot.implied_volatility,
-                        long_implied_volatility=call_snapshot.implied_volatility,
-                        short_volume=put_snapshot.daily_volume,
-                        long_volume=call_snapshot.daily_volume,
-                        lower_breakeven=round(
-                            put_contract.strike_price - midpoint_credit, 4
-                        ),
-                        upper_breakeven=round(
-                            call_contract.strike_price + midpoint_credit, 4
-                        ),
-                        side_balance_score=side_balance_score,
-                        wing_symmetry_ratio=wing_symmetry_ratio,
+                    attach_structure_analytics(
+                        candidate,
+                        snapshots_by_symbol={
+                            put_contract.symbol: put_snapshot,
+                            call_contract.symbol: call_snapshot,
+                        },
+                        args=args,
                     )
                 )
 
