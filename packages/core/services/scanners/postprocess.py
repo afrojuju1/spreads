@@ -162,6 +162,9 @@ def annotate_ranking_policy(
                 ranking_policy=dict(evaluation["policy"]),
                 ranking_policy_status=str(evaluation["status"]),
                 ranking_policy_blockers=tuple(evaluation["blockers"]),
+                ranking_policy_margin_to_pass=dict(
+                    evaluation.get("margin_to_pass") or {}
+                ),
             )
         )
     return enriched

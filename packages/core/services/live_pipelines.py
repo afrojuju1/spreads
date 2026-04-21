@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
+from core.services.discovery_runs.schedule import build_collection_schedule_summary
 from core.services.runtime_identity import (
     build_live_run_scope_id,
     build_pipeline_id,
@@ -53,6 +55,27 @@ def resolve_discovery_run_label(payload: Mapping[str, Any]) -> str:
     )
 
 
+def build_discovery_run_session_schedule(
+    definition: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    payload = dict(definition.get("payload") or {})
+    return build_collection_schedule_summary(
+        now=datetime.now(UTC) if now is None else now,
+        market_calendar=str(definition.get("market_calendar") or "NYSE"),
+        interval_seconds=int(payload.get("interval_seconds", 300) or 300),
+        session_start_offset_minutes=int(
+            payload.get(
+                "session_start_offset_minutes",
+                (definition.get("schedule") or {}).get("minutes", 0),
+            )
+            or 0
+        ),
+        session_end_offset_minutes=int(payload.get("session_end_offset_minutes", 0) or 0),
+    )
+
+
 def pipeline_uses_runtime_owned_opportunities(
     pipeline: Mapping[str, Any] | None,
     *runs: Mapping[str, Any] | None,
@@ -74,6 +97,8 @@ def pipeline_uses_runtime_owned_opportunities(
 
 def list_enabled_discovery_run_pipelines(
     job_rows: Iterable[Mapping[str, Any]],
+    *,
+    now: datetime | None = None,
 ) -> list[dict[str, Any]]:
     pipelines_by_label: dict[str, dict[str, Any]] = {}
 
@@ -93,6 +118,10 @@ def list_enabled_discovery_run_pipelines(
                 "job_keys": [str(definition["job_key"])],
                 "payload": payload,
                 "singleton_scope": definition.get("singleton_scope"),
+                "session_schedule": build_discovery_run_session_schedule(
+                    definition,
+                    now=now,
+                ),
             }
             continue
         existing["job_keys"].append(str(definition["job_key"]))
@@ -132,6 +161,7 @@ __all__ = [
     "build_live_run_scope_id",
     "build_live_session_catalog",
     "build_live_snapshot_label",
+    "build_discovery_run_session_schedule",
     "build_pipeline_id",
     "list_enabled_discovery_run_pipelines",
     "parse_live_run_scope_id",

@@ -375,6 +375,7 @@ def _serialize_pipeline_summary(
         "horizon_intent": pipeline.get("default_horizon_intent"),
         "product_scope": pipeline.get("product_scope_json"),
         "policy": pipeline.get("policy_json"),
+        "session_schedule": dict(pipeline.get("session_schedule") or {}),
         "resolved_ranking_policy": (
             dict(resolved_ranking_policy or {})
             if isinstance(resolved_ranking_policy, Mapping)
@@ -648,6 +649,7 @@ def get_pipeline_detail(
         "resolved_ranking_policy": resolved_ranking_policy,
         "ranking_policy_gate_summary": ranking_policy_gate_summary,
         **tradeability_fields,
+        "session_schedule": dict(live_session.get("session_schedule") or {}),
         "pipeline": dict(pipeline),
         "current_cycle": current_cycle,
         "raw_candidate_summary": dict(live_session.get("raw_candidate_summary") or {}),

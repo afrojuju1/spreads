@@ -64,6 +64,7 @@ _CANDIDATE_POLICY_CONTEXT_FIELDS = (
     "ranking_policy",
     "ranking_policy_status",
     "ranking_policy_blockers",
+    "ranking_policy_margin_to_pass",
 )
 
 _CANDIDATE_RANKING_VECTOR_FIELDS = (

@@ -85,6 +85,7 @@ def evaluate_candidate_ranking_policy(
 ) -> dict[str, Any]:
     policy = resolve_ranking_policy_payload(policy_source)
     blockers: list[str] = []
+    margin_to_pass: dict[str, float | None] = {}
 
     def metric(metric_name: str) -> float | None:
         return _coerce_float(_read_value(candidate, metric_name))
@@ -96,8 +97,15 @@ def evaluate_candidate_ranking_policy(
     if minimum_probability_of_profit is not None:
         if probability_of_profit is None:
             blockers.append("probability_of_profit_missing")
+            margin_to_pass["probability_of_profit"] = None
         elif probability_of_profit < minimum_probability_of_profit:
             blockers.append("probability_of_profit_below_floor")
+            margin_to_pass["probability_of_profit"] = round(
+                minimum_probability_of_profit - probability_of_profit,
+                6,
+            )
+        else:
+            margin_to_pass["probability_of_profit"] = 0.0
 
     expected_value_dollars = metric("expected_value_dollars")
     minimum_expected_value_dollars = _coerce_float(
@@ -106,8 +114,15 @@ def evaluate_candidate_ranking_policy(
     if minimum_expected_value_dollars is not None:
         if expected_value_dollars is None:
             blockers.append("expected_value_dollars_missing")
+            margin_to_pass["expected_value_dollars"] = None
         elif expected_value_dollars < minimum_expected_value_dollars:
             blockers.append("expected_value_dollars_below_floor")
+            margin_to_pass["expected_value_dollars"] = round(
+                minimum_expected_value_dollars - expected_value_dollars,
+                6,
+            )
+        else:
+            margin_to_pass["expected_value_dollars"] = 0.0
 
     slippage_adjusted_expected_value_dollars = metric(
         "slippage_adjusted_expected_value_dollars"
@@ -118,11 +133,19 @@ def evaluate_candidate_ranking_policy(
     if minimum_slippage_adjusted_expected_value_dollars is not None:
         if slippage_adjusted_expected_value_dollars is None:
             blockers.append("slippage_adjusted_expected_value_dollars_missing")
+            margin_to_pass["slippage_adjusted_expected_value_dollars"] = None
         elif (
             slippage_adjusted_expected_value_dollars
             < minimum_slippage_adjusted_expected_value_dollars
         ):
             blockers.append("slippage_adjusted_expected_value_dollars_below_floor")
+            margin_to_pass["slippage_adjusted_expected_value_dollars"] = round(
+                minimum_slippage_adjusted_expected_value_dollars
+                - slippage_adjusted_expected_value_dollars,
+                6,
+            )
+        else:
+            margin_to_pass["slippage_adjusted_expected_value_dollars"] = 0.0
 
     entry_slippage_dollars = metric("entry_slippage_dollars")
     maximum_entry_slippage_dollars = _coerce_float(
@@ -131,8 +154,15 @@ def evaluate_candidate_ranking_policy(
     if maximum_entry_slippage_dollars is not None:
         if entry_slippage_dollars is None:
             blockers.append("entry_slippage_dollars_missing")
+            margin_to_pass["entry_slippage_dollars"] = None
         elif entry_slippage_dollars > maximum_entry_slippage_dollars:
             blockers.append("entry_slippage_dollars_above_ceiling")
+            margin_to_pass["entry_slippage_dollars"] = round(
+                entry_slippage_dollars - maximum_entry_slippage_dollars,
+                6,
+            )
+        else:
+            margin_to_pass["entry_slippage_dollars"] = 0.0
 
     model_implied_volatility = metric("model_implied_volatility")
     minimum_model_implied_volatility = _coerce_float(
@@ -147,22 +177,34 @@ def evaluate_candidate_ranking_policy(
     ):
         if model_implied_volatility is None:
             blockers.append("model_implied_volatility_missing")
+            margin_to_pass["model_implied_volatility"] = None
         else:
             if (
                 minimum_model_implied_volatility is not None
                 and model_implied_volatility < minimum_model_implied_volatility
             ):
                 blockers.append("model_implied_volatility_below_floor")
+                margin_to_pass["model_implied_volatility"] = round(
+                    minimum_model_implied_volatility - model_implied_volatility,
+                    6,
+                )
             if (
                 maximum_model_implied_volatility is not None
                 and model_implied_volatility > maximum_model_implied_volatility
             ):
                 blockers.append("model_implied_volatility_above_ceiling")
+                margin_to_pass["model_implied_volatility"] = round(
+                    model_implied_volatility - maximum_model_implied_volatility,
+                    6,
+                )
+            if "model_implied_volatility" not in margin_to_pass:
+                margin_to_pass["model_implied_volatility"] = 0.0
 
     return {
         "policy": policy,
         "status": "blocked" if blockers else "passed",
         "blockers": tuple(blockers),
+        "margin_to_pass": margin_to_pass,
     }
 
 

@@ -25,10 +25,12 @@ from core.services.discovery_runs.config import (
     build_collection_args,
     build_scanner_args,
 )
+from core.services.discovery_runs.schedule import build_collection_schedule_summary
 from core.services.management_planner import plan_position_management
 from core.services.opportunities import list_opportunities
 from core.services.opportunity_generation import build_runtime_opportunity_payload
 from core.services.positions import list_positions
+from core.services.ranking_policy import evaluate_candidate_ranking_policy
 from core.services.scanners.config import (
     parse_args as parse_scanner_args,
     resolve_ranking_builder_params,
@@ -221,6 +223,9 @@ class CollectionConfigTests(unittest.TestCase):
                         "ranking_policy_blockers": [
                             "expected_value_dollars_below_floor"
                         ],
+                        "ranking_policy_margin_to_pass": {
+                            "expected_value_dollars": 3.8,
+                        },
                         "probability_of_profit": 0.84,
                         "breakeven_touch_probability": 0.29,
                         "expected_value_dollars": 6.2,
@@ -274,10 +279,60 @@ class CollectionConfigTests(unittest.TestCase):
             blocked_candidate["ranking_policy_blockers"],
             ["expected_value_dollars_below_floor"],
         )
+        self.assertEqual(
+            blocked_candidate["ranking_policy_margin_to_pass"],
+            {"expected_value_dollars": 3.8},
+        )
         self.assertAlmostEqual(blocked_candidate["expected_value_dollars"], 6.2)
         self.assertEqual(
             summary["ranking_policy_gate_summary"]["status_counts"],
             {"blocked": 2, "passed": 1},
+        )
+
+    def test_build_collection_schedule_summary_marks_session_complete_after_close(
+        self,
+    ) -> None:
+        summary = build_collection_schedule_summary(
+            now=datetime(2026, 4, 21, 23, 17, tzinfo=UTC),
+            interval_seconds=300,
+            session_start_offset_minutes=-5,
+            session_end_offset_minutes=5,
+        )
+
+        self.assertEqual(summary["state"], "complete")
+        self.assertEqual(summary["expected_last_slot_at"], "2026-04-21T20:05:00Z")
+        self.assertEqual(summary["expected_current_slot_at"], "2026-04-21T20:05:00Z")
+
+    def test_evaluate_candidate_ranking_policy_returns_margin_to_pass(self) -> None:
+        evaluation = evaluate_candidate_ranking_policy(
+            {
+                "probability_of_profit": 0.58,
+                "expected_value_dollars": 6.2,
+                "slippage_adjusted_expected_value_dollars": 3.1,
+                "entry_slippage_dollars": 13.5,
+                "model_implied_volatility": 0.16,
+            },
+            policy_source={
+                "ranking_policy": {
+                    "min_probability_of_profit": 0.60,
+                    "min_expected_value_dollars": 10.0,
+                    "min_slippage_adjusted_expected_value_dollars": 8.0,
+                    "max_entry_slippage_dollars": 12.0,
+                    "min_model_implied_volatility": 0.18,
+                }
+            },
+        )
+
+        self.assertEqual(evaluation["status"], "blocked")
+        self.assertEqual(
+            evaluation["margin_to_pass"],
+            {
+                "probability_of_profit": 0.02,
+                "expected_value_dollars": 3.8,
+                "slippage_adjusted_expected_value_dollars": 4.9,
+                "entry_slippage_dollars": 1.5,
+                "model_implied_volatility": 0.02,
+            },
         )
 
     def test_build_discovery_run_scope_includes_runtime_min_return_on_risk(self) -> None:

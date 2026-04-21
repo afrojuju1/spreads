@@ -223,13 +223,17 @@ def build_system_status(
         for row in latest_discovery_runs:
             job_key = str(row.get("job_key") or "")
             if bool(row.get("needs_attention")):
+                schedule_note = _as_text(row.get("schedule_note"))
                 attention.append(
                     _attention(
                         severity="medium",
                         code="discovery_run_unhealthy",
                         message=(
-                            "Discovery-run "
-                            f"{job_key} is {str(row.get('status') or 'unknown')}."
+                            schedule_note
+                            or (
+                                "Discovery-run "
+                                f"{job_key} is {str(row.get('status') or 'unknown')}."
+                            )
                         ),
                     )
                 )

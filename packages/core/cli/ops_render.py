@@ -114,6 +114,48 @@ def _render_blocker_list(value: Any, *, length: int = 56) -> str:
     return _truncate(rendered or "-", length=length)
 
 
+def _render_session_schedule(value: Any, *, length: int = 72) -> str:
+    payload = value if isinstance(value, dict) else {}
+    if not payload:
+        return "-"
+    interval_minutes = payload.get("interval_minutes")
+    start_offset = int(payload.get("session_start_offset_minutes") or 0)
+    end_offset = int(payload.get("session_end_offset_minutes") or 0)
+    interval_text = (
+        f"every {int(interval_minutes)}m"
+        if isinstance(interval_minutes, (int, float)) and float(interval_minutes).is_integer()
+        else f"every {_render_value(interval_minutes)}m"
+    )
+
+    def _offset(anchor: str, minutes: int) -> str:
+        if minutes == 0:
+            return anchor
+        sign = "+" if minutes > 0 else ""
+        return f"{anchor}{sign}{minutes}m"
+
+    rendered = (
+        f"{interval_text}, "
+        f"{_offset('open', start_offset)}..{_offset('close', end_offset)}"
+    )
+    return _truncate(rendered, length=length)
+
+
+def _render_session_state(value: Any, *, length: int = 40) -> str:
+    payload = value if isinstance(value, dict) else {}
+    state = str(payload.get("state") or "").strip()
+    if not state:
+        return "-"
+    return _truncate(state, length=length)
+
+
+def _render_expected_slot(value: Any, *, length: int = 28) -> str:
+    payload = value if isinstance(value, dict) else {}
+    expected_slot_at = payload.get("expected_current_slot_at") or payload.get(
+        "expected_last_slot_at"
+    )
+    return _truncate(expected_slot_at or "-", length=length)
+
+
 def _render_flat_ranking_policy_summary(
     payload: dict[str, Any], *, length: int = 88
 ) -> str:
@@ -188,6 +230,48 @@ def _render_ranking_vector(value: Any, *, length: int = 88) -> str:
         )
     if payload.get("model_implied_volatility") is not None:
         parts.append(f"IV {_render_percent(payload.get('model_implied_volatility'))}")
+    return _truncate(", ".join(parts) or "-", length=length)
+
+
+def _render_ranking_margin_to_pass(value: Any, *, length: int = 64) -> str:
+    payload = value if isinstance(value, dict) else {}
+    margin_to_pass = (
+        payload.get("ranking_policy_margin_to_pass")
+        if isinstance(payload.get("ranking_policy_margin_to_pass"), dict)
+        else {}
+    )
+    if not margin_to_pass:
+        return "-"
+    ranking_policy = (
+        payload.get("ranking_policy")
+        if isinstance(payload.get("ranking_policy"), dict)
+        else {}
+    )
+    parts: list[str] = []
+    pop_gap = margin_to_pass.get("probability_of_profit")
+    if isinstance(pop_gap, (int, float)) and float(pop_gap) > 0:
+        parts.append(f"PoP +{float(pop_gap) * 100:.1f}pp")
+    ev_gap = margin_to_pass.get("expected_value_dollars")
+    if isinstance(ev_gap, (int, float)) and float(ev_gap) > 0:
+        parts.append(f"EV +{_render_money(ev_gap)}")
+    sev_gap = margin_to_pass.get("slippage_adjusted_expected_value_dollars")
+    if isinstance(sev_gap, (int, float)) and float(sev_gap) > 0:
+        parts.append(f"sEV +{_render_money(sev_gap)}")
+    slip_gap = margin_to_pass.get("entry_slippage_dollars")
+    if isinstance(slip_gap, (int, float)) and float(slip_gap) > 0:
+        parts.append(f"Slip -{_render_money(slip_gap)}")
+    iv_gap = margin_to_pass.get("model_implied_volatility")
+    if isinstance(iv_gap, (int, float)) and float(iv_gap) > 0:
+        direction = "+"
+        actual_iv = payload.get("model_implied_volatility")
+        max_iv = ranking_policy.get("max_model_implied_volatility")
+        if (
+            isinstance(actual_iv, (int, float))
+            and isinstance(max_iv, (int, float))
+            and float(actual_iv) > float(max_iv)
+        ):
+            direction = "-"
+        parts.append(f"IV {direction}{float(iv_gap):.2f}")
     return _truncate(", ".join(parts) or "-", length=length)
 
 
@@ -338,6 +422,7 @@ def _render_candidate_row_table(
     table.add_column("Metrics")
     table.add_column("Rank")
     table.add_column("Blockers")
+    table.add_column("Margin")
     for row in rows:
         table.add_row(
             str(row.get("underlying_symbol") or "-"),
@@ -351,6 +436,7 @@ def _render_candidate_row_table(
             _render_ranking_vector(row, length=96),
             str(row.get("ranking_policy_status") or "-"),
             _render_blocker_list(row.get("ranking_policy_blockers")),
+            _render_ranking_margin_to_pass(row),
         )
     console.print(table)
 
@@ -487,6 +573,7 @@ def _render_discovery_run_raw_candidates(
     table.add_column("Metrics")
     table.add_column("Rank")
     table.add_column("Blockers")
+    table.add_column("Margin")
     for discovery_run_key, candidate in top_rows[:12]:
         table.add_row(
             _truncate(discovery_run_key, length=36),
@@ -500,6 +587,7 @@ def _render_discovery_run_raw_candidates(
             _render_ranking_vector(candidate, length=96),
             str(candidate.get("ranking_policy_status") or "-"),
             _render_blocker_list(candidate.get("ranking_policy_blockers")),
+            _render_ranking_margin_to_pass(candidate),
         )
     console.print(table)
 
@@ -822,6 +910,13 @@ def _job_run_status_text(status: str | None) -> Text:
 
 
 def _render_schedule(row: dict[str, Any]) -> str:
+    session_schedule = (
+        row.get("session_schedule")
+        if isinstance(row.get("session_schedule"), dict)
+        else {}
+    )
+    if session_schedule:
+        return _render_session_schedule(session_schedule)
     schedule_type = str(row.get("schedule_type") or "")
     schedule = dict(row.get("schedule") or {})
     if schedule_type == "interval_minutes":
@@ -929,6 +1024,7 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
     if discovery_run_rows:
         table = Table(title="Discovery Runs", header_style="bold")
         table.add_column("Job Key")
+        table.add_column("Session")
         table.add_column("Status")
         table.add_column("Capture")
         table.add_column("Auto Exec")
@@ -936,6 +1032,7 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Automation")
         table.add_column("Quote Stream/Base", justify="right")
         table.add_column("Last Slot")
+        table.add_column("Expected")
         for row in discovery_run_rows:
             selection_summary = (
                 row.get("selection_summary")
@@ -944,6 +1041,7 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
             )
             table.add_row(
                 str(row.get("job_key") or "-"),
+                _render_session_state(row.get("session_schedule")),
                 str(row.get("status") or "-"),
                 str(row.get("capture_status") or "-"),
                 _render_auto_execution_summary(row.get("auto_execution_summary")),
@@ -951,6 +1049,7 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
                 _render_automation_sync_value(row.get("automation_summary")),
                 f"{_render_value(row.get('stream_quote_events_saved'))}/{_render_value(row.get('baseline_quote_events_saved'))}",
                 str(row.get("last_slot_at") or "-"),
+                _render_expected_slot(row.get("session_schedule")),
             )
         console.print(table)
         _render_discovery_run_raw_candidates(console, discovery_run_rows=discovery_run_rows)
@@ -1209,6 +1308,8 @@ def _render_pipeline_detail(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row("Pipeline", _render_value(payload.get("pipeline_id")))
     overview.add_row("Label", _render_value(payload.get("label")))
     overview.add_row("Date", _render_value(payload.get("market_date")))
+    overview.add_row("Schedule", _render_session_schedule(payload.get("session_schedule")))
+    overview.add_row("Session", _render_session_state(payload.get("session_schedule")))
     overview.add_row("Tradeability", _render_value(payload.get("tradeability_state")))
     overview.add_row("Risk", _render_value(payload.get("risk_status")))
     overview.add_row(
@@ -1239,6 +1340,7 @@ def _render_pipeline_detail(console: Console, payload: dict[str, Any]) -> None:
         table.add_row("Strategy", _render_value(current_cycle.get("strategy")))
         table.add_row("Profile", _render_value(current_cycle.get("profile")))
         table.add_row("Universe", _render_value(current_cycle.get("universe_label")))
+        table.add_row("Expected Slot", _render_expected_slot(payload.get("session_schedule")))
         table.add_row(
             "Candidates",
             (
@@ -1484,7 +1586,9 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Enabled")
         table.add_column("Health")
         table.add_column("Schedule")
+        table.add_column("Session")
         table.add_column("Latest")
+        table.add_column("Expected")
         table.add_column("Capture")
         table.add_column("Scope")
         for row in definition_rows:
@@ -1501,7 +1605,9 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
                 "yes" if row.get("enabled") else "no",
                 _status_text(row.get("operator_status")),
                 _render_schedule(row),
+                _render_session_state(row.get("session_schedule")),
                 latest_text,
+                _render_expected_slot(row.get("session_schedule")),
                 _render_value(row.get("latest_capture_status")),
                 _render_value(row.get("singleton_scope")),
             )
@@ -1597,6 +1703,8 @@ def _render_job_run_detail(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Value")
         table.add_row("Enabled", "yes" if definition.get("enabled") else "no")
         table.add_row("Schedule", _render_schedule(definition))
+        table.add_row("Session", _render_session_state(definition.get("session_schedule")))
+        table.add_row("Expected Slot", _render_expected_slot(definition.get("session_schedule")))
         table.add_row("Calendar", _render_value(definition.get("market_calendar")))
         table.add_row("Scope", _render_value(definition.get("singleton_scope")))
         table.add_row("Latest Run", _render_value(definition.get("latest_run_id")))

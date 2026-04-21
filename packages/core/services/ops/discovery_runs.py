@@ -16,6 +16,9 @@ from core.services.live_pipelines import (
     resolve_discovery_run_label,
 )
 from core.services.live_runtime import list_latest_live_sessions
+from core.services.discovery_run_health.schedule import (
+    evaluate_discovery_run_schedule_health,
+)
 from core.services.positions import enrich_position_row
 from core.services.selection_summary import selection_summary_payload as _selection_summary_payload
 from core.services.value_coercion import (
@@ -38,8 +41,16 @@ def _discovery_run_status(
     run: Mapping[str, Any] | None,
     *,
     now: datetime,
+    schedule_summary: Mapping[str, Any] | None = None,
 ) -> str:
     if run is None:
+        schedule_health = evaluate_discovery_run_schedule_health(
+            schedule_summary=schedule_summary,
+            latest_run=run,
+            now=now,
+        )
+        if bool(schedule_health.get("overdue")):
+            return "degraded"
         return "unknown"
     live_action_gate = (
         run.get("live_action_gate")
@@ -55,6 +66,13 @@ def _discovery_run_status(
     capture_status = str(run.get("capture_status") or "")
     if run_status in {"queued", "running"} and job_operator_status == "healthy":
         return "healthy"
+    schedule_health = evaluate_discovery_run_schedule_health(
+        schedule_summary=schedule_summary,
+        latest_run=run,
+        now=now,
+    )
+    if bool(schedule_health.get("overdue")):
+        return "degraded"
     if run_status != "succeeded":
         return job_operator_status if job_operator_status != "unknown" else "degraded"
     if capture_status == "healthy":
@@ -68,10 +86,25 @@ def _discovery_run_requires_attention(
     run: Mapping[str, Any] | None,
     *,
     now: datetime,
+    schedule_summary: Mapping[str, Any] | None = None,
 ) -> bool:
+    schedule_health = evaluate_discovery_run_schedule_health(
+        schedule_summary=schedule_summary,
+        latest_run=run,
+        now=now,
+    )
     if run is None:
+        return str((schedule_summary or {}).get("state") or "") not in {
+            "pending",
+            "off_day",
+        }
+    if bool(schedule_health.get("overdue")):
         return True
-    discovery_run_status = _discovery_run_status(run, now=now)
+    discovery_run_status = _discovery_run_status(
+        run,
+        now=now,
+        schedule_summary=schedule_summary,
+    )
     if discovery_run_status in {"healthy", "idle"}:
         return False
     return _is_recent(
@@ -89,7 +122,8 @@ def _latest_discovery_runs(
     now: datetime,
 ) -> list[dict[str, Any]]:
     discovery_run_definitions = list_enabled_discovery_run_pipelines(
-        list_declared_job_rows(enabled_only=True, job_type="discovery_run")
+        list_declared_job_rows(enabled_only=True, job_type="discovery_run"),
+        now=now,
     )
     if not discovery_run_definitions:
         return []
@@ -135,8 +169,29 @@ def _latest_discovery_runs(
         capture_status = None if run is None else run.get("capture_status")
         if capture_status is None:
             capture_status = quote_capture.get("capture_status")
-        discovery_run_status = _discovery_run_status(run, now=now)
-        needs_attention = _discovery_run_requires_attention(run, now=now)
+        session_schedule = (
+            {}
+            if session is None
+            or not isinstance(session.get("session_schedule"), Mapping)
+            else dict(session.get("session_schedule") or {})
+        )
+        if not session_schedule:
+            session_schedule = dict(definition.get("session_schedule") or {})
+        schedule_health = evaluate_discovery_run_schedule_health(
+            schedule_summary=session_schedule,
+            latest_run=run,
+            now=now,
+        )
+        discovery_run_status = _discovery_run_status(
+            run,
+            now=now,
+            schedule_summary=session_schedule,
+        )
+        needs_attention = _discovery_run_requires_attention(
+            run,
+            now=now,
+            schedule_summary=session_schedule,
+        )
         stream_quote_events_saved = _stream_quote_events_saved(quote_capture)
         latest_discovery_runs.append(
             {
@@ -168,6 +223,13 @@ def _latest_discovery_runs(
                     quote_capture.get("baseline_quote_events_saved")
                 )
                 or 0,
+                "session_schedule": session_schedule,
+                "schedule_state": session_schedule.get("state"),
+                "expected_slot_at": session_schedule.get("expected_current_slot_at"),
+                "schedule_note": schedule_health.get("message"),
+                "schedule_lag_slot_count": int(
+                    schedule_health.get("lag_slot_count") or 0
+                ),
                 "session_id": None
                 if session is None
                 else session.get("session_id") or job_run.get("session_id"),

@@ -3,12 +3,11 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-import pandas_market_calendars as mcal
-
 from core.services.live_pipelines import (
     build_live_run_scope_id,
     resolve_discovery_run_label,
 )
+from core.services.market_dates import market_session_window
 from core.storage.records import RecordMapping
 
 NEW_YORK = ZoneInfo("America/New_York")
@@ -32,16 +31,7 @@ def worker_runtime_lease_key(worker_name: str) -> str:
 def _market_schedule(
     calendar_name: str, session_day: date
 ) -> tuple[datetime, datetime] | None:
-    calendar = mcal.get_calendar(calendar_name)
-    schedule = calendar.schedule(
-        start_date=session_day.isoformat(), end_date=session_day.isoformat()
-    )
-    if schedule.empty:
-        return None
-    session = schedule.iloc[0]
-    market_open = session["market_open"].to_pydatetime().astimezone(NEW_YORK)
-    market_close = session["market_close"].to_pydatetime().astimezone(NEW_YORK)
-    return market_open, market_close
+    return market_session_window(calendar_name, session_day)
 
 
 def floor_to_interval(now: datetime, minutes: int) -> datetime:

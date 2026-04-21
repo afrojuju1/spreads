@@ -154,6 +154,7 @@ def list_latest_live_sessions(
                 "label": str(latest_cycle["label"]),
                 "market_date": str(latest_cycle["market_date"]),
                 "session_id": session_id,
+                "session_schedule": dict(pipeline.get("session_schedule") or {}),
                 "latest_run": latest_runs_by_session_id.get(session_id),
                 "job_run": _job_run_payload(summary_run),
                 "selection_summary": selection_summary,
@@ -380,6 +381,7 @@ def _build_live_session_state(
         "label": label,
         "market_date": market_date,
         "session_id": session_id,
+        "session_schedule": dict(pipeline.get("session_schedule") or {}),
         "latest_run": latest_run,
         "job_run": _job_run_payload(run_payload),
         "slot_runs": slot_runs,
@@ -458,6 +460,7 @@ def _runtime_pipeline_row(catalog_entry: Mapping[str, Any]) -> dict[str, Any]:
         "options_automation_enabled": bool(
             payload.get("options_automation_enabled", False)
         ),
+        "session_schedule": dict(catalog_entry.get("session_schedule") or {}),
         "updated_at": None,
     }
 

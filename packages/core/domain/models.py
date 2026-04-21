@@ -213,6 +213,9 @@ class SpreadCandidate:
     ranking_policy: dict[str, Any] = field(default_factory=dict)
     ranking_policy_status: str = "passed"
     ranking_policy_blockers: tuple[str, ...] = ()
+    ranking_policy_margin_to_pass: dict[str, float | None] = field(
+        default_factory=dict
+    )
     lower_breakeven: float | None = None
     upper_breakeven: float | None = None
     side_balance_score: float | None = None

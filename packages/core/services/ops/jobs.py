@@ -17,6 +17,10 @@ from core.jobs.specs import get_declared_job_row, list_declared_job_rows
 from core.services.discovery_run_health.enrichment import (
     enrich_discovery_run_job_run_payload,
 )
+from core.services.discovery_run_health.schedule import (
+    evaluate_discovery_run_schedule_health,
+)
+from core.services.live_pipelines import build_discovery_run_session_schedule
 from core.services.selection_summary import selection_summary_payload as _selection_summary_payload
 from core.services.value_coercion import (
     as_text as _as_text,
@@ -256,6 +260,20 @@ def _job_definition_status(
 ) -> str:
     if not bool(definition.get("enabled")):
         return "idle"
+    if str(definition.get("job_type") or "") == "discovery_run":
+        session_schedule = build_discovery_run_session_schedule(definition, now=now)
+        schedule_health = evaluate_discovery_run_schedule_health(
+            schedule_summary=session_schedule,
+            latest_run=latest_run,
+            now=now,
+        )
+        if bool(schedule_health.get("overdue")):
+            return "degraded"
+        if latest_run is None and str(session_schedule.get("state") or "") not in {
+            "pending",
+            "off_day",
+        }:
+            return "degraded"
     if latest_run is None:
         return "unknown"
     latest_status, _ = _job_run_operator_status(latest_run, now=now)
@@ -276,12 +294,23 @@ def _summarize_job_definition(
         if enriched_latest_run is None
         else _summarize_job_run(enriched_latest_run, now=now)
     )
+    session_schedule = (
+        build_discovery_run_session_schedule(definition, now=now)
+        if str(definition.get("job_type") or "") == "discovery_run"
+        else {}
+    )
+    schedule_health = evaluate_discovery_run_schedule_health(
+        schedule_summary=session_schedule,
+        latest_run=enriched_latest_run,
+        now=now,
+    )
     return {
         "job_key": definition.get("job_key"),
         "job_type": definition.get("job_type"),
         "enabled": bool(definition.get("enabled")),
         "schedule_type": definition.get("schedule_type"),
         "schedule": dict(definition.get("schedule") or {}),
+        "session_schedule": session_schedule,
         "market_calendar": definition.get("market_calendar"),
         "singleton_scope": definition.get("singleton_scope"),
         "updated_at": definition.get("updated_at"),
@@ -299,6 +328,9 @@ def _summarize_job_definition(
         "latest_capture_status": None
         if latest_summary is None
         else latest_summary.get("capture_status"),
+        "schedule_state": session_schedule.get("state"),
+        "expected_slot_at": session_schedule.get("expected_current_slot_at"),
+        "schedule_note": schedule_health.get("message"),
     }
 
 

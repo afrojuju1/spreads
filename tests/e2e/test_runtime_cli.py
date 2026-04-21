@@ -18,6 +18,14 @@ class RuntimeCliTests(unittest.TestCase):
             "market_date": "2026-04-21",
             "status": "healthy",
             "updated_at": "2026-04-21T20:05:03Z",
+            "session_schedule": {
+                "state": "complete",
+                "interval_minutes": 5.0,
+                "session_start_offset_minutes": -5,
+                "session_end_offset_minutes": 5,
+                "expected_current_slot_at": "2026-04-21T20:05:00Z",
+                "expected_last_slot_at": "2026-04-21T20:05:00Z",
+            },
             "tradeability_state": "ready",
             "risk_status": "ok",
             "reconciliation_status": "clear",
@@ -100,6 +108,12 @@ class RuntimeCliTests(unittest.TestCase):
                             "ranking_policy_blockers": [
                                 "expected_value_dollars_below_floor"
                             ],
+                            "ranking_policy": {
+                                "min_expected_value_dollars": 10.0,
+                            },
+                            "ranking_policy_margin_to_pass": {
+                                "expected_value_dollars": 3.8,
+                            },
                             "probability_of_profit": 0.84,
                             "breakeven_touch_probability": 0.29,
                             "expected_value_dollars": 6.2,
@@ -132,6 +146,8 @@ class RuntimeCliTests(unittest.TestCase):
         self.assertIn("Current Cycle", result.stdout)
         self.assertIn("Raw Candidate Summary", result.stdout)
         self.assertIn("Blocked Exemplars", result.stdout)
+        self.assertIn("every 5m, open-5m..close+5m", result.stdout)
+        self.assertIn("Expected Slot", result.stdout)
 
     def test_audit_json_output_is_parseable(self) -> None:
         runner = CliRunner()
