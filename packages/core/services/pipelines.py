@@ -314,6 +314,8 @@ def _serialize_pipeline_summary(
     slot_health: Mapping[str, Any],
     candidate_counts: dict[str, int],
     alert_count: int,
+    resolved_ranking_policy: Mapping[str, Any] | None = None,
+    ranking_policy_gate_summary: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     updated_at = _latest_activity_timestamp(
         None if latest_run is None else str(latest_run.get("finished_at") or ""),
@@ -373,6 +375,16 @@ def _serialize_pipeline_summary(
         "horizon_intent": pipeline.get("default_horizon_intent"),
         "product_scope": pipeline.get("product_scope_json"),
         "policy": pipeline.get("policy_json"),
+        "resolved_ranking_policy": (
+            dict(resolved_ranking_policy or {})
+            if isinstance(resolved_ranking_policy, Mapping)
+            else None
+        ),
+        "ranking_policy_gate_summary": (
+            dict(ranking_policy_gate_summary or {})
+            if isinstance(ranking_policy_gate_summary, Mapping)
+            else None
+        ),
     }
 
 
@@ -411,6 +423,10 @@ def list_pipelines(
                         (str(session["market_date"]), str(session["label"]))
                     )
                     or 0
+                ),
+                resolved_ranking_policy=session.get("resolved_ranking_policy"),
+                ranking_policy_gate_summary=session.get(
+                    "ranking_policy_gate_summary"
                 ),
             )
         )
@@ -466,6 +482,10 @@ def get_pipeline_detail(
     selection_counts = dict(live_session.get("selection_counts") or {})
     candidate_counts = dict(live_session.get("candidate_counts") or {})
     automation_summary = dict(live_session.get("automation_summary") or {})
+    resolved_ranking_policy = dict(live_session.get("resolved_ranking_policy") or {})
+    ranking_policy_gate_summary = dict(
+        live_session.get("ranking_policy_gate_summary") or {}
+    )
     current_cycle = {
         **_build_cycle_payload(
             pipeline_id=pipeline_id,
@@ -480,6 +500,9 @@ def get_pipeline_detail(
         "monitor_count": int(selection_counts.get("monitor") or 0),
         "legacy_session_id": legacy_session_id,
         "automation_summary": automation_summary,
+        "resolved_ranking_policy": resolved_ranking_policy,
+        "ranking_policy_gate_summary": ranking_policy_gate_summary,
+        "raw_candidate_summary": dict(live_session.get("raw_candidate_summary") or {}),
     }
 
     alerts = [
@@ -622,9 +645,12 @@ def get_pipeline_detail(
         "uoa_summary": dict(live_session.get("uoa_summary") or {}),
         "uoa_quote_summary": dict(live_session.get("uoa_quote_summary") or {}),
         "uoa_decisions": dict(live_session.get("uoa_decisions") or {}),
+        "resolved_ranking_policy": resolved_ranking_policy,
+        "ranking_policy_gate_summary": ranking_policy_gate_summary,
         **tradeability_fields,
         "pipeline": dict(pipeline),
         "current_cycle": current_cycle,
+        "raw_candidate_summary": dict(live_session.get("raw_candidate_summary") or {}),
         "automation_summary": automation_summary,
         "cycles": cycles,
         "opportunities": live_opportunities,

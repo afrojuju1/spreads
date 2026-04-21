@@ -11,10 +11,12 @@ from core.domain.models import (
 from core.services.live_pipelines import build_live_snapshot_label
 from core.services.option_structures import (
     candidate_legs,
+    normalize_strategy_family,
     payload_display_fields,
     payload_structure_identity,
     primary_short_long_symbols,
 )
+from core.services.ranking_policy import build_strategy_ranking_policy_snapshot
 from core.services.scanners.builders.ranking import sort_candidates_for_display
 from core.services.scanners.config import resolve_symbols
 from core.services.scanners.runtime import (
@@ -113,6 +115,7 @@ def build_symbol_strategy_candidates(
 
 
 def build_raw_candidate_summary(
+    scan_results: list[SymbolScanResult],
     symbol_strategy_candidates: dict[str, list[dict[str, Any]]],
     *,
     limit: int = 10,
@@ -145,6 +148,10 @@ def build_raw_candidate_summary(
                     "midpoint_credit": float(candidate.get("midpoint_credit") or 0.0),
                     "return_on_risk": float(candidate.get("return_on_risk") or 0.0),
                     "setup_status": candidate.get("setup_status"),
+                    "ranking_policy_status": candidate.get("ranking_policy_status"),
+                    "ranking_policy_blockers": list(
+                        candidate.get("ranking_policy_blockers") or []
+                    ),
                 }
             )
     ranked_rows.sort(
@@ -155,10 +162,40 @@ def build_raw_candidate_summary(
         ),
         reverse=True,
     )
+    ranking_policy_gate_status_counts: dict[str, int] = {}
+    ranking_policy_gate_blocker_counts: dict[str, int] = {}
+    for result in scan_results:
+        diagnostics = dict(getattr(result, "diagnostics", {}) or {})
+        for key, value in dict(
+            diagnostics.get("ranking_policy_status_counts") or {}
+        ).items():
+            ranking_policy_gate_status_counts[str(key)] = (
+                int(ranking_policy_gate_status_counts.get(str(key)) or 0) + int(value)
+            )
+        for key, value in dict(
+            diagnostics.get("ranking_policy_blocker_counts") or {}
+        ).items():
+            ranking_policy_gate_blocker_counts[str(key)] = (
+                int(ranking_policy_gate_blocker_counts.get(str(key)) or 0) + int(value)
+            )
+
     return {
         "candidate_count": total,
         "symbol_counts": dict(sorted(symbol_counts.items())),
         "strategy_counts": dict(sorted(strategy_counts.items())),
+        "resolved_ranking_policy": build_strategy_ranking_policy_snapshot(
+            (
+                (
+                    normalize_strategy_family(result.args.strategy),
+                    result.args,
+                )
+                for result in scan_results
+            )
+        ),
+        "ranking_policy_gate_summary": {
+            "status_counts": dict(sorted(ranking_policy_gate_status_counts.items())),
+            "blocker_counts": dict(sorted(ranking_policy_gate_blocker_counts.items())),
+        },
         "top_candidates": ranked_rows[: max(int(limit), 1)],
     }
 

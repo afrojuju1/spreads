@@ -210,6 +210,9 @@ class SpreadCandidate:
     expected_value_dollars: float | None = None
     slippage_adjusted_expected_value_dollars: float | None = None
     entry_slippage_dollars: float | None = None
+    ranking_policy: dict[str, Any] = field(default_factory=dict)
+    ranking_policy_status: str = "passed"
+    ranking_policy_blockers: tuple[str, ...] = ()
     lower_breakeven: float | None = None
     upper_breakeven: float | None = None
     side_balance_score: float | None = None
@@ -247,6 +250,7 @@ class SymbolScanResult:
     alpaca_delta_contract_count: int = 0
     delta_contract_count: int = 0
     local_delta_contract_count: int = 0
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

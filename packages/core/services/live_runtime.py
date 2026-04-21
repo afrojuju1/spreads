@@ -135,6 +135,18 @@ def list_latest_live_sessions(
             and isinstance(summary_run.get("automation_summary"), Mapping)
             else None
         )
+        resolved_ranking_policy = (
+            dict(summary_run.get("resolved_ranking_policy") or {})
+            if isinstance(summary_run, Mapping)
+            and isinstance(summary_run.get("resolved_ranking_policy"), Mapping)
+            else None
+        )
+        ranking_policy_gate_summary = (
+            dict(summary_run.get("ranking_policy_gate_summary") or {})
+            if isinstance(summary_run, Mapping)
+            and isinstance(summary_run.get("ranking_policy_gate_summary"), Mapping)
+            else None
+        )
         sessions.append(
             {
                 "pipeline": dict(pipeline),
@@ -145,6 +157,8 @@ def list_latest_live_sessions(
                 "latest_run": latest_runs_by_session_id.get(session_id),
                 "job_run": _job_run_payload(summary_run),
                 "selection_summary": selection_summary,
+                "resolved_ranking_policy": resolved_ranking_policy,
+                "ranking_policy_gate_summary": ranking_policy_gate_summary,
                 "raw_candidate_summary": raw_candidate_summary,
                 "automation_summary": automation_summary,
                 "quote_capture": {}
@@ -322,6 +336,24 @@ def _build_live_session_state(
             else None
         )
     )
+    resolved_ranking_policy = (
+        None
+        if run_payload is None
+        else (
+            dict(run_payload.get("resolved_ranking_policy") or {})
+            if isinstance(run_payload.get("resolved_ranking_policy"), Mapping)
+            else None
+        )
+    )
+    ranking_policy_gate_summary = (
+        None
+        if run_payload is None
+        else (
+            dict(run_payload.get("ranking_policy_gate_summary") or {})
+            if isinstance(run_payload.get("ranking_policy_gate_summary"), Mapping)
+            else None
+        )
+    )
     if selection_summary is None:
         selection_summary = build_selection_summary(opportunities)
     recovery_slots = (
@@ -362,6 +394,8 @@ def _build_live_session_state(
         "candidate_counts": candidate_counts,
         "selection_counts": selection_counts,
         "selection_summary": selection_summary,
+        "resolved_ranking_policy": resolved_ranking_policy,
+        "ranking_policy_gate_summary": ranking_policy_gate_summary,
         "raw_candidate_summary": raw_candidate_summary,
         "automation_summary": automation_summary,
         "cycle_events": cycle_events,

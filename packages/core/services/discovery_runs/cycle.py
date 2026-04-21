@@ -313,7 +313,10 @@ def run_collection_cycle(
     )
     selection_memory = dict(selection["selection_memory"])
     events = _filter_scope_rows(list(selection["events"]), scope=options_scope)
-    raw_candidate_summary = build_raw_candidate_summary(symbol_strategy_candidates)
+    raw_candidate_summary = build_raw_candidate_summary(
+        scan_results,
+        symbol_strategy_candidates,
+    )
     persisted_opportunities = discovery_store.save_cycle(
         cycle_id=cycle_id,
         label=label,
@@ -642,6 +645,12 @@ def run_collection_cycle(
         "uoa_summary": uoa_summary,
         "uoa_quote_summary": uoa_quote_summary,
         "uoa_decisions": uoa_decisions,
+        "resolved_ranking_policy": dict(
+            raw_candidate_summary.get("resolved_ranking_policy") or {}
+        ),
+        "ranking_policy_gate_summary": dict(
+            raw_candidate_summary.get("ranking_policy_gate_summary") or {}
+        ),
         "raw_candidate_summary": raw_candidate_summary,
         "selection_summary": selection_summary,
         "automation_summary": automation_summary,

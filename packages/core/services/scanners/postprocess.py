@@ -16,6 +16,7 @@ from core.integrations.calendar_events.policy import apply_strategy_calendar_pol
 from core.services.scanners.market_data import option_expiry_close
 from core.services.scanners.config import resolve_scan_session_bucket
 from core.services.option_structures import candidate_legs, legs_identity_key
+from core.services.ranking_policy import evaluate_candidate_ranking_policy
 
 
 def assess_data_quality(
@@ -147,6 +148,38 @@ def annotate_data_quality(
     return enriched
 
 
+def annotate_ranking_policy(
+    *,
+    candidates: list[SpreadCandidate],
+    args: argparse.Namespace,
+) -> list[SpreadCandidate]:
+    enriched: list[SpreadCandidate] = []
+    for candidate in candidates:
+        evaluation = evaluate_candidate_ranking_policy(candidate, policy_source=args)
+        enriched.append(
+            replace(
+                candidate,
+                ranking_policy=dict(evaluation["policy"]),
+                ranking_policy_status=str(evaluation["status"]),
+                ranking_policy_blockers=tuple(evaluation["blockers"]),
+            )
+        )
+    return enriched
+
+
+def attach_ranking_policy(
+    *,
+    candidates: list[SpreadCandidate],
+    args: argparse.Namespace,
+) -> list[SpreadCandidate]:
+    annotated = annotate_ranking_policy(candidates=candidates, args=args)
+    return [
+        candidate
+        for candidate in annotated
+        if str(candidate.ranking_policy_status or "passed").lower() != "blocked"
+    ]
+
+
 def build_selection_notes(
     candidate: SpreadCandidate, args: argparse.Namespace
 ) -> tuple[str, ...]:
@@ -205,6 +238,8 @@ def build_selection_notes(
         notes.append("setup-neutral")
     if candidate.data_status == "penalized":
         notes.append("data-caution")
+    if str(candidate.ranking_policy_status or "").lower() == "blocked":
+        notes.append("policy-blocked")
     if candidate.greeks_source != "alpaca":
         notes.append("local-greeks")
     if (
@@ -361,7 +396,9 @@ __all__ = [
     "attach_calendar_decisions",
     "attach_calendar_decisions_from_map",
     "attach_data_quality",
+    "attach_ranking_policy",
     "annotate_data_quality",
+    "annotate_ranking_policy",
     "attach_selection_notes",
     "resolve_calendar_decisions_by_expiration",
     "deduplicate_candidates",

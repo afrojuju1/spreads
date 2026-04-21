@@ -16,6 +16,7 @@ from core.services.option_structures import (
 from core.services.opportunity_fields import (
     candidate_economics,
     candidate_evidence_metrics,
+    candidate_policy_context,
     candidate_strategy_metrics,
     risk_hints,
 )
@@ -63,6 +64,10 @@ def _candidate_blockers(candidate: dict[str, Any]) -> list[str]:
         rendered = str(blocker or "").strip()
         if rendered and rendered not in blockers:
             blockers.append(rendered)
+    for blocker in list(candidate.get("ranking_policy_blockers") or []):
+        rendered = str(blocker or "").strip()
+        if rendered and rendered not in blockers:
+            blockers.append(rendered)
     return blockers
 
 
@@ -87,6 +92,9 @@ def _opportunity_blockers(
         for blocker in _normalized_blockers(candidate.get(field)):
             if blocker not in blockers:
                 blockers.append(blocker)
+    for blocker in _normalized_blockers(candidate.get("ranking_policy_blockers")):
+        if blocker not in blockers:
+            blockers.append(blocker)
     return blockers
 
 
@@ -260,6 +268,7 @@ def _candidate_evidence(
                 "return_on_risk": candidate.get("return_on_risk"),
                 "midpoint_credit": candidate.get("midpoint_credit"),
                 **candidate_evidence_metrics(candidate),
+                **candidate_policy_context(candidate),
                 "setup_status": candidate.get("setup_status"),
                 "data_status": candidate.get("data_status"),
                 "calendar_status": candidate.get("calendar_status"),
@@ -364,6 +373,7 @@ def _build_opportunity_payload(
             "scoring_state_reason": candidate.get("scoring_state_reason"),
             "execution_blockers": candidate.get("execution_blockers"),
             **candidate_evidence_metrics(candidate),
+            **candidate_policy_context(candidate),
         },
         "execution_shape": _execution_shape(candidate),
         "risk_hints": risk_hints(candidate),

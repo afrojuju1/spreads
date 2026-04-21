@@ -5,6 +5,7 @@ from typing import Any, Mapping
 
 from core.services.automation_runtime import EntryRuntime
 from core.services.entry_recipes import evaluate_entry_recipes
+from core.services.ranking_policy import evaluate_candidate_ranking_policy
 from core.services.strategy_registry import resolve_strategy_definition
 
 
@@ -90,6 +91,12 @@ def match_runtime_candidate(
         return_on_risk = _coerce_float(candidate.get("return_on_risk"))
         if return_on_risk is None or return_on_risk < minimum_return_on_risk:
             reasons.append("return_on_risk_below_floor")
+
+    ranking_policy = evaluate_candidate_ranking_policy(
+        candidate,
+        policy_source=runtime.build_settings.ranking_policy,
+    )
+    reasons.extend(list(ranking_policy["blockers"]))
 
     recipe_result = evaluate_entry_recipes(
         dict(candidate),

@@ -374,6 +374,12 @@ def _current_cycle_summary(
         "promotable_count": int(selection_counts.get("promotable") or 0),
         "monitor_count": int(selection_counts.get("monitor") or 0),
         "opportunity_count": len(opportunities),
+        "resolved_ranking_policy": dict(
+            current_cycle.get("resolved_ranking_policy") or {}
+        ),
+        "ranking_policy_gate_summary": dict(
+            current_cycle.get("ranking_policy_gate_summary") or {}
+        ),
     }
 
 
@@ -722,6 +728,12 @@ def build_audit_snapshot(
         "updated_at": pipeline_run.get("updated_at"),
         "control_snapshot": dict(pipeline_run.get("control") or {}),
         "current_cycle": _current_cycle_summary(pipeline_run.get("current_cycle")),
+        "resolved_ranking_policy": dict(
+            pipeline_run.get("resolved_ranking_policy") or {}
+        ),
+        "ranking_policy_gate_summary": dict(
+            pipeline_run.get("ranking_policy_gate_summary") or {}
+        ),
         "counts": {
             "timeline_items": len(timeline_items),
             "events_scanned": len(raw_events),
@@ -761,6 +773,12 @@ def build_audit_snapshot(
             "risk_note": pipeline_run.get("risk_note"),
             "reconciliation_status": pipeline_run.get("reconciliation_status"),
             "reconciliation_note": pipeline_run.get("reconciliation_note"),
+            "resolved_ranking_policy": dict(
+                pipeline_run.get("resolved_ranking_policy") or {}
+            ),
+            "ranking_policy_gate_summary": dict(
+                pipeline_run.get("ranking_policy_gate_summary") or {}
+            ),
         },
         "timeline": limited_timeline,
         "timeline_stats": {

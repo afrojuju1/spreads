@@ -53,6 +53,12 @@ _CANDIDATE_EVIDENCE_METRIC_FIELDS = (
     "net_vega",
 )
 
+_CANDIDATE_POLICY_CONTEXT_FIELDS = (
+    "ranking_policy",
+    "ranking_policy_status",
+    "ranking_policy_blockers",
+)
+
 _RISK_HINT_FIELDS = (
     "midpoint_credit",
     "natural_credit",
@@ -92,6 +98,10 @@ def candidate_evidence_metrics(candidate: Mapping[str, Any]) -> dict[str, Any]:
     return _candidate_slice(candidate, fields=_CANDIDATE_EVIDENCE_METRIC_FIELDS)
 
 
+def candidate_policy_context(candidate: Mapping[str, Any]) -> dict[str, Any]:
+    return _candidate_slice(candidate, fields=_CANDIDATE_POLICY_CONTEXT_FIELDS)
+
+
 def risk_hints(candidate: Mapping[str, Any]) -> dict[str, Any]:
     return _candidate_slice(candidate, fields=_RISK_HINT_FIELDS)
 
@@ -99,6 +109,7 @@ def risk_hints(candidate: Mapping[str, Any]) -> dict[str, Any]:
 __all__ = [
     "candidate_economics",
     "candidate_evidence_metrics",
+    "candidate_policy_context",
     "candidate_strategy_metrics",
     "risk_hints",
 ]

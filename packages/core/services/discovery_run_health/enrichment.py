@@ -226,6 +226,16 @@ def enrich_discovery_run_result(
         if isinstance(enriched.get("uoa_decisions"), Mapping)
         else None
     )
+    enriched["resolved_ranking_policy"] = (
+        dict(enriched.get("resolved_ranking_policy") or {})
+        if isinstance(enriched.get("resolved_ranking_policy"), Mapping)
+        else {}
+    )
+    enriched["ranking_policy_gate_summary"] = (
+        dict(enriched.get("ranking_policy_gate_summary") or {})
+        if isinstance(enriched.get("ranking_policy_gate_summary"), Mapping)
+        else {}
+    )
     raw_automation_summary = (
         dict(enriched.get("automation_summary") or {})
         if isinstance(enriched.get("automation_summary"), Mapping)
@@ -290,6 +300,10 @@ def enrich_discovery_run_job_run_payload(payload: Mapping[str, Any]) -> dict[str
     enriched["uoa_quote_summary"] = result.get("uoa_quote_summary") or {}
     enriched["uoa_decisions"] = result.get("uoa_decisions") or {}
     enriched["selection_summary"] = result.get("selection_summary") or {}
+    enriched["resolved_ranking_policy"] = result.get("resolved_ranking_policy") or {}
+    enriched["ranking_policy_gate_summary"] = (
+        result.get("ranking_policy_gate_summary") or {}
+    )
     enriched["raw_candidate_summary"] = result.get("raw_candidate_summary") or {}
     enriched["automation_summary"] = result.get("automation_summary") or {}
     enriched["automation_runs_upserted"] = result.get("automation_runs_upserted") or 0

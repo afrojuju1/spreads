@@ -180,6 +180,10 @@ def run_collection_tick(
         "uoa_summary": dict(cycle_result["uoa_summary"]),
         "uoa_quote_summary": dict(cycle_result["uoa_quote_summary"]),
         "uoa_decisions": dict(cycle_result["uoa_decisions"]),
+        "resolved_ranking_policy": dict(cycle_result["resolved_ranking_policy"]),
+        "ranking_policy_gate_summary": dict(
+            cycle_result["ranking_policy_gate_summary"]
+        ),
         "raw_candidate_summary": dict(cycle_result["raw_candidate_summary"]),
         "selection_summary": dict(cycle_result["selection_summary"]),
         "auto_execution": cycle_result["auto_execution"],
@@ -260,6 +264,12 @@ def run_collection(
     last_selection_summary: dict[str, object] = dict(
         bootstrap_result["selection_summary"]
     )
+    last_resolved_ranking_policy: dict[str, object] = dict(
+        bootstrap_result.get("resolved_ranking_policy") or {}
+    )
+    last_ranking_policy_gate_summary: dict[str, object] = dict(
+        bootstrap_result.get("ranking_policy_gate_summary") or {}
+    )
     last_automation_summary: dict[str, object] = {
         "automation_runs_upserted": 0,
         "runtime_opportunities_upserted": 0,
@@ -338,6 +348,12 @@ def run_collection(
                 last_uoa_summary = dict(cycle_result["uoa_summary"])
                 last_uoa_quote_summary = dict(cycle_result["uoa_quote_summary"])
                 last_uoa_decisions = dict(cycle_result["uoa_decisions"])
+                last_resolved_ranking_policy = dict(
+                    cycle_result["resolved_ranking_policy"]
+                )
+                last_ranking_policy_gate_summary = dict(
+                    cycle_result["ranking_policy_gate_summary"]
+                )
                 last_raw_candidate_summary = dict(cycle_result["raw_candidate_summary"])
                 last_selection_summary = dict(cycle_result["selection_summary"])
                 last_automation_summary = dict(cycle_result["automation_summary"])
@@ -396,6 +412,8 @@ def run_collection(
         "uoa_summary": last_uoa_summary,
         "uoa_quote_summary": last_uoa_quote_summary,
         "uoa_decisions": last_uoa_decisions,
+        "resolved_ranking_policy": last_resolved_ranking_policy,
+        "ranking_policy_gate_summary": last_ranking_policy_gate_summary,
         "raw_candidate_summary": last_raw_candidate_summary,
         "selection_summary": last_selection_summary,
         "label": last_label,

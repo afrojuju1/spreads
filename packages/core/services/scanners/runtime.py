@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import Any
 
 from core.domain.models import (
@@ -15,7 +15,6 @@ from core.domain.models import (
     UnderlyingSetupContext,
     UniverseScanFailure,
 )
-from core.domain.profiles import LONG_VOL_STRATEGIES
 from core.integrations.alpaca.client import AlpacaClient
 from core.integrations.calendar_events import classify_underlying_type
 from core.services.market_dates import NEW_YORK
@@ -26,42 +25,35 @@ from core.services.scanners.config import (
     resolve_scan_reference_date,
     resolve_scan_reference_datetime,
     resolve_symbol_scan_args,
-    strategy_option_type,
 )
 from core.services.strategy_specs import resolve_strategy_spec
 from core.services.scanners.market_data import (
     build_expected_move_estimates,
-    count_alpaca_greeks_coverage,
-    count_local_greeks_coverage,
-    count_snapshot_delta_coverage,
     enrich_missing_greeks,
     group_contracts_by_expiration,
 )
 from core.services.scanners.postprocess import (
     annotate_data_quality,
+    annotate_ranking_policy,
     attach_calendar_decisions,
     attach_calendar_decisions_from_map,
     attach_data_quality,
+    attach_ranking_policy,
     attach_selection_notes,
     deduplicate_candidates,
     resolve_calendar_decisions_by_expiration,
 )
+from core.services.ranking_policy import build_ranking_policy_gate_summary
 from core.services.scanners.replay_artifacts import write_scan_replay_artifact
 from core.services.scanners.setup import (
     analyze_underlying_setup,
     attach_underlying_setup,
     serialize_setup_context,
 )
-from core.services.scanners.builders.iron_condors import build_iron_condors
-from core.services.scanners.builders.long_vol import (
-    build_long_straddles,
-    build_long_strangles,
-)
 from core.services.scanners.builders.ranking import (
     rank_candidates,
     sort_candidates_for_display,
 )
-from core.services.scanners.builders.verticals import build_vertical_spreads
 from core.storage.run_history_repository import RunHistoryRepository
 
 
@@ -372,6 +364,10 @@ def postprocess_market_slice_candidates(
         underlying_type=market_slice.underlying_type,
         args=symbol_args,
     )
+    all_candidates = attach_ranking_policy(
+        candidates=all_candidates,
+        args=symbol_args,
+    )
     all_candidates = attach_selection_notes(all_candidates, symbol_args)
     all_candidates = rank_candidates(all_candidates, symbol_args)
     all_candidates = deduplicate_candidates(
@@ -419,6 +415,10 @@ def build_candidates_with_details_from_market_slice(
         underlying_type=market_slice.underlying_type,
         args=symbol_args,
     )
+    policy_candidates = annotate_ranking_policy(
+        candidates=diagnostic_candidates,
+        args=symbol_args,
+    )
     all_candidates = postprocess_market_slice_candidates(
         market_slice=market_slice,
         symbol_args=symbol_args,
@@ -449,6 +449,17 @@ def build_candidates_with_details_from_market_slice(
         "data_reason_counts": _count_candidate_reason_values(
             diagnostic_candidates,
             field="data_reasons",
+        ),
+        "ranking_policy_gate_summary": build_ranking_policy_gate_summary(
+            items=policy_candidates
+        ),
+        "ranking_policy_status_counts": _count_candidate_field_values(
+            policy_candidates,
+            field="ranking_policy_status",
+        ),
+        "ranking_policy_blocker_counts": _count_candidate_reason_values(
+            policy_candidates,
+            field="ranking_policy_blockers",
         ),
     }
 
@@ -522,6 +533,7 @@ def scan_symbol_live(
         alpaca_delta_contract_count=alpaca_delta_contract_count,
         delta_contract_count=delta_contract_count,
         local_delta_contract_count=local_delta_contract_count,
+        diagnostics=replay_details,
     )
 
 

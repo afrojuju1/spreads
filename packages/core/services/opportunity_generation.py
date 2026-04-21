@@ -10,6 +10,7 @@ from core.services.option_structures import (
 from core.services.opportunity_fields import (
     candidate_economics,
     candidate_evidence_metrics,
+    candidate_policy_context,
     candidate_strategy_metrics,
     risk_hints,
 )
@@ -77,6 +78,9 @@ def _opportunity_blockers(
         for blocker in _normalized_blockers(candidate.get(field)):
             if blocker not in blockers:
                 blockers.append(blocker)
+    for blocker in _normalized_blockers(candidate.get("ranking_policy_blockers")):
+        if blocker not in blockers:
+            blockers.append(blocker)
     return blockers
 
 
@@ -260,6 +264,7 @@ def build_runtime_opportunity_payload(
             "selection_rank": row.get("selection_rank"),
             "generated_at": generated_at,
             **candidate_evidence_metrics(candidate),
+            **candidate_policy_context(candidate),
             "source_opportunity_id": None
             if source_row is None
             else source_row.get("opportunity_id"),
