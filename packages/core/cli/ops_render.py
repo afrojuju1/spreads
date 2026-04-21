@@ -107,6 +107,90 @@ def _render_count_map(
     return _truncate(rendered, length=item_length)
 
 
+def _render_blocker_list(value: Any, *, length: int = 56) -> str:
+    if not isinstance(value, (list, tuple)) or not value:
+        return "-"
+    rendered = ", ".join(str(item) for item in value if str(item or "").strip())
+    return _truncate(rendered or "-", length=length)
+
+
+def _render_flat_ranking_policy_summary(
+    payload: dict[str, Any], *, length: int = 88
+) -> str:
+    parts: list[str] = []
+    if payload.get("min_probability_of_profit") is not None:
+        parts.append(
+            f"PoP >= {float(payload.get('min_probability_of_profit')):.2f}"
+        )
+    if payload.get("min_expected_value_dollars") is not None:
+        parts.append(
+            f"EV >= ${float(payload.get('min_expected_value_dollars')):.2f}"
+        )
+    if payload.get("min_slippage_adjusted_expected_value_dollars") is not None:
+        parts.append(
+            "sEV >= "
+            f"${float(payload.get('min_slippage_adjusted_expected_value_dollars')):.2f}"
+        )
+    if payload.get("max_entry_slippage_dollars") is not None:
+        parts.append(
+            f"slip <= ${float(payload.get('max_entry_slippage_dollars')):.2f}"
+        )
+    if payload.get("min_model_implied_volatility") is not None:
+        parts.append(
+            f"IV >= {float(payload.get('min_model_implied_volatility')):.2f}"
+        )
+    return _truncate(", ".join(parts) or "-", length=length)
+
+
+def _render_ranking_policy_summary(value: Any, *, length: int = 88) -> str:
+    payload = value if isinstance(value, dict) else {}
+    if not payload:
+        return "-"
+    by_strategy_family = (
+        payload.get("by_strategy_family")
+        if isinstance(payload.get("by_strategy_family"), dict)
+        else {}
+    )
+    if by_strategy_family:
+        if len(by_strategy_family) == 1:
+            return _render_flat_ranking_policy_summary(
+                next(iter(by_strategy_family.values())),
+                length=length,
+            )
+        rendered = ", ".join(
+            f"{name}: {_render_flat_ranking_policy_summary(dict(policy), length=48)}"
+            for name, policy in sorted(by_strategy_family.items())
+            if isinstance(policy, dict)
+        )
+        return _truncate(rendered or "-", length=length)
+    return _render_flat_ranking_policy_summary(payload, length=length)
+
+
+def _render_ranking_vector(value: Any, *, length: int = 88) -> str:
+    payload = value if isinstance(value, dict) else {}
+    parts: list[str] = []
+    if payload.get("probability_of_profit") is not None:
+        parts.append(f"PoP {_render_percent(payload.get('probability_of_profit'))}")
+    if payload.get("breakeven_touch_probability") is not None:
+        parts.append(
+            f"Touch {_render_percent(payload.get('breakeven_touch_probability'))}"
+        )
+    if payload.get("expected_value_dollars") is not None:
+        parts.append(f"EV {_render_money(payload.get('expected_value_dollars'))}")
+    if payload.get("slippage_adjusted_expected_value_dollars") is not None:
+        parts.append(
+            "sEV "
+            f"{_render_money(payload.get('slippage_adjusted_expected_value_dollars'))}"
+        )
+    if payload.get("entry_slippage_dollars") is not None:
+        parts.append(
+            f"Slip {_render_money(payload.get('entry_slippage_dollars'))}"
+        )
+    if payload.get("model_implied_volatility") is not None:
+        parts.append(f"IV {_render_percent(payload.get('model_implied_volatility'))}")
+    return _truncate(", ".join(parts) or "-", length=length)
+
+
 def _render_auto_execution_summary(value: Any) -> str:
     payload = value if isinstance(value, dict) else {}
     status = str(payload.get("status") or "-")
@@ -193,12 +277,56 @@ def _render_raw_candidate_summary(
         "Strategies",
         _render_count_map(payload.get("strategy_counts"), limit=6, item_length=80),
     )
+    overview.add_row(
+        "Ranking Policy",
+        _render_ranking_policy_summary(payload.get("resolved_ranking_policy")),
+    )
+    ranking_gate_summary = (
+        payload.get("ranking_policy_gate_summary")
+        if isinstance(payload.get("ranking_policy_gate_summary"), dict)
+        else {}
+    )
+    overview.add_row(
+        "Ranking Status",
+        _render_count_map(
+            ranking_gate_summary.get("status_counts"),
+            limit=6,
+            item_length=80,
+        ),
+    )
+    overview.add_row(
+        "Ranking Blockers",
+        _render_count_map(
+            ranking_gate_summary.get("blocker_counts"),
+            limit=6,
+            item_length=80,
+        ),
+    )
     console.print(overview)
 
-    rows = list(payload.get("top_candidates") or [])
-    if not rows:
-        return
-    table = Table(title=f"{title} Top Candidates", header_style="bold")
+    top_rows = list(payload.get("top_candidates") or [])
+    blocked_rows = list(payload.get("top_blocked_candidates") or [])
+    if top_rows:
+        _render_candidate_row_table(
+            console,
+            title=f"{title} Top Candidates",
+            rows=top_rows[:8],
+        )
+    if blocked_rows:
+        _render_candidate_row_table(
+            console,
+            title=f"{title} Blocked Exemplars",
+            rows=blocked_rows[:8],
+        )
+
+
+def _render_candidate_row_table(
+    console: Console,
+    *,
+    title: str,
+    rows: list[dict[str, Any]],
+) -> None:
+    table = Table(title=title, header_style="bold")
     table.add_column("Underlying")
     table.add_column("Strategy")
     table.add_column("Expiry")
@@ -207,7 +335,10 @@ def _render_raw_candidate_summary(
     table.add_column("Credit", justify="right")
     table.add_column("ROR", justify="right")
     table.add_column("Setup")
-    for row in rows[:8]:
+    table.add_column("Metrics")
+    table.add_column("Rank")
+    table.add_column("Blockers")
+    for row in rows:
         table.add_row(
             str(row.get("underlying_symbol") or "-"),
             str(row.get("strategy") or "-"),
@@ -217,7 +348,10 @@ def _render_raw_candidate_summary(
             _render_money(row.get("midpoint_credit")),
             _render_value(row.get("return_on_risk")),
             str(row.get("setup_status") or "-"),
-    )
+            _render_ranking_vector(row, length=96),
+            str(row.get("ranking_policy_status") or "-"),
+            _render_blocker_list(row.get("ranking_policy_blockers")),
+        )
     console.print(table)
 
 
@@ -304,11 +438,18 @@ def _render_discovery_run_raw_candidates(
     table.add_column("Selected", justify="right")
     table.add_column("Symbols")
     table.add_column("Strategies")
+    table.add_column("Rank Gate")
+    table.add_column("Top Blockers")
     for row in rows_with_raw:
         raw_summary = dict(row.get("raw_candidate_summary") or {})
         selection_summary = (
             row.get("selection_summary")
             if isinstance(row.get("selection_summary"), dict)
+            else {}
+        )
+        gate_summary = (
+            raw_summary.get("ranking_policy_gate_summary")
+            if isinstance(raw_summary.get("ranking_policy_gate_summary"), dict)
             else {}
         )
         table.add_row(
@@ -321,6 +462,8 @@ def _render_discovery_run_raw_candidates(
             _render_count_map(
                 raw_summary.get("strategy_counts"), limit=4, item_length=48
             ),
+            _render_count_map(gate_summary.get("status_counts"), item_length=36),
+            _render_count_map(gate_summary.get("blocker_counts"), item_length=48),
         )
     console.print(table)
 
@@ -341,6 +484,9 @@ def _render_discovery_run_raw_candidates(
     table.add_column("Credit", justify="right")
     table.add_column("ROR", justify="right")
     table.add_column("Setup")
+    table.add_column("Metrics")
+    table.add_column("Rank")
+    table.add_column("Blockers")
     for discovery_run_key, candidate in top_rows[:12]:
         table.add_row(
             _truncate(discovery_run_key, length=36),
@@ -351,6 +497,9 @@ def _render_discovery_run_raw_candidates(
             _render_money(candidate.get("midpoint_credit")),
             _render_value(candidate.get("return_on_risk")),
             str(candidate.get("setup_status") or "-"),
+            _render_ranking_vector(candidate, length=96),
+            str(candidate.get("ranking_policy_status") or "-"),
+            _render_blocker_list(candidate.get("ranking_policy_blockers")),
         )
     console.print(table)
 
@@ -721,7 +870,7 @@ def _render_attention(console: Console, payload: dict[str, Any]) -> None:
 
 
 def render_json_payload(console: Console, payload: dict[str, Any]) -> None:
-    console.print(json.dumps(payload, indent=2, default=str))
+    console.file.write(json.dumps(payload, indent=2, default=str) + "\n")
 
 
 def render_system_status(console: Console, payload: dict[str, Any]) -> None:
@@ -965,12 +1114,226 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
         console.print(table)
 
 
+def _render_pipelines_list(console: Console, payload: dict[str, Any]) -> None:
+    rows = list(payload.get("pipelines") or [])
+    overview = Table.grid(padding=(0, 2))
+    overview.add_row("Pipelines", _render_value(len(rows)))
+    overview.add_row(
+        "Healthy",
+        _render_value(
+            sum(1 for row in rows if str(row.get("status") or "") == "healthy")
+        ),
+    )
+    overview.add_row(
+        "Degraded",
+        _render_value(
+            sum(1 for row in rows if str(row.get("status") or "") == "degraded")
+        ),
+    )
+    overview.add_row(
+        "Idle",
+        _render_value(sum(1 for row in rows if str(row.get("status") or "") == "idle")),
+    )
+    console.print(Panel(overview, title="Pipelines", border_style="white"))
+
+    if not rows:
+        return
+    table = Table(title="Pipeline Summary", header_style="bold")
+    table.add_column("Pipeline")
+    table.add_column("Status")
+    table.add_column("Tradeability")
+    table.add_column("Opps", justify="right")
+    table.add_column("Alerts", justify="right")
+    table.add_column("Rank Gate")
+    table.add_column("Updated")
+    for row in rows:
+        gate_summary = (
+            row.get("ranking_policy_gate_summary")
+            if isinstance(row.get("ranking_policy_gate_summary"), dict)
+            else {}
+        )
+        table.add_row(
+            str(row.get("pipeline_id") or "-"),
+            str(row.get("status") or "-"),
+            _render_value(row.get("tradeability_state")),
+            (
+                f"{_render_value(row.get('promotable_count'))}/"
+                f"{_render_value(row.get('monitor_count'))}"
+            ),
+            _render_value(row.get("alert_count")),
+            _render_count_map(gate_summary.get("status_counts"), item_length=36),
+            _render_value(row.get("updated_at")),
+        )
+    console.print(table)
+
+
+def _render_pipeline_detail(console: Console, payload: dict[str, Any]) -> None:
+    current_cycle = dict(payload.get("current_cycle") or {})
+    raw_candidate_summary = (
+        current_cycle.get("raw_candidate_summary")
+        if isinstance(current_cycle.get("raw_candidate_summary"), dict)
+        else {}
+    )
+    if not raw_candidate_summary:
+        raw_candidate_summary = (
+            payload.get("raw_candidate_summary")
+            if isinstance(payload.get("raw_candidate_summary"), dict)
+            else {}
+        )
+    ranking_policy = (
+        current_cycle.get("resolved_ranking_policy")
+        if isinstance(current_cycle.get("resolved_ranking_policy"), dict)
+        else {}
+    )
+    if not ranking_policy:
+        ranking_policy = (
+            payload.get("resolved_ranking_policy")
+            if isinstance(payload.get("resolved_ranking_policy"), dict)
+            else {}
+        )
+    ranking_gate_summary = (
+        current_cycle.get("ranking_policy_gate_summary")
+        if isinstance(current_cycle.get("ranking_policy_gate_summary"), dict)
+        else {}
+    )
+    if not ranking_gate_summary:
+        ranking_gate_summary = (
+            payload.get("ranking_policy_gate_summary")
+            if isinstance(payload.get("ranking_policy_gate_summary"), dict)
+            else {}
+        )
+
+    overview = Table.grid(padding=(0, 2))
+    overview.add_row("Overall", _status_text(payload.get("status")))
+    overview.add_row("Updated", _render_value(payload.get("updated_at")))
+    overview.add_row("Pipeline", _render_value(payload.get("pipeline_id")))
+    overview.add_row("Label", _render_value(payload.get("label")))
+    overview.add_row("Date", _render_value(payload.get("market_date")))
+    overview.add_row("Tradeability", _render_value(payload.get("tradeability_state")))
+    overview.add_row("Risk", _render_value(payload.get("risk_status")))
+    overview.add_row(
+        "Reconciliation", _render_value(payload.get("reconciliation_status"))
+    )
+    overview.add_row(
+        "Capture",
+        (
+            f"quotes {_render_value(dict(payload.get('quote_capture') or {}).get('capture_status'))} | "
+            f"trades {_render_value(dict(payload.get('trade_capture') or {}).get('capture_status'))}"
+        ),
+    )
+    console.print(
+        Panel(
+            overview,
+            title="Pipeline",
+            border_style=STATUS_STYLES.get(str(payload.get("status")), "white"),
+        )
+    )
+
+    if current_cycle:
+        table = Table(title="Current Cycle", show_edge=False, header_style="bold")
+        table.add_column("Field", style="bold")
+        table.add_column("Value")
+        table.add_row("Cycle", _render_value(current_cycle.get("cycle_id")))
+        table.add_row("Generated", _render_value(current_cycle.get("generated_at")))
+        table.add_row("Job Run", _truncate(current_cycle.get("job_run_id"), length=72))
+        table.add_row("Strategy", _render_value(current_cycle.get("strategy")))
+        table.add_row("Profile", _render_value(current_cycle.get("profile")))
+        table.add_row("Universe", _render_value(current_cycle.get("universe_label")))
+        table.add_row(
+            "Candidates",
+            (
+                f"promotable {_render_value(current_cycle.get('promotable_count'))} | "
+                f"monitor {_render_value(current_cycle.get('monitor_count'))}"
+            ),
+        )
+        table.add_row(
+            "Automation",
+            _render_automation_sync_value(current_cycle.get("automation_summary")),
+        )
+        table.add_row(
+            "Ranking Policy",
+            _render_ranking_policy_summary(ranking_policy),
+        )
+        table.add_row(
+            "Ranking Gate",
+            _render_count_map(ranking_gate_summary.get("status_counts"), item_length=88),
+        )
+        table.add_row(
+            "Ranking Blockers",
+            _render_count_map(
+                ranking_gate_summary.get("blocker_counts"),
+                item_length=88,
+            ),
+        )
+        console.print(table)
+
+    _render_raw_candidate_summary(
+        console,
+        title="Raw Candidate Summary",
+        value=raw_candidate_summary,
+    )
+
+    uoa_overview = (
+        dict(payload.get("uoa_summary") or {}).get("overview")
+        if isinstance(dict(payload.get("uoa_summary") or {}).get("overview"), dict)
+        else {}
+    )
+    if uoa_overview:
+        table = Table(title="UOA Overview", show_edge=False, header_style="bold")
+        table.add_column("Field", style="bold")
+        table.add_column("Value")
+        table.add_row("Status", _render_value(uoa_overview.get("summary_status")))
+        table.add_row(
+            "Scoreable Roots", _render_value(uoa_overview.get("scoreable_root_count"))
+        )
+        table.add_row(
+            "Scoreable Premium",
+            _render_money(uoa_overview.get("scoreable_premium")),
+        )
+        table.add_row(
+            "Scoreable Trades",
+            _render_value(uoa_overview.get("scoreable_trade_count")),
+        )
+        table.add_row(
+            "Observed Contracts",
+            _render_value(uoa_overview.get("observed_contract_count")),
+        )
+        console.print(table)
+
+    slot_runs = list(payload.get("slot_runs") or [])
+    if slot_runs:
+        table = Table(title="Discovery-Run Slots", header_style="bold")
+        table.add_column("Slot")
+        table.add_column("Status")
+        table.add_column("Capture")
+        table.add_column("Quote Stream/Base", justify="right")
+        table.add_column("Trades Stream/Total", justify="right")
+        for row in slot_runs[:12]:
+            quote_capture = dict(row.get("quote_capture") or {})
+            trade_capture = dict(row.get("trade_capture") or {})
+            table.add_row(
+                str(row.get("slot_at") or row.get("scheduled_for") or "-"),
+                str(row.get("status") or "-"),
+                str(row.get("capture_status") or "-"),
+                f"{_render_value(_stream_quote_count(quote_capture))}/{_render_value(quote_capture.get('baseline_quote_events_saved'))}",
+                f"{_render_value(_stream_trade_count(trade_capture))}/{_render_value(trade_capture.get('total_trade_events_saved'))}",
+            )
+        console.print(table)
+
+
 def render_jobs_view(console: Console, payload: dict[str, Any]) -> None:
     details = dict(payload.get("details") or {})
     if str(details.get("view") or "list") == "detail":
         _render_job_run_detail(console, payload)
         return
     _render_jobs_list(console, payload)
+
+
+def render_pipelines_view(console: Console, payload: dict[str, Any]) -> None:
+    if isinstance(payload.get("pipelines"), list):
+        _render_pipelines_list(console, payload)
+        return
+    _render_pipeline_detail(console, payload)
 
 
 def render_job_lanes_view(console: Console, payload: dict[str, Any]) -> None:
@@ -1493,6 +1856,18 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
     summary = dict(payload.get("summary") or {})
     details = dict(payload.get("details") or {})
     current_cycle = dict(details.get("current_cycle") or {})
+    audit_target = dict(details.get("target") or {})
+    raw_candidate_summary = (
+        current_cycle.get("raw_candidate_summary")
+        if isinstance(current_cycle.get("raw_candidate_summary"), dict)
+        else {}
+    )
+    if not raw_candidate_summary:
+        raw_candidate_summary = (
+            details.get("raw_candidate_summary")
+            if isinstance(details.get("raw_candidate_summary"), dict)
+            else {}
+        )
     portfolio_summary = dict(details.get("portfolio_summary") or {})
     post_market = dict(details.get("post_market") or {})
     timeline_stats = dict(details.get("timeline_stats") or {})
@@ -1538,6 +1913,28 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
     _render_attention(console, payload)
 
     if current_cycle:
+        current_cycle_policy = (
+            current_cycle.get("resolved_ranking_policy")
+            if isinstance(current_cycle.get("resolved_ranking_policy"), dict)
+            else {}
+        )
+        if not current_cycle_policy:
+            current_cycle_policy = (
+                audit_target.get("resolved_ranking_policy")
+                if isinstance(audit_target.get("resolved_ranking_policy"), dict)
+                else {}
+            )
+        ranking_gate_summary = (
+            current_cycle.get("ranking_policy_gate_summary")
+            if isinstance(current_cycle.get("ranking_policy_gate_summary"), dict)
+            else {}
+        )
+        if not ranking_gate_summary:
+            ranking_gate_summary = (
+                audit_target.get("ranking_policy_gate_summary")
+                if isinstance(audit_target.get("ranking_policy_gate_summary"), dict)
+                else {}
+            )
         table = Table(title="Current Cycle", show_edge=False, header_style="bold")
         table.add_column("Field", style="bold")
         table.add_column("Value")
@@ -1558,7 +1955,32 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
             "Automation",
             _render_automation_sync_value(current_cycle.get("automation_summary")),
         )
+        table.add_row(
+            "Ranking Policy",
+            _render_ranking_policy_summary(current_cycle_policy),
+        )
+        table.add_row(
+            "Ranking Gate",
+            _render_count_map(
+                ranking_gate_summary.get("status_counts"),
+                limit=6,
+                item_length=80,
+            ),
+        )
+        table.add_row(
+            "Ranking Blockers",
+            _render_count_map(
+                ranking_gate_summary.get("blocker_counts"),
+                limit=6,
+                item_length=80,
+            ),
+        )
         console.print(table)
+        _render_raw_candidate_summary(
+            console,
+            title="Raw Candidate Summary",
+            value=raw_candidate_summary,
+        )
 
     portfolio_table = Table(
         title="Portfolio Summary", show_edge=False, header_style="bold"

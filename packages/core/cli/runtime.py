@@ -5,6 +5,7 @@ from typing import Any
 
 import typer
 
+from core.cli.ops_render import build_console, render_json_payload, render_pipelines_view
 from core.services.discovery_sessions import (
     get_discovery_session_detail,
     list_discovery_sessions,
@@ -33,6 +34,7 @@ def pipelines_command(
     limit: int = typer.Option(25, "--limit", help="Maximum pipelines to list."),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
+    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
     payload = (
         list_discovery_sessions(db_target=db, limit=limit, market_date=date)
@@ -45,7 +47,11 @@ def pipelines_command(
             stop_multiple=2.0,
         )
     )
-    _print_payload(payload, json_output=json_output)
+    console = build_console(no_color=no_color)
+    if json_output:
+        render_json_payload(console, payload)
+        return
+    render_pipelines_view(console, payload)
 
 
 def automations_command(

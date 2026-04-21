@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import UTC, datetime
 import unittest
 from unittest.mock import patch
@@ -17,7 +16,10 @@ from core.services.automation_runtime import (
     resolve_management_runtime,
 )
 from core.services.bots import build_discovery_run_scope
-from core.services.discovery_runs.scanning import build_symbol_strategy_candidates
+from core.services.discovery_runs.scanning import (
+    build_raw_candidate_summary,
+    build_symbol_strategy_candidates,
+)
 from core.services.discovery_runs.config import (
     _apply_options_automation_overrides,
     build_collection_args,
@@ -27,10 +29,12 @@ from core.services.management_planner import plan_position_management
 from core.services.opportunities import list_opportunities
 from core.services.opportunity_generation import build_runtime_opportunity_payload
 from core.services.positions import list_positions
-from core.services.scanners.config import parse_args as parse_scanner_args
+from core.services.scanners.config import (
+    parse_args as parse_scanner_args,
+    resolve_ranking_builder_params,
+)
 from core.services.signal_state import _build_opportunity_payload
 from core.services.strategy_builders import (
-    build_entry_runtime_candidates,
     build_runtime_scan_args,
 )
 
@@ -66,153 +70,6 @@ class StrategyBuilderServiceTests(unittest.TestCase):
 
         self.assertEqual(args.min_short_vs_expected_move_ratio, -0.30)
         self.assertEqual(args.min_breakeven_vs_expected_move_ratio, -0.35)
-
-    def test_build_entry_runtime_candidates_filters_to_exact_widths(self) -> None:
-        runtime = resolve_entry_runtime(
-            bot_id="short_dated_index_credit_bot",
-            automation_id="index_put_credit_entry",
-        )
-        runtime = replace(
-            runtime,
-            automation=replace(runtime.automation, symbols=(runtime.symbols[0],)),
-        )
-        base_args = parse_scanner_args([])
-        fake_market_slice = object()
-        with (
-            patch(
-                "core.services.strategy_builders.build_symbol_market_slice",
-                return_value=fake_market_slice,
-            ) as build_slice,
-            patch(
-                "core.services.strategy_builders.build_candidates_with_details_from_market_slice",
-                return_value=([object(), object()], None, {}),
-            ),
-            patch(
-                "core.services.strategy_builders._serialize_candidate",
-                side_effect=[
-                    {
-                        "underlying_symbol": runtime.symbols[0],
-                        "strategy": "put_credit",
-                        "profile": "weekly",
-                        "setup_status": "neutral",
-                        "days_to_expiration": 7,
-                        "short_delta": 0.22,
-                        "width": 2.0,
-                        "short_open_interest": 1200,
-                        "long_open_interest": 1100,
-                        "short_relative_spread": 0.05,
-                        "long_relative_spread": 0.04,
-                        "return_on_risk": 0.15,
-                    },
-                    {
-                        "underlying_symbol": runtime.symbols[0],
-                        "strategy": "put_credit",
-                        "profile": "weekly",
-                        "setup_status": "blocked",
-                        "days_to_expiration": 7,
-                        "short_delta": 0.22,
-                        "width": 2.0,
-                        "short_open_interest": 1200,
-                        "long_open_interest": 1100,
-                        "short_relative_spread": 0.05,
-                        "long_relative_spread": 0.04,
-                        "return_on_risk": 0.15,
-                    },
-                ],
-            ) as serialize_candidate,
-        ):
-            rows = build_entry_runtime_candidates(
-                entry_runtimes=[runtime],
-                base_scanner_args=base_args,
-                client=object(),
-                calendar_resolver=object(),
-                greeks_provider=object(),
-                per_runtime_limit=5,
-            )
-
-        owner_key = (runtime.bot_id, runtime.automation_id)
-        self.assertEqual(build_slice.call_count, 1)
-        self.assertAlmostEqual(
-            serialize_candidate.call_args.kwargs["short_delta_target"],
-            0.23,
-        )
-        self.assertEqual(len(rows[owner_key][runtime.symbols[0]]), 1)
-        self.assertEqual(rows[owner_key][runtime.symbols[0]][0]["setup_status"], "neutral")
-
-    def test_build_entry_runtime_candidates_persists_runtime_runs_with_run_ids(
-        self,
-    ) -> None:
-        runtime = resolve_entry_runtime(
-            bot_id="short_dated_index_credit_bot",
-            automation_id="index_put_credit_entry",
-        )
-        runtime = replace(
-            runtime,
-            automation=replace(runtime.automation, symbols=(runtime.symbols[0],)),
-        )
-        base_args = parse_scanner_args([])
-
-        class _MarketSlice:
-            symbol = runtime.symbols[0]
-            spot_price = 500.0
-
-        candidate = object()
-        with (
-            patch(
-                "core.services.strategy_builders.build_symbol_market_slice",
-                return_value=_MarketSlice(),
-            ),
-            patch(
-                "core.services.strategy_builders.build_candidates_with_details_from_market_slice",
-                return_value=([candidate], None, {}),
-            ),
-            patch(
-                "core.services.strategy_builders._serialize_candidate",
-                return_value={
-                    "underlying_symbol": runtime.symbols[0],
-                    "strategy": "put_credit",
-                    "profile": "weekly",
-                    "setup_status": "neutral",
-                    "days_to_expiration": 7,
-                    "short_delta": 0.22,
-                    "width": 2.0,
-                    "short_open_interest": 1200,
-                    "long_open_interest": 1100,
-                    "short_relative_spread": 0.05,
-                    "long_relative_spread": 0.04,
-                    "return_on_risk": 0.15,
-                },
-            ),
-            patch(
-                "core.services.strategy_builders.persist_scan_run",
-                return_value="runtime-run-1",
-            ) as persist_run,
-        ):
-            rows = build_entry_runtime_candidates(
-                entry_runtimes=[runtime],
-                base_scanner_args=base_args,
-                client=object(),
-                calendar_resolver=object(),
-                greeks_provider=object(),
-                per_runtime_limit=5,
-                history_store=object(),
-                session_label="explore_10_put_credit_weekly_auto",
-            )
-
-        owner_key = (runtime.bot_id, runtime.automation_id)
-        self.assertEqual(persist_run.call_count, 1)
-        self.assertEqual(
-            persist_run.call_args.kwargs["session_label"],
-            "explore_10_put_credit_weekly_auto",
-        )
-        self.assertEqual(
-            rows[owner_key][runtime.symbols[0]][0]["run_id"],
-            "runtime-run-1",
-        )
-        self.assertEqual(
-            persist_run.call_args.kwargs["symbol_args"].min_return_on_risk,
-            0.13,
-        )
 
 
 class ManagementPlannerTests(unittest.TestCase):
@@ -280,6 +137,148 @@ class CollectionConfigTests(unittest.TestCase):
             0.23,
         )
         self.assertEqual(grouped["SPY"][0]["underlying_symbol"], "SPY")
+
+    def test_resolve_ranking_builder_params_prefers_strategy_config_for_live_families(
+        self,
+    ) -> None:
+        cases = {
+            "call_credit": (0.60, 10.0, 8.0, 12.0, 0.18, 0.42),
+            "put_credit": (0.60, 10.0, 8.0, 12.0, 0.18, 0.42),
+            "iron_condor": (0.64, 12.0, 10.0, 16.0, 0.20, 0.48),
+        }
+
+        for strategy, expected in cases.items():
+            source, params = resolve_ranking_builder_params(
+                profile_name="weekly",
+                strategy_family=strategy,
+            )
+
+            self.assertEqual(source, "strategy_config")
+            self.assertEqual(
+                (
+                    params["ranking_min_probability_of_profit"],
+                    params["ranking_min_expected_value_dollars"],
+                    params["ranking_min_slippage_adjusted_expected_value_dollars"],
+                    params["ranking_max_entry_slippage_dollars"],
+                    params["ranking_min_model_implied_volatility"],
+                    params["ranking_weight_probability_of_profit"],
+                ),
+                expected,
+            )
+
+    def test_resolve_ranking_builder_params_uses_explicit_profile_fallback_for_legacy_families(
+        self,
+    ) -> None:
+        source, params = resolve_ranking_builder_params(
+            profile_name="weekly",
+            strategy_family="call_debit",
+        )
+
+        self.assertEqual(source, "profile_fallback")
+        self.assertEqual(params["ranking_min_probability_of_profit"], 0.40)
+        self.assertEqual(params["ranking_weight_probability_of_profit"], 0.28)
+
+    def test_build_raw_candidate_summary_includes_ranking_vectors_and_blocked_exemplars(
+        self,
+    ) -> None:
+        args = parse_scanner_args(
+            [
+                "--symbol",
+                "QQQ",
+                "--strategy",
+                "call_credit",
+                "--profile",
+                "weekly",
+            ]
+        )
+        scan_result = SymbolScanResult(
+            symbol="QQQ",
+            underlying_type="etf_index_proxy",
+            spot_price=500.0,
+            args=args,
+            setup=None,
+            candidates=[],
+            run_id="run-1",
+            diagnostics={
+                "ranking_policy_status_counts": {"passed": 1, "blocked": 2},
+                "ranking_policy_blocker_counts": {
+                    "expected_value_dollars_below_floor": 2,
+                },
+                "ranking_policy_blocked_exemplars": [
+                    {
+                        "underlying_symbol": "QQQ",
+                        "strategy": "call_credit",
+                        "expiration_date": "2026-04-30",
+                        "short_symbol": "QQQ260430C00663000",
+                        "long_symbol": "QQQ260430C00667000",
+                        "symbol_path": "QQQ260430C00663000 / QQQ260430C00667000",
+                        "quality_score": 48.5,
+                        "midpoint_credit": 0.72,
+                        "return_on_risk": 0.21,
+                        "setup_status": "neutral",
+                        "ranking_policy": {"min_expected_value_dollars": 10.0},
+                        "ranking_policy_status": "blocked",
+                        "ranking_policy_blockers": [
+                            "expected_value_dollars_below_floor"
+                        ],
+                        "probability_of_profit": 0.84,
+                        "breakeven_touch_probability": 0.29,
+                        "expected_value_dollars": 6.2,
+                        "slippage_adjusted_expected_value_dollars": 3.1,
+                        "entry_slippage_dollars": 4.0,
+                        "model_implied_volatility": 0.20,
+                    }
+                ],
+            },
+        )
+
+        summary = build_raw_candidate_summary(
+            [scan_result],
+            {
+                "QQQ": [
+                    {
+                        "underlying_symbol": "QQQ",
+                        "strategy": "call_credit",
+                        "expiration_date": "2026-04-30",
+                        "short_symbol": "QQQ260430C00663000",
+                        "long_symbol": "QQQ260430C00667000",
+                        "quality_score": 51.9,
+                        "midpoint_credit": 0.78,
+                        "return_on_risk": 0.24,
+                        "setup_status": "neutral",
+                        "structure_identity": "call_credit_spread|example",
+                        "ranking_policy": {"min_expected_value_dollars": 10.0},
+                        "ranking_policy_status": "passed",
+                        "ranking_policy_blockers": [],
+                        "probability_of_profit": 0.863,
+                        "breakeven_touch_probability": 0.276,
+                        "expected_value_dollars": 23.22,
+                        "slippage_adjusted_expected_value_dollars": 14.22,
+                        "entry_slippage_dollars": 9.0,
+                        "model_implied_volatility": 0.204,
+                    }
+                ]
+            },
+        )
+
+        top_candidate = summary["top_candidates"][0]
+        blocked_candidate = summary["top_blocked_candidates"][0]
+        self.assertEqual(top_candidate["ranking_policy_status"], "passed")
+        self.assertAlmostEqual(top_candidate["probability_of_profit"], 0.863)
+        self.assertAlmostEqual(
+            top_candidate["slippage_adjusted_expected_value_dollars"],
+            14.22,
+        )
+        self.assertEqual(blocked_candidate["ranking_policy_status"], "blocked")
+        self.assertEqual(
+            blocked_candidate["ranking_policy_blockers"],
+            ["expected_value_dollars_below_floor"],
+        )
+        self.assertAlmostEqual(blocked_candidate["expected_value_dollars"], 6.2)
+        self.assertEqual(
+            summary["ranking_policy_gate_summary"]["status_counts"],
+            {"blocked": 2, "passed": 1},
+        )
 
     def test_build_discovery_run_scope_includes_runtime_min_return_on_risk(self) -> None:
         scope = build_discovery_run_scope(

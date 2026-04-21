@@ -18,6 +18,7 @@ from core.domain.models import (
 from core.integrations.alpaca.client import AlpacaClient
 from core.integrations.calendar_events import classify_underlying_type
 from core.services.market_dates import NEW_YORK
+from core.services.opportunity_fields import candidate_ranking_summary_row
 from core.services.scanners.config import (
     build_filter_payload,
     clone_args,
@@ -333,6 +334,29 @@ def _calendar_reason_code_counts(
     return dict(sorted(reason_counts.items()))
 
 
+def _ranking_policy_blocked_exemplars(
+    *,
+    candidates: list[SpreadCandidate],
+    args: argparse.Namespace,
+    limit: int = 3,
+) -> list[dict[str, Any]]:
+    blocked_candidates = [
+        candidate
+        for candidate in candidates
+        if str(candidate.ranking_policy_status or "").lower() == "blocked"
+    ]
+    if not blocked_candidates:
+        return []
+    ranked_blocked_candidates = rank_candidates(
+        attach_selection_notes(blocked_candidates, args),
+        args,
+    )
+    return [
+        candidate_ranking_summary_row(candidate.to_payload())
+        for candidate in ranked_blocked_candidates[: max(int(limit), 1)]
+    ]
+
+
 def postprocess_market_slice_candidates(
     *,
     market_slice: SymbolMarketSlice,
@@ -419,6 +443,17 @@ def build_candidates_with_details_from_market_slice(
         candidates=diagnostic_candidates,
         args=symbol_args,
     )
+    ranking_blocked_exemplars = _ranking_policy_blocked_exemplars(
+        candidates=annotate_ranking_policy(
+            candidates=attach_data_quality(
+                candidates=calendar_annotated_candidates,
+                underlying_type=market_slice.underlying_type,
+                args=symbol_args,
+            ),
+            args=symbol_args,
+        ),
+        args=symbol_args,
+    )
     all_candidates = postprocess_market_slice_candidates(
         market_slice=market_slice,
         symbol_args=symbol_args,
@@ -461,6 +496,7 @@ def build_candidates_with_details_from_market_slice(
             policy_candidates,
             field="ranking_policy_blockers",
         ),
+        "ranking_policy_blocked_exemplars": ranking_blocked_exemplars,
     }
 
 

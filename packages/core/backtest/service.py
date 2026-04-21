@@ -26,7 +26,8 @@ from core.services.entry_planner import plan_entry_selection, score_opportunity
 from core.services.exit_manager import resolve_exit_policy_snapshot
 from core.services.management_recipes import (
     build_exit_policy_from_recipe_refs,
-    evaluate_management_recipes,
+    compile_management_recipes,
+    evaluate_compiled_management_recipes,
 )
 from core.services.option_structures import (
     candidate_legs,
@@ -40,7 +41,7 @@ from core.storage.serializers import parse_datetime
 
 ENGINE_NAME = "backtest"
 ENGINE_VERSION = "v1"
-_SESSION_RUN_FETCH_MULTIPLIER = 128
+_SESSION_RUN_FETCH_MULTIPLIERS = (4, 16, 64, 128)
 
 _FIDELITY_RANK = {
     "high": 0,
@@ -239,12 +240,15 @@ def _structure_marks_from_quote_rows(
     quote_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     opening_legs = candidate_legs(opportunity)
+    required_symbols = set(unique_leg_symbols(opening_legs))
+    if not required_symbols:
+        return []
     quotes_by_symbol: dict[str, dict[str, Any]] = {}
     sources_by_symbol: dict[str, str] = {}
     marks: list[dict[str, Any]] = []
     for row in quote_rows:
         symbol = str(row.get("option_symbol") or "").strip()
-        if not symbol:
+        if not symbol or symbol not in required_symbols:
             continue
         quotes_by_symbol[symbol] = {
             "bid": row.get("bid"),
@@ -255,11 +259,14 @@ def _structure_marks_from_quote_rows(
         }
         if row.get("source") not in (None, ""):
             sources_by_symbol[symbol] = str(row.get("source"))
+        if len(quotes_by_symbol) < len(required_symbols):
+            continue
         snapshot = structure_quote_snapshot(
             legs=opening_legs,
             strategy_family=opportunity.get("strategy_family"),
             quotes_by_symbol=quotes_by_symbol,
             sources_by_symbol=sources_by_symbol,
+            normalized_legs=True,
         )
         if snapshot is None:
             continue
@@ -279,13 +286,16 @@ def _structure_marks_from_trade_rows(
     trade_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     opening_legs = candidate_legs(opportunity)
+    required_symbols = set(unique_leg_symbols(opening_legs))
+    if not required_symbols:
+        return []
     quotes_by_symbol: dict[str, dict[str, Any]] = {}
     sources_by_symbol: dict[str, str] = {}
     marks: list[dict[str, Any]] = []
     for row in trade_rows:
         symbol = str(row.get("option_symbol") or "").strip()
         price = _coerce_float(row.get("price"))
-        if not symbol or price <= 0:
+        if not symbol or symbol not in required_symbols or price <= 0:
             continue
         quotes_by_symbol[symbol] = {
             "bid": price,
@@ -296,11 +306,14 @@ def _structure_marks_from_trade_rows(
         }
         if row.get("source") not in (None, ""):
             sources_by_symbol[symbol] = str(row.get("source"))
+        if len(quotes_by_symbol) < len(required_symbols):
+            continue
         snapshot = structure_quote_snapshot(
             legs=opening_legs,
             strategy_family=opportunity.get("strategy_family"),
             quotes_by_symbol=quotes_by_symbol,
             sources_by_symbol=sources_by_symbol,
+            normalized_legs=True,
         )
         if snapshot is None:
             continue
@@ -330,6 +343,15 @@ def _evaluate_structure_marks(
 ) -> dict[str, Any]:
     simulated_position = dict(entry_execution["position"])
     recipe_refs = tuple(runtime.automation.strategy_config.management_recipe_refs)
+    compiled_recipes = compile_management_recipes(
+        recipe_refs,
+        session_date=str(
+            simulated_position.get("session_date")
+            or simulated_position.get("market_date")
+            or ""
+        ).strip()
+        or None,
+    )
     latest_mark: dict[str, Any] | None = None
     snapshot_count = 0
     for snapshot in marks:
@@ -341,8 +363,8 @@ def _evaluate_structure_marks(
         snapshot_count += 1
         simulated_position["close_mark"] = close_mark
         simulated_position["close_marked_at"] = captured_at
-        decision = evaluate_management_recipes(
-            recipe_refs,
+        decision = evaluate_compiled_management_recipes(
+            compiled_recipes,
             position=simulated_position,
             mark=_coerce_float(close_mark),
             now=parse_datetime(captured_at) or session_end,
@@ -398,8 +420,8 @@ def _evaluate_structure_marks(
         parse_datetime(simulated_position.get("exit_policy", {}).get("force_close_at"))
         or session_end
     )
-    final_decision = evaluate_management_recipes(
-        recipe_refs,
+    final_decision = evaluate_compiled_management_recipes(
+        compiled_recipes,
         position=simulated_position,
         mark=_coerce_float(latest_mark.get("close_mark")),
         now=forced_now,
@@ -570,6 +592,25 @@ def _alpaca_daily_marks(
     return marks, mark_source
 
 
+def _target_lifecycle_end_date(
+    *,
+    entry_execution: dict[str, Any],
+    session_date: str,
+    end_date: str | None,
+) -> str:
+    target_day = date.fromisoformat(end_date or session_date)
+    position = entry_execution.get("position")
+    exit_policy = (
+        position.get("exit_policy")
+        if isinstance(position, dict) and isinstance(position.get("exit_policy"), dict)
+        else {}
+    )
+    force_close_at = parse_datetime(exit_policy.get("force_close_at"))
+    if force_close_at is not None:
+        target_day = min(target_day, force_close_at.date())
+    return target_day.isoformat()
+
+
 def _simulate_position_lifecycle(
     *,
     history_store: Any,
@@ -605,7 +646,11 @@ def _simulate_position_lifecycle(
             fidelity_reason="missing_structure_legs",
         )
 
-    target_date = end_date or session_date
+    target_date = _target_lifecycle_end_date(
+        entry_execution=entry_execution,
+        session_date=session_date,
+        end_date=end_date,
+    )
     _, session_end = session_bounds(target_date)
 
     quote_rows: list[dict[str, Any]] = []
@@ -830,6 +875,33 @@ def _ordered_session_runs(
     return sorted(recent_first, key=lambda row: str(row.get("session_date") or ""))
 
 
+def _fetch_session_runs(
+    *,
+    signal_store: Any,
+    bot_id: str,
+    automation_id: str,
+    start_date: str | None,
+    end_date: str | None,
+    session_limit: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for multiplier in _SESSION_RUN_FETCH_MULTIPLIERS:
+        fetch_limit = max(session_limit * multiplier, session_limit)
+        rows = [
+            dict(row)
+            for row in signal_store.list_automation_runs(
+                bot_id=bot_id,
+                automation_id=automation_id,
+                start_date=start_date,
+                end_date=end_date,
+                limit=fetch_limit,
+            )
+        ]
+        if len(_backtest_runs_by_session(rows)) >= session_limit or len(rows) < fetch_limit:
+            break
+    return _ordered_session_runs(rows, session_limit=session_limit)
+
+
 def _run_fidelity(sessions: list[BacktestSessionSummary]) -> tuple[BacktestFidelity, str, dict[str, int]]:
     if not sessions:
         return "unsupported", "no_sessions", {}
@@ -859,17 +931,12 @@ def build_backtest_run(
     alpaca_cache: dict[tuple[tuple[str, ...], str, str], dict[str, Any]] = {}
     session_limit = max(int(limit), 1)
 
-    runs = _ordered_session_runs(
-        [
-            dict(row)
-            for row in signal_store.list_automation_runs(
-                bot_id=runtime.bot_id,
-                automation_id=runtime.automation_id,
-                start_date=start_date,
-                end_date=end_date,
-                limit=session_limit * _SESSION_RUN_FETCH_MULTIPLIER,
-            )
-        ],
+    runs = _fetch_session_runs(
+        signal_store=signal_store,
+        bot_id=runtime.bot_id,
+        automation_id=runtime.automation_id,
+        start_date=start_date,
+        end_date=end_date,
         session_limit=session_limit,
     )
 

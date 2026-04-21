@@ -298,44 +298,6 @@ _PROFILE_RANKING_POLICY_BASES: dict[str, RankingPolicyConfig] = {
 }
 
 _STRATEGY_RANKING_POLICY_OVERRIDES: dict[str, RankingPolicyConfig] = {
-    "call_credit_spread": RankingPolicyConfig(
-        min_probability_of_profit=0.60,
-        min_slippage_adjusted_expected_value_dollars=8.0,
-        min_model_implied_volatility=0.18,
-        weights=RankingWeightsConfig(
-            probability_of_profit=0.42,
-            expected_value_dollars=0.16,
-            slippage_adjusted_expected_value_dollars=0.24,
-            entry_slippage_dollars=0.10,
-            model_implied_volatility=0.08,
-        ),
-    ),
-    "put_credit_spread": RankingPolicyConfig(
-        min_probability_of_profit=0.60,
-        min_slippage_adjusted_expected_value_dollars=8.0,
-        min_model_implied_volatility=0.18,
-        weights=RankingWeightsConfig(
-            probability_of_profit=0.42,
-            expected_value_dollars=0.16,
-            slippage_adjusted_expected_value_dollars=0.24,
-            entry_slippage_dollars=0.10,
-            model_implied_volatility=0.08,
-        ),
-    ),
-    "iron_condor": RankingPolicyConfig(
-        min_probability_of_profit=0.64,
-        min_expected_value_dollars=12.0,
-        min_slippage_adjusted_expected_value_dollars=10.0,
-        max_entry_slippage_dollars=16.0,
-        min_model_implied_volatility=0.20,
-        weights=RankingWeightsConfig(
-            probability_of_profit=0.48,
-            expected_value_dollars=0.12,
-            slippage_adjusted_expected_value_dollars=0.22,
-            entry_slippage_dollars=0.10,
-            model_implied_volatility=0.08,
-        ),
-    ),
     "call_debit_spread": RankingPolicyConfig(
         min_probability_of_profit=0.40,
         max_model_implied_volatility=0.42,

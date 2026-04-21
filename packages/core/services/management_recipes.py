@@ -28,6 +28,13 @@ class ManagementRecipeDecision:
     limit_price_source: str | None = None
 
 
+@dataclass(frozen=True)
+class CompiledManagementRecipe:
+    recipe_ref: str
+    exit_policy: dict[str, Any] | None = None
+    non_closing_reason: str | None = None
+
+
 def build_exit_policy_from_recipe_refs(
     recipe_refs: tuple[str, ...],
     *,
@@ -59,71 +66,95 @@ def _position_with_recipe_policy(
     return payload
 
 
-def _evaluate_recipe(
+def _position_session_date(position: dict[str, Any]) -> str | None:
+    rendered = str(position.get("session_date") or position.get("market_date") or "")
+    rendered = rendered.strip()
+    return rendered or None
+
+
+def _compile_recipe(
     recipe_ref: str,
+    *,
+    session_date: str | None,
+) -> CompiledManagementRecipe:
+    normalized = str(recipe_ref or "").strip().lower()
+    if normalized == "take_profit_50pct":
+        return CompiledManagementRecipe(
+            recipe_ref=recipe_ref,
+            exit_policy={
+                "enabled": True,
+                "profit_target_pct": 0.5,
+                "stop_multiple": RECIPE_DISABLED_THRESHOLD,
+                "force_close_at": None,
+            },
+        )
+    if normalized == "max_loss_2x_credit":
+        return CompiledManagementRecipe(
+            recipe_ref=recipe_ref,
+            exit_policy={
+                "enabled": True,
+                "profit_target_pct": RECIPE_DISABLED_THRESHOLD,
+                "stop_multiple": 2.0,
+                "force_close_at": None,
+            },
+        )
+    if normalized == "expiry_day_exit":
+        if session_date is None:
+            return CompiledManagementRecipe(
+                recipe_ref=recipe_ref,
+                non_closing_reason="missing_session_date_for_expiry_day_exit",
+            )
+        return CompiledManagementRecipe(
+            recipe_ref=recipe_ref,
+            exit_policy=resolve_exit_policy_snapshot(
+                session_date=session_date,
+                payload={
+                    "exit_policy": {
+                        "enabled": True,
+                        "profit_target_pct": RECIPE_DISABLED_THRESHOLD,
+                        "stop_multiple": RECIPE_DISABLED_THRESHOLD,
+                        "force_close_minutes_before_close": 10,
+                    }
+                },
+            ),
+        )
+    return CompiledManagementRecipe(
+        recipe_ref=recipe_ref,
+        non_closing_reason=f"unknown_management_recipe:{normalized or 'missing'}",
+    )
+
+
+def compile_management_recipes(
+    recipe_refs: tuple[str, ...],
+    *,
+    session_date: str | None = None,
+) -> tuple[CompiledManagementRecipe, ...]:
+    return tuple(
+        _compile_recipe(recipe_ref, session_date=session_date)
+        for recipe_ref in recipe_refs
+    )
+
+
+def _evaluate_compiled_recipe(
+    recipe: CompiledManagementRecipe,
     *,
     position: dict[str, Any],
     mark: float | None,
     now: datetime,
 ) -> ManagementRecipeDecision:
-    normalized = str(recipe_ref or "").strip().lower()
-    if normalized == "take_profit_50pct":
-        decision = evaluate_exit_policy(
-            position=_position_with_recipe_policy(
-                position,
-                exit_policy={
-                    "enabled": True,
-                    "profit_target_pct": 0.5,
-                    "stop_multiple": RECIPE_DISABLED_THRESHOLD,
-                    "force_close_at": None,
-                },
-            ),
-            mark=mark,
-            now=now,
-        )
-    elif normalized == "max_loss_2x_credit":
-        decision = evaluate_exit_policy(
-            position=_position_with_recipe_policy(
-                position,
-                exit_policy={
-                    "enabled": True,
-                    "profit_target_pct": RECIPE_DISABLED_THRESHOLD,
-                    "stop_multiple": 2.0,
-                    "force_close_at": None,
-                },
-            ),
-            mark=mark,
-            now=now,
-        )
-    elif normalized == "expiry_day_exit":
-        session_date = str(
-            position.get("session_date") or position.get("market_date") or ""
-        )
-        exit_policy = resolve_exit_policy_snapshot(
-            session_date=session_date,
-            payload={
-                "exit_policy": {
-                    "enabled": True,
-                    "profit_target_pct": RECIPE_DISABLED_THRESHOLD,
-                    "stop_multiple": RECIPE_DISABLED_THRESHOLD,
-                    "force_close_minutes_before_close": 10,
-                }
-            },
-        )
-        decision = evaluate_exit_policy(
-            position=_position_with_recipe_policy(position, exit_policy=exit_policy),
-            mark=mark,
-            now=now,
-        )
-    else:
+    if recipe.exit_policy is None:
         return ManagementRecipeDecision(
-            recipe_ref=recipe_ref,
+            recipe_ref=recipe.recipe_ref,
             should_close=False,
-            reason=f"unknown_management_recipe:{normalized or 'missing'}",
+            reason=str(recipe.non_closing_reason or "hold"),
         )
-
+    decision = evaluate_exit_policy(
+        position=_position_with_recipe_policy(position, exit_policy=recipe.exit_policy),
+        mark=mark,
+        now=now,
+    )
     return ManagementRecipeDecision(
-        recipe_ref=recipe_ref,
+        recipe_ref=recipe.recipe_ref,
         should_close=bool(decision.get("should_close")),
         reason=str(decision.get("reason") or "hold"),
         limit_price=(
@@ -139,14 +170,14 @@ def _evaluate_recipe(
     )
 
 
-def evaluate_management_recipes(
-    recipe_refs: tuple[str, ...],
+def evaluate_compiled_management_recipes(
+    recipes: tuple[CompiledManagementRecipe, ...],
     *,
     position: dict[str, Any],
     mark: float | None,
     now: datetime | None = None,
 ) -> ManagementRecipeDecision:
-    if not recipe_refs:
+    if not recipes:
         return ManagementRecipeDecision(
             recipe_ref=None,
             should_close=False,
@@ -154,9 +185,9 @@ def evaluate_management_recipes(
         )
     current_time = now or datetime.now(UTC)
     pending_decision: ManagementRecipeDecision | None = None
-    for recipe_ref in recipe_refs:
-        decision = _evaluate_recipe(
-            recipe_ref,
+    for recipe in recipes:
+        decision = _evaluate_compiled_recipe(
+            recipe,
             position=position,
             mark=mark,
             now=current_time,
@@ -175,9 +206,30 @@ def evaluate_management_recipes(
     )
 
 
+def evaluate_management_recipes(
+    recipe_refs: tuple[str, ...],
+    *,
+    position: dict[str, Any],
+    mark: float | None,
+    now: datetime | None = None,
+) -> ManagementRecipeDecision:
+    return evaluate_compiled_management_recipes(
+        compile_management_recipes(
+            recipe_refs,
+            session_date=_position_session_date(position),
+        ),
+        position=position,
+        mark=mark,
+        now=now,
+    )
+
+
 __all__ = [
+    "CompiledManagementRecipe",
     "DEFAULT_EXIT_POLICY",
     "ManagementRecipeDecision",
     "build_exit_policy_from_recipe_refs",
+    "compile_management_recipes",
+    "evaluate_compiled_management_recipes",
     "evaluate_management_recipes",
 ]

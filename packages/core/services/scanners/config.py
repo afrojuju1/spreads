@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import UTC, date, datetime
+from functools import lru_cache
 import os
 from pathlib import Path
 from typing import Any
@@ -26,7 +27,7 @@ from core.services.strategy_specs import (
     strategy_display_label,
     strategy_option_type,
 )
-from core.services.strategy_configs import default_config_root
+from core.services.strategy_configs import default_config_root, load_strategy_configs
 
 DIRECTIONAL_LONG_DELTA_DEFAULTS: dict[str, tuple[float, float, float]] = {
     "0dte": (0.18, 0.35, 0.25),
@@ -49,6 +50,87 @@ RANKING_POLICY_ARG_KEYS = (
     "ranking_weight_entry_slippage_dollars",
     "ranking_weight_model_implied_volatility",
 )
+
+PROFILE_FALLBACK_RANKING_STRATEGY_FAMILIES = frozenset(
+    {
+        "combined",
+        "call_debit_spread",
+        "put_debit_spread",
+        "long_call",
+        "long_put",
+        "long_straddle",
+        "long_strangle",
+    }
+)
+
+
+@lru_cache(maxsize=4)
+def _cached_strategy_configs(config_root: str) -> tuple[Any, ...]:
+    return tuple(load_strategy_configs(config_root).values())
+
+
+def _aggregate_ranking_builder_params(
+    configs: tuple[Any, ...],
+) -> dict[str, float]:
+    values_by_key: dict[str, list[float]] = {key: [] for key in RANKING_POLICY_ARG_KEYS}
+    for strategy_config in configs:
+        for key, value in strategy_config.build.ranking.as_builder_params().items():
+            if value is None:
+                continue
+            values_by_key[key].append(float(value))
+
+    payload: dict[str, float] = {}
+    for key, values in values_by_key.items():
+        if not values:
+            continue
+        if key.startswith("ranking_weight_"):
+            payload[key] = sum(values) / len(values)
+        elif key.startswith("ranking_max_"):
+            payload[key] = max(values)
+        else:
+            payload[key] = min(values)
+    return payload
+
+
+def _config_backed_ranking_builder_params(
+    *,
+    profile_name: str,
+    strategy_family: str,
+) -> dict[str, float]:
+    configs = tuple(
+        strategy_config
+        for strategy_config in _cached_strategy_configs(str(default_config_root()))
+        if strategy_config.enabled
+        and strategy_config.scanner_profile == profile_name
+        and strategy_config.strategy_family == strategy_family
+    )
+    return _aggregate_ranking_builder_params(configs)
+
+
+def resolve_ranking_builder_params(
+    *,
+    profile_name: str,
+    strategy_family: str,
+) -> tuple[str, dict[str, float]]:
+    normalized_strategy_family = normalize_strategy_family(strategy_family)
+    config_backed_params = _config_backed_ranking_builder_params(
+        profile_name=profile_name,
+        strategy_family=normalized_strategy_family,
+    )
+    if config_backed_params:
+        return "strategy_config", config_backed_params
+    if normalized_strategy_family not in PROFILE_FALLBACK_RANKING_STRATEGY_FAMILIES:
+        raise ValueError(
+            "No config-backed ranking defaults exist for "
+            f"{normalized_strategy_family} on profile {profile_name}."
+        )
+    return (
+        "profile_fallback",
+        resolve_ranking_policy(
+            profile_name,
+            normalized_strategy_family,
+        ).as_builder_params(),
+    )
 
 
 def available_universe_labels() -> tuple[str, ...]:
@@ -503,7 +585,10 @@ def apply_profile_defaults(args: argparse.Namespace, underlying_type: str) -> No
     profile = PROFILE_CONFIGS[args.profile]
     underlying_key = infer_underlying_key(underlying_type)
     normalized_strategy = normalize_strategy_family(args.strategy)
-    ranking_policy = resolve_ranking_policy(args.profile, normalized_strategy)
+    _ranking_source, ranking_builder_params = resolve_ranking_builder_params(
+        profile_name=args.profile,
+        strategy_family=normalized_strategy,
+    )
     directional_long_defaults = (
         DIRECTIONAL_LONG_DELTA_DEFAULTS.get(args.profile)
         if normalized_strategy in {"long_call", "long_put"}
@@ -565,7 +650,7 @@ def apply_profile_defaults(args: argparse.Namespace, underlying_type: str) -> No
         args.min_breakeven_vs_expected_move_ratio,
         profile.min_breakeven_vs_expected_move_ratio,
     )
-    for key, value in ranking_policy.as_builder_params().items():
+    for key, value in ranking_builder_params.items():
         setattr(
             args,
             key,
@@ -742,6 +827,7 @@ def resolve_symbol_scan_args(
 
 
 __all__ = [
+    "PROFILE_FALLBACK_RANKING_STRATEGY_FAMILIES",
     "apply_profile_defaults",
     "apply_scan_evaluation_context",
     "build_filter_payload",
@@ -752,6 +838,7 @@ __all__ = [
     "parse_args",
     "RANKING_POLICY_ARG_KEYS",
     "resolve_profile_value",
+    "resolve_ranking_builder_params",
     "resolve_scan_reference_date",
     "resolve_scan_reference_datetime",
     "resolve_scan_session_bucket",

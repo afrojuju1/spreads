@@ -712,9 +712,10 @@ def structure_quote_snapshot(
     strategy_family: Any,
     quotes_by_symbol: Mapping[str, Any],
     sources_by_symbol: Mapping[str, str] | None = None,
+    normalized_legs: bool = False,
 ) -> dict[str, Any] | None:
-    normalized_legs = normalize_legs(legs)
-    if not normalized_legs:
+    normalized_leg_rows = list(legs) if normalized_legs else normalize_legs(legs)
+    if not normalized_leg_rows:
         return None
     family = normalize_strategy_family(strategy_family)
     premium_kind = net_premium_kind(family)
@@ -731,7 +732,7 @@ def structure_quote_snapshot(
     timestamps: list[str] = []
     quote_sources: list[str] = []
 
-    for leg in normalized_legs:
+    for leg in normalized_leg_rows:
         symbol = _as_text(leg.get("symbol"))
         role = _as_text(leg.get("role")) or leg_role(
             side=leg.get("side"),
@@ -791,7 +792,7 @@ def structure_quote_snapshot(
     if unique_sources:
         quote_source = next(iter(unique_sources)) if len(unique_sources) == 1 else "mixed"
 
-    short_symbol, long_symbol = primary_short_long_symbols(normalized_legs)
+    short_symbol, long_symbol = primary_short_long_symbols(normalized_leg_rows)
     return {
         "short_symbol": short_symbol,
         "long_symbol": long_symbol,

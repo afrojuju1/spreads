@@ -12,10 +12,9 @@ from core.services.live_pipelines import build_live_snapshot_label
 from core.services.option_structures import (
     candidate_legs,
     normalize_strategy_family,
-    payload_display_fields,
     payload_structure_identity,
-    primary_short_long_symbols,
 )
+from core.services.opportunity_fields import candidate_ranking_summary_row
 from core.services.ranking_policy import build_strategy_ranking_policy_snapshot
 from core.services.scanners.builders.ranking import sort_candidates_for_display
 from core.services.scanners.config import resolve_symbols
@@ -128,31 +127,10 @@ def build_raw_candidate_summary(
         symbol_counts[str(symbol)] = len(candidates)
         total += len(candidates)
         for candidate in candidates:
-            legs = candidate_legs(candidate)
-            short_symbol, long_symbol = primary_short_long_symbols(legs)
-            display = payload_display_fields(candidate)
             strategy = str(candidate.get("strategy") or "unknown")
             strategy_counts[strategy] = int(strategy_counts.get(strategy) or 0) + 1
             ranked_rows.append(
-                {
-                    "underlying_symbol": str(
-                        candidate.get("underlying_symbol") or symbol
-                    ),
-                    "strategy": strategy,
-                    "expiration_date": candidate.get("expiration_date"),
-                    "short_symbol": display.get("short_symbol") or short_symbol,
-                    "long_symbol": display.get("long_symbol") or long_symbol,
-                    "symbol_path": display.get("symbol_path"),
-                    "structure_identity": payload_structure_identity(candidate),
-                    "quality_score": float(candidate.get("quality_score") or 0.0),
-                    "midpoint_credit": float(candidate.get("midpoint_credit") or 0.0),
-                    "return_on_risk": float(candidate.get("return_on_risk") or 0.0),
-                    "setup_status": candidate.get("setup_status"),
-                    "ranking_policy_status": candidate.get("ranking_policy_status"),
-                    "ranking_policy_blockers": list(
-                        candidate.get("ranking_policy_blockers") or []
-                    ),
-                }
+                candidate_ranking_summary_row(candidate, default_symbol=symbol)
             )
     ranked_rows.sort(
         key=lambda row: (
@@ -164,6 +142,7 @@ def build_raw_candidate_summary(
     )
     ranking_policy_gate_status_counts: dict[str, int] = {}
     ranking_policy_gate_blocker_counts: dict[str, int] = {}
+    blocked_rows: list[dict[str, Any]] = []
     for result in scan_results:
         diagnostics = dict(getattr(result, "diagnostics", {}) or {})
         for key, value in dict(
@@ -178,6 +157,19 @@ def build_raw_candidate_summary(
             ranking_policy_gate_blocker_counts[str(key)] = (
                 int(ranking_policy_gate_blocker_counts.get(str(key)) or 0) + int(value)
             )
+        blocked_rows.extend(
+            row
+            for row in list(diagnostics.get("ranking_policy_blocked_exemplars") or [])
+            if isinstance(row, dict)
+        )
+    blocked_rows.sort(
+        key=lambda row: (
+            float(row.get("quality_score") or 0.0),
+            float(row.get("return_on_risk") or 0.0),
+            float(row.get("midpoint_credit") or 0.0),
+        ),
+        reverse=True,
+    )
 
     return {
         "candidate_count": total,
@@ -197,6 +189,7 @@ def build_raw_candidate_summary(
             "blocker_counts": dict(sorted(ranking_policy_gate_blocker_counts.items())),
         },
         "top_candidates": ranked_rows[: max(int(limit), 1)],
+        "top_blocked_candidates": blocked_rows[: max(int(limit), 1)],
     }
 
 

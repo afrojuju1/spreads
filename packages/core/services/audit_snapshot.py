@@ -380,6 +380,7 @@ def _current_cycle_summary(
         "ranking_policy_gate_summary": dict(
             current_cycle.get("ranking_policy_gate_summary") or {}
         ),
+        "raw_candidate_summary": dict(current_cycle.get("raw_candidate_summary") or {}),
     }
 
 
@@ -734,6 +735,7 @@ def build_audit_snapshot(
         "ranking_policy_gate_summary": dict(
             pipeline_run.get("ranking_policy_gate_summary") or {}
         ),
+        "raw_candidate_summary": dict(pipeline_run.get("raw_candidate_summary") or {}),
         "counts": {
             "timeline_items": len(timeline_items),
             "events_scanned": len(raw_events),
@@ -800,6 +802,7 @@ def build_audit_snapshot(
             },
         },
         "state_summary": state_summary,
+        "raw_candidate_summary": dict(pipeline_run.get("raw_candidate_summary") or {}),
         "slot_runs": slot_runs,
         "alerts": alerts,
         "post_market": _summarize_post_market(analysis),
