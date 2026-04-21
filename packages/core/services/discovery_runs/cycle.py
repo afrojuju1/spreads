@@ -12,35 +12,35 @@ from core.services.automation_runtime import build_entry_runtime
 from core.services.candidate_history_recovery import (
     recover_session_candidates_from_history,
 )
-from core.services.collections.capture.candidates import (
+from core.services.discovery_runs.capture.candidates import (
     build_capture_candidates,
     build_preselection_capture_candidates,
 )
-from core.services.collections.capture.runtime import capture_live_option_market_state
-from core.services.collections.config import (
+from core.services.discovery_runs.capture.runtime import capture_live_option_market_state
+from core.services.discovery_runs.config import (
     _filter_scope_candidates,
     _filter_scope_rows,
     _merge_runtime_candidate_rows,
 )
-from core.services.collections.models import LiveTickContext
-from core.services.collections.scanning import (
+from core.services.discovery_runs.models import LiveTickContext
+from core.services.discovery_runs.scanning import (
     build_raw_candidate_summary,
     build_symbol_strategy_candidates,
     run_universe_cycle,
 )
-from core.services.collections.shared import session_date_for_generated_at
+from core.services.discovery_runs.shared import session_date_for_generated_at
 from core.services.execution import submit_auto_session_execution
-from core.services.live_collector_health.enrichment import (
-    enrich_live_collector_job_run_payload,
+from core.services.discovery_run_health.enrichment import (
+    enrich_discovery_run_job_run_payload,
 )
-from core.services.live_collector_health.selection import build_selection_summary
-from core.services.live_collector_health.tradeability import (
+from core.services.discovery_run_health.selection import build_selection_summary
+from core.services.discovery_run_health.tradeability import (
     CAPTURE_HISTORY_BLOCK_THRESHOLD,
     build_capture_history_gate,
     build_live_action_gate,
 )
 from core.services.live_pipelines import build_live_snapshot_label
-from core.services.live_recovery import (
+from core.services.discovery_recovery import (
     load_session_slot_health,
     merge_live_action_gate_with_recovery,
     refresh_live_session_capture_targets,
@@ -48,11 +48,11 @@ from core.services.live_recovery import (
 from core.services.live_selection import read_previous_selection, select_live_opportunities
 from core.services.option_structures import payload_display_fields
 from core.services.opportunity_generation import sync_entry_runtime_opportunities
-from core.services.signal_state import sync_live_collector_signal_layer
+from core.services.signal_state import sync_discovery_run_signal_layer
 from core.services.strategy_builders import build_entry_runtime_candidates
 from core.services.target_planner import refresh_options_automation_capture_targets
 from core.storage.alert_repository import AlertRepository
-from core.storage.collector_repository import CollectorRepository
+from core.storage.discovery_run_repository import DiscoveryRunRepository
 from core.storage.event_repository import EventRepository
 from core.storage.run_history_repository import RunHistoryRepository
 from core.storage.signal_repository import SignalRepository
@@ -144,7 +144,7 @@ def run_collection_cycle(
     history_store: RunHistoryRepository,
     alert_store: AlertRepository,
     job_store: Any,
-    collector_store: CollectorRepository,
+    discovery_store: DiscoveryRunRepository,
     event_store: EventRepository,
     signal_store: SignalRepository,
     recovery_store: Any | None,
@@ -238,16 +238,16 @@ def run_collection_cycle(
     recovered_payloads: list[dict[str, Any]] = []
     previous_promotable: dict[str, dict[str, Any]] = {}
     previous_selection_memory: dict[str, dict[str, Any]] = {}
-    collector_promotable_payloads: list[dict[str, Any]] = []
-    collector_monitor_payloads: list[dict[str, Any]] = []
-    collector_opportunities: list[dict[str, Any]] = []
+    discovery_run_promotable_payloads: list[dict[str, Any]] = []
+    discovery_run_monitor_payloads: list[dict[str, Any]] = []
+    discovery_run_opportunities: list[dict[str, Any]] = []
     runtime_opportunities: list[dict[str, Any]] = []
     runtime_promotable_payloads: list[dict[str, Any]] = []
     runtime_monitor_payloads: list[dict[str, Any]] = []
     selection_memory: dict[str, Any] = {}
     events: list[dict[str, Any]] = []
     previous_promotable, previous_selection_memory = read_previous_selection(
-        collector_store, label
+        discovery_store, label
     )
     selection = select_live_opportunities(
         label=label,
@@ -265,12 +265,12 @@ def run_collection_cycle(
         dict(selection.get("symbol_candidates") or {}),
         scope=options_scope,
     )
-    collector_promotable_payloads = list(selection["promotable_candidates"])
-    collector_monitor_payloads = list(selection["monitor_candidates"])
+    discovery_run_promotable_payloads = list(selection["promotable_candidates"])
+    discovery_run_monitor_payloads = list(selection["monitor_candidates"])
     if (
         args.profile == "0dte"
-        and not collector_promotable_payloads
-        and not collector_monitor_payloads
+        and not discovery_run_promotable_payloads
+        and not discovery_run_monitor_payloads
     ):
         recovered_payloads = recover_session_candidates_from_history(
             history_store=history_store,
@@ -297,24 +297,24 @@ def run_collection_cycle(
             dict(selection.get("symbol_candidates") or {}),
             scope=options_scope,
         )
-        collector_promotable_payloads = list(selection["promotable_candidates"])
-        collector_monitor_payloads = list(selection["monitor_candidates"])
-    collector_opportunities = _filter_scope_rows(
+        discovery_run_promotable_payloads = list(selection["promotable_candidates"])
+        discovery_run_monitor_payloads = list(selection["monitor_candidates"])
+    discovery_run_opportunities = _filter_scope_rows(
         list(selection["opportunities"]),
         scope=options_scope,
     )
-    collector_promotable_payloads = _filter_scope_rows(
-        collector_promotable_payloads,
+    discovery_run_promotable_payloads = _filter_scope_rows(
+        discovery_run_promotable_payloads,
         scope=options_scope,
     )
-    collector_monitor_payloads = _filter_scope_rows(
-        collector_monitor_payloads,
+    discovery_run_monitor_payloads = _filter_scope_rows(
+        discovery_run_monitor_payloads,
         scope=options_scope,
     )
     selection_memory = dict(selection["selection_memory"])
     events = _filter_scope_rows(list(selection["events"]), scope=options_scope)
     raw_candidate_summary = build_raw_candidate_summary(symbol_strategy_candidates)
-    persisted_opportunities = collector_store.save_cycle(
+    persisted_opportunities = discovery_store.save_cycle(
         cycle_id=cycle_id,
         label=label,
         generated_at=generated_at,
@@ -327,7 +327,7 @@ def run_collection_cycle(
         symbols=symbols,
         failures=[asdict(failure) for failure in failures],
         selection_memory=selection_memory,
-        opportunities=collector_opportunities,
+        opportunities=discovery_run_opportunities,
         events=events,
     )
     signal_sync = {
@@ -337,7 +337,7 @@ def run_collection_cycle(
         "opportunities_expired": 0,
     }
     try:
-        signal_sync = sync_live_collector_signal_layer(
+        signal_sync = sync_discovery_run_signal_layer(
             signal_store=signal_store,
             label=label,
             session_date=session_date,
@@ -390,7 +390,7 @@ def run_collection_cycle(
             for row in runtime_opportunities
             if str(row.get("selection_state") or "") == "monitor"
         ]
-    selection_summary = build_selection_summary(collector_opportunities)
+    selection_summary = build_selection_summary(discovery_run_opportunities)
     automation_summary = {
         "automation_runs_upserted": int(automation_sync["automation_runs_upserted"]),
         "runtime_opportunities_upserted": int(
@@ -401,9 +401,9 @@ def run_collection_cycle(
         ),
         "runtime_selection_summary": build_selection_summary(runtime_opportunities),
     }
-    capture_promotable_payloads = collector_promotable_payloads
-    capture_monitor_payloads = collector_monitor_payloads
-    capture_opportunities = collector_opportunities
+    capture_promotable_payloads = discovery_run_promotable_payloads
+    capture_monitor_payloads = discovery_run_monitor_payloads
+    capture_opportunities = discovery_run_opportunities
     if automation_mode:
         capture_promotable_payloads = runtime_promotable_payloads
         capture_monitor_payloads = runtime_monitor_payloads
@@ -499,9 +499,9 @@ def run_collection_cycle(
     if tick_context is not None:
         try:
             recent_runs = [
-                enrich_live_collector_job_run_payload(row)
+                enrich_discovery_run_job_run_payload(row)
                 for row in job_store.list_job_runs(
-                    job_type="live_collector",
+                    job_type="discovery_run",
                     session_id=tick_context.session_id,
                     limit=CAPTURE_HISTORY_BLOCK_THRESHOLD + 3,
                 )
@@ -527,7 +527,7 @@ def run_collection_cycle(
             **dict(live_action_gate),
             "status": "bot_runtime_owned",
             "reason_code": "bot_runtime_owned",
-            "message": "Collector discovery is active, but execution and alerts are owned by the options automation runtime.",
+            "message": "Discovery run is active, but execution and alerts are owned by the options automation runtime.",
             "allow_auto_execution": False,
             "allow_alerts": False,
         }
@@ -570,7 +570,7 @@ def run_collection_cycle(
     if bool(live_action_gate.get("allow_alerts")):
         try:
             alerts = dispatch_cycle_alerts(
-                collector_store=collector_store,
+                discovery_store=discovery_store,
                 alert_store=alert_store,
                 job_store=job_store,
                 cycle_id=cycle_id,
@@ -578,7 +578,7 @@ def run_collection_cycle(
                 generated_at=generated_at,
                 strategy_mode=args.strategy,
                 profile=args.profile,
-                promotable_candidates=collector_promotable_payloads,
+                promotable_candidates=discovery_run_promotable_payloads,
                 events=events,
                 uoa_decisions=uoa_decisions,
                 session_id=None if tick_context is None else tick_context.session_id,
@@ -592,8 +592,8 @@ def run_collection_cycle(
         print_cycle_summary(
             generated_at=generated_at,
             label=label,
-            promotable_candidates=collector_promotable_payloads,
-            monitor_candidates=collector_monitor_payloads,
+            promotable_candidates=discovery_run_promotable_payloads,
+            monitor_candidates=discovery_run_monitor_payloads,
             events=events,
             alerts=alerts,
             failures=failures,
@@ -621,8 +621,8 @@ def run_collection_cycle(
         "websocket_trade_events_saved": stream_trade_event_count,
         "expected_trade_symbols": expected_trade_symbols,
         "stream_trade_error": stream_trade_error,
-        "promotable_opportunity_count": len(collector_promotable_payloads),
-        "monitor_opportunity_count": len(collector_monitor_payloads),
+        "promotable_opportunity_count": len(discovery_run_promotable_payloads),
+        "monitor_opportunity_count": len(discovery_run_monitor_payloads),
         "signal_states_upserted": int(signal_sync["signal_states_upserted"]),
         "signal_transitions_recorded": int(signal_sync["signal_transitions_recorded"]),
         "opportunities_upserted": int(signal_sync["opportunities_upserted"]),

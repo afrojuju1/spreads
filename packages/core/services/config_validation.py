@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from core.services.automations import load_automations, resolve_automation
-from core.services.bots import build_collector_scopes, load_active_bots, load_bots, resolve_bot
+from core.services.bots import build_discovery_run_scopes, load_active_bots, load_bots, resolve_bot
 from core.services.strategy_configs import load_strategy_configs
 
 
@@ -24,7 +24,7 @@ def validate_options_automation_config(
         resolve_bot(bot_id, config_root=config_root) for bot_id in sorted(bots)
     ]
     active_bots = load_active_bots(config_root)
-    collector_scopes = build_collector_scopes(config_root)
+    discovery_run_scopes = build_discovery_run_scopes(config_root)
 
     return {
         "status": "ok",
@@ -33,7 +33,7 @@ def validate_options_automation_config(
         "automation_count": len(automations),
         "bot_count": len(bots),
         "active_bot_count": len(active_bots),
-        "collector_scope_count": len(collector_scopes),
+        "discovery_run_scope_count": len(discovery_run_scopes),
         "strategies": [
             {
                 "strategy_config_id": strategy.strategy_config_id,
@@ -63,13 +63,13 @@ def validate_options_automation_config(
             }
             for item in resolved_bots
         ],
-        "collector_scopes": [
+        "discovery_run_scopes": [
             {
                 "scanner_strategy": scope.get("scanner_strategy"),
                 "scanner_profile": scope.get("scanner_profile"),
                 "symbol_count": len(list(scope.get("symbols") or [])),
             }
-            for scope in collector_scopes
+            for scope in discovery_run_scopes
         ],
     }
 

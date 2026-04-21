@@ -64,7 +64,7 @@ from .status import (
 )
 
 
-def run_collector_recovery(
+def run_discovery_recovery(
     *,
     db_target: str,
     storage: Any,
@@ -89,7 +89,7 @@ def run_collector_recovery(
         str(row["job_key"]): dict(row)
         for row in list_declared_job_rows(
             enabled_only=True,
-            job_type="live_collector",
+            job_type="discovery_run",
         )
     }
     now = datetime.now(UTC)
@@ -296,6 +296,6 @@ __all__ = [
     "refresh_live_session_capture_targets",
     "refresh_recovery_session_capture_targets",
     "resolve_live_slot_stale_after_seconds",
-    "run_collector_recovery",
+    "run_discovery_recovery",
     "summarize_session_slot_health",
 ]

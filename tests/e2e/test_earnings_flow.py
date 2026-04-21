@@ -4,7 +4,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
-from core.services.live_collector_health.selection import build_selection_summary
+from core.services.discovery_run_health.selection import build_selection_summary
 from core.services.live_selection import select_live_opportunities
 from core.services.ops import (
     build_job_run_view,
@@ -25,7 +25,7 @@ def _future_iso(hours: int = 1) -> str:
     )
 
 
-def _collector_run_record(
+def _discovery_run_record(
     *,
     job_run_id: str = "run-1",
     status: str = "succeeded",
@@ -37,8 +37,8 @@ def _collector_run_record(
     run_at = timestamp or _now_iso()
     payload: dict[str, object] = {
         "job_run_id": job_run_id,
-        "job_key": "live_collector:earnings",
-        "job_type": "live_collector",
+        "job_key": "discovery_run:earnings",
+        "job_type": "discovery_run",
         "status": status,
         "scheduled_for": run_at,
         "started_at": run_at,
@@ -72,7 +72,7 @@ def _collector_run_record(
     return payload
 
 
-def _collector_candidate(
+def _discovery_run_candidate(
     *,
     symbol: str,
     strategy: str,
@@ -226,8 +226,8 @@ class _FakeJobStore:
         self.latest_session_run = dict(latest_session_run or run_record)
         self.recent_runs = [dict(row) for row in list(recent_runs or [])]
         self.definition = {
-            "job_key": "live_collector:earnings",
-            "job_type": "live_collector",
+            "job_key": "discovery_run:earnings",
+            "job_type": "discovery_run",
             "enabled": True,
             "schedule_type": "manual",
             "schedule": {},
@@ -323,7 +323,7 @@ class _FakeJobStore:
             return None
         return dict(self.definition)
 
-    def get_latest_live_collector_run(
+    def get_latest_discovery_run(
         self,
         *,
         label: str | None = None,
@@ -334,7 +334,7 @@ class _FakeJobStore:
             return None
         return dict(self.run_record)
 
-    def get_live_collector_run_by_cycle_id(
+    def get_discovery_run_by_cycle_id(
         self,
         *,
         cycle_id: str,
@@ -347,7 +347,7 @@ class _FakeJobStore:
         return dict(self.run_record)
 
 
-class _FakeCollectorStore:
+class _FakeDiscoveryRunStore:
     def schema_ready(self) -> bool:
         return True
 
@@ -433,7 +433,7 @@ class _FakeStorage:
             recent_runs=recent_runs,
             latest_runs_by_job_key=latest_runs_by_job_key,
         )
-        self.collector = _FakeCollectorStore()
+        self.discovery = _FakeDiscoveryRunStore()
         self.recovery = _FakeRecoveryStore()
         self.signals = _FakeSignalStore()
         self.broker = _FakeBrokerStore()
@@ -445,7 +445,7 @@ class EarningsFlowTests(unittest.TestCase):
     def test_earnings_runtime_views_keep_selection_counts_consistent(self) -> None:
         selection_summary = build_selection_summary(
             [
-                _collector_candidate(
+                _discovery_run_candidate(
                     symbol="AAPL",
                     strategy="call_debit",
                     selection_state="promotable",
@@ -453,7 +453,7 @@ class EarningsFlowTests(unittest.TestCase):
                     earnings_phase="pre_event_runup",
                     timing_confidence="high",
                 ),
-                _collector_candidate(
+                _discovery_run_candidate(
                     symbol="SPY",
                     strategy="iron_condor",
                     selection_state="monitor",
@@ -468,8 +468,8 @@ class EarningsFlowTests(unittest.TestCase):
         )
         run_record = {
             "job_run_id": "run-1",
-            "job_key": "live_collector:earnings",
-            "job_type": "live_collector",
+            "job_key": "discovery_run:earnings",
+            "job_type": "discovery_run",
             "status": "succeeded",
             "scheduled_for": _now_iso(),
             "started_at": _now_iso(),
@@ -533,18 +533,18 @@ class EarningsFlowTests(unittest.TestCase):
             trading_health = build_trading_health(storage=storage)
             job_view = build_job_run_view(storage=storage, job_run_id="run-1")
 
-        self.assertEqual(system_status["summary"]["collector_opportunity_count"], 2)
-        self.assertEqual(system_status["summary"]["collector_shadow_only_count"], 1)
+        self.assertEqual(system_status["summary"]["discovery_run_opportunity_count"], 2)
+        self.assertEqual(system_status["summary"]["discovery_run_shadow_only_count"], 1)
         self.assertEqual(
-            system_status["summary"]["collector_auto_live_eligible_count"],
+            system_status["summary"]["discovery_run_auto_live_eligible_count"],
             1,
         )
         self.assertEqual(
-            trading_health["summary"]["collector_opportunity_count"],
+            trading_health["summary"]["discovery_run_opportunity_count"],
             2,
         )
         self.assertEqual(
-            trading_health["details"]["collector_selection"]["selection_state_counts"][
+            trading_health["details"]["discovery_run_selection"]["selection_state_counts"][
                 "promotable"
             ],
             1,
@@ -563,7 +563,7 @@ class EarningsFlowTests(unittest.TestCase):
         )
 
     def test_system_status_ignores_recovered_recent_failures(self) -> None:
-        summary_run = _collector_run_record()
+        summary_run = _discovery_run_record()
         failure_at = (
             datetime.now(UTC) - timedelta(minutes=10)
         ).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -608,9 +608,9 @@ class EarningsFlowTests(unittest.TestCase):
             {item["code"] for item in system_status["attention"]},
         )
 
-    def test_system_status_keeps_fresh_running_collector_healthy(self) -> None:
-        summary_run = _collector_run_record()
-        running_run = _collector_run_record(
+    def test_system_status_keeps_fresh_running_discovery_run_healthy(self) -> None:
+        summary_run = _discovery_run_record()
+        running_run = _discovery_run_record(
             job_run_id="run-2",
             status="running",
         )
@@ -625,17 +625,17 @@ class EarningsFlowTests(unittest.TestCase):
         ):
             system_status = build_system_status(storage=storage)
 
-        collector_row = system_status["details"]["latest_collectors"][0]
+        discovery_run_row = system_status["details"]["latest_discovery_runs"][0]
         self.assertEqual(system_status["status"], "healthy")
-        self.assertEqual(collector_row["status"], "healthy")
-        self.assertFalse(collector_row["needs_attention"])
+        self.assertEqual(discovery_run_row["status"], "healthy")
+        self.assertFalse(discovery_run_row["needs_attention"])
         self.assertNotIn(
-            "collector_unhealthy",
+            "discovery_run_unhealthy",
             {item["code"] for item in system_status["attention"]},
         )
 
     def test_ops_status_degrades_for_automation_dispatch_gap(self) -> None:
-        summary_run = _collector_run_record()
+        summary_run = _discovery_run_record()
         storage = _FakeStorage(summary_run)
         automation_runtime = {
             "opportunity_count": 10,

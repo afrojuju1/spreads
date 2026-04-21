@@ -26,9 +26,9 @@ from core.services.value_coercion import (
 )
 from core.jobs.orchestration import NEW_YORK
 
-from .collectors import (
+from .discovery_runs import (
     _bot_runtime_summary,
-    _latest_live_collectors,
+    _latest_discovery_runs,
     _market_session_context,
 )
 from .shared import (
@@ -372,14 +372,14 @@ def build_trading_health(
         and hasattr(job_store, "schema_ready")
         and job_store.schema_ready()
     ):
-        latest_collectors = _latest_live_collectors(storage=storage, now=now)
+        latest_discovery_runs = _latest_discovery_runs(storage=storage, now=now)
     else:
-        latest_collectors = []
-    collector_selection = _aggregate_selection_summaries(
-        [row.get("selection_summary") for row in latest_collectors]
+        latest_discovery_runs = []
+    discovery_run_selection = _aggregate_selection_summaries(
+        [row.get("selection_summary") for row in latest_discovery_runs]
     )
-    details["latest_collectors"] = latest_collectors
-    details["collector_selection"] = collector_selection
+    details["latest_discovery_runs"] = latest_discovery_runs
+    details["discovery_run_selection"] = discovery_run_selection
     details["automation_runtime"] = _bot_runtime_summary(
         storage=storage,
         market_date=market_date,
@@ -630,17 +630,17 @@ def build_trading_health(
         "risk_breach_count": risk_breach_count,
         "reconciliation_mismatch_count": reconciliation_mismatch_count,
         "mark_health_status": mark_health_status,
-        "collector_count": len(latest_collectors),
-        "collector_opportunity_count": _coerce_int(
-            collector_selection.get("opportunity_count")
+        "discovery_run_count": len(latest_discovery_runs),
+        "discovery_run_opportunity_count": _coerce_int(
+            discovery_run_selection.get("opportunity_count")
         )
         or 0,
-        "collector_shadow_only_count": _coerce_int(
-            collector_selection.get("shadow_only_count")
+        "discovery_run_shadow_only_count": _coerce_int(
+            discovery_run_selection.get("shadow_only_count")
         )
         or 0,
-        "collector_auto_live_eligible_count": _coerce_int(
-            collector_selection.get("auto_live_eligible_count")
+        "discovery_run_auto_live_eligible_count": _coerce_int(
+            discovery_run_selection.get("auto_live_eligible_count")
         )
         or 0,
         "automation_opportunity_count": _coerce_int(

@@ -7,7 +7,7 @@ import pandas_market_calendars as mcal
 
 from core.services.live_pipelines import (
     build_live_run_scope_id,
-    resolve_live_collector_label,
+    resolve_discovery_run_label,
 )
 from core.storage.records import RecordMapping
 
@@ -170,7 +170,7 @@ def resolve_live_tick_plan(
     recovery_deadline = session_end + timedelta(seconds=interval_seconds)
     if current < session_start or current > recovery_deadline:
         return None
-    label = resolve_live_collector_label(payload)
+    label = resolve_discovery_run_label(payload)
     session_id = build_live_run_scope_id(label, session_start.date())
     slots = _session_slots(
         session_start=session_start,

@@ -16,9 +16,9 @@ from core.services.automation_runtime import (
     resolve_entry_runtime,
     resolve_management_runtime,
 )
-from core.services.bots import build_collector_scope
-from core.services.collections.scanning import build_symbol_strategy_candidates
-from core.services.collections.config import (
+from core.services.bots import build_discovery_run_scope
+from core.services.discovery_runs.scanning import build_symbol_strategy_candidates
+from core.services.discovery_runs.config import (
     _apply_options_automation_overrides,
     build_collection_args,
     build_scanner_args,
@@ -263,7 +263,7 @@ class CollectionConfigTests(unittest.TestCase):
         )
 
         with patch(
-            "core.services.collections.scanning.serialize_candidate",
+            "core.services.discovery_runs.scanning.serialize_candidate",
             return_value={
                 "underlying_symbol": "SPY",
                 "strategy": "put_credit",
@@ -281,16 +281,16 @@ class CollectionConfigTests(unittest.TestCase):
         )
         self.assertEqual(grouped["SPY"][0]["underlying_symbol"], "SPY")
 
-    def test_build_collector_scope_includes_runtime_min_return_on_risk(self) -> None:
-        scope = build_collector_scope(
+    def test_build_discovery_run_scope_includes_runtime_min_return_on_risk(self) -> None:
+        scope = build_discovery_run_scope(
             scanner_strategy="put_credit",
             scanner_profile="weekly",
         )
 
         self.assertEqual(scope["scanner_args"]["min_return_on_risk"], 0.13)
 
-    def test_build_collector_scope_sets_short_delta_target_within_band(self) -> None:
-        scope = build_collector_scope(
+    def test_build_discovery_run_scope_sets_short_delta_target_within_band(self) -> None:
+        scope = build_discovery_run_scope(
             scanner_strategy="put_credit",
             scanner_profile="weekly",
         )
@@ -407,7 +407,7 @@ class OpportunityProjectionTests(unittest.TestCase):
             label="explore_10_put_credit_weekly_auto",
             session_date="2026-04-17",
             generated_at="2026-04-17T19:00:20Z",
-            cycle_id="cycle-collector",
+            cycle_id="cycle-discovery-run",
             default_strategy="put_credit",
             default_profile="weekly",
             row={

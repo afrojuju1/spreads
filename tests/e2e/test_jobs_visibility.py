@@ -26,8 +26,8 @@ class JobsVisibilityTests(unittest.TestCase):
         now = datetime.now(UTC)
         definitions = [
             {
-                "job_key": "collector",
-                "job_type": "live_collector",
+                "job_key": "discovery_run:test",
+                "job_type": "discovery_run",
                 "enabled": True,
                 "schedule_type": "interval_minutes",
                 "schedule": {"minutes": 1},
@@ -69,8 +69,8 @@ class JobsVisibilityTests(unittest.TestCase):
                             "scheduled_for": (now - timedelta(minutes=30)).isoformat(),
                         },
                         {
-                            "job_run_id": "queued-collector",
-                            "job_type": "live_collector",
+                            "job_run_id": "queued-discovery-run",
+                            "job_type": "discovery_run",
                             "status": "queued",
                             "scheduled_for": now.isoformat(),
                         }
@@ -153,8 +153,8 @@ class JobsVisibilityTests(unittest.TestCase):
         now = datetime.now(UTC)
         definitions = [
             {
-                "job_key": "collector_recovery:global",
-                "job_type": "collector_recovery",
+                "job_key": "discovery_recovery:global",
+                "job_type": "discovery_recovery",
                 "enabled": True,
                 "schedule_type": "interval_minutes",
                 "schedule": {"minutes": 1},
@@ -175,9 +175,9 @@ class JobsVisibilityTests(unittest.TestCase):
             ) -> list[dict[str, object]]:
                 return [
                     {
-                        "job_run_id": "collector_recovery:start:1",
-                        "job_key": "collector_recovery:global",
-                        "job_type": "collector_recovery",
+                        "job_run_id": "discovery_recovery:start:1",
+                        "job_key": "discovery_recovery:global",
+                        "job_type": "discovery_recovery",
                         "status": "skipped",
                         "scheduled_for": now.isoformat(),
                         "finished_at": now.isoformat(),
@@ -197,9 +197,9 @@ class JobsVisibilityTests(unittest.TestCase):
                     return []
                 return [
                     {
-                        "job_run_id": "collector_recovery:start:1",
-                        "job_key": "collector_recovery:global",
-                        "job_type": "collector_recovery",
+                        "job_run_id": "discovery_recovery:start:1",
+                        "job_key": "discovery_recovery:global",
+                        "job_type": "discovery_recovery",
                         "status": "skipped",
                         "scheduled_for": now.isoformat(),
                         "finished_at": now.isoformat(),
@@ -271,8 +271,8 @@ class JobsVisibilityTests(unittest.TestCase):
         now = datetime.now(UTC)
         live_definitions = [
             {
-                "job_key": "collector",
-                "job_type": "live_collector",
+                "job_key": "discovery_run:test",
+                "job_type": "discovery_run",
                 "enabled": True,
                 "schedule_type": "interval_minutes",
                 "schedule": {"minutes": 2},
@@ -291,8 +291,8 @@ class JobsVisibilityTests(unittest.TestCase):
         ]
         canonical_definitions = [
             {
-                "job_key": "collector",
-                "job_type": "live_collector",
+                "job_key": "discovery_run:test",
+                "job_type": "discovery_run",
                 "enabled": True,
                 "schedule_type": "interval_minutes",
                 "schedule": {"minutes": 1},
@@ -391,7 +391,7 @@ class JobsVisibilityTests(unittest.TestCase):
         )
         self.assertEqual(
             payload["details"]["seed_drift"]["mismatched"],
-            [{"job_key": "collector", "fields": ["schedule"]}],
+            [{"job_key": "discovery_run:test", "fields": ["schedule"]}],
         )
         self.assertTrue(
             any(

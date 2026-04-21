@@ -9,12 +9,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from core.jobs.orchestration import isoformat_utc
-from core.jobs.scheduler import _enqueue_definition_jobs, _reconcile_live_collector_jobs
+from core.jobs.scheduler import _enqueue_definition_jobs, _reconcile_discovery_run_jobs
 from core.alerts.ops import OPS_DISPATCH_GAP_OPEN_ALERT_TYPE
 from core.services.automation_runtime import resolve_entry_runtime
-from core.services.collections.capture.runtime import capture_live_option_market_state
-from core.services.collections.cycle import run_collection_cycle
-from core.services.collections.models import LiveCaptureSnapshot, LiveTickContext
+from core.services.discovery_runs.capture.runtime import capture_live_option_market_state
+from core.services.discovery_runs.cycle import run_collection_cycle
+from core.services.discovery_runs.models import LiveCaptureSnapshot, LiveTickContext
 from core.services.bot_analytics import summarize_intent_counts
 from core.services.bots import load_active_bots
 from core.services.audit_snapshot import build_audit_snapshot
@@ -24,7 +24,7 @@ from core.services.execution_intents import (
     dispatch_pending_execution_intents,
 )
 from core.services.execution_intents.repricing import _manage_submitted_open_intents
-from core.services.live_collector_health.capture import (
+from core.services.discovery_run_health.capture import (
     build_quote_capture_summary,
     build_trade_capture_summary,
 )
@@ -32,11 +32,11 @@ from core.services.opportunity_generation import sync_entry_runtime_opportunitie
 from core.services.ops.jobs import build_job_run_view
 from core.services.pipelines import get_pipeline_detail, list_pipelines
 from core.services.post_close.summary import build_session_summary
-from core.services.live_recovery import LIVE_SLOT_STATUS_MISSED
+from core.services.discovery_recovery import LIVE_SLOT_STATUS_MISSED
 from core.services.risk_manager import evaluate_open_execution
 from core.services.strategy_positions import run_management_automation_decision
 from core.services.uoa_state import get_latest_uoa_state
-from core.storage.collector_repository import CollectorRepository
+from core.storage.discovery_run_repository import DiscoveryRunRepository
 from core.storage.serializers import parse_datetime
 
 
@@ -152,7 +152,7 @@ def _same_slot_capture_snapshot(symbol: str = "AAPL") -> LiveCaptureSnapshot:
     )
 
 
-def _collector_cycle_event(
+def _discovery_run_cycle_event(
     *,
     event_id: int,
     generated_at: str,
@@ -175,7 +175,7 @@ def _collector_cycle_event(
     }
 
 
-class _CollectorStore:
+class _DiscoveryRunStore:
     def __init__(self) -> None:
         self.saved_cycle: dict[str, object] | None = None
 
@@ -307,7 +307,7 @@ class _TrackingSession:
         return None
 
 
-class _CollectorRepositoryWithoutLegacyPipelineWrites(CollectorRepository):
+class _DiscoveryRunRepositoryWithoutLegacyPipelineWrites(DiscoveryRunRepository):
     def __init__(self, tracking_session: _TrackingSession) -> None:
         super().__init__(
             engine=object(),
@@ -374,11 +374,11 @@ class _RecoveryStore:
 
 
 class _JobStoreThatMustNotServeStaleContext:
-    def get_latest_live_collector_run(self, **_: object) -> dict[str, object] | None:
-        raise AssertionError("collector should not score off the previous live run")
+    def get_latest_discovery_run(self, **_: object) -> dict[str, object] | None:
+        raise AssertionError("discovery run should not score off the previous live run")
 
 
-class _PipelineCollectorStore:
+class _PipelineDiscoveryRunStore:
     def __init__(self, *, events: list[dict[str, object]] | None = None) -> None:
         self.list_cycle_candidates_calls = 0
         self.list_events_calls: list[dict[str, object]] = []
@@ -545,8 +545,8 @@ class _PipelineJobStore:
     def _latest_run(self) -> dict[str, object]:
         return {
             "job_run_id": "job-run-live",
-            "job_key": "live_collector:explore_10_call_debit_weekly_auto",
-            "job_type": "live_collector",
+            "job_key": "discovery_run:explore_10_call_debit_weekly_auto",
+            "job_type": "discovery_run",
             "status": "succeeded",
             "scheduled_for": "2026-04-15T14:35:00Z",
             "started_at": "2026-04-15T14:35:01Z",
@@ -572,8 +572,8 @@ class _PipelineJobStore:
     def list_job_definitions(self, **_: object) -> list[dict[str, object]]:
         return [
             {
-                "job_key": "live_collector:explore_10_call_debit_weekly_auto",
-                "job_type": "live_collector",
+                "job_key": "discovery_run:explore_10_call_debit_weekly_auto",
+                "job_type": "discovery_run",
                 "enabled": True,
                 "payload": {
                     "universe": "explore_10",
@@ -592,7 +592,7 @@ class _PipelineJobStore:
     def list_job_runs(self, **_: object) -> list[dict[str, object]]:
         return [self._latest_run()]
 
-    def get_latest_live_collector_run(self, **_: object) -> dict[str, object] | None:
+    def get_latest_discovery_run(self, **_: object) -> dict[str, object] | None:
         return self._latest_run()
 
     def list_latest_runs_by_session_ids(
@@ -606,7 +606,7 @@ class _PipelineJobStore:
         run = self._latest_run()
         return [run] if str(run["session_id"]) in session_ids else []
 
-    def get_live_collector_run_by_cycle_id(
+    def get_discovery_run_by_cycle_id(
         self,
         *,
         cycle_id: str,
@@ -654,7 +654,7 @@ class _PostCloseHistoryStore:
 
 class _PipelineStorage:
     def __init__(self) -> None:
-        self.collector = _PipelineCollectorStore()
+        self.discovery = _PipelineDiscoveryRunStore()
         self.jobs = _PipelineJobStore()
         self.alerts = _PipelineAlertStore()
         self.post_market = _PipelinePostMarketStore()
@@ -664,7 +664,7 @@ class _PipelineStorage:
         self.risk = None
 
 
-class _AutomationPipelineCollectorStore:
+class _AutomationPipelineDiscoveryRunStore:
     def __init__(self) -> None:
         self.list_cycle_candidates_calls = 0
 
@@ -850,8 +850,8 @@ class _AutomationPipelineJobStore:
     def _latest_run(self) -> dict[str, object]:
         return {
             "job_run_id": "job-run-auto",
-            "job_key": "live_collector:options_automation_short_dated_index_put_credit",
-            "job_type": "live_collector",
+            "job_key": "discovery_run:options_automation_short_dated_index_put_credit",
+            "job_type": "discovery_run",
             "status": "succeeded",
             "scheduled_for": "2026-04-17T17:25:00Z",
             "started_at": "2026-04-17T17:25:01Z",
@@ -887,8 +887,8 @@ class _AutomationPipelineJobStore:
     def list_job_definitions(self, **_: object) -> list[dict[str, object]]:
         return [
             {
-                "job_key": "live_collector:options_automation_short_dated_index_put_credit",
-                "job_type": "live_collector",
+                "job_key": "discovery_run:options_automation_short_dated_index_put_credit",
+                "job_type": "discovery_run",
                 "enabled": True,
                 "payload": {
                     "universe": "explore_10",
@@ -903,7 +903,7 @@ class _AutomationPipelineJobStore:
     def list_job_runs(self, **_: object) -> list[dict[str, object]]:
         return [self._latest_run()]
 
-    def get_latest_live_collector_run(self, **_: object) -> dict[str, object] | None:
+    def get_latest_discovery_run(self, **_: object) -> dict[str, object] | None:
         return self._latest_run()
 
     def list_latest_runs_by_session_ids(
@@ -917,7 +917,7 @@ class _AutomationPipelineJobStore:
         run = self._latest_run()
         return [run] if str(run["session_id"]) in session_ids else []
 
-    def get_live_collector_run_by_cycle_id(
+    def get_discovery_run_by_cycle_id(
         self,
         *,
         cycle_id: str,
@@ -1013,7 +1013,7 @@ class _AuditWindowEventStore:
 
 class _AutomationPipelineStorage:
     def __init__(self) -> None:
-        self.collector = _AutomationPipelineCollectorStore()
+        self.discovery = _AutomationPipelineDiscoveryRunStore()
         self.jobs = _AutomationPipelineJobStore()
         self.alerts = _PipelineAlertStore()
         self.post_market = _PipelinePostMarketStore()
@@ -1024,11 +1024,11 @@ class _AutomationPipelineStorage:
         self.events = _AutomationPipelineEventStore()
 
 
-class LiveCollectorArchitectureE2ETests(unittest.TestCase):
+class DiscoveryRunArchitectureE2ETests(unittest.TestCase):
     def test_collection_cycle_writes_automation_scoped_runtime_opportunities(
         self,
     ) -> None:
-        collector_store = _CollectorStore()
+        discovery_store = _DiscoveryRunStore()
         signal_store = _AutomationRuntimeSignalStore()
         bot = load_active_bots()["short_dated_index_credit_bot"]
         runtime = next(
@@ -1091,27 +1091,27 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
 
         with (
             patch(
-                "core.services.collections.cycle.run_universe_cycle",
+                "core.services.discovery_runs.cycle.run_universe_cycle",
                 return_value=([symbol], "liquid_index_etfs", [], [], []),
             ),
             patch(
-                "core.services.collections.cycle.build_symbol_strategy_candidates",
+                "core.services.discovery_runs.cycle.build_symbol_strategy_candidates",
                 return_value={symbol: [candidate]},
             ),
             patch(
-                "core.services.collections.cycle.capture_live_option_market_state",
+                "core.services.discovery_runs.cycle.capture_live_option_market_state",
                 return_value=_same_slot_capture_snapshot(symbol),
             ),
             patch(
-                "core.services.collections.cycle.read_previous_selection",
+                "core.services.discovery_runs.cycle.read_previous_selection",
                 return_value=({}, {}),
             ),
             patch(
-                "core.services.collections.cycle.build_entry_runtime_candidates",
+                "core.services.discovery_runs.cycle.build_entry_runtime_candidates",
                 return_value=runtime_candidate_rows_by_owner,
             ),
             patch(
-                "core.services.collections.cycle.select_live_opportunities",
+                "core.services.discovery_runs.cycle.select_live_opportunities",
                 return_value=selection_payload,
             ),
             patch(
@@ -1119,7 +1119,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                 return_value=selection_payload,
             ),
             patch(
-                "core.services.collections.cycle.sync_live_collector_signal_layer",
+                "core.services.discovery_runs.cycle.sync_discovery_run_signal_layer",
                 return_value={
                     "signal_states_upserted": 0,
                     "signal_transitions_recorded": 0,
@@ -1128,7 +1128,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                 },
             ),
             patch(
-                "core.services.collections.cycle.dispatch_cycle_alerts",
+                "core.services.discovery_runs.cycle.dispatch_cycle_alerts",
                 return_value=[],
             ),
         ):
@@ -1140,7 +1140,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                 history_store=_HistoryStore(),
                 alert_store=_AlertStore(),
                 job_store=_JobStoreThatMustNotServeStaleContext(),
-                collector_store=collector_store,
+                discovery_store=discovery_store,
                 event_store=_EventStore(),
                 signal_store=signal_store,
                 recovery_store=None,
@@ -1164,7 +1164,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
     def test_collection_cycle_persists_canonical_opportunities_for_automation_scopes(
         self,
     ) -> None:
-        collector_store = _CollectorStore()
+        discovery_store = _DiscoveryRunStore()
         signal_store = _AutomationRuntimeSignalStore()
         bot = load_active_bots()["short_dated_index_credit_bot"]
         runtime = next(
@@ -1201,7 +1201,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
             },
         )
         scanner_args = Namespace(feed="opra", data_base_url="https://data.example")
-        collector_selection = {
+        discovery_run_selection = {
             "symbol_candidates": {symbol: [dict(candidate)]},
             "promotable_candidates": [dict(candidate)],
             "monitor_candidates": [],
@@ -1235,35 +1235,35 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
 
         with (
             patch(
-                "core.services.collections.cycle.run_universe_cycle",
+                "core.services.discovery_runs.cycle.run_universe_cycle",
                 return_value=([symbol], "liquid_index_etfs", [], [], []),
             ),
             patch(
-                "core.services.collections.cycle.build_symbol_strategy_candidates",
+                "core.services.discovery_runs.cycle.build_symbol_strategy_candidates",
                 return_value={symbol: [candidate]},
             ),
             patch(
-                "core.services.collections.cycle.capture_live_option_market_state",
+                "core.services.discovery_runs.cycle.capture_live_option_market_state",
                 return_value=_same_slot_capture_snapshot(symbol),
             ),
             patch(
-                "core.services.collections.cycle.read_previous_selection",
+                "core.services.discovery_runs.cycle.read_previous_selection",
                 return_value=({}, {}),
             ),
             patch(
-                "core.services.collections.cycle.build_entry_runtime_candidates",
+                "core.services.discovery_runs.cycle.build_entry_runtime_candidates",
                 return_value=runtime_candidate_rows_by_owner,
             ),
             patch(
-                "core.services.collections.cycle.select_live_opportunities",
-                return_value=collector_selection,
+                "core.services.discovery_runs.cycle.select_live_opportunities",
+                return_value=discovery_run_selection,
             ),
             patch(
                 "core.services.opportunity_generation.select_live_opportunities",
                 return_value=runtime_selection,
             ),
             patch(
-                "core.services.collections.cycle.sync_live_collector_signal_layer",
+                "core.services.discovery_runs.cycle.sync_discovery_run_signal_layer",
                 return_value={
                     "signal_states_upserted": 1,
                     "signal_transitions_recorded": 1,
@@ -1272,7 +1272,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                 },
             ) as signal_sync,
             patch(
-                "core.services.collections.cycle.dispatch_cycle_alerts",
+                "core.services.discovery_runs.cycle.dispatch_cycle_alerts",
                 return_value=[],
             ),
         ):
@@ -1284,7 +1284,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                 history_store=_HistoryStore(),
                 alert_store=_AlertStore(),
                 job_store=_JobStoreThatMustNotServeStaleContext(),
-                collector_store=collector_store,
+                discovery_store=discovery_store,
                 event_store=_EventStore(),
                 signal_store=signal_store,
                 recovery_store=None,
@@ -1293,8 +1293,8 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                 emit_output=False,
             )
 
-        self.assertIsNotNone(collector_store.saved_cycle)
-        self.assertEqual(len(collector_store.saved_cycle["opportunities"]), 1)
+        self.assertIsNotNone(discovery_store.saved_cycle)
+        self.assertEqual(len(discovery_store.saved_cycle["opportunities"]), 1)
         self.assertEqual(result["selection_summary"]["opportunity_count"], 1)
         self.assertEqual(
             result["automation_summary"]["runtime_selection_summary"][
@@ -1501,7 +1501,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
 
     def test_save_cycle_does_not_materialize_legacy_pipeline_rows(self) -> None:
         tracking_session = _TrackingSession()
-        repo = _CollectorRepositoryWithoutLegacyPipelineWrites(tracking_session)
+        repo = _DiscoveryRunRepositoryWithoutLegacyPipelineWrites(tracking_session)
         candidate = _candidate_payload()
 
         repo.save_cycle(
@@ -1532,7 +1532,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         )
 
         merged_type_names = [type(value).__name__ for value in tracking_session.merged]
-        self.assertEqual(merged_type_names, ["CollectorCycleModel"])
+        self.assertEqual(merged_type_names, ["DiscoveryRunModel"])
 
     def test_execute_job_terminalizes_inactive_runtime_opportunities(self) -> None:
         stale_updated_at = (datetime.now(UTC) - timedelta(minutes=30)).isoformat()
@@ -2562,7 +2562,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         )
 
     def test_collection_cycle_uses_same_slot_signal_context(self) -> None:
-        collector_store = _CollectorStore()
+        discovery_store = _DiscoveryRunStore()
         args = Namespace(
             strategy="call_debit",
             profile="weekly",
@@ -2578,23 +2578,23 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
 
         with (
             patch(
-                "core.services.collections.cycle.run_universe_cycle",
+                "core.services.discovery_runs.cycle.run_universe_cycle",
                 return_value=(["AAPL"], "earnings", [], [], []),
             ),
             patch(
-                "core.services.collections.cycle.build_symbol_strategy_candidates",
+                "core.services.discovery_runs.cycle.build_symbol_strategy_candidates",
                 return_value={"AAPL": [_candidate_payload()]},
             ),
             patch(
-                "core.services.collections.cycle.capture_live_option_market_state",
+                "core.services.discovery_runs.cycle.capture_live_option_market_state",
                 return_value=_same_slot_capture_snapshot(),
             ),
             patch(
-                "core.services.collections.cycle.read_previous_selection",
+                "core.services.discovery_runs.cycle.read_previous_selection",
                 return_value=({}, {}),
             ),
             patch(
-                "core.services.collections.cycle.sync_live_collector_signal_layer",
+                "core.services.discovery_runs.cycle.sync_discovery_run_signal_layer",
                 return_value={
                     "signal_states_upserted": 0,
                     "signal_transitions_recorded": 0,
@@ -2603,7 +2603,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                 },
             ),
             patch(
-                "core.services.collections.cycle.dispatch_cycle_alerts",
+                "core.services.discovery_runs.cycle.dispatch_cycle_alerts",
                 return_value=[],
             ),
         ):
@@ -2615,7 +2615,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                 history_store=_HistoryStore(),
                 alert_store=_AlertStore(),
                 job_store=_JobStoreThatMustNotServeStaleContext(),
-                collector_store=collector_store,
+                discovery_store=discovery_store,
                 event_store=_EventStore(),
                 signal_store=_SignalStore(),
                 recovery_store=None,
@@ -2625,8 +2625,8 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
             )
 
         self.assertEqual(result["promotable_opportunity_count"], 1)
-        self.assertIsNotNone(collector_store.saved_cycle)
-        saved_opportunity = collector_store.saved_cycle["opportunities"][0]
+        self.assertIsNotNone(discovery_store.saved_cycle)
+        saved_opportunity = discovery_store.saved_cycle["opportunities"][0]
         signal_bundle = saved_opportunity["score_evidence"]["signal_bundle"]
         self.assertEqual(signal_bundle["options_bias_alignment_source"], "evidence")
         self.assertEqual(
@@ -2672,12 +2672,12 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
 
         with (
             patch(
-                "core.services.collections.capture.runtime.refresh_live_session_capture_targets",
+                "core.services.discovery_runs.capture.runtime.refresh_live_session_capture_targets",
                 side_effect=lambda **_: order.append("targets")
                 or {"status": "ok", "capture_targets": {}},
             ),
             patch(
-                "core.services.collections.capture.runtime.collect_latest_quote_records",
+                "core.services.discovery_runs.capture.runtime.collect_latest_quote_records",
                 side_effect=lambda **_: order.append("baseline")
                 or [
                     {
@@ -2690,7 +2690,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                 ],
             ),
             patch(
-                "core.services.collections.capture.runtime.collect_recorded_market_data_records",
+                "core.services.discovery_runs.capture.runtime.collect_recorded_market_data_records",
                 side_effect=lambda **_: order.append("recorded")
                 or {
                     "quotes": recorder_quotes,
@@ -2701,19 +2701,19 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                 },
             ),
             patch(
-                "core.services.collections.capture.runtime.build_uoa_trade_summary",
+                "core.services.discovery_runs.capture.runtime.build_uoa_trade_summary",
                 return_value={"overview": {"scoreable_trade_count": 1}},
             ),
             patch(
-                "core.services.collections.capture.runtime.build_uoa_quote_summary",
+                "core.services.discovery_runs.capture.runtime.build_uoa_quote_summary",
                 return_value={"overview": {"observed_contract_count": 1}},
             ),
             patch(
-                "core.services.collections.capture.runtime.build_uoa_trade_baselines",
+                "core.services.discovery_runs.capture.runtime.build_uoa_trade_baselines",
                 return_value={},
             ),
             patch(
-                "core.services.collections.capture.runtime.build_uoa_root_decisions",
+                "core.services.discovery_runs.capture.runtime.build_uoa_root_decisions",
                 return_value={"overview": {"root_count": 1}},
             ),
         ):
@@ -2775,7 +2775,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         current_opportunity = detail["current_cycle"]["opportunities"][0]
         self.assertEqual(current_opportunity["opportunity_id"], "opp-live")
         self.assertEqual(current_opportunity["candidate"]["underlying_symbol"], "MSFT")
-        self.assertEqual(storage.collector.list_cycle_candidates_calls, 0)
+        self.assertEqual(storage.discovery.list_cycle_candidates_calls, 0)
 
     def test_pipeline_detail_prefers_runtime_owned_opportunities_for_automation_labels(
         self,
@@ -2812,13 +2812,13 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         self.assertEqual(current_opportunity["opportunity_id"], "opp-runtime")
         self.assertEqual(current_opportunity["candidate"]["underlying_symbol"], "SPY")
         self.assertEqual(detail["current_cycle"]["promotable_count"], 1)
-        self.assertEqual(storage.collector.list_cycle_candidates_calls, 0)
+        self.assertEqual(storage.discovery.list_cycle_candidates_calls, 0)
         self.assertTrue(storage.signals.active_cycle_calls[0]["runtime_owned"])
         self.assertTrue(storage.signals.count_calls[0]["runtime_owned"])
 
-    def test_pipeline_detail_prefers_newest_collector_events_under_cap(self) -> None:
+    def test_pipeline_detail_prefers_newest_discovery_run_events_under_cap(self) -> None:
         events = [
-            _collector_cycle_event(
+            _discovery_run_cycle_event(
                 event_id=event_id,
                 generated_at=isoformat_utc(
                     datetime(2026, 4, 15, 14, 0, tzinfo=UTC)
@@ -2828,7 +2828,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
             for event_id in range(1, 403)
         ]
         storage = _PipelineStorage()
-        storage.collector = _PipelineCollectorStore(events=events)
+        storage.discovery = _PipelineDiscoveryRunStore(events=events)
         with (
             patch(
                 "core.services.pipelines.build_session_execution_portfolio",
@@ -3011,9 +3011,9 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         self.assertIn("AAPL signal is IDLE.", summaries)
         self.assertIn("QQQ signal is ARMING.", summaries)
 
-    def test_post_close_summary_prefers_newest_collector_events_under_cap(self) -> None:
+    def test_post_close_summary_prefers_newest_discovery_run_events_under_cap(self) -> None:
         events = [
-            _collector_cycle_event(
+            _discovery_run_cycle_event(
                 event_id=event_id,
                 generated_at=isoformat_utc(
                     datetime(2026, 4, 15, 14, 0, tzinfo=UTC)
@@ -3026,7 +3026,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         ]
         storage = SimpleNamespace(
             history=_PostCloseHistoryStore(),
-            collector=_PipelineCollectorStore(events=events),
+            discovery=_PipelineDiscoveryRunStore(events=events),
         )
         with (
             patch(
@@ -3053,11 +3053,11 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         self.assertEqual(len(summary["event_overview"]["recent_events"]), 10)
         self.assertEqual(recent_event_ids, list(range(4993, 5003)))
 
-    def test_job_run_view_surfaces_live_collector_automation_summary(self) -> None:
+    def test_job_run_view_surfaces_discovery_run_automation_summary(self) -> None:
         run = {
             "job_run_id": "run-1",
-            "job_key": "live_collector:explore_10_call_debit_weekly_auto",
-            "job_type": "live_collector",
+            "job_key": "discovery_run:explore_10_call_debit_weekly_auto",
+            "job_type": "discovery_run",
             "status": "succeeded",
             "scheduled_for": "2026-04-15T14:35:00Z",
             "started_at": "2026-04-15T14:35:01Z",
@@ -3096,8 +3096,8 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
             },
         }
         definition = {
-            "job_key": "live_collector:explore_10_call_debit_weekly_auto",
-            "job_type": "live_collector",
+            "job_key": "discovery_run:explore_10_call_debit_weekly_auto",
+            "job_type": "discovery_run",
             "enabled": True,
             "payload": {},
         }
@@ -3148,7 +3148,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         self.assertEqual(
             detail["opportunities"][0]["candidate"]["underlying_symbol"], "MSFT"
         )
-        self.assertEqual(storage.collector.list_cycle_candidates_calls, 0)
+        self.assertEqual(storage.discovery.list_cycle_candidates_calls, 0)
 
     def test_scheduler_coalesces_stale_queued_slot_to_latest_slot(self) -> None:
         old_slot = datetime(2026, 4, 15, 14, 30, tzinfo=UTC)
@@ -3157,32 +3157,32 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
         class _SchedulerJobStore:
             def __init__(self) -> None:
                 self.definition = {
-                    "job_key": "live_collector:test",
-                    "job_type": "live_collector",
+                    "job_key": "discovery_run:test",
+                    "job_type": "discovery_run",
                     "payload": {
                         "interval_seconds": 60,
                     },
                 }
                 self.runs: dict[str, dict[str, object]] = {
-                    "live_collector:test:20260415T143000Z": {
-                        "job_run_id": "live_collector:test:20260415T143000Z",
-                        "job_key": "live_collector:test",
-                        "job_type": "live_collector",
+                    "discovery_run:test:20260415T143000Z": {
+                        "job_run_id": "discovery_run:test:20260415T143000Z",
+                        "job_key": "discovery_run:test",
+                        "job_type": "discovery_run",
                         "status": "queued",
                         "scheduled_for": old_slot,
                         "slot_at": old_slot,
                         "session_id": "live:test:2026-04-15",
                         "retry_count": 0,
                         "payload": {
-                            "job_key": "live_collector:test",
-                            "job_type": "live_collector",
+                            "job_key": "discovery_run:test",
+                            "job_type": "discovery_run",
                             "label": "test",
                             "session_id": "live:test:2026-04-15",
                             "session_date": "2026-04-15",
                             "scheduled_for": isoformat_utc(old_slot),
                             "slot_at": isoformat_utc(old_slot),
                         },
-                        "arq_job_id": "live_collector:test:20260415T143000Z",
+                        "arq_job_id": "discovery_run:test:20260415T143000Z",
                     }
                 }
                 self.created_runs: list[dict[str, object]] = []
@@ -3325,7 +3325,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                     return_value=True,
                 ),
                 patch(
-                    "core.jobs.scheduler._enqueue_collector_recovery_if_needed",
+                    "core.jobs.scheduler._enqueue_discovery_recovery_if_needed",
                     return_value=None,
                 ),
                 patch(
@@ -3333,7 +3333,7 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
                     return_value=None,
                 ),
             ):
-                return await _reconcile_live_collector_jobs(
+                return await _reconcile_discovery_run_jobs(
                     job_store,
                     recovery_store,
                     object(),
@@ -3342,11 +3342,11 @@ class LiveCollectorArchitectureE2ETests(unittest.TestCase):
 
         result = asyncio.run(run_test())
 
-        old_run = job_store.runs["live_collector:test:20260415T143000Z"]
+        old_run = job_store.runs["discovery_run:test:20260415T143000Z"]
         self.assertEqual(old_run["status"], "skipped")
         self.assertNotEqual(
             old_run["arq_job_id"],
-            "live_collector:test:20260415T143000Z",
+            "discovery_run:test:20260415T143000Z",
         )
         current_run = next(
             row for row in job_store.created_runs if row["slot_at"] == current_slot

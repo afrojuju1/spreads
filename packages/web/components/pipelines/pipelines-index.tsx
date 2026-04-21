@@ -166,7 +166,7 @@ export function PipelinesIndexPageContent() {
               Discovery sessions
             </div>
             <div className="mt-2 text-sm text-foreground/70">
-              Browse collector-owned discovery sessions. Automation-owned
+              Browse discovery-run-owned discovery sessions. Automation-owned
               runtime state now lives under Automations, while this surface
               stays focused on session diagnostics.
             </div>
@@ -224,14 +224,14 @@ export function PipelinesIndexPageContent() {
 
       <SectionSurface
         title="Discovery Session List"
-        description="Open a discovery session to inspect its latest cycle, collector health, and linked runtime outcomes."
+        description="Open a discovery session to inspect its latest cycle, discovery-run health, and linked runtime outcomes."
       >
         {!pipelines.length ? (
           <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
             <Rows3 className="size-10 text-muted-foreground" />
             <div className="text-lg font-medium">No discovery sessions found</div>
             <div className="max-w-[34rem] text-sm text-muted-foreground">
-              Discovery sessions will appear here after collector cycles are
+              Discovery sessions will appear here after discovery-run cycles are
               persisted.
             </div>
           </div>

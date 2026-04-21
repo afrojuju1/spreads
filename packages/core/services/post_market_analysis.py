@@ -17,10 +17,12 @@ from core.storage.factory import build_post_market_repository
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run persisted post-market analysis for a collector label.")
+    parser = argparse.ArgumentParser(
+        description="Run persisted post-market analysis for a discovery-run label."
+    )
     parser.add_argument("--db", default=default_database_url(), help="Postgres database URL.")
     parser.add_argument("--date", default="today", help="Trading date in YYYY-MM-DD or 'today'.")
-    parser.add_argument("--label", required=True, help="Collector session label.")
+    parser.add_argument("--label", required=True, help="Discovery-run session label.")
     parser.add_argument(
         "--backtest-profit-target",
         type=float,
@@ -217,7 +219,7 @@ def build_post_market_diagnostics(summary: Mapping[str, Any]) -> dict[str, Any]:
     if side_flip_count >= 3 or churn_ratio >= 0.3:
         problems.append(
             {
-                "title": "Collector churn was elevated",
+                "title": "Discovery-run churn was elevated",
                 "details": f"Observed {side_flip_count} side flips and {replacement_count} replacements across {cycle_count} cycles.",
                 "evidence": {
                     "side_flip_count": side_flip_count,
@@ -272,7 +274,7 @@ def build_post_market_diagnostics(summary: Mapping[str, Any]) -> dict[str, Any]:
                 "confidence": "medium",
                 "title": "Increase promotable-switch hysteresis",
                 "action": "Tighten side-switch and same-side replacement thresholds for this label.",
-                "reason": "Collector churn was elevated enough to risk noisy promotable-set changes.",
+                "reason": "Discovery-run churn was elevated enough to risk noisy promotable-set changes.",
                 "evidence": {
                     "side_flip_count": side_flip_count,
                     "replacement_count": replacement_count,

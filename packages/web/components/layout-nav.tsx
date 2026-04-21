@@ -22,7 +22,7 @@ export const LAYOUT_NAV_ITEMS = [
   {
     href: "/pipelines",
     label: "Discovery",
-    caption: "collector sessions",
+    caption: "discovery runs",
     icon: CandlestickChart,
   },
   {

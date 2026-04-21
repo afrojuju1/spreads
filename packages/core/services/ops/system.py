@@ -20,9 +20,9 @@ from core.services.value_coercion import (
     utc_now_iso as _utc_now,
 )
 
-from .collectors import (
+from .discovery_runs import (
     _bot_runtime_summary,
-    _latest_live_collectors,
+    _latest_discovery_runs,
     _market_session_context,
 )
 from .jobs import _job_run_requires_attention, _split_active_queued_jobs
@@ -136,7 +136,7 @@ def build_system_status(
         queued_jobs = []
         recent_failures = []
         actionable_recent_failures = []
-        latest_collectors = []
+        latest_discovery_runs = []
         statuses.append("blocked")
         attention.append(
             _attention(
@@ -219,16 +219,16 @@ def build_system_status(
                 )
             )
 
-        latest_collectors = _latest_live_collectors(storage=storage, now=now)
-        for row in latest_collectors:
+        latest_discovery_runs = _latest_discovery_runs(storage=storage, now=now)
+        for row in latest_discovery_runs:
             job_key = str(row.get("job_key") or "")
             if bool(row.get("needs_attention")):
                 attention.append(
                     _attention(
                         severity="medium",
-                        code="collector_unhealthy",
+                        code="discovery_run_unhealthy",
                         message=(
-                            "Discovery collector "
+                            "Discovery-run "
                             f"{job_key} is {str(row.get('status') or 'unknown')}."
                         ),
                     )
@@ -240,7 +240,7 @@ def build_system_status(
                 worker_status,
                 "degraded" if actionable_recent_failures else "healthy",
                 "degraded"
-                if any(row["needs_attention"] for row in latest_collectors)
+                if any(row["needs_attention"] for row in latest_discovery_runs)
                 else "healthy",
             )
         )
@@ -318,13 +318,13 @@ def build_system_status(
                 }
                 for row in actionable_recent_failures
             ],
-            "discovery_sessions": latest_collectors,
-            "latest_collectors": latest_collectors,
+            "discovery_sessions": latest_discovery_runs,
+            "latest_discovery_runs": latest_discovery_runs,
             "discovery_selection": _aggregate_selection_summaries(
-                [row.get("selection_summary") for row in latest_collectors]
+                [row.get("selection_summary") for row in latest_discovery_runs]
             ),
-            "collector_selection": _aggregate_selection_summaries(
-                [row.get("selection_summary") for row in latest_collectors]
+            "discovery_run_selection": _aggregate_selection_summaries(
+                [row.get("selection_summary") for row in latest_discovery_runs]
             ),
             "automation_runtime": _bot_runtime_summary(
                 storage=storage,
@@ -339,7 +339,7 @@ def build_system_status(
         }
     )
 
-    collector_selection = dict(details.get("collector_selection") or {})
+    discovery_run_selection = dict(details.get("discovery_run_selection") or {})
     automation_runtime = dict(details.get("automation_runtime") or {})
     automation_performance = dict(details.get("automation_performance") or {})
     automation_dispatch_gap = _automation_dispatch_gap_summary(automation_performance)
@@ -398,36 +398,36 @@ def build_system_status(
         "automation_daily_pnl": _coerce_float(
             automation_performance.get("daily_total_pnl")
         ),
-        "discovery_session_count": len(latest_collectors),
+        "discovery_session_count": len(latest_discovery_runs),
         "discovery_session_degraded_count": sum(
-            1 for row in latest_collectors if row["needs_attention"]
+            1 for row in latest_discovery_runs if row["needs_attention"]
         ),
         "discovery_opportunity_count": _coerce_int(
-            collector_selection.get("opportunity_count")
+            discovery_run_selection.get("opportunity_count")
         )
         or 0,
         "discovery_shadow_only_count": _coerce_int(
-            collector_selection.get("shadow_only_count")
+            discovery_run_selection.get("shadow_only_count")
         )
         or 0,
         "discovery_auto_live_eligible_count": _coerce_int(
-            collector_selection.get("auto_live_eligible_count")
+            discovery_run_selection.get("auto_live_eligible_count")
         )
         or 0,
-        "collector_count": len(latest_collectors),
-        "collector_degraded_count": sum(
-            1 for row in latest_collectors if row["needs_attention"]
+        "discovery_run_count": len(latest_discovery_runs),
+        "discovery_run_degraded_count": sum(
+            1 for row in latest_discovery_runs if row["needs_attention"]
         ),
-        "collector_opportunity_count": _coerce_int(
-            collector_selection.get("opportunity_count")
+        "discovery_run_opportunity_count": _coerce_int(
+            discovery_run_selection.get("opportunity_count")
         )
         or 0,
-        "collector_shadow_only_count": _coerce_int(
-            collector_selection.get("shadow_only_count")
+        "discovery_run_shadow_only_count": _coerce_int(
+            discovery_run_selection.get("shadow_only_count")
         )
         or 0,
-        "collector_auto_live_eligible_count": _coerce_int(
-            collector_selection.get("auto_live_eligible_count")
+        "discovery_run_auto_live_eligible_count": _coerce_int(
+            discovery_run_selection.get("auto_live_eligible_count")
         )
         or 0,
         "broker_sync_status": broker_sync.get("status"),

@@ -6,7 +6,7 @@ from typing import Any
 
 from core.jobs.orchestration import singleton_lease_key
 
-from .observability import _emit_live_collector_observability, _publish_job_run_event
+from .observability import _emit_discovery_run_observability, _publish_job_run_event
 
 JOB_LEASE_TTL_SECONDS = 600
 
@@ -148,8 +148,8 @@ async def _execute_managed_job(
         await _publish_job_run_event(ctx, completed_record)
         if on_completed is not None:
             await on_completed(completed_record, result)
-        if payload.get("job_type") == "live_collector" and final_status == "succeeded":
-            await _emit_live_collector_observability(ctx, completed_record)
+        if payload.get("job_type") == "discovery_run" and final_status == "succeeded":
+            await _emit_discovery_run_observability(ctx, completed_record)
         return compact
     except SupersededJobRun:
         return {"status": "superseded", "job_run_id": job_run_id}

@@ -10,7 +10,7 @@ Operator dashboard for the `spreads` backend. The app is built with:
 
 ## What It Shows
 
-- live board and watchlist for a selected collector label
+- live board and watchlist for a selected discovery-run label
 - recent board events
 - latest Discord alerts
 - seeded job health and recent job runs

@@ -39,7 +39,7 @@ def _payload_namespace(payload: Mapping[str, Any]) -> SimpleNamespace:
     )
 
 
-def resolve_live_collector_label(payload: Mapping[str, Any]) -> str:
+def resolve_discovery_run_label(payload: Mapping[str, Any]) -> str:
     explicit_label = str(payload.get("label") or "").strip().lower()
     if explicit_label:
         return explicit_label
@@ -72,7 +72,7 @@ def pipeline_uses_runtime_owned_opportunities(
     return False
 
 
-def list_enabled_live_collector_pipelines(
+def list_enabled_discovery_run_pipelines(
     job_rows: Iterable[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
     pipelines_by_label: dict[str, dict[str, Any]] = {}
@@ -80,10 +80,10 @@ def list_enabled_live_collector_pipelines(
     for definition in job_rows:
         if not bool(definition.get("enabled", False)):
             continue
-        if str(definition.get("job_type")) != "live_collector":
+        if str(definition.get("job_type")) != "discovery_run":
             continue
         payload = dict(definition.get("payload") or {})
-        label = resolve_live_collector_label(payload)
+        label = resolve_discovery_run_label(payload)
         existing = pipelines_by_label.get(label)
         if existing is None:
             pipelines_by_label[label] = {
@@ -105,7 +105,7 @@ def build_live_session_catalog(
     *,
     realized_labels: Iterable[str] | None = None,
 ) -> dict[str, Any]:
-    pipelines = list_enabled_live_collector_pipelines(job_rows)
+    pipelines = list_enabled_discovery_run_pipelines(job_rows)
     expected_labels = [str(pipeline["label"]) for pipeline in pipelines]
     expected_label_set = set(expected_labels)
     realized = sorted({str(label) for label in (realized_labels or []) if str(label)})
@@ -133,12 +133,12 @@ __all__ = [
     "build_live_session_catalog",
     "build_live_snapshot_label",
     "build_pipeline_id",
-    "list_enabled_live_collector_pipelines",
+    "list_enabled_discovery_run_pipelines",
     "parse_live_run_scope_id",
     "parse_pipeline_id",
     "pipeline_uses_runtime_owned_opportunities",
     "resolve_horizon_intent",
-    "resolve_live_collector_label",
+    "resolve_discovery_run_label",
     "resolve_pipeline_policy_fields",
     "resolve_product_class",
     "resolve_style_profile",

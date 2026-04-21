@@ -24,7 +24,7 @@ def build_live_session_catalog_for_date(
     session_date: str,
 ) -> dict[str, Any]:
     definitions = list_declared_job_rows(
-        enabled_only=True, job_type="live_collector"
+        enabled_only=True, job_type="discovery_run"
     )
     base_catalog = build_live_session_catalog(definitions, realized_labels=[])
     realized_labels = [
@@ -32,7 +32,7 @@ def build_live_session_catalog_for_date(
         for pipeline in base_catalog["pipelines"]
         if job_store.list_job_runs(
             job_key=str(pipeline["job_key"]),
-            job_type="live_collector",
+            job_type="discovery_run",
             status="succeeded",
             session_id=build_live_run_scope_id(str(pipeline["label"]), session_date),
             limit=1,
@@ -138,7 +138,7 @@ def run_post_market_analysis_targets(
                 repository.skip_run(
                     analysis_run_id=analysis_run_id,
                     completed_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-                    error_text="No persisted collector cycles were available for this session label.",
+                    error_text="No persisted discovery-run cycles were available for this session label.",
                 )
                 skipped_labels.append(
                     {

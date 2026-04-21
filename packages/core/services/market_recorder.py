@@ -12,7 +12,7 @@ from uuid import uuid4
 from core.common import load_local_env
 from core.integrations.alpaca.client import DEFAULT_DATA_BASE_URL
 from core.runtime.config import default_database_url
-from core.services.live_recovery import refresh_execution_capture_targets
+from core.services.discovery_recovery import refresh_execution_capture_targets
 from core.services.option_quote_records import build_quote_records
 from core.services.option_stream_broker import (
     AlpacaOptionStreamBroker,

@@ -4,7 +4,7 @@ from core.runtime.config import default_database_url
 from core.storage.alert_repository import AlertRepository
 from core.storage.broker_repository import BrokerRepository
 from core.storage.capabilities import StorageCapabilities
-from core.storage.collector_repository import CollectorRepository
+from core.storage.discovery_run_repository import DiscoveryRunRepository
 from core.storage.control_repository import ControlRepository
 from core.storage.event_repository import EventRepository
 from core.storage.db import build_session_factory
@@ -47,8 +47,8 @@ class StorageContext:
         return self._build_repository("broker", BrokerRepository)  # type: ignore[return-value]
 
     @property
-    def collector(self) -> CollectorRepository:
-        return self._build_repository("collector", CollectorRepository)  # type: ignore[return-value]
+    def discovery(self) -> DiscoveryRunRepository:
+        return self._build_repository("discovery", DiscoveryRunRepository)  # type: ignore[return-value]
 
     @property
     def trading(self) -> TradingStore:

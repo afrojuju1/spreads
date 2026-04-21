@@ -9,9 +9,9 @@ from core.jobs.registry import (
     ALERT_DELIVERY_JOB_TYPE,
     ALERT_RECONCILE_JOB_TYPE,
     BROKER_SYNC_JOB_TYPE,
-    COLLECTOR_RECOVERY_JOB_TYPE,
+    DISCOVERY_RECOVERY_JOB_TYPE,
     EXECUTION_SUBMIT_JOB_TYPE,
-    LIVE_COLLECTOR_JOB_TYPE,
+    DISCOVERY_RUN_JOB_TYPE,
     OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE,
     OPTIONS_AUTOMATION_ENTRY_JOB_TYPE,
     OPTIONS_AUTOMATION_MANAGEMENT_JOB_TYPE,
@@ -19,26 +19,26 @@ from core.jobs.registry import (
     POST_CLOSE_ANALYSIS_JOB_TYPE,
     POST_MARKET_ANALYSIS_JOB_TYPE,
 )
-from core.jobs.specs import get_declared_collector_spec
+from core.jobs.specs import get_declared_discovery_run_spec
 from core.services.alert_delivery import (
     ALERT_DELIVERY_STALE_SECONDS,
     reconcile_alert_delivery,
     run_alert_delivery,
 )
 from core.services.broker_sync import run_broker_sync
-from core.services.collections.config import build_collection_args
-from core.services.collections.models import LiveTickContext
-from core.services.collections.runtime import run_collection_tick
+from core.services.discovery_runs.config import build_collection_args
+from core.services.discovery_runs.models import LiveTickContext
+from core.services.discovery_runs.runtime import run_collection_tick
 from core.services.decision_engine import run_entry_automation_decision
 from core.services.execution import run_execution_submit
 from core.services.execution_intents import dispatch_pending_execution_intents
 from core.services.exit_manager import run_position_exit_manager
-from core.services.live_recovery import (
+from core.services.discovery_recovery import (
     LIVE_SLOT_STATUS_MISSED,
     LIVE_SLOT_STATUS_RUNNING,
     LIVE_SLOT_STATUS_SUCCEEDED,
     build_slot_details_from_cycle_result,
-    run_collector_recovery,
+    run_discovery_recovery,
 )
 from core.services.post_market_analysis import (
     parse_args as parse_post_market_args,
@@ -134,7 +134,7 @@ async def run_broker_sync_job(
     )
 
 
-async def run_collector_recovery_job(
+async def run_discovery_recovery_job(
     ctx: dict[str, Any],
     job_key: str,
     job_run_id: str,
@@ -145,13 +145,13 @@ async def run_collector_recovery_job(
 
     def runner(heartbeat: Any) -> dict[str, Any]:
         heartbeat()
-        return run_collector_recovery(
+        return run_discovery_recovery(
             db_target=database_url,
             storage=ctx["storage"],
         )
 
     enriched_payload = dict(payload)
-    enriched_payload["job_type"] = COLLECTOR_RECOVERY_JOB_TYPE
+    enriched_payload["job_type"] = DISCOVERY_RECOVERY_JOB_TYPE
     return await _execute_managed_job(
         ctx,
         job_key=job_key,
@@ -371,7 +371,7 @@ async def run_alert_reconcile_job(
     )
 
 
-async def run_live_collector_job(
+async def run_discovery_run_job(
     ctx: dict[str, Any],
     job_key: str,
     job_run_id: str,
@@ -450,19 +450,19 @@ async def run_live_collector_job(
         )
 
     def runner(heartbeat: Any) -> dict[str, Any]:
-        collector_spec = get_declared_collector_spec(job_key)
-        if collector_spec is None:
-            raise ValueError(f"Unknown live collector spec: {job_key}")
+        discovery_run_spec = get_declared_discovery_run_spec(job_key)
+        if discovery_run_spec is None:
+            raise ValueError(f"Unknown discovery-run spec: {job_key}")
         args = build_collection_args(
             payload,
-            options_automation_scope=collector_spec.options_automation_scope,
+            options_automation_scope=discovery_run_spec.options_automation_scope,
         )
         session_id = payload.get("session_id")
         slot_at = payload.get("slot_at")
         if not isinstance(session_id, str) or not session_id:
-            raise ValueError("live_collector payload is missing session_id")
+            raise ValueError("discovery_run payload is missing session_id")
         if not isinstance(slot_at, str) or not slot_at:
-            raise ValueError("live_collector payload is missing slot_at")
+            raise ValueError("discovery_run payload is missing slot_at")
         tick_context = LiveTickContext(
             job_run_id=job_run_id,
             session_id=session_id,
@@ -476,7 +476,7 @@ async def run_live_collector_job(
         )
 
     enriched_payload = dict(payload)
-    enriched_payload["job_type"] = LIVE_COLLECTOR_JOB_TYPE
+    enriched_payload["job_type"] = DISCOVERY_RUN_JOB_TYPE
     return await _execute_managed_job(
         ctx,
         job_key=job_key,

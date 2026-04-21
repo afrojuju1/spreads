@@ -21,7 +21,7 @@ from core.cli.runtime import (
 )
 from core.jobs.scheduler import main as scheduler_main
 from core.services.alpaca_research import main as research_alpaca_main
-from core.services.collections.runtime import main as collect_main
+from core.services.discovery_runs.runtime import main as discover_main
 from core.services.market_recorder import main as market_recorder_main
 from core.services.post_market_analysis import main as post_market_analyze_main
 from core.services.post_close.service import main as analyze_main
@@ -94,12 +94,12 @@ def scan_command(ctx: typer.Context) -> None:
 
 
 @app.command(
-    "collect",
+    "discover",
     context_settings=PASSTHROUGH_CONTEXT_SETTINGS,
-    help="Run a live collector session.",
+    help="Run a live discovery run session.",
 )
-def collect_command(ctx: typer.Context) -> None:
-    _run_passthrough(ctx=ctx, entrypoint=collect_main)
+def discover_command(ctx: typer.Context) -> None:
+    _run_passthrough(ctx=ctx, entrypoint=discover_main)
 
 
 @app.command(
@@ -120,7 +120,7 @@ post_market_app = typer.Typer(
 @post_market_app.command(
     "analyze",
     context_settings=PASSTHROUGH_CONTEXT_SETTINGS,
-    help="Run persisted post-market analysis for a collector label.",
+    help="Run persisted post-market analysis for a discovery-run label.",
 )
 def post_market_analyze_command(ctx: typer.Context) -> None:
     _run_passthrough(ctx=ctx, entrypoint=post_market_analyze_main)

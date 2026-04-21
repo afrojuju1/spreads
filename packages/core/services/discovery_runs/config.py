@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from core.runtime.config import default_database_url
-from core.services.bots import build_collector_scope
+from core.services.bots import build_discovery_run_scope
 from core.services.live_pipelines import build_live_snapshot_label
 from core.services.market_dates import NEW_YORK
 from core.services.option_structures import normalize_strategy_family
@@ -137,7 +137,7 @@ def _options_automation_scope(args: argparse.Namespace) -> dict[str, Any]:
     try:
         strategy = str(getattr(args, "strategy", "") or "").strip() or None
         profile = str(getattr(args, "profile", "") or "").strip() or None
-        return build_collector_scope(
+        return build_discovery_run_scope(
             scanner_strategy=strategy,
             scanner_profile=profile,
         )

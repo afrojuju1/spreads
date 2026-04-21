@@ -131,13 +131,13 @@ class JobRepository(RepositoryBase):
             rows = session.scalars(statement).all()
         return self.rows(rows)
 
-    def get_latest_live_collector_run(
+    def get_latest_discovery_run(
         self,
         *,
         label: str | None = None,
         status: str | None = "succeeded",
     ) -> JobRunRecord | None:
-        statement = select(JobRunModel).where(JobRunModel.job_type == "live_collector")
+        statement = select(JobRunModel).where(JobRunModel.job_type == "discovery_run")
         if label:
             statement = statement.where(JobRunModel.payload_json["label"].astext == label)
         if status:
@@ -149,14 +149,14 @@ class JobRepository(RepositoryBase):
             return None
         return self.row(row)
 
-    def get_live_collector_run_by_cycle_id(
+    def get_discovery_run_by_cycle_id(
         self,
         *,
         cycle_id: str,
         label: str | None = None,
         status: str | None = "succeeded",
     ) -> JobRunRecord | None:
-        statement = select(JobRunModel).where(JobRunModel.job_type == "live_collector")
+        statement = select(JobRunModel).where(JobRunModel.job_type == "discovery_run")
         if label:
             statement = statement.where(JobRunModel.payload_json["label"].astext == label)
         if status:

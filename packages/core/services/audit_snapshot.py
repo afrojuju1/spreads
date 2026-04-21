@@ -150,8 +150,8 @@ def _event_summary(event: Mapping[str, Any]) -> str:
     if topic == "job.run.updated":
         job_type = _as_text(payload.get("job_type")) or "job"
         return f"{job_type} run is {status or 'updated'}."
-    if topic == "live.collector.degraded":
-        return _as_text(payload.get("message")) or "Live collector slot degraded."
+    if topic == "live.discovery_run.degraded":
+        return _as_text(payload.get("message")) or "Discovery-run slot degraded."
     if topic == "broker.sync.updated":
         return f"Broker sync is {status or 'updated'}."
     if topic == "market.quote.captured":
@@ -298,7 +298,7 @@ def _collapse_market_quote_events(
     return normalized_items, collapsed_count
 
 
-def _normalize_collector_event(event: Mapping[str, Any]) -> dict[str, Any]:
+def _normalize_discovery_run_event(event: Mapping[str, Any]) -> dict[str, Any]:
     details = {
         "label": _as_text(event.get("label")),
         "session_date": _as_text(event.get("session_date")),
@@ -308,14 +308,14 @@ def _normalize_collector_event(event: Mapping[str, Any]) -> dict[str, Any]:
     }
     return {
         "at": _as_text(event.get("generated_at")),
-        "kind": "collector_event",
-        "topic": f"collector.{_as_text(event.get('event_type')) or 'updated'}",
-        "source": "collector",
-        "entity_type": "collector_cycle_event",
+        "kind": "discovery_run_event",
+        "topic": f"discovery_run.{_as_text(event.get('event_type')) or 'updated'}",
+        "source": "discovery_run",
+        "entity_type": "discovery_run_event",
         "entity_id": str(event.get("event_id") or ""),
         "correlation_id": _as_text(event.get("cycle_id")),
         "causation_id": None,
-        "summary": _as_text(event.get("message")) or "Collector event recorded.",
+        "summary": _as_text(event.get("message")) or "Discovery-run event recorded.",
         "details": details,
     }
 
@@ -698,7 +698,7 @@ def build_audit_snapshot(
 
     timeline_items, collapsed_quote_count = _collapse_market_quote_events(raw_events)
     timeline_items.extend(
-        _normalize_collector_event(dict(event))
+        _normalize_discovery_run_event(dict(event))
         for event in pipeline_run.get("events") or []
     )
     timeline_items.sort(key=_timeline_sort_key)
@@ -725,7 +725,7 @@ def build_audit_snapshot(
         "counts": {
             "timeline_items": len(timeline_items),
             "events_scanned": len(raw_events),
-            "collector_events": len(list(pipeline_run.get("events") or [])),
+            "discovery_run_events": len(list(pipeline_run.get("events") or [])),
             "signal_states": len(signal_states),
             "signal_transitions": len(signal_transitions),
             "opportunities": len(opportunities),

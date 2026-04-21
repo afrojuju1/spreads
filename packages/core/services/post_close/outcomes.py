@@ -23,7 +23,7 @@ from core.services.selection_terms import (
     selection_state_counts,
     selection_state_rank,
 )
-from core.storage.collector_repository import CollectorRepository
+from core.storage.discovery_run_repository import DiscoveryRunRepository
 from core.storage.run_history_repository import RunHistoryRepository
 
 from .tuning import (
@@ -49,13 +49,13 @@ def build_backtest_client() -> AlpacaClient:
 def build_session_outcomes(
     *,
     history_store: RunHistoryRepository,
-    collector_store: CollectorRepository,
+    discovery_store: DiscoveryRunRepository,
     session_date: str,
     label: str,
     profit_target: float,
     stop_multiple: float,
 ) -> dict[str, Any]:
-    session_candidates = collector_store.list_session_candidates(
+    session_candidates = discovery_store.list_session_candidates(
         label=label,
         session_date=session_date,
     )

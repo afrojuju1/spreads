@@ -22,9 +22,9 @@ ScanCandidateRecord = StorageRow
 SessionTopRunRecord = StorageRow
 OptionQuoteEventRecord = StorageRow
 OptionTradeEventRecord = StorageRow
-CollectorCycleRecord = StorageRow
-CollectorCycleCandidateRecord = StorageRow
-CollectorCycleEventRecord = StorageRow
+DiscoveryRunRecord = StorageRow
+DiscoveryRunCandidateRecord = StorageRow
+DiscoveryRunEventRecord = StorageRow
 PipelineRecord = StorageRow
 PipelineCycleRecord = StorageRow
 AlertEventRecord = StorageRow
@@ -64,9 +64,9 @@ __all__ = [
     "SessionTopRunRecord",
     "OptionQuoteEventRecord",
     "OptionTradeEventRecord",
-    "CollectorCycleRecord",
-    "CollectorCycleCandidateRecord",
-    "CollectorCycleEventRecord",
+    "DiscoveryRunRecord",
+    "DiscoveryRunCandidateRecord",
+    "DiscoveryRunEventRecord",
     "PipelineRecord",
     "PipelineCycleRecord",
     "AlertEventRecord",

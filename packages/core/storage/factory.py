@@ -3,7 +3,7 @@ from __future__ import annotations
 from core.runtime.config import DEFAULT_POSTGRES_URL, default_database_url
 from core.storage.alert_repository import AlertRepository
 from core.storage.broker_repository import BrokerRepository
-from core.storage.collector_repository import CollectorRepository
+from core.storage.discovery_run_repository import DiscoveryRunRepository
 from core.storage.control_repository import ControlRepository
 from core.storage.context import StorageContext
 from core.storage.event_repository import EventRepository
@@ -40,11 +40,11 @@ def build_history_store(path_or_url: str | None = None, *, context: StorageConte
     return RunHistoryRepository(value)
 
 
-def build_collector_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):
+def build_discovery_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):
     if context is not None:
-        return context.collector
+        return context.discovery
     value = _resolve_postgres_url(path_or_url)
-    return CollectorRepository(value)
+    return DiscoveryRunRepository(value)
 
 
 def build_alert_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):

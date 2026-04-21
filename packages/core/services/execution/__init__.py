@@ -858,14 +858,14 @@ def _classify_auto_execution_block(exc: Exception) -> dict[str, Any] | None:
 
 def _resolve_session_candidate(
     *,
-    collector_store: Any,
+    discovery_store: Any,
     session_id: str,
     candidate_id: int,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    candidate = collector_store.get_candidate(candidate_id)
+    candidate = discovery_store.get_candidate(candidate_id)
     if candidate is None:
         raise ValueError(f"Unknown candidate_id: {candidate_id}")
-    cycle = collector_store.get_cycle(str(candidate["cycle_id"]))
+    cycle = discovery_store.get_cycle(str(candidate["cycle_id"]))
     if cycle is None:
         raise ValueError(f"Missing cycle for candidate_id: {candidate_id}")
     candidate_session_id = cycle.get("session_id") or build_live_run_scope_id(
@@ -976,7 +976,7 @@ def submit_live_session_execution(
     request_metadata: dict[str, Any] | None = None,
     storage: Any | None = None,
 ) -> dict[str, Any]:
-    collector_store = storage.collector
+    discovery_store = storage.discovery
     execution_store = storage.execution
     job_store = storage.jobs
     signal_store = getattr(storage, "signals", None)
@@ -989,7 +989,7 @@ def submit_live_session_execution(
         _require_execution_schema(execution_store)
         _require_position_schema(execution_store)
         candidate, cycle = _resolve_session_candidate(
-            collector_store=collector_store,
+            discovery_store=discovery_store,
             session_id=session_id,
             candidate_id=candidate_id,
         )
@@ -2010,8 +2010,8 @@ def submit_auto_session_execution(
 ) -> dict[str, Any]:
     active_policy_rollouts = get_active_policy_rollout_map(storage=storage)
     execution_rollout = active_policy_rollouts.get("execution_policy")
-    collector_store = storage.collector
-    cycle = collector_store.get_cycle(cycle_id)
+    discovery_store = storage.discovery
+    cycle = discovery_store.get_cycle(cycle_id)
     source_policies = (
         {
             "execution_policy": normalize_execution_policy(None),
@@ -2043,7 +2043,7 @@ def submit_auto_session_execution(
             "action": "auto_submit",
             "changed": False,
             "reason": "execution_disabled",
-            "message": "Automatic execution is disabled for this live collector.",
+            "message": "Automatic execution is disabled for this discovery run.",
             "policy": normalized_policy,
         }
 

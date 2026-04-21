@@ -386,7 +386,7 @@ def sync_entry_runtime_opportunities(
             bot_id=runtime.bot_id,
             automation_id=runtime.automation_id,
             strategy_config_id=runtime.strategy_config_id,
-            trigger_type="collector_cycle",
+            trigger_type="discovery_run_cycle",
             job_run_id=job_run_id,
             cycle_id=cycle_id,
             label=label,

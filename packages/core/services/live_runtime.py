@@ -5,18 +5,18 @@ from typing import Any
 
 from core.jobs.specs import list_declared_job_rows
 from core.services.execution import normalize_execution_policy
-from core.services.live_collector_health.enrichment import (
-    enrich_live_collector_job_run_payload,
+from core.services.discovery_run_health.enrichment import (
+    enrich_discovery_run_job_run_payload,
     normalize_uoa_decisions_payload,
 )
-from core.services.live_collector_health.selection import (
+from core.services.discovery_run_health.selection import (
     build_selection_summary,
 )
 from core.services.live_pipelines import (
-    list_enabled_live_collector_pipelines,
+    list_enabled_discovery_run_pipelines,
     pipeline_uses_runtime_owned_opportunities,
 )
-from core.services.live_recovery import (
+from core.services.discovery_recovery import (
     list_session_slot_health_by_session_id,
     load_session_slot_health,
 )
@@ -37,8 +37,8 @@ def list_latest_live_sessions(
     market_date: str | None = None,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
-    collector_store = storage.collector
-    if not _collector_schema_ready(collector_store):
+    discovery_store = storage.discovery
+    if not _discovery_run_schema_ready(discovery_store):
         return []
 
     job_store = storage.jobs
@@ -46,10 +46,10 @@ def list_latest_live_sessions(
     pipeline_rows = _list_runtime_pipelines(job_store)
     if not pipeline_rows:
         pipeline_rows = [
-            dict(row) for row in collector_store.list_pipelines(limit=max(limit, 1))
+            dict(row) for row in discovery_store.list_pipelines(limit=max(limit, 1))
         ]
     latest_cycles = _latest_cycles_for_market_date(
-        collector_store=collector_store,
+        discovery_store=discovery_store,
         pipeline_rows=pipeline_rows,
         market_date=market_date,
     )
@@ -67,17 +67,17 @@ def list_latest_live_sessions(
         session_date=market_date,
     )
     latest_runs = [
-        enrich_live_collector_job_run_payload(row)
+        enrich_discovery_run_job_run_payload(row)
         for row in job_store.list_latest_runs_by_session_ids(
             session_ids=session_ids,
-            job_type="live_collector",
+            job_type="discovery_run",
         )
     ]
     latest_runs_by_session_id = {
         str(row["session_id"]): row for row in latest_runs if row.get("session_id")
     }
     candidate_counts_by_cycle_id = _candidate_counts_by_cycle_id(
-        collector_store=collector_store,
+        discovery_store=discovery_store,
         signal_store=signal_store,
         cycle_ids=[
             str(row["cycle_id"])
@@ -90,7 +90,7 @@ def list_latest_live_sessions(
     )
     candidate_counts_by_cycle_id.update(
         _candidate_counts_by_cycle_id(
-            collector_store=collector_store,
+            discovery_store=discovery_store,
             signal_store=signal_store,
             cycle_ids=[
                 str(row["cycle_id"])
@@ -177,12 +177,12 @@ def get_live_session(
     pipeline_id: str,
     market_date: str | None = None,
 ) -> dict[str, Any]:
-    collector_store = storage.collector
-    if not _collector_schema_ready(collector_store):
+    discovery_store = storage.discovery
+    if not _discovery_run_schema_ready(discovery_store):
         raise ValueError(f"Unknown pipeline_id: {pipeline_id}")
 
     pipeline = _resolve_runtime_pipeline(
-        collector_store=collector_store,
+        discovery_store=discovery_store,
         job_store=storage.jobs,
         pipeline_id=pipeline_id,
     )
@@ -191,7 +191,7 @@ def get_live_session(
 
     label = str(pipeline["label"])
     cycle = _resolve_cycle(
-        collector_store=collector_store,
+        discovery_store=discovery_store,
         label=label,
         market_date=market_date,
     )
@@ -211,11 +211,11 @@ def get_live_session_for_cycle(
     cycle_id: str,
     label: str | None = None,
 ) -> dict[str, Any]:
-    collector_store = storage.collector
-    if not _collector_schema_ready(collector_store):
+    discovery_store = storage.discovery
+    if not _discovery_run_schema_ready(discovery_store):
         raise ValueError(f"Unknown cycle_id: {cycle_id}")
 
-    cycle = collector_store.get_cycle(cycle_id)
+    cycle = discovery_store.get_cycle(cycle_id)
     if cycle is None:
         raise ValueError(f"Unknown cycle_id: {cycle_id}")
     cycle_payload = dict(cycle)
@@ -226,7 +226,7 @@ def get_live_session_for_cycle(
         cycle_payload.get("pipeline_id") or build_pipeline_id(resolved_label)
     )
     pipeline = _resolve_runtime_pipeline(
-        collector_store=collector_store,
+        discovery_store=discovery_store,
         job_store=storage.jobs,
         pipeline_id=pipeline_id,
     )
@@ -249,7 +249,7 @@ def _build_live_session_state(
     pipeline: Mapping[str, Any],
     cycle: Mapping[str, Any],
 ) -> dict[str, Any]:
-    collector_store = storage.collector
+    discovery_store = storage.discovery
     job_store = storage.jobs
     recovery_store = storage.recovery
     signal_store = storage.signals
@@ -263,9 +263,9 @@ def _build_live_session_state(
     session_id = build_live_run_scope_id(label, market_date)
 
     slot_runs = _sort_session_runs(
-        enrich_live_collector_job_run_payload(row)
+        enrich_discovery_run_job_run_payload(row)
         for row in job_store.list_job_runs(
-            job_type="live_collector",
+            job_type="discovery_run",
             session_id=session_id,
             limit=500,
         )
@@ -278,7 +278,7 @@ def _build_live_session_state(
         summary_run,
     )
     opportunities = _cycle_opportunity_payloads(
-        collector_store,
+        discovery_store,
         signal_store,
         pipeline_id=pipeline_id,
         market_date=market_date,
@@ -292,7 +292,7 @@ def _build_live_session_state(
         "monitor": int(selection_counts.get("monitor") or 0),
     }
     cycle_events = [
-        dict(row) for row in list(collector_store.list_cycle_events(cycle_id) or [])
+        dict(row) for row in list(discovery_store.list_cycle_events(cycle_id) or [])
     ]
     run_payload = summary_run
     selection_summary = (
@@ -383,10 +383,10 @@ def _build_live_session_state(
     }
 
 
-def _collector_schema_ready(collector_store: Any) -> bool:
-    if hasattr(collector_store, "schema_ready"):
-        return bool(collector_store.schema_ready())
-    return bool(collector_store.pipeline_schema_ready())
+def _discovery_run_schema_ready(discovery_store: Any) -> bool:
+    if hasattr(discovery_store, "schema_ready"):
+        return bool(discovery_store.schema_ready())
+    return bool(discovery_store.pipeline_schema_ready())
 
 
 def _runtime_pipeline_row(catalog_entry: Mapping[str, Any]) -> dict[str, Any]:
@@ -431,17 +431,17 @@ def _runtime_pipeline_row(catalog_entry: Mapping[str, Any]) -> dict[str, Any]:
 def _list_runtime_pipelines(job_store: Any) -> list[dict[str, Any]]:
     definitions = list_declared_job_rows(
         enabled_only=True,
-        job_type="live_collector",
+        job_type="discovery_run",
     )
     return [
         _runtime_pipeline_row(row)
-        for row in list_enabled_live_collector_pipelines(definitions)
+        for row in list_enabled_discovery_run_pipelines(definitions)
     ]
 
 
 def _resolve_runtime_pipeline(
     *,
-    collector_store: Any,
+    discovery_store: Any,
     job_store: Any,
     pipeline_id: str,
 ) -> dict[str, Any] | None:
@@ -456,21 +456,21 @@ def _resolve_runtime_pipeline(
         ),
         None,
     )
-    if pipeline is None and hasattr(collector_store, "get_pipeline"):
-        pipeline = collector_store.get_pipeline(pipeline_id)
+    if pipeline is None and hasattr(discovery_store, "get_pipeline"):
+        pipeline = discovery_store.get_pipeline(pipeline_id)
     return None if pipeline is None else dict(pipeline)
 
 
 def _resolve_cycle(
     *,
-    collector_store: Any,
+    discovery_store: Any,
     label: str,
     market_date: str | None,
 ) -> dict[str, Any] | None:
     if market_date is None:
-        cycle = collector_store.get_latest_cycle(label)
+        cycle = discovery_store.get_latest_cycle(label)
     else:
-        cycles = collector_store.list_cycles(
+        cycles = discovery_store.list_cycles(
             label,
             session_date=market_date,
             limit=1,
@@ -481,7 +481,7 @@ def _resolve_cycle(
 
 def _latest_cycles_for_market_date(
     *,
-    collector_store: Any,
+    discovery_store: Any,
     pipeline_rows: list[Mapping[str, Any]],
     market_date: str | None,
 ) -> list[dict[str, Any]]:
@@ -491,7 +491,7 @@ def _latest_cycles_for_market_date(
         if not label:
             continue
         latest_cycle = _resolve_cycle(
-            collector_store=collector_store,
+            discovery_store=discovery_store,
             label=label,
             market_date=market_date,
         )
@@ -507,7 +507,7 @@ def _latest_cycles_for_market_date(
 
 def _candidate_counts_by_cycle_id(
     *,
-    collector_store: Any,
+    discovery_store: Any,
     signal_store: Any,
     cycle_ids: list[str],
     runtime_owned: bool = False,
@@ -526,11 +526,11 @@ def _candidate_counts_by_cycle_id(
         )
     if runtime_owned:
         return {}
-    return collector_store.count_cycle_candidates_by_cycle_ids(cycle_ids)
+    return discovery_store.count_cycle_candidates_by_cycle_ids(cycle_ids)
 
 
 def _cycle_opportunity_payloads(
-    collector_store: Any,
+    discovery_store: Any,
     signal_store: Any,
     *,
     pipeline_id: str,
@@ -554,7 +554,7 @@ def _cycle_opportunity_payloads(
     if not opportunities and not signal_schema_ready and not runtime_owned:
         opportunities = [
             dict(candidate)
-            for candidate in collector_store.list_cycle_candidates(cycle_id)
+            for candidate in discovery_store.list_cycle_candidates(cycle_id)
         ]
     return opportunities
 
@@ -565,9 +565,9 @@ def _load_summary_run(
     cycle_id: str,
     label: str,
 ) -> dict[str, Any] | None:
-    if not hasattr(job_store, "get_live_collector_run_by_cycle_id"):
+    if not hasattr(job_store, "get_discovery_run_by_cycle_id"):
         return None
-    run_record = job_store.get_live_collector_run_by_cycle_id(
+    run_record = job_store.get_discovery_run_by_cycle_id(
         cycle_id=cycle_id,
         label=label,
         status="succeeded",
@@ -575,7 +575,7 @@ def _load_summary_run(
     return (
         None
         if run_record is None
-        else enrich_live_collector_job_run_payload(run_record)
+        else enrich_discovery_run_job_run_payload(run_record)
     )
 
 

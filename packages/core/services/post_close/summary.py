@@ -6,7 +6,7 @@ from typing import Any, Mapping
 
 from core.db.decorators import with_storage
 from core.services.selection_summary import live_selection_counts
-from core.storage.collector_repository import CollectorRepository
+from core.storage.discovery_run_repository import DiscoveryRunRepository
 from core.storage.run_history_repository import RunHistoryRepository
 from core.storage.serializers import parse_datetime
 
@@ -16,7 +16,7 @@ from .tuning import build_signal_tuning
 MAX_EVENTS = 5000
 
 
-def _collector_event_sort_key(event: Mapping[str, Any]) -> tuple[Any, int]:
+def _discovery_run_event_sort_key(event: Mapping[str, Any]) -> tuple[Any, int]:
     timestamp = parse_datetime(str(event.get("generated_at") or ""))
     try:
         event_id = int(event.get("event_id") or 0)
@@ -198,7 +198,7 @@ def build_session_summary(
     storage: Any | None = None,
 ) -> dict[str, Any]:
     history_store: RunHistoryRepository = storage.history
-    collector_store: CollectorRepository = storage.collector
+    discovery_store: DiscoveryRunRepository = storage.discovery
 
     run_rows = history_store.list_session_top_runs(
         session_date=session_date,
@@ -208,19 +208,19 @@ def build_session_summary(
         session_date=session_date,
         label=label,
     )
-    cycles = collector_store.list_cycles(label, session_date=session_date, limit=5000)
-    events = collector_store.list_events(
+    cycles = discovery_store.list_cycles(label, session_date=session_date, limit=5000)
+    events = discovery_store.list_events(
         label,
         session_date,
         limit=MAX_EVENTS,
         ascending=False,
     )
     events = [dict(event) for event in events]
-    events.sort(key=_collector_event_sort_key)
+    events.sort(key=_discovery_run_event_sort_key)
     latest_cycle = cycles[0] if cycles else None
     latest_cycle_payload = None
     if latest_cycle is not None:
-        opportunities = collector_store.list_cycle_candidates(latest_cycle["cycle_id"])
+        opportunities = discovery_store.list_cycle_candidates(latest_cycle["cycle_id"])
         latest_cycle_payload = {
             **latest_cycle,
             "opportunities": list(opportunities),
@@ -228,7 +228,7 @@ def build_session_summary(
         }
     outcomes = build_session_outcomes(
         history_store=history_store,
-        collector_store=collector_store,
+        discovery_store=discovery_store,
         session_date=session_date,
         label=label,
         profit_target=profit_target,

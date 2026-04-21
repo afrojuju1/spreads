@@ -221,7 +221,7 @@ def active_entry_automations(
     return entries
 
 
-def build_collector_scope(
+def build_discovery_run_scope(
     config_root: str | Path | None = None,
     *,
     scanner_strategy: str | None = None,
@@ -366,7 +366,7 @@ def build_collector_scope(
     }
 
 
-def build_collector_scopes(
+def build_discovery_run_scopes(
     config_root: str | Path | None = None,
 ) -> list[dict[str, Any]]:
     groups: dict[tuple[str, str], list[tuple[ResolvedBot, ResolvedAutomation]]] = {}
@@ -380,7 +380,7 @@ def build_collector_scopes(
 
     scopes: list[dict[str, Any]] = []
     for (scanner_strategy, scanner_profile), _entries in sorted(groups.items()):
-        scope = build_collector_scope(
+        scope = build_discovery_run_scope(
             config_root,
             scanner_strategy=scanner_strategy,
             scanner_profile=scanner_profile,
@@ -394,8 +394,8 @@ __all__ = [
     "BotConfig",
     "ResolvedBot",
     "active_entry_automations",
-    "build_collector_scope",
-    "build_collector_scopes",
+    "build_discovery_run_scope",
+    "build_discovery_run_scopes",
     "bot_time_reached",
     "load_active_bots",
     "load_bots",

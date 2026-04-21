@@ -22,10 +22,10 @@ Related:
 |---|---|---|
 | Operator interfaces | `packages/web`, `packages/api`, `packages/core/cli` | Web and CLI are interface layers. They should not own business logic. |
 | Scheduling and control | `packages/core/jobs`, `services/control_plane.py`, `services/runtime_policy.py` | Owns schedules, worker routing, control state, and runtime-policy gates. |
-| Market-data capture and recovery | `services/market_recorder.py`, `services/live_recovery/`, `services/collections/capture/` | `market_recorder.py` remains the sole Alpaca option websocket owner in normal runtime. |
-| Discovery and collection | `services/scanners/`, `services/collections/`, `services/live_selection.py`, `services/opportunity_scoring.py`, `services/candidate_policy.py` | Owns symbol scanning, cycle orchestration, live ranking, and promotable/monitor state assignment. |
-| Canonical opportunity state | `services/signal_state.py`, `services/opportunity_generation.py`, `services/opportunities.py`, `storage/signal_repository.py` | Owns signal state, canonical opportunity rows, and runtime-owned projections derived from collector cycles. |
-| Runtime, automation, discovery-session, pipeline-compat, and ops read models | `services/automation_runtimes.py`, `services/discovery_sessions.py`, `services/live_runtime.py`, `services/live_collector_health/`, `services/pipelines.py`, `services/ops/` | Owns owner-plane automation runtime views, collector-owned discovery-session views, compatibility pipeline projections, and operator CLI payloads. |
+| Market-data capture and recovery | `services/market_recorder.py`, `services/discovery_recovery/`, `services/discovery_runs/capture/` | `market_recorder.py` remains the sole Alpaca option websocket owner in normal runtime. |
+| Discovery and collection | `services/scanners/`, `services/discovery_runs/`, `services/live_selection.py`, `services/opportunity_scoring.py`, `services/candidate_policy.py` | Owns symbol scanning, cycle orchestration, live ranking, and promotable/monitor state assignment. |
+| Canonical opportunity state | `services/signal_state.py`, `services/opportunity_generation.py`, `services/opportunities.py`, `storage/signal_repository.py` | Owns signal state, canonical opportunity rows, and runtime-owned projections derived from discovery run cycles. |
+| Runtime, automation, discovery-session, pipeline-compat, and ops read models | `services/automation_runtimes.py`, `services/discovery_sessions.py`, `services/live_runtime.py`, `services/discovery_run_health/`, `services/pipelines.py`, `services/ops/` | Owns owner-plane automation runtime views, discovery-run-owned discovery-session views, compatibility pipeline projections, and operator CLI payloads. |
 | Execution and portfolio state | `services/execution/`, `services/execution_portfolio.py`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py` | Owns broker submission, immutable execution ledger, day-local position ownership, reconciliation, and exit behavior. |
 | Historical backtest and evaluation | `backtest/`, `services/post_close/`, `services/post_market_analysis.py` | `backtest/` owns the canonical historical evaluation engine and artifacts; post-close services own legacy report rendering and closed-session analysis. |
 | Persistence and event transport | Postgres, Redis | Postgres is source of truth. Redis handles queues, leases, and pub/sub fanout. |
@@ -34,9 +34,9 @@ Related:
 
 - `services/market_recorder.py` is the sole Alpaca option websocket owner in normal runtime.
 - API routes, web surfaces, and ops views are read models over service-owned state. They are not business-logic owners.
-- The discovery path may persist collector-cycle artifacts, but canonical live selection state lives in `signal_states`, `signal_state_transitions`, and `opportunities`.
+- The discovery path may persist discovery run-cycle artifacts, but canonical live selection state lives in `signal_states`, `signal_state_transitions`, and `opportunities`.
 - Runtime-owned automation opportunities are projections over canonical cycle opportunities, not a separate selection system.
-- Bot plus automation is the primary operator/product ownership plane. Discovery sessions remain collector-owned diagnostic surfaces, and `pipeline_id` is discovery lineage plus compatibility identity rather than the primary runtime owner.
+- Bot plus automation is the primary operator/product ownership plane. Discovery sessions remain discovery-run-owned diagnostic surfaces, and `pipeline_id` is discovery lineage plus compatibility identity rather than the primary runtime owner.
 - `execution` is the immutable broker-facing ledger. `session_positions` is the mutable owner of day-local position attribution.
 - `broker_sync` reconciles broker reality and health, but it does not take ownership of session attribution away from `session_positions`.
 
@@ -138,8 +138,8 @@ Redis = transport, queueing, leases, and pub/sub fanout
                                              |                   |
                                              | runs              | runs
                                              |                   |
-                                             | broker_sync       | live_collector
-                                             | collector_recovery| collections + scanners
+                                             | broker_sync       | discovery_run
+                                             | discovery_recovery| collections + scanners
                                              | execution_submit  | live_selection + signal sync
                                              | alert_delivery    | recorder-backed quote/trade reads
                                              | alert_reconcile   | UOA + live_action_gate
@@ -185,8 +185,8 @@ Redis = transport, queueing, leases, and pub/sub fanout
                  |                   |
                  | runs              | runs
                  |                   |
-                 | broker_sync       | live_collector
-                 | collector_recovery|
+                 | broker_sync       | discovery_run
+                 | discovery_recovery|
                  | execution_submit  |
                  | alert_delivery    |
                  | alert_reconcile   |
@@ -212,16 +212,16 @@ Redis = transport, queueing, leases, and pub/sub fanout
                   |
                   v
         +---------+-----------------------------+
-        | live_collector job                    |
+        | discovery_run job                    |
         | collections/ + scanners/ + selection |
         +---------+-----------------------------+
                   |
                   | cycle result
                   v
    +--------------+------------------+
-   | collector_cycles                |
-   | collector_cycle_candidates      |
-   | collector_cycle_events          |
+   | discovery_runs                |
+   | discovery_run_candidates      |
+   | discovery_run_events          |
    +--------------+------------------+
                   |
                   | quote/trade context + UOA
@@ -315,7 +315,7 @@ Rule:
            |                      |
            v                      | publish global events
    +-------+--------+    +--------+---------+
-   | main workers   |    | collector workers|
+   | main workers   |    | discovery workers|
    +-------+--------+    +--------+---------+
            |                      |
            +----------+-----------+
@@ -392,9 +392,9 @@ Current worker topology is:
 
 Current main job types are:
 
-- `live_collector`
+- `discovery_run`
 - `broker_sync`
-- `collector_recovery`
+- `discovery_recovery`
 - `execution_submit`
 - `alert_delivery`
 - `alert_reconcile`
@@ -409,11 +409,11 @@ Redis is transport and event fanout. Postgres remains the source of truth for jo
 
 ### 3. Discovery, Collection, And Opportunity State
 
-The `live_collector` job remains the discovery worker entrypoint, but it is no longer the right architectural owner for all of the logic it triggers.
+The `discovery_run` job remains the discovery worker entrypoint, but it is no longer the right architectural owner for all of the logic it triggers.
 
 Today that path is split across:
 
-- `services/collections/` for collector entrypoints, cycle orchestration, capture helpers, and collection-time shared logic
+- `services/discovery_runs/` for discovery run entrypoints, cycle orchestration, capture helpers, and collection-time shared logic
 - `services/scanners/` for strategy scanning, builder logic, market-slice assembly, output formatting, and historical evaluation adapters
 - `services/live_selection.py` plus `services/opportunity_scoring.py` for live state assignment and scoring
 - `services/signal_state.py`, `services/opportunity_generation.py`, and `services/opportunities.py` for canonical signal and opportunity persistence
@@ -431,9 +431,9 @@ At a high level it:
 
 Its persistent outputs live mainly in:
 
-- `collector_cycles`
-- `collector_cycle_candidates`
-- `collector_cycle_events`
+- `discovery_runs`
+- `discovery_run_candidates`
+- `discovery_run_events`
 - `option_quote_events`
 - `option_trade_events`
 - `signal_states`
@@ -545,16 +545,16 @@ The user-facing read model is assembled from multiple domains.
 Current service owners here are:
 
 - `services/automation_runtimes.py` for bot-and-automation-oriented runtime summaries and detail views
-- `services/discovery_sessions.py` for collector-owned discovery-session detail and compatibility reads
-- `services/live_runtime.py` for session detail and current collector-backed runtime state
-- `services/live_collector_health/` for capture, selection, enrichment, and tradeability summaries
+- `services/discovery_sessions.py` for discovery-run-owned discovery-session detail and compatibility reads
+- `services/live_runtime.py` for session detail and current discovery run-backed runtime state
+- `services/discovery_run_health/` for capture, selection, enrichment, and tradeability summaries
 - `services/pipelines.py` for pipeline-facing runtime projections
 - `services/ops/` for operator CLI read models such as `status`, `trading`, `jobs`, `audit`, and `uoa`
 
 Examples:
 
 - account overview can use live Alpaca data and attach broker sync health
-- session detail joins collector state, execution ledger, positions, alerts, job runs, and analysis
+- session detail joins discovery run state, execution ledger, positions, alerts, job runs, and analysis
 - execution portfolio computes current marks and PnL for open positions
 
 Realtime updates are pushed through Redis pub/sub and exposed by FastAPI WebSockets.
@@ -562,7 +562,7 @@ Realtime updates are pushed through Redis pub/sub and exposed by FastAPI WebSock
 The UI uses this for:
 
 - session and execution updates
-- live collector degradation notices
+- discovery run degradation notices
 - execution status changes
 - session-linked alert notices
 - session-linked job notices
@@ -591,10 +591,10 @@ Post-close and post-market analysis:
 At a high level Postgres currently holds these logical groups:
 
 ```text
-collector:
-  collector_cycles
-  collector_cycle_candidates
-  collector_cycle_events
+discovery run:
+  discovery_runs
+  discovery_run_candidates
+  discovery_run_events
   option_quote_events
   option_trade_events
 
@@ -628,7 +628,7 @@ alerts:
 
 analysis:
   post_market_analysis_runs
-  plus read-only derived summaries built from collector and execution history
+  plus read-only derived summaries built from discovery run and execution history
 
 control:
   control_state
@@ -643,12 +643,12 @@ events:
 
 The current application is best understood as one narrow runtime console sitting on top of one backend runtime with several cooperating subsystems:
 
-- a discovery and collection stack built from `services/collections/`, `services/scanners/`, `services/live_selection.py`, and canonical signal/opportunity persistence
+- a discovery and collection stack built from `services/discovery_runs/`, `services/scanners/`, `services/live_selection.py`, and canonical signal/opportunity persistence
 - an execution ledger that records broker interactions immutably
 - a session position model that owns day-local trade state
 - a broker sync process that reconciles broker reality without taking ownership
 - a shared risk and exit layer for both manual and automated actions
-- runtime, pipeline, and ops read models assembled by `live_runtime`, `live_collector_health`, `pipelines`, and `ops`
+- runtime, pipeline, and ops read models assembled by `live_runtime`, `discovery_run_health`, `pipelines`, and `ops`
 - an API and WebSocket layer that exposes those read models and fans realtime events to the UI
 - a scheduler plus two worker lanes over Redis ARQ
 - supporting alerts and analysis subsystems around that core

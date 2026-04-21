@@ -28,12 +28,12 @@ class RiskDecisionModel(Base):
     label: Mapped[str] = mapped_column(Text, nullable=False)
     cycle_id: Mapped[str | None] = mapped_column(
         Text,
-        ForeignKey("collector_cycles.cycle_id", ondelete="SET NULL"),
+        ForeignKey("discovery_runs.cycle_id", ondelete="SET NULL"),
         nullable=True,
     )
     candidate_id: Mapped[int | None] = mapped_column(
         BigInteger,
-        ForeignKey("collector_cycle_candidates.candidate_id", ondelete="SET NULL"),
+        ForeignKey("discovery_run_candidates.candidate_id", ondelete="SET NULL"),
         nullable=True,
     )
     opportunity_id: Mapped[str | None] = mapped_column(

@@ -14,8 +14,8 @@ from core.jobs.orchestration import (
 )
 from core.jobs.registry import WORKER_LANES, get_queue_name_for_job_type
 from core.jobs.specs import get_declared_job_row, list_declared_job_rows
-from core.services.live_collector_health.enrichment import (
-    enrich_live_collector_job_run_payload,
+from core.services.discovery_run_health.enrichment import (
+    enrich_discovery_run_job_run_payload,
 )
 from core.services.selection_summary import selection_summary_payload as _selection_summary_payload
 from core.services.value_coercion import (
@@ -54,7 +54,7 @@ def _skip_is_benign(run: Mapping[str, Any]) -> bool:
         return True
     if reason == "superseded_by_newer_scheduled_run":
         return True
-    if reason == "stale_slot" and str(run.get("job_type") or "") == "live_collector":
+    if reason == "stale_slot" and str(run.get("job_type") or "") == "discovery_run":
         return True
     error_text = str(_as_text(run.get("error_text")) or "").strip().lower()
     return error_text in {
@@ -116,7 +116,7 @@ def _job_run_operator_status(
                     "healthy",
                     "Job run was skipped because it was outside its configured schedule window.",
                 )
-            if reason == "stale_slot" and str(run.get("job_type") or "") == "live_collector":
+            if reason == "stale_slot" and str(run.get("job_type") or "") == "discovery_run":
                 return (
                     "healthy",
                     "Stale live slot was intentionally marked missed instead of replayed.",
@@ -153,7 +153,7 @@ def _job_run_operator_status(
             return "degraded", "Running job heartbeat is stale."
         return "healthy", None
     if status == "succeeded":
-        if str(run.get("job_type") or "") == "live_collector":
+        if str(run.get("job_type") or "") == "discovery_run":
             live_action_gate = (
                 run.get("live_action_gate")
                 if isinstance(run.get("live_action_gate"), Mapping)
@@ -163,13 +163,13 @@ def _job_run_operator_status(
                 return (
                     "blocked",
                     _as_text(live_action_gate.get("message"))
-                    or "Live collector actions are blocked.",
+                    or "Discovery-run actions are blocked.",
                 )
             capture_status = str(run.get("capture_status") or "").strip().lower()
             if capture_status and capture_status not in {"healthy", "idle"}:
                 return (
                     "degraded",
-                    f"Live collector capture finished as {capture_status}.",
+                    f"Discovery-run capture finished as {capture_status}.",
                 )
         return "healthy", None
     return "unknown", None
@@ -180,7 +180,7 @@ def _summarize_job_run(
     *,
     now: datetime,
 ) -> dict[str, Any]:
-    enriched = enrich_live_collector_job_run_payload(run)
+    enriched = enrich_discovery_run_job_run_payload(run)
     operator_status, operator_note = _job_run_operator_status(enriched, now=now)
     quote_capture = (
         enriched.get("quote_capture")
@@ -269,7 +269,7 @@ def _summarize_job_definition(
     now: datetime,
 ) -> dict[str, Any]:
     enriched_latest_run = (
-        None if latest_run is None else enrich_live_collector_job_run_payload(latest_run)
+        None if latest_run is None else enrich_discovery_run_job_run_payload(latest_run)
     )
     latest_summary = (
         None
@@ -517,7 +517,7 @@ def build_jobs_overview(
     degraded_capture_count = sum(
         1
         for row in run_rows
-        if str(row.get("job_type") or "") == "live_collector"
+        if str(row.get("job_type") or "") == "discovery_run"
         and str(row.get("capture_status") or "") not in {"", "healthy", "None"}
     )
     if status_counts.get("failed", 0):
@@ -554,8 +554,8 @@ def build_jobs_overview(
         attention.append(
             _attention(
                 severity="medium",
-                code="collector_capture_degraded",
-                message=f"{degraded_capture_count} live collector run(s) completed with degraded capture.",
+                code="discovery_run_capture_degraded",
+                message=f"{degraded_capture_count} discovery-run execution(s) completed with degraded capture.",
             )
         )
     if stale_queued_run_rows:
@@ -736,7 +736,7 @@ def build_job_run_view(
     if run_record is None:
         raise OpsLookupError(f"Unknown job run: {job_run_id}")
 
-    run = enrich_live_collector_job_run_payload(run_record)
+    run = enrich_discovery_run_job_run_payload(run_record)
     run_summary = _summarize_job_run(run, now=now)
     attention: list[dict[str, str]] = []
     statuses = [str(run_summary.get("operator_status") or "unknown")]
@@ -853,7 +853,7 @@ def build_job_run_view(
             "worker_name": run_summary.get("worker_name"),
             "retry_count": run_summary.get("retry_count"),
             "capture_status": run_summary.get("capture_status"),
-            "collector_opportunity_count": _coerce_int(
+            "discovery_run_opportunity_count": _coerce_int(
                 (run.get("selection_summary") or {}).get("opportunity_count")
             )
             or 0,

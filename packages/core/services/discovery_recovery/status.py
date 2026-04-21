@@ -5,7 +5,7 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from core.services.live_collector_health.tradeability import (
+from core.services.discovery_run_health.tradeability import (
     TRADEABILITY_STATE_RECOVERY_ONLY,
 )
 from core.services.value_coercion import as_text as _as_text
@@ -149,7 +149,7 @@ def merge_live_action_gate_with_recovery(
         "status": "blocked",
         "reason_code": RECOVERY_CONTROL_REASON_CODE,
         "message": (
-            "Live actions are blocked while collector gaps are being reconciled."
+            "Live actions are blocked while discovery-run gaps are being reconciled."
             if recovery_state == RECOVERY_STATE_RECOVERING
             else "Live actions stay blocked until one successful post-gap live slot completes."
         ),

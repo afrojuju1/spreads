@@ -65,7 +65,7 @@ The existing commands use Postgres automatically:
 
 ```bash
 uv run spreads scan --symbol SPY
-uv run spreads collect --profile weekly --universe explore_10
+uv run spreads discover --profile weekly --universe explore_10
 uv run spreads analyze --label explore_10_combined_weekly_auto
 ```
 
@@ -85,9 +85,9 @@ Redis default connection URL:
 redis://localhost:56379/0
 ```
 
-`spreads collect` now persists live collector cycles, promotable/monitor opportunity state, events, and quote events directly to Postgres.
+`spreads discover` now persists discovery run cycles, promotable/monitor opportunity state, events, and quote events directly to Postgres.
 
-Discord alert delivery is optional. If configured, collector alerts are sent through:
+Discord alert delivery is optional. If configured, discovery run alerts are sent through:
 
 ```bash
 SPREADS_DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
@@ -124,5 +124,5 @@ The FastAPI app is DB-backed. Useful endpoints include:
 - Docker Compose can run `postgres`, `redis`, `api`, `worker`, and `scheduler`.
 - Alembic owns app-schema changes.
 - The runtime stores are SQLAlchemy ORM on Postgres.
-- Run history, collector live state, and calendar events all use the same Postgres database and session pattern.
+- Run history, discovery run live state, and calendar events all use the same Postgres database and session pattern.
 - Redis is transport/runtime only for ARQ; Postgres remains the source of truth for job state.

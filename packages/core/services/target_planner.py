@@ -6,7 +6,7 @@ from typing import Any
 
 from core.services.automations import ResolvedAutomation
 from core.services.bots import ResolvedBot
-from core.services.live_recovery import build_capture_target_rows_for_candidates
+from core.services.discovery_recovery import build_capture_target_rows_for_candidates
 from core.services.option_structures import normalize_strategy_family, payload_structure_identity
 
 CAPTURE_OWNER_BOT = "bot"

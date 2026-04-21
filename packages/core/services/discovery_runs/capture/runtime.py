@@ -4,11 +4,11 @@ import argparse
 from typing import Any
 
 from core.integrations.alpaca.client import AlpacaClient
-from core.services.live_collector_health.capture import (
+from core.services.discovery_run_health.capture import (
     build_quote_capture_summary,
     build_trade_capture_summary,
 )
-from core.services.live_recovery import refresh_live_session_capture_targets
+from core.services.discovery_recovery import refresh_live_session_capture_targets
 from core.services.option_quote_records import build_quote_symbol_metadata
 from core.services.option_trade_records import build_trade_symbol_metadata
 from core.services.runtime_identity import build_live_run_scope_id
@@ -19,7 +19,7 @@ from core.services.uoa_trade_summary import build_uoa_trade_summary
 from core.storage.event_repository import EventRepository
 from core.storage.run_history_repository import RunHistoryRepository
 
-from core.services.collections.models import LiveCaptureSnapshot, LiveTickContext
+from core.services.discovery_runs.models import LiveCaptureSnapshot, LiveTickContext
 
 from .events import (
     record_quote_market_events,

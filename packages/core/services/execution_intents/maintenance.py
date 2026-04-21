@@ -9,7 +9,7 @@ from core.services.deployment_policy import (
     DEPLOYMENT_MODE_LIVE_AUTO,
     DEPLOYMENT_MODE_PAPER_AUTO,
 )
-from core.services.live_pipelines import resolve_live_collector_label
+from core.services.live_pipelines import resolve_discovery_run_label
 from core.storage.serializers import parse_datetime
 
 from .shared import (
@@ -245,12 +245,12 @@ def _backfill_strategy_position_links(
 def _active_options_automation_labels(job_store: Any) -> set[str]:
     labels: set[str] = set()
     for definition in list_declared_job_rows(
-        enabled_only=True, job_type="live_collector"
+        enabled_only=True, job_type="discovery_run"
     ):
         payload = dict(definition.get("payload") or {})
         if not bool(payload.get("options_automation_enabled", False)):
             continue
-        labels.add(resolve_live_collector_label(payload))
+        labels.add(resolve_discovery_run_label(payload))
     return labels
 
 

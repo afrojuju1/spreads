@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 
-def live_collector_main() -> int:
-    from core.services.collections.runtime import main
+def discovery_run_main() -> int:
+    from core.services.discovery_runs.runtime import main
 
     return main()
 
 
-__all__ = ["live_collector_main"]
+__all__ = ["discovery_run_main"]

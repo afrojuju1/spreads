@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from core.services.option_structures import payload_display_fields, payload_structure_identity
-from core.storage.collector_repository import CollectorRepository
-from core.storage.records import CollectorCycleCandidateRecord
+from core.storage.discovery_run_repository import DiscoveryRunRepository
+from core.storage.records import DiscoveryRunCandidateRecord
 
 ALERT_SCORE_FLOOR = 72.0
 STRICT_PROFILE_ALERT_SCORE_FLOOR = 75.0
@@ -38,7 +38,7 @@ def parse_utc_timestamp(value: str) -> datetime:
 
 
 def candidate_identity(
-    candidate: dict[str, Any] | CollectorCycleCandidateRecord,
+    candidate: dict[str, Any] | DiscoveryRunCandidateRecord,
 ) -> tuple[str, str, str]:
     return (
         str(candidate["strategy"]),
@@ -47,7 +47,7 @@ def candidate_identity(
     )
 
 
-def idea_fragment(candidate: dict[str, Any] | CollectorCycleCandidateRecord) -> str:
+def idea_fragment(candidate: dict[str, Any] | DiscoveryRunCandidateRecord) -> str:
     strategy, expiration_date, structure_identity = candidate_identity(candidate)
     return f"{strategy}|{expiration_date}|{structure_identity}"
 
@@ -82,7 +82,7 @@ def uoa_threshold_dedupe_key(
     return f"{label}|{session_date}|{symbol}|uoa_flow|{decision_state}|{dominant_flow}"
 
 
-def candidate_profile(label: str, candidate: dict[str, Any] | CollectorCycleCandidateRecord) -> str:
+def candidate_profile(label: str, candidate: dict[str, Any] | DiscoveryRunCandidateRecord) -> str:
     explicit = str(candidate.get("profile") or "").strip().lower()
     if explicit:
         return explicit
@@ -94,7 +94,7 @@ def candidate_profile(label: str, candidate: dict[str, Any] | CollectorCycleCand
 
 
 def _candidate_structure_text(
-    candidate: dict[str, Any] | CollectorCycleCandidateRecord,
+    candidate: dict[str, Any] | DiscoveryRunCandidateRecord,
 ) -> str:
     if isinstance(candidate, dict):
         explicit = str(candidate.get("strike_path") or "").strip()
@@ -123,7 +123,7 @@ def score_breakout_delta_for_profile(profile: str) -> float:
 
 
 def is_before_current_cycle(
-    row: CollectorCycleCandidateRecord,
+    row: DiscoveryRunCandidateRecord,
     *,
     current_cycle_id: str,
     current_generated_at: str,
@@ -140,14 +140,14 @@ def is_before_current_cycle(
 
 
 def build_history_indexes(
-    collector_store: CollectorRepository,
+    discovery_store: DiscoveryRunRepository,
     *,
     label: str,
     session_date: str,
     current_cycle_id: str,
     current_generated_at: str,
 ) -> tuple[set[tuple[str, str, str]], set[tuple[str, str, str]], set[str]]:
-    rows = collector_store.list_session_candidates(label=label, session_date=session_date)
+    rows = discovery_store.list_session_candidates(label=label, session_date=session_date)
     prior_promotable_identities: set[tuple[str, str, str]] = set()
     prior_monitor_identities: set[tuple[str, str, str]] = set()
     prior_promotable_symbols: set[str] = set()
@@ -217,11 +217,11 @@ def build_event_alert_decisions(
     current_cycle_id: str,
     current_generated_at: str,
     events: list[dict[str, Any]],
-    collector_store: CollectorRepository,
+    discovery_store: DiscoveryRunRepository,
     get_alert_state: callable,
 ) -> list[AlertDecision]:
     prior_promotable_identities, prior_monitor_identities, prior_promotable_symbols = build_history_indexes(
-        collector_store,
+        discovery_store,
         label=label,
         session_date=session_date,
         current_cycle_id=current_cycle_id,

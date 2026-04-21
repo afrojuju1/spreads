@@ -12,8 +12,8 @@ from core.jobs.orchestration import NEW_YORK, _market_schedule
 from core.services.bot_analytics import summarize_intent_counts
 from core.services.bots import load_active_bots
 from core.services.live_pipelines import (
-    list_enabled_live_collector_pipelines,
-    resolve_live_collector_label,
+    list_enabled_discovery_run_pipelines,
+    resolve_discovery_run_label,
 )
 from core.services.live_runtime import list_latest_live_sessions
 from core.services.positions import enrich_position_row
@@ -34,7 +34,7 @@ from .shared import (
 OPEN_POSITION_STATUSES = ["open", "partial_close"]
 
 
-def _collector_status(
+def _discovery_run_status(
     run: Mapping[str, Any] | None,
     *,
     now: datetime,
@@ -64,15 +64,15 @@ def _collector_status(
     return "degraded"
 
 
-def _collector_requires_attention(
+def _discovery_run_requires_attention(
     run: Mapping[str, Any] | None,
     *,
     now: datetime,
 ) -> bool:
     if run is None:
         return True
-    collector_status = _collector_status(run, now=now)
-    if collector_status in {"healthy", "idle"}:
+    discovery_run_status = _discovery_run_status(run, now=now)
+    if discovery_run_status in {"healthy", "idle"}:
         return False
     return _is_recent(
         run.get("slot_at")
@@ -83,27 +83,27 @@ def _collector_requires_attention(
     )
 
 
-def _latest_live_collectors(
+def _latest_discovery_runs(
     *,
     storage: Any,
     now: datetime,
 ) -> list[dict[str, Any]]:
-    collector_definitions = list_enabled_live_collector_pipelines(
-        list_declared_job_rows(enabled_only=True, job_type="live_collector")
+    discovery_run_definitions = list_enabled_discovery_run_pipelines(
+        list_declared_job_rows(enabled_only=True, job_type="discovery_run")
     )
-    if not collector_definitions:
+    if not discovery_run_definitions:
         return []
     latest_session_by_pipeline_id = {
         str(session["pipeline"]["pipeline_id"]): session
         for session in list_latest_live_sessions(
             storage=storage,
-            limit=max(len(collector_definitions), 1),
+            limit=max(len(discovery_run_definitions), 1),
         )
         if isinstance(session.get("pipeline"), Mapping)
         and session["pipeline"].get("pipeline_id")
     }
-    latest_collectors: list[dict[str, Any]] = []
-    for definition in collector_definitions:
+    latest_discovery_runs: list[dict[str, Any]] = []
+    for definition in discovery_run_definitions:
         session = latest_session_by_pipeline_id.get(str(definition["pipeline_id"]))
         run = (
             None
@@ -135,13 +135,13 @@ def _latest_live_collectors(
         capture_status = None if run is None else run.get("capture_status")
         if capture_status is None:
             capture_status = quote_capture.get("capture_status")
-        collector_status = _collector_status(run, now=now)
-        needs_attention = _collector_requires_attention(run, now=now)
+        discovery_run_status = _discovery_run_status(run, now=now)
+        needs_attention = _discovery_run_requires_attention(run, now=now)
         stream_quote_events_saved = _stream_quote_events_saved(quote_capture)
-        latest_collectors.append(
+        latest_discovery_runs.append(
             {
                 "job_key": str(definition["job_key"]),
-                "status": collector_status,
+                "status": discovery_run_status,
                 "needs_attention": needs_attention,
                 "capture_status": capture_status,
                 "live_action_gate": None
@@ -173,18 +173,18 @@ def _latest_live_collectors(
                 else session.get("session_id") or job_run.get("session_id"),
             }
         )
-    return latest_collectors
+    return latest_discovery_runs
 
 
 def _active_options_automation_labels(job_store: Any) -> set[str]:
     labels: set[str] = set()
     for definition in list_declared_job_rows(
-        enabled_only=True, job_type="live_collector"
+        enabled_only=True, job_type="discovery_run"
     ):
         payload = dict(definition.get("payload") or {})
         if not bool(payload.get("options_automation_enabled", False)):
             continue
-        labels.add(resolve_live_collector_label(payload))
+        labels.add(resolve_discovery_run_label(payload))
     return labels
 
 

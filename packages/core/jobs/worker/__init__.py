@@ -10,9 +10,9 @@ from .tasks import (
     run_alert_delivery_job,
     run_alert_reconcile_job,
     run_broker_sync_job,
-    run_collector_recovery_job,
+    run_discovery_recovery_job,
     run_execution_submit_job,
-    run_live_collector_job,
+    run_discovery_run_job,
     run_options_automation_entry_job,
     run_options_automation_execute_job,
     run_options_automation_management_job,
@@ -25,7 +25,7 @@ from .tasks import (
 class RuntimeWorkerSettings:
     functions = [
         run_broker_sync_job,
-        run_collector_recovery_job,
+        run_discovery_recovery_job,
         run_execution_submit_job,
         run_options_automation_entry_job,
         run_options_automation_management_job,
@@ -47,7 +47,7 @@ class RuntimeWorkerSettings:
 
 class DiscoveryWorkerSettings:
     functions = [
-        run_live_collector_job,
+        run_discovery_run_job,
     ]
     queue_name = DISCOVERY_QUEUE_NAME
     redis_settings = build_redis_settings(default_redis_url())
@@ -70,9 +70,9 @@ __all__ = [
     "run_alert_delivery_job",
     "run_alert_reconcile_job",
     "run_broker_sync_job",
-    "run_collector_recovery_job",
+    "run_discovery_recovery_job",
     "run_execution_submit_job",
-    "run_live_collector_job",
+    "run_discovery_run_job",
     "run_options_automation_entry_job",
     "run_options_automation_execute_job",
     "run_options_automation_management_job",

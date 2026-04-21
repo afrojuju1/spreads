@@ -1,4 +1,4 @@
-job_key: post_close_analysis:live_collectors
+job_key: post_close_analysis:discovery_runs
 job_type: post_close_analysis
 enabled: true
 schedule:

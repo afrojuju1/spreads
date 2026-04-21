@@ -11,8 +11,8 @@ from arq import create_pool
 
 from core.events.bus import publish_global_event_async
 from core.jobs.registry import (
-    COLLECTOR_RECOVERY_JOB_KEY,
-    COLLECTOR_RECOVERY_JOB_TYPE,
+    DISCOVERY_RECOVERY_JOB_KEY,
+    DISCOVERY_RECOVERY_JOB_TYPE,
     get_job_spec,
 )
 from core.jobs.specs import get_declared_job_row, list_declared_job_rows
@@ -29,7 +29,7 @@ from core.jobs.orchestration import (
 from core.runtime.config import default_database_url, default_redis_url
 from core.runtime.redis import build_redis_settings
 from core.services.live_slot_updates import write_live_session_slot
-from core.services.live_recovery import (
+from core.services.discovery_recovery import (
     LIVE_SLOT_STATUS_MISSED,
     LIVE_SLOT_STATUS_QUEUED,
     LIVE_SLOT_TERMINAL_STATUSES,
@@ -72,7 +72,9 @@ async def _publish_job_run_update(redis: Any, run_record: Any) -> None:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Schedule ARQ jobs for spreads collectors and analysis.")
+    parser = argparse.ArgumentParser(
+        description="Schedule ARQ jobs for spreads discovery runs and analysis."
+    )
     parser.add_argument("--db", default=default_database_url(), help="Postgres database URL.")
     parser.add_argument("--redis-url", default=default_redis_url(), help="Redis connection URL.")
     parser.add_argument("--poll-seconds", type=int, default=DEFAULT_POLL_SECONDS, help="Scheduler poll interval.")
@@ -220,7 +222,7 @@ async def _supersede_queued_live_run(
     return superseded_record
 
 
-async def _enqueue_collector_recovery_if_needed(
+async def _enqueue_discovery_recovery_if_needed(
     *,
     job_store: Any,
     redis: Any,
@@ -228,13 +230,13 @@ async def _enqueue_collector_recovery_if_needed(
 ) -> str | None:
     definition = await asyncio.to_thread(
         get_declared_job_row,
-        COLLECTOR_RECOVERY_JOB_KEY,
+        DISCOVERY_RECOVERY_JOB_KEY,
     )
     if definition is None or not bool(definition.get("enabled")):
         return None
     latest_runs = await asyncio.to_thread(
         job_store.list_job_runs,
-        job_key=COLLECTOR_RECOVERY_JOB_KEY,
+        job_key=DISCOVERY_RECOVERY_JOB_KEY,
         limit=1,
     )
     latest_run = latest_runs[0] if latest_runs else None
@@ -249,19 +251,19 @@ async def _enqueue_collector_recovery_if_needed(
     payload = dict(definition.get("payload") or {})
     payload.update(
         {
-            "job_key": COLLECTOR_RECOVERY_JOB_KEY,
-            "job_type": COLLECTOR_RECOVERY_JOB_TYPE,
+            "job_key": DISCOVERY_RECOVERY_JOB_KEY,
+            "job_type": DISCOVERY_RECOVERY_JOB_TYPE,
             "scheduled_for": isoformat_utc(now),
             "singleton_scope": definition.get("singleton_scope"),
         }
     )
-    job_run_id = build_job_run_id(COLLECTOR_RECOVERY_JOB_KEY, now)
+    job_run_id = build_job_run_id(DISCOVERY_RECOVERY_JOB_KEY, now)
     run_record, created = await asyncio.to_thread(
         job_store.create_job_run,
         job_run_id=job_run_id,
-        job_key=COLLECTOR_RECOVERY_JOB_KEY,
+        job_key=DISCOVERY_RECOVERY_JOB_KEY,
         arq_job_id=build_job_attempt_id(job_run_id, 0),
-        job_type=COLLECTOR_RECOVERY_JOB_TYPE,
+        job_type=DISCOVERY_RECOVERY_JOB_TYPE,
         status="queued",
         scheduled_for=now,
         payload=payload,
@@ -277,7 +279,7 @@ async def _enqueue_collector_recovery_if_needed(
     return None if not enqueued else str(run_record["job_run_id"])
 
 
-async def _reconcile_live_collector_jobs(
+async def _reconcile_discovery_run_jobs(
     job_store: Any,
     recovery_store: Any,
     redis: Any,
@@ -287,7 +289,7 @@ async def _reconcile_live_collector_jobs(
     definitions = await asyncio.to_thread(
         list_declared_job_rows,
         enabled_only=True,
-        job_type="live_collector",
+        job_type="discovery_run",
     )
     enqueued: list[str] = []
     skipped: list[dict[str, str]] = []
@@ -414,7 +416,7 @@ async def _reconcile_live_collector_jobs(
                     }
                 )
                 if gap_detected:
-                    recovery_run_id = await _enqueue_collector_recovery_if_needed(
+                    recovery_run_id = await _enqueue_discovery_recovery_if_needed(
                         job_store=job_store,
                         redis=redis,
                         now=now,
@@ -426,7 +428,7 @@ async def _reconcile_live_collector_jobs(
             payload.update(
                 {
                     "job_key": definition["job_key"],
-                    "job_type": "live_collector",
+                    "job_type": "discovery_run",
                     "label": label,
                     "session_id": session_id,
                     "session_date": session_date,
@@ -442,7 +444,7 @@ async def _reconcile_live_collector_jobs(
                 job_run_id=job_run_id,
                 job_key=definition["job_key"],
                 arq_job_id=attempt_id,
-                job_type="live_collector",
+                job_type="discovery_run",
                 status="queued",
                 scheduled_for=slot_at,
                 session_id=session_id,
@@ -550,7 +552,7 @@ async def _reconcile_live_collector_jobs(
                 latest_session_run = requeued_record
 
         if gap_detected:
-            recovery_run_id = await _enqueue_collector_recovery_if_needed(
+            recovery_run_id = await _enqueue_discovery_recovery_if_needed(
                 job_store=job_store,
                 redis=redis,
                 now=now,
@@ -571,7 +573,7 @@ async def _enqueue_definition_jobs(job_store: Any, redis: Any, *, now: datetime)
     skipped: list[dict[str, str]] = []
 
     for definition in definitions:
-        if definition["job_type"] == "live_collector":
+        if definition["job_type"] == "discovery_run":
             continue
         due = due_job_payload(definition, now=now)
         if due is None:
@@ -672,7 +674,7 @@ async def _enqueue_definition_jobs(job_store: Any, redis: Any, *, now: datetime)
 async def enqueue_due_jobs(job_store: Any, recovery_store: Any, redis: Any) -> dict[str, Any]:
     now = datetime.now(UTC)
     live_result, definition_result = await asyncio.gather(
-        _reconcile_live_collector_jobs(job_store, recovery_store, redis, now=now),
+        _reconcile_discovery_run_jobs(job_store, recovery_store, redis, now=now),
         _enqueue_definition_jobs(job_store, redis, now=now),
     )
     return {

@@ -190,16 +190,16 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
         tone: status === "failed" ? "error" : "warning",
       };
     }
-    case "live.collector.degraded": {
-      const label = readText(payload.label) ?? "live collector";
+    case "live.discovery_run.degraded": {
+      const label = readText(payload.label) ?? "discovery run";
       const captureStatus = humanizeToken(readText(payload.capture_status) ?? "degraded");
       const reasons = Array.isArray(payload.reasons)
         ? payload.reasons.filter(isString).map((reason) => humanizeToken(reason))
         : [];
-      const reasonText = reasons.length ? reasons.join(", ") : "Collector health degraded";
+      const reasonText = reasons.length ? reasons.join(", ") : "Discovery-run health degraded";
       return {
         id: `${event.topic}:${event.entity_id}:${reasonText}`,
-        title: `Live collector degraded for ${label}`,
+        title: `Discovery run degraded for ${label}`,
         body: `${captureStatus}. ${reasonText}.`,
         href: resolveOperatorHrefFromPayload(payload),
         summary: `Live ${label} degraded`,
@@ -355,7 +355,7 @@ function GlobalRealtimeBridge({
           });
         }
         break;
-      case "live.collector.degraded":
+      case "live.discovery_run.degraded":
         queryClient.invalidateQueries({ queryKey: ["sessions"] });
         queryClient.invalidateQueries({ queryKey: ["pipelines"] });
         queryClient.invalidateQueries({ queryKey: ["automations"] });

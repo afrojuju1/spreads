@@ -286,20 +286,20 @@ def _render_automation_sync_summary(
     console.print(table)
 
 
-def _render_collector_raw_candidates(
+def _render_discovery_run_raw_candidates(
     console: Console,
     *,
-    collector_rows: list[dict[str, Any]],
+    discovery_run_rows: list[dict[str, Any]],
 ) -> None:
     rows_with_raw = [
         row
-        for row in collector_rows
+        for row in discovery_run_rows
         if isinstance(row.get("raw_candidate_summary"), dict)
     ]
     if not rows_with_raw:
         return
-    table = Table(title="Collector Raw Candidates", header_style="bold")
-    table.add_column("Collector")
+    table = Table(title="Discovery-Run Raw Candidates", header_style="bold")
+    table.add_column("Discovery Run")
     table.add_column("Raw", justify="right")
     table.add_column("Selected", justify="right")
     table.add_column("Symbols")
@@ -332,8 +332,8 @@ def _render_collector_raw_candidates(
                 top_rows.append((str(row.get("job_key") or "-"), candidate))
     if not top_rows:
         return
-    table = Table(title="Collector Raw Top Candidates", header_style="bold")
-    table.add_column("Collector")
+    table = Table(title="Discovery-Run Raw Top Candidates", header_style="bold")
+    table.add_column("Discovery Run")
     table.add_column("Underlying")
     table.add_column("Strategy")
     table.add_column("Expiry")
@@ -341,9 +341,9 @@ def _render_collector_raw_candidates(
     table.add_column("Credit", justify="right")
     table.add_column("ROR", justify="right")
     table.add_column("Setup")
-    for collector_key, candidate in top_rows[:12]:
+    for discovery_run_key, candidate in top_rows[:12]:
         table.add_row(
-            _truncate(collector_key, length=36),
+            _truncate(discovery_run_key, length=36),
             str(candidate.get("underlying_symbol") or "-"),
             str(candidate.get("strategy") or "-"),
             str(candidate.get("expiration_date") or "-"),
@@ -776,9 +776,9 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
 
     _render_attention(console, payload)
 
-    collector_rows = list(details.get("latest_collectors") or [])
-    if collector_rows:
-        table = Table(title="Collectors", header_style="bold")
+    discovery_run_rows = list(details.get("latest_discovery_runs") or [])
+    if discovery_run_rows:
+        table = Table(title="Discovery Runs", header_style="bold")
         table.add_column("Job Key")
         table.add_column("Status")
         table.add_column("Capture")
@@ -787,7 +787,7 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Automation")
         table.add_column("Quote Stream/Base", justify="right")
         table.add_column("Last Slot")
-        for row in collector_rows:
+        for row in discovery_run_rows:
             selection_summary = (
                 row.get("selection_summary")
                 if isinstance(row.get("selection_summary"), dict)
@@ -804,7 +804,7 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
                 str(row.get("last_slot_at") or "-"),
             )
         console.print(table)
-        _render_collector_raw_candidates(console, collector_rows=collector_rows)
+        _render_discovery_run_raw_candidates(console, discovery_run_rows=discovery_run_rows)
 
     _render_automation_runtime_summary(
         console,
@@ -842,7 +842,7 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
     market_session = dict(details.get("market_session") or {})
     automation_runtime = dict(details.get("automation_runtime") or {})
     automation_performance = dict(details.get("automation_performance") or {})
-    collector_rows = list(details.get("latest_collectors") or [])
+    discovery_run_rows = list(details.get("latest_discovery_runs") or [])
 
     overview = Table.grid(padding=(0, 2))
     overview.add_row("Overall", _status_text(payload.get("status")))
@@ -884,7 +884,7 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row(
         "Execution Health", _render_value(summary.get("execution_health_status"))
     )
-    overview.add_row("Collectors", _render_value(summary.get("collector_count")))
+    overview.add_row("Discovery Runs", _render_value(summary.get("discovery_run_count")))
     overview.add_row(
         "Automation",
         (
@@ -920,7 +920,7 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
         title="Automation Performance",
         value=automation_performance,
     )
-    _render_collector_raw_candidates(console, collector_rows=collector_rows)
+    _render_discovery_run_raw_candidates(console, discovery_run_rows=discovery_run_rows)
 
     top_positions = list(details.get("top_positions") or [])
     if top_positions:
@@ -1211,7 +1211,7 @@ def _render_job_run_detail(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row("Capture", _render_value(summary.get("capture_status")))
     overview.add_row(
         "Opportunities",
-        _render_value(summary.get("collector_opportunity_count")),
+        _render_value(summary.get("discovery_run_opportunity_count")),
     )
     overview.add_row(
         "Automation",
@@ -1618,7 +1618,7 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
 
     slot_runs = list(details.get("slot_runs") or [])
     if slot_runs:
-        table = Table(title="Collector Slots", header_style="bold")
+        table = Table(title="Discovery-Run Slots", header_style="bold")
         table.add_column("Slot")
         table.add_column("Status")
         table.add_column("Capture")

@@ -1147,7 +1147,7 @@ def _build_alpaca_replay_range_payload(
                     "selection_input_candidate_count": selection_input_candidate_count,
                     "opportunity_count": opportunity_count,
                     "entry_eligible_opportunity_count": entry_eligible_opportunity_count,
-                    "collector_candidate_count": candidate_count,
+                    "discovery_run_candidate_count": candidate_count,
                     "scan_run_count": 0,
                     "controls_allowed": controls_allowed,
                     "controls_reason": controls_reason,
@@ -1335,7 +1335,7 @@ def build_replay_range_payload(
         raise ValueError("--sample-mode is only supported with --source alpaca")
 
     signal_store = storage.signals
-    collector_store = storage.collector
+    discovery_store = storage.discovery
     history_store = storage.history
     cycle_limit = max(int(limit), 1)
     automation_runs = [
@@ -1366,17 +1366,17 @@ def build_replay_range_payload(
 
     for automation_run in ordered_runs:
         cycle_id = str(automation_run.get("cycle_id") or "").strip()
-        collector_candidates = (
+        discovery_run_candidates = (
             []
             if not cycle_id
             else [
                 dict(row)
-                for row in collector_store.list_cycle_candidates(cycle_id)
+                for row in discovery_store.list_cycle_candidates(cycle_id)
             ]
         )
         unique_run_ids: list[str] = []
         seen_run_ids: set[str] = set()
-        for candidate in collector_candidates:
+        for candidate in discovery_run_candidates:
             run_id = str(candidate.get("run_id") or "").strip()
             if not run_id or run_id in seen_run_ids:
                 continue
@@ -1438,7 +1438,7 @@ def build_replay_range_payload(
                 "trigger_type": automation_run.get("trigger_type"),
                 "candidate_symbol_count": result_payload.get("candidate_symbol_count"),
                 "opportunity_count": result_payload.get("opportunity_count"),
-                "collector_candidate_count": len(collector_candidates),
+                "discovery_run_candidate_count": len(discovery_run_candidates),
                 "scan_run_count": len(run_rows),
                 "runs": run_rows,
             }
@@ -1447,7 +1447,7 @@ def build_replay_range_payload(
     summary = {
         "cycle_count": len(cycle_rows),
         "cycle_with_candidates_count": len(
-            [row for row in cycle_rows if int(row.get("collector_candidate_count") or 0) > 0]
+            [row for row in cycle_rows if int(row.get("discovery_run_candidate_count") or 0) > 0]
         ),
         "scan_run_count": sum(int(row.get("scan_run_count") or 0) for row in cycle_rows),
         "exact_match_cycle_count": int(cycle_status_counts.get("exact_match", 0)),

@@ -36,7 +36,7 @@ def validate_command(
                 f"automations: {payload['automation_count']}",
                 f"bots: {payload['bot_count']}",
                 f"active_bots: {payload['active_bot_count']}",
-                f"collector_scopes: {payload['collector_scope_count']}",
+                f"discovery_run_scopes: {payload['discovery_run_scope_count']}",
             ]
         )
     )

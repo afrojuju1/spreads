@@ -594,7 +594,7 @@ export function PipelineDetailPageContent({
             </div>
             <div className="mt-2 text-sm text-foreground/70">
               Market date {formatDate(detail.market_date)}. Use this workspace
-              to inspect collector and cycle state first; linked automation
+              to inspect discovery-run and cycle state first; linked automation
               decisions, executions, and positions remain available here for
               compatibility.
             </div>
@@ -877,7 +877,7 @@ export function PipelineDetailPageContent({
 
       <SectionSurface
         title="Cycle Timeline"
-        description="Recent collector cycles for this discovery session."
+        description="Recent discovery-run cycles for this discovery session."
       >
         {!detail.cycles.length ? (
           <div className="text-sm text-muted-foreground">

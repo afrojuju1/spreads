@@ -13,10 +13,10 @@ from core.services.option_structures import (
     structure_symbol_path,
 )
 from core.storage.base import RepositoryBase
-from core.storage.collector_models import (
-    CollectorCycleCandidateModel,
-    CollectorCycleEventModel,
-    CollectorCycleModel,
+from core.storage.discovery_run_models import (
+    DiscoveryRunCandidateModel,
+    DiscoveryRunEventModel,
+    DiscoveryRunModel,
 )
 from core.services.runtime_identity import (
     build_pipeline_id,
@@ -24,9 +24,9 @@ from core.services.runtime_identity import (
     resolve_pipeline_policy_fields,
 )
 from core.storage.records import (
-    CollectorCycleCandidateRecord,
-    CollectorCycleEventRecord,
-    CollectorCycleRecord,
+    DiscoveryRunCandidateRecord,
+    DiscoveryRunEventRecord,
+    DiscoveryRunRecord,
     PipelineCycleRecord,
     PipelineRecord,
 )
@@ -35,12 +35,12 @@ from core.storage.serializers import parse_date, parse_datetime
 NEW_YORK = ZoneInfo("America/New_York")
 
 
-class CollectorRepository(RepositoryBase):
+class DiscoveryRunRepository(RepositoryBase):
     def schema_ready(self) -> bool:
         return self.schema_has_tables(
-            "collector_cycles",
-            "collector_cycle_candidates",
-            "collector_cycle_events",
+            "discovery_runs",
+            "discovery_run_candidates",
+            "discovery_run_events",
         )
 
     def pipeline_schema_ready(self) -> bool:
@@ -48,12 +48,12 @@ class CollectorRepository(RepositoryBase):
 
     def _cycle_candidate_row(
         self,
-        model: CollectorCycleCandidateModel,
+        model: DiscoveryRunCandidateModel,
         *,
         label: str,
         session_date: date,
         generated_at: datetime,
-    ) -> CollectorCycleCandidateRecord:
+    ) -> DiscoveryRunCandidateRecord:
         legs = list(model.legs_json or [])
         short_symbol, long_symbol = primary_short_long_symbols(legs)
         return self.row(
@@ -85,7 +85,7 @@ class CollectorRepository(RepositoryBase):
         selection_memory: dict[str, Any],
         opportunities: list[dict[str, Any]],
         events: list[dict[str, Any]],
-    ) -> list[CollectorCycleCandidateRecord]:
+    ) -> list[DiscoveryRunCandidateRecord]:
         generated_at_dt = parse_datetime(generated_at)
         if generated_at_dt is None:
             raise ValueError("generated_at is required")
@@ -93,8 +93,8 @@ class CollectorRepository(RepositoryBase):
 
         def build_candidate_models(
             payloads: list[dict[str, Any]],
-        ) -> list[CollectorCycleCandidateModel]:
-            models: list[CollectorCycleCandidateModel] = []
+        ) -> list[DiscoveryRunCandidateModel]:
+            models: list[DiscoveryRunCandidateModel] = []
             for payload in payloads:
                 run_id = payload.get("run_id")
                 if not run_id:
@@ -126,10 +126,10 @@ class CollectorRepository(RepositoryBase):
                 legs = candidate_legs(payload) or candidate_legs(stored_candidate)
                 if structure_identity is None or not legs:
                     raise ValueError(
-                        "Persisted collector candidate is missing canonical legs or structure identity"
+                        "Persisted discovery-run candidate is missing canonical legs or structure identity"
                     )
                 models.append(
-                    CollectorCycleCandidateModel(
+                    DiscoveryRunCandidateModel(
                         cycle_id=cycle_id,
                         selection_state=str(payload["selection_state"]),
                         selection_rank=int(payload["selection_rank"]),
@@ -149,7 +149,7 @@ class CollectorRepository(RepositoryBase):
                 )
             return models
 
-        cycle = CollectorCycleModel(
+        cycle = DiscoveryRunModel(
             cycle_id=cycle_id,
             label=label,
             session_date=session_date,
@@ -165,7 +165,7 @@ class CollectorRepository(RepositoryBase):
             selection_memory_json=selection_memory,
             candidates=build_candidate_models(opportunities),
             events=[
-                CollectorCycleEventModel(
+                DiscoveryRunEventModel(
                     cycle_id=cycle_id,
                     label=label,
                     session_date=session_date,
@@ -234,7 +234,7 @@ class CollectorRepository(RepositoryBase):
 
     def _build_pipeline_cycle_row(
         self,
-        cycle: CollectorCycleModel,
+        cycle: DiscoveryRunModel,
         *,
         candidate_count: int = 0,
         promotable_count: int = 0,
@@ -275,16 +275,16 @@ class CollectorRepository(RepositoryBase):
         labels: list[str] | None = None,
         *,
         limit: int | None = None,
-    ) -> list[CollectorCycleModel]:
+    ) -> list[DiscoveryRunModel]:
         ranked_cycles = (
             select(
-                CollectorCycleModel.cycle_id.label("cycle_id"),
+                DiscoveryRunModel.cycle_id.label("cycle_id"),
                 func.row_number()
                 .over(
-                    partition_by=CollectorCycleModel.label,
+                    partition_by=DiscoveryRunModel.label,
                     order_by=(
-                        CollectorCycleModel.generated_at.desc(),
-                        CollectorCycleModel.cycle_id.desc(),
+                        DiscoveryRunModel.generated_at.desc(),
+                        DiscoveryRunModel.cycle_id.desc(),
                     ),
                 )
                 .label("cycle_rank"),
@@ -292,18 +292,18 @@ class CollectorRepository(RepositoryBase):
             .subquery()
         )
         statement = (
-            select(CollectorCycleModel)
+            select(DiscoveryRunModel)
             .join(
                 ranked_cycles,
-                CollectorCycleModel.cycle_id == ranked_cycles.c.cycle_id,
+                DiscoveryRunModel.cycle_id == ranked_cycles.c.cycle_id,
             )
             .where(ranked_cycles.c.cycle_rank == 1)
         )
         if labels:
-            statement = statement.where(CollectorCycleModel.label.in_(labels))
+            statement = statement.where(DiscoveryRunModel.label.in_(labels))
         statement = statement.order_by(
-            CollectorCycleModel.generated_at.desc(),
-            CollectorCycleModel.label.asc(),
+            DiscoveryRunModel.generated_at.desc(),
+            DiscoveryRunModel.label.asc(),
         )
         if limit is not None:
             statement = statement.limit(limit)
@@ -318,31 +318,31 @@ class CollectorRepository(RepositoryBase):
             return {}
         candidate_rows = (
             select(
-                CollectorCycleCandidateModel.cycle_id,
+                DiscoveryRunCandidateModel.cycle_id,
                 func.count().label("candidate_count"),
                 func.sum(
                     func.cast(
-                        CollectorCycleCandidateModel.selection_state == "promotable",
+                        DiscoveryRunCandidateModel.selection_state == "promotable",
                         Integer,
                     )
                 ).label("promotable_count"),
                 func.sum(
                     func.cast(
-                        CollectorCycleCandidateModel.selection_state == "monitor",
+                        DiscoveryRunCandidateModel.selection_state == "monitor",
                         Integer,
                     )
                 ).label("monitor_count"),
             )
-            .where(CollectorCycleCandidateModel.cycle_id.in_(cycle_ids))
-            .group_by(CollectorCycleCandidateModel.cycle_id)
+            .where(DiscoveryRunCandidateModel.cycle_id.in_(cycle_ids))
+            .group_by(DiscoveryRunCandidateModel.cycle_id)
         )
         event_rows = (
             select(
-                CollectorCycleEventModel.cycle_id,
+                DiscoveryRunEventModel.cycle_id,
                 func.count().label("event_count"),
             )
-            .where(CollectorCycleEventModel.cycle_id.in_(cycle_ids))
-            .group_by(CollectorCycleEventModel.cycle_id)
+            .where(DiscoveryRunEventModel.cycle_id.in_(cycle_ids))
+            .group_by(DiscoveryRunEventModel.cycle_id)
         )
         summary: dict[str, dict[str, int]] = {}
         with self.session_factory() as session:
@@ -361,20 +361,20 @@ class CollectorRepository(RepositoryBase):
                 )
         return summary
 
-    def get_cycle(self, cycle_id: str) -> CollectorCycleRecord | None:
+    def get_cycle(self, cycle_id: str) -> DiscoveryRunRecord | None:
         with self.session_factory() as session:
-            cycle = session.get(CollectorCycleModel, cycle_id)
+            cycle = session.get(DiscoveryRunModel, cycle_id)
         if cycle is None:
             return None
         return self.row(cycle)
 
-    def get_latest_cycle(self, label: str) -> CollectorCycleRecord | None:
+    def get_latest_cycle(self, label: str) -> DiscoveryRunRecord | None:
         statement = (
-            select(CollectorCycleModel)
-            .where(CollectorCycleModel.label == label)
+            select(DiscoveryRunModel)
+            .where(DiscoveryRunModel.label == label)
             .order_by(
-                CollectorCycleModel.generated_at.desc(),
-                CollectorCycleModel.cycle_id.desc(),
+                DiscoveryRunModel.generated_at.desc(),
+                DiscoveryRunModel.cycle_id.desc(),
             )
             .limit(1)
         )
@@ -389,15 +389,15 @@ class CollectorRepository(RepositoryBase):
         label: str,
         session_date: str | None = None,
         limit: int = 100,
-    ) -> list[CollectorCycleRecord]:
-        statement = select(CollectorCycleModel).where(
-            CollectorCycleModel.label == label
+    ) -> list[DiscoveryRunRecord]:
+        statement = select(DiscoveryRunModel).where(
+            DiscoveryRunModel.label == label
         )
         if session_date:
             statement = statement.where(
-                CollectorCycleModel.session_date == date.fromisoformat(session_date)
+                DiscoveryRunModel.session_date == date.fromisoformat(session_date)
             )
-        statement = statement.order_by(CollectorCycleModel.generated_at.desc()).limit(
+        statement = statement.order_by(DiscoveryRunModel.generated_at.desc()).limit(
             limit
         )
         with self.session_factory() as session:
@@ -410,12 +410,12 @@ class CollectorRepository(RepositoryBase):
         session_date: str | None = None,
         limit: int | None = None,
     ) -> list[str]:
-        statement = select(CollectorCycleModel.label).distinct()
+        statement = select(DiscoveryRunModel.label).distinct()
         if session_date:
             statement = statement.where(
-                CollectorCycleModel.session_date == date.fromisoformat(session_date)
+                DiscoveryRunModel.session_date == date.fromisoformat(session_date)
             )
-        statement = statement.order_by(CollectorCycleModel.label.asc())
+        statement = statement.order_by(DiscoveryRunModel.label.asc())
         if limit is not None:
             statement = statement.limit(limit)
         with self.session_factory() as session:
@@ -429,28 +429,28 @@ class CollectorRepository(RepositoryBase):
         limit: int | None = None,
     ) -> list[str]:
         statement = (
-            select(CollectorCycleModel.session_id)
+            select(DiscoveryRunModel.session_id)
             .distinct()
-            .where(CollectorCycleModel.session_id.is_not(None))
+            .where(DiscoveryRunModel.session_id.is_not(None))
         )
         if session_date:
             statement = statement.where(
-                CollectorCycleModel.session_date == date.fromisoformat(session_date)
+                DiscoveryRunModel.session_date == date.fromisoformat(session_date)
             )
-        statement = statement.order_by(CollectorCycleModel.session_id.desc())
+        statement = statement.order_by(DiscoveryRunModel.session_id.desc())
         if limit is not None:
             statement = statement.limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
         return [str(row) for row in rows if row]
 
-    def get_latest_session_cycle(self, session_id: str) -> CollectorCycleRecord | None:
+    def get_latest_session_cycle(self, session_id: str) -> DiscoveryRunRecord | None:
         statement = (
-            select(CollectorCycleModel)
-            .where(CollectorCycleModel.session_id == session_id)
+            select(DiscoveryRunModel)
+            .where(DiscoveryRunModel.session_id == session_id)
             .order_by(
-                CollectorCycleModel.generated_at.desc(),
-                CollectorCycleModel.cycle_id.desc(),
+                DiscoveryRunModel.generated_at.desc(),
+                DiscoveryRunModel.cycle_id.desc(),
             )
             .limit(1)
         )
@@ -512,14 +512,14 @@ class CollectorRepository(RepositoryBase):
         label = self._resolve_pipeline_label(pipeline_id)
         if label is None:
             return None
-        statement = select(CollectorCycleModel).where(CollectorCycleModel.label == label)
+        statement = select(DiscoveryRunModel).where(DiscoveryRunModel.label == label)
         if market_date:
             statement = statement.where(
-                CollectorCycleModel.session_date == date.fromisoformat(market_date)
+                DiscoveryRunModel.session_date == date.fromisoformat(market_date)
             )
         statement = statement.order_by(
-            CollectorCycleModel.generated_at.desc(),
-            CollectorCycleModel.cycle_id.desc(),
+            DiscoveryRunModel.generated_at.desc(),
+            DiscoveryRunModel.cycle_id.desc(),
         ).limit(1)
         with self.session_factory() as session:
             row = session.scalar(statement)
@@ -547,14 +547,14 @@ class CollectorRepository(RepositoryBase):
         label = self._resolve_pipeline_label(pipeline_id)
         if label is None:
             return []
-        statement = select(CollectorCycleModel).where(CollectorCycleModel.label == label)
+        statement = select(DiscoveryRunModel).where(DiscoveryRunModel.label == label)
         if market_date:
             statement = statement.where(
-                CollectorCycleModel.session_date == date.fromisoformat(market_date)
+                DiscoveryRunModel.session_date == date.fromisoformat(market_date)
             )
         statement = statement.order_by(
-            CollectorCycleModel.generated_at.desc(),
-            CollectorCycleModel.cycle_id.desc(),
+            DiscoveryRunModel.generated_at.desc(),
+            DiscoveryRunModel.cycle_id.desc(),
         ).limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
@@ -629,29 +629,29 @@ class CollectorRepository(RepositoryBase):
     def list_latest_cycles_by_session_ids(
         self,
         session_ids: list[str],
-    ) -> list[CollectorCycleRecord]:
+    ) -> list[DiscoveryRunRecord]:
         if not session_ids:
             return []
         ranked_cycles = (
             select(
-                CollectorCycleModel.cycle_id.label("cycle_id"),
+                DiscoveryRunModel.cycle_id.label("cycle_id"),
                 func.row_number()
                 .over(
-                    partition_by=CollectorCycleModel.session_id,
+                    partition_by=DiscoveryRunModel.session_id,
                     order_by=(
-                        CollectorCycleModel.generated_at.desc(),
-                        CollectorCycleModel.cycle_id.desc(),
+                        DiscoveryRunModel.generated_at.desc(),
+                        DiscoveryRunModel.cycle_id.desc(),
                     ),
                 )
                 .label("cycle_rank"),
             )
-            .where(CollectorCycleModel.session_id.in_(session_ids))
+            .where(DiscoveryRunModel.session_id.in_(session_ids))
             .subquery()
         )
         statement = (
-            select(CollectorCycleModel)
+            select(DiscoveryRunModel)
             .join(
-                ranked_cycles, CollectorCycleModel.cycle_id == ranked_cycles.c.cycle_id
+                ranked_cycles, DiscoveryRunModel.cycle_id == ranked_cycles.c.cycle_id
             )
             .where(ranked_cycles.c.cycle_rank == 1)
         )
@@ -667,15 +667,15 @@ class CollectorRepository(RepositoryBase):
             return {}
         statement = (
             select(
-                CollectorCycleCandidateModel.cycle_id,
-                CollectorCycleCandidateModel.selection_state,
+                DiscoveryRunCandidateModel.cycle_id,
+                DiscoveryRunCandidateModel.selection_state,
                 func.count().label("candidate_count"),
             )
-            .where(CollectorCycleCandidateModel.cycle_id.in_(cycle_ids))
-            .where(CollectorCycleCandidateModel.eligibility == "live")
+            .where(DiscoveryRunCandidateModel.cycle_id.in_(cycle_ids))
+            .where(DiscoveryRunCandidateModel.eligibility == "live")
             .group_by(
-                CollectorCycleCandidateModel.cycle_id,
-                CollectorCycleCandidateModel.selection_state,
+                DiscoveryRunCandidateModel.cycle_id,
+                DiscoveryRunCandidateModel.selection_state,
             )
         )
         with self.session_factory() as session:
@@ -693,26 +693,26 @@ class CollectorRepository(RepositoryBase):
         selection_state: str | None = None,
         *,
         eligibility: str | None = None,
-    ) -> list[CollectorCycleCandidateRecord]:
+    ) -> list[DiscoveryRunCandidateRecord]:
         statement = (
-            select(CollectorCycleCandidateModel, CollectorCycleModel)
+            select(DiscoveryRunCandidateModel, DiscoveryRunModel)
             .join(
-                CollectorCycleModel,
-                CollectorCycleCandidateModel.cycle_id == CollectorCycleModel.cycle_id,
+                DiscoveryRunModel,
+                DiscoveryRunCandidateModel.cycle_id == DiscoveryRunModel.cycle_id,
             )
-            .where(CollectorCycleCandidateModel.cycle_id == cycle_id)
+            .where(DiscoveryRunCandidateModel.cycle_id == cycle_id)
         )
         if selection_state:
             statement = statement.where(
-                CollectorCycleCandidateModel.selection_state == selection_state
+                DiscoveryRunCandidateModel.selection_state == selection_state
             )
         if eligibility:
             statement = statement.where(
-                CollectorCycleCandidateModel.eligibility == eligibility
+                DiscoveryRunCandidateModel.eligibility == eligibility
             )
         statement = statement.order_by(
-            CollectorCycleCandidateModel.selection_rank.asc(),
-            CollectorCycleCandidateModel.candidate_id.asc(),
+            DiscoveryRunCandidateModel.selection_rank.asc(),
+            DiscoveryRunCandidateModel.candidate_id.asc(),
         )
         with self.session_factory() as session:
             rows = session.execute(statement).all()
@@ -726,14 +726,14 @@ class CollectorRepository(RepositoryBase):
             for candidate, cycle in rows
         ]
 
-    def get_candidate(self, candidate_id: int) -> CollectorCycleCandidateRecord | None:
+    def get_candidate(self, candidate_id: int) -> DiscoveryRunCandidateRecord | None:
         statement = (
-            select(CollectorCycleCandidateModel, CollectorCycleModel)
+            select(DiscoveryRunCandidateModel, DiscoveryRunModel)
             .join(
-                CollectorCycleModel,
-                CollectorCycleCandidateModel.cycle_id == CollectorCycleModel.cycle_id,
+                DiscoveryRunModel,
+                DiscoveryRunCandidateModel.cycle_id == DiscoveryRunModel.cycle_id,
             )
-            .where(CollectorCycleCandidateModel.candidate_id == candidate_id)
+            .where(DiscoveryRunCandidateModel.candidate_id == candidate_id)
             .limit(1)
         )
         with self.session_factory() as session:
@@ -755,33 +755,33 @@ class CollectorRepository(RepositoryBase):
         session_date: str,
         selection_state: str | None = None,
         eligibility: str | None = None,
-    ) -> list[CollectorCycleCandidateRecord]:
+    ) -> list[DiscoveryRunCandidateRecord]:
         session_date_value = date.fromisoformat(session_date)
         statement = (
-            select(CollectorCycleCandidateModel, CollectorCycleModel)
+            select(DiscoveryRunCandidateModel, DiscoveryRunModel)
             .join(
-                CollectorCycleModel,
-                CollectorCycleCandidateModel.cycle_id == CollectorCycleModel.cycle_id,
+                DiscoveryRunModel,
+                DiscoveryRunCandidateModel.cycle_id == DiscoveryRunModel.cycle_id,
             )
             .where(
                 and_(
-                    CollectorCycleModel.label == label,
-                    CollectorCycleModel.session_date == session_date_value,
+                    DiscoveryRunModel.label == label,
+                    DiscoveryRunModel.session_date == session_date_value,
                 )
             )
         )
         if selection_state:
             statement = statement.where(
-                CollectorCycleCandidateModel.selection_state == selection_state
+                DiscoveryRunCandidateModel.selection_state == selection_state
             )
         if eligibility:
             statement = statement.where(
-                CollectorCycleCandidateModel.eligibility == eligibility
+                DiscoveryRunCandidateModel.eligibility == eligibility
             )
         statement = statement.order_by(
-            CollectorCycleModel.generated_at.asc(),
-            CollectorCycleCandidateModel.selection_rank.asc(),
-            CollectorCycleCandidateModel.candidate_id.asc(),
+            DiscoveryRunModel.generated_at.asc(),
+            DiscoveryRunCandidateModel.selection_rank.asc(),
+            DiscoveryRunCandidateModel.candidate_id.asc(),
         )
         with self.session_factory() as session:
             rows = session.execute(statement).all()
@@ -802,22 +802,22 @@ class CollectorRepository(RepositoryBase):
         limit: int = 500,
         *,
         ascending: bool = False,
-    ) -> list[CollectorCycleEventRecord]:
+    ) -> list[DiscoveryRunEventRecord]:
         generated_at_order = (
-            CollectorCycleEventModel.generated_at.asc()
+            DiscoveryRunEventModel.generated_at.asc()
             if ascending
-            else CollectorCycleEventModel.generated_at.desc()
+            else DiscoveryRunEventModel.generated_at.desc()
         )
         event_id_order = (
-            CollectorCycleEventModel.event_id.asc()
+            DiscoveryRunEventModel.event_id.asc()
             if ascending
-            else CollectorCycleEventModel.event_id.desc()
+            else DiscoveryRunEventModel.event_id.desc()
         )
         statement = (
-            select(CollectorCycleEventModel)
-            .where(CollectorCycleEventModel.label == label)
+            select(DiscoveryRunEventModel)
+            .where(DiscoveryRunEventModel.label == label)
             .where(
-                CollectorCycleEventModel.session_date
+                DiscoveryRunEventModel.session_date
                 == date.fromisoformat(session_date)
             )
             .order_by(generated_at_order, event_id_order)
@@ -827,13 +827,13 @@ class CollectorRepository(RepositoryBase):
             rows = session.scalars(statement).all()
         return self.rows(rows)
 
-    def list_cycle_events(self, cycle_id: str) -> list[CollectorCycleEventRecord]:
+    def list_cycle_events(self, cycle_id: str) -> list[DiscoveryRunEventRecord]:
         statement = (
-            select(CollectorCycleEventModel)
-            .where(CollectorCycleEventModel.cycle_id == cycle_id)
+            select(DiscoveryRunEventModel)
+            .where(DiscoveryRunEventModel.cycle_id == cycle_id)
             .order_by(
-                CollectorCycleEventModel.generated_at.asc(),
-                CollectorCycleEventModel.event_id.asc(),
+                DiscoveryRunEventModel.generated_at.asc(),
+                DiscoveryRunEventModel.event_id.asc(),
             )
         )
         with self.session_factory() as session:
@@ -842,6 +842,6 @@ class CollectorRepository(RepositoryBase):
 
     def truncate_all(self) -> None:
         with self.session_scope() as session:
-            session.execute(delete(CollectorCycleEventModel))
-            session.execute(delete(CollectorCycleCandidateModel))
-            session.execute(delete(CollectorCycleModel))
+            session.execute(delete(DiscoveryRunEventModel))
+            session.execute(delete(DiscoveryRunCandidateModel))
+            session.execute(delete(DiscoveryRunModel))

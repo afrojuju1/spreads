@@ -11,7 +11,7 @@ from core.domain.models import (
     OptionSnapshot,
 )
 from core.services.execution import _build_order_request, normalize_execution_policy
-from core.services.live_collector_health.selection import build_selection_summary
+from core.services.discovery_run_health.selection import build_selection_summary
 from core.services.opportunity_scoring import build_candidate_opportunity_score
 from core.services.scanners.builders.long_vol import (
     build_long_straddles,

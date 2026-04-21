@@ -1,5 +1,5 @@
-job_key: collector_recovery:global
-job_type: collector_recovery
+job_key: discovery_recovery:global
+job_type: discovery_recovery
 enabled: true
 schedule:
   type: interval_minutes

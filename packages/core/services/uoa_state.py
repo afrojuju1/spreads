@@ -26,7 +26,7 @@ def _cycle_id_from_run_payload(run_payload: Mapping[str, Any]) -> str | None:
 def _build_uoa_state_payload(state: Mapping[str, Any]) -> dict[str, Any]:
     job_run = state.get("job_run")
     if not isinstance(job_run, Mapping):
-        raise ValueError("No completed live collector run was found")
+        raise ValueError("No completed discovery-run execution was found")
     return {
         "job_run": {
             "job_run_id": job_run.get("job_run_id"),
@@ -68,14 +68,14 @@ def get_latest_uoa_state(
     label: str | None = None,
     storage: Any | None = None,
 ) -> dict[str, Any]:
-    run_record = storage.jobs.get_latest_live_collector_run(
+    run_record = storage.jobs.get_latest_discovery_run(
         label=label, status="succeeded"
     )
     if run_record is None:
-        raise ValueError("No completed live collector run was found")
+        raise ValueError("No completed discovery-run execution was found")
     cycle_id = _cycle_id_from_run_payload(run_record)
     if cycle_id is None:
-        raise ValueError("Live collector run is missing cycle_id")
+        raise ValueError("Discovery-run execution is missing cycle_id")
     state = get_live_session_for_cycle(
         storage=storage,
         cycle_id=cycle_id,
@@ -99,6 +99,6 @@ def get_uoa_state_for_cycle(
     )
     if state.get("job_run") is None:
         raise ValueError(
-            f"No completed live collector run was found for cycle_id={cycle_id}"
+            f"No completed discovery-run execution was found for cycle_id={cycle_id}"
         )
     return _build_uoa_state_payload(state)

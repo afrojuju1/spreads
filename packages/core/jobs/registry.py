@@ -9,11 +9,11 @@ BROKER_SYNC_JOB_TYPE = "broker_sync"
 EXECUTION_SUBMIT_JOB_TYPE = "execution_submit"
 ALERT_DELIVERY_JOB_TYPE = "alert_delivery"
 ALERT_RECONCILE_JOB_TYPE = "alert_reconcile"
-LIVE_COLLECTOR_JOB_TYPE = "live_collector"
+DISCOVERY_RUN_JOB_TYPE = "discovery_run"
 POST_CLOSE_ANALYSIS_JOB_TYPE = "post_close_analysis"
 POST_MARKET_ANALYSIS_JOB_TYPE = "post_market_analysis"
 POSITION_EXIT_MANAGER_JOB_TYPE = "position_exit_manager"
-COLLECTOR_RECOVERY_JOB_TYPE = "collector_recovery"
+DISCOVERY_RECOVERY_JOB_TYPE = "discovery_recovery"
 OPTIONS_AUTOMATION_ENTRY_JOB_TYPE = "options_automation_entry"
 OPTIONS_AUTOMATION_MANAGEMENT_JOB_TYPE = "options_automation_management"
 OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE = "options_automation_execute"
@@ -22,7 +22,7 @@ EXECUTION_SUBMIT_ADHOC_JOB_KEY = "execution_submit:adhoc"
 ALERT_DELIVERY_ADHOC_JOB_KEY = "alert_delivery:adhoc"
 ALERT_RECONCILE_JOB_KEY = "alert_reconcile:scheduled"
 POST_CLOSE_ANALYSIS_ADHOC_JOB_KEY = "post_close_analysis:adhoc"
-COLLECTOR_RECOVERY_JOB_KEY = "collector_recovery:global"
+DISCOVERY_RECOVERY_JOB_KEY = "discovery_recovery:global"
 OPTIONS_AUTOMATION_ENTRY_ADHOC_JOB_KEY = "options_automation_entry:adhoc"
 OPTIONS_AUTOMATION_MANAGEMENT_ADHOC_JOB_KEY = "options_automation_management:adhoc"
 OPTIONS_AUTOMATION_EXECUTE_ADHOC_JOB_KEY = "options_automation_execute:adhoc"
@@ -72,8 +72,8 @@ JOB_SPECS = {
             queue_name=RUNTIME_QUEUE_NAME,
         ),
         JobSpec(
-            job_type=LIVE_COLLECTOR_JOB_TYPE,
-            task_name="run_live_collector_job",
+            job_type=DISCOVERY_RUN_JOB_TYPE,
+            task_name="run_discovery_run_job",
             queue_name=DISCOVERY_QUEUE_NAME,
         ),
         JobSpec(
@@ -87,8 +87,8 @@ JOB_SPECS = {
             queue_name=RUNTIME_QUEUE_NAME,
         ),
         JobSpec(
-            job_type=COLLECTOR_RECOVERY_JOB_TYPE,
-            task_name="run_collector_recovery_job",
+            job_type=DISCOVERY_RECOVERY_JOB_TYPE,
+            task_name="run_discovery_recovery_job",
             queue_name=RUNTIME_QUEUE_NAME,
         ),
         JobSpec(
@@ -121,7 +121,7 @@ WORKER_LANES = (
             JOB_SPECS[POSITION_EXIT_MANAGER_JOB_TYPE].task_name,
             JOB_SPECS[POST_CLOSE_ANALYSIS_JOB_TYPE].task_name,
             JOB_SPECS[POST_MARKET_ANALYSIS_JOB_TYPE].task_name,
-            JOB_SPECS[COLLECTOR_RECOVERY_JOB_TYPE].task_name,
+            JOB_SPECS[DISCOVERY_RECOVERY_JOB_TYPE].task_name,
             JOB_SPECS[OPTIONS_AUTOMATION_ENTRY_JOB_TYPE].task_name,
             JOB_SPECS[OPTIONS_AUTOMATION_MANAGEMENT_JOB_TYPE].task_name,
             JOB_SPECS[OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE].task_name,
@@ -131,7 +131,7 @@ WORKER_LANES = (
     WorkerLaneSpec(
         settings_name="DiscoveryWorkerSettings",
         queue_name=DISCOVERY_QUEUE_NAME,
-        task_names=(JOB_SPECS[LIVE_COLLECTOR_JOB_TYPE].task_name,),
+        task_names=(JOB_SPECS[DISCOVERY_RUN_JOB_TYPE].task_name,),
     ),
 )
 

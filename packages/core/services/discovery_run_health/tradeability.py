@@ -137,9 +137,9 @@ def build_tradeability_summary(
     if gap_active or (recovery_state and recovery_state != "clear"):
         return {
             "state": TRADEABILITY_STATE_RECOVERY_ONLY,
-            "reason_code": gate_reason or "collector_gap_active",
+            "reason_code": gate_reason or "discovery_run_gap_active",
             "message": gate_message
-            or "Collector recovery is active, so the label is limited to recovery-only mode.",
+            or "Discovery-run recovery is active, so the label is limited to recovery-only mode.",
             "capture_status": normalized_capture_status,
             "blocked": True,
         }

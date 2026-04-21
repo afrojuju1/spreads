@@ -1,7 +1,7 @@
-collector_id: short_dated_index_call_credit
-job_key: live_collector:options_automation_short_dated_index_call_credit
-label: explore_10_call_credit_weekly_auto
-scanner_strategy: call_credit
+discovery_run_id: short_dated_index_iron_condor
+job_key: discovery_run:options_automation_short_dated_index_iron_condor
+label: explore_10_iron_condor_weekly_auto
+scanner_strategy: iron_condor
 scanner_profile: weekly
 enabled: true
 schedule:
@@ -18,7 +18,7 @@ trade_capture_seconds: 30
 allow_off_hours: false
 session_start_offset_minutes: -5
 session_end_offset_minutes: 5
-singleton_scope: options_automation_short_dated_index_call_credit
+singleton_scope: options_automation_short_dated_index_iron_condor
 execution_policy:
   enabled: false
   deployment_mode: shadow

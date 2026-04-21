@@ -10,11 +10,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from core.storage.db import Base
 
 
-class CollectorCycleModel(Base):
-    __tablename__ = "collector_cycles"
+class DiscoveryRunModel(Base):
+    __tablename__ = "discovery_runs"
     __table_args__ = (
-        Index("idx_collector_cycles_label_session_generated_at", "label", "session_date", "generated_at"),
-        Index("idx_collector_cycles_session_id_generated_at", "session_id", "generated_at"),
+        Index("idx_discovery_runs_label_session_generated_at", "label", "session_date", "generated_at"),
+        Index("idx_discovery_runs_session_id_generated_at", "session_id", "generated_at"),
     )
 
     cycle_id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -35,15 +35,15 @@ class CollectorCycleModel(Base):
     failures_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
     selection_memory_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
-    candidates: Mapped[list["CollectorCycleCandidateModel"]] = relationship(
+    candidates: Mapped[list["DiscoveryRunCandidateModel"]] = relationship(
         back_populates="cycle",
         cascade="all, delete-orphan",
-        order_by="CollectorCycleCandidateModel.selection_rank",
+        order_by="DiscoveryRunCandidateModel.selection_rank",
     )
-    events: Mapped[list["CollectorCycleEventModel"]] = relationship(
+    events: Mapped[list["DiscoveryRunEventModel"]] = relationship(
         back_populates="cycle",
         cascade="all, delete-orphan",
-        order_by="CollectorCycleEventModel.generated_at",
+        order_by="DiscoveryRunEventModel.generated_at",
     )
 
 
@@ -100,18 +100,18 @@ class PipelineCycleModel(Base):
     summary_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
 
-class CollectorCycleCandidateModel(Base):
-    __tablename__ = "collector_cycle_candidates"
+class DiscoveryRunCandidateModel(Base):
+    __tablename__ = "discovery_run_candidates"
     __table_args__ = (
         Index(
-            "idx_collector_cycle_candidates_cycle_bucket_position",
+            "idx_discovery_run_candidates_cycle_bucket_position",
             "cycle_id",
             "selection_state",
             "selection_rank",
         ),
-        Index("idx_collector_cycle_candidates_run_id", "run_id"),
+        Index("idx_discovery_run_candidates_run_id", "run_id"),
         Index(
-            "idx_collector_cycle_candidates_identity",
+            "idx_discovery_run_candidates_identity",
             "underlying_symbol",
             "strategy",
             "expiration_date",
@@ -122,7 +122,7 @@ class CollectorCycleCandidateModel(Base):
     candidate_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     cycle_id: Mapped[str] = mapped_column(
         Text,
-        ForeignKey("collector_cycles.cycle_id", ondelete="CASCADE"),
+        ForeignKey("discovery_runs.cycle_id", ondelete="CASCADE"),
         nullable=False,
     )
     selection_state: Mapped[str] = mapped_column(Text, nullable=False)
@@ -142,19 +142,19 @@ class CollectorCycleCandidateModel(Base):
     midpoint_credit: Mapped[float] = mapped_column(Float, nullable=False)
     candidate_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
 
-    cycle: Mapped[CollectorCycleModel] = relationship(back_populates="candidates")
+    cycle: Mapped[DiscoveryRunModel] = relationship(back_populates="candidates")
 
 
-class CollectorCycleEventModel(Base):
-    __tablename__ = "collector_cycle_events"
+class DiscoveryRunEventModel(Base):
+    __tablename__ = "discovery_run_events"
     __table_args__ = (
-        Index("idx_collector_cycle_events_label_session_generated_at", "label", "session_date", "generated_at"),
+        Index("idx_discovery_run_events_label_session_generated_at", "label", "session_date", "generated_at"),
     )
 
     event_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     cycle_id: Mapped[str] = mapped_column(
         Text,
-        ForeignKey("collector_cycles.cycle_id", ondelete="CASCADE"),
+        ForeignKey("discovery_runs.cycle_id", ondelete="CASCADE"),
         nullable=False,
     )
     label: Mapped[str] = mapped_column(Text, nullable=False)
@@ -166,4 +166,4 @@ class CollectorCycleEventModel(Base):
     previous_candidate_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     current_candidate_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
-    cycle: Mapped[CollectorCycleModel] = relationship(back_populates="events")
+    cycle: Mapped[DiscoveryRunModel] = relationship(back_populates="events")

@@ -187,7 +187,7 @@ def normalize_uoa_decisions_payload(
     }
 
 
-def enrich_live_collector_result(
+def enrich_discovery_run_result(
     result: Mapping[str, Any] | None,
 ) -> dict[str, Any] | None:
     if result is None:
@@ -274,11 +274,11 @@ def enrich_live_collector_result(
     return enriched
 
 
-def enrich_live_collector_job_run_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+def enrich_discovery_run_job_run_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     enriched = dict(payload)
-    if enriched.get("job_type") != "live_collector":
+    if enriched.get("job_type") != "discovery_run":
         return enriched
-    result = enrich_live_collector_result(
+    result = enrich_discovery_run_result(
         enriched.get("result") if isinstance(enriched.get("result"), Mapping) else None
     )
     if result is None:
@@ -322,7 +322,7 @@ def enrich_live_collector_job_run_payload(payload: Mapping[str, Any]) -> dict[st
 
 __all__ = [
     "build_auto_execution_summary",
-    "enrich_live_collector_job_run_payload",
-    "enrich_live_collector_result",
+    "enrich_discovery_run_job_run_payload",
+    "enrich_discovery_run_result",
     "normalize_uoa_decisions_payload",
 ]

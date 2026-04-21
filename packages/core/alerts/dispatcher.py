@@ -14,7 +14,7 @@ from core.alerts.rules import (
 from core.services.alert_delivery import plan_alert_delivery
 from core.services.live_pipelines import build_live_run_scope_id
 from core.storage.alert_repository import AlertRepository
-from core.storage.collector_repository import CollectorRepository
+from core.storage.discovery_run_repository import DiscoveryRunRepository
 from core.storage.job_repository import JobRepository
 
 NEW_YORK = ZoneInfo("America/New_York")
@@ -79,7 +79,7 @@ def update_score_anchors(
 
 def dispatch_cycle_alerts(
     *,
-    collector_store: CollectorRepository,
+    discovery_store: DiscoveryRunRepository,
     alert_store: AlertRepository,
     job_store: JobRepository,
     cycle_id: str,
@@ -105,7 +105,7 @@ def dispatch_cycle_alerts(
             current_cycle_id=cycle_id,
             current_generated_at=generated_at,
             events=events,
-            collector_store=collector_store,
+            discovery_store=discovery_store,
             get_alert_state=get_state,
         ),
         *build_score_breakout_decisions(

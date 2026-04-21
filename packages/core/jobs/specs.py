@@ -8,7 +8,7 @@ from typing import Any
 
 import yaml
 
-from core.services.bots import build_collector_scope, load_active_bots
+from core.services.bots import build_discovery_run_scope, load_active_bots
 from core.services.strategy_configs import default_config_root
 
 
@@ -86,8 +86,8 @@ class DeclaredJobSpec:
 
 
 @dataclass(frozen=True)
-class CollectorConfig:
-    collector_id: str
+class DiscoveryRunConfig:
+    discovery_run_id: str
     job_key: str
     label: str
     scanner_strategy: str
@@ -116,8 +116,8 @@ class CollectorConfig:
 
 
 @dataclass(frozen=True)
-class CollectorSpec:
-    config: CollectorConfig
+class DiscoveryRunSpec:
+    config: DiscoveryRunConfig
     scope: dict[str, Any]
 
     @property
@@ -130,7 +130,7 @@ class CollectorSpec:
 
     @property
     def job_type(self) -> str:
-        return "live_collector"
+        return "discovery_run"
 
     @property
     def singleton_scope(self) -> str | None:
@@ -176,7 +176,7 @@ class CollectorSpec:
     def as_job_spec(self) -> DeclaredJobSpec:
         return DeclaredJobSpec(
             job_key=self.config.job_key,
-            job_type="live_collector",
+            job_type="discovery_run",
             enabled=self.enabled,
             schedule_type=self.config.schedule_type,
             schedule=dict(self.config.schedule),
@@ -228,13 +228,13 @@ def _load_job_specs(config_root: str | Path | None = None) -> list[DeclaredJobSp
     return specs
 
 
-def _load_collector_configs(
+def _load_discovery_run_configs(
     config_root: str | Path | None = None,
-) -> list[CollectorConfig]:
-    root = default_config_root(config_root) / "collectors"
+) -> list[DiscoveryRunConfig]:
+    root = default_config_root(config_root) / "discovery_runs"
     if not root.exists():
         return []
-    configs: list[CollectorConfig] = []
+    configs: list[DiscoveryRunConfig] = []
     for path in sorted(root.glob("*.yaml")):
         raw = _load_yaml_mapping(path)
         schedule_type, schedule = _schedule_payload(raw.get("schedule"), field_name="schedule")
@@ -243,8 +243,8 @@ def _load_collector_configs(
         )
         risk_policy = _as_mapping(raw.get("risk_policy"), field_name="risk_policy")
         exit_policy = _as_mapping(raw.get("exit_policy"), field_name="exit_policy")
-        config = CollectorConfig(
-            collector_id=_as_text(raw.get("collector_id"), field_name="collector_id"),
+        config = DiscoveryRunConfig(
+            discovery_run_id=_as_text(raw.get("discovery_run_id"), field_name="discovery_run_id"),
             job_key=_as_text(raw.get("job_key"), field_name="job_key"),
             label=_as_text(raw.get("label"), field_name="label"),
             scanner_strategy=_as_text(
@@ -281,7 +281,7 @@ def _load_collector_configs(
             config_path=path,
             config_hash=_canonical_hash(
                 {
-                    "collector_id": raw.get("collector_id"),
+                    "discovery_run_id": raw.get("discovery_run_id"),
                     "job_key": raw.get("job_key"),
                     "label": raw.get("label"),
                     "scanner_strategy": raw.get("scanner_strategy"),
@@ -322,17 +322,17 @@ def _load_collector_configs(
     return configs
 
 
-def load_declared_collector_specs(
+def load_declared_discovery_run_specs(
     config_root: str | Path | None = None,
-) -> list[CollectorSpec]:
-    specs: list[CollectorSpec] = []
-    for config in _load_collector_configs(config_root):
-        scope = build_collector_scope(
+) -> list[DiscoveryRunSpec]:
+    specs: list[DiscoveryRunSpec] = []
+    for config in _load_discovery_run_configs(config_root):
+        scope = build_discovery_run_scope(
             config_root=config_root,
             scanner_strategy=config.scanner_strategy,
             scanner_profile=config.scanner_profile,
         )
-        specs.append(CollectorSpec(config=config, scope=scope))
+        specs.append(DiscoveryRunSpec(config=config, scope=scope))
     return specs
 
 
@@ -399,7 +399,7 @@ def load_declared_job_specs(
     config_root: str | Path | None = None,
 ) -> list[DeclaredJobSpec]:
     specs = list(_load_job_specs(config_root))
-    specs.extend(spec.as_job_spec() for spec in load_declared_collector_specs(config_root))
+    specs.extend(spec.as_job_spec() for spec in load_declared_discovery_run_specs(config_root))
     specs.extend(_automation_job_specs(config_root))
     specs.sort(key=lambda item: item.job_key)
     return specs
@@ -439,18 +439,18 @@ def get_declared_job_row(
     )
 
 
-def get_declared_collector_spec(
+def get_declared_discovery_run_spec(
     job_key: str,
     *,
     config_root: str | Path | None = None,
-) -> CollectorSpec | None:
+) -> DiscoveryRunSpec | None:
     normalized = str(job_key or "").strip()
     if not normalized:
         return None
     return next(
         (
             spec
-            for spec in load_declared_collector_specs(config_root)
+            for spec in load_declared_discovery_run_specs(config_root)
             if spec.job_key == normalized
         ),
         None,
@@ -458,12 +458,12 @@ def get_declared_collector_spec(
 
 
 __all__ = [
-    "CollectorConfig",
-    "CollectorSpec",
+    "DiscoveryRunConfig",
+    "DiscoveryRunSpec",
     "DeclaredJobSpec",
-    "get_declared_collector_spec",
+    "get_declared_discovery_run_spec",
     "get_declared_job_row",
     "list_declared_job_rows",
-    "load_declared_collector_specs",
+    "load_declared_discovery_run_specs",
     "load_declared_job_specs",
 ]

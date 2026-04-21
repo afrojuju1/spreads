@@ -225,7 +225,7 @@ export function AutomationsIndexPageContent() {
             <div className="mt-2 text-sm text-foreground/70">
               Operate the owner plane first: bot and automation state,
               decisions, positions, and PnL. Discovery sessions remain under
-              Pipelines for collector diagnostics.
+              Pipelines for discovery-run diagnostics.
             </div>
           </div>
           <Button
@@ -345,7 +345,7 @@ export function AutomationsIndexPageContent() {
                   ),
                 ).size,
               )}
-              note="Collector-linked sessions"
+              note="Discovery-run-linked sessions"
             />
             <MetricTile
               label="Linked discovery dates"

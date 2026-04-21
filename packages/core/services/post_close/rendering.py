@@ -9,7 +9,7 @@ from core.services.selection_terms import (
 
 def render_event_summary(event_overview: Mapping[str, Any]) -> list[str]:
     if not event_overview["event_count"]:
-        return ["No collector events were persisted for this session."]
+        return ["No discovery-run events were persisted for this session."]
     lines = [
         f"- Event count: {event_overview['event_count']}",
         "- By type: "
@@ -255,7 +255,7 @@ def render_session_summary_markdown(summary: Mapping[str, Any]) -> str:
         f"# Post-Close Analysis: {summary['session_date']}",
         "",
         f"- Label: `{summary['label']}`",
-        f"- Collector cycles: {summary['cycle_count']}",
+        f"- Discovery-run cycles: {summary['cycle_count']}",
         f"- Scan runs: {run_overview['run_count']} total, {run_overview['candidate_run_count']} with surfaced ideas",
         f"- Scan window: {run_overview['first_run_at']} -> {run_overview['last_run_at']}",
         f"- Quote events: {quote_overview['quote_event_count']} across {quote_overview['tracked_leg_count']} legs",
@@ -273,7 +273,7 @@ def render_session_summary_markdown(summary: Mapping[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "## Collector Events",
+            "## Discovery-Run Events",
             "",
             *render_event_summary(summary["event_overview"]),
             "",

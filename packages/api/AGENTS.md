@@ -7,7 +7,7 @@
 - Keep endpoint shapes narrow and caller-driven. Expand only when there is a real consumer.
 - Keep route ownership explicit:
   - pipeline list/detail routes -> `services/pipelines.py`
-  - current runtime/session health surfaces -> `services/live_runtime.py`, `services/live_collector_health/`, and `services/pipelines.py`
+  - current runtime/session health surfaces -> `services/live_runtime.py`, `services/discovery_run_health/`, and `services/pipelines.py`
   - opportunities routes -> `services/opportunities.py`
   - opportunity and position execution mutations -> `services/execution/`
   - positions read routes -> `services/positions.py`

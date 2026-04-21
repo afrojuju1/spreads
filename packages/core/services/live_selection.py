@@ -216,14 +216,14 @@ def _meets_promotable_thresholds(
 
 
 def read_previous_selection(
-    collector_store: Any,
+    discovery_store: Any,
     label: str,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    latest_cycle = collector_store.get_latest_cycle(label)
+    latest_cycle = discovery_store.get_latest_cycle(label)
     if latest_cycle is None:
         return {}, {}
 
-    promotable_rows = collector_store.list_cycle_candidates(
+    promotable_rows = discovery_store.list_cycle_candidates(
         latest_cycle["cycle_id"],
         selection_state="promotable",
         eligibility="live",

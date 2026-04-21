@@ -1,5 +1,5 @@
-collector_id: short_dated_index_put_credit
-job_key: live_collector:options_automation_short_dated_index_put_credit
+discovery_run_id: short_dated_index_put_credit
+job_key: discovery_run:options_automation_short_dated_index_put_credit
 label: explore_10_put_credit_weekly_auto
 scanner_strategy: put_credit
 scanner_profile: weekly

@@ -12,7 +12,7 @@ from core.services.execution import (
 )
 from core.services.execution_portfolio import build_session_execution_portfolio
 from core.services.live_pipelines import pipeline_uses_runtime_owned_opportunities
-from core.services.live_collector_health.tradeability import (
+from core.services.discovery_run_health.tradeability import (
     build_tradeability_summary,
 )
 from core.services.live_runtime import (
@@ -55,7 +55,7 @@ def _latest_activity_timestamp(*values: str | None) -> str | None:
     return best_value
 
 
-def _collector_event_sort_key(event: Mapping[str, Any]) -> tuple[Any, int]:
+def _discovery_run_event_sort_key(event: Mapping[str, Any]) -> tuple[Any, int]:
     timestamp = parse_datetime(str(event.get("generated_at") or ""))
     try:
         event_id = int(event.get("event_id") or 0)
@@ -251,15 +251,15 @@ def _resolve_pipeline_analysis(
     return payload
 
 
-def _collector_schema_ready(collector_store: Any) -> bool:
-    if hasattr(collector_store, "schema_ready"):
-        return bool(collector_store.schema_ready())
-    return bool(collector_store.pipeline_schema_ready())
+def _discovery_run_schema_ready(discovery_store: Any) -> bool:
+    if hasattr(discovery_store, "schema_ready"):
+        return bool(discovery_store.schema_ready())
+    return bool(discovery_store.pipeline_schema_ready())
 
 
 def _candidate_counts_by_cycle_id(
     *,
-    collector_store: Any,
+    discovery_store: Any,
     signal_store: Any,
     cycle_ids: list[str],
     runtime_owned: bool = False,
@@ -278,7 +278,7 @@ def _candidate_counts_by_cycle_id(
         )
     if runtime_owned:
         return {}
-    return collector_store.count_cycle_candidates_by_cycle_ids(cycle_ids)
+    return discovery_store.count_cycle_candidates_by_cycle_ids(cycle_ids)
 
 
 def _build_cycle_payload(
@@ -434,7 +434,7 @@ def get_pipeline_detail(
     stop_multiple: float,
     storage: Any | None = None,
 ) -> dict[str, Any]:
-    collector_store = storage.collector
+    discovery_store = storage.discovery
     alert_store = storage.alerts
     post_market_store = storage.post_market
     execution_store = storage.execution
@@ -492,14 +492,14 @@ def get_pipeline_detail(
     ]
     events = [
         dict(event)
-        for event in collector_store.list_events(
+        for event in discovery_store.list_events(
             label=label,
             session_date=resolved_market_date,
             limit=400,
             ascending=False,
         )
     ]
-    events.sort(key=_collector_event_sort_key)
+    events.sort(key=_discovery_run_event_sort_key)
 
     analysis_run = post_market_store.get_latest_run(
         label=label,
@@ -569,9 +569,9 @@ def get_pipeline_detail(
         pipeline,
         latest_run,
     )
-    cycle_rows = [dict(row) for row in collector_store.list_cycles(label, limit=50)]
+    cycle_rows = [dict(row) for row in discovery_store.list_cycles(label, limit=50)]
     cycle_counts_by_cycle_id = _candidate_counts_by_cycle_id(
-        collector_store=collector_store,
+        discovery_store=discovery_store,
         signal_store=signal_store,
         cycle_ids=[str(row["cycle_id"]) for row in cycle_rows],
         runtime_owned=runtime_owned,
@@ -650,8 +650,8 @@ def list_pipeline_cycles(
     limit: int = 100,
     storage: Any | None = None,
 ) -> dict[str, Any]:
-    collector_store = storage.collector
-    if not _collector_schema_ready(collector_store):
+    discovery_store = storage.discovery
+    if not _discovery_run_schema_ready(discovery_store):
         return {"cycles": []}
     parsed = parse_pipeline_id(pipeline_id)
     if parsed is None:
@@ -659,7 +659,7 @@ def list_pipeline_cycles(
     signal_store = storage.signals
     rows = [
         dict(row)
-        for row in collector_store.list_cycles(
+        for row in discovery_store.list_cycles(
             parsed["label"],
             session_date=market_date,
             limit=limit,
@@ -667,7 +667,7 @@ def list_pipeline_cycles(
     ]
     cycle_ids = [str(row["cycle_id"]) for row in rows]
     candidate_counts_by_cycle_id = _candidate_counts_by_cycle_id(
-        collector_store=collector_store,
+        discovery_store=discovery_store,
         signal_store=signal_store,
         cycle_ids=cycle_ids,
     )

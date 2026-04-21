@@ -1,4 +1,4 @@
-job_key: post_market_analysis:live_collectors
+job_key: post_market_analysis:discovery_runs
 job_type: post_market_analysis
 enabled: true
 schedule:

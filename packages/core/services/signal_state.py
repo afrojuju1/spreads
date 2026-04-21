@@ -552,7 +552,7 @@ def _derive_symbol_slice(
     }
 
 
-def sync_live_collector_signal_layer(
+def sync_discovery_run_signal_layer(
     *,
     signal_store: SignalRepository,
     label: str,

@@ -10,25 +10,25 @@ from core.common import env_or_die, load_local_env
 from core.integrations.alpaca.client import AlpacaClient, infer_trading_base_url
 from core.integrations.calendar_events import build_calendar_event_resolver
 from core.integrations.greeks import build_local_greeks_provider
-from core.services.collections.config import (
+from core.services.discovery_runs.config import (
     build_scanner_args,
     collection_window_is_open,
     parse_args,
 )
-from core.services.collections.cycle import run_collection_cycle
-from core.services.collections.models import LiveTickContext
-from core.services.collections.shared import (
+from core.services.discovery_runs.cycle import run_collection_cycle
+from core.services.discovery_runs.models import LiveTickContext
+from core.services.discovery_runs.shared import (
     build_skipped_collection_result,
     build_skipped_tick_result,
     resolve_collection_reference_time,
     session_date_for_generated_at,
 )
-from core.services.live_collector_health.capture import (
+from core.services.discovery_run_health.capture import (
     build_quote_capture_summary,
     build_trade_capture_summary,
 )
 from core.services.live_pipelines import build_live_snapshot_label
-from core.services.live_recovery import (
+from core.services.discovery_recovery import (
     LIVE_SLOT_STATUS_MISSED,
     resolve_live_slot_stale_after_seconds,
 )
@@ -84,7 +84,7 @@ def run_collection_tick(
             message = "Scheduled live slot is stale and will be marked missed instead of replayed."
             if recovery_store.schema_ready():
                 recovery_store.upsert_live_session_slot(
-                    job_key=str(getattr(args, "job_key", "") or "live_collector"),
+                    job_key=str(getattr(args, "job_key", "") or "discovery_run"),
                     session_id=tick_context.session_id,
                     session_date=session_date,
                     label=label,
@@ -134,7 +134,7 @@ def run_collection_tick(
                 history_store=storage.history,
                 alert_store=storage.alerts,
                 job_store=storage.jobs,
-                collector_store=storage.collector,
+                discovery_store=storage.discovery,
                 event_store=storage.events,
                 signal_store=storage.signals,
                 recovery_store=recovery_store,
@@ -293,7 +293,7 @@ def run_collection(
                     history_store=storage.history,
                     alert_store=storage.alerts,
                     job_store=storage.jobs,
-                    collector_store=storage.collector,
+                    discovery_store=storage.discovery,
                     event_store=storage.events,
                     signal_store=storage.signals,
                     recovery_store=storage.recovery,

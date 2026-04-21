@@ -24,7 +24,7 @@ def _set_recovery_control_mode(
             and configured_source_kind == "recovery_manager"
         ):
             note = (
-                f"{len(blocked_sessions)} live session(s) are blocked by collector gap recovery."
+                f"{len(blocked_sessions)} live session(s) are blocked by discovery-run gap recovery."
             )
             return set_control_mode(
                 db_target=db_target,
@@ -32,7 +32,7 @@ def _set_recovery_control_mode(
                 reason_code=RECOVERY_CONTROL_REASON_CODE,
                 note=note,
                 source_kind="recovery_manager",
-                actor_id="collector_recovery",
+                actor_id="discovery_recovery",
                 metadata={
                     "blocked_session_count": len(blocked_sessions),
                     "session_ids": sorted(blocked_sessions.keys())[:25],
@@ -54,9 +54,9 @@ def _set_recovery_control_mode(
             db_target=db_target,
             mode="normal",
             reason_code=RECOVERY_CONTROL_CLEAR_REASON_CODE,
-            note="Collector gaps cleared after a successful post-gap live slot.",
+            note="Discovery-run gaps cleared after a successful post-gap live slot.",
             source_kind="recovery_manager",
-            actor_id="collector_recovery",
+            actor_id="discovery_recovery",
             metadata={},
             storage=storage,
         )

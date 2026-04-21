@@ -4,14 +4,14 @@ from .alert_repository import AlertRepository
 from .broker_repository import BrokerRepository
 from .control_repository import ControlRepository
 from .db import DEFAULT_POSTGRES_URL, default_database_url
-from .collector_repository import CollectorRepository
+from .discovery_run_repository import DiscoveryRunRepository
 from .event_repository import EventRepository
 from .execution_repository import ExecutionRepository
 from .ops_store import OpsStore
 from .factory import (
     build_alert_repository,
     build_broker_repository,
-    build_collector_repository,
+    build_discovery_repository,
     build_control_repository,
     build_event_repository,
     build_execution_repository,
@@ -34,7 +34,7 @@ from .trading_store import TradingStore
 __all__ = [
     "AlertRepository",
     "BrokerRepository",
-    "CollectorRepository",
+    "DiscoveryRunRepository",
     "ControlRepository",
     "DEFAULT_POSTGRES_URL",
     "ExecutionRepository",
@@ -50,7 +50,7 @@ __all__ = [
     "TradingStore",
     "build_alert_repository",
     "build_broker_repository",
-    "build_collector_repository",
+    "build_discovery_repository",
     "build_control_repository",
     "build_event_repository",
     "build_execution_repository",

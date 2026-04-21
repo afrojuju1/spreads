@@ -502,7 +502,7 @@ def _render_replay_range_text(payload: dict[str, Any]) -> str:
             "- "
             f"{cycle.get('session_date')} {cycle.get('started_at')} | cycle {cycle.get('cycle_id')} | "
             f"status {cycle.get('status')} | opportunities {cycle.get('opportunity_count')} | "
-            f"collector candidates {cycle.get('collector_candidate_count')} | scan runs {cycle.get('scan_run_count')}"
+            f"discovery-run candidates {cycle.get('discovery_run_candidate_count')} | scan runs {cycle.get('scan_run_count')}"
         )
         for run in list(cycle.get("runs") or [])[:5]:
             lines.append(

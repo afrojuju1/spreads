@@ -294,7 +294,7 @@ uoa_app = typer.Typer(
 def uoa_command(
     ctx: typer.Context,
     label: str | None = typer.Option(
-        None, "--label", help="Filter to one collector label."
+        None, "--label", help="Filter to one discovery-run label."
     ),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
@@ -319,9 +319,9 @@ def uoa_command(
 
 @uoa_app.command("cycle", help="Inspect one UOA cycle.")
 def uoa_cycle_command(
-    cycle_id: str = typer.Argument(..., help="Collector cycle id to inspect."),
+    cycle_id: str = typer.Argument(..., help="Discovery-run cycle id to inspect."),
     label: str | None = typer.Option(
-        None, "--label", help="Filter to one collector label."
+        None, "--label", help="Filter to one discovery-run label."
     ),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),

@@ -353,7 +353,7 @@ def _build_uoa_payload(
             _attention(
                 severity="high",
                 code="uoa_cycle_missing",
-                message="Collector cycle payload is missing for the selected UOA state.",
+                message="Discovery-run cycle payload is missing for the selected UOA state.",
             )
         )
 

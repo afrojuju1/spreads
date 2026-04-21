@@ -8,7 +8,7 @@ from core.runtime.config import default_database_url
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Summarize persisted intraday collector sessions and backtest spread outcomes."
+        description="Summarize persisted intraday discovery runs and backtest spread outcomes."
     )
     parser.add_argument(
         "--db",
@@ -27,7 +27,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--label",
         default="explore_10_combined_0dte_auto",
-        help="Collector label to summarize.",
+        help="Discovery-run label to summarize.",
     )
     parser.add_argument(
         "--backtest-profit-target",

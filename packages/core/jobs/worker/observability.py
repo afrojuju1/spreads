@@ -6,13 +6,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 from core.events.bus import publish_global_event_async
-from core.services.live_collector_health.enrichment import (
-    enrich_live_collector_job_run_payload,
+from core.services.discovery_run_health.enrichment import (
+    enrich_discovery_run_job_run_payload,
 )
 from core.services.live_pipelines import build_live_run_scope_id
 
-LIVE_COLLECTOR_STREAM_STALL_THRESHOLD = 2
-LIVE_COLLECTOR_SLOT_LAG_THRESHOLD = 2
+DISCOVERY_RUN_STREAM_STALL_THRESHOLD = 2
+DISCOVERY_RUN_SLOT_LAG_THRESHOLD = 2
 
 
 def _compact_single_analysis_result(
@@ -99,7 +99,7 @@ async def _publish_job_run_event(ctx: dict[str, Any], run_record: Any) -> None:
     if event_bus is None:
         return
     try:
-        payload = enrich_live_collector_job_run_payload(run_record)
+        payload = enrich_discovery_run_job_run_payload(run_record)
         await publish_global_event_async(
             event_bus,
             topic="job.run.updated",
@@ -225,7 +225,7 @@ def _count_consecutive_stream_zero_slots(
     )
     consecutive = 0
     for row in rows:
-        payload = enrich_live_collector_job_run_payload(row)
+        payload = enrich_discovery_run_job_run_payload(row)
         quote_capture = payload.get("quote_capture") or {}
         if int(quote_capture.get("expected_quote_symbol_count", 0)) <= 0:
             continue
@@ -235,7 +235,7 @@ def _count_consecutive_stream_zero_slots(
     return consecutive
 
 
-def _build_live_collector_log_payload(
+def _build_discovery_run_log_payload(
     run_payload: dict[str, Any],
     *,
     consecutive_stream_zero_slots: int,
@@ -249,7 +249,7 @@ def _build_live_collector_log_payload(
     uoa_decisions = run_payload.get("uoa_decisions") or {}
     cycle_ids = result.get("cycle_ids") or []
     return {
-        "event": "live_collector_slot_completed",
+        "event": "discovery_run_slot_completed",
         "job_run_id": run_payload["job_run_id"],
         "job_key": run_payload["job_key"],
         "label": result.get("label") or (run_payload.get("payload") or {}).get("label"),
@@ -284,7 +284,7 @@ def _build_live_collector_log_payload(
     }
 
 
-def _build_live_collector_degradation(
+def _build_discovery_run_degradation(
     run_payload: dict[str, Any],
     *,
     consecutive_stream_zero_slots: int,
@@ -303,10 +303,10 @@ def _build_live_collector_degradation(
     if (
         expected_quote_symbol_count > 0
         and int(quote_capture.get("stream_quote_events_saved", 0)) == 0
-        and consecutive_stream_zero_slots >= LIVE_COLLECTOR_STREAM_STALL_THRESHOLD
+        and consecutive_stream_zero_slots >= DISCOVERY_RUN_STREAM_STALL_THRESHOLD
     ):
         reasons.append("stream_capture_stalled")
-    if slot_lag_slots >= LIVE_COLLECTOR_SLOT_LAG_THRESHOLD:
+    if slot_lag_slots >= DISCOVERY_RUN_SLOT_LAG_THRESHOLD:
         reasons.append("slot_lagging")
     if not reasons:
         return None
@@ -327,10 +327,10 @@ def _build_live_collector_degradation(
     }
 
 
-async def _emit_live_collector_observability(
+async def _emit_discovery_run_observability(
     ctx: dict[str, Any], run_record: Any
 ) -> None:
-    run_payload = enrich_live_collector_job_run_payload(run_record)
+    run_payload = enrich_discovery_run_job_run_payload(run_record)
     session_id = run_payload.get("session_id")
     if not isinstance(session_id, str) or not session_id:
         return
@@ -342,13 +342,13 @@ async def _emit_live_collector_observability(
         session_id=session_id,
     )
     slot_lag_slots = _slot_lag_slots(run_payload)
-    log_payload = _build_live_collector_log_payload(
+    log_payload = _build_discovery_run_log_payload(
         run_payload,
         consecutive_stream_zero_slots=consecutive_stream_zero_slots,
         slot_lag_slots=slot_lag_slots,
     )
     print(json.dumps(log_payload, separators=(",", ":"), sort_keys=True), flush=True)
-    degradation = _build_live_collector_degradation(
+    degradation = _build_discovery_run_degradation(
         run_payload,
         consecutive_stream_zero_slots=consecutive_stream_zero_slots,
         slot_lag_slots=slot_lag_slots,
@@ -357,7 +357,7 @@ async def _emit_live_collector_observability(
         return
     print(
         json.dumps(
-            {"event": "live_collector_slot_degraded", **degradation},
+            {"event": "discovery_run_slot_degraded", **degradation},
             separators=(",", ":"),
             sort_keys=True,
         ),
@@ -369,7 +369,7 @@ async def _emit_live_collector_observability(
     try:
         await publish_global_event_async(
             event_bus,
-            topic="live.collector.degraded",
+            topic="live.discovery_run.degraded",
             event_class="control_event",
             entity_type="job_run",
             entity_id=run_payload["job_run_id"],
