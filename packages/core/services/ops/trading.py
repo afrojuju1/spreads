@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from core.db.decorators import with_storage
+from core.jobs.specs import get_declared_job_row
 from core.services.bot_analytics import build_automation_performance_summary
 from core.services.broker_sync import BROKER_SYNC_KEY
 from core.services.execution import OPEN_STATUSES
@@ -176,10 +177,7 @@ def _load_execution_attempt_job_context(
         source_job_key = _as_text(source_job.get("job_key"))
         if source_job_key is None or source_job_key in source_definitions:
             continue
-        try:
-            source_definitions[source_job_key] = job_store.get_job_definition(source_job_key)
-        except Exception:
-            source_definitions[source_job_key] = None
+        source_definitions[source_job_key] = get_declared_job_row(source_job_key)
     return submit_jobs, source_definitions
 
 

@@ -35,8 +35,9 @@ Apply the schema with Alembic:
 
 ```bash
 uv run alembic upgrade head
-uv run spreads jobs seed
 ```
+
+There is no job-definition seed step anymore. Scheduled job declarations now load directly from YAML under `packages/config/`.
 
 Create a new migration:
 

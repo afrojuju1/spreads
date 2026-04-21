@@ -18,6 +18,7 @@ from core.jobs.registry import (
     RUNTIME_QUEUE_NAME,
     get_job_spec,
 )
+from core.jobs.specs import get_declared_job_row
 from core.runtime.config import default_database_url, default_redis_url
 from core.runtime.redis import build_redis_settings
 from core.storage.factory import build_job_repository, build_storage_context
@@ -75,10 +76,7 @@ async def startup(ctx: dict[str, Any]) -> None:
 
 async def _enqueue_startup_collector_recovery(ctx: dict[str, Any]) -> None:
     job_store = ctx["job_store"]
-    definition = await asyncio.to_thread(
-        job_store.get_job_definition,
-        COLLECTOR_RECOVERY_JOB_KEY,
-    )
+    definition = await asyncio.to_thread(get_declared_job_row, COLLECTOR_RECOVERY_JOB_KEY)
     if definition is None or not bool(definition.get("enabled")):
         return
     latest_runs = await asyncio.to_thread(

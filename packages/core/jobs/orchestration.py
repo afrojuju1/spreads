@@ -9,7 +9,7 @@ from core.services.live_pipelines import (
     build_live_run_scope_id,
     resolve_live_collector_label,
 )
-from core.storage.records import JobDefinitionRecord
+from core.storage.records import RecordMapping
 
 NEW_YORK = ZoneInfo("America/New_York")
 SCHEDULER_RUNTIME_LEASE_KEY = "runtime:scheduler"
@@ -65,7 +65,7 @@ def _interval_market_cutoff(
 
 
 def resolve_scheduled_for(
-    definition: JobDefinitionRecord,
+    definition: RecordMapping,
     *,
     now: datetime | None = None,
 ) -> datetime | None:
@@ -143,7 +143,7 @@ def _session_slots(
 
 
 def resolve_live_tick_plan(
-    definition: JobDefinitionRecord,
+    definition: RecordMapping,
     *,
     now: datetime | None = None,
 ) -> dict[str, object] | None:
@@ -193,7 +193,7 @@ def resolve_live_tick_plan(
 
 
 def due_job_payload(
-    definition: JobDefinitionRecord, *, now: datetime | None = None
+    definition: RecordMapping, *, now: datetime | None = None
 ) -> tuple[str, datetime, dict[str, object]] | None:
     scheduled_for = resolve_scheduled_for(definition, now=now)
     if scheduled_for is None:

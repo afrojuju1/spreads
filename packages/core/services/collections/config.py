@@ -117,10 +117,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def build_collection_args(
     overrides: dict[str, Any] | None = None,
+    *,
+    options_automation_scope: dict[str, Any] | None = None,
 ) -> argparse.Namespace:
     args = parse_args([])
     for key, value in (overrides or {}).items():
         setattr(args, key, value)
+    setattr(
+        args,
+        "options_automation_scope",
+        {"enabled": False}
+        if options_automation_scope is None
+        else dict(options_automation_scope),
+    )
     return args
 
 

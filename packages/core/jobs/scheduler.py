@@ -15,6 +15,7 @@ from core.jobs.registry import (
     COLLECTOR_RECOVERY_JOB_TYPE,
     get_job_spec,
 )
+from core.jobs.specs import get_declared_job_row, list_declared_job_rows
 from core.jobs.orchestration import (
     SCHEDULER_RUNTIME_LEASE_KEY,
     build_job_attempt_id,
@@ -226,7 +227,7 @@ async def _enqueue_collector_recovery_if_needed(
     now: datetime,
 ) -> str | None:
     definition = await asyncio.to_thread(
-        job_store.get_job_definition,
+        get_declared_job_row,
         COLLECTOR_RECOVERY_JOB_KEY,
     )
     if definition is None or not bool(definition.get("enabled")):
@@ -284,7 +285,7 @@ async def _reconcile_live_collector_jobs(
     now: datetime,
 ) -> dict[str, Any]:
     definitions = await asyncio.to_thread(
-        job_store.list_job_definitions,
+        list_declared_job_rows,
         enabled_only=True,
         job_type="live_collector",
     )
@@ -565,7 +566,7 @@ async def _reconcile_live_collector_jobs(
 
 
 async def _enqueue_definition_jobs(job_store: Any, redis: Any, *, now: datetime) -> dict[str, Any]:
-    definitions = await asyncio.to_thread(job_store.list_job_definitions, enabled_only=True)
+    definitions = await asyncio.to_thread(list_declared_job_rows, enabled_only=True)
     enqueued: list[str] = []
     skipped: list[dict[str, str]] = []
 

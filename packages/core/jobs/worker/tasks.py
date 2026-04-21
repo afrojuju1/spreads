@@ -19,6 +19,7 @@ from core.jobs.registry import (
     POST_CLOSE_ANALYSIS_JOB_TYPE,
     POST_MARKET_ANALYSIS_JOB_TYPE,
 )
+from core.jobs.specs import get_declared_collector_spec
 from core.services.alert_delivery import (
     ALERT_DELIVERY_STALE_SECONDS,
     reconcile_alert_delivery,
@@ -449,7 +450,13 @@ async def run_live_collector_job(
         )
 
     def runner(heartbeat: Any) -> dict[str, Any]:
-        args = build_collection_args(payload)
+        collector_spec = get_declared_collector_spec(job_key)
+        if collector_spec is None:
+            raise ValueError(f"Unknown live collector spec: {job_key}")
+        args = build_collection_args(
+            payload,
+            options_automation_scope=collector_spec.options_automation_scope,
+        )
         session_id = payload.get("session_id")
         slot_at = payload.get("slot_at")
         if not isinstance(session_id, str) or not session_id:

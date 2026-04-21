@@ -52,7 +52,7 @@
 ## Rollout Checklist
 
 - After schema changes, run `uv run alembic upgrade head`.
-- If job definitions or scheduled/manual job keys changed, run `uv run spreads jobs seed`.
+- If declared job YAML or collector config changed, restart the scheduler and affected workers so they reload config.
 - After changing code imported by `worker-runtime`, `worker-discovery`, or `scheduler`, restart those containers before trusting runtime behavior.
 - Use `docker compose ps` and recent `docker compose logs` to verify startup and job execution after restart.
 - Restart `api` only when the changed runtime surface requires it or when explicitly requested.

@@ -71,7 +71,7 @@ Market Recorder
 
 Scheduler
   |
-  +--> reads job definitions from Postgres
+  +--> reads declared job specs from YAML/config
   +--> enqueues ARQ jobs into Redis
 
 ARQ workers
@@ -160,7 +160,7 @@ Redis = transport, queueing, leases, and pub/sub fanout
 
 ```text
              +---------------------------+
-             | Postgres job_definitions  |
+             | YAML declared jobs        |
              | Postgres job_runs         |
              +-------------+-------------+
                            |
@@ -296,7 +296,7 @@ Rule:
 ### Scheduler -> Queues -> Workers -> Event Fanout
 
 ```text
-      job_definitions
+      declared job YAML
            |
            v
    +-------+--------+
@@ -372,7 +372,7 @@ The background runtime is split into a scheduler and ARQ workers.
 
 The scheduler:
 
-- reads `job_definitions` from Postgres
+- reads declared job specs from YAML/config
 - determines which jobs are due
 - creates `job_runs`
 - enqueues work into Redis
@@ -620,7 +620,6 @@ broker_sync:
   broker_sync_state
 
 jobs:
-  job_definitions
   job_runs
   job_leases
 

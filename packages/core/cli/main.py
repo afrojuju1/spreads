@@ -20,7 +20,6 @@ from core.cli.runtime import (
     positions_command,
 )
 from core.jobs.scheduler import main as scheduler_main
-from core.jobs.seed import main as seed_jobs_main
 from core.services.alpaca_research import main as research_alpaca_main
 from core.services.collections.runtime import main as collect_main
 from core.services.market_recorder import main as market_recorder_main
@@ -164,15 +163,6 @@ def scheduler_command(ctx: typer.Context) -> None:
 )
 def market_recorder_command(ctx: typer.Context) -> None:
     _run_passthrough(ctx=ctx, entrypoint=market_recorder_main)
-
-
-@jobs_app.command(
-    "seed",
-    context_settings=PASSTHROUGH_CONTEXT_SETTINGS,
-    help="Seed default job definitions.",
-)
-def jobs_seed_command(ctx: typer.Context) -> None:
-    _run_passthrough(ctx=ctx, entrypoint=seed_jobs_main)
 
 
 def main() -> None:

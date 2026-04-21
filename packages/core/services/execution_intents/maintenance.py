@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from core.jobs.specs import list_declared_job_rows
 from core.services.bots import bot_time_reached, load_bots
 from core.services.deployment_policy import (
     DEPLOYMENT_MODE_LIVE_AUTO,
@@ -242,10 +243,8 @@ def _backfill_strategy_position_links(
 
 
 def _active_options_automation_labels(job_store: Any) -> set[str]:
-    if job_store is None or not job_store.schema_ready():
-        return set()
     labels: set[str] = set()
-    for definition in job_store.list_job_definitions(
+    for definition in list_declared_job_rows(
         enabled_only=True, job_type="live_collector"
     ):
         payload = dict(definition.get("payload") or {})

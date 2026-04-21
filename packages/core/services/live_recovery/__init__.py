@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
+from core.jobs.specs import list_declared_job_rows
 from core.jobs.orchestration import NEW_YORK
 from core.services.live_slot_updates import update_live_session_slot_from_row
 from core.services.value_coercion import (
@@ -86,7 +87,7 @@ def run_collector_recovery(
 
     definitions = {
         str(row["job_key"]): dict(row)
-        for row in job_store.list_job_definitions(
+        for row in list_declared_job_rows(
             enabled_only=True,
             job_type="live_collector",
         )

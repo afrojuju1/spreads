@@ -40,6 +40,9 @@ def _payload_namespace(payload: Mapping[str, Any]) -> SimpleNamespace:
 
 
 def resolve_live_collector_label(payload: Mapping[str, Any]) -> str:
+    explicit_label = str(payload.get("label") or "").strip().lower()
+    if explicit_label:
+        return explicit_label
     args = _payload_namespace(payload)
     _, universe_label = resolve_symbols(args)
     return build_live_snapshot_label(
@@ -70,11 +73,11 @@ def pipeline_uses_runtime_owned_opportunities(
 
 
 def list_enabled_live_collector_pipelines(
-    job_definitions: Iterable[Mapping[str, Any]],
+    job_rows: Iterable[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
     pipelines_by_label: dict[str, dict[str, Any]] = {}
 
-    for definition in job_definitions:
+    for definition in job_rows:
         if not bool(definition.get("enabled", False)):
             continue
         if str(definition.get("job_type")) != "live_collector":
@@ -98,11 +101,11 @@ def list_enabled_live_collector_pipelines(
 
 
 def build_live_session_catalog(
-    job_definitions: Iterable[Mapping[str, Any]],
+    job_rows: Iterable[Mapping[str, Any]],
     *,
     realized_labels: Iterable[str] | None = None,
 ) -> dict[str, Any]:
-    pipelines = list_enabled_live_collector_pipelines(job_definitions)
+    pipelines = list_enabled_live_collector_pipelines(job_rows)
     expected_labels = [str(pipeline["label"]) for pipeline in pipelines]
     expected_label_set = set(expected_labels)
     realized = sorted({str(label) for label in (realized_labels or []) if str(label)})

@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from core.jobs.specs import list_declared_job_rows
 from core.services.live_pipelines import build_live_session_catalog, build_live_run_scope_id
 from core.services.market_dates import resolve_market_date
 from core.services.post_market_analysis import (
@@ -22,7 +23,7 @@ def build_live_session_catalog_for_date(
     job_store: Any,
     session_date: str,
 ) -> dict[str, Any]:
-    definitions = job_store.list_job_definitions(
+    definitions = list_declared_job_rows(
         enabled_only=True, job_type="live_collector"
     )
     base_catalog = build_live_session_catalog(definitions, realized_labels=[])

@@ -7,80 +7,14 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from core.storage.base import RepositoryBase
-from core.storage.job_models import JobDefinitionModel, JobLeaseModel, JobRunModel
-from core.storage.records import JobDefinitionRecord, JobLeaseRecord, JobRunRecord
+from core.storage.job_models import JobLeaseModel, JobRunModel
+from core.storage.records import JobLeaseRecord, JobRunRecord
 from core.storage.serializers import parse_datetime
 
 
 class JobRepository(RepositoryBase):
     def schema_ready(self) -> bool:
-        return self.schema_has_tables("job_definitions", "job_runs", "job_leases")
-
-    def upsert_job_definition(
-        self,
-        *,
-        job_key: str,
-        job_type: str,
-        enabled: bool,
-        schedule_type: str,
-        schedule: dict[str, Any],
-        payload: dict[str, Any],
-        market_calendar: str = "NYSE",
-        singleton_scope: str | None = None,
-    ) -> JobDefinitionRecord:
-        now = datetime.now(UTC)
-        with self.session_scope() as session:
-            row = session.get(JobDefinitionModel, job_key)
-            if row is None:
-                row = JobDefinitionModel(
-                    job_key=job_key,
-                    created_at=now,
-                )
-                session.add(row)
-            row.job_type = job_type
-            row.enabled = enabled
-            row.schedule_type = schedule_type
-            row.schedule_json = schedule
-            row.payload_json = payload
-            row.market_calendar = market_calendar
-            row.singleton_scope = singleton_scope
-            row.updated_at = now
-            session.flush()
-            session.refresh(row)
-            return self.row(row)
-
-    def get_job_definition(self, job_key: str) -> JobDefinitionRecord | None:
-        with self.session_factory() as session:
-            row = session.get(JobDefinitionModel, job_key)
-        if row is None:
-            return None
-        return self.row(row)
-
-    def delete_job_definition(self, job_key: str) -> bool:
-        with self.session_scope() as session:
-            row = session.get(JobDefinitionModel, job_key)
-            if row is None:
-                return False
-            session.delete(row)
-            return True
-
-    def list_job_definitions(
-        self,
-        *,
-        enabled_only: bool | None = None,
-        job_type: str | None = None,
-    ) -> list[JobDefinitionRecord]:
-        statement = select(JobDefinitionModel)
-        if enabled_only is True:
-            statement = statement.where(JobDefinitionModel.enabled.is_(True))
-        elif enabled_only is False:
-            statement = statement.where(JobDefinitionModel.enabled.is_(False))
-        if job_type:
-            statement = statement.where(JobDefinitionModel.job_type == job_type)
-        statement = statement.order_by(JobDefinitionModel.job_key.asc())
-        with self.session_factory() as session:
-            rows = session.scalars(statement).all()
-        return self.rows(rows)
+        return self.schema_has_tables("job_runs", "job_leases")
 
     def create_job_run(
         self,
@@ -511,4 +445,3 @@ class JobRepository(RepositoryBase):
         with self.session_scope() as session:
             session.execute(delete(JobLeaseModel))
             session.execute(delete(JobRunModel))
-            session.execute(delete(JobDefinitionModel))

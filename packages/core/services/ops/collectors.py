@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 
+from core.jobs.specs import list_declared_job_rows
 from core.jobs.orchestration import NEW_YORK, _market_schedule
 from core.services.bot_analytics import summarize_intent_counts
 from core.services.bots import load_active_bots
@@ -87,9 +88,8 @@ def _latest_live_collectors(
     storage: Any,
     now: datetime,
 ) -> list[dict[str, Any]]:
-    job_store = storage.jobs
     collector_definitions = list_enabled_live_collector_pipelines(
-        job_store.list_job_definitions(enabled_only=True, job_type="live_collector")
+        list_declared_job_rows(enabled_only=True, job_type="live_collector")
     )
     if not collector_definitions:
         return []
@@ -177,10 +177,8 @@ def _latest_live_collectors(
 
 
 def _active_options_automation_labels(job_store: Any) -> set[str]:
-    if job_store is None or not job_store.schema_ready():
-        return set()
     labels: set[str] = set()
-    for definition in job_store.list_job_definitions(
+    for definition in list_declared_job_rows(
         enabled_only=True, job_type="live_collector"
     ):
         payload = dict(definition.get("payload") or {})

@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from core.alerts.ops import plan_dispatch_gap_open_alerts
 from core.db.decorators import with_storage
-from core.jobs.adhoc import ensure_manual_job_definition, enqueue_ad_hoc_job
+from core.jobs.adhoc import enqueue_ad_hoc_job
 from core.jobs.registry import (
     OPTIONS_AUTOMATION_EXECUTE_ADHOC_JOB_KEY,
     OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE,
@@ -57,19 +57,9 @@ def request_options_automation_dispatch(
         return None
     if hasattr(job_store, "schema_ready") and not job_store.schema_ready():
         return None
-    required_methods = (
-        "upsert_job_definition",
-        "create_job_run",
-        "update_job_run_status",
-    )
+    required_methods = ("create_job_run", "update_job_run_status")
     if any(not hasattr(job_store, method_name) for method_name in required_methods):
         return None
-
-    ensure_manual_job_definition(
-        job_store,
-        job_key=OPTIONS_AUTOMATION_EXECUTE_ADHOC_JOB_KEY,
-        job_type=OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE,
-    )
     scheduled_for = datetime.now(UTC)
     job_run_id = f"{OPTIONS_AUTOMATION_EXECUTE_ADHOC_JOB_KEY}:{uuid4().hex}"
     payload: dict[str, Any] = {

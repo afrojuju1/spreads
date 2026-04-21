@@ -11,7 +11,6 @@ from core.integrations.alpaca.client import AlpacaClient, infer_trading_base_url
 from core.integrations.calendar_events import build_calendar_event_resolver
 from core.integrations.greeks import build_local_greeks_provider
 from core.services.collections.config import (
-    _apply_options_automation_overrides,
     build_scanner_args,
     collection_window_is_open,
     parse_args,
@@ -43,7 +42,6 @@ def run_collection_tick(
     heartbeat: Callable[[], None] | None = None,
     emit_output: bool = True,
 ) -> dict[str, object]:
-    args = _apply_options_automation_overrides(args)
     scanner_args = build_scanner_args(args)
     reference_time = resolve_collection_reference_time(tick_context.slot_at)
     if not args.allow_off_hours and not collection_window_is_open(

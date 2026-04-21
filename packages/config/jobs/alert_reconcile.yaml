@@ -1,0 +1,11 @@
+job_key: alert_reconcile:scheduled
+job_type: alert_reconcile
+enabled: true
+schedule:
+  type: interval_minutes
+  minutes: 1
+payload:
+  limit: 200
+  stale_after_seconds: 300
+  allow_off_hours: true
+singleton_scope: global

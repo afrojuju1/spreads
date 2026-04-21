@@ -7,7 +7,7 @@ from typing import Any
 from core.db.decorators import with_storage
 from core.events.bus import publish_global_event_sync
 from core.integrations.alpaca.client import AlpacaClient, AlpacaRequestError
-from core.jobs.adhoc import ensure_manual_job_definition, enqueue_ad_hoc_job
+from core.jobs.adhoc import enqueue_ad_hoc_job
 from core.jobs.registry import (
     EXECUTION_SUBMIT_ADHOC_JOB_KEY,
     EXECUTION_SUBMIT_JOB_TYPE,
@@ -391,11 +391,6 @@ def _queue_execution_attempt(
     execution_store: Any,
     attempt: dict[str, Any],
 ) -> dict[str, Any]:
-    ensure_manual_job_definition(
-        job_store,
-        job_key=EXECUTION_SUBMIT_ADHOC_JOB_KEY,
-        job_type=EXECUTION_SUBMIT_JOB_TYPE,
-    )
     execution_attempt_id = str(attempt["execution_attempt_id"])
     job_run_id = _execution_submit_job_run_id(execution_attempt_id)
     scheduled_for = datetime.now(UTC)

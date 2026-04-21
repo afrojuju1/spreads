@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from core.jobs.specs import list_declared_job_rows
 from core.services.execution import normalize_execution_policy
 from core.services.live_collector_health.enrichment import (
     enrich_live_collector_job_run_payload,
@@ -428,9 +429,7 @@ def _runtime_pipeline_row(catalog_entry: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _list_runtime_pipelines(job_store: Any) -> list[dict[str, Any]]:
-    if not hasattr(job_store, "list_job_definitions"):
-        return []
-    definitions = job_store.list_job_definitions(
+    definitions = list_declared_job_rows(
         enabled_only=True,
         job_type="live_collector",
     )

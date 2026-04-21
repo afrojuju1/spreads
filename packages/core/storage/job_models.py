@@ -3,29 +3,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.storage.db import Base
-
-
-class JobDefinitionModel(Base):
-    __tablename__ = "job_definitions"
-    __table_args__ = (
-        Index("idx_job_definitions_enabled_type", "enabled", "job_type"),
-    )
-
-    job_key: Mapped[str] = mapped_column(Text, primary_key=True)
-    job_type: Mapped[str] = mapped_column(Text, nullable=False)
-    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    schedule_type: Mapped[str] = mapped_column(Text, nullable=False)
-    schedule_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    market_calendar: Mapped[str] = mapped_column(Text, nullable=False, default="NYSE")
-    singleton_scope: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class JobRunModel(Base):
@@ -38,11 +20,7 @@ class JobRunModel(Base):
     )
 
     job_run_id: Mapped[str] = mapped_column(Text, primary_key=True)
-    job_key: Mapped[str] = mapped_column(
-        Text,
-        ForeignKey("job_definitions.job_key", ondelete="CASCADE"),
-        nullable=False,
-    )
+    job_key: Mapped[str] = mapped_column(Text, nullable=False)
     arq_job_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     job_type: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)

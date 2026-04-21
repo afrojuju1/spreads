@@ -1,0 +1,12 @@
+job_key: broker_sync:alpaca
+job_type: broker_sync
+enabled: true
+schedule:
+  type: interval_minutes
+  minutes: 1
+payload:
+  history_range: "1D"
+  activity_lookback_days: 1
+  allow_off_hours: false
+  post_close_grace_minutes: 5
+singleton_scope: alpaca

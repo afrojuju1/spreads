@@ -6,7 +6,7 @@ from typing import Any, Mapping
 
 from core.alerts.discord import build_discord_payload, send_discord_webhook
 from core.events.bus import publish_global_event_sync
-from core.jobs.adhoc import ensure_manual_job_definition, enqueue_ad_hoc_job
+from core.jobs.adhoc import enqueue_ad_hoc_job
 from core.jobs.orchestration import build_job_attempt_id
 from core.jobs.registry import (
     ALERT_DELIVERY_ADHOC_JOB_KEY,
@@ -60,14 +60,6 @@ def _resolve_session_id(row: Mapping[str, Any], session_id: str | None = None) -
     return build_live_run_scope_id(str(row["label"]), str(row["session_date"]))
 
 
-def _ensure_alert_delivery_job_definition(job_store: JobRepository) -> None:
-    ensure_manual_job_definition(
-        job_key=ALERT_DELIVERY_ADHOC_JOB_KEY,
-        job_type=ALERT_DELIVERY_JOB_TYPE,
-        job_store=job_store,
-    )
-
-
 def publish_alert_event(
     *,
     topic: str,
@@ -108,7 +100,6 @@ def enqueue_alert_delivery_job(
     if row["record_kind"] != ALERT_RECORD_KIND_DELIVERY:
         raise ValueError(f"Alert {alert_id} is not a delivery row")
 
-    _ensure_alert_delivery_job_definition(job_store)
     job_run_id = alert_delivery_job_run_id(alert_id)
     resolved_session_id = _resolve_session_id(row, session_id=session_id)
     scheduled_for = _utc_now()

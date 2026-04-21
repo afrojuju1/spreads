@@ -1,0 +1,10 @@
+job_key: post_market_analysis:live_collectors
+job_type: post_market_analysis
+enabled: true
+schedule:
+  type: market_close_plus_minutes
+  minutes: 45
+payload:
+  date: today
+  backtest_profit_target: 0.5
+  backtest_stop_multiple: 2.0

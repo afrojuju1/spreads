@@ -215,7 +215,7 @@ It should not become the product/runtime ownership noun.
 
 Current anchors:
 
-- `job_definitions`
+- declared job specs under `packages/config/`
 - `job_runs`
 - `job_leases`
 - `packages/core/jobs/registry.py`
@@ -819,7 +819,7 @@ Introduce explicit job types for:
 - backtest evaluation
 - recorder target refresh
 
-These should be scheduled through the existing job system and persisted through the existing `job_definitions` and `job_runs` tables.
+These should be scheduled through the existing job system, declared in config, and persisted through `job_runs`.
 
 ### Move Ops And Backtest Up A Layer
 
@@ -954,7 +954,7 @@ This is where the product actually becomes an automation system instead of a col
 Infra consequence:
 
 - `worker-runtime` should become the lane that runs bot entry and management jobs
-- `job_definitions` should schedule these explicitly rather than hiding them inside collector behavior
+- declared job specs should schedule these explicitly rather than hiding them inside collector behavior
 - decision runs should serialize by bot, automation, and planning scope
 
 ### Phase 5: Reuse The Existing OMS Instead Of Rewriting It
@@ -1047,7 +1047,7 @@ These names are illustrative, but the boundary matters more than the exact filen
 - `execution_fills`
 - `portfolio_positions`
 - `position_closes`
-- `job_definitions`
+- declared job YAML under `packages/config/`
 - `job_runs`
 - `job_leases`
 - `market_recorder_targets`

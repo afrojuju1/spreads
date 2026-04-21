@@ -201,18 +201,17 @@ Goal:
 5. update Docker Compose commands and reload dirs
 6. update Alembic imports
 7. update config-root resolution to `packages/config`
-8. reseed jobs and restart runtime services
+8. reload declared job config and restart runtime services
 
 ## Validation Checklist
 
 After the restructure:
 
 1. `uv run alembic upgrade head`
-2. `uv run spreads jobs seed`
-3. `docker compose restart scheduler worker-runtime worker-discovery api web`
-4. `uv run spreads status`
-5. `uv run spreads trading`
-6. `uv run spreads jobs`
+2. `docker compose restart scheduler worker-runtime worker-discovery api web`
+3. `uv run spreads status`
+4. `uv run spreads trading`
+5. `uv run spreads jobs`
 
 Success means:
 

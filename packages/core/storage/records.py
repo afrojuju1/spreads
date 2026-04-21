@@ -29,7 +29,6 @@ PipelineRecord = StorageRow
 PipelineCycleRecord = StorageRow
 AlertEventRecord = StorageRow
 AlertStateRecord = StorageRow
-JobDefinitionRecord = StorageRow
 JobRunRecord = StorageRow
 AccountSnapshotRecord = StorageRow
 BrokerSyncStateRecord = StorageRow
@@ -72,7 +71,6 @@ __all__ = [
     "PipelineCycleRecord",
     "AlertEventRecord",
     "AlertStateRecord",
-    "JobDefinitionRecord",
     "JobRunRecord",
     "AccountSnapshotRecord",
     "BrokerSyncStateRecord",

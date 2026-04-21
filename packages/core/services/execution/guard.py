@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from core.db.decorators import with_storage
+from core.jobs.specs import get_declared_job_row
 from core.integrations.alpaca.client import AlpacaClient
 from core.services.alpaca import create_alpaca_client_from_env
 from core.services.candidate_policy import resolve_candidate_profile
@@ -54,17 +55,9 @@ def _source_job_definition(
 ) -> Mapping[str, Any] | None:
     source_job = resolve_execution_attempt_source_job(attempt)
     source_job_key = _as_text(source_job.get("job_key"))
-    job_store = getattr(storage, "jobs", None)
-    if (
-        source_job_key is None
-        or job_store is None
-        or (hasattr(job_store, "schema_ready") and not job_store.schema_ready())
-    ):
+    if source_job_key is None:
         return None
-    try:
-        return job_store.get_job_definition(source_job_key)
-    except Exception:
-        return None
+    return get_declared_job_row(source_job_key)
 
 
 def _attempt_request(attempt: Mapping[str, Any]) -> Mapping[str, Any]:

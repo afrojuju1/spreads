@@ -1067,7 +1067,7 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row("Generated", _render_value(payload.get("generated_at")))
     overview.add_row("Job Type", _render_value(summary.get("job_type")))
     overview.add_row("Status Filter", _render_value(summary.get("status_filter")))
-    overview.add_row("Definitions", _render_value(summary.get("definition_count")))
+    overview.add_row("Declared Jobs", _render_value(summary.get("definition_count")))
     overview.add_row("Enabled", _render_value(summary.get("enabled_definition_count")))
     overview.add_row("Recent Runs", _render_value(summary.get("run_count")))
     overview.add_row(
@@ -1079,14 +1079,6 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
         "Singleton Leases", _render_value(summary.get("singleton_lease_count"))
     )
     overview.add_row("Worker Lanes", _render_value(summary.get("worker_lane_count")))
-    overview.add_row(
-        "Seed Drift",
-        (
-            f"missing {_render_value(summary.get('seed_missing_count'))} | "
-            f"extra {_render_value(summary.get('seed_extra_count'))} | "
-            f"mismatch {_render_value(summary.get('seed_mismatched_count'))}"
-        ),
-    )
     console.print(
         Panel(
             overview,
@@ -1121,9 +1113,9 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
             )
         console.print(table)
 
-    definition_rows = list(details.get("job_definitions") or [])
+    definition_rows = list(details.get("declared_jobs") or [])
     if definition_rows:
-        table = Table(title="Definitions", header_style="bold")
+        table = Table(title="Declared Jobs", header_style="bold")
         table.add_column("Job Key")
         table.add_column("Type")
         table.add_column("Enabled")
@@ -1149,29 +1141,6 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
                 latest_text,
                 _render_value(row.get("latest_capture_status")),
                 _render_value(row.get("singleton_scope")),
-            )
-        console.print(table)
-
-    seed_drift = (
-        details.get("seed_drift") if isinstance(details.get("seed_drift"), dict) else {}
-    )
-    drift_rows: list[dict[str, Any]] = []
-    for row in list(seed_drift.get("missing") or []):
-        drift_rows.append({"kind": "missing", **dict(row)})
-    for row in list(seed_drift.get("extra") or []):
-        drift_rows.append({"kind": "extra", **dict(row)})
-    for row in list(seed_drift.get("mismatched") or []):
-        drift_rows.append({"kind": "mismatched", **dict(row)})
-    if drift_rows:
-        table = Table(title="Seed Drift", header_style="bold")
-        table.add_column("Kind")
-        table.add_column("Job Key")
-        table.add_column("Fields")
-        for row in drift_rows[:15]:
-            table.add_row(
-                str(row.get("kind") or "-"),
-                str(row.get("job_key") or "-"),
-                ", ".join(str(field) for field in list(row.get("fields") or [])) or "-",
             )
         console.print(table)
 

@@ -1,0 +1,47 @@
+collector_id: short_dated_index_iron_condor
+job_key: live_collector:options_automation_short_dated_index_iron_condor
+label: explore_10_iron_condor_weekly_auto
+scanner_strategy: iron_condor
+scanner_profile: weekly
+enabled: true
+schedule:
+  type: market_open_plus_minutes
+  minutes: -5
+greeks_source: auto
+top: 10
+per_symbol_top: 1
+interval_seconds: 300
+backfill_missed_slots: false
+max_slot_retries: 3
+quote_capture_seconds: 20
+trade_capture_seconds: 30
+allow_off_hours: false
+session_start_offset_minutes: -5
+session_end_offset_minutes: 5
+singleton_scope: options_automation_short_dated_index_iron_condor
+execution_policy:
+  enabled: false
+  deployment_mode: shadow
+  mode: top_promotable
+  quantity: 1
+  pricing_mode: adaptive_credit
+  min_credit_retention_pct: 0.95
+  max_credit_concession: 0.02
+risk_policy:
+  enabled: true
+  allow_live: true
+  max_open_positions_per_session: 20
+  max_open_positions_per_underlying: 1
+  max_open_positions_per_underlying_strategy: 1
+  max_contracts_per_position: 1
+  max_contracts_per_session: 20
+  max_position_notional: 1000.0
+  max_session_notional: 1000.0
+  max_position_max_loss: 1000.0
+  max_session_max_loss: 1000.0
+  stale_quote_after_seconds: 900
+exit_policy:
+  enabled: true
+  profit_target_pct: 0.5
+  stop_multiple: 2.0
+  force_close_minutes_before_close: 10

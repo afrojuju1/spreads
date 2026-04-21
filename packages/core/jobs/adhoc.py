@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
 from typing import Any
 
 from arq import create_pool
@@ -9,25 +8,6 @@ from arq import create_pool
 from core.jobs.registry import get_job_spec
 from core.runtime.config import default_redis_url
 from core.runtime.redis import build_redis_settings
-
-
-def ensure_manual_job_definition(
-    job_store: Any,
-    *,
-    job_key: str,
-    job_type: str,
-    payload: Mapping[str, Any] | None = None,
-    singleton_scope: str | None = None,
-) -> None:
-    job_store.upsert_job_definition(
-        job_key=job_key,
-        job_type=job_type,
-        enabled=False,
-        schedule_type="manual",
-        schedule={},
-        payload=dict(payload or {}),
-        singleton_scope=singleton_scope,
-    )
 
 
 def enqueue_ad_hoc_job(
