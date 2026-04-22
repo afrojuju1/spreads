@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.services.option_structures import (
-    build_multileg_order_payload,
+    build_order_payload,
     legs_identity_key,
     normalize_legs,
     normalize_position_intent,
@@ -41,7 +41,7 @@ def _build_candidate_structure(
             strategy=strategy,
             legs=normalized_legs,
         ),
-        "order_payload": build_multileg_order_payload(
+        "order_payload": build_order_payload(
             legs=normalized_legs,
             limit_price=limit_price,
             strategy_family=strategy,

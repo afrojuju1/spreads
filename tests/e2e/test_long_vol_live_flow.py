@@ -10,7 +10,11 @@ from core.domain.models import (
     OptionContract,
     OptionSnapshot,
 )
-from core.services.execution import _build_order_request, normalize_execution_policy
+from core.services.execution import (
+    _build_close_order_request,
+    _build_order_request,
+    normalize_execution_policy,
+)
 from core.services.discovery_run_health.selection import build_selection_summary
 from core.services.opportunity_scoring import build_candidate_opportunity_score
 from core.services.scanners.builders.long_vol import (
@@ -161,8 +165,10 @@ class LongVolLiveFlowE2ETests(unittest.TestCase):
         candidate = candidates[0]
         self.assertEqual(candidate.strategy, "long_call")
         self.assertEqual(candidate.strike_path, "915.00C")
-        self.assertEqual(len(candidate.order_payload["legs"]), 1)
-        self.assertEqual(candidate.order_payload["legs"][0]["side"], "buy")
+        self.assertEqual(candidate.order_payload["symbol"], "NVDA260424C915")
+        self.assertEqual(candidate.order_payload["side"], "buy")
+        self.assertEqual(candidate.order_payload["position_intent"], "buy_to_open")
+        self.assertNotIn("legs", candidate.order_payload)
 
         candidate_payload = asdict(candidate)
         candidate_payload.update(
@@ -193,7 +199,10 @@ class LongVolLiveFlowE2ETests(unittest.TestCase):
             client_order_id="test-long-call-open",
         )
         self.assertEqual(resolved_quantity, 1)
-        self.assertEqual(len(order_request["legs"]), 1)
+        self.assertEqual(order_request["symbol"], "NVDA260424C915")
+        self.assertEqual(order_request["side"], "buy")
+        self.assertEqual(order_request["position_intent"], "buy_to_open")
+        self.assertNotIn("legs", order_request)
         self.assertEqual(order_request["limit_price"], "4.60")
         self.assertEqual(resolved_limit_price, 4.6)
 
@@ -237,6 +246,23 @@ class LongVolLiveFlowE2ETests(unittest.TestCase):
         self.assertAlmostEqual(position["entry_value"], 4.6, places=4)
         self.assertIsNone(position["economics"]["max_profit"])
         self.assertAlmostEqual(position["economics"]["max_loss"], 460.0, places=2)
+
+        close_request, close_quantity, close_limit = _build_close_order_request(
+            position={
+                **position,
+                "close_mark": 5.10,
+            },
+            quantity=1,
+            limit_price=None,
+            client_order_id="test-long-call-close",
+        )
+        self.assertEqual(close_quantity, 1)
+        self.assertEqual(close_limit, 5.1)
+        self.assertEqual(close_request["symbol"], "NVDA260424C915")
+        self.assertEqual(close_request["side"], "sell")
+        self.assertEqual(close_request["position_intent"], "sell_to_close")
+        self.assertNotIn("legs", close_request)
+        self.assertEqual(close_request["limit_price"], "5.10")
 
     def test_long_straddle_scanner_scoring_order_and_position_flow(self) -> None:
         expiration = "2026-04-24"

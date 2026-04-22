@@ -15,8 +15,8 @@ from core.services.execution_lifecycle import (
 from core.services.option_structures import (
     candidate_legs,
     legs_identity_key,
-    normalize_legs,
     normalize_strategy_family,
+    order_payload_legs,
 )
 from core.services.value_coercion import (
     as_text as _as_text,
@@ -134,7 +134,10 @@ def _execution_attempt_identity(attempt: Mapping[str, Any]) -> str | None:
         if isinstance(attempt.get("candidate"), Mapping)
         else {}
     )
-    legs = normalize_legs(request_order.get("legs")) or candidate_legs(
+    legs = order_payload_legs(
+        request_order,
+        expiration_date=_as_text(attempt.get("expiration_date")),
+    ) or candidate_legs(
         candidate_payload
     )
     if not legs:

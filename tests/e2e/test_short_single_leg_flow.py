@@ -10,7 +10,11 @@ from core.domain.models import (
     OptionSnapshot,
 )
 from core.services.discovery_run_health.selection import build_selection_summary
-from core.services.execution import _build_order_request, normalize_execution_policy
+from core.services.execution import (
+    _build_close_order_request,
+    _build_order_request,
+    normalize_execution_policy,
+)
 from core.services.opportunity_scoring import build_candidate_opportunity_score
 from core.services.scanners.builders.single_legs import (
     build_short_calls,
@@ -98,8 +102,11 @@ class ShortSingleLegFlowE2ETests(unittest.TestCase):
         self.assertEqual(len(candidates), 1)
         candidate = candidates[0]
         self.assertEqual(candidate.strategy, "short_call")
-        self.assertEqual(candidate.order_payload["legs"][0]["side"], "sell")
-        self.assertEqual(candidate.order_payload["limit_price"], "-2.25")
+        self.assertEqual(candidate.order_payload["symbol"], "SPY260424C510")
+        self.assertEqual(candidate.order_payload["side"], "sell")
+        self.assertEqual(candidate.order_payload["position_intent"], "sell_to_open")
+        self.assertNotIn("legs", candidate.order_payload)
+        self.assertEqual(candidate.order_payload["limit_price"], "2.25")
         self.assertAlmostEqual(candidate.return_on_risk, 1.0, places=4)
 
         candidate_payload = asdict(candidate)
@@ -126,8 +133,11 @@ class ShortSingleLegFlowE2ETests(unittest.TestCase):
         )
         self.assertEqual(resolved_quantity, 1)
         self.assertEqual(resolved_limit_price, 2.25)
-        self.assertEqual(order_request["limit_price"], "-2.25")
-        self.assertEqual(order_request["legs"][0]["side"], "sell")
+        self.assertEqual(order_request["symbol"], "SPY260424C510")
+        self.assertEqual(order_request["side"], "sell")
+        self.assertEqual(order_request["position_intent"], "sell_to_open")
+        self.assertNotIn("legs", order_request)
+        self.assertEqual(order_request["limit_price"], "2.25")
 
     def test_short_put_surfaces_in_selection_summary(self) -> None:
         expiration = "2026-04-24"
@@ -192,6 +202,26 @@ class ShortSingleLegFlowE2ETests(unittest.TestCase):
         )
         scorecard = build_candidate_opportunity_score(candidate_payload)
         self.assertEqual(scorecard["strategy_family"], "short_put")
+
+        close_request, close_quantity, close_limit = _build_close_order_request(
+            position={
+                "strategy": "short_put",
+                "strategy_family": "short_put",
+                "remaining_quantity": 1,
+                "close_mark": 1.10,
+                "legs": candidate_payload["legs"],
+            },
+            quantity=1,
+            limit_price=None,
+            client_order_id="test-short-put-close",
+        )
+        self.assertEqual(close_quantity, 1)
+        self.assertEqual(close_limit, 1.1)
+        self.assertEqual(close_request["symbol"], "QQQ260424P412")
+        self.assertEqual(close_request["side"], "buy")
+        self.assertEqual(close_request["position_intent"], "buy_to_close")
+        self.assertNotIn("legs", close_request)
+        self.assertEqual(close_request["limit_price"], "1.10")
 
         summary = build_selection_summary(
             [

@@ -2,8 +2,8 @@ bot_id: short_dated_index_iron_condor_bot
 name: Short-Dated Index Iron Condor Bot
 limits:
   capital_limit: 5000
-  max_open_positions: 2
-  max_daily_actions: 4
+  max_open_positions: 10
+  max_daily_actions: 20
   max_new_entries_per_day: 2
   daily_loss_limit: 250
 runtime:

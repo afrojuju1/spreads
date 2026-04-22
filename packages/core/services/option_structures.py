@@ -226,8 +226,8 @@ def candidate_legs(candidate: Mapping[str, Any]) -> list[dict[str, Any]]:
         return resolved
     order_payload = candidate.get("order_payload")
     if isinstance(order_payload, Mapping):
-        resolved = normalize_legs(
-            order_payload.get("legs"),
+        resolved = order_payload_legs(
+            order_payload,
             expiration_date=_as_text(candidate.get("expiration_date")),
         )
         if resolved:
@@ -642,21 +642,14 @@ def iron_condor_opening_legs(
     return built
 
 
-def build_multileg_order_payload(
+def _render_order_legs(
     *,
     legs: list[Mapping[str, Any]],
-    limit_price: float,
-    strategy_family: Any,
     trade_intent: str,
-    quantity: int = 1,
-) -> dict[str, Any]:
+) -> list[dict[str, Any]]:
     intent = str(trade_intent or "open").strip().lower()
-    normalized_legs = normalize_legs(legs)
-    if not normalized_legs:
-        raise ValueError("Order payload requires at least one normalized leg")
-
     rendered_legs: list[dict[str, Any]] = []
-    for leg in normalized_legs:
+    for leg in normalize_legs(legs):
         role = _as_text(leg.get("role")) or leg_role(
             side=leg.get("side"),
             position_intent=leg.get("position_intent"),
@@ -681,6 +674,91 @@ def build_multileg_order_payload(
                 "position_intent": position_intent,
             }
         )
+    return rendered_legs
+
+
+def order_payload_legs(
+    order_payload: Mapping[str, Any] | None,
+    *,
+    expiration_date: str | None = None,
+) -> list[dict[str, Any]]:
+    if not isinstance(order_payload, Mapping):
+        return []
+    resolved = normalize_legs(
+        order_payload.get("legs"),
+        expiration_date=expiration_date,
+    )
+    if resolved:
+        return resolved
+
+    symbol = _as_text(order_payload.get("symbol"))
+    if symbol is None:
+        return []
+    side = _as_text(order_payload.get("side"))
+    role = _as_text(order_payload.get("role")) or leg_role(
+        side=side,
+        position_intent=order_payload.get("position_intent"),
+    )
+    position_intent = normalize_position_intent(
+        order_payload.get("position_intent"),
+        role=role,
+        trade_intent="close"
+        if str(order_payload.get("position_intent") or "").strip().lower()
+        in {"buy_to_close", "sell_to_close", "close"}
+        else "open",
+    )
+    return normalize_legs(
+        [
+            {
+                "symbol": symbol,
+                "side": side,
+                "position_intent": position_intent,
+                "ratio_qty": _as_text(order_payload.get("ratio_qty")) or "1",
+                "role": role,
+                "expiration_date": _as_text(order_payload.get("expiration_date"))
+                or expiration_date,
+                "strike": order_payload.get("strike"),
+                "option_type": order_payload.get("option_type"),
+            }
+        ],
+        expiration_date=expiration_date,
+    )
+
+
+def build_single_leg_order_payload(
+    *,
+    legs: list[Mapping[str, Any]],
+    limit_price: float,
+    trade_intent: str,
+    quantity: int = 1,
+) -> dict[str, Any]:
+    rendered_legs = _render_order_legs(legs=legs, trade_intent=trade_intent)
+    if len(rendered_legs) != 1:
+        raise ValueError("Single-leg order payload requires exactly one normalized leg")
+    rendered_leg = rendered_legs[0]
+    return {
+        "symbol": rendered_leg["symbol"],
+        "side": str(rendered_leg["side"]),
+        "position_intent": str(rendered_leg["position_intent"]),
+        "qty": str(max(int(quantity), 1)),
+        "type": "limit",
+        "limit_price": f"{abs(float(limit_price)):.2f}",
+        "time_in_force": "day",
+    }
+
+
+def build_multileg_order_payload(
+    *,
+    legs: list[Mapping[str, Any]],
+    limit_price: float,
+    strategy_family: Any,
+    trade_intent: str,
+    quantity: int = 1,
+) -> dict[str, Any]:
+    intent = str(trade_intent or "open").strip().lower()
+    rendered_legs = _render_order_legs(legs=legs, trade_intent=intent)
+    if not rendered_legs:
+        raise ValueError("Order payload requires at least one normalized leg")
 
     signed_limit = signed_net_limit_price(
         limit_price=limit_price,
@@ -695,6 +773,33 @@ def build_multileg_order_payload(
         "time_in_force": "day",
         "legs": rendered_legs,
     }
+
+
+def build_order_payload(
+    *,
+    legs: list[Mapping[str, Any]],
+    limit_price: float,
+    strategy_family: Any,
+    trade_intent: str,
+    quantity: int = 1,
+) -> dict[str, Any]:
+    normalized_legs = normalize_legs(legs)
+    if not normalized_legs:
+        raise ValueError("Order payload requires at least one normalized leg")
+    if len(normalized_legs) == 1:
+        return build_single_leg_order_payload(
+            legs=normalized_legs,
+            limit_price=limit_price,
+            trade_intent=trade_intent,
+            quantity=quantity,
+        )
+    return build_multileg_order_payload(
+        legs=normalized_legs,
+        limit_price=limit_price,
+        strategy_family=strategy_family,
+        trade_intent=trade_intent,
+        quantity=quantity,
+    )
 
 
 def _quote_number(quote: Any, key: str) -> float | None:
@@ -853,7 +958,9 @@ def legs_identity_key(
 
 
 __all__ = [
+    "build_order_payload",
     "build_multileg_order_payload",
+    "build_single_leg_order_payload",
     "candidate_legs",
     "closing_legs",
     "common_expiration_date",
@@ -866,6 +973,7 @@ __all__ = [
     "normalize_legs",
     "normalize_position_intent",
     "normalize_strategy_family",
+    "order_payload_legs",
     "position_legs",
     "primary_short_long_symbols",
     "payload_structure_identity",

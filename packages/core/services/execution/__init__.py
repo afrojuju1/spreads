@@ -33,12 +33,13 @@ from core.services.execution_lifecycle import (
 )
 from core.services.execution_portfolio import build_structure_quote_snapshot
 from core.services.option_structures import (
-    build_multileg_order_payload,
+    build_order_payload,
     candidate_legs,
     closing_legs,
     legs_identity_key,
     net_premium_kind,
     normalize_legs,
+    order_payload_legs,
     structure_quote_snapshot,
 )
 from core.services.opportunity_execution_plan import build_execution_plan
@@ -113,13 +114,13 @@ from .shared import (
 
 def _opportunity_legs_from_row(opportunity: Mapping[str, Any]) -> list[OpportunityLeg]:
     legs_payload = opportunity.get("legs")
-    if not isinstance(legs_payload, (list, tuple)):
+    resolved_legs = normalize_legs(legs_payload)
+    if not resolved_legs:
         execution_shape = opportunity.get("execution_shape")
         if isinstance(execution_shape, Mapping):
             order_payload = execution_shape.get("order_payload")
             if isinstance(order_payload, Mapping):
-                legs_payload = order_payload.get("legs")
-    resolved_legs = normalize_legs(legs_payload)
+                resolved_legs = order_payload_legs(order_payload)
     if not resolved_legs:
         return []
     built: list[OpportunityLeg] = []
@@ -1004,7 +1005,10 @@ def _build_order_request(
     candidate_payload = _candidate_with_payload(candidate)
     strategy_family = _strategy_family_from_payload(candidate_payload)
     order_payload = dict(candidate_payload.get("order_payload") or {})
-    resolved_legs = normalize_legs(order_payload.get("legs")) or candidate_legs(
+    resolved_legs = order_payload_legs(
+        order_payload,
+        expiration_date=_as_text(candidate_payload.get("expiration_date")),
+    ) or candidate_legs(
         candidate_payload
     )
     if not resolved_legs:
@@ -1021,7 +1025,7 @@ def _build_order_request(
         explicit_limit_price=limit_price,
         execution_policy=execution_policy,
     )
-    request = build_multileg_order_payload(
+    request = build_order_payload(
         legs=resolved_legs,
         limit_price=resolved_limit_price,
         strategy_family=strategy_family,
@@ -1069,7 +1073,7 @@ def _build_close_order_request(
         resolved_legs = candidate_legs(position)
     if not resolved_legs:
         raise ValueError("Close execution requires canonical position legs")
-    request = build_multileg_order_payload(
+    request = build_order_payload(
         legs=closing_legs(resolved_legs),
         limit_price=float(resolved_limit_price),
         strategy_family=strategy_family,

@@ -12,7 +12,7 @@ from core.services.execution_lifecycle import (
 from core.services.option_structures import (
     candidate_legs,
     net_premium_kind,
-    normalize_legs,
+    order_payload_legs,
     position_legs as canonical_position_legs,
     structure_width,
 )
@@ -251,8 +251,8 @@ def _resolve_spread_amount(
 ) -> float | None:
     request = _attempt_request(attempt)
     order = request.get("order") if isinstance(request.get("order"), Mapping) else {}
-    legs = normalize_legs(
-        order.get("legs"),
+    legs = order_payload_legs(
+        order,
         expiration_date=_as_text(attempt.get("expiration_date")),
     )
     if not legs:
@@ -552,8 +552,8 @@ def _position_common_payload(
     risk_policy.update(_attempt_risk_policy(attempt))
     request = _attempt_request(attempt)
     order = request.get("order") if isinstance(request.get("order"), Mapping) else {}
-    attempt_legs = normalize_legs(
-        order.get("legs"),
+    attempt_legs = order_payload_legs(
+        order,
         expiration_date=_as_text(attempt.get("expiration_date")),
     )
     if not attempt_legs and candidate:
