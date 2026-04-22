@@ -4,7 +4,7 @@ import asyncio
 import os
 import unittest
 from argparse import Namespace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -37,6 +37,8 @@ from core.services.risk_manager import evaluate_open_execution
 from core.services.strategy_positions import run_management_automation_decision
 from core.services.uoa_state import get_latest_uoa_state
 from core.storage.discovery_run_repository import DiscoveryRunRepository
+from core.storage.signal_models import OpportunityModel
+from core.storage.signal_repository import SignalRepository
 from core.storage.serializers import parse_datetime
 
 
@@ -224,6 +226,40 @@ class _AutomationRuntimeSignalStore:
         return []
 
 
+class _StaticScalarResult:
+    def __init__(self, rows: list[object]) -> None:
+        self.rows = rows
+
+    def all(self) -> list[object]:
+        return list(self.rows)
+
+
+class _StaticSession:
+    def __init__(self, rows: list[object]) -> None:
+        self.rows = rows
+
+    def scalars(self, _statement: object) -> _StaticScalarResult:
+        return _StaticScalarResult(self.rows)
+
+    def scalar(self, _statement: object) -> object | None:
+        return None if not self.rows else self.rows[0]
+
+    def flush(self) -> None:
+        return None
+
+    def refresh(self, _row: object) -> None:
+        return None
+
+    def commit(self) -> None:
+        return None
+
+    def rollback(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
 class _DecisionSignalStore:
     def __init__(
         self, *, scoped_row: dict[str, object], generic_row: dict[str, object]
@@ -244,6 +280,28 @@ class _DecisionSignalStore:
         if bool(kwargs.get("runtime_owned")):
             return [dict(self.scoped_row)]
         return [dict(self.generic_row)]
+
+    def upsert_opportunity_decision(self, **kwargs: object) -> dict[str, object]:
+        row = dict(kwargs)
+        self.decisions.append(row)
+        return row
+
+
+class _MultiRowDecisionSignalStore:
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self.rows = [dict(row) for row in rows]
+        self.list_calls: list[dict[str, object]] = []
+        self.decisions: list[dict[str, object]] = []
+
+    def schema_ready(self) -> bool:
+        return True
+
+    def decision_schema_ready(self) -> bool:
+        return True
+
+    def list_opportunities(self, **kwargs: object) -> list[dict[str, object]]:
+        self.list_calls.append(dict(kwargs))
+        return [dict(row) for row in self.rows]
 
     def upsert_opportunity_decision(self, **kwargs: object) -> dict[str, object]:
         row = dict(kwargs)
@@ -3513,6 +3571,197 @@ class DiscoveryRunArchitectureE2ETests(unittest.TestCase):
         )
         self.assertEqual(result["skipped"][0]["reason"], "superseded_stale_queued_runs")
         self.assertEqual(result["skipped"][0]["count"], "2")
+
+    def test_signal_repository_soft_stales_absent_opportunities_before_ttl_expiry(
+        self,
+    ) -> None:
+        first_seen_at = datetime(2026, 4, 22, 14, 0, tzinfo=UTC)
+        hard_expires_at = datetime(2026, 4, 22, 14, 30, tzinfo=UTC)
+        row = OpportunityModel(
+            opportunity_id="opp-soft-stale",
+            pipeline_id="pipeline:explore_5_short_put_weekly_auto",
+            label="explore_5_short_put_weekly_auto",
+            market_date=date(2026, 4, 22),
+            session_date=date(2026, 4, 22),
+            cycle_id="cycle-1",
+            root_symbol="IWM",
+            bot_id="short_dated_etf_short_put_bot",
+            automation_id="etf_short_put_entry",
+            automation_run_id="automation_run:1",
+            strategy_config_id="short_dated_etf_short_put",
+            strategy_id="short_put",
+            config_hash="cfg-1",
+            policy_ref_json={},
+            strategy_family="short_put",
+            profile="weekly",
+            style_profile="income",
+            horizon_intent="short_dated",
+            product_class="options",
+            expiration_date=date(2026, 4, 24),
+            entity_type="automation_signal_subject",
+            entity_key="automation_signal_subject:short_dated_etf_short_put_bot:etf_short_put_entry:IWM",
+            underlying_symbol="IWM",
+            side="short_put",
+            side_bias="short_put",
+            selection_state="promotable",
+            selection_rank=1,
+            state_reason="selected_promotable",
+            origin="config_runtime",
+            eligibility="live",
+            eligibility_state="live",
+            promotion_score=82.0,
+            execution_score=84.0,
+            confidence=0.8,
+            signal_state_ref=None,
+            lifecycle_state="ready",
+            created_at=first_seen_at,
+            updated_at=first_seen_at,
+            expires_at=hard_expires_at,
+            reason_codes_json=["selected_promotable"],
+            blockers_json=[],
+            legs_json=[],
+            economics_json={},
+            strategy_metrics_json={},
+            order_payload_json={},
+            evidence_json={
+                "generated_at": "2026-04-22T14:00:00Z",
+                "last_present_at": "2026-04-22T14:00:00Z",
+            },
+            execution_shape_json={},
+            risk_hints_json={},
+            source_cycle_id="cycle-1",
+            source_candidate_id=101,
+            source_selection_state="promotable",
+            candidate_identity="IWM:short_put",
+            candidate_json={"underlying_symbol": "IWM"},
+            consumed_by_execution_attempt_id=None,
+        )
+        session = _StaticSession([row])
+        repo = SignalRepository(
+            engine=object(),
+            session_factory=lambda: session,
+            capabilities=_RepositoryCapabilities(),
+        )
+
+        first_transition = repo.expire_absent_opportunities(
+            label="explore_5_short_put_weekly_auto",
+            session_date="2026-04-22",
+            active_opportunity_ids=[],
+            expired_at="2026-04-22T14:05:00Z",
+            bot_id="short_dated_etf_short_put_bot",
+            automation_id="etf_short_put_entry",
+            strategy_config_id="short_dated_etf_short_put",
+            runtime_owned=True,
+        )[0]
+        self.assertEqual(first_transition["lifecycle_state"], "ready")
+        self.assertEqual(first_transition["eligibility_state"], "live")
+        self.assertIn("grace_cycle_absence", first_transition["reason_codes"])
+        self.assertEqual(first_transition["evidence"]["absence_state"], "grace")
+        self.assertEqual(first_transition["evidence"]["missed_cycle_count"], 1)
+        self.assertEqual(
+            first_transition["evidence"]["last_present_at"],
+            "2026-04-22T14:00:00Z",
+        )
+        self.assertEqual(first_transition["expires_at"], "2026-04-22T14:30:00Z")
+
+        second_transition = repo.expire_absent_opportunities(
+            label="explore_5_short_put_weekly_auto",
+            session_date="2026-04-22",
+            active_opportunity_ids=[],
+            expired_at="2026-04-22T14:10:00Z",
+            bot_id="short_dated_etf_short_put_bot",
+            automation_id="etf_short_put_entry",
+            strategy_config_id="short_dated_etf_short_put",
+            runtime_owned=True,
+        )[0]
+        self.assertEqual(second_transition["lifecycle_state"], "stale")
+        self.assertEqual(second_transition["eligibility_state"], "stale")
+        self.assertIn("stale_cycle_absence", second_transition["reason_codes"])
+        self.assertEqual(second_transition["evidence"]["absence_state"], "stale")
+        self.assertEqual(second_transition["evidence"]["missed_cycle_count"], 2)
+        self.assertEqual(second_transition["expires_at"], "2026-04-22T14:30:00Z")
+
+        third_transition = repo.expire_absent_opportunities(
+            label="explore_5_short_put_weekly_auto",
+            session_date="2026-04-22",
+            active_opportunity_ids=[],
+            expired_at="2026-04-22T14:30:00Z",
+            bot_id="short_dated_etf_short_put_bot",
+            automation_id="etf_short_put_entry",
+            strategy_config_id="short_dated_etf_short_put",
+            runtime_owned=True,
+        )[0]
+        self.assertEqual(third_transition["lifecycle_state"], "expired")
+        self.assertEqual(third_transition["eligibility_state"], "expired")
+        self.assertIn("expired_cycle_absence", third_transition["reason_codes"])
+        self.assertEqual(third_transition["evidence"]["absence_state"], "expired")
+        self.assertEqual(third_transition["expires_at"], "2026-04-22T14:30:00Z")
+
+    def test_entry_decision_skips_stale_runtime_opportunities(self) -> None:
+        bot = load_active_bots()["short_dated_index_credit_bot"]
+        runtime = next(
+            item
+            for item in bot.automations
+            if item.automation.automation_id == "index_put_credit_entry"
+        )
+        symbol = runtime.symbols[0]
+        signals = _MultiRowDecisionSignalStore(
+            [
+                {
+                    "opportunity_id": "opp-stale",
+                    "underlying_symbol": symbol,
+                    "strategy_family": runtime.strategy_config.strategy_family,
+                    "lifecycle_state": "stale",
+                    "eligibility_state": "stale",
+                    "consumed_by_execution_attempt_id": None,
+                    "execution_score": 99.0,
+                    "selection_rank": 1,
+                    "label": "runtime_label",
+                    "expires_at": "2026-04-15T15:30:00Z",
+                },
+                {
+                    "opportunity_id": "opp-ready",
+                    "underlying_symbol": symbol,
+                    "strategy_family": runtime.strategy_config.strategy_family,
+                    "lifecycle_state": "ready",
+                    "eligibility_state": "live",
+                    "consumed_by_execution_attempt_id": None,
+                    "execution_score": 88.0,
+                    "selection_rank": 2,
+                    "label": "runtime_label",
+                    "expires_at": "2026-04-15T15:30:00Z",
+                },
+            ]
+        )
+        execution = _DecisionExecutionStore()
+        storage = _DecisionStorage(
+            signals=signals,
+            execution=execution,
+            jobs=_DecisionJobStore(),
+        )
+
+        with (
+            patch(
+                "core.services.decision_engine.automation_should_run_now",
+                return_value=True,
+            ),
+            patch(
+                "core.services.decision_engine.evaluate_entry_controls",
+                return_value=(True, None, {"open_positions": 0}),
+            ),
+        ):
+            result = run_entry_automation_decision(
+                db_target="postgresql://example",
+                bot_id=bot.bot.bot_id,
+                automation_id=runtime.automation.automation_id,
+                market_date="2026-04-15",
+                storage=storage,
+            )
+
+        self.assertEqual(result["selected_opportunity_id"], "opp-ready")
+        self.assertEqual(result["opportunity_count"], 1)
+        self.assertEqual(len(execution.upserted_intents), 1)
+        self.assertEqual(execution.upserted_intents[0]["payload"]["opportunity_id"], "opp-ready")
 
     def test_entry_decision_prefers_automation_scoped_opportunities(self) -> None:
         bot = load_active_bots()["short_dated_index_credit_bot"]

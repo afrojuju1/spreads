@@ -263,6 +263,7 @@ def build_runtime_opportunity_payload(
             "selection_state": row.get("selection_state"),
             "selection_rank": row.get("selection_rank"),
             "generated_at": generated_at,
+            "last_present_at": generated_at,
             **candidate_evidence_metrics(candidate),
             **candidate_policy_context(candidate),
             "source_opportunity_id": None

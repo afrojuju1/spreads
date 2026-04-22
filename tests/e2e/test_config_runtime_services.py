@@ -784,6 +784,64 @@ class RuntimeVisibilityTests(unittest.TestCase):
         )
         self.assertFalse(storage.signals.calls[0]["active_only"])
 
+    def test_list_opportunities_can_surface_stale_rows_for_diagnostics(self) -> None:
+        class _SignalStore:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            def list_opportunities(self, **kwargs: object) -> list[dict[str, object]]:
+                self.calls.append(dict(kwargs))
+                rows = [
+                    {
+                        "opportunity_id": "opp-live",
+                        "pipeline_id": "pipeline:explore_10_put_credit_weekly_auto",
+                        "label": "explore_10_put_credit_weekly_auto",
+                        "market_date": "2026-04-20",
+                        "session_date": "2026-04-20",
+                        "lifecycle_state": "ready",
+                        "selection_state": "promotable",
+                        "selection_rank": 1,
+                        "eligibility_state": "live",
+                        "underlying_symbol": "SPY",
+                    },
+                    {
+                        "opportunity_id": "opp-stale",
+                        "pipeline_id": "pipeline:explore_10_put_credit_weekly_auto",
+                        "label": "explore_10_put_credit_weekly_auto",
+                        "market_date": "2026-04-20",
+                        "session_date": "2026-04-20",
+                        "lifecycle_state": "stale",
+                        "selection_state": "promotable",
+                        "selection_rank": 2,
+                        "eligibility_state": "stale",
+                        "underlying_symbol": "QQQ",
+                    },
+                ]
+                if kwargs.get("active_only"):
+                    return list(rows)
+                return []
+
+        class _Storage:
+            def __init__(self) -> None:
+                self.signals = _SignalStore()
+
+        storage = _Storage()
+
+        payload = list_opportunities(
+            db_target="postgresql://example",
+            pipeline_id="pipeline:explore_10_put_credit_weekly_auto",
+            market_date="2026-04-20",
+            include_analysis_only=True,
+            storage=storage,
+        )
+
+        self.assertEqual(
+            [row["opportunity_id"] for row in payload["opportunities"]],
+            ["opp-live", "opp-stale"],
+        )
+        self.assertTrue(storage.signals.calls[0]["active_only"])
+        self.assertIsNone(storage.signals.calls[0]["eligibility_state"])
+
     def test_list_opportunities_respects_explicit_lifecycle_filter(self) -> None:
         class _SignalStore:
             def __init__(self) -> None:

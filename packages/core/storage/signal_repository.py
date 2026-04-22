@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
@@ -24,12 +24,60 @@ from core.storage.signal_models import (
 )
 
 ACTIVE_OPPORTUNITY_LIFECYCLE_STATES = ("candidate", "ready", "blocked")
+VISIBLE_OPPORTUNITY_LIFECYCLE_STATES = ACTIVE_OPPORTUNITY_LIFECYCLE_STATES + ("stale",)
+ABSENCE_OPPORTUNITY_REASON_CODES = frozenset(
+    {
+        "grace_cycle_absence",
+        "stale_cycle_absence",
+        "expired_cycle_absence",
+    }
+)
+ABSENT_OPPORTUNITY_STALE_AFTER_MISSED_CYCLES = 2
+OPPORTUNITY_PROFILE_TTL_MINUTES = {
+    "0dte": 5,
+    "micro": 15,
+    "weekly": 30,
+    "core": 30,
+    "swing": 60,
+}
 
 
 def _optional_date(value: str | date | None) -> date | None:
     if value in (None, ""):
         return None
     return parse_date(value)
+
+
+def _opportunity_ttl_minutes(profile: str | None) -> int:
+    return OPPORTUNITY_PROFILE_TTL_MINUTES.get(str(profile or "").lower(), 30)
+
+
+def _render_datetime(value: datetime | None) -> str | None:
+    return None if value is None else str(render_value(value))
+
+
+def _hard_expire_at(row: OpportunityModel) -> datetime | None:
+    if row.expires_at is not None:
+        return row.expires_at
+    if row.updated_at is None:
+        return None
+    return row.updated_at + timedelta(minutes=_opportunity_ttl_minutes(row.profile))
+
+
+def _append_reason_code(
+    reason_codes: list[str],
+    reason_code: str,
+    *,
+    clear_absence_reasons: bool = False,
+) -> list[str]:
+    next_codes = [
+        str(value)
+        for value in reason_codes
+        if not clear_absence_reasons or str(value) not in ABSENCE_OPPORTUNITY_REASON_CODES
+    ]
+    if reason_code not in next_codes:
+        next_codes.append(reason_code)
+    return next_codes
 
 
 def _state_snapshot(payload: dict[str, Any]) -> tuple[Any, ...]:
@@ -546,6 +594,73 @@ class SignalRepository(RepositoryBase):
         row.updated_at = expired_at_dt
         row.expires_at = expired_at_dt
 
+    @staticmethod
+    def _transition_absent_opportunity_model(
+        row: OpportunityModel,
+        *,
+        expired_at_dt: datetime,
+        stale_after_missed_cycles: int = ABSENT_OPPORTUNITY_STALE_AFTER_MISSED_CYCLES,
+    ) -> None:
+        evidence = dict(row.evidence_json or {})
+        previous_updated_at = row.updated_at
+        hard_expire_at = _hard_expire_at(row)
+        resolved_hard_expire_at = hard_expire_at
+        if row.expires_at is None and hard_expire_at is not None:
+            row.expires_at = hard_expire_at
+        try:
+            missed_cycles = max(int(evidence.get("missed_cycle_count") or 0), 0) + 1
+        except (TypeError, ValueError):
+            missed_cycles = 1
+        hard_expired = hard_expire_at is not None and expired_at_dt >= hard_expire_at
+        if hard_expired:
+            SignalRepository._expire_opportunity_model(
+                row,
+                expired_at_dt=expired_at_dt,
+                reason_code="expired_cycle_absence",
+            )
+            row.eligibility_state = "expired"
+            row.reason_codes_json = _append_reason_code(
+                [str(value) for value in row.reason_codes_json or []],
+                "expired_cycle_absence",
+                clear_absence_reasons=True,
+            )
+            evidence["absence_state"] = "expired"
+        elif missed_cycles >= max(int(stale_after_missed_cycles), 1):
+            row.lifecycle_state = "stale"
+            row.eligibility_state = "stale"
+            row.updated_at = expired_at_dt
+            row.reason_codes_json = _append_reason_code(
+                [str(value) for value in row.reason_codes_json or []],
+                "stale_cycle_absence",
+                clear_absence_reasons=True,
+            )
+            evidence["absence_state"] = "stale"
+            evidence["stale_at"] = evidence.get("stale_at") or _render_datetime(
+                expired_at_dt
+            )
+        else:
+            if row.lifecycle_state not in ACTIVE_OPPORTUNITY_LIFECYCLE_STATES:
+                row.lifecycle_state = "candidate"
+            row.eligibility_state = str(row.eligibility or "live")
+            row.updated_at = expired_at_dt
+            row.reason_codes_json = _append_reason_code(
+                [str(value) for value in row.reason_codes_json or []],
+                "grace_cycle_absence",
+                clear_absence_reasons=True,
+            )
+            evidence["absence_state"] = "grace"
+            evidence.pop("stale_at", None)
+        evidence["missed_cycle_count"] = missed_cycles
+        evidence["stale_after_missed_cycles"] = max(int(stale_after_missed_cycles), 1)
+        evidence["last_absent_at"] = _render_datetime(expired_at_dt)
+        evidence["hard_expire_at"] = _render_datetime(resolved_hard_expire_at)
+        evidence["last_present_at"] = (
+            evidence.get("last_present_at")
+            or evidence.get("generated_at")
+            or _render_datetime(previous_updated_at)
+        )
+        row.evidence_json = evidence
+
     def expire_opportunity(
         self,
         opportunity_id: str,
@@ -862,7 +977,7 @@ class SignalRepository(RepositoryBase):
         elif active_only:
             statement = statement.where(
                 OpportunityModel.lifecycle_state.in_(
-                    ACTIVE_OPPORTUNITY_LIFECYCLE_STATES
+                    VISIBLE_OPPORTUNITY_LIFECYCLE_STATES
                 )
             )
         if eligibility_state:
@@ -962,7 +1077,7 @@ class SignalRepository(RepositoryBase):
         statement = select(OpportunityModel).where(
             OpportunityModel.label == label,
             OpportunityModel.session_date == session_date_value,
-            OpportunityModel.lifecycle_state.in_(ACTIVE_OPPORTUNITY_LIFECYCLE_STATES),
+            OpportunityModel.lifecycle_state.in_(VISIBLE_OPPORTUNITY_LIFECYCLE_STATES),
         )
         if runtime_owned is False and not any(
             [bot_id, automation_id, strategy_config_id]
@@ -984,18 +1099,17 @@ class SignalRepository(RepositoryBase):
             )
         with self.session_scope() as session:
             rows = session.scalars(statement).all()
-            expired_rows: list[OpportunityModel] = []
+            transitioned_rows: list[OpportunityModel] = []
             for row in rows:
-                self._expire_opportunity_model(
+                self._transition_absent_opportunity_model(
                     row,
                     expired_at_dt=expired_at_dt,
-                    reason_code="expired_cycle_absence",
                 )
-                expired_rows.append(row)
+                transitioned_rows.append(row)
             session.flush()
-            for row in expired_rows:
+            for row in transitioned_rows:
                 session.refresh(row)
-            return self.rows(expired_rows)
+            return self.rows(transitioned_rows)
 
     def find_active_opportunity_by_candidate_id(
         self,

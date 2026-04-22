@@ -366,6 +366,7 @@ def _build_opportunity_payload(
             "origin": row.get("origin"),
             "eligibility": row.get("eligibility"),
             "generated_at": generated_at,
+            "last_present_at": generated_at,
             "discovery_score": candidate.get("discovery_score"),
             "promotion_score": candidate.get("promotion_score"),
             "execution_score": candidate.get("execution_score"),
