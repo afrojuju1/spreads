@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -938,7 +939,9 @@ class SignalRepository(RepositoryBase):
         market_date: str | None = None,
         session_date: str | None = None,
         lifecycle_state: str | None = None,
+        lifecycle_states: Sequence[str] | None = None,
         eligibility_state: str | None = None,
+        eligibility_states: Sequence[str] | None = None,
         underlying_symbol: str | None = None,
         strategy_family: str | None = None,
         bot_id: str | None = None,
@@ -974,6 +977,14 @@ class SignalRepository(RepositoryBase):
             statement = statement.where(
                 OpportunityModel.lifecycle_state == lifecycle_state
             )
+        elif lifecycle_states:
+            resolved_lifecycle_states = tuple(
+                str(value) for value in lifecycle_states if str(value)
+            )
+            if resolved_lifecycle_states:
+                statement = statement.where(
+                    OpportunityModel.lifecycle_state.in_(resolved_lifecycle_states)
+                )
         elif active_only:
             statement = statement.where(
                 OpportunityModel.lifecycle_state.in_(
@@ -984,6 +995,14 @@ class SignalRepository(RepositoryBase):
             statement = statement.where(
                 OpportunityModel.eligibility_state == eligibility_state
             )
+        elif eligibility_states:
+            resolved_eligibility_states = tuple(
+                str(value) for value in eligibility_states if str(value)
+            )
+            if resolved_eligibility_states:
+                statement = statement.where(
+                    OpportunityModel.eligibility_state.in_(resolved_eligibility_states)
+                )
         if underlying_symbol:
             statement = statement.where(
                 OpportunityModel.underlying_symbol == underlying_symbol.upper()

@@ -5,10 +5,6 @@ const candidateDetailSchema = z
     run_id: z.string().optional(),
     profile: z.string().optional(),
     strategy: z.string(),
-    short_symbol: z.string(),
-    long_symbol: z.string(),
-    short_strike: z.number(),
-    long_strike: z.number(),
     quality_score: z.number(),
     midpoint_credit: z.number(),
     setup_status: z.string().nullable().optional(),
@@ -46,8 +42,6 @@ const liveCandidateSchema = z
     underlying_symbol: z.string(),
     strategy: z.string(),
     expiration_date: z.string(),
-    short_symbol: z.string(),
-    long_symbol: z.string(),
     quality_score: z.number(),
     midpoint_credit: z.number(),
     candidate: candidateDetailSchema,
@@ -355,8 +349,6 @@ const executionAttemptSchema = z
     underlying_symbol: z.string(),
     strategy: z.string(),
     expiration_date: z.string(),
-    short_symbol: z.string(),
-    long_symbol: z.string(),
     trade_intent: z.string(),
     position_id: z.string().nullable().optional(),
     quantity: z.number(),
@@ -404,8 +396,6 @@ const sessionPortfolioPositionSchema = z
     candidate_id: z.number().nullable().optional(),
     underlying_symbol: z.string(),
     strategy: z.string(),
-    short_symbol: z.string(),
-    long_symbol: z.string(),
     expiration_date: z.string().nullable().optional(),
     position_status: z.string(),
     broker_status: z.string(),
@@ -860,6 +850,7 @@ export function getOpportunities(filters?: {
   automationId?: string;
   strategyConfigId?: string;
   includeAnalysisOnly?: boolean;
+  includeNonLive?: boolean;
   limit?: number;
 }) {
   return fetchApi("opportunities", opportunityListResponseSchema, {
@@ -871,6 +862,7 @@ export function getOpportunities(filters?: {
     automation_id: filters?.automationId,
     strategy_config_id: filters?.strategyConfigId,
     include_analysis_only: filters?.includeAnalysisOnly,
+    include_non_live: filters?.includeNonLive,
     limit: filters?.limit,
   });
 }
@@ -974,6 +966,7 @@ export function buildOpportunitiesHref(filters?: {
   automationId?: string | null;
   strategyConfigId?: string | null;
   label?: string | null;
+  showNonLive?: boolean | null;
 }) {
   const params = new URLSearchParams();
   if (filters?.marketDate) {
@@ -990,6 +983,9 @@ export function buildOpportunitiesHref(filters?: {
   }
   if (filters?.label) {
     params.set("label", filters.label);
+  }
+  if (filters?.showNonLive) {
+    params.set("showNonLive", "1");
   }
   const query = params.toString();
   return query ? `/opportunities?${query}` : "/opportunities";

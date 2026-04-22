@@ -6,6 +6,46 @@ from typing import Any
 from core.db.decorators import with_storage
 from core.services.option_structures import payload_display_fields, payload_structure_identity
 from core.services.runtime_identity import build_live_run_scope_id
+from core.storage.signal_repository import VISIBLE_OPPORTUNITY_LIFECYCLE_STATES
+
+LIVE_OPPORTUNITY_ELIGIBILITY_STATES = ("live",)
+LIVE_AND_EXPIRED_OPPORTUNITY_ELIGIBILITY_STATES = ("live", "expired")
+BOARD_OPPORTUNITY_ELIGIBILITY_STATES = ("live", "stale", "expired")
+BOARD_OPPORTUNITY_LIFECYCLE_STATES = VISIBLE_OPPORTUNITY_LIFECYCLE_STATES + (
+    "expired",
+)
+
+
+def _resolve_opportunity_eligibility_states(
+    *,
+    lifecycle_state: str | None,
+    include_analysis_only: bool,
+    include_expired: bool,
+    include_non_live: bool,
+) -> tuple[str, ...] | None:
+    if include_analysis_only:
+        return None
+    resolved_lifecycle_state = str(lifecycle_state or "").strip().lower()
+    if resolved_lifecycle_state in {"stale", "expired"}:
+        return (resolved_lifecycle_state,)
+    if include_non_live:
+        return BOARD_OPPORTUNITY_ELIGIBILITY_STATES
+    if include_expired:
+        return LIVE_AND_EXPIRED_OPPORTUNITY_ELIGIBILITY_STATES
+    return LIVE_OPPORTUNITY_ELIGIBILITY_STATES
+
+
+def _resolve_opportunity_lifecycle_states(
+    *,
+    lifecycle_state: str | None,
+    include_expired: bool,
+    include_non_live: bool,
+) -> tuple[str, ...] | None:
+    if lifecycle_state is not None:
+        return None
+    if include_expired or include_non_live:
+        return BOARD_OPPORTUNITY_LIFECYCLE_STATES
+    return None
 
 
 def serialize_opportunity_row(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -158,10 +198,22 @@ def list_opportunities(
     strategy_config_id: str | None = None,
     include_analysis_only: bool = False,
     include_expired: bool = False,
+    include_non_live: bool = False,
     limit: int = 200,
     storage: Any | None = None,
 ) -> dict[str, Any]:
     signal_store = storage.signals
+    eligibility_states = _resolve_opportunity_eligibility_states(
+        lifecycle_state=lifecycle_state,
+        include_analysis_only=include_analysis_only,
+        include_expired=include_expired,
+        include_non_live=include_non_live,
+    )
+    lifecycle_states = _resolve_opportunity_lifecycle_states(
+        lifecycle_state=lifecycle_state,
+        include_expired=include_expired,
+        include_non_live=include_non_live,
+    )
     rows = [
         serialize_opportunity_row(dict(row))
         for row in signal_store.list_opportunities(
@@ -169,11 +221,16 @@ def list_opportunities(
             label=label,
             market_date=market_date,
             lifecycle_state=lifecycle_state,
+            lifecycle_states=lifecycle_states,
             bot_id=bot_id,
             automation_id=automation_id,
             strategy_config_id=strategy_config_id,
-            eligibility_state=None if include_analysis_only else "live",
-            active_only=lifecycle_state is None and not include_expired,
+            eligibility_states=eligibility_states,
+            active_only=(
+                lifecycle_state is None
+                and not include_expired
+                and not include_non_live
+            ),
             limit=limit,
         )
     ]

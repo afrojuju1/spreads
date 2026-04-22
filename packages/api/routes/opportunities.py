@@ -27,6 +27,7 @@ def list_opportunities_route(
     lifecycle_state: str | None = None,
     include_analysis_only: bool = False,
     include_expired: bool = False,
+    include_non_live: bool = False,
     limit: int = Query(default=200, ge=1, le=500),
     db: str | None = None,
 ) -> dict[str, object]:
@@ -47,6 +48,7 @@ def list_opportunities_route(
         strategy_config_id=strategy_config_id,
         include_analysis_only=include_analysis_only,
         include_expired=include_expired,
+        include_non_live=include_non_live,
         limit=limit,
     )
 
