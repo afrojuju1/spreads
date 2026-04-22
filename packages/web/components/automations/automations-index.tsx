@@ -21,7 +21,7 @@ import {
   MetricTile,
   readString,
   SectionSurface,
-} from "@/components/sessions/workspace-primitives";
+} from "@/components/operator/operator-primitives";
 
 type AutomationListRow = {
   id: string;
@@ -224,8 +224,8 @@ export function AutomationsIndexPageContent() {
             </div>
             <div className="mt-2 text-sm text-foreground/70">
               Operate the owner plane first: bot and automation state,
-              decisions, positions, and PnL. Discovery sessions remain under
-              Pipelines for discovery-run diagnostics.
+              decisions, positions, and PnL. Discovery diagnostics stay under
+              Diagnostics as a read-only support surface.
             </div>
           </div>
           <Button
@@ -299,70 +299,6 @@ export function AutomationsIndexPageContent() {
           />
         )}
       </SectionSurface>
-
-      <div className="grid gap-4 xl:grid-cols-2">
-        <SectionSurface
-          title="Primary plane"
-          description="Use this surface for runtime-owned state and bot operations."
-        >
-          <div className="grid gap-3 sm:grid-cols-2">
-            <MetricTile
-              label="Decisions"
-              value={String(
-                automations.reduce(
-                  (total, row) => total + (row.decision_count ?? 0),
-                  0,
-                ),
-              )}
-              note="Owner-scoped opportunity decisions"
-            />
-            <MetricTile
-              label="Intents"
-              value={String(
-                automations.reduce(
-                  (total, row) => total + (row.intent_count ?? 0),
-                  0,
-                ),
-              )}
-              note="Execution intents"
-            />
-          </div>
-        </SectionSurface>
-
-        <SectionSurface
-          title="Supporting plane"
-          description="Discovery remains visible, but it is no longer the primary operator noun."
-        >
-          <div className="grid gap-3 sm:grid-cols-2">
-            <MetricTile
-              label="Discovery sessions"
-              value={String(
-                new Set(
-                  automations.flatMap((row) =>
-                    row.latest_discovery?.pipeline_id
-                      ? [row.latest_discovery.pipeline_id]
-                      : [],
-                  ),
-                ).size,
-              )}
-              note="Discovery-run-linked sessions"
-            />
-            <MetricTile
-              label="Linked discovery dates"
-              value={String(
-                new Set(
-                  automations.flatMap((row) =>
-                    row.latest_discovery?.session_date
-                      ? [row.latest_discovery.session_date]
-                      : [],
-                  ),
-                ).size,
-              )}
-              note="Recent discovery coverage"
-            />
-          </div>
-        </SectionSurface>
-      </div>
     </div>
   );
 }

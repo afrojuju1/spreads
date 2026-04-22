@@ -299,20 +299,15 @@ function GlobalRealtimeBridge({
 
   const handleRealtimeEvent = useEffectEvent((payload: string) => {
     const realtimeEvent = parseGlobalRealtimeEvent(payload);
-    const sessionId = readText(realtimeEvent.payload.session_id);
     const pipelineId = readText(realtimeEvent.payload.pipeline_id);
     const botId = readText(realtimeEvent.payload.bot_id);
     const automationId = readText(realtimeEvent.payload.automation_id);
     switch (realtimeEvent.topic) {
       case "alert.event.created":
       case "alert.event.updated":
-        queryClient.invalidateQueries({ queryKey: ["sessions"] });
         queryClient.invalidateQueries({ queryKey: ["pipelines"] });
         queryClient.invalidateQueries({ queryKey: ["automations"] });
         queryClient.invalidateQueries({ queryKey: ["opportunities"] });
-        if (sessionId) {
-          queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
-        }
         if (pipelineId) {
           queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
         }
@@ -323,13 +318,9 @@ function GlobalRealtimeBridge({
         }
         break;
       case "live.cycle.updated":
-        queryClient.invalidateQueries({ queryKey: ["sessions"] });
         queryClient.invalidateQueries({ queryKey: ["pipelines"] });
         queryClient.invalidateQueries({ queryKey: ["automations"] });
         queryClient.invalidateQueries({ queryKey: ["opportunities"] });
-        if (sessionId) {
-          queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
-        }
         if (pipelineId) {
           queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
         }
@@ -340,12 +331,8 @@ function GlobalRealtimeBridge({
         }
         break;
       case "job.run.updated":
-        queryClient.invalidateQueries({ queryKey: ["sessions"] });
         queryClient.invalidateQueries({ queryKey: ["pipelines"] });
         queryClient.invalidateQueries({ queryKey: ["automations"] });
-        if (sessionId) {
-          queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
-        }
         if (pipelineId) {
           queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
         }
@@ -356,12 +343,8 @@ function GlobalRealtimeBridge({
         }
         break;
       case "live.discovery_run.degraded":
-        queryClient.invalidateQueries({ queryKey: ["sessions"] });
         queryClient.invalidateQueries({ queryKey: ["pipelines"] });
         queryClient.invalidateQueries({ queryKey: ["automations"] });
-        if (sessionId) {
-          queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
-        }
         if (pipelineId) {
           queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
         }
@@ -372,12 +355,8 @@ function GlobalRealtimeBridge({
         }
         break;
       case "post_market.analysis.updated":
-        queryClient.invalidateQueries({ queryKey: ["sessions"] });
         queryClient.invalidateQueries({ queryKey: ["pipelines"] });
         queryClient.invalidateQueries({ queryKey: ["automations"] });
-        if (sessionId) {
-          queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
-        }
         if (pipelineId) {
           queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
         }
@@ -389,13 +368,9 @@ function GlobalRealtimeBridge({
         break;
       case "execution.attempt.updated":
         queryClient.invalidateQueries({ queryKey: ["account-overview"] });
-        queryClient.invalidateQueries({ queryKey: ["sessions"] });
         queryClient.invalidateQueries({ queryKey: ["pipelines"] });
         queryClient.invalidateQueries({ queryKey: ["automations"] });
         queryClient.invalidateQueries({ queryKey: ["positions"] });
-        if (sessionId) {
-          queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
-        }
         if (pipelineId) {
           queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
         }

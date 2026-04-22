@@ -10,11 +10,10 @@ Operator dashboard for the `spreads` backend. The app is built with:
 
 ## What It Shows
 
-- live board and watchlist for a selected discovery-run label
-- recent board events
-- latest Discord alerts
-- seeded job health and recent job runs
-- session outcomes and signal-tuning buckets
+- owner-plane automation runtimes and linked discovery lineage
+- live opportunity board with direct execution actions
+- open positions and broker account state
+- read-only discovery diagnostics for run health, UOA, and linked outcomes
 
 ## Canonical Dev Run
 

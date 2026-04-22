@@ -18,7 +18,8 @@ const mono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: "Spreads Operator",
-  description: "Pipeline, opportunity, position, and account runtime console for spreads.",
+  description:
+    "Opportunity, automation, diagnostics, position, and account runtime console for spreads.",
 };
 
 const themeInitScript = buildThemeInitScript();
@@ -38,6 +39,12 @@ export default function RootLayout({
     >
       <body className="min-h-full font-sans">
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+        <a
+          href="#main-content"
+          className="sr-only fixed left-4 top-4 z-[60] rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground focus:not-sr-only"
+        >
+          Skip to main content
+        </a>
         <Providers>{children}</Providers>
       </body>
     </html>

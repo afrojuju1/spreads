@@ -14,28 +14,28 @@ import { cn } from "@/lib/utils";
 
 export const LAYOUT_NAV_ITEMS = [
   {
-    href: "/automations",
-    label: "Automations",
-    caption: "runtime control",
-    icon: Bot,
-  },
-  {
-    href: "/pipelines",
-    label: "Discovery",
-    caption: "discovery runs",
-    icon: CandlestickChart,
-  },
-  {
     href: "/opportunities",
     label: "Opportunities",
-    caption: "trade ideas",
+    caption: "live board",
     icon: Radar,
+  },
+  {
+    href: "/automations",
+    label: "Automations",
+    caption: "owner plane",
+    icon: Bot,
   },
   {
     href: "/positions",
     label: "Positions",
     caption: "open risk",
     icon: BriefcaseBusiness,
+  },
+  {
+    href: "/pipelines",
+    label: "Diagnostics",
+    caption: "discovery runs",
+    icon: CandlestickChart,
   },
   {
     href: "/account",
@@ -46,14 +46,6 @@ export const LAYOUT_NAV_ITEMS = [
 ];
 
 export function resolveActiveLayoutItem(pathname: string) {
-  if (pathname === "/sessions" || pathname.startsWith("/sessions/")) {
-    return {
-      href: "/sessions",
-      label: "Sessions",
-      caption: "compatibility history",
-      icon: CandlestickChart,
-    };
-  }
   return (
     LAYOUT_NAV_ITEMS.find((item) =>
       pathname === item.href || pathname.startsWith(`${item.href}/`),

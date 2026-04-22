@@ -27,9 +27,9 @@ import {
   MetricTile,
   readString,
   SectionSurface,
-  SessionStatusBadge,
+  RuntimeStatusBadge,
   valueTone,
-} from "@/components/sessions/workspace-primitives";
+} from "@/components/operator/operator-primitives";
 import { cn } from "@/lib/utils";
 
 type AccountPositionRow = {
@@ -315,12 +315,12 @@ function AccountOverviewSection({
                 </Badge>
                 <AccountEnvironmentBadge value={overview.environment} />
                 {overview.account.status ? (
-                  <SessionStatusBadge
+                  <RuntimeStatusBadge
                     value={overview.account.status.toLowerCase()}
                   />
                 ) : null}
                 {overview.sync ? (
-                  <SessionStatusBadge value={overview.sync.status} />
+                  <RuntimeStatusBadge value={overview.sync.status} />
                 ) : null}
               </div>
               <div className="mt-3 text-sm text-foreground/70">
@@ -463,12 +463,12 @@ export function AccountPageContent() {
                 Account
               </Badge>
               {accountOverviewQuery.data?.account.status ? (
-                <SessionStatusBadge
+                <RuntimeStatusBadge
                   value={accountOverviewQuery.data.account.status.toLowerCase()}
                 />
               ) : null}
               {accountOverviewQuery.data?.sync ? (
-                <SessionStatusBadge value={accountOverviewQuery.data.sync.status} />
+                <RuntimeStatusBadge value={accountOverviewQuery.data.sync.status} />
               ) : null}
             </div>
             <div className="mt-4 text-3xl font-semibold tracking-[0.02em]">

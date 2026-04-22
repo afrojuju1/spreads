@@ -241,105 +241,6 @@ const accountOverviewSchema = z
   })
   .passthrough();
 
-const sessionIdeaSchema = z
-  .object({
-    underlying_symbol: z.string(),
-    strategy: z.string(),
-    expiration_date: z.string(),
-    short_symbol: z.string(),
-    long_symbol: z.string(),
-    classification: z.string(),
-    first_seen: z.string(),
-    entry_seen: z.string(),
-    latest_seen: z.string(),
-    entry_run_id: z.string(),
-    entry_cycle_id: z.string(),
-    first_board_seen: z.string().nullable().optional(),
-    first_watchlist_seen: z.string().nullable().optional(),
-    latest_score: z.number(),
-    score_bucket: z.string(),
-    occurrence_count: z.number(),
-    backtest_status: z.string(),
-    backtest_verdict: z.string().nullable().optional(),
-    outcome_bucket: z.string(),
-    estimated_close_pnl: z.number().nullable().optional(),
-    estimated_expiry_pnl: z.number().nullable().optional(),
-    profit_target_hit: z.boolean().nullable().optional(),
-    stop_hit: z.boolean().nullable().optional(),
-    still_in_play: z.boolean().nullable().optional(),
-    entry_candidate: candidateDetailSchema,
-    latest_candidate: candidateDetailSchema,
-    setup_status: z.string().nullable().optional(),
-    calendar_status: z.string().nullable().optional(),
-    greeks_source: z.string().nullable().optional(),
-    session_phase: z.string().nullable().optional(),
-    vwap_regime: z.string().nullable().optional(),
-    trend_regime: z.string().nullable().optional(),
-    opening_range_regime: z.string().nullable().optional(),
-    session_extreme_regime: z.string().nullable().optional(),
-  })
-  .passthrough();
-
-const sessionSummarySchema = z
-  .object({
-    label: z.string(),
-    session_date: z.string(),
-    cycle_count: z.number(),
-    latest_cycle: z.record(z.string(), z.unknown()).nullable().optional(),
-    run_overview: z.record(z.string(), z.unknown()).nullable().optional(),
-    quote_overview: z.record(z.string(), z.unknown()).nullable().optional(),
-    event_overview: z.record(z.string(), z.unknown()).nullable().optional(),
-    symbol_breakdown: z.array(z.record(z.string(), z.unknown())).optional(),
-    leg_summaries: z.array(z.record(z.string(), z.unknown())).optional(),
-    outcomes: z
-      .object({
-        session_date: z.string(),
-        label: z.string(),
-        idea_count: z.number(),
-        counts_by_bucket: z.record(z.string(), z.number()).optional(),
-        outcome_counts_by_bucket: z
-          .record(z.string(), z.record(z.string(), z.number()))
-          .optional(),
-        average_estimated_pnl_by_bucket: z
-          .record(z.string(), z.number().nullable())
-          .optional(),
-        by_symbol: z.record(z.string(), z.unknown()).optional(),
-        by_strategy: z.record(z.string(), z.unknown()).optional(),
-        by_score_bucket: z.record(z.string(), z.unknown()).optional(),
-        ideas: z.array(sessionIdeaSchema),
-      })
-      .passthrough(),
-    tuning: z.lazy(() => sessionTuningSchema).nullable().optional(),
-  })
-  .passthrough();
-
-const tuningBucketSchema = z
-  .object({
-    dimension: z.string().optional(),
-    bucket: z.string(),
-    count: z.number().optional(),
-    board_count: z.number().optional(),
-    watchlist_count: z.number().optional(),
-    win_count: z.number().optional(),
-    loss_count: z.number().optional(),
-    still_open_count: z.number().optional(),
-    unavailable_count: z.number().optional(),
-    resolved_count: z.number().optional(),
-    win_rate: z.number().nullable().optional(),
-    average_estimated_pnl: z.number().nullable().optional(),
-    average_latest_score: z.number().nullable().optional(),
-  })
-  .passthrough();
-
-const sessionTuningSchema = z.object({
-  sample_size: z.number().optional(),
-  dimensions: z.record(z.string(), z.array(tuningBucketSchema)).optional(),
-  strongest_signals: z.array(tuningBucketSchema),
-  weakest_signals: z.array(tuningBucketSchema),
-  provisional_strongest_signals: z.array(tuningBucketSchema).optional(),
-  provisional_weakest_signals: z.array(tuningBucketSchema).optional(),
-});
-
 const autoExecutionSummarySchema = z
   .object({
     status: z.string(),
@@ -389,12 +290,6 @@ const pipelineListItemSchema = z
 const pipelineListResponseSchema = z.object({
   pipelines: z.array(pipelineListItemSchema),
 });
-
-const sessionAnalysisSchema = sessionSummarySchema
-  .extend({
-    analysis_run: z.record(z.string(), z.unknown()),
-  })
-  .passthrough();
 
 const executionOrderSchema = z
   .object({
@@ -481,7 +376,7 @@ const executionAttemptSchema = z
   })
   .passthrough();
 
-const sessionExecutionActionResponseSchema = z
+const operatorActionResponseSchema = z
   .object({
     action: z.enum(["submit", "refresh"]),
     changed: z.boolean(),
@@ -615,7 +510,6 @@ const sessionDetailSchema = z
     events: z.array(liveEventSchema),
     executions: z.array(executionAttemptSchema),
     portfolio: sessionPortfolioSchema,
-    analysis: sessionAnalysisSchema.nullable().optional(),
   })
   .passthrough();
 
@@ -798,9 +692,6 @@ export type AccountHistory = z.infer<typeof accountHistorySchema>;
 export type AccountPosition = z.infer<typeof accountPositionSchema>;
 export type AccountOverview = z.infer<typeof accountOverviewSchema>;
 export type AccountHistoryRange = z.infer<typeof accountHistoryRangeSchema>;
-export type SessionIdea = z.infer<typeof sessionIdeaSchema>;
-export type SessionSummary = z.infer<typeof sessionSummarySchema>;
-export type SessionTuning = z.infer<typeof sessionTuningSchema>;
 export type PipelineListItem = z.infer<typeof pipelineListItemSchema>;
 export type ExecutionOrder = z.infer<typeof executionOrderSchema>;
 export type ExecutionFill = z.infer<typeof executionFillSchema>;
@@ -816,9 +707,7 @@ export type Opportunity = z.infer<typeof opportunitySchema>;
 export type Position = z.infer<typeof positionSchema>;
 export type AutomationRuntimeListItem = z.infer<typeof automationRuntimeListItemSchema>;
 export type AutomationRuntimeDetail = z.infer<typeof automationRuntimeDetailSchema>;
-export type TuningBucket = z.infer<typeof tuningBucketSchema>;
 export type AutoExecutionSummary = z.infer<typeof autoExecutionSummarySchema>;
-export type SessionExecutionActionResponse = z.infer<typeof sessionExecutionActionResponseSchema>;
 export type GlobalRealtimeEvent = z.infer<typeof globalRealtimeEventSchema>;
 export type OpportunityExecutionRequest = {
   quantity?: number;
@@ -999,7 +888,7 @@ export function executeOpportunity(
 ) {
   return postApi(
     `opportunities/${encodeURIComponent(opportunityId)}/execute`,
-    sessionExecutionActionResponseSchema,
+    operatorActionResponseSchema,
     payload,
   );
 }
@@ -1034,7 +923,7 @@ export function closePosition(
 ) {
   return postApi(
     `positions/${encodeURIComponent(positionId)}/close`,
-    sessionExecutionActionResponseSchema,
+    operatorActionResponseSchema,
     payload,
   );
 }
@@ -1042,7 +931,7 @@ export function closePosition(
 export function refreshExecution(executionAttemptId: string) {
   return postApi(
     `executions/${encodeURIComponent(executionAttemptId)}/refresh`,
-    sessionExecutionActionResponseSchema,
+    operatorActionResponseSchema,
     {},
   );
 }

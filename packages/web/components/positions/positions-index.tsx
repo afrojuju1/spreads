@@ -26,7 +26,7 @@ import {
   MetricTile,
   readString,
   SectionSurface,
-} from "@/components/sessions/workspace-primitives";
+} from "@/components/operator/operator-primitives";
 
 function positionRecord(position: Position): Record<string, unknown> {
   return position as Record<string, unknown>;
@@ -110,7 +110,7 @@ const POSITION_COLUMNS: ColumnDef<Position>[] = [
           href={getPositionDiscoveryHref(row.original)}
           className="mt-1 inline-block text-xs text-muted-foreground underline-offset-4 hover:underline"
         >
-          Discovery · {getPositionDiscoveryLabel(row.original)}
+          Diagnostics · {getPositionDiscoveryLabel(row.original)}
         </Link>
       </div>
     ),
@@ -143,8 +143,8 @@ const POSITION_COLUMNS: ColumnDef<Position>[] = [
     cell: ({ row }) => (
       <span className="text-xs text-muted-foreground">
         {hasPositionAutomationOwner(row.original)
-          ? "Automation-owned"
-          : "Discovery-owned"}
+          ? "Owner-attributed"
+          : "Diagnostics lineage only"}
       </span>
     ),
   },
@@ -169,7 +169,7 @@ export function PositionsIndexPageContent({
   const ownerScopeLabel = hasOwnerScope
     ? `${botId} / ${automationId}`
     : label
-      ? `Discovery · ${label}`
+      ? `Diagnostics · ${label}`
       : "All owners";
   const positionsQuery = useQuery({
     queryKey: [
@@ -257,7 +257,7 @@ export function PositionsIndexPageContent({
             </div>
             <div className="mt-2 text-sm text-foreground/70">
               Inspect all runtime-owned positions, jump to the owning
-              automation, and keep discovery lineage visible but secondary.
+              automation, and keep diagnostics lineage as secondary context.
               Current owner scope: {ownerScopeLabel}.
             </div>
           </div>
@@ -288,7 +288,7 @@ export function PositionsIndexPageContent({
         <MetricTile
           label="Owner Scope"
           value={ownerScopeLabel}
-          note={hasOwnerScope ? "Automation-scoped inventory" : label ? "Discovery-scoped inventory" : `${automationCount} automations`}
+          note={hasOwnerScope ? "Automation-scoped inventory" : label ? "Diagnostics-scoped inventory" : `${automationCount} automations`}
         />
         <MetricTile
           label="Open"

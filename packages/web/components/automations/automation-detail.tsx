@@ -35,7 +35,7 @@ import {
   MetricTile,
   readString,
   SectionSurface,
-} from "@/components/sessions/workspace-primitives";
+} from "@/components/operator/operator-primitives";
 
 type AutomationDetailPageContentProps = {
   botId: string;
@@ -101,7 +101,7 @@ function buildOpportunityColumns(
             {row.original.strategy_family.replaceAll("_", " ")}
           </div>
           <div className="mt-1 text-xs text-foreground/80">
-            Discovery · {readString(row.original.discovery?.label, "—")}
+            Diagnostics · {readString(row.original.discovery?.label, "—")}
           </div>
         </div>
       ),
@@ -163,7 +163,7 @@ function buildPositionColumns(
             {row.original.strategy_family}
           </div>
           <div className="mt-1 text-xs text-foreground/80">
-            Discovery · {readString(row.original.discovery?.label, "—")}
+            Diagnostics · {readString(row.original.discovery?.label, "—")}
           </div>
         </div>
       ),
@@ -386,8 +386,8 @@ export function AutomationDetailPageContent({
             <div className="mt-2 text-sm text-foreground/70">
               {detail.automation_id} ·{" "}
               {readString(detail.strategy_family, "unscoped").replaceAll("_", " ")}.
-              Use this workspace for owner-scoped decisions, intents,
-              positions, and the latest linked discovery session.
+              Use this runtime for owner-scoped decisions, intents, positions,
+              and linked discovery diagnostics.
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -428,12 +428,12 @@ export function AutomationDetailPageContent({
           note={formatNullableCurrency(detail.daily_realized_pnl)}
         />
         <MetricTile
-          label="Discovery"
+          label="Diagnostics"
           value={detail.latest_discovery?.label ?? "—"}
           note={
             detail.latest_discovery?.session_date
               ? formatDate(detail.latest_discovery.session_date)
-              : "No linked session"
+              : "No linked diagnostics"
           }
         />
       </div>
@@ -472,14 +472,14 @@ export function AutomationDetailPageContent({
             value={
               detail.latest_discovery?.label
                 ? `${detail.latest_discovery.label}${detail.latest_discovery.session_date ? ` · ${detail.latest_discovery.session_date}` : ""}`
-                : "No discovery linkage"
+                : "No diagnostics linkage"
             }
           />
         </div>
         {discoveryHref ? (
           <div className="mt-4 flex flex-wrap gap-2">
             <Link href={discoveryHref} className={buttonVariants({ variant: "outline" })}>
-              Open linked discovery session
+              Open linked diagnostics
             </Link>
             <Link
               href={buildOpportunitiesHref({

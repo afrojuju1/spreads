@@ -20,7 +20,7 @@ import {
   readNumber,
   readString,
   SectionSurface,
-} from "@/components/sessions/workspace-primitives";
+} from "@/components/operator/operator-primitives";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -737,7 +737,7 @@ function OpportunityInspectorPanel({
               href={getOpportunityDiscoveryHref(opportunity)}
               className={buttonVariants({ variant: "outline", size: "sm" })}
             >
-              Open discovery
+              Open diagnostics
             </Link>
           </div>
           <div className="mt-4 rounded-2xl border border-border/70 bg-muted/20 px-3 py-3 text-xs text-muted-foreground">
@@ -801,7 +801,7 @@ function UnderlyingCell({
         href={getOpportunityDiscoveryHref(opportunity)}
         className="mt-1 inline-block text-xs text-muted-foreground underline-offset-4 hover:underline"
       >
-        Discovery · {getOpportunityDiscoveryLabel(opportunity)}
+        Diagnostics · {getOpportunityDiscoveryLabel(opportunity)}
       </Link>
     </div>
   );
@@ -926,7 +926,7 @@ export function OpportunitiesIndexPageContent({
   const ownerScopeLabel = hasOwnerScope
     ? `${botId} / ${automationId}`
     : label
-      ? `Discovery · ${label}`
+      ? `Diagnostics · ${label}`
       : "All owners";
   const allDatesSelected = marketDate === "all";
   const selectedMarketDate =
@@ -1177,7 +1177,7 @@ export function OpportunitiesIndexPageContent({
         <MetricTile
           label="Owner Scope"
           value={ownerScopeLabel}
-          note={hasOwnerScope ? "Automation-scoped board" : label ? "Discovery-scoped board" : "Cross-owner board"}
+          note={hasOwnerScope ? "Automation-scoped board" : label ? "Diagnostics-scoped board" : "Cross-owner board"}
         />
         <MetricTile
           label="Opportunities"

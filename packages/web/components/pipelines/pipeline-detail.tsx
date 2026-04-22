@@ -1,13 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
   Activity,
   Radar,
   RefreshCw,
-  RotateCw,
   Rows3,
   ShieldAlert,
 } from "lucide-react";
@@ -16,11 +15,8 @@ import { useMemo } from "react";
 import { DataTable } from "@/components/data-table";
 import {
   buildPipelineHref,
-  closePosition,
-  executeOpportunity,
   getPipelineDetail,
   getPipelines,
-  refreshExecution,
   type LiveCandidate,
   type PipelineListItem,
   type SessionPortfolioPosition,
@@ -41,9 +37,9 @@ import {
   readNumber,
   readString,
   SectionSurface,
-  SessionStatusBadge,
+  RuntimeStatusBadge,
   TradeabilityBadge,
-} from "@/components/sessions/workspace-primitives";
+} from "@/components/operator/operator-primitives";
 
 type PipelineDetailPageContentProps = {
   pipelineId: string;
@@ -57,7 +53,6 @@ type OpportunityRow = {
   state: string;
   score: number;
   credit: number;
-  opportunityId: string | null;
 };
 
 type ExecutionRow = {
@@ -272,10 +267,6 @@ function buildOpportunityRows(opportunities: LiveCandidate[]): OpportunityRow[] 
     state: row.selection_state,
     score: readNumber(row.quality_score),
     credit: readNumber(row.midpoint_credit),
-    opportunityId:
-      typeof row.opportunity_id === "string" && row.opportunity_id
-        ? row.opportunity_id
-        : null,
   }));
 }
 
@@ -317,7 +308,6 @@ export function PipelineDetailPageContent({
   pipelineId,
   marketDate,
 }: PipelineDetailPageContentProps) {
-  const queryClient = useQueryClient();
   const pipelinesQuery = useQuery({
     queryKey: ["pipelines"],
     queryFn: () => getPipelines({ limit: 120 }),
@@ -325,39 +315,6 @@ export function PipelineDetailPageContent({
   const detailQuery = useQuery({
     queryKey: ["pipelines", pipelineId, marketDate ?? ""],
     queryFn: () => getPipelineDetail(pipelineId, { marketDate }),
-  });
-
-  const executeMutation = useMutation({
-    mutationFn: (opportunityId: string) => executeOpportunity(opportunityId, {}),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["pipelines"] }),
-        queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] }),
-        queryClient.invalidateQueries({ queryKey: ["opportunities"] }),
-        queryClient.invalidateQueries({ queryKey: ["positions"] }),
-      ]);
-    },
-  });
-
-  const closeMutation = useMutation({
-    mutationFn: (positionId: string) => closePosition(positionId, {}),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["pipelines"] }),
-        queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] }),
-        queryClient.invalidateQueries({ queryKey: ["positions"] }),
-      ]);
-    },
-  });
-
-  const refreshMutation = useMutation({
-    mutationFn: (executionAttemptId: string) => refreshExecution(executionAttemptId),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["pipelines"] }),
-        queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] }),
-      ]);
-    },
   });
 
   const pipelineRows = pipelinesQuery.data?.pipelines ?? [];
@@ -424,27 +381,8 @@ export function PipelineDetailPageContent({
         header: "Credit",
         cell: ({ getValue }) => <span className="font-mono">{Number(getValue()).toFixed(2)}</span>,
       },
-      {
-        id: "actions",
-        header: "",
-        cell: ({ row }) => (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={!row.original.opportunityId || executeMutation.isPending}
-            onClick={() => {
-              if (row.original.opportunityId) {
-                executeMutation.mutate(row.original.opportunityId);
-              }
-            }}
-          >
-            Execute
-          </Button>
-        ),
-      },
     ],
-    [executeMutation],
+    [],
   );
 
   const executionColumns = useMemo<ColumnDef<ExecutionRow>[]>(
@@ -475,23 +413,8 @@ export function PipelineDetailPageContent({
           </span>
         ),
       },
-      {
-        id: "actions",
-        header: "",
-        cell: ({ row }) => (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={refreshMutation.isPending}
-            onClick={() => refreshMutation.mutate(row.original.id)}
-          >
-            Refresh
-          </Button>
-        ),
-      },
     ],
-    [refreshMutation],
+    [],
   );
 
   const positionColumns = useMemo<ColumnDef<PositionRow>[]>(
@@ -528,23 +451,8 @@ export function PipelineDetailPageContent({
         header: "Unrealized",
         cell: ({ getValue }) => formatSignedCurrency(getValue() as number | null | undefined),
       },
-      {
-        id: "actions",
-        header: "",
-        cell: ({ row }) => (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={closeMutation.isPending || row.original.status === "closed"}
-            onClick={() => closeMutation.mutate(row.original.id)}
-          >
-            Close
-          </Button>
-        ),
-      },
     ],
-    [closeMutation],
+    [],
   );
 
   if (detailQuery.isLoading) {
@@ -555,10 +463,10 @@ export function PipelineDetailPageContent({
     return (
       <div className="flex flex-col gap-4">
         <div className="app-tone-error rounded-2xl border px-4 py-3 text-sm">
-          Discovery session detail could not be loaded.
+          Discovery diagnostics could not be loaded.
         </div>
         <Link href="/pipelines" className={buttonVariants({ variant: "outline" })}>
-          Back to discovery
+          Back to diagnostics
         </Link>
       </div>
     );
@@ -578,9 +486,9 @@ export function PipelineDetailPageContent({
                 className="rounded-full border-border/70 bg-background/80 px-2.5 py-1 text-[11px] uppercase tracking-[0.18em] text-muted-foreground"
               >
                 <Radar data-icon="inline-start" />
-                Discovery workspace
+                Diagnostics
               </Badge>
-              <SessionStatusBadge value={detail.status} />
+              <RuntimeStatusBadge value={detail.status} />
               <CaptureStatusBadge
                 value={readString(detail.latest_slot?.capture_status, "") || undefined}
               />
@@ -593,10 +501,9 @@ export function PipelineDetailPageContent({
               {detail.label}
             </div>
             <div className="mt-2 text-sm text-foreground/70">
-              Market date {formatDate(detail.market_date)}. Use this workspace
-              to inspect discovery-run and cycle state first; linked automation
-              decisions, executions, and positions remain available here for
-              compatibility.
+              Market date {formatDate(detail.market_date)}. Use this view for
+              read-only discovery-run diagnostics, cycle state, and linked
+              owner-plane outcomes.
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -609,7 +516,7 @@ export function PipelineDetailPageContent({
               Refresh
             </Button>
             <Link href="/pipelines" className={buttonVariants({ variant: "outline" })}>
-              All discovery sessions
+              All diagnostics
             </Link>
           </div>
         </div>
@@ -617,7 +524,7 @@ export function PipelineDetailPageContent({
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <MetricTile
-          label="Discovery"
+          label="Diagnostics"
           value={detail.label}
           note={latestPipeline?.style_profile ?? "runtime"}
         />
@@ -645,7 +552,7 @@ export function PipelineDetailPageContent({
 
       <SectionSurface
         title="UOA"
-        description="Cycle-local unusual options activity, quote quality, and root decision diagnostics for this discovery session."
+        description="Cycle-local unusual options activity, quote quality, and root decision diagnostics for this discovery run."
       >
         {!hasUoaData ? (
           <div className="rounded-2xl border border-dashed border-border/70 bg-background/60 px-4 py-3 text-sm text-muted-foreground">
@@ -724,7 +631,7 @@ export function PipelineDetailPageContent({
 
       <SectionSurface
         title="Latest Auto Execution"
-        description="Most recent owner-plane decision linked to this discovery session."
+        description="Most recent owner-plane decision linked to this diagnostic view."
       >
         {detail.latest_auto_execution ? (
           <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
@@ -781,12 +688,12 @@ export function PipelineDetailPageContent({
       </SectionSurface>
 
       <SectionSurface
-        title="Discovery Dates"
-        description="Switch between persisted discovery dates or inspect the latest runtime cycles."
+        title="Captured Dates"
+        description="Switch between persisted diagnostic dates for this discovery run."
       >
         {!pipelineRows.length ? (
           <div className="text-sm text-muted-foreground">
-            No persisted discovery sessions were found.
+            No persisted diagnostics were found.
           </div>
         ) : (
           <div className="flex flex-wrap gap-2">
@@ -813,7 +720,7 @@ export function PipelineDetailPageContent({
       <div className="grid gap-4 xl:grid-cols-2">
         <SectionSurface
           title="Opportunities"
-          description="These are the linked promotable and monitor ideas for this discovery date."
+          description="Read-only snapshot of the linked opportunity rows for this diagnostic date."
         >
           {!opportunityRows.length ? (
             <div className="flex flex-col items-center justify-center gap-3 px-6 py-12 text-center">
@@ -834,11 +741,11 @@ export function PipelineDetailPageContent({
 
         <SectionSurface
           title="Executions"
-          description="Refresh broker state without leaving the discovery workspace."
+          description="Read-only execution attempts linked to this diagnostic date."
         >
           {!executionRows.length ? (
             <div className="flex flex-col items-center justify-center gap-3 px-6 py-12 text-center">
-              <RotateCw className="size-10 text-muted-foreground" />
+              <Rows3 className="size-10 text-muted-foreground" />
               <div className="text-sm text-muted-foreground">
                 No executions have been recorded yet.
               </div>
@@ -856,7 +763,7 @@ export function PipelineDetailPageContent({
 
       <SectionSurface
         title="Positions"
-        description="Open and partially closed positions linked to this discovery date."
+        description="Read-only positions linked by lineage to this diagnostic date."
       >
         {!positionRows.length ? (
           <div className="flex flex-col items-center justify-center gap-3 px-6 py-12 text-center">
@@ -877,7 +784,7 @@ export function PipelineDetailPageContent({
 
       <SectionSurface
         title="Cycle Timeline"
-        description="Recent discovery-run cycles for this discovery session."
+        description="Recent discovery-run cycles captured for this diagnostic view."
       >
         {!detail.cycles.length ? (
           <div className="text-sm text-muted-foreground">

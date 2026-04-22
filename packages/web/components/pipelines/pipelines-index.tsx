@@ -22,9 +22,9 @@ import {
   MetricTile,
   readString,
   SectionSurface,
-  SessionStatusBadge,
+  RuntimeStatusBadge,
   TradeabilityBadge,
-} from "@/components/sessions/workspace-primitives";
+} from "@/components/operator/operator-primitives";
 
 type PipelineListRow = {
   id: string;
@@ -75,7 +75,7 @@ const PIPELINE_COLUMNS: ColumnDef<PipelineListRow>[] = [
   {
     accessorKey: "status",
     header: "Status",
-    cell: ({ getValue }) => <SessionStatusBadge value={String(getValue())} />,
+    cell: ({ getValue }) => <RuntimeStatusBadge value={String(getValue())} />,
   },
   {
     accessorKey: "captureStatus",
@@ -153,7 +153,7 @@ export function PipelinesIndexPageContent() {
                 Discovery
               </Badge>
               {latestPipeline ? (
-                <SessionStatusBadge value={latestPipeline.status} />
+                <RuntimeStatusBadge value={latestPipeline.status} />
               ) : null}
               {latestPipeline ? (
                 <CaptureStatusBadge value={latestPipeline.latest_capture_status} />
@@ -163,12 +163,12 @@ export function PipelinesIndexPageContent() {
               ) : null}
             </div>
             <div className="mt-4 text-3xl font-semibold tracking-[0.02em]">
-              Discovery sessions
+              Discovery diagnostics
             </div>
             <div className="mt-2 text-sm text-foreground/70">
-              Browse discovery-run-owned discovery sessions. Automation-owned
-              runtime state now lives under Automations, while this surface
-              stays focused on session diagnostics.
+              Browse read-only discovery-run diagnostics. Opportunity entry,
+              position management, and owner-plane runtime control now live
+              under Opportunities, Automations, and Positions.
             </div>
           </div>
           <Button
@@ -190,9 +190,9 @@ export function PipelinesIndexPageContent() {
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <MetricTile
-          label="Sessions"
+          label="Diagnostics"
           value={String(pipelines.length)}
-          note="Persisted discovery views"
+          note="Persisted discovery snapshots"
         />
         <MetricTile
           label="Latest discovery"
@@ -223,15 +223,15 @@ export function PipelinesIndexPageContent() {
       </div>
 
       <SectionSurface
-        title="Discovery Session List"
-        description="Open a discovery session to inspect its latest cycle, discovery-run health, and linked runtime outcomes."
+        title="Diagnostics List"
+        description="Open a diagnostic view to inspect discovery-run health, cycle state, and linked owner-plane outcomes."
       >
         {!pipelines.length ? (
           <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
             <Rows3 className="size-10 text-muted-foreground" />
-            <div className="text-lg font-medium">No discovery sessions found</div>
+            <div className="text-lg font-medium">No diagnostics found</div>
             <div className="max-w-[34rem] text-sm text-muted-foreground">
-              Discovery sessions will appear here after discovery-run cycles are
+              Discovery diagnostics will appear here after discovery-run cycles are
               persisted.
             </div>
           </div>
@@ -240,7 +240,7 @@ export function PipelinesIndexPageContent() {
             columns={PIPELINE_COLUMNS}
             data={pipelineRows}
             getRowId={(row) => row.id}
-            emptyMessage="No discovery sessions matched the current query."
+            emptyMessage="No diagnostics matched the current query."
           />
         )}
       </SectionSurface>

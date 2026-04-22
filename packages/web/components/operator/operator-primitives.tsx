@@ -145,7 +145,7 @@ export function valueTone(value: number | null | undefined): string {
   return "text-foreground/80";
 }
 
-export function SessionStatusBadge({
+export function RuntimeStatusBadge({
   value,
 }: {
   value: string | null | undefined;
