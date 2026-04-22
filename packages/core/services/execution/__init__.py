@@ -7,6 +7,7 @@ from typing import Any
 from core.db.decorators import with_storage
 from core.domain.opportunity_models import Opportunity, OpportunityLeg
 from core.services.alpaca import create_alpaca_client_from_env
+from core.services.automation_runtime import resolve_entry_runtime
 from core.services.candidate_policy import (
     candidate_has_intraday_setup_context,
     resolve_candidate_profile,
@@ -48,6 +49,7 @@ from core.services.runtime_identity import (
     resolve_pipeline_policy_fields,
 )
 from core.services.risk_manager import (
+    build_open_candidate_position_sizing,
     evaluate_open_execution,
     normalize_risk_policy,
     validate_close_execution,
@@ -64,6 +66,7 @@ from core.services.value_coercion import (
     coerce_int as _coerce_int,
     utc_now_iso as _utc_now,
 )
+from core.services.strategy_configs import load_strategy_configs
 from core.storage.serializers import parse_datetime
 
 from .attempts import (
@@ -878,6 +881,118 @@ def _resolve_session_candidate(
     return dict(candidate), dict(cycle)
 
 
+def _strategy_risk_budget(
+    *,
+    bot_id: str | None,
+    automation_id: str | None,
+    strategy_config_id: str | None,
+) -> float | None:
+    if bot_id is not None and automation_id is not None:
+        try:
+            runtime = resolve_entry_runtime(
+                bot_id=bot_id,
+                automation_id=automation_id,
+            )
+        except ValueError:
+            runtime = None
+        if runtime is not None:
+            return _coerce_float(
+                runtime.build_settings.risk_defaults.get("max_risk_per_trade")
+            )
+    if strategy_config_id is None:
+        return None
+    strategy_config = load_strategy_configs().get(strategy_config_id)
+    if strategy_config is None:
+        return None
+    return _coerce_float(strategy_config.risk_defaults.get("max_risk_per_trade"))
+
+
+def _request_recommended_quantity(
+    request_metadata: Mapping[str, Any] | dict[str, Any] | None,
+) -> int | None:
+    if not isinstance(request_metadata, Mapping):
+        return None
+    execution_intent = request_metadata.get("execution_intent")
+    if isinstance(execution_intent, Mapping):
+        evidence = execution_intent.get("evidence")
+        if isinstance(evidence, Mapping):
+            quantity = _coerce_int(evidence.get("recommended_quantity"))
+            if quantity is not None and quantity > 0:
+                return quantity
+    allocation_decision = request_metadata.get("allocation_decision")
+    if not isinstance(allocation_decision, Mapping):
+        return None
+    budget_impact = allocation_decision.get("budget_impact")
+    if isinstance(budget_impact, Mapping):
+        quantity = _coerce_int(budget_impact.get("recommended_contracts"))
+        if quantity is not None and quantity > 0:
+            return quantity
+    evidence = allocation_decision.get("evidence")
+    if not isinstance(evidence, Mapping):
+        return None
+    position_sizing = evidence.get("position_sizing")
+    if not isinstance(position_sizing, Mapping):
+        return None
+    quantity = _coerce_int(position_sizing.get("recommended_quantity"))
+    if quantity is None or quantity <= 0:
+        return None
+    return quantity
+
+
+def _resolve_open_submission_quantity(
+    *,
+    execution_store: Any,
+    session_id: str,
+    candidate: dict[str, Any],
+    explicit_quantity: int | None,
+    limit_price: float | None,
+    request_metadata: Mapping[str, Any] | dict[str, Any] | None,
+    risk_policy: dict[str, Any] | None,
+    execution_policy: dict[str, Any],
+    bot_id: str | None,
+    automation_id: str | None,
+    strategy_config_id: str | None,
+) -> tuple[int, float | None]:
+    strategy_risk_budget = _strategy_risk_budget(
+        bot_id=bot_id,
+        automation_id=automation_id,
+        strategy_config_id=strategy_config_id,
+    )
+    if explicit_quantity is not None:
+        return explicit_quantity, strategy_risk_budget
+
+    quantity_hints: list[int] = []
+    request_quantity = _request_recommended_quantity(request_metadata)
+    if request_quantity is not None and request_quantity > 0:
+        quantity_hints.append(request_quantity)
+    risk_sizing = build_open_candidate_position_sizing(
+        execution_store=execution_store,
+        session_id=session_id,
+        candidate=candidate,
+        limit_price=limit_price,
+        risk_policy=risk_policy,
+        strategy_risk_budget=strategy_risk_budget,
+    )
+    risk_quantity = _coerce_int(risk_sizing.get("recommended_quantity"))
+    if (
+        bool(risk_sizing.get("applies"))
+        and risk_quantity is not None
+        and risk_quantity > 0
+    ):
+        quantity_hints.append(risk_quantity)
+    if bool(execution_policy.get("quantity_configured")):
+        policy_cap = _coerce_int(execution_policy.get("quantity"))
+        if policy_cap is not None and policy_cap > 0:
+            quantity_hints.append(policy_cap)
+    if quantity_hints:
+        return max(min(quantity_hints), 1), strategy_risk_budget
+
+    candidate_payload = _candidate_with_payload(candidate)
+    order_payload = dict(candidate_payload.get("order_payload") or {})
+    fallback_quantity = _coerce_int(order_payload.get("qty")) or 1
+    return fallback_quantity, strategy_risk_budget
+
+
 def _build_order_request(
     *,
     candidate: dict[str, Any],
@@ -1138,9 +1253,24 @@ def submit_live_session_execution(
                 "risk_policy": requested_risk_policy,
             }
         )
+        resolved_requested_quantity, strategy_risk_budget = (
+            _resolve_open_submission_quantity(
+                execution_store=execution_store,
+                session_id=session_id,
+                candidate=candidate,
+                explicit_quantity=quantity,
+                limit_price=limit_price,
+                request_metadata=request_metadata,
+                risk_policy=requested_risk_policy,
+                execution_policy=resolved_execution_policy,
+                bot_id=owner_bot_id,
+                automation_id=owner_automation_id,
+                strategy_config_id=owner_strategy_config_id,
+            )
+        )
         order_request, resolved_quantity, resolved_limit_price = _build_order_request(
             candidate=candidate,
-            quantity=quantity,
+            quantity=resolved_requested_quantity,
             limit_price=limit_price,
             execution_policy=resolved_execution_policy,
             client_order_id=client_order_id,
@@ -1178,6 +1308,7 @@ def submit_live_session_execution(
             limit_price=resolved_limit_price,
             risk_policy=requested_risk_policy,
             execution_policy=resolved_execution_policy,
+            strategy_risk_budget=strategy_risk_budget,
         )
         resolved_risk_policy = dict(risk_evaluation["policy"])
         policy_refs = _build_policy_refs(

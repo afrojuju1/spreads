@@ -201,6 +201,10 @@ def build_selection_notes(
         notes.append("directional-call")
     elif candidate.strategy == "long_put":
         notes.append("directional-put")
+    elif candidate.strategy == "short_call":
+        notes.append("short-call")
+    elif candidate.strategy == "short_put":
+        notes.append("short-put")
     elif (
         candidate.short_delta is not None
         and abs(abs(candidate.short_delta) - delta_target) <= 0.02

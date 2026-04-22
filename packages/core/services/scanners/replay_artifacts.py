@@ -28,7 +28,11 @@ REPLAY_ARTIFACT_ROOT = REPO_ROOT / "outputs" / "backtests" / "replay" / "artifac
 _SYMBOL_ARG_KEYS = (
     "strategy",
     "profile",
+    "session_label",
     "greeks_source",
+    "evaluation_date",
+    "evaluation_timestamp",
+    "session_bucket_override",
     "min_dte",
     "max_dte",
     "short_delta_min",

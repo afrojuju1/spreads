@@ -33,17 +33,39 @@ from core.services.opportunity_generation import build_runtime_opportunity_paylo
 from core.services.ops.jobs import build_jobs_overview
 from core.services.positions import list_positions
 from core.services.ranking_policy import evaluate_candidate_ranking_policy
+from core.services.replay_filters import candidate_matches_filter
 from core.services.scanners.config import (
     parse_args as parse_scanner_args,
+    resolve_symbol_scan_args,
     resolve_ranking_builder_params,
 )
+from core.services.scanners.replay_artifacts import (
+    deserialize_symbol_args,
+    serialize_symbol_args,
+)
 from core.services.signal_state import _build_opportunity_payload
+from core.services.runtime_candidate_filters import (
+    build_runtime_candidate_filter,
+    match_runtime_candidate,
+)
 from core.services.strategy_builders import (
     build_runtime_scan_args,
 )
 
 
 class StrategyBuilderServiceTests(unittest.TestCase):
+    def test_short_put_etf_runtime_uses_focus_universe(self) -> None:
+        runtime = resolve_entry_runtime(
+            bot_id="short_dated_etf_short_put_bot",
+            automation_id="etf_short_put_entry",
+        )
+
+        self.assertEqual(runtime.strategy_family, "short_put")
+        self.assertEqual(runtime.build_settings.short_delta_target, 0.12)
+        self.assertEqual(runtime.build_settings.min_return_on_risk, 0.05)
+        self.assertEqual(len(runtime.symbols), 12)
+        self.assertEqual(runtime.symbols[:4], ("SPY", "QQQ", "IWM", "DIA"))
+
     def test_build_runtime_scan_args_uses_strategy_min_return_on_risk(self) -> None:
         runtime = resolve_entry_runtime(
             bot_id="short_dated_index_credit_bot",
@@ -75,6 +97,56 @@ class StrategyBuilderServiceTests(unittest.TestCase):
         self.assertEqual(args.min_short_vs_expected_move_ratio, -0.30)
         self.assertEqual(args.min_breakeven_vs_expected_move_ratio, -0.35)
 
+    def test_runtime_candidate_filter_matches_runtime_gate_for_iron_condors(self) -> None:
+        runtime = resolve_entry_runtime(
+            bot_id="short_dated_index_iron_condor_bot",
+            automation_id="index_iron_condor_entry",
+        )
+        filter_payload = build_runtime_candidate_filter(runtime)
+        passing_candidate = {
+            "underlying_symbol": runtime.symbols[0],
+            "strategy": "iron_condor",
+            "days_to_expiration": runtime.build_settings.dte_min + 1,
+            "short_delta": runtime.build_settings.short_delta_target,
+            "width": runtime.build_settings.width_points[0],
+            "short_open_interest": runtime.build_settings.min_open_interest + 100,
+            "long_open_interest": runtime.build_settings.min_open_interest + 100,
+            "short_relative_spread": 0.05,
+            "long_relative_spread": 0.05,
+            "return_on_risk": runtime.build_settings.min_return_on_risk + 0.05,
+            "setup_status": "neutral",
+            "side_balance_score": 0.55,
+            "wing_symmetry_ratio": 1.0,
+            "probability_of_profit": 0.80,
+            "expected_value_dollars": 30.0,
+            "slippage_adjusted_expected_value_dollars": 24.0,
+            "entry_slippage_dollars": 8.0,
+            "model_implied_volatility": 0.24,
+        }
+        failing_candidate = {
+            **passing_candidate,
+            "setup_status": "unfavorable",
+        }
+
+        runtime_match, runtime_reasons = match_runtime_candidate(
+            passing_candidate, runtime
+        )
+        self.assertTrue(runtime_match)
+        self.assertEqual(runtime_reasons, [])
+        self.assertTrue(candidate_matches_filter(passing_candidate, filter_payload))
+        self.assertIn("entry_recipe_refs", filter_payload)
+        self.assertEqual(
+            filter_payload["allowed_widths"],
+            [float(value) for value in runtime.build_settings.width_points],
+        )
+
+        runtime_match, runtime_reasons = match_runtime_candidate(
+            failing_candidate, runtime
+        )
+        self.assertFalse(runtime_match)
+        self.assertIn("neutral_range_setup_unusable", runtime_reasons)
+        self.assertFalse(candidate_matches_filter(failing_candidate, filter_payload))
+
 
 class ManagementPlannerTests(unittest.TestCase):
     def test_plan_position_management_uses_management_recipe_refs(self) -> None:
@@ -103,6 +175,97 @@ class ManagementPlannerTests(unittest.TestCase):
 
 
 class CollectionConfigTests(unittest.TestCase):
+    def test_replay_artifact_symbol_args_preserve_evaluation_context(self) -> None:
+        args = parse_scanner_args(
+            [
+                "--symbol",
+                "SPY",
+                "--strategy",
+                "iron_condor",
+                "--profile",
+                "weekly",
+            ]
+        )
+        args.session_label = "test_session"
+        args.evaluation_date = "2026-04-21"
+        args.evaluation_timestamp = "2026-04-21T18:55:00+00:00"
+        args.session_bucket_override = "midday"
+
+        restored = deserialize_symbol_args(serialize_symbol_args(args))
+
+        self.assertEqual(restored.session_label, "test_session")
+        self.assertEqual(restored.evaluation_date, "2026-04-21")
+        self.assertEqual(
+            restored.evaluation_timestamp,
+            "2026-04-21T18:55:00+00:00",
+        )
+        self.assertEqual(restored.session_bucket_override, "midday")
+
+    def test_parse_scanner_args_allows_zero_width_single_leg_strategies(self) -> None:
+        for strategy in ("long_call", "long_put", "short_call", "short_put"):
+            with self.subTest(strategy=strategy):
+                base_args = parse_scanner_args(
+                    [
+                        "--symbol",
+                        "SPY",
+                        "--strategy",
+                        strategy,
+                        "--profile",
+                        "weekly",
+                    ]
+                )
+                args, underlying_type = resolve_symbol_scan_args(
+                    symbol="SPY",
+                    base_args=base_args,
+                )
+                self.assertEqual(underlying_type, "etf_index_proxy")
+                self.assertEqual(args.min_width, 0.0)
+                self.assertEqual(args.max_width, 0.0)
+
+    def test_weekly_short_call_uses_strategy_profile_override(self) -> None:
+        short_call_args = parse_scanner_args(
+            [
+                "--symbol",
+                "SPY",
+                "--strategy",
+                "short_call",
+                "--profile",
+                "weekly",
+            ]
+        )
+        short_call, underlying_type = resolve_symbol_scan_args(
+            symbol="SPY",
+            base_args=short_call_args,
+        )
+
+        self.assertEqual(underlying_type, "etf_index_proxy")
+        self.assertEqual(short_call.short_delta_min, 0.14)
+        self.assertEqual(short_call.short_delta_max, 0.22)
+        self.assertEqual(short_call.short_delta_target, 0.19)
+        self.assertEqual(short_call.min_short_vs_expected_move_ratio, -0.10)
+        self.assertEqual(short_call.min_breakeven_vs_expected_move_ratio, -0.05)
+
+        short_put_args = parse_scanner_args(
+            [
+                "--symbol",
+                "SPY",
+                "--strategy",
+                "short_put",
+                "--profile",
+                "weekly",
+            ]
+        )
+        short_put, _ = resolve_symbol_scan_args(
+            symbol="SPY",
+            base_args=short_put_args,
+        )
+
+        self.assertEqual(short_put.short_delta_min, 0.08)
+        self.assertEqual(short_put.short_delta_max, 0.16)
+        self.assertEqual(short_put.short_delta_target, 0.12)
+        self.assertEqual(short_put.min_short_vs_expected_move_ratio, -0.05)
+        self.assertEqual(short_put.min_breakeven_vs_expected_move_ratio, -0.02)
+
     def test_build_symbol_strategy_candidates_carries_short_delta_target(self) -> None:
         scan_result = SymbolScanResult(
             symbol="SPY",

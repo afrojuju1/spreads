@@ -131,6 +131,7 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
     } & set(source):
         raw_policy = source
     if isinstance(raw_policy, dict):
+        quantity_configured = raw_policy.get("quantity") not in (None, "")
         quantity = _coerce_int(raw_policy.get("quantity")) or 1
         pricing_mode = (
             _as_text(raw_policy.get("pricing_mode")) or DEFAULT_ENTRY_PRICING_MODE
@@ -153,6 +154,7 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
         )
     else:
         deployment_mode = "shadow"
+        quantity_configured = False
         quantity = 1
         pricing_mode = DEFAULT_ENTRY_PRICING_MODE
         min_credit_retention_pct = DEFAULT_MIN_CREDIT_RETENTION_PCT
@@ -175,6 +177,7 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
             "deployment_mode": deployment_mode,
             "mode": "disabled",
             "quantity": quantity,
+            "quantity_configured": quantity_configured,
             "pricing_mode": pricing_mode,
             "min_credit_retention_pct": min_credit_retention_pct,
             "max_credit_concession": max_credit_concession,
@@ -188,6 +191,7 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
         "deployment_mode": deployment_mode,
         "mode": "top_promotable",
         "quantity": max(quantity, 1),
+        "quantity_configured": quantity_configured,
         "pricing_mode": pricing_mode,
         "min_credit_retention_pct": min_credit_retention_pct,
         "max_credit_concession": max_credit_concession,

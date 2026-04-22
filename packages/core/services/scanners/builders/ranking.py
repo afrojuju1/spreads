@@ -183,7 +183,7 @@ def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> flo
 
     if candidate.strategy == "long_straddle":
         width_target = 0.0
-    elif candidate.strategy in {"long_call", "long_put"}:
+    elif candidate.strategy in {"long_call", "long_put", "short_call", "short_put"}:
         width_target = 0.0
     elif candidate.strategy == "long_strangle" and candidate.expected_move is not None:
         width_target = max(candidate.expected_move * 2.0, args.min_width)
@@ -194,7 +194,13 @@ def score_candidate(candidate: SpreadCandidate, args: argparse.Namespace) -> flo
             args.min_width, 2.0 if args.profile == "core" else args.min_width
         )
     width_window = max(args.max_width - args.min_width, 1.0)
-    if candidate.strategy in {"long_call", "long_put", "long_straddle"}:
+    if candidate.strategy in {
+        "long_call",
+        "long_put",
+        "short_call",
+        "short_put",
+        "long_straddle",
+    }:
         width_window = 1.0
     elif candidate.strategy == "long_strangle" and candidate.expected_move is not None:
         width_window = max(candidate.expected_move, 1.0)

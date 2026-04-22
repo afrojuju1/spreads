@@ -8,7 +8,7 @@ If another planning or design document disagrees about current ownership, topolo
 
 Use planning documents for target-state design, subsystem specifications, migration plans, and historical context.
 
-Last updated: 2026-04-20
+Last updated: 2026-04-21
 
 Related:
 
@@ -37,6 +37,9 @@ Related:
 - The discovery path may persist discovery run-cycle artifacts, but canonical live selection state lives in `signal_states`, `signal_state_transitions`, and `opportunities`.
 - Runtime-owned automation opportunities are projections over canonical cycle opportunities, not a separate selection system.
 - Bot plus automation is the primary operator/product ownership plane. Discovery sessions remain discovery-run-owned diagnostic surfaces, and `pipeline_id` is discovery lineage plus compatibility identity rather than the primary runtime owner.
+- Config-backed symbol ownership is `bot -> automation -> universe -> symbols[]`. Bots own limits, runtime flags, and automation references; they do not directly own persisted symbol lists.
+- `EntryRuntime.symbols` and `ManagementRuntime.symbols` are derived from the resolved automation universe. Discovery-run scope may union symbols across active entry automations when building a scanner scope.
+- Scanner and collection CLI flags such as `--symbols` and `--symbols-file` are ad hoc operator and research overrides, not the persisted bot or automation ownership model.
 - `execution` is the immutable broker-facing ledger. `session_positions` is the mutable owner of day-local position attribution.
 - `broker_sync` reconciles broker reality and health, but it does not take ownership of session attribution away from `session_positions`.
 
@@ -417,6 +420,15 @@ Today that path is split across:
 - `services/scanners/` for strategy scanning, builder logic, market-slice assembly, output formatting, and historical evaluation adapters
 - `services/live_selection.py` plus `services/opportunity_scoring.py` for live state assignment and scoring
 - `services/signal_state.py`, `services/opportunity_generation.py`, and `services/opportunities.py` for canonical signal and opportunity persistence
+
+For config-backed options automation, discovery symbol scope is resolved through:
+
+1. bot config for limits, runtime flags, and referenced automations
+2. automation config for `strategy_config` and `universe`
+3. universe config for concrete `symbols[]`
+4. runtime scope assembly that unions symbols across active entry automations when a shared discovery-run scope is built
+
+This means persisted bots do not currently carry direct symbol lists. Direct symbol lists exist today only as scanner and collection CLI overrides such as `--symbols` and `--symbols-file`.
 
 At a high level it:
 

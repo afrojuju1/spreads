@@ -47,6 +47,8 @@ def default_output_path(symbol: str, strategy: str, output_format: str) -> str:
         "put_debit": "put_debit_spreads",
         "long_call": "long_calls",
         "long_put": "long_puts",
+        "short_call": "short_calls",
+        "short_put": "short_puts",
         "long_straddle": "long_straddles",
         "long_strangle": "long_strangles",
         "iron_condor": "iron_condors",

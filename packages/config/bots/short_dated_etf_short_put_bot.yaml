@@ -1,0 +1,16 @@
+bot_id: short_dated_etf_short_put_bot
+name: Short-Dated ETF Short Put Bot
+limits:
+  capital_limit: 5000
+  max_open_positions: 3
+  max_daily_actions: 6
+  max_new_entries_per_day: 3
+  daily_loss_limit: 250
+runtime:
+  live_enabled: false
+  cancel_pending_entries_after_et: "15:30"
+  flatten_positions_at_et: "15:45"
+  paused: false
+automations:
+  - etf_short_put_entry
+  - etf_short_put_manage

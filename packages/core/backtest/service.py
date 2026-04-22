@@ -35,6 +35,7 @@ from core.services.option_structures import (
     structure_quote_snapshot,
     unique_leg_symbols,
 )
+from core.services.risk_manager import build_candidate_position_sizing
 from core.storage.run_history_repository import session_bounds
 from core.storage.serializers import parse_datetime
 
@@ -101,11 +102,15 @@ def _opportunity_economics(opportunity: dict[str, Any]) -> dict[str, Any]:
 
 
 def _lifecycle_pnl(
-    *, strategy_family: Any, entry_value: float, exit_value: float
+    *,
+    strategy_family: Any,
+    entry_value: float,
+    exit_value: float,
+    quantity: float = 1.0,
 ) -> float:
     if net_premium_kind(strategy_family) == "debit":
-        return round((exit_value - entry_value) * 100.0, 2)
-    return round((entry_value - exit_value) * 100.0, 2)
+        return round((exit_value - entry_value) * 100.0 * quantity, 2)
+    return round((entry_value - exit_value) * 100.0 * quantity, 2)
 
 
 def _simulated_position_payload(
@@ -115,6 +120,7 @@ def _simulated_position_payload(
     fill_price: float,
     width: float | None,
     max_loss: float | None,
+    quantity: int,
     session_date: str,
 ) -> dict[str, Any]:
     return {
@@ -126,9 +132,13 @@ def _simulated_position_payload(
         "entry_credit": round(fill_price, 4),
         "entry_value": round(fill_price, 4),
         "entry_value_kind": net_premium_kind(opportunity.get("strategy_family")),
-        "remaining_quantity": 1.0,
+        "remaining_quantity": float(quantity),
         "width": None if width is None or width <= 0 else width,
-        "max_loss": None if max_loss is None or max_loss <= 0 else round(max_loss, 2),
+        "max_loss": (
+            None
+            if max_loss is None or max_loss <= 0
+            else round(max_loss * quantity, 2)
+        ),
         "risk_policy": {},
         "exit_policy": resolve_exit_policy_snapshot(
             session_date=session_date,
@@ -181,18 +191,39 @@ def _simulate_entry_execution(
             "position": None,
         }
     max_loss = _coerce_float(economics.get("max_loss"))
+    sizing = build_candidate_position_sizing(
+        candidate={
+            **dict(opportunity),
+            **economics,
+        },
+        limit_price=fill_price,
+        strategy_risk_budget=_coerce_float(
+            runtime.build_settings.risk_defaults.get("max_risk_per_trade")
+        ),
+    )
+    quantity = int(sizing.get("recommended_quantity") or 1)
+    if bool(sizing.get("applies")) and quantity <= 0:
+        return {
+            "intent_state": "rejected",
+            "fill_state": "risk_budget_exhausted",
+            "filled": False,
+            "position": None,
+            "position_sizing": sizing,
+        }
     return {
         "intent_state": "filled",
         "fill_state": fill_state,
         "filled": True,
         "fill_price": round(fill_price, 4),
         "fill_source": fill_source,
+        "position_sizing": sizing,
         "position": _simulated_position_payload(
             runtime=runtime,
             opportunity=opportunity,
             fill_price=fill_price,
             width=None if width <= 0 else width,
             max_loss=None if max_loss <= 0 else max_loss,
+            quantity=max(quantity, 1),
             session_date=session_date,
         ),
     }
@@ -352,6 +383,7 @@ def _evaluate_structure_marks(
         ).strip()
         or None,
     )
+    modeled_quantity = _coerce_float(simulated_position.get("remaining_quantity")) or 1.0
     latest_mark: dict[str, Any] | None = None
     snapshot_count = 0
     for snapshot in marks:
@@ -388,6 +420,7 @@ def _evaluate_structure_marks(
                     strategy_family=opportunity.get("strategy_family"),
                     entry_value=float(entry_execution["fill_price"]),
                     exit_value=exit_fill_price,
+                    quantity=modeled_quantity,
                 ),
                 unrealized_pnl=0.0,
                 final_close_mark=close_mark,
@@ -445,6 +478,7 @@ def _evaluate_structure_marks(
                 strategy_family=opportunity.get("strategy_family"),
                 entry_value=float(entry_execution["fill_price"]),
                 exit_value=exit_fill_price,
+                quantity=modeled_quantity,
             ),
             unrealized_pnl=0.0,
             final_close_mark=latest_mark.get("close_mark"),
@@ -470,6 +504,7 @@ def _evaluate_structure_marks(
             strategy_family=opportunity.get("strategy_family"),
             entry_value=float(entry_execution["fill_price"]),
             exit_value=final_close_mark,
+            quantity=modeled_quantity,
         )
         if final_close_mark > 0
         else 0.0,

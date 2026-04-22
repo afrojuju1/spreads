@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import UTC, date, datetime, time, timedelta
+from functools import lru_cache
 import os
 from typing import Any, Mapping
 
@@ -11,7 +12,7 @@ from core.integrations.calendar_events import build_calendar_event_resolver
 from core.integrations.greeks import build_local_greeks_provider
 from core.services.alpaca import create_alpaca_client_from_env
 from core.services.automations import cadence_minutes
-from core.services.automation_runtime import resolve_entry_runtime
+from core.services.automation_runtime import resolve_entry_runtime, resolve_entry_runtimes
 from core.services.bot_analytics import evaluate_entry_controls
 from core.services.entry_planner import plan_entry_selection
 from core.services.live_selection import select_live_opportunities
@@ -28,6 +29,7 @@ from core.services.scanners.historical import (
 from core.services.option_structures import (
     candidate_legs,
     legs_identity_key,
+    normalize_strategy_family,
     payload_display_fields,
 )
 from core.services.scanners.replay_artifacts import (
@@ -41,6 +43,7 @@ from core.services.scanners.runtime import (
     build_raw_candidates_from_market_slice,
     postprocess_market_slice_candidates,
 )
+from core.services.runtime_candidate_filters import build_runtime_candidate_filter
 from core.services.strategy_builders import (
     build_entry_runtime_symbol_candidates_from_market_slice,
     build_market_slice_args,
@@ -85,6 +88,88 @@ def _candidate_identity(candidate: Mapping[str, Any]) -> str:
         strategy=candidate.get("strategy"),
         legs=candidate_legs(candidate),
     )
+
+
+def _candidate_strategy(candidate: Mapping[str, Any]) -> str:
+    return str(
+        candidate.get("strategy") or candidate.get("strategy_family") or ""
+    ).strip()
+
+
+def _rounded_float(value: Any, *, places: int = 4) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return round(float(value), places)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_legacy_iron_condor_candidate(candidate: Mapping[str, Any]) -> bool:
+    return _candidate_strategy(candidate) == "iron_condor" and 0 < len(
+        candidate_legs(candidate)
+    ) < 4
+
+
+def _legacy_iron_condor_match_key(
+    candidate: Mapping[str, Any],
+) -> tuple[Any, ...] | None:
+    if _candidate_strategy(candidate) != "iron_condor":
+        return None
+    display = payload_display_fields(candidate)
+    expiration_date = str(candidate.get("expiration_date") or "").strip()
+    short_symbol = str(
+        display.get("short_symbol") or candidate.get("short_symbol") or ""
+    ).strip()
+    long_symbol = str(
+        display.get("long_symbol") or candidate.get("long_symbol") or ""
+    ).strip()
+    if not expiration_date or not short_symbol or not long_symbol:
+        return None
+    return (
+        "legacy_iron_condor",
+        expiration_date,
+        short_symbol,
+        long_symbol,
+        _rounded_float(candidate.get("width")),
+        _rounded_float(candidate.get("midpoint_credit")),
+        _rounded_float(candidate.get("natural_credit")),
+        _rounded_float(candidate.get("breakeven")),
+        _rounded_float(candidate.get("max_profit"), places=2),
+        _rounded_float(candidate.get("max_loss"), places=2),
+        _rounded_float(candidate.get("return_on_risk")),
+    )
+
+
+def _replay_comparison_mode(
+    *, run: Mapping[str, Any], stored_candidates: list[dict[str, Any]]
+) -> str:
+    if str(run.get("strategy") or "").strip() != "iron_condor":
+        return "full_identity"
+    if any(_is_legacy_iron_condor_candidate(row) for row in stored_candidates):
+        return "legacy_iron_condor_compat"
+    return "full_identity"
+
+
+def _candidate_match_key(candidate: Mapping[str, Any], *, mode: str) -> Any:
+    if mode == "legacy_iron_condor_compat":
+        compat_key = _legacy_iron_condor_match_key(candidate)
+        if compat_key is not None:
+            return compat_key
+    return _candidate_identity(candidate)
+
+
+def _candidate_match_label(
+    *,
+    stored_row: Mapping[str, Any] | None,
+    replayed_row: Mapping[str, Any] | None,
+    fallback_key: Any,
+) -> str:
+    if replayed_row is not None:
+        return _candidate_identity(replayed_row)
+    if stored_row is not None:
+        return _candidate_identity(stored_row)
+    return str(fallback_key)
 
 
 def _candidate_summary(candidate: Mapping[str, Any], *, rank: int | None = None) -> dict[str, Any]:
@@ -153,6 +238,72 @@ def _build_base_replay_payload(
     }
 
 
+@lru_cache(maxsize=1)
+def _cached_entry_runtimes() -> tuple[Any, ...]:
+    return tuple(resolve_entry_runtimes())
+
+
+def _upgrade_legacy_runtime_candidate_filter(
+    *,
+    run: Mapping[str, Any],
+    candidate_filter: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    payload = dict(candidate_filter or {})
+    if not payload:
+        return payload
+    if any(
+        key in payload
+        for key in (
+            "strategy_id",
+            "symbols",
+            "dte_min",
+            "dte_max",
+            "short_delta_min",
+            "short_delta_max",
+            "min_open_interest",
+            "max_leg_spread_pct_mid",
+            "min_return_on_risk",
+            "ranking_policy",
+            "entry_recipe_refs",
+        )
+    ):
+        return payload
+
+    allowed_widths = {
+        round(float(value), 4)
+        for value in list(payload.get("allowed_widths") or [])
+        if value not in (None, "")
+    }
+    run_symbol = str(run.get("symbol") or "").upper()
+    run_profile = str(run.get("profile") or "").strip()
+    run_strategy_family = normalize_strategy_family(run.get("strategy"))
+
+    matching_runtimes: list[Any] = []
+    for runtime in _cached_entry_runtimes():
+        if normalize_strategy_family(runtime.strategy_id) != run_strategy_family:
+            continue
+        if run_symbol and run_symbol not in {str(symbol).upper() for symbol in runtime.symbols}:
+            continue
+        if (
+            run_profile
+            and str(runtime.build_settings.scanner_profile or "").strip() != run_profile
+        ):
+            continue
+        runtime_widths = {
+            round(float(value), 4) for value in runtime.build_settings.width_points
+        }
+        if allowed_widths and runtime_widths and allowed_widths != runtime_widths:
+            continue
+        matching_runtimes.append(runtime)
+
+    if len(matching_runtimes) != 1:
+        return payload
+    upgraded = build_runtime_candidate_filter(matching_runtimes[0])
+    if run_symbol:
+        upgraded["symbols"] = [run_symbol]
+    return upgraded
+
+
 def _build_replay_payload_for_run(
     *,
     history_store: Any,
@@ -186,7 +337,10 @@ def _build_replay_payload_for_run(
     calendar_decisions_by_expiration = deserialize_calendar_decisions_by_expiration(
         artifact.get("calendar_decisions_by_expiration")
     )
-    candidate_filter = dict(artifact.get("candidate_filter") or {})
+    candidate_filter = _upgrade_legacy_runtime_candidate_filter(
+        run=resolved_run,
+        candidate_filter=artifact.get("candidate_filter"),
+    )
 
     replayed_candidates = postprocess_market_slice_candidates(
         market_slice=market_slice,
@@ -204,17 +358,22 @@ def _build_replay_payload_for_run(
         if candidate_matches_filter(dict(candidate.to_payload()), candidate_filter)
     ]
 
-    stored_rank_by_identity: dict[str, int] = {}
-    stored_by_identity: dict[str, dict[str, Any]] = {}
+    comparison_mode = _replay_comparison_mode(
+        run=resolved_run,
+        stored_candidates=stored_candidates,
+    )
+
+    stored_rank_by_identity: dict[Any, int] = {}
+    stored_by_identity: dict[Any, dict[str, Any]] = {}
     for index, row in enumerate(stored_candidates, start=1):
-        identity = _candidate_identity(row)
+        identity = _candidate_match_key(row, mode=comparison_mode)
         stored_rank_by_identity[identity] = index
         stored_by_identity[identity] = dict(row)
 
-    replayed_rank_by_identity: dict[str, int] = {}
-    replayed_by_identity: dict[str, dict[str, Any]] = {}
+    replayed_rank_by_identity: dict[Any, int] = {}
+    replayed_by_identity: dict[Any, dict[str, Any]] = {}
     for index, row in enumerate(replayed_rows, start=1):
-        identity = _candidate_identity(row)
+        identity = _candidate_match_key(row, mode=comparison_mode)
         replayed_rank_by_identity[identity] = index
         replayed_by_identity[identity] = dict(row)
 
@@ -229,21 +388,26 @@ def _build_replay_payload_for_run(
     for identity in common_identities:
         stored_rank = stored_rank_by_identity[identity]
         replayed_rank = replayed_rank_by_identity[identity]
+        stored_row = stored_by_identity[identity]
+        replayed_row = replayed_by_identity[identity]
+        identity_label = _candidate_match_label(
+            stored_row=stored_row,
+            replayed_row=replayed_row,
+            fallback_key=identity,
+        )
         if stored_rank != replayed_rank:
             rank_changes.append(
                 {
-                    "identity": identity,
+                    "identity": identity_label,
                     "stored_rank": stored_rank,
                     "replayed_rank": replayed_rank,
                 }
             )
-        stored_row = stored_by_identity[identity]
-        replayed_row = replayed_by_identity[identity]
         for field in _COMPARABLE_FIELDS:
             if _values_differ(stored_row.get(field), replayed_row.get(field)):
                 field_drifts.append(
                     {
-                        "identity": identity,
+                        "identity": identity_label,
                         "field": field,
                         "stored": stored_row.get(field),
                         "replayed": replayed_row.get(field),
@@ -262,6 +426,7 @@ def _build_replay_payload_for_run(
         "replayed_only_count": len(replayed_only),
         "rank_change_count": len(rank_changes),
         "field_drift_count": len(field_drifts),
+        "comparison_mode": comparison_mode,
     }
     base_payload["stored_top"] = [
         _candidate_summary(row, rank=index)

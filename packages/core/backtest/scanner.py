@@ -139,7 +139,7 @@ def run_scanner_backtest(
         raise SystemExit(
             "Backtest latest requires a concrete strategy such as call_credit, "
             "put_credit, call_debit, put_debit, long_call, long_put, "
-            "long_straddle, long_strangle, or iron_condor"
+            "short_call, short_put, long_straddle, long_strangle, or iron_condor"
         )
     if args.backtest_run_id:
         run_payload = history_store.get_run(args.backtest_run_id)

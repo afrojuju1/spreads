@@ -13,6 +13,7 @@ from core.domain.profiles import (
     UNIVERSE_PRESETS,
     ZERO_DTE_ALLOWED_SYMBOLS,
     resolve_ranking_policy,
+    resolve_strategy_profile_override,
     zero_dte_session_bucket,
 )
 from core.integrations.alpaca.client import DEFAULT_DATA_BASE_URL
@@ -58,6 +59,8 @@ PROFILE_FALLBACK_RANKING_STRATEGY_FAMILIES = frozenset(
         "put_debit_spread",
         "long_call",
         "long_put",
+        "short_call",
+        "short_put",
         "long_straddle",
         "long_strangle",
     }
@@ -179,6 +182,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "put_debit",
             "long_call",
             "long_put",
+            "short_call",
+            "short_put",
             "long_straddle",
             "long_strangle",
             "iron_condor",
@@ -589,6 +594,10 @@ def apply_profile_defaults(args: argparse.Namespace, underlying_type: str) -> No
         profile_name=args.profile,
         strategy_family=normalized_strategy,
     )
+    strategy_profile_override = resolve_strategy_profile_override(
+        profile_name=args.profile,
+        strategy=normalized_strategy,
+    )
     directional_long_defaults = (
         DIRECTIONAL_LONG_DELTA_DEFAULTS.get(args.profile)
         if normalized_strategy in {"long_call", "long_put"}
@@ -599,32 +608,50 @@ def apply_profile_defaults(args: argparse.Namespace, underlying_type: str) -> No
     args.max_dte = resolve_profile_value(args.max_dte, profile.max_dte)
     args.short_delta_min = resolve_profile_value(
         args.short_delta_min,
-        profile.short_delta_min
-        if directional_long_defaults is None
-        else directional_long_defaults[0],
+        (
+            directional_long_defaults[0]
+            if directional_long_defaults is not None
+            else (
+                profile.short_delta_min
+                if strategy_profile_override.short_delta_min is None
+                else strategy_profile_override.short_delta_min
+            )
+        ),
     )
     args.short_delta_max = resolve_profile_value(
         args.short_delta_max,
-        profile.short_delta_max
-        if directional_long_defaults is None
-        else directional_long_defaults[1],
+        (
+            directional_long_defaults[1]
+            if directional_long_defaults is not None
+            else (
+                profile.short_delta_max
+                if strategy_profile_override.short_delta_max is None
+                else strategy_profile_override.short_delta_max
+            )
+        ),
     )
     args.short_delta_target = resolve_profile_value(
         args.short_delta_target,
-        profile.short_delta_target
-        if directional_long_defaults is None
-        else directional_long_defaults[2],
+        (
+            directional_long_defaults[2]
+            if directional_long_defaults is not None
+            else (
+                profile.short_delta_target
+                if strategy_profile_override.short_delta_target is None
+                else strategy_profile_override.short_delta_target
+            )
+        ),
     )
     args.min_width = resolve_profile_value(
         args.min_width,
         0.0
-        if normalized_strategy in {"long_call", "long_put"}
+        if normalized_strategy in {"long_call", "long_put", "short_call", "short_put"}
         else profile.min_width,
     )
     args.max_width = resolve_profile_value(
         args.max_width,
         0.0
-        if normalized_strategy in {"long_call", "long_put"}
+        if normalized_strategy in {"long_call", "long_put", "short_call", "short_put"}
         else profile.max_width_by_underlying[underlying_key],
     )
     args.min_credit = resolve_profile_value(args.min_credit, profile.min_credit)
@@ -644,11 +671,19 @@ def apply_profile_defaults(args: argparse.Namespace, underlying_type: str) -> No
     )
     args.min_short_vs_expected_move_ratio = resolve_profile_value(
         args.min_short_vs_expected_move_ratio,
-        profile.min_short_vs_expected_move_ratio,
+        (
+            profile.min_short_vs_expected_move_ratio
+            if strategy_profile_override.min_short_vs_expected_move_ratio is None
+            else strategy_profile_override.min_short_vs_expected_move_ratio
+        ),
     )
     args.min_breakeven_vs_expected_move_ratio = resolve_profile_value(
         args.min_breakeven_vs_expected_move_ratio,
-        profile.min_breakeven_vs_expected_move_ratio,
+        (
+            profile.min_breakeven_vs_expected_move_ratio
+            if strategy_profile_override.min_breakeven_vs_expected_move_ratio is None
+            else strategy_profile_override.min_breakeven_vs_expected_move_ratio
+        ),
     )
     for key, value in ranking_builder_params.items():
         setattr(
@@ -736,6 +771,7 @@ def clone_args(args: argparse.Namespace) -> argparse.Namespace:
 
 
 def validate_resolved_args(args: argparse.Namespace) -> None:
+    normalized_strategy = normalize_strategy_family(args.strategy)
     if args.min_dte < 0 or args.max_dte < args.min_dte:
         raise SystemExit("Expected 0 <= min-dte <= max-dte")
     if (
@@ -751,7 +787,10 @@ def validate_resolved_args(args: argparse.Namespace) -> None:
         raise SystemExit(
             "Expected short-delta-target to fall inside the selected delta band"
         )
-    if args.min_width <= 0:
+    if normalized_strategy in {"long_call", "long_put", "short_call", "short_put"}:
+        if args.min_width < 0:
+            raise SystemExit("Expected min-width >= 0")
+    elif args.min_width <= 0:
         raise SystemExit("Expected min-width > 0")
     if args.max_width < args.min_width:
         raise SystemExit("Expected max-width >= min-width")

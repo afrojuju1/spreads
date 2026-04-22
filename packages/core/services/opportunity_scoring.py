@@ -54,6 +54,8 @@ SHORT_PREMIUM_FAMILIES = {
     "call_credit_spread",
     "put_credit_spread",
     "iron_condor",
+    "short_call",
+    "short_put",
 }
 SUPPORTED_EARNINGS_HORIZONS = {"next_daily", "near_term", "post_event"}
 
@@ -118,6 +120,8 @@ def strategy_family(strategy: str | None) -> str:
         "long_strangle": "long_strangle",
         "long_call": "long_call",
         "long_put": "long_put",
+        "short_call": "short_call",
+        "short_put": "short_put",
         "iron_condor": "iron_condor",
     }.get(normalized, normalized or "unknown")
 
@@ -292,6 +296,8 @@ def earnings_signal_thresholds(
     elif earnings_phase == "post_event_fresh" and family in {
         "call_credit_spread",
         "put_credit_spread",
+        "short_call",
+        "short_put",
     }:
         confirmation_min = 0.65 + (0.05 if friday_after_hours_event else 0.0)
         thresholds.update(
@@ -910,7 +916,7 @@ def product_policy_blockers(
         blockers.append("product_policy_condor_blocked")
     if (
         style_profile == "reactive"
-        and family in {"put_credit_spread", "call_credit_spread", "iron_condor"}
+        and family in SHORT_PREMIUM_FAMILIES
         and product_class_value not in {"cash_settled_index", "top_tier_etf"}
     ):
         blockers.append("reactive_short_premium_product_blocked")

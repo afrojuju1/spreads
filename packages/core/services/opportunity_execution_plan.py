@@ -10,6 +10,7 @@ from core.domain.opportunity_models import (
     ExecutionIntent,
     Opportunity,
 )
+from core.services.risk_manager import build_candidate_position_sizing
 
 SLOT_LIMITS = {
     "reactive": {"slot_limit": 2, "risk_budget": 500.0},
@@ -105,6 +106,37 @@ def _opportunity_rank_score(opportunity: Opportunity) -> float:
     return round(base_score + min(buffer_ratio * 2.0, 2.5), 4)
 
 
+def _opportunity_position_sizing(
+    *,
+    opportunity: Opportunity,
+    style_profile: str,
+) -> dict[str, Any]:
+    policy = SLOT_LIMITS.get(style_profile, SLOT_LIMITS["tactical"])
+    sizing = build_candidate_position_sizing(
+        candidate={
+            "strategy_family": opportunity.strategy_family,
+            "max_loss": opportunity.max_loss,
+            "midpoint_credit": opportunity.capital_usage,
+        },
+        limit_price=None,
+        strategy_risk_budget=float(policy["risk_budget"]),
+    )
+    recommended_contracts = int(sizing.get("recommended_quantity") or 1)
+    allocated_max_loss = _as_float(sizing.get("recommended_max_loss"))
+    if allocated_max_loss is None:
+        base_max_loss = opportunity.max_loss
+        allocated_max_loss = (
+            None
+            if base_max_loss is None
+            else round(base_max_loss * recommended_contracts, 2)
+        )
+    return {
+        "recommended_contracts": recommended_contracts,
+        "allocated_max_loss": allocated_max_loss,
+        "position_sizing": sizing,
+    }
+
+
 def rank_opportunities(opportunities: Sequence[Opportunity]) -> list[Opportunity]:
     ranked = sorted(
         list(opportunities),
@@ -129,7 +161,15 @@ def allocation_score(
     desirability = opportunity_execution_score(opportunity) / 100.0
     edge_value = _clamp(opportunity.expected_edge_value or 0.0, 0.0, 0.25) / 0.25
     readiness = 1.0 if opportunity.state == "promotable" else 0.5
-    max_loss = opportunity.max_loss or policy["risk_budget"]
+    sizing = _opportunity_position_sizing(
+        opportunity=opportunity,
+        style_profile=style_profile,
+    )
+    max_loss = (
+        _as_float(sizing.get("allocated_max_loss"))
+        or opportunity.max_loss
+        or policy["risk_budget"]
+    )
     capital_efficiency = 1.0 - _clamp(max_loss / policy["risk_budget"], 0.0, 1.0)
     if style_profile == "carry":
         buffer_ratio = _opportunity_buffer_ratio(opportunity) or 0.0
@@ -186,7 +226,12 @@ def build_allocation_decisions(
         rejection_codes: list[str] = []
         allocation_state = "not_allocated"
         allocation_reason = "Not selected."
-        max_loss = opportunity.max_loss or 0.0
+        sized_position = _opportunity_position_sizing(
+            opportunity=opportunity,
+            style_profile=style_profile,
+        )
+        recommended_contracts = int(sized_position["recommended_contracts"])
+        max_loss = _as_float(sized_position.get("allocated_max_loss")) or 0.0
         budget_before = remaining_budget
         slots_before = remaining_slots
         symbol_taken_count = int(taken_symbol_counts.get(opportunity.symbol) or 0)
@@ -218,6 +263,11 @@ def build_allocation_decisions(
         elif opportunity.state != "promotable":
             rejection_codes.append("not_promotable")
             allocation_reason = "Opportunity did not clear the promotion floor."
+        elif recommended_contracts <= 0:
+            rejection_codes.append("position_size_zero")
+            allocation_reason = (
+                "Opportunity does not fit the style risk budget even at one contract."
+            )
         elif symbol_taken_count > 0 and not carry_override:
             rejection_codes.append("same_symbol_conflict")
             allocation_reason = (
@@ -260,6 +310,8 @@ def build_allocation_decisions(
                 rejection_codes=rejection_codes,
                 budget_impact={
                     "max_loss": max_loss,
+                    "unit_max_loss": opportunity.max_loss,
+                    "recommended_contracts": recommended_contracts,
                     "risk_budget_before": round(budget_before, 2),
                     "risk_budget_after": round(remaining_budget, 2),
                     "slots_before": slots_before,
@@ -271,6 +323,7 @@ def build_allocation_decisions(
                     "execution_score": opportunity_execution_score(opportunity),
                     "baseline_selection_state": opportunity.baseline_selection_state,
                     "product_class": opportunity.product_class,
+                    "position_sizing": sized_position["position_sizing"],
                 },
             )
         )
@@ -363,6 +416,9 @@ def build_execution_intents(
                 validation_state="provisional_offline",
                 evidence={
                     "allocation_score": decision.allocation_score,
+                    "recommended_quantity": (
+                        decision.budget_impact.get("recommended_contracts")
+                    ),
                     "execution_score": opportunity_execution_score(opportunity),
                     "baseline_selection_state": opportunity.baseline_selection_state,
                     "rank": opportunity.rank,

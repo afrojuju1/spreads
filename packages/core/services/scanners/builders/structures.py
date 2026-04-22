@@ -100,8 +100,22 @@ def build_long_candidate_structure(
     )
 
 
+def build_short_candidate_structure(
+    *,
+    strategy: str,
+    contracts: list[Any],
+    limit_price: float,
+) -> dict[str, Any]:
+    return _build_candidate_structure(
+        strategy=strategy,
+        limit_price=limit_price,
+        legs=[_opening_leg(contract, role="short") for contract in contracts],
+    )
+
+
 __all__ = [
     "build_iron_condor_candidate_structure",
     "build_long_candidate_structure",
+    "build_short_candidate_structure",
     "build_vertical_candidate_structure",
 ]

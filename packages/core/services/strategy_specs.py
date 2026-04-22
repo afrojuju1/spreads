@@ -190,6 +190,38 @@ def _build_long_put_candidates(
     )
 
 
+def _build_short_call_candidates(
+    market_slice: SymbolMarketSlice,
+    symbol_args: argparse.Namespace,
+) -> list[SpreadCandidate]:
+    from core.services.scanners.builders.single_legs import build_short_calls
+
+    return build_short_calls(
+        symbol=market_slice.symbol,
+        spot_price=market_slice.spot_price,
+        contracts_by_expiration=market_slice.call_contracts_by_expiration,
+        snapshots_by_expiration=market_slice.call_snapshots_by_expiration,
+        expected_moves_by_expiration=market_slice.expected_moves_by_expiration,
+        args=symbol_args,
+    )
+
+
+def _build_short_put_candidates(
+    market_slice: SymbolMarketSlice,
+    symbol_args: argparse.Namespace,
+) -> list[SpreadCandidate]:
+    from core.services.scanners.builders.single_legs import build_short_puts
+
+    return build_short_puts(
+        symbol=market_slice.symbol,
+        spot_price=market_slice.spot_price,
+        contracts_by_expiration=market_slice.put_contracts_by_expiration,
+        snapshots_by_expiration=market_slice.put_snapshots_by_expiration,
+        expected_moves_by_expiration=market_slice.expected_moves_by_expiration,
+        args=symbol_args,
+    )
+
+
 @dataclass(frozen=True)
 class StrategySpec:
     strategy_family: str
@@ -334,6 +366,34 @@ _SPEC_LIST = (
         aliases=("long_put",),
         build_validator=LongVolBuildConfig.from_payload,
         candidate_builder=_build_long_put_candidates,
+        coverage_counter=lambda market_slice: _single_side_coverage(
+            market_slice=market_slice,
+            option_type="put",
+        ),
+    ),
+    StrategySpec(
+        strategy_family="short_call",
+        scanner_strategy="short_call",
+        display_label="Short Call",
+        direction="bearish",
+        option_type="call",
+        aliases=("short_call",),
+        build_validator=LongVolBuildConfig.from_payload,
+        candidate_builder=_build_short_call_candidates,
+        coverage_counter=lambda market_slice: _single_side_coverage(
+            market_slice=market_slice,
+            option_type="call",
+        ),
+    ),
+    StrategySpec(
+        strategy_family="short_put",
+        scanner_strategy="short_put",
+        display_label="Short Put",
+        direction="bullish",
+        option_type="put",
+        aliases=("short_put",),
+        build_validator=LongVolBuildConfig.from_payload,
+        candidate_builder=_build_short_put_candidates,
         coverage_counter=lambda market_slice: _single_side_coverage(
             market_slice=market_slice,
             option_type="put",

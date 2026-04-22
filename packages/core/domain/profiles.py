@@ -40,7 +40,7 @@ UNIVERSE_PRESETS: dict[str, tuple[str, ...]] = {
     ),
 }
 SHORT_PREMIUM_STRATEGIES = frozenset(
-    {"call_credit_spread", "put_credit_spread", "iron_condor"}
+    {"call_credit_spread", "put_credit_spread", "iron_condor", "short_call", "short_put"}
 )
 DEBIT_SPREAD_STRATEGIES = frozenset({"call_debit_spread", "put_debit_spread"})
 DIRECTIONAL_LONG_STRATEGIES = frozenset({"long_call", "long_put"})
@@ -227,6 +227,15 @@ class ProfileConfig:
     min_fill_ratio: float
     min_short_vs_expected_move_ratio: float
     min_breakeven_vs_expected_move_ratio: float
+
+
+@dataclass(frozen=True)
+class StrategyProfileOverride:
+    short_delta_min: float | None = None
+    short_delta_max: float | None = None
+    short_delta_target: float | None = None
+    min_short_vs_expected_move_ratio: float | None = None
+    min_breakeven_vs_expected_move_ratio: float | None = None
 
 
 _PROFILE_RANKING_POLICY_BASES: dict[str, RankingPolicyConfig] = {
@@ -485,6 +494,21 @@ PROFILE_CONFIGS: dict[str, ProfileConfig] = {
     ),
 }
 
+_EMPTY_STRATEGY_PROFILE_OVERRIDE = StrategyProfileOverride()
+
+_STRATEGY_PROFILE_OVERRIDES: dict[tuple[str, str], StrategyProfileOverride] = {
+    (
+        "weekly",
+        "short_call",
+    ): StrategyProfileOverride(
+        short_delta_min=0.14,
+        short_delta_max=0.22,
+        short_delta_target=0.19,
+        min_short_vs_expected_move_ratio=-0.10,
+        min_breakeven_vs_expected_move_ratio=-0.05,
+    ),
+}
+
 
 def _normalize_ranking_strategy(strategy: str) -> str:
     normalized = str(strategy or "").strip().lower()
@@ -518,6 +542,16 @@ def resolve_ranking_policy(profile_name: str, strategy: str) -> RankingPolicyCon
     return _merge_ranking_policies(
         base,
         _STRATEGY_RANKING_POLICY_OVERRIDES.get(_normalize_ranking_strategy(strategy)),
+    )
+
+
+def resolve_strategy_profile_override(
+    profile_name: str,
+    strategy: str,
+) -> StrategyProfileOverride:
+    return _STRATEGY_PROFILE_OVERRIDES.get(
+        (str(profile_name), _normalize_ranking_strategy(strategy)),
+        _EMPTY_STRATEGY_PROFILE_OVERRIDE,
     )
 
 
@@ -556,11 +590,13 @@ __all__ = [
     "RankingWeightsConfig",
     "SHORT_PREMIUM_STRATEGIES",
     "ProfileConfig",
+    "StrategyProfileOverride",
     "UNIVERSE_PRESETS",
     "ZERO_DTE_ALLOWED_SYMBOLS",
     "ZERO_DTE_CORE_SYMBOLS",
     "format_session_bucket",
     "resolve_ranking_policy",
+    "resolve_strategy_profile_override",
     "zero_dte_delta_target",
     "zero_dte_session_bucket",
 ]

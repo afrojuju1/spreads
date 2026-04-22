@@ -8,14 +8,18 @@ from core.domain.models import (
     OptionSnapshot,
     SpreadCandidate,
 )
+from core.services.option_structures import net_premium_kind
 from core.services.scanners.config import strategy_option_type
 
 from .analytics import attach_structure_analytics
 from .shared import days_from_reference, relative_spread, relative_spread_exceeds
-from .structures import build_long_candidate_structure
+from .structures import build_long_candidate_structure, build_short_candidate_structure
 
 
-def _modeled_boundary(
+_SHORT_SINGLE_LEG_STRESS_MOVE_MULTIPLE = 2.0
+
+
+def _expected_move_boundary(
     *,
     option_type: str,
     spot_price: float,
@@ -28,7 +32,46 @@ def _modeled_boundary(
     )
 
 
-def build_long_single_legs(
+def _modeled_intrinsic(
+    *,
+    option_type: str,
+    strike_price: float,
+    terminal_spot: float,
+) -> float:
+    return (
+        max(terminal_spot - strike_price, 0.0)
+        if option_type == "call"
+        else max(strike_price - terminal_spot, 0.0)
+    )
+
+
+def _short_single_leg_stress_loss(
+    *,
+    option_type: str,
+    strike_price: float,
+    spot_price: float,
+    expected_move: ExpectedMoveEstimate,
+    entry_credit: float,
+) -> float:
+    stress_boundary = (
+        spot_price + (expected_move.amount * _SHORT_SINGLE_LEG_STRESS_MOVE_MULTIPLE)
+        if option_type == "call"
+        else spot_price - (expected_move.amount * _SHORT_SINGLE_LEG_STRESS_MOVE_MULTIPLE)
+    )
+    intrinsic_loss = (
+        _modeled_intrinsic(
+            option_type=option_type,
+            strike_price=strike_price,
+            terminal_spot=stress_boundary,
+        )
+        - entry_credit
+    )
+    # Keep naked shorts finite on the scanner path with a conservative
+    # expected-move stress proxy rather than implying live undefined-risk support.
+    return max(intrinsic_loss, entry_credit)
+
+
+def build_single_legs(
     *,
     symbol: str,
     strategy: str,
@@ -40,6 +83,9 @@ def build_long_single_legs(
 ) -> list[SpreadCandidate]:
     candidates: list[SpreadCandidate] = []
     option_type = strategy_option_type(strategy)
+    premium_kind = net_premium_kind(strategy)
+    if premium_kind not in {"credit", "debit"}:
+        return candidates
 
     for expiration_date, contracts in sorted(contracts_by_expiration.items()):
         snapshot_map = snapshots_by_expiration.get(expiration_date, {})
@@ -72,7 +118,10 @@ def build_long_single_legs(
                 continue
 
             midpoint_credit = round(snapshot.midpoint, 4)
-            natural_credit = round(snapshot.ask, 4)
+            natural_credit = round(
+                snapshot.ask if premium_kind == "debit" else snapshot.bid,
+                4,
+            )
             if midpoint_credit < args.min_credit or natural_credit <= 0:
                 continue
 
@@ -89,39 +138,71 @@ def build_long_single_legs(
             breakeven_cushion_pct = (
                 abs(breakeven - spot_price) / spot_price if spot_price > 0 else 0.0
             )
-            modeled_boundary = _modeled_boundary(
+            expected_move_boundary = _expected_move_boundary(
                 option_type=option_type,
                 spot_price=spot_price,
                 expected_move=expected_move,
             )
-            modeled_intrinsic = (
-                max(modeled_boundary - contract.strike_price, 0.0)
-                if option_type == "call"
-                else max(contract.strike_price - modeled_boundary, 0.0)
+            modeled_intrinsic = _modeled_intrinsic(
+                option_type=option_type,
+                strike_price=contract.strike_price,
+                terminal_spot=expected_move_boundary,
             )
-            modeled_profit = modeled_intrinsic - midpoint_credit
-            if modeled_profit <= 0:
-                continue
-            return_on_risk = round(modeled_profit / midpoint_credit, 4)
+            if premium_kind == "debit":
+                modeled_profit = modeled_intrinsic - midpoint_credit
+                if modeled_profit <= 0:
+                    continue
+                max_profit = round(modeled_profit * 100.0, 2)
+                max_loss = round(midpoint_credit * 100.0, 2)
+                return_on_risk = round(modeled_profit / midpoint_credit, 4)
+                short_vs_expected_move = (
+                    expected_move_boundary - contract.strike_price
+                    if option_type == "call"
+                    else contract.strike_price - expected_move_boundary
+                )
+                breakeven_vs_expected_move = (
+                    expected_move_boundary - breakeven
+                    if option_type == "call"
+                    else breakeven - expected_move_boundary
+                )
+                fill_ratio = min(max(midpoint_credit / natural_credit, 0.0), 1.25)
+                structure = build_long_candidate_structure(
+                    strategy=strategy,
+                    contracts=[contract],
+                    limit_price=midpoint_credit,
+                )
+            else:
+                stress_loss = _short_single_leg_stress_loss(
+                    option_type=option_type,
+                    strike_price=contract.strike_price,
+                    spot_price=spot_price,
+                    expected_move=expected_move,
+                    entry_credit=midpoint_credit,
+                )
+                if stress_loss <= 0:
+                    continue
+                max_profit = round(midpoint_credit * 100.0, 2)
+                max_loss = round(stress_loss * 100.0, 2)
+                return_on_risk = round(midpoint_credit / stress_loss, 4)
+                short_vs_expected_move = (
+                    contract.strike_price - expected_move_boundary
+                    if option_type == "call"
+                    else expected_move_boundary - contract.strike_price
+                )
+                breakeven_vs_expected_move = (
+                    breakeven - expected_move_boundary
+                    if option_type == "call"
+                    else expected_move_boundary - breakeven
+                )
+                fill_ratio = min(max(natural_credit / midpoint_credit, 0.0), 1.25)
+                structure = build_short_candidate_structure(
+                    strategy=strategy,
+                    contracts=[contract],
+                    limit_price=midpoint_credit,
+                )
             if return_on_risk < args.min_return_on_risk:
                 continue
 
-            short_vs_expected_move = (
-                modeled_boundary - contract.strike_price
-                if option_type == "call"
-                else contract.strike_price - modeled_boundary
-            )
-            breakeven_vs_expected_move = (
-                modeled_boundary - breakeven
-                if option_type == "call"
-                else breakeven - modeled_boundary
-            )
-            fill_ratio = min(max(midpoint_credit / natural_credit, 0.0), 1.25)
-            structure = build_long_candidate_structure(
-                strategy=strategy,
-                contracts=[contract],
-                limit_price=midpoint_credit,
-            )
             candidate = SpreadCandidate(
                 underlying_symbol=symbol,
                 strategy=strategy,
@@ -145,8 +226,8 @@ def build_long_single_legs(
                 long_ask=snapshot.ask,
                 midpoint_credit=midpoint_credit,
                 natural_credit=natural_credit,
-                max_profit=round(modeled_profit * 100.0, 2),
-                max_loss=round(midpoint_credit * 100.0, 2),
+                max_profit=max_profit,
+                max_loss=max_loss,
                 return_on_risk=return_on_risk,
                 breakeven=breakeven,
                 breakeven_cushion_pct=breakeven_cushion_pct,
@@ -193,7 +274,7 @@ def build_long_calls(
     expected_moves_by_expiration: dict[str, ExpectedMoveEstimate],
     args: argparse.Namespace,
 ) -> list[SpreadCandidate]:
-    return build_long_single_legs(
+    return build_single_legs(
         symbol=symbol,
         strategy="long_call",
         spot_price=spot_price,
@@ -213,7 +294,7 @@ def build_long_puts(
     expected_moves_by_expiration: dict[str, ExpectedMoveEstimate],
     args: argparse.Namespace,
 ) -> list[SpreadCandidate]:
-    return build_long_single_legs(
+    return build_single_legs(
         symbol=symbol,
         strategy="long_put",
         spot_price=spot_price,
@@ -224,4 +305,50 @@ def build_long_puts(
     )
 
 
-__all__ = ["build_long_calls", "build_long_puts", "build_long_single_legs"]
+def build_short_calls(
+    *,
+    symbol: str,
+    spot_price: float,
+    contracts_by_expiration: dict[str, list[OptionContract]],
+    snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
+    expected_moves_by_expiration: dict[str, ExpectedMoveEstimate],
+    args: argparse.Namespace,
+) -> list[SpreadCandidate]:
+    return build_single_legs(
+        symbol=symbol,
+        strategy="short_call",
+        spot_price=spot_price,
+        contracts_by_expiration=contracts_by_expiration,
+        snapshots_by_expiration=snapshots_by_expiration,
+        expected_moves_by_expiration=expected_moves_by_expiration,
+        args=args,
+    )
+
+
+def build_short_puts(
+    *,
+    symbol: str,
+    spot_price: float,
+    contracts_by_expiration: dict[str, list[OptionContract]],
+    snapshots_by_expiration: dict[str, dict[str, OptionSnapshot]],
+    expected_moves_by_expiration: dict[str, ExpectedMoveEstimate],
+    args: argparse.Namespace,
+) -> list[SpreadCandidate]:
+    return build_single_legs(
+        symbol=symbol,
+        strategy="short_put",
+        spot_price=spot_price,
+        contracts_by_expiration=contracts_by_expiration,
+        snapshots_by_expiration=snapshots_by_expiration,
+        expected_moves_by_expiration=expected_moves_by_expiration,
+        args=args,
+    )
+
+
+__all__ = [
+    "build_long_calls",
+    "build_long_puts",
+    "build_short_calls",
+    "build_short_puts",
+    "build_single_legs",
+]

@@ -8,6 +8,8 @@ NET_CREDIT_FAMILIES = {
     "call_credit_spread",
     "put_credit_spread",
     "iron_condor",
+    "short_call",
+    "short_put",
 }
 NET_DEBIT_FAMILIES = {
     "call_debit_spread",
@@ -360,7 +362,13 @@ def structure_width(
     if not normalized_legs:
         return None
     normalized_strategy = normalize_strategy_family(strategy)
-    if normalized_strategy in {"long_call", "long_put", "long_straddle"}:
+    if normalized_strategy in {
+        "long_call",
+        "long_put",
+        "long_straddle",
+        "short_call",
+        "short_put",
+    }:
         return 0.0
     widths: list[float] = []
     grouped: dict[str | None, list[float]] = {}
@@ -407,12 +415,14 @@ def structure_barrier_strike(
         "call_credit_spread",
         "call_debit_spread",
         "long_call",
+        "short_call",
     }:
         target_option_type = "call"
     elif normalized_strategy in {
         "put_credit_spread",
         "put_debit_spread",
         "long_put",
+        "short_put",
     }:
         target_option_type = "put"
 
