@@ -2,16 +2,16 @@
 
 Alpaca-based options spread scanner, live collector, and operator dashboard.
 
-It scans candidate spreads, runs live collection sessions, persists runtime history to Postgres, delivers Discord alerts through a durable outbox, and renders post-market analysis plus a web UI for operators.
+It scans candidate spreads, runs live collection sessions, persists runtime history to Postgres, delivers Discord alerts through a durable outbox, and renders a web UI for operators.
 
 ## What Is Here
 
 - `packages/api`
-  - FastAPI backend for sessions, alerts, jobs, account state, and post-market analysis
+  - FastAPI backend for sessions, alerts, jobs, account state, and operator surfaces
 - `packages/web`
   - Next.js operator dashboard
 - `packages/core/services`
-  - scanner, session, account, alert, and post-market logic
+  - scanner, session, account, alert, execution, and runtime logic
 - `packages/core/jobs`
   - scheduler and ARQ worker entrypoints
 - `packages/core/storage`
@@ -89,18 +89,6 @@ Run a collector profile:
 uv run spreads collect --profile weekly --universe explore_10
 ```
 
-Analyze a label:
-
-```bash
-uv run spreads analyze --label explore_10_combined_weekly_auto
-```
-
-Run post-market analysis:
-
-```bash
-uv run spreads post-market analyze --label explore_10_combined_weekly_auto --date 2026-04-10
-```
-
 Run the scheduler directly:
 
 ```bash
@@ -115,8 +103,7 @@ uv run spreads scheduler
 - In Docker, `web` is the canonical frontend dev path. It bind-mounts source and auto-syncs `node_modules` from `packages/web/package-lock.json` on container start or restart.
 - `worker-runtime`, `worker-discovery`, and `scheduler` do not hot-reload. Restart those containers after backend changes they import.
 - Prefer using the existing Docker services for runtime checks instead of starting duplicate local processes.
-- Postgres is the source of truth for runtime history, sessions, alerts, jobs, and post-market analysis.
-- Post-market outcomes are modeled analysis, not realized account PnL.
+- Postgres is the source of truth for runtime history, sessions, alerts, jobs, execution, and opportunity state.
 
 ## Useful Docs
 
@@ -130,7 +117,7 @@ uv run spreads scheduler
 The repo is actively evolving toward:
 
 - durable alert delivery
-- stronger session and post-market visibility
+- stronger session and trading visibility
 - one canonical `spreads` CLI for operator workflows
 
 The planning docs in [`docs/planning`](docs/planning) are the best place to see in-flight architecture and execution plans.

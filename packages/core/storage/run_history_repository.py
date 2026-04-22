@@ -294,6 +294,129 @@ class RunHistoryRepository(RepositoryBase):
             rows = session.scalars(statement).all()
         return self.rows(rows)
 
+    def session_quote_overview(
+        self,
+        *,
+        session_date: str,
+        label: str,
+    ) -> dict[str, Any]:
+        session_start, session_end = session_bounds(session_date)
+        statement = (
+            select(
+                func.count(OptionQuoteEventModel.quote_id),
+                func.min(OptionQuoteEventModel.captured_at),
+                func.max(OptionQuoteEventModel.captured_at),
+                func.count(func.distinct(OptionQuoteEventModel.option_symbol)),
+            )
+            .where(OptionQuoteEventModel.captured_at >= session_start)
+            .where(OptionQuoteEventModel.captured_at < session_end)
+            .where(OptionQuoteEventModel.label == label)
+        )
+        with self.session_factory() as session:
+            row = session.execute(statement).one()
+        return {
+            "quote_event_count": int(row[0] or 0),
+            "first_quote_at": render_value(row[1]),
+            "last_quote_at": render_value(row[2]),
+            "tracked_leg_count": int(row[3] or 0),
+        }
+
+    def list_session_quote_coverage(
+        self,
+        *,
+        session_date: str,
+        label: str,
+    ) -> list[dict[str, Any]]:
+        session_start, session_end = session_bounds(session_date)
+        statement = (
+            select(
+                OptionQuoteEventModel.underlying_symbol.label("underlying_symbol"),
+                OptionQuoteEventModel.strategy.label("strategy"),
+                func.count(OptionQuoteEventModel.quote_id).label("quote_events"),
+                func.count(func.distinct(OptionQuoteEventModel.option_symbol)).label(
+                    "unique_legs"
+                ),
+                func.min(OptionQuoteEventModel.captured_at).label("first_quote_at"),
+                func.max(OptionQuoteEventModel.captured_at).label("last_quote_at"),
+            )
+            .where(OptionQuoteEventModel.captured_at >= session_start)
+            .where(OptionQuoteEventModel.captured_at < session_end)
+            .where(OptionQuoteEventModel.label == label)
+            .group_by(
+                OptionQuoteEventModel.underlying_symbol,
+                OptionQuoteEventModel.strategy,
+            )
+            .order_by(
+                OptionQuoteEventModel.underlying_symbol.asc(),
+                OptionQuoteEventModel.strategy.asc(),
+            )
+        )
+        with self.session_factory() as session:
+            rows = session.execute(statement).all()
+        return [
+            {
+                "underlying_symbol": str(render_value(row.underlying_symbol) or "UNKNOWN"),
+                "strategy": str(render_value(row.strategy) or "unknown"),
+                "quote_events": int(row.quote_events or 0),
+                "unique_legs": int(row.unique_legs or 0),
+                "first_quote_at": render_value(row.first_quote_at),
+                "last_quote_at": render_value(row.last_quote_at),
+            }
+            for row in rows
+        ]
+
+    def list_session_quote_leg_summaries(
+        self,
+        *,
+        session_date: str,
+        label: str,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        session_start, session_end = session_bounds(session_date)
+        statement = (
+            select(
+                OptionQuoteEventModel.option_symbol.label("option_symbol"),
+                OptionQuoteEventModel.underlying_symbol.label("underlying_symbol"),
+                OptionQuoteEventModel.strategy.label("strategy"),
+                OptionQuoteEventModel.leg_role.label("leg_role"),
+                func.count(OptionQuoteEventModel.quote_id).label("event_count"),
+                func.min(OptionQuoteEventModel.captured_at).label("first_quote_at"),
+                func.max(OptionQuoteEventModel.captured_at).label("last_quote_at"),
+                func.min(OptionQuoteEventModel.midpoint).label("midpoint_min"),
+                func.max(OptionQuoteEventModel.midpoint).label("midpoint_max"),
+            )
+            .where(OptionQuoteEventModel.captured_at >= session_start)
+            .where(OptionQuoteEventModel.captured_at < session_end)
+            .where(OptionQuoteEventModel.label == label)
+            .group_by(
+                OptionQuoteEventModel.option_symbol,
+                OptionQuoteEventModel.underlying_symbol,
+                OptionQuoteEventModel.strategy,
+                OptionQuoteEventModel.leg_role,
+            )
+            .order_by(
+                func.count(OptionQuoteEventModel.quote_id).desc(),
+                OptionQuoteEventModel.option_symbol.asc(),
+            )
+            .limit(max(int(limit), 1))
+        )
+        with self.session_factory() as session:
+            rows = session.execute(statement).all()
+        return [
+            {
+                "option_symbol": str(render_value(row.option_symbol) or ""),
+                "underlying_symbol": str(render_value(row.underlying_symbol) or "UNKNOWN"),
+                "strategy": str(render_value(row.strategy) or "unknown"),
+                "leg_role": str(render_value(row.leg_role) or "unknown"),
+                "event_count": int(row.event_count or 0),
+                "first_quote_at": render_value(row.first_quote_at),
+                "last_quote_at": render_value(row.last_quote_at),
+                "midpoint_min": float(row.midpoint_min or 0.0),
+                "midpoint_max": float(row.midpoint_max or 0.0),
+            }
+            for row in rows
+        ]
+
     def list_option_quote_events_window(
         self,
         *,

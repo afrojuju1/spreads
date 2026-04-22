@@ -46,7 +46,7 @@ def isoformat_utc(value: datetime) -> str:
 def _interval_market_cutoff(
     payload: dict[str, object], *, market_close: datetime
 ) -> datetime:
-    raw_grace_minutes = payload.get("post_close_grace_minutes", 0)
+    raw_grace_minutes = payload.get("market_close_grace_minutes", 0)
     try:
         grace_minutes = max(int(raw_grace_minutes), 0)
     except (TypeError, ValueError):

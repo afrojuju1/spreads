@@ -207,29 +207,6 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
         tone: "warning",
       };
     }
-    case "post_market.analysis.updated": {
-      const status = readText(payload.status);
-      if (!status || !["succeeded", "failed"].includes(status)) {
-        return null;
-      }
-      const label = readText(payload.label) ?? "post-market";
-      const sessionDate = readText(payload.session_date);
-      return {
-        id: `${event.topic}:${event.entity_id}:${status}`,
-        title:
-          status === "succeeded"
-            ? `Post-market ready for ${label}`
-            : `Post-market failed for ${label}`,
-        body:
-          status === "succeeded"
-            ? `The ${label} analysis${sessionDate ? ` for ${sessionDate}` : ""} finished successfully.`
-            : `The ${label} analysis${sessionDate ? ` for ${sessionDate}` : ""} failed.`,
-        href: resolveOperatorHrefFromPayload(payload),
-        summary: `Post-market ${label} ${humanizeToken(status)}`,
-        timestamp: event.timestamp,
-        tone: status === "succeeded" ? "success" : "error",
-      };
-    }
     case "execution.attempt.updated": {
       const status = readText(payload.status) ?? "updated";
       const symbol = readText(payload.underlying_symbol) ?? "execution";
@@ -343,18 +320,6 @@ function GlobalRealtimeBridge({
         }
         break;
       case "live.discovery_run.degraded":
-        queryClient.invalidateQueries({ queryKey: ["pipelines"] });
-        queryClient.invalidateQueries({ queryKey: ["runtimes"] });
-        if (pipelineId) {
-          queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
-        }
-        if (botId && automationId) {
-          queryClient.invalidateQueries({
-            queryKey: ["runtimes", botId, automationId],
-          });
-        }
-        break;
-      case "post_market.analysis.updated":
         queryClient.invalidateQueries({ queryKey: ["pipelines"] });
         queryClient.invalidateQueries({ queryKey: ["runtimes"] });
         if (pipelineId) {

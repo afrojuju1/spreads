@@ -11,8 +11,10 @@ from arq import create_pool
 
 from core.events.bus import publish_global_event_async
 from core.jobs.registry import (
+    DISCOVERY_QUEUE_NAME,
     DISCOVERY_RECOVERY_JOB_KEY,
     DISCOVERY_RECOVERY_JOB_TYPE,
+    RUNTIME_QUEUE_NAME,
     get_job_spec,
 )
 from core.jobs.specs import get_declared_job_row, list_declared_job_rows
@@ -42,6 +44,9 @@ DEFAULT_POLL_SECONDS = 30
 SCHEDULER_LEASE_TTL_SECONDS = 90
 LIVE_SLOT_MAX_RETRIES = 3
 DEFINITION_QUEUE_CLEANUP_LIMIT = 500
+STALE_JOB_RECONCILE_LIMIT = 500
+JOB_RUN_QUEUE_STALE_AFTER_SECONDS = 15 * 60
+JOB_RUN_HEARTBEAT_STALE_AFTER_SECONDS = 10 * 60
 
 
 def _log_scheduler_event(event: str, **payload: Any) -> None:
@@ -87,6 +92,134 @@ def _lease_is_active(lease: Any) -> bool:
         return False
     expires_at = parse_datetime(lease["expires_at"])
     return expires_at is not None and expires_at > utc_now()
+
+
+def _job_run_heartbeat_stale_after_seconds(run_record: Any) -> int:
+    payload = dict(run_record.get("payload") or {})
+    try:
+        interval_seconds = max(int(payload.get("interval_seconds", 0)), 0)
+    except (TypeError, ValueError):
+        interval_seconds = 0
+    return max(interval_seconds * 2, JOB_RUN_HEARTBEAT_STALE_AFTER_SECONDS)
+
+
+def _job_run_is_stale(run_record: Any, *, now: datetime) -> bool:
+    status = str(run_record.get("status") or "").strip().lower()
+    if status == "queued":
+        scheduled_for = parse_datetime(run_record.get("scheduled_for"))
+        if scheduled_for is None:
+            return True
+        return scheduled_for < now - timedelta(seconds=JOB_RUN_QUEUE_STALE_AFTER_SECONDS)
+    if status == "running":
+        last_seen = (
+            parse_datetime(run_record.get("heartbeat_at"))
+            or parse_datetime(run_record.get("started_at"))
+            or parse_datetime(run_record.get("scheduled_for"))
+        )
+        if last_seen is None:
+            return True
+        return last_seen < now - timedelta(
+            seconds=_job_run_heartbeat_stale_after_seconds(run_record)
+        )
+    return False
+
+
+async def _purge_arq_job_artifacts(redis: Any, *, arq_job_id: str) -> None:
+    if not arq_job_id:
+        return
+    await redis.zrem(RUNTIME_QUEUE_NAME, arq_job_id)
+    await redis.zrem(DISCOVERY_QUEUE_NAME, arq_job_id)
+    await redis.delete(
+        f"arq:job:{arq_job_id}",
+        f"arq:in-progress:{arq_job_id}",
+        f"arq:retry:{arq_job_id}",
+        f"arq:result:{arq_job_id}",
+    )
+
+
+async def _release_singleton_lease_for_run(job_store: Any, run_record: Any) -> None:
+    payload = dict(run_record.get("payload") or {})
+    singleton_scope = str(payload.get("singleton_scope") or "").strip()
+    job_type = str(run_record.get("job_type") or "").strip()
+    job_run_id = str(run_record.get("job_run_id") or "").strip()
+    if not singleton_scope or not job_type or not job_run_id:
+        return
+    await asyncio.to_thread(
+        job_store.release_lease,
+        singleton_lease_key(job_type, singleton_scope),
+        owner=job_run_id,
+    )
+
+
+async def _reconcile_stale_job_run(
+    *,
+    job_store: Any,
+    redis: Any,
+    run_record: Any,
+    now: datetime,
+) -> str | None:
+    status = str(run_record.get("status") or "").strip().lower()
+    arq_job_id = str(run_record.get("arq_job_id") or "")
+    job_run_id = str(run_record.get("job_run_id") or "")
+    if not job_run_id or status not in {"queued", "running"}:
+        return None
+
+    if status == "queued":
+        reconciled_record = await asyncio.to_thread(
+            job_store.update_job_run_status,
+            job_run_id=job_run_id,
+            status="skipped",
+            expected_arq_job_id=arq_job_id,
+            finished_at=now,
+            result={
+                "status": "skipped",
+                "reason": "stale_queued_run_reconciled",
+            },
+            error_text="Marked skipped after stale queue reconciliation.",
+        )
+    else:
+        reconciled_record = await asyncio.to_thread(
+            job_store.update_job_run_status,
+            job_run_id=job_run_id,
+            status="failed",
+            expected_arq_job_id=arq_job_id,
+            finished_at=now,
+            heartbeat_at=now,
+            result={
+                "status": "failed",
+                "reason": "stale_running_heartbeat_reconciled",
+            },
+            error_text="Marked failed after stale heartbeat reconciliation.",
+        )
+    if reconciled_record is None:
+        return None
+
+    await _release_singleton_lease_for_run(job_store, run_record)
+    await _purge_arq_job_artifacts(redis, arq_job_id=arq_job_id)
+    await _publish_job_run_update(redis, reconciled_record)
+    return job_run_id
+
+
+async def _reconcile_stale_job_runs(job_store: Any, redis: Any, *, now: datetime) -> list[str]:
+    reconciled: list[str] = []
+    for status in ("running", "queued"):
+        run_rows = await asyncio.to_thread(
+            job_store.list_job_runs,
+            status=status,
+            limit=STALE_JOB_RECONCILE_LIMIT,
+        )
+        for run_record in run_rows:
+            if not _job_run_is_stale(run_record, now=now):
+                continue
+            reconciled_job_run_id = await _reconcile_stale_job_run(
+                job_store=job_store,
+                redis=redis,
+                run_record=run_record,
+                now=now,
+            )
+            if reconciled_job_run_id is not None:
+                reconciled.append(reconciled_job_run_id)
+    return reconciled
 
 async def _enqueue_job_run(
     *,
@@ -673,7 +806,8 @@ async def _enqueue_definition_jobs(job_store: Any, redis: Any, *, now: datetime)
 
 async def enqueue_due_jobs(job_store: Any, recovery_store: Any, redis: Any) -> dict[str, Any]:
     now = datetime.now(UTC)
-    live_result, definition_result = await asyncio.gather(
+    stale_reconciled, live_result, definition_result = await asyncio.gather(
+        _reconcile_stale_job_runs(job_store, redis, now=now),
         _reconcile_discovery_run_jobs(job_store, recovery_store, redis, now=now),
         _enqueue_definition_jobs(job_store, redis, now=now),
     )
@@ -681,6 +815,7 @@ async def enqueue_due_jobs(job_store: Any, recovery_store: Any, redis: Any) -> d
         "enqueued": [*live_result["enqueued"], *definition_result["enqueued"]],
         "skipped": [*live_result["skipped"], *definition_result["skipped"]],
         "recovery_enqueued": list(live_result.get("recovery_enqueued") or []),
+        "reconciled": stale_reconciled,
     }
 
 
@@ -715,9 +850,11 @@ async def scheduler_loop(args: argparse.Namespace) -> int:
                 enqueued_count=len(result["enqueued"]),
                 skipped_count=len(result["skipped"]),
                 recovery_enqueued_count=len(result.get("recovery_enqueued") or []),
+                reconciled_count=len(result.get("reconciled") or []),
                 enqueued_job_run_ids=result["enqueued"][:5],
                 skipped_samples=result["skipped"][:5],
                 recovery_job_run_ids=list(result.get("recovery_enqueued") or [])[:5],
+                reconciled_job_run_ids=list(result.get("reconciled") or [])[:5],
             )
             if args.once:
                 break

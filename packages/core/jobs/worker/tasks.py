@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from datetime import UTC, datetime
-import threading
 from typing import Any
 
 from core.jobs.registry import (
@@ -17,8 +16,6 @@ from core.jobs.registry import (
     OPTIONS_AUTOMATION_ENTRY_JOB_TYPE,
     OPTIONS_AUTOMATION_MANAGEMENT_JOB_TYPE,
     POSITION_EXIT_MANAGER_JOB_TYPE,
-    POST_CLOSE_ANALYSIS_JOB_TYPE,
-    POST_MARKET_ANALYSIS_JOB_TYPE,
 )
 from core.jobs.specs import get_declared_discovery_run_spec
 from core.services.alert_delivery import (
@@ -41,50 +38,9 @@ from core.services.discovery_recovery import (
     build_slot_details_from_cycle_result,
     run_discovery_recovery,
 )
-from core.services.post_market_analysis import (
-    parse_args as parse_post_market_args,
-    run_post_market_analysis,
-)
-from core.services.post_close.cli import build_analysis_args
-from core.services.post_close.service import run_post_close_analysis
 from core.services.strategy_positions import run_management_automation_decision
 
-from .managed import ManagedJobFailure, _execute_managed_job
-from .observability import (
-    _publish_post_market_event,
-    _publish_post_market_planner_events,
-    compact_analysis_result,
-    compact_post_market_result,
-)
-from .planner import run_post_close_analysis_targets, run_post_market_analysis_targets
-
-
-def _run_with_periodic_heartbeat(
-    fn: Any,
-    *,
-    heartbeat: Any,
-    interval_seconds: float = 15.0,
-) -> Any:
-    result: dict[str, Any] = {}
-    error: dict[str, BaseException] = {}
-    done = threading.Event()
-
-    def target() -> None:
-        try:
-            result["value"] = fn()
-        except BaseException as exc:
-            error["value"] = exc
-        finally:
-            done.set()
-
-    thread = threading.Thread(target=target, daemon=True)
-    thread.start()
-    while not done.wait(timeout=max(float(interval_seconds), 1.0)):
-        heartbeat()
-    heartbeat()
-    if "value" in error:
-        raise error["value"]
-    return result.get("value")
+from .managed import _execute_managed_job
 
 
 async def _update_live_slot_status(
@@ -518,163 +474,3 @@ async def run_discovery_run_job(
         on_completed=on_completed,
         on_failed=on_failed,
     )
-
-
-async def run_post_close_analysis_job(
-    ctx: dict[str, Any],
-    job_key: str,
-    job_run_id: str,
-    payload: dict[str, Any],
-    arq_job_id: str,
-) -> dict[str, Any]:
-    database_url = ctx["database_url"]
-    job_store = ctx["job_store"]
-
-    def runner(heartbeat: Any) -> dict[str, Any]:
-        if payload.get("label"):
-            heartbeat()
-            args = build_analysis_args(
-                {
-                    "db": database_url,
-                    "date": payload.get("date", "today"),
-                    "label": payload["label"],
-                    "backtest_profit_target": payload.get(
-                        "backtest_profit_target", 0.5
-                    ),
-                    "backtest_stop_multiple": payload.get(
-                        "backtest_stop_multiple", 2.0
-                    ),
-                }
-            )
-            return _run_with_periodic_heartbeat(
-                lambda: run_post_close_analysis(args, emit_output=False),
-                heartbeat=heartbeat,
-            )
-        return _run_with_periodic_heartbeat(
-            lambda: run_post_close_analysis_targets(
-                db_target=database_url,
-                job_store=job_store,
-                payload=payload,
-                heartbeat=heartbeat,
-            ),
-            heartbeat=heartbeat,
-        )
-
-    enriched_payload = dict(payload)
-    enriched_payload["job_type"] = POST_CLOSE_ANALYSIS_JOB_TYPE
-    return await _execute_managed_job(
-        ctx,
-        job_key=job_key,
-        job_run_id=job_run_id,
-        arq_job_id=arq_job_id,
-        payload=enriched_payload,
-        runner=runner,
-        compact_result=lambda result: compact_analysis_result(
-            result,
-            include_report=bool(payload.get("include_report")),
-        ),
-    )
-
-
-async def run_post_market_analysis_job(
-    ctx: dict[str, Any],
-    job_key: str,
-    job_run_id: str,
-    payload: dict[str, Any],
-    arq_job_id: str,
-) -> dict[str, Any]:
-    database_url = str(payload.get("db") or ctx["database_url"])
-    job_store = ctx["job_store"]
-
-    def runner(heartbeat: Any) -> dict[str, Any]:
-        if payload.get("label"):
-            heartbeat()
-            args = parse_post_market_args(
-                [
-                    "--db",
-                    database_url,
-                    "--date",
-                    str(payload.get("date", "today")),
-                    "--label",
-                    str(payload["label"]),
-                    "--backtest-profit-target",
-                    str(payload.get("backtest_profit_target", 0.5)),
-                    "--backtest-stop-multiple",
-                    str(payload.get("backtest_stop_multiple", 2.0)),
-                ]
-            )
-            return _run_with_periodic_heartbeat(
-                lambda: run_post_market_analysis(
-                    args,
-                    emit_output=False,
-                    analysis_run_id=job_run_id,
-                    job_run_id=job_run_id,
-                ),
-                heartbeat=heartbeat,
-            )
-        return _run_with_periodic_heartbeat(
-            lambda: run_post_market_analysis_targets(
-                db_target=database_url,
-                job_store=job_store,
-                parent_job_run_id=job_run_id,
-                payload=payload,
-                heartbeat=heartbeat,
-            ),
-            heartbeat=heartbeat,
-        )
-
-    enriched_payload = dict(payload)
-    enriched_payload["job_type"] = POST_MARKET_ANALYSIS_JOB_TYPE
-    try:
-        result = await _execute_managed_job(
-            ctx,
-            job_key=job_key,
-            job_run_id=job_run_id,
-            arq_job_id=arq_job_id,
-            payload=enriched_payload,
-            runner=runner,
-            compact_result=compact_post_market_result,
-        )
-        if result.get("mode") == "planner":
-            await _publish_post_market_planner_events(ctx, result)
-            return result
-        await _publish_post_market_event(
-            ctx,
-            analysis_run_id=str(result["analysis_run_id"]),
-            payload=result,
-            timestamp=datetime.now(UTC),
-        )
-        return result
-    except ManagedJobFailure as exc:
-        partial_result = (
-            compact_post_market_result(exc.result) if exc.result is not None else None
-        )
-        if partial_result is not None and partial_result.get("mode") == "planner":
-            await _publish_post_market_planner_events(ctx, partial_result)
-        await _publish_post_market_event(
-            ctx,
-            analysis_run_id=job_run_id,
-            payload={
-                "analysis_run_id": job_run_id,
-                "session_date": payload.get("date", "today"),
-                "status": "failed",
-                "failed_labels": []
-                if partial_result is None
-                else partial_result.get("failed_labels", []),
-            },
-            timestamp=datetime.now(UTC),
-        )
-        raise
-    except Exception:
-        await _publish_post_market_event(
-            ctx,
-            analysis_run_id=job_run_id,
-            payload={
-                "analysis_run_id": job_run_id,
-                "label": payload.get("label"),
-                "session_date": payload.get("date", "today"),
-                "status": "failed",
-            },
-            timestamp=datetime.now(UTC),
-        )
-        raise

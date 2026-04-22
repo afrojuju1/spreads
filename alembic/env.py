@@ -14,7 +14,6 @@ from core.storage import discovery_run_models as storage_discovery_run_models  #
 from core.storage import event_models as storage_event_models  # noqa: F401
 from core.storage import execution_models as storage_execution_models  # noqa: F401
 from core.storage import job_models as storage_job_models  # noqa: F401
-from core.storage import post_market_models as storage_post_market_models  # noqa: F401
 from core.storage import recovery_models as storage_recovery_models  # noqa: F401
 from core.storage import risk_models as storage_risk_models  # noqa: F401
 from core.storage import signal_models as storage_signal_models  # noqa: F401

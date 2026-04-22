@@ -17,8 +17,6 @@ from .tasks import (
     run_options_automation_execute_job,
     run_options_automation_management_job,
     run_position_exit_manager_job,
-    run_post_close_analysis_job,
-    run_post_market_analysis_job,
 )
 
 
@@ -33,8 +31,6 @@ class RuntimeWorkerSettings:
         run_alert_delivery_job,
         run_alert_reconcile_job,
         run_position_exit_manager_job,
-        run_post_close_analysis_job,
-        run_post_market_analysis_job,
     ]
     queue_name = RUNTIME_QUEUE_NAME
     redis_settings = build_redis_settings(default_redis_url())
@@ -77,6 +73,4 @@ __all__ = [
     "run_options_automation_execute_job",
     "run_options_automation_management_job",
     "run_position_exit_manager_job",
-    "run_post_close_analysis_job",
-    "run_post_market_analysis_job",
 ]

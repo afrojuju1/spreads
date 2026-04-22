@@ -29,16 +29,12 @@ def get_discovery_session_detail(
     db_target: str,
     pipeline_id: str,
     market_date: str | None = None,
-    profit_target: float = 0.5,
-    stop_multiple: float = 2.0,
     storage: Any | None = None,
 ) -> dict[str, Any]:
     return get_pipeline_detail(
         db_target=db_target,
         pipeline_id=pipeline_id,
         market_date=market_date,
-        profit_target=profit_target,
-        stop_multiple=stop_multiple,
         storage=storage,
     )
 

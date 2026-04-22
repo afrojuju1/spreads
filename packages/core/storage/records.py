@@ -43,7 +43,6 @@ OpportunityRecord = StorageRow
 OpportunityDecisionRecord = StorageRow
 RiskDecisionRecord = StorageRow
 JobLeaseRecord = StorageRow
-PostMarketAnalysisRunRecord = StorageRow
 ExecutionIntentRecord = StorageRow
 ExecutionIntentEventRecord = StorageRow
 ExecutionAttemptRecord = StorageRow
@@ -85,7 +84,6 @@ __all__ = [
     "OpportunityDecisionRecord",
     "RiskDecisionRecord",
     "JobLeaseRecord",
-    "PostMarketAnalysisRunRecord",
     "ExecutionIntentRecord",
     "ExecutionIntentEventRecord",
     "ExecutionAttemptRecord",

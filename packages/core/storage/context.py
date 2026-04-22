@@ -11,7 +11,6 @@ from core.storage.db import build_session_factory
 from core.storage.execution_repository import ExecutionRepository
 from core.storage.job_repository import JobRepository
 from core.storage.ops_store import OpsStore
-from core.storage.post_market_repository import PostMarketAnalysisRepository
 from core.storage.recovery_repository import RecoveryRepository
 from core.storage.risk_repository import RiskDecisionRepository
 from core.storage.run_history_repository import RunHistoryRepository
@@ -83,10 +82,6 @@ class StorageContext:
         return self._build_repository("risk", RiskDecisionRepository)  # type: ignore[return-value]
 
     @property
-    def post_market(self) -> PostMarketAnalysisRepository:
-        return self._build_repository("post_market", PostMarketAnalysisRepository)  # type: ignore[return-value]
-
-    @property
     def recovery(self) -> RecoveryRepository:
         return self._build_repository("recovery", RecoveryRepository)  # type: ignore[return-value]
 
@@ -97,7 +92,6 @@ class StorageContext:
             store = OpsStore(
                 alerts=self.alerts,
                 jobs=self.jobs,
-                post_market=self.post_market,
             )
             self._repositories["ops"] = store
         return store  # type: ignore[return-value]

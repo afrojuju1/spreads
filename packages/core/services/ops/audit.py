@@ -143,11 +143,6 @@ def build_audit_view(
         if isinstance(portfolio.get("summary"), Mapping)
         else {}
     )
-    post_market = (
-        audit_snapshot.get("post_market")
-        if isinstance(audit_snapshot.get("post_market"), Mapping)
-        else {}
-    )
     selected_opportunities = [
         dict(row)
         for row in list(explanations.get("selected_opportunities") or [])
@@ -251,19 +246,6 @@ def build_audit_view(
             )
         )
 
-    weak_verdict = (
-        str(post_market.get("overall_verdict") or "").strip().lower() == "weak"
-    )
-    if weak_verdict:
-        statuses.append("degraded")
-        attention.append(
-            _attention(
-                severity="medium",
-                code="audit_post_market_weak",
-                message="Post-market verdict is weak.",
-            )
-        )
-
     blocked_risk_count = sum(
         1
         for row in risk_decisions
@@ -355,7 +337,6 @@ def build_audit_view(
             "returned_timeline_item_count": timeline_stats.get(
                 "returned_timeline_item_count"
             ),
-            "post_market_verdict": post_market.get("overall_verdict"),
             "net_pnl_total": portfolio_summary.get("net_pnl_total"),
             "linked_automation_count": len(linked_automations),
         },
@@ -367,7 +348,6 @@ def build_audit_view(
             "current_cycle": dict(current_cycle),
             "counts": dict(counts),
             "portfolio_summary": dict(portfolio_summary),
-            "post_market": dict(post_market),
             "linked_automations": linked_automations,
             "slot_runs": [
                 dict(row)

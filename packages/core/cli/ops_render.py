@@ -1975,9 +1975,8 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
             details.get("raw_candidate_summary")
             if isinstance(details.get("raw_candidate_summary"), dict)
             else {}
-        )
+    )
     portfolio_summary = dict(details.get("portfolio_summary") or {})
-    post_market = dict(details.get("post_market") or {})
     timeline_stats = dict(details.get("timeline_stats") or {})
 
     overview = Table.grid(padding=(0, 2))
@@ -1992,7 +1991,6 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row(
         "Reconciliation", _render_value(summary.get("reconciliation_status"))
     )
-    overview.add_row("Verdict", _render_value(summary.get("post_market_verdict")))
     overview.add_row("Net PnL", _render_money(summary.get("net_pnl_total")))
     overview.add_row(
         "Counts",
@@ -2118,33 +2116,6 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
         "Mark Source", _render_value(portfolio_summary.get("mark_source"))
     )
     console.print(portfolio_table)
-
-    recommendations = list(post_market.get("recommendations") or [])
-    post_market_table = Table(title="Post-Market", show_edge=False, header_style="bold")
-    post_market_table.add_column("Field", style="bold")
-    post_market_table.add_column("Value")
-    post_market_table.add_row(
-        "Verdict", _render_value(post_market.get("overall_verdict"))
-    )
-    post_market_table.add_row(
-        "Prom vs Mon",
-        _render_money(post_market.get("promotable_monitor_pnl_spread")),
-    )
-    post_market_table.add_row("Recommendations", _render_value(len(recommendations)))
-    console.print(post_market_table)
-
-    if recommendations:
-        table = Table(title="Recommendations", header_style="bold")
-        table.add_column("Priority")
-        table.add_column("Code")
-        table.add_column("Reason")
-        for row in recommendations[:5]:
-            table.add_row(
-                str(row.get("priority") or "-"),
-                str(row.get("code") or row.get("title") or "-"),
-                _truncate(row.get("reason") or row.get("title"), length=80),
-            )
-        console.print(table)
 
     slot_runs = list(details.get("slot_runs") or [])
     if slot_runs:

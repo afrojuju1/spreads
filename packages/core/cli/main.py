@@ -23,8 +23,6 @@ from core.jobs.scheduler import main as scheduler_main
 from core.services.alpaca_research import main as research_alpaca_main
 from core.services.discovery_runs.runtime import main as discover_main
 from core.services.market_recorder import main as market_recorder_main
-from core.services.post_market_analysis import main as post_market_analyze_main
-from core.services.post_close.service import main as analyze_main
 from core.services.scanners.service import main as scan_main
 
 PASSTHROUGH_CONTEXT_SETTINGS = {
@@ -100,33 +98,6 @@ def scan_command(ctx: typer.Context) -> None:
 )
 def discover_command(ctx: typer.Context) -> None:
     _run_passthrough(ctx=ctx, entrypoint=discover_main)
-
-
-@app.command(
-    "analyze",
-    context_settings=PASSTHROUGH_CONTEXT_SETTINGS,
-    help="Run the legacy post-close analysis report.",
-)
-def analyze_command(ctx: typer.Context) -> None:
-    _run_passthrough(ctx=ctx, entrypoint=analyze_main)
-
-
-post_market_app = typer.Typer(
-    add_completion=False,
-    help="Run post-market analysis workflows.",
-)
-
-
-@post_market_app.command(
-    "analyze",
-    context_settings=PASSTHROUGH_CONTEXT_SETTINGS,
-    help="Run persisted post-market analysis for a discovery-run label.",
-)
-def post_market_analyze_command(ctx: typer.Context) -> None:
-    _run_passthrough(ctx=ctx, entrypoint=post_market_analyze_main)
-
-
-app.add_typer(post_market_app, name="post-market")
 
 
 research_app = typer.Typer(

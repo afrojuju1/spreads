@@ -10,7 +10,6 @@ from core.storage.event_repository import EventRepository
 from core.storage.execution_repository import ExecutionRepository
 from core.storage.job_repository import JobRepository
 from core.storage.ops_store import OpsStore
-from core.storage.post_market_repository import PostMarketAnalysisRepository
 from core.storage.recovery_repository import RecoveryRepository
 from core.storage.risk_repository import RiskDecisionRepository
 from core.storage.run_history_repository import RunHistoryRepository
@@ -108,13 +107,6 @@ def build_trading_store(path_or_url: str | None = None, *, context: StorageConte
         return context.trading
     value = _resolve_postgres_url(path_or_url)
     return TradingStore(value)
-
-
-def build_post_market_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):
-    if context is not None:
-        return context.post_market
-    value = _resolve_postgres_url(path_or_url)
-    return PostMarketAnalysisRepository(value)
 
 
 def build_recovery_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):

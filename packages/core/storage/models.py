@@ -81,6 +81,7 @@ class OptionQuoteEventModel(Base):
     __tablename__ = "option_quote_events"
     __table_args__ = (
         Index("idx_option_quote_events_cycle_id", "cycle_id"),
+        Index("idx_option_quote_events_label_captured_at", "label", "captured_at"),
         Index("idx_option_quote_events_symbol_captured_at", "option_symbol", "captured_at"),
     )
 
@@ -106,6 +107,7 @@ class OptionTradeEventModel(Base):
     __tablename__ = "option_trade_events"
     __table_args__ = (
         Index("idx_option_trade_events_cycle_id", "cycle_id"),
+        Index("idx_option_trade_events_label_captured_at", "label", "captured_at"),
         Index("idx_option_trade_events_symbol_captured_at", "option_symbol", "captured_at"),
         Index("idx_option_trade_events_underlying_captured_at", "underlying_symbol", "captured_at"),
     )

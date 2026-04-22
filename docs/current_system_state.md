@@ -8,7 +8,7 @@ If another planning or design document disagrees about current ownership, topolo
 
 Use planning documents for target-state design, subsystem specifications, migration plans, and historical context.
 
-Last updated: 2026-04-21
+Last updated: 2026-04-22
 
 Related:
 
@@ -27,7 +27,7 @@ Related:
 | Canonical opportunity state | `services/signal_state.py`, `services/opportunity_generation.py`, `services/opportunities.py`, `storage/signal_repository.py` | Owns signal state, canonical opportunity rows, and runtime-owned projections derived from discovery run cycles. |
 | Runtime, automation, discovery-session, pipeline-compat, and ops read models | `services/automation_runtimes.py`, `services/discovery_sessions.py`, `services/live_runtime.py`, `services/discovery_run_health/`, `services/pipelines.py`, `services/ops/` | Owns owner-plane automation runtime views, discovery-run-owned discovery-session views, compatibility pipeline projections, and operator CLI payloads. |
 | Execution and portfolio state | `services/execution/`, `services/execution_portfolio.py`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py` | Owns broker submission, immutable execution ledger, day-local position ownership, reconciliation, and exit behavior. |
-| Historical backtest and evaluation | `backtest/`, `services/post_close/`, `services/post_market_analysis.py` | `backtest/` owns the canonical historical evaluation engine and artifacts; post-close services own legacy report rendering and closed-session analysis. |
+| Historical backtest and evaluation | `backtest/` | `backtest/` owns the canonical historical evaluation engine and artifacts. |
 | Persistence and event transport | Postgres, Redis | Postgres is source of truth. Redis handles queues, leases, and pub/sub fanout. |
 
 ## Non-Negotiable Boundary Rules
@@ -57,7 +57,7 @@ Operator
   |
   +--> `uv run spreads ...`
         |
-        +--> direct CLI entrypoints for ops, backtest, scan, collect, analyze,
+        +--> direct CLI entrypoints for ops, backtest, scan, collect,
              research, scheduler, and job seeding
 
 FastAPI
@@ -150,8 +150,6 @@ Redis = transport, queueing, leases, and pub/sub fanout
                                              | options_automation_management
                                              | options_automation_execute
                                              | position_exit_manager
-                                             | post_close        |
-                                             | post_market       |
                                              v                   v
                                   +----------+-------------------+----------+
                                   |   External sinks / persisted state      |
@@ -197,8 +195,6 @@ Redis = transport, queueing, leases, and pub/sub fanout
                  | options_automation_management
                  | options_automation_execute
                  | position_exit_manager
-                 | post_close        |
-                 | post_market       |
                  v                   v
         +--------+-------------------+--------+
         |            Postgres                 |
@@ -405,9 +401,6 @@ Current main job types are:
 - `options_automation_management`
 - `options_automation_execute`
 - `position_exit_manager`
-- `post_close_analysis`
-- `post_market_analysis`
-
 Redis is transport and event fanout. Postgres remains the source of truth for job state.
 
 ### 3. Discovery, Collection, And Opportunity State
@@ -592,12 +585,6 @@ Alerts:
 - use `alert_reconcile` to reclaim stale `dispatching` rows and requeue due `retry_wait` deliveries
 - optionally deliver to Discord webhook sinks when configured
 
-Post-close and post-market analysis:
-
-- read stored session and quote history
-- compute summaries, diagnostics, and recommendations
-- persist post-market analysis runs in `post_market_analysis_runs`
-
 ### 10. Persistence Layout
 
 At a high level Postgres currently holds these logical groups:
@@ -637,10 +624,6 @@ jobs:
 
 alerts:
   alert_events
-
-analysis:
-  post_market_analysis_runs
-  plus read-only derived summaries built from discovery run and execution history
 
 control:
   control_state

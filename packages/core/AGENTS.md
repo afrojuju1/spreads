@@ -26,7 +26,7 @@
 - pipeline/session runtime list/detail: `services/pipelines.py`
 - actual account and trading health: `services/account_state.py`
 - execution, portfolio, and reconciliation: `services/execution/`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, and `services/exit_manager.py`
-- closed-session verdicts and recommendations: `services/post_market_analysis.py` and `storage/post_market_repository.py`
+- historical evaluation and policy research: `backtest/`
 - alert delivery state: `storage/alert_repository.py`
 - job execution and scheduler behavior: `jobs/worker.py`, `jobs/registry.py`, and `storage/job_repository.py`
 
@@ -35,8 +35,6 @@
 - For operator visibility work, reuse these modules with thin adapters instead of introducing parallel API-only logic.
 - For session health and current runtime state, prefer `services/live_runtime.py`, `services/discovery_run_health/`, `services/pipelines.py`, and `services/ops/` over creating new read-model owners.
 - For first-pass ops/runtime checks and historical backtest workflows, follow the repo-level CLI guidance in [../../AGENTS.md](../../AGENTS.md). Keep the canonical command list there instead of repeating it in backend-specific instructions.
-- Treat `services/post_close/` as the canonical post-close reporting surface.
-- For closed-session investigations, check post-market analysis before tuning strategy thresholds from raw session counts alone.
 
 ## End-Of-Day And Ops Queries
 
@@ -44,9 +42,7 @@
 - Use the existing stack and narrow live reads first:
   - account and trading health: `services/account_state.py` or `http://localhost:58080/account/overview?history_range=1D`
   - pipeline/session runtime health: `services/pipelines.py` or `uv run spreads pipelines`
-  - closed-session analysis: `storage/post_market_repository.py` / `services/post_market_analysis.py` or `http://localhost:58080/post-market/{session_date}/{label}`
-- Always distinguish actual account PnL from modeled post-market outcomes. Do not present modeled idea outcomes as realized account performance.
-- Backtest and post-close output now include modeled close/final PnL and actual traded-position PnL. Treat modeled and actual metrics as separate evaluation planes.
+- historical evaluation and tuning: `uv run spreads backtest ...`
 - After market close, use exact dates in summaries.
 
 ## Rollout Checklist

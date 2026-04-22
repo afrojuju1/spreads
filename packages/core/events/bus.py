@@ -29,8 +29,6 @@ def _render_timestamp(value: str | datetime | None = None) -> str:
 def _default_event_class(topic: str) -> str:
     if topic.startswith(("broker.", "execution.")):
         return "broker_event"
-    if topic.startswith(("post_market.",)):
-        return "analytics_event"
     return "control_event"
 
 

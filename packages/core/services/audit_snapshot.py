@@ -6,17 +6,12 @@ from typing import Any
 from core.db.decorators import with_storage
 from core.services.live_pipelines import pipeline_uses_runtime_owned_opportunities
 from core.services.opportunities import list_session_opportunity_rows
-from core.services.pipelines import (
-    DEFAULT_ANALYSIS_PROFIT_TARGET,
-    DEFAULT_ANALYSIS_STOP_MULTIPLE,
-    get_pipeline_detail,
-)
+from core.services.pipelines import get_pipeline_detail
 from core.services.runtime_identity import (
     build_live_run_scope_id,
     build_pipeline_id,
     parse_pipeline_id,
 )
-from core.services.selection_terms import promotable_monitor_pnl_spread
 from core.storage.serializers import parse_datetime
 
 DEFAULT_TIMELINE_LIMIT = 500
@@ -563,42 +558,6 @@ def _summarize_alert(alert: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _promotable_monitor_pnl_spread(summary: Mapping[str, Any] | None) -> float | None:
-    if not isinstance(summary, Mapping):
-        return None
-    outcomes = summary.get("outcomes")
-    if not isinstance(outcomes, Mapping):
-        return None
-    averages = outcomes.get(
-        "average_estimated_pnl_by_selection_state",
-        outcomes.get("average_estimated_pnl_by_bucket"),
-    )
-    return (
-        None
-        if not isinstance(averages, Mapping)
-        else promotable_monitor_pnl_spread(averages)
-    )
-
-
-def _summarize_post_market(analysis: Mapping[str, Any] | None) -> dict[str, Any]:
-    if not isinstance(analysis, Mapping):
-        return {
-            "overall_verdict": None,
-            "promotable_monitor_pnl_spread": None,
-            "recommendations": [],
-        }
-    diagnostics = (
-        analysis.get("diagnostics")
-        if isinstance(analysis.get("diagnostics"), Mapping)
-        else {}
-    )
-    return {
-        "overall_verdict": _as_text(diagnostics.get("overall_verdict")),
-        "promotable_monitor_pnl_spread": _promotable_monitor_pnl_spread(analysis),
-        "recommendations": list(analysis.get("recommendations") or []),
-    }
-
-
 def _resolve_audit_scope(
     *,
     pipeline_id: str,
@@ -632,17 +591,10 @@ def build_audit_snapshot(
         db_target=db_target,
         pipeline_id=scope["pipeline_id"],
         market_date=scope["market_date"],
-        profit_target=DEFAULT_ANALYSIS_PROFIT_TARGET,
-        stop_multiple=DEFAULT_ANALYSIS_STOP_MULTIPLE,
         storage=storage,
     )
     label = str(scope["label"])
     session_date = str(scope["market_date"])
-    analysis = (
-        pipeline_run.get("analysis")
-        if isinstance(pipeline_run.get("analysis"), Mapping)
-        else {}
-    )
     event_store = storage.events
     signal_store = storage.signals
     runtime_owned_opportunities = pipeline_uses_runtime_owned_opportunities(
@@ -805,7 +757,6 @@ def build_audit_snapshot(
         "raw_candidate_summary": dict(pipeline_run.get("raw_candidate_summary") or {}),
         "slot_runs": slot_runs,
         "alerts": alerts,
-        "post_market": _summarize_post_market(analysis),
         "explanations": {
             "selected_opportunities": [
                 _summarize_opportunity(row) for row in prioritized_opportunities[:10]

@@ -9,87 +9,9 @@ from core.events.bus import publish_global_event_async
 from core.services.discovery_run_health.enrichment import (
     enrich_discovery_run_job_run_payload,
 )
-from core.services.live_pipelines import build_live_run_scope_id
 
 DISCOVERY_RUN_STREAM_STALL_THRESHOLD = 2
 DISCOVERY_RUN_SLOT_LAG_THRESHOLD = 2
-
-
-def _compact_single_analysis_result(
-    result: dict[str, Any],
-    *,
-    include_report: bool = False,
-) -> dict[str, Any]:
-    summary = result["summary"]
-    outcomes = summary["outcomes"]
-    payload = {
-        "session_date": result["session_date"],
-        "label": result["label"],
-        "cycle_count": summary["cycle_count"],
-        "idea_count": outcomes["idea_count"],
-        "counts_by_selection_state": outcomes["counts_by_selection_state"],
-        "run_count": summary["run_overview"]["run_count"],
-        "quote_event_count": summary["quote_overview"]["quote_event_count"],
-        "event_count": summary["event_overview"]["event_count"],
-    }
-    if include_report:
-        payload["report"] = result.get("report")
-    return payload
-
-
-def compact_analysis_result(
-    result: dict[str, Any],
-    *,
-    include_report: bool = False,
-) -> dict[str, Any]:
-    if result.get("mode") == "planner":
-        return {
-            "mode": "planner",
-            "session_date": result["session_date"],
-            "expected_labels": list(result.get("expected_labels") or []),
-            "realized_labels": list(result.get("realized_labels") or []),
-            "runs": [
-                _compact_single_analysis_result(item, include_report=include_report)
-                for item in result.get("runs", [])
-            ],
-            "skipped_labels": [dict(item) for item in result.get("skipped_labels", [])],
-            "failed_labels": [dict(item) for item in result.get("failed_labels", [])],
-        }
-    return _compact_single_analysis_result(result, include_report=include_report)
-
-
-def _compact_single_post_market_result(result: dict[str, Any]) -> dict[str, Any]:
-    diagnostics = result["diagnostics"]
-    selection_state_performance = diagnostics["selection_state_performance"]
-    return {
-        "analysis_run_id": result["analysis_run_id"],
-        "session_date": result["session_date"],
-        "label": result["label"],
-        "status": result["status"],
-        "overall_verdict": diagnostics["overall_verdict"],
-        "strength_count": len(diagnostics["strengths"]),
-        "problem_count": len(diagnostics["problems"]),
-        "recommendation_count": len(result["recommendations"]),
-        "promotable_count": selection_state_performance["promotable"]["count"],
-        "monitor_count": selection_state_performance["monitor"]["count"],
-    }
-
-
-def compact_post_market_result(result: dict[str, Any]) -> dict[str, Any]:
-    if result.get("mode") == "planner":
-        return {
-            "mode": "planner",
-            "session_date": result["session_date"],
-            "expected_labels": list(result.get("expected_labels") or []),
-            "realized_labels": list(result.get("realized_labels") or []),
-            "runs": [
-                _compact_single_post_market_result(item)
-                for item in result.get("runs", [])
-            ],
-            "skipped_labels": [dict(item) for item in result.get("skipped_labels", [])],
-            "failed_labels": [dict(item) for item in result.get("failed_labels", [])],
-        }
-    return _compact_single_post_market_result(result)
 
 
 async def _publish_job_run_event(ctx: dict[str, Any], run_record: Any) -> None:
@@ -118,65 +40,6 @@ async def _publish_job_run_event(ctx: dict[str, Any], run_record: Any) -> None:
         )
     except Exception:
         pass
-
-
-async def _publish_post_market_event(
-    ctx: dict[str, Any],
-    *,
-    analysis_run_id: str,
-    payload: dict[str, Any],
-    timestamp: str | datetime | None = None,
-) -> None:
-    event_bus = ctx.get("event_bus")
-    if event_bus is None:
-        return
-    session_id = None
-    label = payload.get("label")
-    session_date = payload.get("session_date")
-    if (
-        isinstance(label, str)
-        and label
-        and isinstance(session_date, str)
-        and session_date
-    ):
-        session_id = build_live_run_scope_id(label, session_date)
-    try:
-        await publish_global_event_async(
-            event_bus,
-            topic="post_market.analysis.updated",
-            event_class="analytics_event",
-            entity_type="post_market_analysis",
-            entity_id=analysis_run_id,
-            payload={
-                **payload,
-                **({} if session_id is None else {"session_id": session_id}),
-            },
-            timestamp=timestamp,
-            source="worker",
-            session_date=session_date if isinstance(session_date, str) else None,
-            correlation_id=session_id,
-        )
-    except Exception:
-        pass
-
-
-async def _publish_post_market_planner_events(
-    ctx: dict[str, Any], result: dict[str, Any]
-) -> None:
-    for run in result.get("runs", []):
-        await _publish_post_market_event(
-            ctx,
-            analysis_run_id=str(run["analysis_run_id"]),
-            payload=run,
-            timestamp=datetime.now(UTC),
-        )
-    for skipped in result.get("skipped_labels", []):
-        await _publish_post_market_event(
-            ctx,
-            analysis_run_id=str(skipped["analysis_run_id"]),
-            payload=skipped,
-            timestamp=datetime.now(UTC),
-        )
 
 
 def _parse_utc(value: str | None) -> datetime | None:

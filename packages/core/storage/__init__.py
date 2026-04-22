@@ -21,11 +21,9 @@ from .factory import (
     build_signal_repository,
     build_risk_repository,
     build_storage_context,
-    build_post_market_repository,
     build_trading_store,
 )
 from .job_repository import JobRepository
-from .post_market_repository import PostMarketAnalysisRepository
 from .risk_repository import RiskDecisionRepository
 from .run_history_repository import RunHistoryRepository
 from .signal_repository import SignalRepository
@@ -41,7 +39,6 @@ __all__ = [
     "EventRepository",
     "JobRepository",
     "OpsStore",
-    "PostMarketAnalysisRepository",
     "RiskDecisionRepository",
     "RunHistoryRepository",
     "SignalRepository",
@@ -60,7 +57,6 @@ __all__ = [
     "build_risk_repository",
     "build_signal_repository",
     "build_storage_context",
-    "build_post_market_repository",
     "build_trading_store",
     "default_database_url",
 ]

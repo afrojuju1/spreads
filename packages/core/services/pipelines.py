@@ -4,7 +4,6 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from core.db.decorators import with_storage
-from core.services.post_close.summary import build_session_summary
 from core.services.control_plane import get_control_state_snapshot
 from core.services.execution import (
     list_session_execution_attempts,
@@ -28,9 +27,6 @@ from core.services.runtime_identity import (
     parse_pipeline_id,
 )
 from core.storage.serializers import parse_datetime
-
-DEFAULT_ANALYSIS_PROFIT_TARGET = 0.5
-DEFAULT_ANALYSIS_STOP_MULTIPLE = 2.0
 
 
 def _parse_sort_value(value: str | None):
@@ -217,38 +213,6 @@ def _reconciliation_snapshot(portfolio: Mapping[str, Any]) -> dict[str, Any]:
         "status": "matched",
         "note": "Open positions match the broker inventory snapshot.",
     }
-
-
-def _resolve_pipeline_analysis(
-    *,
-    analysis_run: Any,
-    db_target: str,
-    market_date: str,
-    label: str,
-    profit_target: float,
-    stop_multiple: float,
-    storage: Any,
-) -> dict[str, Any]:
-    analysis_run_payload = dict(analysis_run)
-    summary = build_session_summary(
-        db_target=db_target,
-        session_date=market_date,
-        label=label,
-        profit_target=profit_target,
-        stop_multiple=stop_multiple,
-        storage=storage,
-    )
-    payload = {
-        **summary,
-        "analysis_run": analysis_run_payload,
-    }
-    if isinstance(analysis_run_payload.get("diagnostics"), Mapping):
-        payload["diagnostics"] = analysis_run_payload.get("diagnostics")
-    if isinstance(analysis_run_payload.get("recommendations"), list):
-        payload["recommendations"] = list(analysis_run_payload.get("recommendations"))
-    if isinstance(analysis_run_payload.get("report_markdown"), str):
-        payload["report"] = analysis_run_payload.get("report_markdown")
-    return payload
 
 
 def _discovery_run_schema_ready(discovery_store: Any) -> bool:
@@ -447,13 +411,10 @@ def get_pipeline_detail(
     db_target: str,
     pipeline_id: str,
     market_date: str | None,
-    profit_target: float,
-    stop_multiple: float,
     storage: Any | None = None,
 ) -> dict[str, Any]:
     discovery_store = storage.discovery
     alert_store = storage.alerts
-    post_market_store = storage.post_market
     execution_store = storage.execution
     risk_store = getattr(storage, "risk", None)
     signal_store = storage.signals
@@ -525,22 +486,6 @@ def get_pipeline_detail(
     ]
     events.sort(key=_discovery_run_event_sort_key)
 
-    analysis_run = post_market_store.get_latest_run(
-        label=label,
-        session_date=resolved_market_date,
-        succeeded_only=True,
-    )
-    analysis = None
-    if analysis_run is not None:
-        analysis = _resolve_pipeline_analysis(
-            analysis_run=analysis_run,
-            db_target=db_target,
-            market_date=resolved_market_date,
-            label=label,
-            profit_target=profit_target,
-            stop_multiple=stop_multiple,
-            storage=storage,
-        )
     updated_at = _latest_activity_timestamp(
         None if latest_run is None else str(latest_run.get("finished_at") or ""),
         None if latest_run is None else str(latest_run.get("heartbeat_at") or ""),
@@ -665,7 +610,6 @@ def get_pipeline_detail(
         "risk_decisions": risk_decisions,
         "control": control_snapshot,
         "portfolio": portfolio,
-        "analysis": analysis,
     }
 
 

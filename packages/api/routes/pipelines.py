@@ -51,8 +51,6 @@ def get_pipeline_route(
             db_target=_db_target(db),
             pipeline_id=pipeline_id,
             market_date=resolved_market_date,
-            profit_target=0.5,
-            stop_multiple=2.0,
         )
     except ValueError as exc:
         raise not_found_error(exc) from exc

@@ -1084,6 +1084,44 @@ def _build_close_order_request(
     return request, int(resolved_quantity), round(float(resolved_limit_price), 2)
 
 
+def _normalize_submit_order_request(
+    *,
+    payload: Mapping[str, Any],
+    order_request: Mapping[str, Any],
+) -> dict[str, Any]:
+    request = dict(order_request)
+    request_legs = order_payload_legs(
+        request,
+        expiration_date=_as_text(payload.get("expiration_date")),
+    ) or normalize_legs(payload.get("legs"))
+    if not request_legs or len(request_legs) != 1:
+        return request
+    requires_single_leg_rebuild = (
+        str(request.get("order_class") or "").strip().lower() == "mleg"
+        or "symbol" not in request
+        or "side" not in request
+    )
+    if not requires_single_leg_rebuild:
+        return request
+    limit_price = _coerce_float(request.get("limit_price")) or _coerce_float(
+        payload.get("limit_price")
+    )
+    if limit_price is None:
+        return request
+    quantity = _coerce_int(request.get("qty")) or _coerce_int(payload.get("quantity")) or 1
+    normalized_request = build_order_payload(
+        legs=request_legs,
+        limit_price=limit_price,
+        strategy_family=_strategy_family_from_payload(payload),
+        trade_intent=str(payload.get("trade_intent") or OPEN_TRADE_INTENT),
+        quantity=quantity,
+    )
+    client_order_id = _as_text(request.get("client_order_id"))
+    if client_order_id is not None:
+        normalized_request["client_order_id"] = client_order_id
+    return normalized_request
+
+
 @with_storage()
 def submit_live_session_execution(
     *,
@@ -2035,6 +2073,10 @@ def run_execution_submit(
             }
     requested_at = _as_text(payload.get("requested_at")) or _utc_now()
     client_order_id = _as_text(payload.get("client_order_id"))
+    order_request = _normalize_submit_order_request(
+        payload=payload,
+        order_request=order_request,
+    )
 
     submitted_order: dict[str, Any] | None = None
     try:

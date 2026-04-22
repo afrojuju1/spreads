@@ -8,5 +8,5 @@ payload:
   history_range: "1D"
   activity_lookback_days: 1
   allow_off_hours: false
-  post_close_grace_minutes: 5
+  market_close_grace_minutes: 5
 singleton_scope: alpaca
