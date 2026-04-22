@@ -63,8 +63,7 @@ class StrategyBuilderServiceTests(unittest.TestCase):
         self.assertEqual(runtime.strategy_family, "short_put")
         self.assertEqual(runtime.build_settings.short_delta_target, 0.12)
         self.assertEqual(runtime.build_settings.min_return_on_risk, 0.05)
-        self.assertEqual(len(runtime.symbols), 12)
-        self.assertEqual(runtime.symbols[:4], ("SPY", "QQQ", "IWM", "DIA"))
+        self.assertEqual(runtime.symbols, ("SPY", "IWM", "QQQ", "SLV", "SMH"))
 
     def test_build_runtime_scan_args_uses_strategy_min_return_on_risk(self) -> None:
         runtime = resolve_entry_runtime(
@@ -175,6 +174,26 @@ class ManagementPlannerTests(unittest.TestCase):
 
 
 class CollectionConfigTests(unittest.TestCase):
+    def test_short_put_discovery_run_scope_uses_trimmed_universe(self) -> None:
+        scope = build_discovery_run_scope(
+            scanner_strategy="short_put",
+            scanner_profile="weekly",
+        )
+
+        self.assertTrue(scope["enabled"])
+        self.assertEqual(
+            tuple(scope["symbols"]),
+            ("IWM", "QQQ", "SLV", "SMH", "SPY"),
+        )
+        self.assertEqual(scope["scanner_strategy"], "short_put")
+        self.assertEqual(scope["scanner_profile"], "weekly")
+        scanner_args = dict(scope.get("scanner_args") or {})
+        self.assertNotIn("ranking_min_expected_value_dollars", scanner_args)
+        self.assertNotIn(
+            "ranking_min_slippage_adjusted_expected_value_dollars",
+            scanner_args,
+        )
+
     def test_replay_artifact_symbol_args_preserve_evaluation_context(self) -> None:
         args = parse_scanner_args(
             [
@@ -1768,6 +1787,65 @@ class BacktestTests(unittest.TestCase):
 
 
 class JobsOverviewTests(unittest.TestCase):
+    def test_build_jobs_overview_handles_succeeded_non_discovery_runs(self) -> None:
+        class _JobStore:
+            def schema_ready(self) -> bool:
+                return True
+
+            def list_latest_runs_by_job_keys(
+                self,
+                *,
+                job_keys: list[str],
+                statuses: list[str] | None = None,
+            ) -> list[dict[str, object]]:
+                return []
+
+            def list_job_runs(
+                self,
+                *,
+                job_type: str | None = None,
+                status: str | None = None,
+                limit: int = 25,
+            ) -> list[dict[str, object]]:
+                if status in {"queued", "running"}:
+                    return []
+                return [
+                    {
+                        "job_run_id": "job-run-1",
+                        "job_key": "options_automation_entry:short_dated_etf_short_put_bot:etf_short_put_entry",
+                        "job_type": "options_automation_entry",
+                        "status": "succeeded",
+                        "scheduled_for": "2026-04-22T14:35:00Z",
+                        "started_at": "2026-04-22T14:35:05Z",
+                        "finished_at": "2026-04-22T14:35:10Z",
+                        "heartbeat_at": "2026-04-22T14:35:10Z",
+                        "worker_name": "worker-runtime-1",
+                        "payload": {},
+                        "result": {"status": "ok"},
+                    }
+                ]
+
+            def get_lease(self, key: str) -> dict[str, object] | None:
+                return None
+
+            def list_active_leases(self, *, prefix: str) -> list[dict[str, object]]:
+                return []
+
+        storage = SimpleNamespace(jobs=_JobStore())
+        with (
+            patch("core.services.ops.jobs._utc_now", return_value="2026-04-22T14:36:00Z"),
+            patch("core.services.ops.jobs.list_declared_job_rows", return_value=[]),
+        ):
+            payload = build_jobs_overview(
+                storage=storage,
+                limit=10,
+            )
+
+        self.assertEqual(len(payload["details"]["job_runs"]), 1)
+        self.assertEqual(
+            payload["details"]["job_runs"][0]["operator_status"], "healthy"
+        )
+
     def test_build_jobs_overview_excludes_idle_capture_from_degraded_count(self) -> None:
         class _JobStore:
             def schema_ready(self) -> bool:

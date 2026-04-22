@@ -106,6 +106,11 @@ def _job_run_operator_status(
     now: datetime,
 ) -> tuple[str, str | None]:
     status = str(run.get("status") or "unknown").strip().lower()
+    live_action_gate = (
+        run.get("live_action_gate")
+        if isinstance(run.get("live_action_gate"), Mapping)
+        else {}
+    )
     if status == "failed":
         error_text = _as_text(run.get("error_text"))
         return "blocked", error_text or "Job run failed."
@@ -161,23 +166,18 @@ def _job_run_operator_status(
         return "healthy", None
     if status == "succeeded":
         if str(run.get("job_type") or "") == "discovery_run":
-            live_action_gate = (
-                run.get("live_action_gate")
-                if isinstance(run.get("live_action_gate"), Mapping)
-                else {}
-            )
-        if str(live_action_gate.get("status") or "") == "blocked":
-            return (
-                "blocked",
-                _as_text(live_action_gate.get("message"))
-                or "Discovery-run actions are blocked.",
-            )
-        capture_status = str(run.get("capture_status") or "").strip().lower()
-        if is_non_healthy_capture_status(capture_status):
-            return (
-                "degraded",
-                f"Discovery-run capture finished as {capture_status}.",
-            )
+            if str(live_action_gate.get("status") or "") == "blocked":
+                return (
+                    "blocked",
+                    _as_text(live_action_gate.get("message"))
+                    or "Discovery-run actions are blocked.",
+                )
+            capture_status = str(run.get("capture_status") or "").strip().lower()
+            if is_non_healthy_capture_status(capture_status):
+                return (
+                    "degraded",
+                    f"Discovery-run capture finished as {capture_status}.",
+                )
         return "healthy", None
     return "unknown", None
 
