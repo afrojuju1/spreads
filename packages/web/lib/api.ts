@@ -823,7 +823,7 @@ export function getPipelineDetail(
   );
 }
 
-export function getAutomations(filters?: {
+export function getRuntimes(filters?: {
   marketDate?: string;
   limit?: number;
 }) {
@@ -833,7 +833,7 @@ export function getAutomations(filters?: {
   });
 }
 
-export function getAutomationDetail(
+export function getRuntimeDetail(
   botId: string,
   automationId: string,
   filters?: {
@@ -953,15 +953,15 @@ export function buildPipelineHref(
   return `/pipelines/${encodeURIComponent(pipelineId)}?marketDate=${encodeURIComponent(marketDate)}`;
 }
 
-export function buildAutomationHref(
+export function buildRuntimeHref(
   botId?: string | null,
   automationId?: string | null,
   marketDate?: string | null,
 ) {
   if (!botId || !automationId) {
-    return "/automations";
+    return "/runtimes";
   }
-  const basePath = `/automations/${encodeURIComponent(botId)}/${encodeURIComponent(automationId)}`;
+  const basePath = `/runtimes/${encodeURIComponent(botId)}/${encodeURIComponent(automationId)}`;
   if (!marketDate) {
     return basePath;
   }

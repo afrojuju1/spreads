@@ -14,9 +14,9 @@ import {
 import { formatCalendarDate, parseDateValue } from "@/lib/date";
 
 type MarketDateFilterProps = {
-  selectedMarketDate?: string;
+  selectedMarketDate: string;
   defaultMarketDate: string;
-  onSelectMarketDate: (nextMarketDate?: string) => void;
+  onSelectMarketDate: (nextMarketDate: string) => void;
 };
 
 export function MarketDateFilter({
@@ -25,21 +25,13 @@ export function MarketDateFilter({
   onSelectMarketDate,
 }: MarketDateFilterProps) {
   const [open, setOpen] = useState(false);
-  const allDatesSelected = selectedMarketDate == null;
   const selectedMarketDateValue = parseDateValue(selectedMarketDate);
   const defaultMarketDateValue = parseDateValue(defaultMarketDate);
-  const triggerLabel = allDatesSelected
-    ? "Pick market date"
-    : formatCalendarDate(selectedMarketDate);
+  const triggerLabel = formatCalendarDate(selectedMarketDate);
 
   function selectToday() {
     setOpen(false);
     onSelectMarketDate(defaultMarketDate);
-  }
-
-  function selectAllDates() {
-    setOpen(false);
-    onSelectMarketDate(undefined);
   }
 
   function selectDate(nextDate: Date | undefined) {
@@ -54,11 +46,7 @@ export function MarketDateFilter({
     <>
       <Button
         type="button"
-        variant={
-          !allDatesSelected && selectedMarketDate === defaultMarketDate
-            ? "default"
-            : "outline"
-        }
+        variant={selectedMarketDate === defaultMarketDate ? "default" : "outline"}
         onClick={selectToday}
       >
         Today
@@ -69,8 +57,7 @@ export function MarketDateFilter({
             <Button
               type="button"
               variant="outline"
-              data-empty={allDatesSelected}
-              className="min-w-[12.5rem] justify-start text-left font-normal data-[empty=true]:text-muted-foreground"
+              className="min-w-[12.5rem] justify-start text-left font-normal"
             />
           }
         >
@@ -87,13 +74,6 @@ export function MarketDateFilter({
           />
         </PopoverContent>
       </Popover>
-      <Button
-        type="button"
-        variant={allDatesSelected ? "default" : "outline"}
-        onClick={selectAllDates}
-      >
-        All dates
-      </Button>
     </>
   );
 }

@@ -9,7 +9,7 @@ import { BriefcaseBusiness, RefreshCw } from "lucide-react";
 
 import { DataTable } from "@/components/data-table";
 import {
-  buildAutomationHref,
+  buildRuntimeHref,
   buildPositionsHref,
   buildPipelineHref,
   closePosition,
@@ -56,7 +56,7 @@ function hasPositionAutomationOwner(position: Position): boolean {
   );
 }
 
-function getPositionAutomationLabel(position: Position): string {
+function getPositionRuntimeLabel(position: Position): string {
   const owner = getPositionOwner(position);
   const botId = readString(owner.bot_id, "");
   const automationId = readString(owner.automation_id, "");
@@ -71,12 +71,12 @@ function getPositionDiscoveryLabel(position: Position): string {
   return readString(discovery.label, readString(position.pipeline_id));
 }
 
-function getPositionAutomationHref(position: Position): string {
+function getPositionRuntimeHref(position: Position): string {
   const owner = getPositionOwner(position);
   const botId = typeof owner.bot_id === "string" ? owner.bot_id : null;
   const automationId =
     typeof owner.automation_id === "string" ? owner.automation_id : null;
-  return buildAutomationHref(botId, automationId, position.market_date);
+  return buildRuntimeHref(botId, automationId, position.market_date);
 }
 
 function getPositionDiscoveryHref(position: Position): string {
@@ -100,10 +100,10 @@ const POSITION_COLUMNS: ColumnDef<Position>[] = [
         </div>
         {hasPositionAutomationOwner(row.original) ? (
           <Link
-            href={getPositionAutomationHref(row.original)}
+            href={getPositionRuntimeHref(row.original)}
             className="mt-1 inline-block text-xs text-foreground underline-offset-4 hover:underline"
           >
-            {getPositionAutomationLabel(row.original)}
+            Runtime · {getPositionRuntimeLabel(row.original)}
           </Link>
         ) : null}
         <Link
@@ -167,10 +167,10 @@ export function PositionsIndexPageContent({
   const queryClient = useQueryClient();
   const hasOwnerScope = Boolean(botId && automationId);
   const ownerScopeLabel = hasOwnerScope
-    ? `${botId} / ${automationId}`
+    ? `Runtime · ${botId} / ${automationId}`
     : label
       ? `Diagnostics · ${label}`
-      : "All owners";
+      : "All runtimes";
   const positionsQuery = useQuery({
     queryKey: [
       "positions",
@@ -194,7 +194,7 @@ export function PositionsIndexPageContent({
     mutationFn: (positionId: string) => closePosition(positionId, {}),
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["automations"] }),
+        queryClient.invalidateQueries({ queryKey: ["runtimes"] }),
         queryClient.invalidateQueries({ queryKey: ["positions"] }),
         queryClient.invalidateQueries({ queryKey: ["pipelines"] }),
       ]);
@@ -207,19 +207,6 @@ export function PositionsIndexPageContent({
 
   const positions = positionsQuery.data?.positions ?? [];
   const summary = positionsQuery.data?.summary ?? {};
-  const automationCount = new Set(
-    positions.flatMap((row) => {
-      const owner = getPositionOwner(row);
-      const scopedBotId =
-        typeof owner.bot_id === "string" ? owner.bot_id : "";
-      const scopedAutomationId =
-        typeof owner.automation_id === "string" ? owner.automation_id : "";
-      if (scopedBotId && scopedAutomationId) {
-        return [`${scopedBotId}:${scopedAutomationId}`];
-      }
-      return [];
-    }),
-  ).size;
 
   function clearOwnerScope() {
     startTransition(() => {
@@ -256,9 +243,9 @@ export function PositionsIndexPageContent({
               Open risk inventory
             </div>
             <div className="mt-2 text-sm text-foreground/70">
-              Inspect all runtime-owned positions, jump to the owning
-              automation, and keep diagnostics lineage as secondary context.
-              Current owner scope: {ownerScopeLabel}.
+              Inspect current risk first. Runtime ownership and diagnostics
+              lineage stay attached to each row, but this surface stays focused
+              on inventory and exits. Current workspace scope: {ownerScopeLabel}.
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -279,16 +266,11 @@ export function PositionsIndexPageContent({
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricTile
           label="Positions"
           value={String(summary.position_count ?? 0)}
           note="Current runtime inventory"
-        />
-        <MetricTile
-          label="Owner Scope"
-          value={ownerScopeLabel}
-          note={hasOwnerScope ? "Automation-scoped inventory" : label ? "Diagnostics-scoped inventory" : `${automationCount} automations`}
         />
         <MetricTile
           label="Open"
@@ -314,7 +296,7 @@ export function PositionsIndexPageContent({
 
       <SectionSurface
         title="Position List"
-        description="Use the automation runtime for owner context, or close directly from here."
+        description="Use the owning runtime for limits and execution context, or close directly from here."
       >
         <DataTable
           columns={[

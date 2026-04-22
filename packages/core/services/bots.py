@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -20,6 +21,7 @@ from core.services.strategy_configs import (
     _canonical_hash,
     _load_yaml_file,
     default_config_root,
+    _yaml_directory_signature,
 )
 
 NEW_YORK = ZoneInfo("America/New_York")
@@ -145,10 +147,13 @@ def bot_time_reached(
     return (current.hour, current.minute) >= (hour, minute)
 
 
-def load_bots(config_root: str | Path | None = None) -> dict[str, BotConfig]:
-    root = default_config_root(config_root) / "bots"
-    if not root.exists():
-        return {}
+@lru_cache(maxsize=8)
+def _load_bots_cached(
+    root_key: str,
+    signature: tuple[tuple[str, int, int], ...],
+) -> tuple[BotConfig, ...]:
+    del signature
+    root = Path(root_key)
     bots: dict[str, BotConfig] = {}
     for path in sorted(root.glob("*.yaml")):
         payload = _load_yaml_file(path)
@@ -170,7 +175,20 @@ def load_bots(config_root: str | Path | None = None) -> dict[str, BotConfig]:
         if bot.bot_id in bots:
             raise ValueError(f"Duplicate bot_id {bot.bot_id}")
         bots[bot.bot_id] = bot
-    return bots
+    return tuple(bots.values())
+
+
+def load_bots(config_root: str | Path | None = None) -> dict[str, BotConfig]:
+    root = default_config_root(config_root) / "bots"
+    if not root.exists():
+        return {}
+    return {
+        bot.bot_id: bot
+        for bot in _load_bots_cached(
+            str(root),
+            _yaml_directory_signature(root),
+        )
+    }
 
 
 def resolve_bot(bot_id: str, *, config_root: str | Path | None = None) -> ResolvedBot:
@@ -200,12 +218,18 @@ def resolve_bot(bot_id: str, *, config_root: str | Path | None = None) -> Resolv
     )
 
 
-def load_active_bots(
-    config_root: str | Path | None = None,
-) -> dict[str, ResolvedBot]:
+@lru_cache(maxsize=8)
+def _load_active_bots_cached(
+    config_root_key: str,
+    bot_signature: tuple[tuple[str, int, int], ...],
+    automation_signature: tuple[tuple[str, int, int], ...],
+    strategy_signature: tuple[tuple[str, int, int], ...],
+    universe_signature: tuple[tuple[str, int, int], ...],
+) -> tuple[ResolvedBot, ...]:
+    del bot_signature, automation_signature, strategy_signature, universe_signature
     resolved: dict[str, ResolvedBot] = {}
-    for bot_id in sorted(load_bots(config_root)):
-        bot = resolve_bot(bot_id, config_root=config_root)
+    for bot_id in sorted(load_bots(config_root_key)):
+        bot = resolve_bot(bot_id, config_root=config_root_key)
         if bot.bot.paused:
             continue
         enabled_automations = tuple(
@@ -220,7 +244,21 @@ def load_active_bots(
             automations=enabled_automations,
             config_hash=bot.config_hash,
         )
-    return resolved
+    return tuple(resolved.values())
+
+
+def load_active_bots(
+    config_root: str | Path | None = None,
+) -> dict[str, ResolvedBot]:
+    root = default_config_root(config_root)
+    resolved = _load_active_bots_cached(
+        str(root),
+        _yaml_directory_signature(root / "bots"),
+        _yaml_directory_signature(root / "automations"),
+        _yaml_directory_signature(root / "strategies"),
+        _yaml_directory_signature(root / "universes"),
+    )
+    return {bot.bot.bot_id: bot for bot in resolved}
 
 
 def active_entry_automations(

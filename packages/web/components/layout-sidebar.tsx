@@ -70,7 +70,7 @@ export function LayoutSidebar() {
           <SheetHeader className="sr-only">
             <SheetTitle>Navigation</SheetTitle>
             <SheetDescription>
-              Operator routes for automations, opportunities, positions, discovery, and account.
+              Operator routes for opportunities, positions, diagnostics, account, and runtime detail.
             </SheetDescription>
           </SheetHeader>
           <div className="flex h-full flex-col px-4 py-4">

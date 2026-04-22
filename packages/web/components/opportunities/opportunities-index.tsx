@@ -33,7 +33,7 @@ import {
 } from "@/components/ui/sheet";
 import {
   buildOpportunitiesHref,
-  buildAutomationHref as buildAutomationRouteHref,
+  buildRuntimeHref,
   buildPipelineHref,
   executeOpportunity,
   getOpportunities,
@@ -117,7 +117,7 @@ function getOpportunityDiscovery(opportunity: Opportunity): Record<string, unkno
   return readRecord(opportunityRecord(opportunity).discovery);
 }
 
-function getOpportunityAutomationLabel(opportunity: Opportunity): string {
+function getOpportunityRuntimeLabel(opportunity: Opportunity): string {
   const owner = getOpportunityOwner(opportunity);
   const botId = readString(owner.bot_id, "");
   const automationId = readString(owner.automation_id, "");
@@ -135,19 +135,19 @@ function getOpportunityDiscoveryLabel(opportunity: Opportunity): string {
   );
 }
 
-function getOpportunityAutomationHref(opportunity: Opportunity): string {
+function getOpportunityRuntimeHref(opportunity: Opportunity): string {
   const owner = getOpportunityOwner(opportunity);
   const botId = typeof owner.bot_id === "string" ? owner.bot_id : null;
   const automationId =
     typeof owner.automation_id === "string" ? owner.automation_id : null;
-  return buildAutomationRouteHref(
+  return buildRuntimeHref(
     botId,
     automationId,
     opportunity.market_date,
   );
 }
 
-function hasOpportunityAutomationOwner(opportunity: Opportunity): boolean {
+function hasOpportunityRuntimeOwner(opportunity: Opportunity): boolean {
   const owner = getOpportunityOwner(opportunity);
   return Boolean(readString(owner.bot_id, "") && readString(owner.automation_id, ""));
 }
@@ -239,14 +239,26 @@ function getOpportunityDte(opportunity: Opportunity): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function getOpportunityCycleId(opportunity: Opportunity): string {
-  const record = opportunityRecord(opportunity);
-  return readString(record.cycle_id ?? record.source_cycle_id);
-}
-
 function getOpportunityStateReason(opportunity: Opportunity): string {
   const record = opportunityRecord(opportunity);
   return readString(record.state_reason);
+}
+
+function getOpportunityEligibilityState(opportunity: Opportunity): string {
+  const record = opportunityRecord(opportunity);
+  return readString(record.eligibility_state ?? record.eligibility, "");
+}
+
+function isOpportunityLiveExecutable(opportunity: Opportunity): boolean {
+  if (isOpportunityConsumed(opportunity)) {
+    return false;
+  }
+  const lifecycleState = readString(opportunity.lifecycle_state, "");
+  if (!["candidate", "ready", "blocked"].includes(lifecycleState)) {
+    return false;
+  }
+  const eligibilityState = getOpportunityEligibilityState(opportunity);
+  return eligibilityState === "" || eligibilityState === "live";
 }
 
 function getOpportunityMidpointCredit(opportunity: Opportunity): number | null {
@@ -533,11 +545,13 @@ function OpportunityInspectorEmptyState() {
 
 function OpportunityInspectorPanel({
   opportunity,
+  historicalDateSelected,
   executePending,
   onExecute,
   onClear,
 }: {
   opportunity: Opportunity;
+  historicalDateSelected: boolean;
   executePending: boolean;
   onExecute: (opportunityId: string) => void;
   onClear?: () => void;
@@ -550,6 +564,13 @@ function OpportunityInspectorPanel({
   const orderLimitPrice = readString(orderPayload.limit_price, "");
   const orderQty = readString(orderPayload.qty, "");
   const consumed = isOpportunityConsumed(opportunity);
+  const liveExecutable = isOpportunityLiveExecutable(opportunity);
+  const executionDisabledLabel = historicalDateSelected
+    ? "Review only"
+    : consumed
+      ? "Consumed"
+      : "Unavailable";
+  const canExecute = !historicalDateSelected && liveExecutable;
 
   return (
     <div className="overflow-hidden rounded-[26px] border border-border/70 bg-background/70">
@@ -573,7 +594,7 @@ function OpportunityInspectorPanel({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {!consumed ? (
+          {canExecute ? (
             <Button
               type="button"
               size="sm"
@@ -584,7 +605,7 @@ function OpportunityInspectorPanel({
             </Button>
           ) : (
             <Badge variant="outline" className="rounded-full">
-              Consumed
+              {executionDisabledLabel}
             </Badge>
           )}
           {onClear ? (
@@ -703,8 +724,8 @@ function OpportunityInspectorPanel({
       <InspectorSection title="Lineage">
         <div className="grid gap-2">
           <BoardMetric
-            label="Automation"
-            value={getOpportunityAutomationLabel(opportunity)}
+            label="Runtime"
+            value={getOpportunityRuntimeLabel(opportunity)}
           />
           <BoardMetric
             label="Discovery"
@@ -725,12 +746,12 @@ function OpportunityInspectorPanel({
             value={reasonCodes.length ? reasonCodes.join(", ") : "—"}
           />
           <div className="mt-3 flex flex-wrap gap-2">
-            {hasOpportunityAutomationOwner(opportunity) ? (
+            {hasOpportunityRuntimeOwner(opportunity) ? (
               <Link
-                href={getOpportunityAutomationHref(opportunity)}
+                href={getOpportunityRuntimeHref(opportunity)}
                 className={buttonVariants({ variant: "outline", size: "sm" })}
               >
-                Open automation
+                Open runtime
               </Link>
             ) : null}
             <Link
@@ -739,18 +760,6 @@ function OpportunityInspectorPanel({
             >
               Open diagnostics
             </Link>
-          </div>
-          <div className="mt-4 rounded-2xl border border-border/70 bg-muted/20 px-3 py-3 text-xs text-muted-foreground">
-            <div className="uppercase tracking-[0.16em]">IDs</div>
-            <div className="mt-2 break-all font-mono text-[11px] text-foreground/80">
-              {opportunity.opportunity_id}
-            </div>
-            <div className="mt-2 break-all font-mono text-[11px] text-foreground/70">
-              {getOpportunityCycleId(opportunity)}
-            </div>
-            <div className="mt-2 break-all font-mono text-[11px] text-foreground/60">
-              {readString(getOpportunityOwner(opportunity).automation_run_id, "No automation run id")}
-            </div>
           </div>
         </div>
       </InspectorSection>
@@ -789,12 +798,12 @@ function UnderlyingCell({
       <div className="mt-1 font-mono text-xs text-foreground/85">
         {getOpportunityStrikes(opportunity)}
       </div>
-      {hasOpportunityAutomationOwner(opportunity) ? (
+      {hasOpportunityRuntimeOwner(opportunity) ? (
         <Link
-          href={getOpportunityAutomationHref(opportunity)}
+          href={getOpportunityRuntimeHref(opportunity)}
           className="mt-1 inline-block text-xs text-foreground underline-offset-4 hover:underline"
         >
-          {getOpportunityAutomationLabel(opportunity)}
+          Runtime · {getOpportunityRuntimeLabel(opportunity)}
         </Link>
       ) : null}
       <Link
@@ -924,20 +933,21 @@ export function OpportunitiesIndexPageContent({
   const isDesktopInspector = useDesktopInspector();
   const hasOwnerScope = Boolean(botId && automationId);
   const ownerScopeLabel = hasOwnerScope
-    ? `${botId} / ${automationId}`
+    ? `Runtime · ${botId} / ${automationId}`
     : label
       ? `Diagnostics · ${label}`
-      : "All owners";
-  const allDatesSelected = marketDate === "all";
-  const selectedMarketDate =
-    allDatesSelected
-      ? undefined
-      : isMarketDateValue(marketDate)
-        ? marketDate
-        : defaultMarketDate;
+      : "All runtimes";
+  const selectedMarketDate = isMarketDateValue(marketDate)
+    ? marketDate
+    : defaultMarketDate;
+  const historicalDateSelected = selectedMarketDate !== defaultMarketDate;
+  const dateScopeLabel = formatDate(selectedMarketDate);
+  const dateScopeDescription = historicalDateSelected
+    ? "Historical review-only board"
+    : "Current market date";
 
   useEffect(() => {
-    if (marketDate === "all" || isMarketDateValue(marketDate)) {
+    if (isMarketDateValue(marketDate)) {
       return;
     }
     const nextParams = new URLSearchParams(searchParams.toString());
@@ -952,7 +962,7 @@ export function OpportunitiesIndexPageContent({
   const opportunitiesQuery = useQuery({
     queryKey: [
       "opportunities",
-      selectedMarketDate ?? "all",
+      selectedMarketDate,
       botId ?? "",
       automationId ?? "",
       strategyConfigId ?? "",
@@ -972,7 +982,7 @@ export function OpportunitiesIndexPageContent({
     mutationFn: (opportunityId: string) => executeOpportunity(opportunityId, {}),
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["automations"] }),
+        queryClient.invalidateQueries({ queryKey: ["runtimes"] }),
         queryClient.invalidateQueries({ queryKey: ["opportunities"] }),
         queryClient.invalidateQueries({ queryKey: ["pipelines"] }),
         queryClient.invalidateQueries({ queryKey: ["positions"] }),
@@ -1001,7 +1011,7 @@ export function OpportunitiesIndexPageContent({
     (row) => row.lifecycle_state === "ready",
   ).length;
   const consumedCount = opportunities.filter(isOpportunityConsumed).length;
-  const automationCount = new Set(
+  const runtimeCount = new Set(
     opportunities.flatMap((row) => {
       const owner = getOpportunityOwner(row);
       const botId = readString(owner.bot_id, "");
@@ -1027,13 +1037,10 @@ export function OpportunitiesIndexPageContent({
     }
     return latest;
   }, null);
-  const scopeLabel = allDatesSelected
-    ? "All dates"
-    : formatDate(selectedMarketDate ?? defaultMarketDate);
 
-  function replaceMarketDate(nextMarketDate?: string) {
+  function replaceMarketDate(nextMarketDate: string) {
     const nextParams = new URLSearchParams(searchParams.toString());
-    nextParams.set("marketDate", nextMarketDate ?? "all");
+    nextParams.set("marketDate", nextMarketDate);
     startTransition(() => {
       router.replace(`${pathname}?${nextParams.toString()}`, {
         scroll: false,
@@ -1056,7 +1063,7 @@ export function OpportunitiesIndexPageContent({
     startTransition(() => {
       router.replace(
         buildOpportunitiesHref({
-          marketDate: allDatesSelected ? "all" : selectedMarketDate ?? defaultMarketDate,
+          marketDate: selectedMarketDate,
         }),
         { scroll: false },
       );
@@ -1092,12 +1099,22 @@ export function OpportunitiesIndexPageContent({
     {
       id: "actions",
       header: "Act",
-      cell: ({ row }) =>
-        isOpportunityConsumed(row.original) ? (
-          <span className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-            Consumed
-          </span>
-        ) : (
+      cell: ({ row }) => {
+        if (historicalDateSelected) {
+          return (
+            <span className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+              Review only
+            </span>
+          );
+        }
+        if (!isOpportunityLiveExecutable(row.original)) {
+          return (
+            <span className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+              {isOpportunityConsumed(row.original) ? "Consumed" : "Unavailable"}
+            </span>
+          );
+        }
+        return (
           <Button
             type="button"
             size="sm"
@@ -1107,7 +1124,8 @@ export function OpportunitiesIndexPageContent({
           >
             Execute
           </Button>
-        ),
+        );
+      },
     },
   ];
 
@@ -1124,6 +1142,9 @@ export function OpportunitiesIndexPageContent({
                 <Radar data-icon="inline-start" />
                 Opportunities
               </Badge>
+              <Badge variant="outline">
+                {historicalDateSelected ? "Historical review" : "Today"}
+              </Badge>
               {hasOwnerScope ? (
                 <Badge variant="outline">{ownerScopeLabel}</Badge>
               ) : null}
@@ -1135,9 +1156,10 @@ export function OpportunitiesIndexPageContent({
               Opportunity board
             </div>
             <div className="mt-2 text-sm text-foreground/70">
-              Scan the live pool across automation runtimes, execute directly,
-              and inspect one candidate at a time without breaking table
-              density. Current date scope: {scopeLabel}. Current owner scope:{" "}
+              Work one market date at a time across active opportunities.
+              Runtime ownership and diagnostics lineage stay attached to every
+              row, but this surface stays centered on entry decisions. Current
+              date scope: {dateScopeLabel}. Current workspace scope:{" "}
               {ownerScopeLabel}.
             </div>
           </div>
@@ -1164,25 +1186,33 @@ export function OpportunitiesIndexPageContent({
         </div>
       </div>
 
+      {historicalDateSelected ? (
+        <div className="rounded-2xl border border-amber-300/70 bg-amber-100/80 px-4 py-3 text-sm text-amber-950 dark:border-amber-900/80 dark:bg-amber-950/40 dark:text-amber-100">
+          <div className="flex items-start gap-2">
+            <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+            <span>
+              Historical opportunity boards are review-only. Direct execution is
+              disabled outside the current Chicago market date of{" "}
+              {formatDate(defaultMarketDate)}.
+            </span>
+          </div>
+        </div>
+      ) : null}
+
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-7">
         <MetricTile
           label="Date Scope"
-          value={allDatesSelected ? "All dates" : formatDate(selectedMarketDate ?? defaultMarketDate)}
-          note={
-            allDatesSelected
-              ? "No market-date filter"
-              : "Selected market date"
-          }
-        />
-        <MetricTile
-          label="Owner Scope"
-          value={ownerScopeLabel}
-          note={hasOwnerScope ? "Automation-scoped board" : label ? "Diagnostics-scoped board" : "Cross-owner board"}
+          value={dateScopeLabel}
+          note={dateScopeDescription}
         />
         <MetricTile
           label="Opportunities"
           value={String(opportunities.length)}
-          note={allDatesSelected ? "Cross-date live rows" : "Current live rows"}
+          note={
+            historicalDateSelected
+              ? "Rows captured for the selected date"
+              : "Current live rows"
+          }
         />
         <MetricTile
           label="Promotable"
@@ -1205,8 +1235,8 @@ export function OpportunitiesIndexPageContent({
           note="Lifecycle ready"
         />
         <MetricTile
-          label="Automations"
-          value={String(automationCount)}
+          label="Runtimes"
+          value={String(runtimeCount)}
           note={
             latestTimestamp
               ? `Updated ${formatTimestamp(latestTimestamp)}`
@@ -1230,7 +1260,11 @@ export function OpportunitiesIndexPageContent({
 
       <SectionSurface
         title="Opportunity Board"
-        description="Keep the board compact on the left. Select a row to inspect rationale, structure, and lineage in a dedicated panel."
+        description={
+          historicalDateSelected
+            ? "Historical boards are review-only. Select a row to inspect rationale, structure, and diagnostics lineage in a dedicated panel."
+            : "Keep the board compact on the left. Select a row to inspect rationale, structure, and lineage in a dedicated panel."
+        }
       >
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_24rem]">
           <div className="min-w-0">
@@ -1249,6 +1283,7 @@ export function OpportunitiesIndexPageContent({
               {inspectedOpportunity ? (
                 <OpportunityInspectorPanel
                   opportunity={inspectedOpportunity}
+                  historicalDateSelected={historicalDateSelected}
                   executePending={executeMutation.isPending}
                   onExecute={(opportunityId) => executeMutation.mutate(opportunityId)}
                   onClear={clearInspector}
@@ -1277,6 +1312,7 @@ export function OpportunitiesIndexPageContent({
               <div className="overflow-y-auto px-4 pt-6 pb-4">
                 <OpportunityInspectorPanel
                   opportunity={inspectedOpportunity}
+                  historicalDateSelected={historicalDateSelected}
                   executePending={executeMutation.isPending}
                   onExecute={(opportunityId) => executeMutation.mutate(opportunityId)}
                 />

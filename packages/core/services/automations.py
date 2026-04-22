@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -19,6 +20,8 @@ from core.services.strategy_configs import (
     _load_yaml_file,
     default_config_root,
     load_strategy_configs,
+    _yaml_directory_signature,
+    _yaml_file_signature,
 )
 
 NEW_YORK = ZoneInfo("America/New_York")
@@ -156,17 +159,31 @@ def load_universe_symbols(
     path = default_config_root(config_root) / "universes" / f"{universe_ref}.yaml"
     if not path.exists():
         raise ValueError(f"Unknown universe_ref: {universe_ref}")
-    payload = _load_yaml_file(path)
+    signature = _yaml_file_signature(path)
+    if signature is None:
+        raise ValueError(f"Unknown universe_ref: {universe_ref}")
+    return _load_universe_symbols_cached(str(path), signature, universe_ref)
+
+
+@lru_cache(maxsize=32)
+def _load_universe_symbols_cached(
+    path_key: str,
+    signature: tuple[str, int, int],
+    universe_ref: str,
+) -> tuple[str, ...]:
+    del signature
+    payload = _load_yaml_file(Path(path_key))
     symbols = _as_list(payload.get("symbols"), field_name=f"{universe_ref}.symbols")
     return tuple(str(symbol).upper() for symbol in symbols)
 
 
-def load_automations(
-    config_root: str | Path | None = None,
-) -> dict[str, AutomationConfig]:
-    root = default_config_root(config_root) / "automations"
-    if not root.exists():
-        return {}
+@lru_cache(maxsize=8)
+def _load_automations_cached(
+    root_key: str,
+    signature: tuple[tuple[str, int, int], ...],
+) -> tuple[AutomationConfig, ...]:
+    del signature
+    root = Path(root_key)
     automations: dict[str, AutomationConfig] = {}
     for path in sorted(root.glob("*.yaml")):
         payload = _load_yaml_file(path)
@@ -203,7 +220,22 @@ def load_automations(
         if automation.automation_id in automations:
             raise ValueError(f"Duplicate automation_id {automation.automation_id}")
         automations[automation.automation_id] = automation
-    return automations
+    return tuple(automations.values())
+
+
+def load_automations(
+    config_root: str | Path | None = None,
+) -> dict[str, AutomationConfig]:
+    root = default_config_root(config_root) / "automations"
+    if not root.exists():
+        return {}
+    return {
+        automation.automation_id: automation
+        for automation in _load_automations_cached(
+            str(root),
+            _yaml_directory_signature(root),
+        )
+    }
 
 
 def resolve_automation(

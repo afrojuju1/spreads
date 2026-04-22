@@ -9,9 +9,9 @@ import { DataTable } from "@/components/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
-  buildAutomationHref,
+  buildRuntimeHref,
   buildPipelineHref,
-  getAutomations,
+  getRuntimes,
   type AutomationRuntimeListItem,
 } from "@/lib/api";
 import {
@@ -73,7 +73,7 @@ function buildAutomationRows(
 const AUTOMATION_COLUMNS: ColumnDef<AutomationListRow>[] = [
   {
     accessorKey: "botName",
-    header: "Automation",
+    header: "Runtime",
     cell: ({ row }) => (
       <div className="min-w-[260px]">
         <div className="font-semibold">{row.original.botName}</div>
@@ -166,7 +166,7 @@ const AUTOMATION_COLUMNS: ColumnDef<AutomationListRow>[] = [
     header: "",
     cell: ({ row }) => (
       <Link
-        href={buildAutomationHref(
+        href={buildRuntimeHref(
           row.original.botId,
           row.original.automationId,
           row.original.marketDate || null,
@@ -180,18 +180,17 @@ const AUTOMATION_COLUMNS: ColumnDef<AutomationListRow>[] = [
 ];
 
 export function AutomationsIndexPageContent() {
-  const automationsQuery = useQuery({
-    queryKey: ["automations"],
-    queryFn: () => getAutomations({ limit: 120 }),
+  const runtimesQuery = useQuery({
+    queryKey: ["runtimes"],
+    queryFn: () => getRuntimes({ limit: 120 }),
   });
 
-  if (automationsQuery.isLoading) {
+  if (runtimesQuery.isLoading) {
     return <LoadingState />;
   }
 
-  const automations = automationsQuery.data?.automations ?? [];
+  const automations = runtimesQuery.data?.automations ?? [];
   const automationRows = buildAutomationRows(automations);
-  const latestAutomation = automations[0] ?? null;
   const liveOpportunityTotal = automations.reduce(
     (total, row) => total + (row.live_opportunity_count ?? 0),
     0,
@@ -216,22 +215,22 @@ export function AutomationsIndexPageContent() {
                 className="rounded-full border-border/70 bg-background/80 px-2.5 py-1 text-[11px] uppercase tracking-[0.18em] text-muted-foreground"
               >
                 <Bot data-icon="inline-start" />
-                Automations
+                Runtime
               </Badge>
             </div>
             <div className="mt-4 text-3xl font-semibold tracking-[0.02em]">
-              Automation runtimes
+              Runtime catalog
             </div>
             <div className="mt-2 text-sm text-foreground/70">
-              Operate the owner plane first: bot and automation state,
-              decisions, positions, and PnL. Discovery diagnostics stay under
-              Diagnostics as a read-only support surface.
+              Inspect bot-owned runtime configurations when you need schedule,
+              caps, recent decisions, or linked diagnostics outside a specific
+              opportunity or position.
             </div>
           </div>
           <Button
             type="button"
             variant="outline"
-            onClick={() => void automationsQuery.refetch()}
+            onClick={() => void runtimesQuery.refetch()}
           >
             <RefreshCw data-icon="inline-start" />
             Refresh
@@ -239,22 +238,22 @@ export function AutomationsIndexPageContent() {
         </div>
       </div>
 
-      {automationsQuery.isError ? (
+      {runtimesQuery.isError ? (
         <div className="app-tone-error rounded-2xl border px-4 py-3 text-sm">
-          Automation runtimes could not be loaded.
+          Runtime catalog could not be loaded.
         </div>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricTile
-          label="Automations"
+          label="Runtimes"
           value={String(automations.length)}
           note="Active runtime configs"
         />
         <MetricTile
           label="Live opportunities"
           value={String(liveOpportunityTotal)}
-          note={latestAutomation?.bot_name ?? "No runtime loaded"}
+          note="Across all runtimes"
         />
         <MetricTile
           label="Open positions"
@@ -266,28 +265,19 @@ export function AutomationsIndexPageContent() {
           value={formatNullableCurrency(dailyPnlTotal)}
           note="Realized plus open estimate"
         />
-        <MetricTile
-          label="Latest discovery"
-          value={latestAutomation?.latest_discovery?.label ?? "—"}
-          note={
-            latestAutomation?.latest_discovery?.session_date
-              ? formatDate(latestAutomation.latest_discovery.session_date)
-              : "No discovery linkage"
-          }
-        />
       </div>
 
       <SectionSurface
-        title="Automation List"
-        description="Open a runtime to inspect automation runs, linked discovery lineage, opportunities, execution intents, and positions."
+        title="Runtime List"
+        description="Open a runtime to inspect recent runs, linked diagnostics, opportunities, execution intents, and positions."
       >
         {!automationRows.length ? (
           <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
             <Rows3 className="size-10 text-muted-foreground" />
-            <div className="text-lg font-medium">No automations found</div>
+            <div className="text-lg font-medium">No runtimes found</div>
             <div className="max-w-[34rem] text-sm text-muted-foreground">
               Active bot-owned runtimes will appear here after the configured
-              automation set is loaded.
+              runtime set is loaded.
             </div>
           </div>
         ) : (
@@ -295,7 +285,7 @@ export function AutomationsIndexPageContent() {
             columns={AUTOMATION_COLUMNS}
             data={automationRows}
             getRowId={(row) => row.id}
-            emptyMessage="No automation runtimes matched the current query."
+            emptyMessage="No runtimes matched the current query."
           />
         )}
       </SectionSurface>

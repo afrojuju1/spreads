@@ -2,36 +2,22 @@
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import type { ColumnDef } from "@tanstack/react-table";
-import {
-  Activity,
-  Radar,
-  RefreshCw,
-  Rows3,
-  ShieldAlert,
-} from "lucide-react";
-import { useMemo } from "react";
+import { Activity, Radar, RefreshCw } from "lucide-react";
 
-import { DataTable } from "@/components/data-table";
 import {
   buildPipelineHref,
   getPipelineDetail,
   getPipelines,
-  type LiveCandidate,
   type PipelineListItem,
-  type SessionPortfolioPosition,
 } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   AutoExecutionStatusBadge,
   CaptureStatusBadge,
-  ExecutionStatusBadge,
   formatDate,
   formatNullableCurrency,
   formatQuantity,
-  formatSignedCurrency,
-  formatTimestamp,
   LoadingState,
   MetricTile,
   readNumber,
@@ -44,34 +30,6 @@ import {
 type PipelineDetailPageContentProps = {
   pipelineId: string;
   marketDate?: string;
-};
-
-type OpportunityRow = {
-  id: string;
-  symbol: string;
-  strategy: string;
-  state: string;
-  score: number;
-  credit: number;
-};
-
-type ExecutionRow = {
-  id: string;
-  symbol: string;
-  strategy: string;
-  intent: string;
-  status: string;
-  requestedAt: string;
-};
-
-type PositionRow = {
-  id: string;
-  symbol: string;
-  strategy: string;
-  status: string;
-  remainingQuantity: number;
-  realizedPnl: number | null | undefined;
-  unrealizedPnl: number | null | undefined;
 };
 
 type DetailRecord = Record<string, unknown>;
@@ -259,51 +217,6 @@ function autoExecutionBlockers(summary: Record<string, unknown> | null | undefin
   return blockers.join(", ");
 }
 
-function buildOpportunityRows(opportunities: LiveCandidate[]): OpportunityRow[] {
-  return opportunities.map((row) => ({
-    id: String(row.candidate_id),
-    symbol: readString(row.underlying_symbol, "—"),
-    strategy: row.strategy,
-    state: row.selection_state,
-    score: readNumber(row.quality_score),
-    credit: readNumber(row.midpoint_credit),
-  }));
-}
-
-function buildExecutionRows(
-  executions: {
-    execution_attempt_id: string;
-    underlying_symbol: string;
-    strategy: string;
-    trade_intent: string;
-    status: string;
-    requested_at: string;
-  }[],
-): ExecutionRow[] {
-  return executions.map((row) => ({
-    id: row.execution_attempt_id,
-    symbol: row.underlying_symbol,
-    strategy: row.strategy,
-    intent: row.trade_intent,
-    status: row.status,
-    requestedAt: row.requested_at,
-  }));
-}
-
-function buildPositionRows(
-  positions: SessionPortfolioPosition[],
-): PositionRow[] {
-  return positions.map((row) => ({
-    id: row.position_id,
-    symbol: row.underlying_symbol,
-    strategy: row.strategy,
-    status: row.position_status,
-    remainingQuantity: readNumber(row.remaining_quantity),
-    realizedPnl: row.realized_pnl,
-    unrealizedPnl: row.unrealized_pnl,
-  }));
-}
-
 export function PipelineDetailPageContent({
   pipelineId,
   marketDate,
@@ -319,18 +232,6 @@ export function PipelineDetailPageContent({
 
   const pipelineRows = pipelinesQuery.data?.pipelines ?? [];
   const detail = detailQuery.data;
-  const opportunityRows = useMemo(
-    () => buildOpportunityRows(detail?.opportunities ?? []),
-    [detail?.opportunities],
-  );
-  const executionRows = useMemo(
-    () => buildExecutionRows(detail?.executions ?? []),
-    [detail?.executions],
-  );
-  const positionRows = useMemo(
-    () => buildPositionRows(detail?.portfolio?.positions ?? []),
-    [detail?.portfolio?.positions],
-  );
   const quoteCapture = readRecord(detail?.quote_capture);
   const tradeCapture = readRecord(detail?.trade_capture);
   const uoaSummary = readRecord(detail?.uoa_summary);
@@ -351,109 +252,6 @@ export function PipelineDetailPageContent({
     Object.keys(uoaSummary).length > 0 ||
     Object.keys(uoaQuoteSummary).length > 0 ||
     Object.keys(uoaDecisions).length > 0;
-
-  const opportunityColumns = useMemo<ColumnDef<OpportunityRow>[]>(
-    () => [
-      {
-        accessorKey: "symbol",
-        header: "Symbol",
-        cell: ({ row }) => (
-          <div>
-            <div className="font-semibold">{row.original.symbol}</div>
-            <div className="text-xs text-muted-foreground">
-              {row.original.strategy}
-            </div>
-          </div>
-        ),
-      },
-      {
-        accessorKey: "state",
-        header: "State",
-        cell: ({ getValue }) => <Badge variant="outline">{String(getValue())}</Badge>,
-      },
-      {
-        accessorKey: "score",
-        header: "Score",
-        cell: ({ getValue }) => <span className="font-mono">{Number(getValue()).toFixed(1)}</span>,
-      },
-      {
-        accessorKey: "credit",
-        header: "Credit",
-        cell: ({ getValue }) => <span className="font-mono">{Number(getValue()).toFixed(2)}</span>,
-      },
-    ],
-    [],
-  );
-
-  const executionColumns = useMemo<ColumnDef<ExecutionRow>[]>(
-    () => [
-      {
-        accessorKey: "symbol",
-        header: "Execution",
-        cell: ({ row }) => (
-          <div>
-            <div className="font-semibold">{row.original.symbol}</div>
-            <div className="text-xs text-muted-foreground">
-              {row.original.strategy} · {row.original.intent}
-            </div>
-          </div>
-        ),
-      },
-      {
-        accessorKey: "status",
-        header: "Status",
-        cell: ({ getValue }) => <ExecutionStatusBadge value={String(getValue())} />,
-      },
-      {
-        accessorKey: "requestedAt",
-        header: "Requested",
-        cell: ({ getValue }) => (
-          <span className="font-mono text-[12px]">
-            {formatTimestamp(String(getValue()))}
-          </span>
-        ),
-      },
-    ],
-    [],
-  );
-
-  const positionColumns = useMemo<ColumnDef<PositionRow>[]>(
-    () => [
-      {
-        accessorKey: "symbol",
-        header: "Position",
-        cell: ({ row }) => (
-          <div>
-            <div className="font-semibold">{row.original.symbol}</div>
-            <div className="text-xs text-muted-foreground">
-              {row.original.strategy}
-            </div>
-          </div>
-        ),
-      },
-      {
-        accessorKey: "status",
-        header: "Status",
-        cell: ({ getValue }) => <Badge variant="outline">{String(getValue())}</Badge>,
-      },
-      {
-        accessorKey: "remainingQuantity",
-        header: "Remaining",
-        cell: ({ getValue }) => <span className="font-mono">{formatQuantity(Number(getValue()))}</span>,
-      },
-      {
-        accessorKey: "realizedPnl",
-        header: "Realized",
-        cell: ({ getValue }) => formatSignedCurrency(getValue() as number | null | undefined),
-      },
-      {
-        accessorKey: "unrealizedPnl",
-        header: "Unrealized",
-        cell: ({ getValue }) => formatSignedCurrency(getValue() as number | null | undefined),
-      },
-    ],
-    [],
-  );
 
   if (detailQuery.isLoading) {
     return <LoadingState />;
@@ -503,7 +301,7 @@ export function PipelineDetailPageContent({
             <div className="mt-2 text-sm text-foreground/70">
               Market date {formatDate(detail.market_date)}. Use this view for
               read-only discovery-run diagnostics, cycle state, and linked
-              owner-plane outcomes.
+              runtime-linked outcomes.
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -689,7 +487,7 @@ export function PipelineDetailPageContent({
 
       <SectionSurface
         title="Captured Dates"
-        description="Switch between persisted diagnostic dates for this discovery run."
+        description="Switch between persisted diagnostic dates for this discovery run. Use Opportunities, Positions, and Runtime links for active operator work."
       >
         {!pipelineRows.length ? (
           <div className="text-sm text-muted-foreground">
@@ -712,102 +510,6 @@ export function PipelineDetailPageContent({
               >
                 {row.label} · {formatDate(row.latest_market_date)}
               </Link>
-            ))}
-          </div>
-        )}
-      </SectionSurface>
-
-      <div className="grid gap-4 xl:grid-cols-2">
-        <SectionSurface
-          title="Opportunities"
-          description="Read-only snapshot of the linked opportunity rows for this diagnostic date."
-        >
-          {!opportunityRows.length ? (
-            <div className="flex flex-col items-center justify-center gap-3 px-6 py-12 text-center">
-              <Rows3 className="size-10 text-muted-foreground" />
-              <div className="text-sm text-muted-foreground">
-                No opportunities are available for this cycle.
-              </div>
-            </div>
-          ) : (
-            <DataTable
-              columns={opportunityColumns}
-              data={opportunityRows}
-              getRowId={(row) => row.id}
-              emptyMessage="No opportunities were available."
-            />
-          )}
-        </SectionSurface>
-
-        <SectionSurface
-          title="Executions"
-          description="Read-only execution attempts linked to this diagnostic date."
-        >
-          {!executionRows.length ? (
-            <div className="flex flex-col items-center justify-center gap-3 px-6 py-12 text-center">
-              <Rows3 className="size-10 text-muted-foreground" />
-              <div className="text-sm text-muted-foreground">
-                No executions have been recorded yet.
-              </div>
-            </div>
-          ) : (
-            <DataTable
-              columns={executionColumns}
-              data={executionRows}
-              getRowId={(row) => row.id}
-              emptyMessage="No executions were available."
-            />
-          )}
-        </SectionSurface>
-      </div>
-
-      <SectionSurface
-        title="Positions"
-        description="Read-only positions linked by lineage to this diagnostic date."
-      >
-        {!positionRows.length ? (
-          <div className="flex flex-col items-center justify-center gap-3 px-6 py-12 text-center">
-            <ShieldAlert className="size-10 text-muted-foreground" />
-            <div className="text-sm text-muted-foreground">
-              No positions are open for this pipeline date.
-            </div>
-          </div>
-        ) : (
-          <DataTable
-            columns={positionColumns}
-            data={positionRows}
-            getRowId={(row) => row.id}
-            emptyMessage="No positions were available."
-          />
-        )}
-      </SectionSurface>
-
-      <SectionSurface
-        title="Cycle Timeline"
-        description="Recent discovery-run cycles captured for this diagnostic view."
-      >
-        {!detail.cycles.length ? (
-          <div className="text-sm text-muted-foreground">
-            No pipeline cycles were recorded.
-          </div>
-        ) : (
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {detail.cycles.slice(0, 6).map((row) => (
-              <div
-                key={String(row.cycle_id)}
-                className="rounded-2xl border border-border/70 bg-card/80 px-4 py-3"
-              >
-                <div className="text-sm font-medium">
-                  {formatTimestamp(readString(row.generated_at, ""))}
-                </div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {readString(row.strategy_mode, "strategy")} ·{" "}
-                  {readString(row.legacy_profile, "profile")}
-                </div>
-                <div className="mt-3 text-xs text-muted-foreground">
-                  Symbols {readNumber((row.summary_json as Record<string, unknown> | undefined)?.candidate_count)}
-                </div>
-              </div>
             ))}
           </div>
         )}

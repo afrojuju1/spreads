@@ -1,6 +1,6 @@
 import { AutomationDetailPageContent } from "@/components/automations/automation-detail";
 
-type AutomationDetailPageProps = {
+type RuntimeDetailPageProps = {
   params: Promise<{
     botId: string;
     automationId: string;
@@ -10,10 +10,10 @@ type AutomationDetailPageProps = {
   }>;
 };
 
-export default async function AutomationDetailPage({
+export default async function RuntimeDetailPage({
   params,
   searchParams,
-}: AutomationDetailPageProps) {
+}: RuntimeDetailPageProps) {
   const { botId, automationId } = await params;
   const { marketDate } = await searchParams;
 

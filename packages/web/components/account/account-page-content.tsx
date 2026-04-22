@@ -452,7 +452,7 @@ export function AccountPageContent() {
   return (
     <div className="flex flex-col gap-4">
       <div className="app-hero">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+        <div className="flex flex-col gap-4">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <Badge
@@ -478,32 +478,6 @@ export function AccountPageContent() {
               Read-only Alpaca balances, open positions, equity history, and sync
               status.
             </div>
-          </div>
-          <div className="grid w-full gap-3 sm:grid-cols-2 xl:max-w-[760px] xl:grid-cols-4">
-            <MetricTile
-              label="Equity"
-              value={formatNullableCurrency(accountOverviewQuery.data?.account.equity)}
-              note={`Cash ${formatNullableCurrency(accountOverviewQuery.data?.account.cash)}`}
-            />
-            <MetricTile
-              label="Buying Power"
-              value={formatNullableCurrency(accountOverviewQuery.data?.account.buying_power)}
-              note={`Options ${formatNullableCurrency(accountOverviewQuery.data?.account.options_buying_power)}`}
-            />
-            <MetricTile
-              label="Positions"
-              value={String(accountOverviewQuery.data?.positions.length ?? 0)}
-              note="Currently open broker positions"
-            />
-            <MetricTile
-              label="Sync"
-              value={readString(accountOverviewQuery.data?.sync?.status, "unknown").toUpperCase()}
-              note={
-                accountOverviewQuery.data?.sync?.updated_at
-                  ? formatTimestamp(accountOverviewQuery.data.sync.updated_at)
-                  : "Awaiting background sync"
-              }
-            />
           </div>
         </div>
       </div>

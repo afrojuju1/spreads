@@ -8,10 +8,11 @@ from core.db.decorators import with_storage
 from core.services.automation_runtime import (
     EntryRuntime,
     ManagementRuntime,
-    resolve_entry_runtimes,
-    resolve_management_runtimes,
+    build_entry_runtime,
+    build_management_runtime,
 )
 from core.services.bot_analytics import build_bot_metrics, summarize_intent_counts
+from core.services.bots import load_active_bots
 from core.services.opportunities import list_opportunities
 from core.services.positions import OPEN_POSITION_STATUSES, list_positions
 from core.services.runtime_identity import build_live_run_scope_id, build_pipeline_id
@@ -47,10 +48,13 @@ def _within_window(
 
 
 def _runtime_catalog() -> list[tuple[str, RuntimeConfig]]:
-    rows: list[tuple[str, RuntimeConfig]] = [
-        ("entry", runtime) for runtime in resolve_entry_runtimes()
-    ]
-    rows.extend(("management", runtime) for runtime in resolve_management_runtimes())
+    rows: list[tuple[str, RuntimeConfig]] = []
+    for bot in load_active_bots().values():
+        for runtime in bot.automations:
+            if runtime.automation.is_entry:
+                rows.append(("entry", build_entry_runtime(bot, runtime)))
+            if runtime.automation.is_management:
+                rows.append(("management", build_management_runtime(bot, runtime)))
     rows.sort(key=lambda item: (item[1].bot_id, item[1].automation_id))
     return rows
 
@@ -215,6 +219,7 @@ def _runtime_summary(
     runtime: RuntimeConfig,
     market_date: str | None,
     limit: int,
+    include_bot_metrics: bool = False,
 ) -> dict[str, Any]:
     signal_store = storage.signals
     execution_store = storage.execution
@@ -352,10 +357,14 @@ def _runtime_summary(
         **position_metrics,
         "latest_automation_run": latest_run,
         "latest_discovery": latest_discovery,
-        "bot_metrics": build_bot_metrics(
-            storage=storage,
-            bot_id=runtime.bot_id,
-            market_date=resolved_market_date,
+        "bot_metrics": (
+            build_bot_metrics(
+                storage=storage,
+                bot_id=runtime.bot_id,
+                market_date=resolved_market_date,
+            )
+            if include_bot_metrics
+            else None
         ),
     }
 
@@ -376,6 +385,7 @@ def list_automation_runtimes(
             runtime=runtime,
             market_date=market_date,
             limit=limit,
+            include_bot_metrics=False,
         )
         for runtime_kind, runtime in _runtime_catalog()
     ]
@@ -408,6 +418,7 @@ def get_automation_runtime_detail(
         runtime=runtime,
         market_date=market_date,
         limit=limit,
+        include_bot_metrics=True,
     )
     owner_payload = _owner_payload(
         db_target=db_target,

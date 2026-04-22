@@ -16,7 +16,6 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import {
   CaptureStatusBadge,
   formatDate,
-  formatTime,
   formatTimestamp,
   LoadingState,
   MetricTile,
@@ -138,6 +137,21 @@ export function PipelinesIndexPageContent() {
   const pipelines = pipelinesQuery.data?.pipelines ?? [];
   const latestPipeline = pipelines[0] ?? null;
   const pipelineRows = buildPipelineRows(pipelines);
+  const actionablePipelineCount = pipelines.filter(
+    (row) => readString(row.tradeability_state, "research_only") !== "research_only",
+  ).length;
+  const promotableTotal = pipelines.reduce(
+    (total, row) => total + (row.promotable_count ?? 0),
+    0,
+  );
+  const monitorTotal = pipelines.reduce(
+    (total, row) => total + (row.monitor_count ?? 0),
+    0,
+  );
+  const alertTotal = pipelines.reduce(
+    (total, row) => total + (row.alert_count ?? 0),
+    0,
+  );
 
   return (
     <div className="flex flex-col gap-4">
@@ -167,8 +181,8 @@ export function PipelinesIndexPageContent() {
             </div>
             <div className="mt-2 text-sm text-foreground/70">
               Browse read-only discovery-run diagnostics. Opportunity entry,
-              position management, and owner-plane runtime control now live
-              under Opportunities, Automations, and Positions.
+              position management, and runtime detail now live under
+              Opportunities, Positions, and Runtime links.
             </div>
           </div>
           <Button
@@ -195,36 +209,30 @@ export function PipelinesIndexPageContent() {
           note="Persisted discovery snapshots"
         />
         <MetricTile
-          label="Latest discovery"
-          value={latestPipeline?.label ?? "—"}
-          note={
-            latestPipeline
-              ? formatDate(latestPipeline.latest_market_date)
-              : "No pipelines"
-          }
-        />
-        <MetricTile
-          label="Latest Slot"
-          value={
-            latestPipeline ? formatTime(latestPipeline.latest_slot_at) : "—"
-          }
-          note={latestPipeline?.latest_slot_status ?? "No slot"}
+          label="Actionable"
+          value={String(actionablePipelineCount)}
+          note="Not research-only"
         />
         <MetricTile
           label="Promotable"
-          value={String(latestPipeline?.promotable_count ?? 0)}
-          note="Latest pipeline snapshot"
+          value={String(promotableTotal)}
+          note="Across all diagnostics"
         />
         <MetricTile
           label="Monitor"
-          value={String(latestPipeline?.monitor_count ?? 0)}
-          note={`Alerts ${latestPipeline?.alert_count ?? 0}`}
+          value={String(monitorTotal)}
+          note="Across all diagnostics"
+        />
+        <MetricTile
+          label="Alerts"
+          value={String(alertTotal)}
+          note="Open diagnostic alerts"
         />
       </div>
 
       <SectionSurface
         title="Diagnostics List"
-        description="Open a diagnostic view to inspect discovery-run health, cycle state, and linked owner-plane outcomes."
+        description="Open a diagnostic view to inspect discovery-run health, cycle state, and linked runtime outcomes."
       >
         {!pipelines.length ? (
           <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">

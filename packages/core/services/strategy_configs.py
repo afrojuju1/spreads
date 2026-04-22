@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,23 @@ def _load_yaml_file(path: Path) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError(f"Expected mapping payload in {path}")
     return raw
+
+
+def _yaml_directory_signature(root: Path) -> tuple[tuple[str, int, int], ...]:
+    if not root.exists():
+        return ()
+    signature: list[tuple[str, int, int]] = []
+    for path in sorted(root.glob("*.yaml")):
+        stat = path.stat()
+        signature.append((path.name, stat.st_mtime_ns, stat.st_size))
+    return tuple(signature)
+
+
+def _yaml_file_signature(path: Path) -> tuple[str, int, int] | None:
+    if not path.exists():
+        return None
+    stat = path.stat()
+    return (path.name, stat.st_mtime_ns, stat.st_size)
 
 
 def _as_text(value: Any, *, field_name: str) -> str:
@@ -162,12 +180,12 @@ class StrategyConfig:
         return "core"
 
 
-def load_strategy_configs(
-    config_root: str | Path | None = None,
-) -> dict[str, StrategyConfig]:
-    root = default_config_root(config_root) / "strategies"
-    if not root.exists():
-        return {}
+@lru_cache(maxsize=8)
+def _load_strategy_configs_cached(
+    root_key: str,
+    signature: tuple[tuple[str, int, int], ...],
+) -> tuple[StrategyConfig, ...]:
+    root = Path(root_key)
     configs: dict[str, StrategyConfig] = {}
     for path in sorted(root.glob("*.yaml")):
         payload = _load_yaml_file(path)
@@ -208,7 +226,22 @@ def load_strategy_configs(
                 f"Duplicate strategy_config_id {strategy_config.strategy_config_id}"
             )
         configs[strategy_config.strategy_config_id] = strategy_config
-    return configs
+    return tuple(configs.values())
+
+
+def load_strategy_configs(
+    config_root: str | Path | None = None,
+) -> dict[str, StrategyConfig]:
+    root = default_config_root(config_root) / "strategies"
+    if not root.exists():
+        return {}
+    return {
+        strategy_config.strategy_config_id: strategy_config
+        for strategy_config in _load_strategy_configs_cached(
+            str(root),
+            _yaml_directory_signature(root),
+        )
+    }
 
 
 __all__ = [

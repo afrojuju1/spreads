@@ -16,14 +16,8 @@ export const LAYOUT_NAV_ITEMS = [
   {
     href: "/opportunities",
     label: "Opportunities",
-    caption: "live board",
+    caption: "trade queue",
     icon: Radar,
-  },
-  {
-    href: "/automations",
-    label: "Automations",
-    caption: "owner plane",
-    icon: Bot,
   },
   {
     href: "/positions",
@@ -45,7 +39,17 @@ export const LAYOUT_NAV_ITEMS = [
   },
 ];
 
+const RUNTIME_LAYOUT_ITEM = {
+  href: "/runtimes",
+  label: "Runtime",
+  caption: "owner detail",
+  icon: Bot,
+};
+
 export function resolveActiveLayoutItem(pathname: string) {
+  if (pathname === "/runtimes" || pathname.startsWith("/runtimes/")) {
+    return RUNTIME_LAYOUT_ITEM;
+  }
   return (
     LAYOUT_NAV_ITEMS.find((item) =>
       pathname === item.href || pathname.startsWith(`${item.href}/`),
