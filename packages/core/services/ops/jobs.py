@@ -20,6 +20,9 @@ from core.services.discovery_run_health.enrichment import (
 from core.services.discovery_run_health.schedule import (
     evaluate_discovery_run_schedule_health,
 )
+from core.services.discovery_run_health.shared import (
+    is_non_healthy_capture_status,
+)
 from core.services.live_pipelines import build_discovery_run_session_schedule
 from core.services.selection_summary import selection_summary_payload as _selection_summary_payload
 from core.services.value_coercion import (
@@ -163,18 +166,18 @@ def _job_run_operator_status(
                 if isinstance(run.get("live_action_gate"), Mapping)
                 else {}
             )
-            if str(live_action_gate.get("status") or "") == "blocked":
-                return (
-                    "blocked",
-                    _as_text(live_action_gate.get("message"))
-                    or "Discovery-run actions are blocked.",
-                )
-            capture_status = str(run.get("capture_status") or "").strip().lower()
-            if capture_status and capture_status not in {"healthy", "idle"}:
-                return (
-                    "degraded",
-                    f"Discovery-run capture finished as {capture_status}.",
-                )
+        if str(live_action_gate.get("status") or "") == "blocked":
+            return (
+                "blocked",
+                _as_text(live_action_gate.get("message"))
+                or "Discovery-run actions are blocked.",
+            )
+        capture_status = str(run.get("capture_status") or "").strip().lower()
+        if is_non_healthy_capture_status(capture_status):
+            return (
+                "degraded",
+                f"Discovery-run capture finished as {capture_status}.",
+            )
         return "healthy", None
     return "unknown", None
 
@@ -550,7 +553,7 @@ def build_jobs_overview(
         1
         for row in run_rows
         if str(row.get("job_type") or "") == "discovery_run"
-        and str(row.get("capture_status") or "") not in {"", "healthy", "None"}
+        and is_non_healthy_capture_status(row.get("capture_status"))
     )
     if status_counts.get("failed", 0):
         attention.append(

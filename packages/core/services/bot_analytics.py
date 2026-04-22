@@ -15,7 +15,7 @@ from core.storage.execution_models import (
     ExecutionIntentModel,
 )
 from core.storage.signal_models import OpportunityDecisionModel
-from core.storage.serializers import parse_datetime
+from core.storage.serializers import parse_datetime, render_value
 
 OPEN_POSITION_STATUSES = {"open", "partial_open", "partial_close"}
 ENTRY_DECISION_AUDIT_SAMPLE_LIMIT = 12
@@ -650,7 +650,7 @@ def _build_entry_decision_audit(
                     policy_ref=decision.get("policy_ref"),
                     payload=decision.get("payload"),
                 ),
-                "decision_at": decision.get("decided_at"),
+                "decision_at": render_value(decision.get("decided_at")),
                 "decision_reason_codes": list(decision.get("reason_codes") or []),
                 "intent_count": len(ordered_intents),
                 "execution_intent_id": None
@@ -667,7 +667,7 @@ def _build_entry_decision_audit(
                 else latest_event.get("event_type"),
                 "latest_event_at": None
                 if latest_event is None
-                else latest_event.get("event_at"),
+                else render_value(latest_event.get("event_at")),
                 "execution_attempt_id": None
                 if latest_attempt is None
                 else latest_attempt.get("execution_attempt_id"),

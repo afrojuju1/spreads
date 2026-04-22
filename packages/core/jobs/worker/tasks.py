@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from datetime import UTC, datetime
+import threading
 from typing import Any
 
 from core.jobs.registry import (
@@ -56,6 +57,34 @@ from .observability import (
     compact_post_market_result,
 )
 from .planner import run_post_close_analysis_targets, run_post_market_analysis_targets
+
+
+def _run_with_periodic_heartbeat(
+    fn: Any,
+    *,
+    heartbeat: Any,
+    interval_seconds: float = 15.0,
+) -> Any:
+    result: dict[str, Any] = {}
+    error: dict[str, BaseException] = {}
+    done = threading.Event()
+
+    def target() -> None:
+        try:
+            result["value"] = fn()
+        except BaseException as exc:
+            error["value"] = exc
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=target, daemon=True)
+    thread.start()
+    while not done.wait(timeout=max(float(interval_seconds), 1.0)):
+        heartbeat()
+    heartbeat()
+    if "value" in error:
+        raise error["value"]
+    return result.get("value")
 
 
 async def _update_live_slot_status(
@@ -517,11 +546,17 @@ async def run_post_close_analysis_job(
                     ),
                 }
             )
-            return run_post_close_analysis(args, emit_output=False)
-        return run_post_close_analysis_targets(
-            db_target=database_url,
-            job_store=job_store,
-            payload=payload,
+            return _run_with_periodic_heartbeat(
+                lambda: run_post_close_analysis(args, emit_output=False),
+                heartbeat=heartbeat,
+            )
+        return _run_with_periodic_heartbeat(
+            lambda: run_post_close_analysis_targets(
+                db_target=database_url,
+                job_store=job_store,
+                payload=payload,
+                heartbeat=heartbeat,
+            ),
             heartbeat=heartbeat,
         )
 
@@ -568,17 +603,23 @@ async def run_post_market_analysis_job(
                     str(payload.get("backtest_stop_multiple", 2.0)),
                 ]
             )
-            return run_post_market_analysis(
-                args,
-                emit_output=False,
-                analysis_run_id=job_run_id,
-                job_run_id=job_run_id,
+            return _run_with_periodic_heartbeat(
+                lambda: run_post_market_analysis(
+                    args,
+                    emit_output=False,
+                    analysis_run_id=job_run_id,
+                    job_run_id=job_run_id,
+                ),
+                heartbeat=heartbeat,
             )
-        return run_post_market_analysis_targets(
-            db_target=database_url,
-            job_store=job_store,
-            parent_job_run_id=job_run_id,
-            payload=payload,
+        return _run_with_periodic_heartbeat(
+            lambda: run_post_market_analysis_targets(
+                db_target=database_url,
+                job_store=job_store,
+                parent_job_run_id=job_run_id,
+                payload=payload,
+                heartbeat=heartbeat,
+            ),
             heartbeat=heartbeat,
         )
 

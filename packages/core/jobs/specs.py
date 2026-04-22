@@ -146,11 +146,11 @@ class DiscoveryRunSpec:
 
     def payload(self) -> dict[str, Any]:
         symbols = [str(symbol).upper() for symbol in list(self.scope.get("symbols") or [])]
+        universe_ref = str(self.scope.get("universe_ref") or "").strip()
         payload = {
             "job_key": self.config.job_key,
             "label": self.config.label,
             "symbols": ",".join(symbols),
-            "universe": "custom_symbols" if symbols else "0dte_core",
             "strategy": self.config.scanner_strategy,
             "profile": self.config.scanner_profile,
             "greeks_source": self.config.greeks_source,
@@ -171,6 +171,10 @@ class DiscoveryRunSpec:
             "declared_config_hash": self.config.config_hash,
             **dict(self.scope.get("scanner_args") or {}),
         }
+        if universe_ref:
+            payload["universe"] = universe_ref
+        elif not symbols:
+            payload["universe"] = "0dte_core"
         return payload
 
     def as_job_spec(self) -> DeclaredJobSpec:

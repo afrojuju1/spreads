@@ -5,6 +5,7 @@ from statistics import mean
 from typing import Any, Mapping
 
 from core.db.decorators import with_storage
+from core.services.uoa_trade_summary import parse_option_symbol_details
 from core.services.selection_summary import live_selection_counts
 from core.storage.discovery_run_repository import DiscoveryRunRepository
 from core.storage.run_history_repository import RunHistoryRepository
@@ -39,6 +40,16 @@ def parse_setup_json(value: dict[str, Any] | str | None) -> dict[str, Any] | Non
         return json.loads(value)
     except Exception:
         return None
+
+
+def _quote_underlying_symbol(row: Mapping[str, Any]) -> str:
+    direct_symbol = str(row.get("underlying_symbol") or "").strip().upper()
+    if direct_symbol:
+        return direct_symbol
+    option_symbol = str(row.get("option_symbol") or "").strip().upper()
+    parsed = parse_option_symbol_details(option_symbol)
+    parsed_symbol = str(parsed.get("parsed_underlying_symbol") or "").strip().upper()
+    return parsed_symbol or "UNKNOWN"
 
 
 def summarize_runs(
@@ -102,10 +113,13 @@ def summarize_quotes(
     )
     by_option_symbol: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
     for row in rows:
-        by_symbol_strategy[
-            (str(row["underlying_symbol"]), str(row["strategy"]))
-        ].append(row)
-        by_option_symbol[str(row["option_symbol"])].append(row)
+        underlying_symbol = _quote_underlying_symbol(row)
+        strategy = str(row.get("strategy") or "unknown")
+        option_symbol = str(row.get("option_symbol") or "")
+        if not option_symbol:
+            continue
+        by_symbol_strategy[(underlying_symbol, strategy)].append(row)
+        by_option_symbol[option_symbol].append(row)
 
     summaries: dict[tuple[str, str], dict[str, Any]] = {}
     for key, group in by_symbol_strategy.items():
@@ -122,9 +136,9 @@ def summarize_quotes(
         leg_summaries.append(
             {
                 "option_symbol": option_symbol,
-                "underlying_symbol": group[0]["underlying_symbol"],
-                "strategy": group[0]["strategy"],
-                "leg_role": group[0]["leg_role"],
+                "underlying_symbol": _quote_underlying_symbol(group[0]),
+                "strategy": group[0].get("strategy") or "unknown",
+                "leg_role": group[0].get("leg_role") or "unknown",
                 "event_count": len(group),
                 "first_quote_at": group[0]["captured_at"],
                 "last_quote_at": group[-1]["captured_at"],

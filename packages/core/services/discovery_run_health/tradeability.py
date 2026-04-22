@@ -4,6 +4,9 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from .shared import (
+    DEGRADED_CAPTURE_STATUSES,
+    NON_HEALTHY_CAPTURE_STATUSES,
+    RECOVERY_ONLY_CAPTURE_STATUSES,
     _resolve_profile,
     normalize_capture_status,
     normalize_tradeability_state,
@@ -14,11 +17,9 @@ TRADEABILITY_STATE_DEGRADED_QUOTES = "degraded_quotes"
 TRADEABILITY_STATE_RECOVERY_ONLY = "recovery_only"
 TRADEABILITY_STATE_RESEARCH_ONLY = "research_only"
 
-NON_HEALTHY_QUOTE_CAPTURE_STATUSES = frozenset(
-    {"empty", "baseline_only", "recovery_only"}
-)
-DEGRADED_QUOTE_CAPTURE_STATUSES = frozenset({"empty", "baseline_only"})
-RECOVERY_QUOTE_CAPTURE_STATUSES = frozenset({"recovery_only"})
+NON_HEALTHY_QUOTE_CAPTURE_STATUSES = NON_HEALTHY_CAPTURE_STATUSES
+DEGRADED_QUOTE_CAPTURE_STATUSES = DEGRADED_CAPTURE_STATUSES
+RECOVERY_QUOTE_CAPTURE_STATUSES = RECOVERY_ONLY_CAPTURE_STATUSES
 CAPTURE_HISTORY_BLOCK_THRESHOLD = 3
 
 

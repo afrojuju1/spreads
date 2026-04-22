@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -29,6 +30,7 @@ from core.services.discovery_runs.schedule import build_collection_schedule_summ
 from core.services.management_planner import plan_position_management
 from core.services.opportunities import list_opportunities
 from core.services.opportunity_generation import build_runtime_opportunity_payload
+from core.services.ops.jobs import build_jobs_overview
 from core.services.positions import list_positions
 from core.services.ranking_policy import evaluate_candidate_ranking_policy
 from core.services.scanners.config import (
@@ -1600,6 +1602,114 @@ class BacktestTests(unittest.TestCase):
         self.assertEqual(run.aggregate.fidelity, "reduced")
         self.assertEqual(run.sessions[0].fidelity, "reduced")
         self.assertEqual(run.sessions[0].modeled_mark_source, "synthetic_midpoint")
+
+
+class JobsOverviewTests(unittest.TestCase):
+    def test_build_jobs_overview_excludes_idle_capture_from_degraded_count(self) -> None:
+        class _JobStore:
+            def schema_ready(self) -> bool:
+                return True
+
+            def list_latest_runs_by_job_keys(
+                self,
+                *,
+                job_keys: list[str],
+                statuses: list[str] | None = None,
+            ) -> list[dict[str, object]]:
+                return []
+
+            def list_job_runs(
+                self,
+                *,
+                job_type: str | None = None,
+                status: str | None = None,
+                limit: int = 25,
+            ) -> list[dict[str, object]]:
+                if status in {"queued", "running"}:
+                    return []
+                if job_type != "discovery_run":
+                    return []
+                return [
+                    {
+                        "job_run_id": "discovery_run:demo:20260421T200500Z",
+                        "job_key": "discovery_run:demo",
+                        "job_type": "discovery_run",
+                        "status": "succeeded",
+                        "scheduled_for": "2026-04-21T20:05:00Z",
+                        "slot_at": "2026-04-21T20:05:00Z",
+                        "started_at": "2026-04-21T20:05:03Z",
+                        "finished_at": "2026-04-21T20:05:08Z",
+                        "heartbeat_at": "2026-04-21T20:05:08Z",
+                        "worker_name": "worker-discovery-1",
+                        "payload": {},
+                        "result": {"status": "completed"},
+                        "quote_capture": {
+                            "capture_status": "idle",
+                            "expected_quote_symbol_count": 0,
+                            "stream_quote_events_saved": 0,
+                            "baseline_quote_events_saved": 0,
+                            "recovery_quote_events_saved": 0,
+                        },
+                        "trade_capture": {
+                            "capture_status": "idle",
+                            "expected_trade_symbol_count": 0,
+                            "stream_trade_events_saved": 0,
+                            "total_trade_events_saved": 0,
+                        },
+                    }
+                ]
+
+            def get_lease(self, key: str) -> dict[str, object] | None:
+                if key == "runtime:scheduler":
+                    return {
+                        "owner": "scheduler",
+                        "expires_at": "2026-04-21T20:07:30Z",
+                        "job_run_id": None,
+                    }
+                return None
+
+            def list_active_leases(self, *, prefix: str) -> list[dict[str, object]]:
+                if prefix != "runtime:worker:":
+                    return []
+                return [
+                    {
+                        "lease_key": "runtime:worker:runtime:1",
+                        "owner": "runtime:1",
+                        "expires_at": "2026-04-21T20:06:30Z",
+                        "lease_state": {
+                            "kind": "worker",
+                            "lane": "runtime",
+                            "queue_name": "arq:queue:runtime",
+                            "settings_name": "RuntimeWorkerSettings",
+                        },
+                    },
+                    {
+                        "lease_key": "runtime:worker:discovery:1",
+                        "owner": "discovery:1",
+                        "expires_at": "2026-04-21T20:06:30Z",
+                        "lease_state": {
+                            "kind": "worker",
+                            "lane": "discovery",
+                            "queue_name": "arq:queue:discovery",
+                            "settings_name": "DiscoveryWorkerSettings",
+                        },
+                    },
+                ]
+
+        storage = SimpleNamespace(jobs=_JobStore())
+        with (
+            patch("core.services.ops.jobs._utc_now", return_value="2026-04-21T20:06:00Z"),
+            patch("core.services.ops.jobs.list_declared_job_rows", return_value=[]),
+        ):
+            payload = build_jobs_overview(
+                storage=storage,
+                job_type="discovery_run",
+                limit=10,
+            )
+
+        self.assertEqual(payload["status"], "healthy")
+        self.assertEqual(payload["summary"]["degraded_capture_count"], 0)
+        self.assertEqual(payload["attention"], [])
 
 
 if __name__ == "__main__":

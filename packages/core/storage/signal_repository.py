@@ -14,7 +14,7 @@ from core.storage.records import (
     SignalStateRecord,
     SignalStateTransitionRecord,
 )
-from core.storage.serializers import parse_date, parse_datetime
+from core.storage.serializers import parse_date, parse_datetime, render_value
 from core.storage.signal_models import (
     AutomationRunModel,
     OpportunityDecisionModel,
@@ -1146,7 +1146,7 @@ class SignalRepository(RepositoryBase):
                     automation_id=automation_id,
                     run_key=run_key,
                     scope_key=scope_key,
-                    policy_ref_json=dict(policy_ref),
+                    policy_ref_json=render_value(dict(policy_ref)),
                     config_hash=config_hash,
                     state=state,
                     score=score,
@@ -1154,7 +1154,7 @@ class SignalRepository(RepositoryBase):
                     reason_codes_json=list(reason_codes),
                     superseded_by_id=superseded_by_id,
                     decided_at=decided_at_dt,
-                    payload_json=dict(payload or {}),
+                    payload_json=render_value(dict(payload or {})),
                 )
                 session.add(row)
             else:
@@ -1163,7 +1163,7 @@ class SignalRepository(RepositoryBase):
                 row.automation_id = automation_id
                 row.run_key = run_key
                 row.scope_key = scope_key
-                row.policy_ref_json = dict(policy_ref)
+                row.policy_ref_json = render_value(dict(policy_ref))
                 row.config_hash = config_hash
                 row.state = state
                 row.score = score
@@ -1171,7 +1171,7 @@ class SignalRepository(RepositoryBase):
                 row.reason_codes_json = list(reason_codes)
                 row.superseded_by_id = superseded_by_id
                 row.decided_at = decided_at_dt
-                row.payload_json = dict(payload or {})
+                row.payload_json = render_value(dict(payload or {}))
             session.flush()
             session.refresh(row)
             return self.row(row)

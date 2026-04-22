@@ -26,6 +26,12 @@ def render_value(value: Any) -> Any:
         return rendered.replace("+00:00", "Z") if rendered.endswith("+00:00") else rendered
     if isinstance(value, date):
         return value.isoformat()
+    if isinstance(value, dict):
+        return {key: render_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [render_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [render_value(item) for item in value]
     return value
 
 

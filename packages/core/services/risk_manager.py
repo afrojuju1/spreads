@@ -18,7 +18,11 @@ from core.services.execution_lifecycle import (
     is_open_execution_attempt_status,
     resolve_execution_attempt_filled_quantity,
 )
-from core.services.option_structures import net_premium_kind, position_legs
+from core.services.option_structures import (
+    candidate_legs,
+    net_premium_kind,
+    position_legs,
+)
 from core.services.positions import enrich_position_row
 from core.services.runtime_identity import parse_live_run_scope_id
 from core.services.value_coercion import (
@@ -78,6 +82,16 @@ def _candidate_payload(candidate: dict[str, Any]) -> dict[str, Any]:
     if isinstance(payload, dict):
         return dict(payload)
     return dict(candidate) if isinstance(candidate, dict) else {}
+
+
+def _candidate_with_payload(candidate: dict[str, Any]) -> dict[str, Any]:
+    payload = _candidate_payload(candidate)
+    if not isinstance(candidate, dict):
+        return payload
+    return {
+        **dict(candidate),
+        **payload,
+    }
 
 
 def normalize_risk_policy(payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -263,6 +277,62 @@ def _pending_open_attempt_exposures(
             }
         )
     return exposures
+
+
+def _broker_position_side(position: Mapping[str, Any]) -> str | None:
+    side = _as_text(position.get("side"))
+    if side in {"long", "short"}:
+        return side
+    quantity = _coerce_float(position.get("qty"))
+    if quantity is None:
+        return None
+    if quantity > 0:
+        return "long"
+    if quantity < 0:
+        return "short"
+    return None
+
+
+def _candidate_broker_position_conflicts(
+    candidate: dict[str, Any],
+) -> list[dict[str, str]]:
+    resolved_candidate = _candidate_with_payload(candidate)
+    resolved_legs = candidate_legs(resolved_candidate)
+    if not resolved_legs:
+        return []
+    try:
+        broker_positions = create_alpaca_client_from_env().list_positions()
+    except Exception:
+        return []
+
+    broker_positions_by_symbol = {
+        symbol: side
+        for position in broker_positions
+        if isinstance(position, Mapping)
+        and (symbol := _as_text(position.get("symbol"))) is not None
+        and (side := _broker_position_side(position)) is not None
+    }
+    conflicts: list[dict[str, str]] = []
+    for leg in resolved_legs:
+        symbol = _as_text(leg.get("symbol"))
+        role = _as_text(leg.get("role"))
+        if symbol is None or role not in {"short", "long"}:
+            continue
+        broker_side = broker_positions_by_symbol.get(symbol)
+        requested_side = "short" if role == "short" else "long"
+        if broker_side is None or broker_side == requested_side:
+            continue
+        conflicts.append(
+            {
+                "symbol": symbol,
+                "broker_side": broker_side,
+                "requested_role": role,
+                "requested_position_intent": (
+                    "sell_to_open" if role == "short" else "buy_to_open"
+                ),
+            }
+        )
+    return conflicts
 
 
 def _session_position_metrics(positions: list[dict[str, Any]]) -> dict[str, float]:
@@ -641,6 +711,33 @@ def evaluate_open_execution(
             "note": environment_reason,
             "reason_codes": ["live_environment_blocked"],
             "blockers": ["live_environment_blocked"],
+            "policy": normalized_policy,
+            "metrics": metrics,
+        }
+
+    broker_position_conflicts = _candidate_broker_position_conflicts(candidate)
+    metrics["broker_position_conflict_count"] = len(broker_position_conflicts)
+    metrics["broker_position_conflict_symbols"] = [
+        conflict["symbol"] for conflict in broker_position_conflicts
+    ]
+    if broker_position_conflicts:
+        conflict_summary = ", ".join(
+            (
+                f"{conflict['symbol']} "
+                f"(broker {conflict['broker_side']}, request {conflict['requested_position_intent']})"
+            )
+            for conflict in broker_position_conflicts[:4]
+        )
+        if len(broker_position_conflicts) > 4:
+            conflict_summary += ", …"
+        return {
+            "status": "blocked",
+            "note": (
+                "Open execution conflicts with existing broker-held option legs: "
+                f"{conflict_summary}."
+            ),
+            "reason_codes": ["broker_position_intent_conflict"],
+            "blockers": ["broker_position_intent_conflict"],
             "policy": normalized_policy,
             "metrics": metrics,
         }

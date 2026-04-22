@@ -3868,6 +3868,92 @@ class DiscoveryRunArchitectureE2ETests(unittest.TestCase):
         self.assertEqual(legacy_live_decision["status"], "approved")
         self.assertEqual(legacy_live_decision["policy"]["allow_live"], True)
 
+    def test_evaluate_open_execution_blocks_broker_position_intent_conflicts(
+        self,
+    ) -> None:
+        class _ExecutionStore:
+            def list_positions(self, **_: object) -> list[dict[str, object]]:
+                return []
+
+            def list_session_attempts_by_status(
+                self,
+                **_: object,
+            ) -> list[dict[str, object]]:
+                return []
+
+        class _BrokerClient:
+            def list_positions(self) -> list[dict[str, object]]:
+                return [
+                    {
+                        "symbol": "SPY260427P00697000",
+                        "side": "long",
+                        "qty": "1",
+                    }
+                ]
+
+        candidate = {
+            "underlying_symbol": "SPY",
+            "strategy": "iron_condor",
+            "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "candidate": {
+                "strategy": "iron_condor",
+                "midpoint_credit": 0.57,
+                "max_loss": 143.0,
+                "legs": [
+                    {
+                        "symbol": "SPY260427P00697000",
+                        "role": "short",
+                        "expiration_date": "2026-04-27",
+                    },
+                    {
+                        "symbol": "SPY260427P00695000",
+                        "role": "long",
+                        "expiration_date": "2026-04-27",
+                    },
+                    {
+                        "symbol": "SPY260427C00723000",
+                        "role": "short",
+                        "expiration_date": "2026-04-27",
+                    },
+                    {
+                        "symbol": "SPY260427C00725000",
+                        "role": "long",
+                        "expiration_date": "2026-04-27",
+                    },
+                ],
+            },
+        }
+        cycle = {
+            "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        }
+
+        with (
+            patch(
+                "core.services.risk_manager._environment_reason",
+                return_value=None,
+            ),
+            patch(
+                "core.services.risk_manager.create_alpaca_client_from_env",
+                return_value=_BrokerClient(),
+            ),
+        ):
+            decision = evaluate_open_execution(
+                execution_store=_ExecutionStore(),
+                session_id="live:explore_10_iron_condor_weekly_auto:2026-04-21",
+                candidate=candidate,
+                cycle=cycle,
+                quantity=1,
+                limit_price=0.57,
+                risk_policy={"enabled": True, "allow_live": True},
+            )
+
+        self.assertEqual(decision["status"], "blocked")
+        self.assertIn(
+            "broker_position_intent_conflict",
+            decision["reason_codes"],
+        )
+        self.assertIn("SPY260427P00697000", decision["note"])
+
 
 if __name__ == "__main__":
     unittest.main()

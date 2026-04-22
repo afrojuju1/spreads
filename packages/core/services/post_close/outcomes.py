@@ -144,166 +144,180 @@ def build_session_outcomes(
                 "profit_target_hit": False,
                 "stop_hit": False,
             }
+        try:
+            run_id = str(entry_row["run_id"])
+            run_payload, stored_candidates = load_run_bundle(run_id)
+            if run_payload is None:
+                return {
+                    "status": "missing_run",
+                    "verdict": "stored run missing",
+                    "outcome_bucket": "unavailable",
+                    "still_in_play": False,
+                    "estimated_close_pnl": None,
+                    "estimated_expiry_pnl": None,
+                    "profit_target_hit": False,
+                    "stop_hit": False,
+                }
 
-        run_id = str(entry_row["run_id"])
-        run_payload, stored_candidates = load_run_bundle(run_id)
-        if run_payload is None:
-            return {
-                "status": "missing_run",
-                "verdict": "stored run missing",
-                "outcome_bucket": "unavailable",
-                "still_in_play": False,
-                "estimated_close_pnl": None,
-                "estimated_expiry_pnl": None,
-                "profit_target_hit": False,
-                "stop_hit": False,
-            }
+            target_candidate = find_matching_candidate(stored_candidates, entry_row)
+            if target_candidate is None:
+                return {
+                    "status": "missing_candidate",
+                    "verdict": "stored candidate missing",
+                    "outcome_bucket": "unavailable",
+                    "still_in_play": False,
+                    "estimated_close_pnl": None,
+                    "estimated_expiry_pnl": None,
+                    "profit_target_hit": False,
+                    "stop_hit": False,
+                }
 
-        target_candidate = find_matching_candidate(stored_candidates, entry_row)
-        if target_candidate is None:
-            return {
-                "status": "missing_candidate",
-                "verdict": "stored candidate missing",
-                "outcome_bucket": "unavailable",
-                "still_in_play": False,
-                "estimated_close_pnl": None,
-                "estimated_expiry_pnl": None,
-                "profit_target_hit": False,
-                "stop_hit": False,
-            }
+            generated_at = datetime.fromisoformat(
+                str(run_payload["generated_at"]).replace("Z", "+00:00")
+            )
+            run_date = generated_at.astimezone(NEW_YORK).date()
+            expiry_date = date.fromisoformat(str(target_candidate["expiration_date"]))
+            evaluation_end = max(run_date + timedelta(days=3), expiry_date)
+            stock_feed = str(run_payload["filters"].get("stock_feed", "sip"))
 
-        generated_at = datetime.fromisoformat(
-            str(run_payload["generated_at"]).replace("Z", "+00:00")
-        )
-        run_date = generated_at.astimezone(NEW_YORK).date()
-        expiry_date = date.fromisoformat(str(target_candidate["expiration_date"]))
-        evaluation_end = max(run_date + timedelta(days=3), expiry_date)
-        stock_feed = str(run_payload["filters"].get("stock_feed", "sip"))
-
-        bars_key = (
-            str(run_payload["symbol"]),
-            run_date.isoformat(),
-            evaluation_end.isoformat(),
-            stock_feed,
-        )
-        if bars_key not in bars_cache:
-            bars_cache[bars_key] = client.get_daily_bars(
+            bars_key = (
                 str(run_payload["symbol"]),
-                start=(run_date - timedelta(days=2)).isoformat(),
-                end=evaluation_end.isoformat(),
-                stock_feed=stock_feed,
+                run_date.isoformat(),
+                evaluation_end.isoformat(),
+                stock_feed,
             )
+            if bars_key not in bars_cache:
+                bars_cache[bars_key] = client.get_daily_bars(
+                    str(run_payload["symbol"]),
+                    start=(run_date - timedelta(days=2)).isoformat(),
+                    end=evaluation_end.isoformat(),
+                    stock_feed=stock_feed,
+                )
 
-        option_symbols = tuple(sorted(unique_leg_symbols(candidate_legs(target_candidate))))
-        option_bars_key = (
-            option_symbols,
-            run_date.isoformat(),
-            evaluation_end.isoformat(),
-        )
-        if option_bars_key not in option_bars_cache:
-            option_bars_cache[option_bars_key] = merge_option_bars_with_trades(
-                bars_by_symbol=client.get_option_bars(
-                    list(option_symbols),
-                    start=run_date.isoformat(),
-                    end=evaluation_end.isoformat(),
-                ),
-                trades_by_symbol=client.get_option_trades(
-                    list(option_symbols),
-                    start=run_date.isoformat(),
-                    end=evaluation_end.isoformat(),
-                ),
+            option_symbols = tuple(
+                sorted(unique_leg_symbols(candidate_legs(target_candidate)))
             )
+            option_bars_key = (
+                option_symbols,
+                run_date.isoformat(),
+                evaluation_end.isoformat(),
+            )
+            if option_bars_key not in option_bars_cache:
+                option_bars_cache[option_bars_key] = merge_option_bars_with_trades(
+                    bars_by_symbol=client.get_option_bars(
+                        list(option_symbols),
+                        start=run_date.isoformat(),
+                        end=evaluation_end.isoformat(),
+                    ),
+                    trades_by_symbol=client.get_option_trades(
+                        list(option_symbols),
+                        start=run_date.isoformat(),
+                        end=evaluation_end.isoformat(),
+                    ),
+                )
 
-        _, backtest_rows = summarize_market_outcomes(
-            run_payload=run_payload,
-            candidates=[target_candidate],
-            bars=bars_cache[bars_key],
-            option_bars=option_bars_cache[option_bars_key],
-            profit_target=profit_target,
-            stop_multiple=stop_multiple,
-        )
-        rows_by_horizon = {
-            row["horizon"]: row
-            for row in backtest_rows
-            if row.get("status") == "available"
-        }
-        entry_horizon = rows_by_horizon.get("entry")
-        expiry_horizon = rows_by_horizon.get("expiry")
-
-        if expiry_horizon is not None:
-            expiry_pnl = expiry_horizon.get("estimated_pnl")
-            if expiry_pnl is not None and expiry_pnl > 0:
-                verdict = "profitable by expiry"
-                outcome_bucket = "win"
-            elif expiry_horizon.get("estimated_stop_hit"):
-                verdict = "stop-loss outcome by expiry"
-                outcome_bucket = "loss"
-            elif expiry_horizon.get("closed_past_breakeven") or (
-                expiry_pnl is not None and expiry_pnl < 0
-            ):
-                verdict = "loss by expiry"
-                outcome_bucket = "loss"
-            else:
-                verdict = "expired but unresolved"
-                outcome_bucket = "loss"
-            return {
-                "status": "available",
-                "verdict": verdict,
-                "outcome_bucket": outcome_bucket,
-                "still_in_play": False,
-                "estimated_close_pnl": (
-                    None
-                    if entry_horizon is None
-                    else entry_horizon.get("estimated_pnl")
-                ),
-                "estimated_expiry_pnl": expiry_pnl,
-                "profit_target_hit": bool(
-                    expiry_horizon.get("estimated_profit_target_hit")
-                ),
-                "stop_hit": bool(expiry_horizon.get("estimated_stop_hit")),
-                "entry_row": entry_horizon,
-                "expiry_row": expiry_horizon,
+            _, backtest_rows = summarize_market_outcomes(
+                run_payload=run_payload,
+                candidates=[target_candidate],
+                bars=bars_cache[bars_key],
+                option_bars=option_bars_cache[option_bars_key],
+                profit_target=profit_target,
+                stop_multiple=stop_multiple,
+            )
+            rows_by_horizon = {
+                row["horizon"]: row
+                for row in backtest_rows
+                if row.get("status") == "available"
             }
+            entry_horizon = rows_by_horizon.get("entry")
+            expiry_horizon = rows_by_horizon.get("expiry")
 
-        if entry_horizon is not None:
-            if entry_horizon.get("closed_past_breakeven"):
-                verdict = "in danger at close"
-            elif entry_horizon.get("closed_past_short_strike"):
-                verdict = "tested at close but still live"
-            elif (
-                entry_horizon.get("estimated_pnl") is not None
-                and entry_horizon.get("estimated_pnl", 0) > 0
-            ):
-                verdict = "up and still in play at close"
-            else:
-                verdict = "down but still in play at close"
+            if expiry_horizon is not None:
+                expiry_pnl = expiry_horizon.get("estimated_pnl")
+                if expiry_pnl is not None and expiry_pnl > 0:
+                    verdict = "profitable by expiry"
+                    outcome_bucket = "win"
+                elif expiry_horizon.get("estimated_stop_hit"):
+                    verdict = "stop-loss outcome by expiry"
+                    outcome_bucket = "loss"
+                elif expiry_horizon.get("closed_past_breakeven") or (
+                    expiry_pnl is not None and expiry_pnl < 0
+                ):
+                    verdict = "loss by expiry"
+                    outcome_bucket = "loss"
+                else:
+                    verdict = "expired but unresolved"
+                    outcome_bucket = "loss"
+                return {
+                    "status": "available",
+                    "verdict": verdict,
+                    "outcome_bucket": outcome_bucket,
+                    "still_in_play": False,
+                    "estimated_close_pnl": (
+                        None
+                        if entry_horizon is None
+                        else entry_horizon.get("estimated_pnl")
+                    ),
+                    "estimated_expiry_pnl": expiry_pnl,
+                    "profit_target_hit": bool(
+                        expiry_horizon.get("estimated_profit_target_hit")
+                    ),
+                    "stop_hit": bool(expiry_horizon.get("estimated_stop_hit")),
+                    "entry_row": entry_horizon,
+                    "expiry_row": expiry_horizon,
+                }
+
+            if entry_horizon is not None:
+                if entry_horizon.get("closed_past_breakeven"):
+                    verdict = "in danger at close"
+                elif entry_horizon.get("closed_past_short_strike"):
+                    verdict = "tested at close but still live"
+                elif (
+                    entry_horizon.get("estimated_pnl") is not None
+                    and entry_horizon.get("estimated_pnl", 0) > 0
+                ):
+                    verdict = "up and still in play at close"
+                else:
+                    verdict = "down but still in play at close"
+                return {
+                    "status": "available",
+                    "verdict": verdict,
+                    "outcome_bucket": "still_open",
+                    "still_in_play": True,
+                    "estimated_close_pnl": entry_horizon.get("estimated_pnl"),
+                    "estimated_expiry_pnl": None,
+                    "profit_target_hit": bool(
+                        entry_horizon.get("estimated_profit_target_hit")
+                    ),
+                    "stop_hit": bool(entry_horizon.get("estimated_stop_hit")),
+                    "entry_row": entry_horizon,
+                    "expiry_row": None,
+                }
+
             return {
-                "status": "available",
-                "verdict": verdict,
+                "status": "pending",
+                "verdict": "backtest data pending",
                 "outcome_bucket": "still_open",
                 "still_in_play": True,
-                "estimated_close_pnl": entry_horizon.get("estimated_pnl"),
+                "estimated_close_pnl": None,
                 "estimated_expiry_pnl": None,
-                "profit_target_hit": bool(
-                    entry_horizon.get("estimated_profit_target_hit")
-                ),
-                "stop_hit": bool(entry_horizon.get("estimated_stop_hit")),
-                "entry_row": entry_horizon,
+                "profit_target_hit": False,
+                "stop_hit": False,
+                "entry_row": None,
                 "expiry_row": None,
             }
-
-        return {
-            "status": "pending",
-            "verdict": "backtest data pending",
-            "outcome_bucket": "still_open",
-            "still_in_play": True,
-            "estimated_close_pnl": None,
-            "estimated_expiry_pnl": None,
-            "profit_target_hit": False,
-            "stop_hit": False,
-            "entry_row": None,
-            "expiry_row": None,
-        }
+        except Exception as exc:
+            return {
+                "status": "unavailable",
+                "reason": str(exc),
+                "verdict": "backtest unavailable",
+                "outcome_bucket": "unavailable",
+                "still_in_play": False,
+                "estimated_close_pnl": None,
+                "estimated_expiry_pnl": None,
+                "profit_target_hit": False,
+                "stop_hit": False,
+            }
 
     ideas: list[dict[str, Any]] = []
     for state in grouped.values():

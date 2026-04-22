@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
+NON_HEALTHY_CAPTURE_STATUSES = frozenset({"empty", "baseline_only", "recovery_only"})
+DEGRADED_CAPTURE_STATUSES = frozenset({"empty", "baseline_only"})
+RECOVERY_ONLY_CAPTURE_STATUSES = frozenset({"recovery_only"})
+
 
 def _read_int(mapping: Mapping[str, Any] | None, key: str) -> int:
     if mapping is None:
@@ -115,6 +119,11 @@ def _with_legacy_count_aliases(
 def normalize_capture_status(value: Any) -> str | None:
     normalized = str(value or "").strip().lower()
     return normalized or None
+
+
+def is_non_healthy_capture_status(value: Any) -> bool:
+    normalized = normalize_capture_status(value)
+    return normalized in NON_HEALTHY_CAPTURE_STATUSES
 
 
 def normalize_tradeability_state(value: Any) -> str | None:
