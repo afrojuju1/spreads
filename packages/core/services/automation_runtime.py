@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,6 +12,7 @@ from core.services.options_automation_models import (
     StrategyLiquidityRules,
     StrategyRiskDefaults,
 )
+from core.services.option_structures import normalize_strategy_family
 from core.services.scanners.config import RANKING_POLICY_ARG_KEYS
 from core.services.strategy_specs import StrategySpec
 
@@ -31,6 +33,13 @@ def _float_tuple(values: Any) -> tuple[float, ...]:
     if not isinstance(values, list):
         return ()
     return tuple(float(value) for value in values if value not in (None, ""))
+
+
+def _as_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    rendered = str(value).strip()
+    return rendered or None
 
 
 @dataclass(frozen=True)
@@ -257,6 +266,52 @@ def resolve_management_runtimes() -> list[ManagementRuntime]:
     return runtimes
 
 
+def find_management_runtime_for_position(
+    position: Mapping[str, Any],
+    *,
+    runtimes: tuple[ManagementRuntime, ...] | None = None,
+) -> tuple[ManagementRuntime | None, str | None]:
+    owner_bot_id = _as_text(position.get("bot_id"))
+    strategy_config_id = _as_text(position.get("strategy_config_id"))
+    if owner_bot_id is None or strategy_config_id is None:
+        return None, "missing_management_owner"
+
+    owner_strategy_family = normalize_strategy_family(position.get("strategy_family"))
+    underlying_symbol = _as_text(
+        position.get("underlying_symbol") or position.get("root_symbol")
+    )
+    normalized_symbol = None if underlying_symbol is None else underlying_symbol.upper()
+    available_runtimes = (
+        tuple(resolve_management_runtimes())
+        if runtimes is None
+        else tuple(runtimes)
+    )
+
+    fallback_matches: list[ManagementRuntime] = []
+    exact_symbol_matches: list[ManagementRuntime] = []
+    for runtime in available_runtimes:
+        if runtime.bot_id != owner_bot_id:
+            continue
+        if runtime.strategy_config_id != strategy_config_id:
+            continue
+        if runtime.strategy_family != owner_strategy_family:
+            continue
+        fallback_matches.append(runtime)
+        runtime_symbols = {symbol.upper() for symbol in runtime.symbols}
+        if not runtime_symbols or normalized_symbol is None:
+            exact_symbol_matches.append(runtime)
+            continue
+        if normalized_symbol in runtime_symbols:
+            exact_symbol_matches.append(runtime)
+
+    effective_matches = exact_symbol_matches or fallback_matches
+    if not effective_matches:
+        return None, "no_management_runtime"
+    if len(effective_matches) > 1:
+        return None, "ambiguous_management_runtime"
+    return effective_matches[0], None
+
+
 __all__ = [
     "EntryRuntime",
     "ManagementRuntime",
@@ -264,6 +319,7 @@ __all__ = [
     "build_entry_runtime",
     "build_management_runtime",
     "build_strategy_build_settings",
+    "find_management_runtime_for_position",
     "resolve_entry_runtime",
     "resolve_entry_runtimes",
     "resolve_management_runtime",

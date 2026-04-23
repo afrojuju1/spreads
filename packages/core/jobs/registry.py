@@ -13,7 +13,6 @@ DISCOVERY_RUN_JOB_TYPE = "discovery_run"
 POSITION_EXIT_MANAGER_JOB_TYPE = "position_exit_manager"
 DISCOVERY_RECOVERY_JOB_TYPE = "discovery_recovery"
 OPTIONS_AUTOMATION_ENTRY_JOB_TYPE = "options_automation_entry"
-OPTIONS_AUTOMATION_MANAGEMENT_JOB_TYPE = "options_automation_management"
 OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE = "options_automation_execute"
 
 EXECUTION_SUBMIT_ADHOC_JOB_KEY = "execution_submit:adhoc"
@@ -21,7 +20,6 @@ ALERT_DELIVERY_ADHOC_JOB_KEY = "alert_delivery:adhoc"
 ALERT_RECONCILE_JOB_KEY = "alert_reconcile:scheduled"
 DISCOVERY_RECOVERY_JOB_KEY = "discovery_recovery:global"
 OPTIONS_AUTOMATION_ENTRY_ADHOC_JOB_KEY = "options_automation_entry:adhoc"
-OPTIONS_AUTOMATION_MANAGEMENT_ADHOC_JOB_KEY = "options_automation_management:adhoc"
 OPTIONS_AUTOMATION_EXECUTE_ADHOC_JOB_KEY = "options_automation_execute:adhoc"
 
 
@@ -84,11 +82,6 @@ JOB_SPECS = {
             queue_name=RUNTIME_QUEUE_NAME,
         ),
         JobSpec(
-            job_type=OPTIONS_AUTOMATION_MANAGEMENT_JOB_TYPE,
-            task_name="run_options_automation_management_job",
-            queue_name=RUNTIME_QUEUE_NAME,
-        ),
-        JobSpec(
             job_type=OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE,
             task_name="run_options_automation_execute_job",
             queue_name=RUNTIME_QUEUE_NAME,
@@ -108,7 +101,6 @@ WORKER_LANES = (
             JOB_SPECS[POSITION_EXIT_MANAGER_JOB_TYPE].task_name,
             JOB_SPECS[DISCOVERY_RECOVERY_JOB_TYPE].task_name,
             JOB_SPECS[OPTIONS_AUTOMATION_ENTRY_JOB_TYPE].task_name,
-            JOB_SPECS[OPTIONS_AUTOMATION_MANAGEMENT_JOB_TYPE].task_name,
             JOB_SPECS[OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE].task_name,
         ),
         max_jobs=4,

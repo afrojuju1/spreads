@@ -10,6 +10,7 @@ from core.jobs.orchestration import (
     SCHEDULER_RUNTIME_LEASE_KEY,
     SINGLETON_LEASE_PREFIX,
     WORKER_RUNTIME_LEASE_PREFIX,
+    resolve_scheduled_for,
     singleton_lease_key,
 )
 from core.jobs.registry import WORKER_LANES, get_queue_name_for_job_type
@@ -182,6 +183,21 @@ def _job_run_operator_status(
     return "unknown", None
 
 
+def _definition_is_currently_schedulable(
+    definition: Mapping[str, Any],
+    *,
+    now: datetime,
+) -> bool:
+    if not bool(definition.get("enabled")):
+        return False
+    if str(definition.get("job_type") or "") == "discovery_run":
+        return True
+    try:
+        return resolve_scheduled_for(definition, now=now) is not None
+    except (TypeError, ValueError):
+        return True
+
+
 def _summarize_job_run(
     run: Mapping[str, Any],
     *,
@@ -263,6 +279,10 @@ def _job_definition_status(
 ) -> str:
     if not bool(definition.get("enabled")):
         return "idle"
+    currently_schedulable = _definition_is_currently_schedulable(
+        definition,
+        now=now,
+    )
     if str(definition.get("job_type") or "") == "discovery_run":
         session_schedule = build_discovery_run_session_schedule(definition, now=now)
         schedule_health = evaluate_discovery_run_schedule_health(
@@ -278,8 +298,14 @@ def _job_definition_status(
         }:
             return "degraded"
     if latest_run is None:
-        return "unknown"
+        return "unknown" if currently_schedulable else "idle"
     latest_status, _ = _job_run_operator_status(latest_run, now=now)
+    if not currently_schedulable and str(latest_run.get("status") or "") in {
+        "failed",
+        "skipped",
+        "succeeded",
+    }:
+        return "idle"
     return _combine_statuses("healthy", latest_status)
 
 

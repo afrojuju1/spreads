@@ -6,6 +6,12 @@ from typing import Any
 import pandas_market_calendars as mcal
 
 from core.db.decorators import with_storage
+from core.services.automation_runtime import (
+    find_management_runtime_for_position,
+    resolve_management_runtimes,
+)
+from core.services.automations import automation_should_run_now
+from core.services.bots import bot_time_reached
 from core.services.execution_portfolio import refresh_session_position_marks
 from core.services.option_structures import net_premium_kind
 from core.services.positions import enrich_position_row
@@ -35,10 +41,19 @@ DEFAULT_EXIT_POLICY = {
     "stop_multiple": 2.0,
     "force_close_at": None,
 }
+MANAGED_CLOSE_INTENT_TTL_MINUTES = 5
 
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _expires_in(minutes: int) -> str:
+    return (
+        (datetime.now(UTC) + timedelta(minutes=max(minutes, 1)))
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def _as_text(value: Any) -> str | None:
@@ -270,25 +285,130 @@ def _has_open_close_attempt(execution_store: Any, position_id: str) -> bool:
     )
 
 
-def _is_bot_managed_position(execution_store: Any, position: dict[str, Any]) -> bool:
+def _close_intent_id(position_id: str, automation_id: str) -> str:
+    return f"execution_intent:manage:{automation_id}:{position_id}"
+
+
+def _close_slot_key(position_id: str) -> str:
+    return f"manage:{position_id}:close"
+
+
+def _has_active_close_intent(execution_store: Any, position_id: str) -> bool:
     if not execution_store.intent_schema_ready():
         return False
-    open_execution_attempt_id = _as_text(position.get("open_execution_attempt_id"))
-    if open_execution_attempt_id is None:
-        return False
-    attempt = execution_store.get_attempt(open_execution_attempt_id)
-    if attempt is None:
-        return False
-    request = attempt.get("request")
-    if not isinstance(request, dict):
-        return False
-    execution_intent_id = _as_text(request.get("execution_intent_id"))
-    if execution_intent_id is None:
-        return False
-    intent = execution_store.get_execution_intent(execution_intent_id)
-    if intent is None:
-        return False
-    return _as_text(intent.get("bot_id")) is not None
+    from core.services.execution_intents.shared import ACTIVE_INTENT_STATES
+
+    return bool(
+        execution_store.list_execution_intents(
+            slot_key=_close_slot_key(position_id),
+            states=sorted(ACTIVE_INTENT_STATES),
+            limit=1,
+        )
+    )
+
+
+def _evaluate_position_close_decision(
+    *,
+    position: dict[str, Any],
+    now: datetime,
+    management_runtimes: tuple[Any, ...],
+) -> tuple[dict[str, Any], str, Any | None]:
+    runtime, runtime_reason = find_management_runtime_for_position(
+        position,
+        runtimes=management_runtimes,
+    )
+    if runtime is None:
+        if runtime_reason == "ambiguous_management_runtime":
+            return (
+                {
+                    "should_close": False,
+                    "reason": "ambiguous_management_runtime",
+                },
+                "management_runtime",
+                None,
+            )
+        return (
+            evaluate_exit_policy(
+                position=position,
+                mark=_coerce_float(position.get("close_mark")),
+                now=now,
+            ),
+            "position_exit_policy",
+            None,
+        )
+    if not automation_should_run_now(runtime.automation.automation, now=now):
+        return (
+            {
+                "should_close": False,
+                "reason": "outside_management_schedule_window",
+            },
+            "management_runtime",
+            runtime,
+        )
+
+    from core.services.management_planner import plan_position_management
+
+    return (
+        plan_position_management(
+            runtime=runtime,
+            position=position,
+            flatten_due=bot_time_reached(
+                runtime.bot.bot,
+                time_value=runtime.bot.bot.flatten_positions_at_et,
+                now=now,
+            ),
+            now=now,
+        ),
+        "management_runtime",
+        runtime,
+    )
+
+
+def _create_managed_close_intent(
+    execution_store: Any,
+    *,
+    position: dict[str, Any],
+    runtime: Any,
+    decision: dict[str, Any],
+) -> dict[str, Any]:
+    from core.services.execution_intents.shared import issue_pending_execution_intent
+
+    position_id = str(position["position_id"])
+    return issue_pending_execution_intent(
+        execution_store,
+        execution_intent_id=_close_intent_id(position_id, runtime.automation_id),
+        bot_id=runtime.bot_id,
+        automation_id=runtime.automation_id,
+        opportunity_decision_id=None,
+        strategy_position_id=position_id,
+        execution_attempt_id=None,
+        action_type="close",
+        slot_key=_close_slot_key(position_id),
+        claim_token=None,
+        policy_ref={
+            "bot_id": runtime.bot_id,
+            "automation_id": runtime.automation_id,
+            "strategy_config_id": runtime.strategy_config_id,
+            "strategy_id": runtime.strategy_id,
+        },
+        config_hash=runtime.config_hash,
+        state="pending",
+        expires_at=_expires_in(MANAGED_CLOSE_INTENT_TTL_MINUTES),
+        superseded_by_id=None,
+        payload={
+            "position_id": position_id,
+            "limit_price": decision.get("limit_price"),
+            "limit_price_source": decision.get("limit_price_source"),
+            "reason": decision.get("reason"),
+            "execution_mode": runtime.automation.automation.execution_mode,
+            "approval_mode": runtime.automation.automation.approval_mode,
+        },
+        created_event_payload={
+            "position_id": position_id,
+            "reason": decision.get("reason"),
+            "limit_price": decision.get("limit_price"),
+        },
+    )
 
 
 def _refresh_open_position_marks(
@@ -347,6 +467,7 @@ def run_position_exit_manager(
             else "ok",
             "position_count": 0,
             "evaluated": 0,
+            "created_intents": 0,
             "submitted": 0,
             "skipped": 0,
             "failure_count": 0,
@@ -356,7 +477,11 @@ def run_position_exit_manager(
     _refresh_open_position_marks(
         db_target=db_target,
         session_ids=sorted(
-            {str(position["session_id"]) for position in open_positions}
+            {
+                str(position["session_id"])
+                for position in open_positions
+                if position.get("session_id")
+            }
         ),
         storage=storage,
     )
@@ -369,30 +494,15 @@ def run_position_exit_manager(
     ]
 
     evaluated = 0
+    created_intents = 0
     submitted = 0
     skipped = 0
     failures: list[dict[str, str]] = []
     decisions: list[dict[str, Any]] = []
     now = datetime.now(UTC)
+    management_runtimes = tuple(resolve_management_runtimes())
     for position in refreshed_positions:
         position_id = str(position["position_id"])
-        if _is_bot_managed_position(execution_store, position):
-            evaluated += 1
-            skipped += 1
-            execution_store.update_position(
-                position_id=position_id,
-                last_exit_evaluated_at=_utc_now(),
-                last_exit_reason="bot_runtime_managed",
-                updated_at=_utc_now(),
-            )
-            decisions.append(
-                {
-                    "position_id": position_id,
-                    "reason": "bot_runtime_managed",
-                    "should_close": False,
-                }
-            )
-            continue
         if _has_open_close_attempt(execution_store, position_id):
             evaluated += 1
             skipped += 1
@@ -411,10 +521,10 @@ def run_position_exit_manager(
             )
             continue
 
-        decision = evaluate_exit_policy(
+        decision, decision_source, management_runtime = _evaluate_position_close_decision(
             position=position,
-            mark=_coerce_float(position.get("close_mark")),
             now=now,
+            management_runtimes=management_runtimes,
         )
         evaluated += 1
         execution_store.update_position(
@@ -427,11 +537,51 @@ def run_position_exit_manager(
             {
                 "position_id": position_id,
                 "reason": decision["reason"],
+                "decision_source": decision_source,
                 "should_close": bool(decision["should_close"]),
             }
         )
         if not decision["should_close"]:
             skipped += 1
+            continue
+        if management_runtime is not None:
+            if not execution_store.intent_schema_ready():
+                skipped += 1
+                execution_store.update_position(
+                    position_id=position_id,
+                    last_exit_evaluated_at=_utc_now(),
+                    last_exit_reason="execution_intent_schema_unavailable",
+                    updated_at=_utc_now(),
+                )
+                decisions[-1]["reason"] = "execution_intent_schema_unavailable"
+                decisions[-1]["should_close"] = False
+                continue
+            if _has_active_close_intent(execution_store, position_id):
+                skipped += 1
+                execution_store.update_position(
+                    position_id=position_id,
+                    last_exit_evaluated_at=_utc_now(),
+                    last_exit_reason="close_intent_already_open",
+                    updated_at=_utc_now(),
+                )
+                decisions[-1]["reason"] = "close_intent_already_open"
+                decisions[-1]["should_close"] = False
+                continue
+            try:
+                _create_managed_close_intent(
+                    execution_store,
+                    position=position,
+                    runtime=management_runtime,
+                    decision=decision,
+                )
+                created_intents += 1
+            except Exception as exc:
+                failures.append(
+                    {
+                        "position_id": position_id,
+                        "error": str(exc),
+                    }
+                )
             continue
         try:
             from core.services.execution import submit_position_close_by_id
@@ -465,6 +615,7 @@ def run_position_exit_manager(
         else "ok",
         "position_count": len(refreshed_positions),
         "evaluated": evaluated,
+        "created_intents": created_intents,
         "submitted": submitted,
         "skipped": skipped,
         "failure_count": len(failures),

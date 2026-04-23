@@ -14,7 +14,6 @@ from core.jobs.registry import (
     DISCOVERY_RUN_JOB_TYPE,
     OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE,
     OPTIONS_AUTOMATION_ENTRY_JOB_TYPE,
-    OPTIONS_AUTOMATION_MANAGEMENT_JOB_TYPE,
     POSITION_EXIT_MANAGER_JOB_TYPE,
 )
 from core.jobs.specs import get_declared_discovery_run_spec
@@ -38,7 +37,6 @@ from core.services.discovery_recovery import (
     build_slot_details_from_cycle_result,
     run_discovery_recovery,
 )
-from core.services.strategy_positions import run_management_automation_decision
 
 from .managed import _execute_managed_job
 
@@ -226,36 +224,6 @@ async def run_options_automation_entry_job(
 
     enriched_payload = dict(payload)
     enriched_payload["job_type"] = OPTIONS_AUTOMATION_ENTRY_JOB_TYPE
-    return await _execute_managed_job(
-        ctx,
-        job_key=job_key,
-        job_run_id=job_run_id,
-        arq_job_id=arq_job_id,
-        payload=enriched_payload,
-        runner=runner,
-        compact_result=lambda result: result,
-    )
-
-
-async def run_options_automation_management_job(
-    ctx: dict[str, Any],
-    job_key: str,
-    job_run_id: str,
-    payload: dict[str, Any],
-    arq_job_id: str,
-) -> dict[str, Any]:
-    database_url = ctx["database_url"]
-
-    def runner(heartbeat: Any) -> dict[str, Any]:
-        heartbeat()
-        return run_management_automation_decision(
-            db_target=database_url,
-            bot_id=str(payload["bot_id"]),
-            automation_id=str(payload["automation_id"]),
-        )
-
-    enriched_payload = dict(payload)
-    enriched_payload["job_type"] = OPTIONS_AUTOMATION_MANAGEMENT_JOB_TYPE
     return await _execute_managed_job(
         ctx,
         job_key=job_key,

@@ -1,0 +1,10 @@
+job_key: position_exit_manager:global
+job_type: position_exit_manager
+enabled: true
+schedule:
+  type: interval_minutes
+  minutes: 1
+payload:
+  allow_off_hours: false
+  market_close_grace_minutes: 0
+singleton_scope: global

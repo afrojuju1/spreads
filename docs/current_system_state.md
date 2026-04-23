@@ -26,7 +26,7 @@ Related:
 | Discovery and collection | `services/scanners/`, `services/discovery_runs/`, `services/live_selection.py`, `services/opportunity_scoring.py`, `services/candidate_policy.py` | Owns symbol scanning, cycle orchestration, live ranking, and promotable/monitor state assignment. |
 | Canonical opportunity state | `services/signal_state.py`, `services/opportunity_generation.py`, `services/opportunities.py`, `storage/signal_repository.py` | Owns signal state, canonical opportunity rows, and runtime-owned projections derived from discovery run cycles. |
 | Runtime, automation, discovery-session, pipeline-compat, and ops read models | `services/automation_runtimes.py`, `services/discovery_sessions.py`, `services/live_runtime.py`, `services/discovery_run_health/`, `services/pipelines.py`, `services/ops/` | Owns owner-plane automation runtime views, discovery-run-owned discovery-session views, compatibility pipeline projections, and operator CLI payloads. |
-| Execution and portfolio state | `services/execution/`, `services/execution_portfolio.py`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py` | Owns broker submission, immutable execution ledger, day-local position ownership, reconciliation, and exit behavior. |
+| Execution and portfolio state | `services/execution/`, `services/execution_portfolio.py`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py` | Owns broker submission, immutable execution ledger, day-local position ownership, reconciliation, and exit behavior, including config-driven management closes. |
 | Historical backtest and evaluation | `backtest/` | `backtest/` owns the canonical historical evaluation engine and artifacts. |
 | Persistence and event transport | Postgres, Redis | Postgres is source of truth. Redis handles queues, leases, and pub/sub fanout. |
 
@@ -147,7 +147,6 @@ Redis = transport, queueing, leases, and pub/sub fanout
                                              | alert_delivery    | recorder-backed quote/trade reads
                                              | alert_reconcile   | UOA + live_action_gate
                                              | options_automation_entry
-                                             | options_automation_management
                                              | options_automation_execute
                                              | position_exit_manager
                                              v                   v
@@ -192,7 +191,6 @@ Redis = transport, queueing, leases, and pub/sub fanout
                  | alert_delivery    |
                  | alert_reconcile   |
                  | options_automation_entry
-                 | options_automation_management
                  | options_automation_execute
                  | position_exit_manager
                  v                   v
@@ -398,9 +396,12 @@ Current main job types are:
 - `alert_delivery`
 - `alert_reconcile`
 - `options_automation_entry`
-- `options_automation_management`
 - `options_automation_execute`
 - `position_exit_manager`
+
+Management automations are still config-owned runtime concepts, but they are evaluated inside `position_exit_manager` rather than through a separate `options_automation_management` job type.
+Recurring maintenance jobs now run only through declared job definitions; `discovery_recovery` no longer inlines `broker_sync` or `position_exit_manager`.
+
 Redis is transport and event fanout. Postgres remains the source of truth for job state.
 
 ### 3. Discovery, Collection, And Opportunity State

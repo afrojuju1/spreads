@@ -78,11 +78,6 @@ def run_discovery_recovery(
             "reason": "recovery_schema_unavailable",
         }
 
-    from core.services.broker_sync import run_broker_sync
-    from core.services.exit_manager import run_position_exit_manager
-
-    broker_sync = run_broker_sync(db_target=db_target, storage=storage)
-    exit_manager = run_position_exit_manager(db_target=db_target, storage=storage)
     execution_targets = refresh_execution_capture_targets(storage=storage)
 
     definitions = {
@@ -250,8 +245,6 @@ def run_discovery_recovery(
     )
     return {
         "status": "ok",
-        "broker_sync": broker_sync,
-        "exit_manager": exit_manager,
         "execution_targets": execution_targets,
         "newly_missed_slot_count": newly_missed_slot_count,
         "recovered_slot_count": recovered_slot_count,

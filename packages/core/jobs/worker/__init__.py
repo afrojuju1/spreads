@@ -15,7 +15,6 @@ from .tasks import (
     run_discovery_run_job,
     run_options_automation_entry_job,
     run_options_automation_execute_job,
-    run_options_automation_management_job,
     run_position_exit_manager_job,
 )
 
@@ -26,7 +25,6 @@ class RuntimeWorkerSettings:
         run_discovery_recovery_job,
         run_execution_submit_job,
         run_options_automation_entry_job,
-        run_options_automation_management_job,
         run_options_automation_execute_job,
         run_alert_delivery_job,
         run_alert_reconcile_job,
@@ -71,6 +69,5 @@ __all__ = [
     "run_discovery_run_job",
     "run_options_automation_entry_job",
     "run_options_automation_execute_job",
-    "run_options_automation_management_job",
     "run_position_exit_manager_job",
 ]

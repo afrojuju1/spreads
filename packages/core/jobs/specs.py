@@ -377,31 +377,14 @@ def _automation_job_specs(
                         config_hash=bot.config_hash,
                     )
                 )
-            if automation.automation.is_management:
-                job_key = (
-                    f"options_automation_management:{bot.bot.bot_id}:"
-                    f"{automation.automation.automation_id}"
-                )
-                specs.append(
-                    DeclaredJobSpec(
-                        job_key=job_key,
-                        job_type="options_automation_management",
-                        enabled=True,
-                        schedule_type="interval_minutes",
-                        schedule={"minutes": cadence},
-                        payload=payload,
-                        market_calendar="NYSE",
-                        singleton_scope=f"{bot.bot.bot_id}:{automation.automation.automation_id}",
-                        config_path=automation.automation.config_path,
-                        config_hash=bot.config_hash,
-                    )
-                )
     return specs
 
 
 def load_declared_job_specs(
     config_root: str | Path | None = None,
 ) -> list[DeclaredJobSpec]:
+    # The declared job surface is assembled from static job YAML plus
+    # config-compiled discovery and automation definitions.
     specs = list(_load_job_specs(config_root))
     specs.extend(spec.as_job_spec() for spec in load_declared_discovery_run_specs(config_root))
     specs.extend(_automation_job_specs(config_root))

@@ -12,12 +12,10 @@ from arq import create_pool
 from core.events.bus import publish_global_event_async
 from core.jobs.registry import (
     DISCOVERY_QUEUE_NAME,
-    DISCOVERY_RECOVERY_JOB_KEY,
-    DISCOVERY_RECOVERY_JOB_TYPE,
     RUNTIME_QUEUE_NAME,
     get_job_spec,
 )
-from core.jobs.specs import get_declared_job_row, list_declared_job_rows
+from core.jobs.specs import list_declared_job_rows
 from core.jobs.orchestration import (
     SCHEDULER_RUNTIME_LEASE_KEY,
     build_job_attempt_id,
@@ -355,63 +353,6 @@ async def _supersede_queued_live_run(
     return superseded_record
 
 
-async def _enqueue_discovery_recovery_if_needed(
-    *,
-    job_store: Any,
-    redis: Any,
-    now: datetime,
-) -> str | None:
-    definition = await asyncio.to_thread(
-        get_declared_job_row,
-        DISCOVERY_RECOVERY_JOB_KEY,
-    )
-    if definition is None or not bool(definition.get("enabled")):
-        return None
-    latest_runs = await asyncio.to_thread(
-        job_store.list_job_runs,
-        job_key=DISCOVERY_RECOVERY_JOB_KEY,
-        limit=1,
-    )
-    latest_run = latest_runs[0] if latest_runs else None
-    if latest_run is not None and str(latest_run.get("status") or "") in {"queued", "running"}:
-        active_at = (
-            parse_datetime(latest_run.get("heartbeat_at"))
-            or parse_datetime(latest_run.get("started_at"))
-            or parse_datetime(latest_run.get("scheduled_for"))
-        )
-        if active_at is not None and active_at >= now - timedelta(seconds=120):
-            return None
-    payload = dict(definition.get("payload") or {})
-    payload.update(
-        {
-            "job_key": DISCOVERY_RECOVERY_JOB_KEY,
-            "job_type": DISCOVERY_RECOVERY_JOB_TYPE,
-            "scheduled_for": isoformat_utc(now),
-            "singleton_scope": definition.get("singleton_scope"),
-        }
-    )
-    job_run_id = build_job_run_id(DISCOVERY_RECOVERY_JOB_KEY, now)
-    run_record, created = await asyncio.to_thread(
-        job_store.create_job_run,
-        job_run_id=job_run_id,
-        job_key=DISCOVERY_RECOVERY_JOB_KEY,
-        arq_job_id=build_job_attempt_id(job_run_id, 0),
-        job_type=DISCOVERY_RECOVERY_JOB_TYPE,
-        status="queued",
-        scheduled_for=now,
-        payload=payload,
-    )
-    if not created:
-        return None
-    enqueued = await _enqueue_job_run(
-        job_store=job_store,
-        redis=redis,
-        definition=definition,
-        run_record=run_record,
-    )
-    return None if not enqueued else str(run_record["job_run_id"])
-
-
 async def _reconcile_discovery_run_jobs(
     job_store: Any,
     recovery_store: Any,
@@ -461,8 +402,6 @@ async def _reconcile_discovery_run_jobs(
         )
         latest_session_run = latest_session_runs[0] if latest_session_runs else None
         max_retries = max(int(definition["payload"].get("max_slot_retries", LIVE_SLOT_MAX_RETRIES)), 0)
-        gap_detected = False
-
         for slot_at in all_slots:
             if slot_at >= current_slot:
                 break
@@ -504,8 +443,6 @@ async def _reconcile_discovery_run_jobs(
                 finished_at=isoformat_utc(now),
                 updated_at=isoformat_utc(now),
             )
-            gap_detected = True
-
         slot_at = current_slot
         run_record = await asyncio.to_thread(
             job_store.get_job_run_for_slot,
@@ -536,7 +473,6 @@ async def _reconcile_discovery_run_jobs(
                     label=label,
                     now=now,
                 )
-                gap_detected = True
             if latest_session_run is not None and latest_session_run["status"] in {"queued", "running"} and _live_run_active(
                 latest_session_run,
                 now=now,
@@ -548,14 +484,6 @@ async def _reconcile_discovery_run_jobs(
                         "reason": "previous_slot_active",
                     }
                 )
-                if gap_detected:
-                    recovery_run_id = await _enqueue_discovery_recovery_if_needed(
-                        job_store=job_store,
-                        redis=redis,
-                        now=now,
-                    )
-                    if recovery_run_id is not None:
-                        recovery_enqueued.append(recovery_run_id)
                 continue
             payload = dict(plan["payload"])
             payload.update(
@@ -625,7 +553,6 @@ async def _reconcile_discovery_run_jobs(
                 finished_at=isoformat_utc(now),
                 updated_at=isoformat_utc(now),
             )
-            gap_detected = True
             latest_session_run = run_record
         elif run_record["status"] in {"queued", "running"} and _live_run_active(
             run_record,
@@ -651,7 +578,6 @@ async def _reconcile_discovery_run_jobs(
                     finished_at=isoformat_utc(now),
                     updated_at=isoformat_utc(now),
                 )
-                gap_detected = True
                 latest_session_run = run_record
             else:
                 attempt_id = build_job_attempt_id(run_record["job_run_id"], next_retry_count)
@@ -683,15 +609,6 @@ async def _reconcile_discovery_run_jobs(
                 ):
                     enqueued.append(requeued_record["job_run_id"])
                 latest_session_run = requeued_record
-
-        if gap_detected:
-            recovery_run_id = await _enqueue_discovery_recovery_if_needed(
-                job_store=job_store,
-                redis=redis,
-                now=now,
-            )
-            if recovery_run_id is not None:
-                recovery_enqueued.append(recovery_run_id)
 
     return {
         "enqueued": enqueued,

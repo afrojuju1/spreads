@@ -10,6 +10,8 @@ from core.jobs.orchestration import (
     SCHEDULER_RUNTIME_LEASE_KEY,
     WORKER_RUNTIME_LEASE_PREFIX,
 )
+from core.jobs.registry import get_job_spec
+from core.jobs.specs import get_declared_job_row
 from core.services.bot_analytics import build_automation_performance_summary
 from core.services.broker_sync import BROKER_SYNC_KEY
 from core.services.selection_summary import aggregate_selection_summaries as _aggregate_selection_summaries
@@ -25,7 +27,11 @@ from .discovery_runs import (
     _latest_discovery_runs,
     _market_session_context,
 )
-from .jobs import _job_run_requires_attention, _split_active_queued_jobs
+from .jobs import (
+    _job_definition_status,
+    _job_run_requires_attention,
+    _split_active_queued_jobs,
+)
 from .shared import (
     RECENT_FAILURE_LIMIT,
     _activity_at,
@@ -71,6 +77,9 @@ def _actionable_recent_failures(
     actionable: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
     for row in candidates:
+        job_type = str(row.get("job_type") or "").strip()
+        if get_job_spec(job_type) is None:
+            continue
         job_key = str(row.get("job_key") or "").strip()
         if not job_key:
             actionable.append(dict(row))
@@ -81,6 +90,13 @@ def _actionable_recent_failures(
         latest_row = latest_by_key.get(job_key)
         if latest_row is None:
             actionable.append(dict(row))
+            continue
+        definition = get_declared_job_row(job_key)
+        if definition is not None and _job_definition_status(
+            definition,
+            latest_row,
+            now=now,
+        ) in {"healthy", "idle"}:
             continue
         if _job_run_requires_attention(latest_row, now=now):
             actionable.append(latest_row)
