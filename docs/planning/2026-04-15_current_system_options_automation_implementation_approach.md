@@ -577,7 +577,7 @@ Required config keys:
 
 - `bot_id`
 - `name`
-- `capital_limit`
+- `limits`
 - `max_open_positions`
 - `max_daily_actions`
 - `automation_ids[]`
@@ -633,7 +633,6 @@ schedule:
 universe_ref: liquid_index_etfs
 trigger_policy:
   min_opportunity_score: 70
-  replan_on_new_cycle: true
 approval_mode: manual
 execution_mode: paper
 enabled: true
@@ -644,9 +643,8 @@ enabled: true
 ```yaml
 bot_id: short_dated_index_credit_bot
 name: Short-Dated Index Credit Bot
-capital_limit: 5000
-max_open_positions: 3
-max_daily_actions: 6
+limits:
+  extends: baseline
 automation_ids:
   - index_put_credit_entry
   - index_put_credit_manage

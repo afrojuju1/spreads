@@ -167,7 +167,7 @@ Required fields:
 - `bot_id`
 - `name`
 - `status`
-- `capital_limit`
+- `limits`
 - `max_open_positions`
 - `max_daily_actions`
 - `automation_ids[]`

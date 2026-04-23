@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from core.jobs.specs import load_declared_discovery_run_specs
 from core.services.automations import load_automations, resolve_automation
 from core.services.bots import build_discovery_run_scopes, load_active_bots, load_bots, resolve_bot
 from core.services.strategy_configs import load_strategy_configs
@@ -25,6 +26,7 @@ def validate_options_automation_config(
     ]
     active_bots = load_active_bots(config_root)
     discovery_run_scopes = build_discovery_run_scopes(config_root)
+    discovery_runs = load_declared_discovery_run_specs(config_root)
 
     return {
         "status": "ok",
@@ -33,6 +35,7 @@ def validate_options_automation_config(
         "automation_count": len(automations),
         "bot_count": len(bots),
         "active_bot_count": len(active_bots),
+        "discovery_run_count": len(discovery_runs),
         "discovery_run_scope_count": len(discovery_run_scopes),
         "strategies": [
             {
@@ -70,6 +73,15 @@ def validate_options_automation_config(
                 "symbol_count": len(list(scope.get("symbols") or [])),
             }
             for scope in discovery_run_scopes
+        ],
+        "discovery_runs": [
+            {
+                "discovery_run_id": item.config.discovery_run_id,
+                "scanner_strategy": item.config.scanner_strategy,
+                "scanner_profile": item.config.scanner_profile,
+                "enabled": item.enabled,
+            }
+            for item in discovery_runs
         ],
     }
 

@@ -1,0 +1,22 @@
+enabled: true
+scanner_profile: weekly
+schedule:
+  type: market_open_plus_minutes
+  minutes: -5
+greeks_source: auto
+top: 10
+per_symbol_top: 1
+interval_seconds: 300
+backfill_missed_slots: false
+max_slot_retries: 3
+quote_capture_seconds: 20
+trade_capture_seconds: 30
+allow_off_hours: false
+session_start_offset_minutes: -5
+session_end_offset_minutes: 5
+execution_policy:
+  extends: shadow_adaptive_credit
+risk_policy:
+  extends: baseline
+exit_policy:
+  extends: short_dated_default

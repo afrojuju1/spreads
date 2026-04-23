@@ -1,0 +1,4 @@
+enabled: true
+profit_target_pct: 0.5
+stop_multiple: 2.0
+force_close_minutes_before_close: 10

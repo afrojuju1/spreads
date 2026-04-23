@@ -6,9 +6,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from core.services.bots import build_discovery_run_scope, load_active_bots
+from core.services.config_inheritance import (
+    as_mapping as _as_mapping,
+    as_required_text as _as_text,
+    load_yaml_mapping as _load_yaml_mapping,
+    resolve_policy_mapping as _resolve_policy_mapping,
+)
 from core.services.strategy_configs import default_config_root
 
 
@@ -18,114 +22,12 @@ VALID_SCHEDULE_TYPES = {
     "market_close_plus_minutes",
     "manual",
 }
-POLICY_EXTENDS_KEY = "extends"
 
 
 def _canonical_hash(payload: dict[str, Any]) -> str:
     return hashlib.sha1(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-
-
-def _load_yaml_mapping(path: Path) -> dict[str, Any]:
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(raw, dict):
-        raise ValueError(f"Expected mapping payload in {path}")
-    return raw
-
-
-def _as_text(value: Any, *, field_name: str) -> str:
-    rendered = str(value or "").strip()
-    if not rendered:
-        raise ValueError(f"{field_name} is required")
-    return rendered
-
-
-def _as_mapping(value: Any, *, field_name: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise ValueError(f"{field_name} must be a mapping")
-    return dict(value)
-
-
-def _merge_mappings(
-    base: dict[str, Any],
-    override: dict[str, Any],
-) -> dict[str, Any]:
-    merged = dict(base)
-    for key, value in override.items():
-        if key == POLICY_EXTENDS_KEY:
-            continue
-        existing = merged.get(key)
-        if isinstance(existing, dict) and isinstance(value, dict):
-            merged[key] = _merge_mappings(existing, value)
-        else:
-            merged[key] = value
-    return merged
-
-
-def _policy_base_path(
-    *,
-    config_root: Path,
-    policy_kind: str,
-    ref: str,
-    field_name: str,
-    config_path: Path,
-) -> Path:
-    relative = Path(ref)
-    if relative.is_absolute() or relative.suffix or ".." in relative.parts:
-        raise ValueError(
-            f"{field_name}.extends in {config_path} must name a policy under "
-            f"policies/{policy_kind}"
-        )
-    if len(relative.parts) != 1:
-        raise ValueError(
-            f"{field_name}.extends in {config_path} must be a single policy name"
-        )
-    return config_root / "policies" / policy_kind / f"{ref}.yaml"
-
-
-def _resolve_policy_mapping(
-    value: Any,
-    *,
-    field_name: str,
-    policy_kind: str,
-    config_root: Path,
-    config_path: Path,
-    seen: frozenset[Path] = frozenset(),
-) -> dict[str, Any]:
-    mapping = _as_mapping(value, field_name=field_name)
-    extends = mapping.get(POLICY_EXTENDS_KEY)
-    if extends in (None, ""):
-        return {
-            key: policy_value
-            for key, policy_value in mapping.items()
-            if key != POLICY_EXTENDS_KEY
-        }
-
-    ref = _as_text(extends, field_name=f"{field_name}.{POLICY_EXTENDS_KEY}")
-    base_path = _policy_base_path(
-        config_root=config_root,
-        policy_kind=policy_kind,
-        ref=ref,
-        field_name=field_name,
-        config_path=config_path,
-    )
-    if base_path in seen:
-        raise ValueError(f"Cycle detected while resolving {field_name}.extends")
-    if not base_path.exists():
-        raise FileNotFoundError(
-            f"{field_name}.extends references missing policy {base_path}"
-        )
-
-    base_mapping = _resolve_policy_mapping(
-        _load_yaml_mapping(base_path),
-        field_name=f"{policy_kind}_policy:{ref}",
-        policy_kind=policy_kind,
-        config_root=config_root,
-        config_path=base_path,
-        seen=seen | frozenset({base_path}),
-    )
-    return _merge_mappings(base_mapping, mapping)
 
 
 def _schedule_payload(value: Any, *, field_name: str) -> tuple[str, dict[str, Any]]:
@@ -323,10 +225,20 @@ def _load_discovery_run_configs(
         return []
     configs: list[DiscoveryRunConfig] = []
     for path in sorted(root.glob("*.yaml")):
-        raw = _load_yaml_mapping(path)
+        raw = _resolve_policy_mapping(
+            _load_yaml_mapping(path),
+            field_name="discovery_run",
+            policy_kind="discovery_run",
+            config_root=config_root_path,
+            config_path=path,
+        )
         schedule_type, schedule = _schedule_payload(raw.get("schedule"), field_name="schedule")
-        execution_policy = _as_mapping(
-            raw.get("execution_policy"), field_name="execution_policy"
+        execution_policy = _resolve_policy_mapping(
+            raw.get("execution_policy"),
+            field_name="execution_policy",
+            policy_kind="execution",
+            config_root=config_root_path,
+            config_path=path,
         )
         risk_policy = _resolve_policy_mapping(
             raw.get("risk_policy"),
@@ -335,7 +247,13 @@ def _load_discovery_run_configs(
             config_root=config_root_path,
             config_path=path,
         )
-        exit_policy = _as_mapping(raw.get("exit_policy"), field_name="exit_policy")
+        exit_policy = _resolve_policy_mapping(
+            raw.get("exit_policy"),
+            field_name="exit_policy",
+            policy_kind="exit",
+            config_root=config_root_path,
+            config_path=path,
+        )
         config = DiscoveryRunConfig(
             discovery_run_id=_as_text(raw.get("discovery_run_id"), field_name="discovery_run_id"),
             job_key=_as_text(raw.get("job_key"), field_name="job_key"),

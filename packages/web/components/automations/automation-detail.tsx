@@ -217,7 +217,6 @@ export function AutomationDetailPageContent({
     "end_time_et",
   ]);
   const triggerPolicyItems = buildDetailItems(triggerPolicy, [
-    "replan_on_new_cycle",
     "min_opportunity_score",
   ]);
 

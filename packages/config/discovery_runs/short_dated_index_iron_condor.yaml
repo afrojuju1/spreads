@@ -1,36 +1,6 @@
+extends: short_dated_weekly
 discovery_run_id: short_dated_index_iron_condor
 job_key: discovery_run:options_automation_short_dated_index_iron_condor
 label: explore_10_iron_condor_weekly_auto
 scanner_strategy: iron_condor
-scanner_profile: weekly
-enabled: true
-schedule:
-  type: market_open_plus_minutes
-  minutes: -5
-greeks_source: auto
-top: 10
-per_symbol_top: 1
-interval_seconds: 300
-backfill_missed_slots: false
-max_slot_retries: 3
-quote_capture_seconds: 20
-trade_capture_seconds: 30
-allow_off_hours: false
-session_start_offset_minutes: -5
-session_end_offset_minutes: 5
 singleton_scope: options_automation_short_dated_index_iron_condor
-execution_policy:
-  enabled: false
-  deployment_mode: shadow
-  mode: top_promotable
-  quantity: 1
-  pricing_mode: adaptive_credit
-  min_credit_retention_pct: 0.95
-  max_credit_concession: 0.02
-risk_policy:
-  extends: baseline
-exit_policy:
-  enabled: true
-  profit_target_pct: 0.5
-  stop_multiple: 2.0
-  force_close_minutes_before_close: 10

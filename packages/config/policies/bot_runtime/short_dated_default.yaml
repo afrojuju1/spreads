@@ -1,0 +1,4 @@
+live_enabled: false
+cancel_pending_entries_after_et: "15:30"
+flatten_positions_at_et: "15:45"
+paused: false

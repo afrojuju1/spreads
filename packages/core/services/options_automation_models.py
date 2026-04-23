@@ -503,7 +503,6 @@ class AutomationSchedule:
 @dataclass(frozen=True)
 class AutomationTriggers:
     min_opportunity_score: float | None = None
-    replan_on_new_cycle: bool = False
 
     @classmethod
     def from_payload(
@@ -513,13 +512,10 @@ class AutomationTriggers:
         mapping = _require_mapping(payload, field_name="triggers")
         return cls(
             min_opportunity_score=_optional_float(mapping.get("min_opportunity_score")),
-            replan_on_new_cycle=bool(mapping.get("replan_on_new_cycle", False)),
         )
 
     def as_dict(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "replan_on_new_cycle": self.replan_on_new_cycle,
-        }
+        payload: dict[str, Any] = {}
         if self.min_opportunity_score is not None:
             payload["min_opportunity_score"] = self.min_opportunity_score
         return payload
@@ -557,15 +553,12 @@ class AutomationExecution:
 
 @dataclass(frozen=True)
 class BotLimits:
-    capital_limit: float
     max_open_positions: int
     max_daily_actions: int
     max_new_entries_per_day: int | None = None
     daily_loss_limit: float | None = None
 
     def __post_init__(self) -> None:
-        if self.capital_limit < 0:
-            raise ValueError("limits.capital_limit must be >= 0")
         if self.max_open_positions < 0:
             raise ValueError("limits.max_open_positions must be >= 0")
         if self.max_daily_actions < 0:
@@ -585,7 +578,6 @@ class BotLimits:
     ) -> BotLimits:
         mapping = _require_mapping(payload, field_name="limits")
         return cls(
-            capital_limit=float(mapping.get("capital_limit") or 0.0),
             max_open_positions=int(mapping.get("max_open_positions") or 0),
             max_daily_actions=int(mapping.get("max_daily_actions") or 0),
             max_new_entries_per_day=_optional_int(

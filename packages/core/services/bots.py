@@ -13,6 +13,7 @@ from core.services.automations import (
     resolve_automation,
 )
 from core.services.candidate_policy import resolve_strategy_min_return_on_risk
+from core.services.config_inheritance import resolve_policy_mapping
 from core.services.options_automation_models import BotLimits, BotRuntimePolicy
 from core.services.scanners.config import RANKING_POLICY_ARG_KEYS
 from core.services.strategy_configs import (
@@ -63,10 +64,6 @@ class BotConfig:
     config_hash: str
 
     @property
-    def capital_limit(self) -> float:
-        return self.limits.capital_limit
-
-    @property
     def max_open_positions(self) -> int:
         return self.limits.max_open_positions
 
@@ -111,7 +108,6 @@ def _bot_payload(bot: BotConfig) -> dict[str, Any]:
         "bot_id": bot.bot_id,
         "name": bot.name,
         "limits": {
-            "capital_limit": bot.limits.capital_limit,
             "max_open_positions": bot.limits.max_open_positions,
             "max_daily_actions": bot.limits.max_daily_actions,
             "max_new_entries_per_day": bot.limits.max_new_entries_per_day,
@@ -151,17 +147,36 @@ def bot_time_reached(
 def _load_bots_cached(
     root_key: str,
     signature: tuple[tuple[str, int, int], ...],
+    limits_policy_signature: tuple[tuple[str, int, int], ...],
+    runtime_policy_signature: tuple[tuple[str, int, int], ...],
 ) -> tuple[BotConfig, ...]:
-    del signature
+    del signature, limits_policy_signature, runtime_policy_signature
     root = Path(root_key)
     bots: dict[str, BotConfig] = {}
     for path in sorted(root.glob("*.yaml")):
         payload = _load_yaml_file(path)
+        config_root = root.parent
         bot = BotConfig(
             bot_id=_as_text(payload.get("bot_id"), field_name="bot_id"),
             name=_as_text(payload.get("name"), field_name="name"),
-            limits=BotLimits.from_payload(payload.get("limits")),
-            runtime=BotRuntimePolicy.from_payload(payload.get("runtime")),
+            limits=BotLimits.from_payload(
+                resolve_policy_mapping(
+                    payload.get("limits"),
+                    field_name="limits",
+                    policy_kind="bot_limits",
+                    config_root=config_root,
+                    config_path=path,
+                )
+            ),
+            runtime=BotRuntimePolicy.from_payload(
+                resolve_policy_mapping(
+                    payload.get("runtime"),
+                    field_name="runtime",
+                    policy_kind="bot_runtime",
+                    config_root=config_root,
+                    config_path=path,
+                )
+            ),
             automation_ids=_as_list(payload.get("automations"), field_name="automations"),
             config_path=path,
             config_hash="",
@@ -179,7 +194,8 @@ def _load_bots_cached(
 
 
 def load_bots(config_root: str | Path | None = None) -> dict[str, BotConfig]:
-    root = default_config_root(config_root) / "bots"
+    config_root_path = default_config_root(config_root)
+    root = config_root_path / "bots"
     if not root.exists():
         return {}
     return {
@@ -187,6 +203,8 @@ def load_bots(config_root: str | Path | None = None) -> dict[str, BotConfig]:
         for bot in _load_bots_cached(
             str(root),
             _yaml_directory_signature(root),
+            _yaml_directory_signature(config_root_path / "policies" / "bot_limits"),
+            _yaml_directory_signature(config_root_path / "policies" / "bot_runtime"),
         )
     }
 
@@ -222,11 +240,20 @@ def resolve_bot(bot_id: str, *, config_root: str | Path | None = None) -> Resolv
 def _load_active_bots_cached(
     config_root_key: str,
     bot_signature: tuple[tuple[str, int, int], ...],
+    bot_limits_policy_signature: tuple[tuple[str, int, int], ...],
+    bot_runtime_policy_signature: tuple[tuple[str, int, int], ...],
     automation_signature: tuple[tuple[str, int, int], ...],
     strategy_signature: tuple[tuple[str, int, int], ...],
     universe_signature: tuple[tuple[str, int, int], ...],
 ) -> tuple[ResolvedBot, ...]:
-    del bot_signature, automation_signature, strategy_signature, universe_signature
+    del (
+        bot_signature,
+        bot_limits_policy_signature,
+        bot_runtime_policy_signature,
+        automation_signature,
+        strategy_signature,
+        universe_signature,
+    )
     resolved: dict[str, ResolvedBot] = {}
     for bot_id in sorted(load_bots(config_root_key)):
         bot = resolve_bot(bot_id, config_root=config_root_key)
@@ -254,6 +281,8 @@ def load_active_bots(
     resolved = _load_active_bots_cached(
         str(root),
         _yaml_directory_signature(root / "bots"),
+        _yaml_directory_signature(root / "policies" / "bot_limits"),
+        _yaml_directory_signature(root / "policies" / "bot_runtime"),
         _yaml_directory_signature(root / "automations"),
         _yaml_directory_signature(root / "strategies"),
         _yaml_directory_signature(root / "universes"),

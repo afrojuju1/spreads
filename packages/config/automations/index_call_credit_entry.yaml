@@ -10,7 +10,6 @@ schedule:
 universe: liquid_index_etfs
 triggers:
   min_opportunity_score: 60
-  replan_on_new_cycle: true
 execution:
   approval_mode: auto
   mode: paper

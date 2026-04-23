@@ -8,8 +8,6 @@ schedule:
     start_et: "09:50"
     end_et: "15:45"
 universe: liquid_index_etfs
-triggers:
-  replan_on_new_cycle: false
 execution:
   approval_mode: auto
   mode: paper
