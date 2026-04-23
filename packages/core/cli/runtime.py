@@ -43,8 +43,6 @@ def pipelines_command(
             db_target=db,
             pipeline_id=pipeline_id,
             market_date=date,
-            profit_target=0.5,
-            stop_multiple=2.0,
         )
     )
     console = build_console(no_color=no_color)

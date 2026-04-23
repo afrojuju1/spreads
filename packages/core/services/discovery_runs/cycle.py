@@ -525,14 +525,19 @@ def run_collection_cycle(
                 live_action_gate = history_gate
         except Exception as exc:
             print(f"Live capture history gate unavailable: {exc}")
-    if bool(options_scope.get("enabled")):
+    options_scope_enabled = bool(options_scope.get("enabled"))
+    gate_allows_alerts = bool(live_action_gate.get("allow_alerts"))
+    if options_scope_enabled:
         live_action_gate = {
             **dict(live_action_gate),
             "status": "bot_runtime_owned",
             "reason_code": "bot_runtime_owned",
-            "message": "Discovery run is active, but execution and alerts are owned by the options automation runtime.",
+            "message": "Discovery run is active, but execution and opportunity alerts are owned by the options automation runtime.",
             "allow_auto_execution": False,
-            "allow_alerts": False,
+            "allow_alerts": gate_allows_alerts,
+            "allow_discovery_opportunity_alerts": False,
+            "allow_uoa_alerts": gate_allows_alerts,
+            "opportunity_alert_owner": "options_automation_runtime",
         }
     uoa_summary = dict(capture_snapshot.uoa_summary)
     uoa_quote_summary = dict(capture_snapshot.uoa_quote_summary)
@@ -571,6 +576,10 @@ def run_collection_cycle(
         }
     alerts: list[dict[str, Any]] = []
     if bool(live_action_gate.get("allow_alerts")):
+        alert_promotable_payloads = (
+            [] if options_scope_enabled else discovery_run_promotable_payloads
+        )
+        alert_events = [] if options_scope_enabled else events
         try:
             alerts = dispatch_cycle_alerts(
                 discovery_store=discovery_store,
@@ -581,8 +590,8 @@ def run_collection_cycle(
                 generated_at=generated_at,
                 strategy_mode=args.strategy,
                 profile=args.profile,
-                promotable_candidates=discovery_run_promotable_payloads,
-                events=events,
+                promotable_candidates=alert_promotable_payloads,
+                events=alert_events,
                 uoa_decisions=uoa_decisions,
                 session_id=None if tick_context is None else tick_context.session_id,
                 planner_job_run_id=None

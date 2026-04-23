@@ -4,6 +4,7 @@ import hashlib
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from core.alerts.runtime import plan_runtime_entry_selected_alert
 from core.db.decorators import with_storage
 from core.services.automations import automation_should_run_now
 from core.services.bot_analytics import evaluate_entry_controls
@@ -133,6 +134,7 @@ def run_entry_automation_decision(
     bot_id: str,
     automation_id: str,
     market_date: str | None = None,
+    planner_job_run_id: str | None = None,
     storage: Any | None = None,
 ) -> dict[str, Any]:
     signal_store = storage.signals
@@ -187,6 +189,8 @@ def run_entry_automation_decision(
 
     decisions: list[dict[str, Any]] = []
     selected_intent: dict[str, Any] | None = None
+    selected_decision: dict[str, Any] | None = None
+    selected_opportunity: dict[str, Any] | None = None
     dispatch_job_run_id: str | None = None
     for decision_plan, opportunity in zip(
         plan["decisions"], opportunities, strict=False
@@ -272,6 +276,8 @@ def run_entry_automation_decision(
                 "slot_key": slot_key,
             },
         )
+        selected_decision = decision
+        selected_opportunity = opportunity
     if selected_intent is not None:
         dispatch_request = request_options_automation_dispatch(
             job_store=job_store,
@@ -304,6 +310,31 @@ def run_entry_automation_decision(
                 },
             )
 
+    runtime_alert: dict[str, Any] | None = None
+    if (
+        selected_intent is not None
+        and selected_decision is not None
+        and selected_opportunity is not None
+    ):
+        try:
+            runtime_alert = plan_runtime_entry_selected_alert(
+                alert_store=getattr(storage, "alerts", None),
+                job_store=getattr(storage, "jobs", None),
+                bot_id=runtime.bot_id,
+                automation_id=runtime.automation_id,
+                market_date=resolved_market_date,
+                run_key=run_key,
+                opportunity=selected_opportunity,
+                decision=selected_decision,
+                execution_intent=selected_intent,
+                execution_mode=runtime.automation.automation.execution_mode,
+                approval_mode=runtime.automation.automation.approval_mode,
+                planner_job_run_id=planner_job_run_id,
+                dispatch_job_run_id=dispatch_job_run_id,
+            )
+        except Exception as exc:
+            runtime_alert = {"status": "failed", "error": str(exc)}
+
     return {
         "status": "ok",
         "bot_id": runtime.bot_id,
@@ -319,6 +350,7 @@ def run_entry_automation_decision(
         if selected_intent is None
         else str(selected_intent.get("execution_intent_id")),
         "dispatch_job_run_id": dispatch_job_run_id,
+        "runtime_alert": runtime_alert,
     }
 
 

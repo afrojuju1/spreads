@@ -1207,6 +1207,48 @@ class RuntimeVisibilityTests(unittest.TestCase):
 
 
 class BacktestTests(unittest.TestCase):
+    def test_build_backtest_run_forwards_config_root_to_runtime_resolution(self) -> None:
+        runtime = resolve_entry_runtime(
+            bot_id="short_dated_index_credit_bot",
+            automation_id="index_put_credit_entry",
+        )
+
+        class _SignalStore:
+            def list_automation_runs(self, **_: object) -> list[dict[str, object]]:
+                return []
+
+        class _ExecutionStore:
+            pass
+
+        class _HistoryStore:
+            pass
+
+        class _Storage:
+            def __init__(self) -> None:
+                self.signals = _SignalStore()
+                self.execution = _ExecutionStore()
+                self.history = _HistoryStore()
+
+        with patch(
+            "core.backtest.service.resolve_entry_runtime",
+            return_value=runtime,
+        ) as resolve_runtime_mock:
+            run = build_backtest_run(
+                db_target="postgresql://example",
+                bot_id=runtime.bot_id,
+                automation_id=runtime.automation_id,
+                config_root="/tmp/policy-compare",
+                limit=1,
+                storage=_Storage(),
+            )
+
+        resolve_runtime_mock.assert_called_once_with(
+            bot_id=runtime.bot_id,
+            automation_id=runtime.automation_id,
+            config_root="/tmp/policy-compare",
+        )
+        self.assertEqual(run.aggregate.session_count, 0)
+
     def test_build_backtest_run_prefers_latest_non_empty_recent_session(self) -> None:
         runtime = resolve_entry_runtime(
             bot_id="short_dated_index_credit_bot",

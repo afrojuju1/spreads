@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import UTC, date, datetime
 import os
-from typing import Any
+from typing import Any, Mapping
 
 from core.backtest.market_data import (
     ALPACA_OPTIONS_HISTORY_START,
@@ -50,6 +50,67 @@ _FIDELITY_RANK = {
     "reduced": 2,
     "unsupported": 3,
 }
+
+_RUN_COMPARE_METRIC_KEYS = (
+    "session_count",
+    "modeled_selected_count",
+    "modeled_fill_count",
+    "modeled_position_count",
+    "modeled_closed_count",
+    "modeled_open_position_count",
+    "actual_selected_count",
+    "matched_selection_count",
+    "selection_match_rate",
+    "modeled_fill_rate",
+    "actual_fill_rate",
+    "modeled_realized_pnl",
+    "modeled_unrealized_pnl",
+    "position_count",
+    "realized_pnl",
+    "unrealized_pnl",
+)
+
+_REPLAY_RUN_COMPARE_METRIC_KEYS = (
+    "status",
+    "fidelity",
+    "exact_match",
+    "stored_candidate_count",
+    "replayed_candidate_count",
+    "matched_candidate_count",
+    "stored_only_count",
+    "replayed_only_count",
+    "rank_change_count",
+    "field_drift_count",
+    "comparison_mode",
+)
+
+_REPLAY_RANGE_COMPARE_METRIC_KEYS = (
+    "status",
+    "source",
+    "sample_mode",
+    "fidelity",
+    "cycle_count",
+    "cycle_with_raw_candidates_count",
+    "cycle_with_candidates_count",
+    "cycle_with_opportunities_count",
+    "cycle_with_entry_eligible_opportunities_count",
+    "scan_run_count",
+    "raw_candidate_count",
+    "postprocess_candidate_count",
+    "candidate_count",
+    "selection_input_candidate_count",
+    "opportunity_count",
+    "entry_eligible_opportunity_count",
+    "selected_cycle_count",
+    "exact_match_cycle_count",
+    "mismatch_cycle_count",
+    "unsupported_cycle_count",
+    "no_scan_run_cycle_count",
+    "exact_match_run_count",
+    "mismatch_run_count",
+    "unsupported_run_count",
+    "clipped_recorded_cycle_count",
+)
 
 
 def _scope_key(bot_id: str, automation_id: str, session_date: str) -> str:
@@ -802,56 +863,241 @@ def _simulate_position_lifecycle(
     )
 
 
-def compare_backtest_runs(
-    *,
-    left_run: BacktestRun,
-    right_run: BacktestRun,
-) -> BacktestRun:
-    left_target = BacktestTarget() if left_run.target is None else left_run.target
-    right_target = BacktestTarget() if right_run.target is None else right_run.target
-    left_aggregate = (
-        {} if left_run.aggregate is None else left_run.aggregate.to_payload()
-    )
-    right_aggregate = (
-        {} if right_run.aggregate is None else right_run.aggregate.to_payload()
-    )
-    metric_keys = [
-        "session_count",
-        "modeled_selected_count",
-        "modeled_fill_count",
-        "modeled_position_count",
-        "modeled_closed_count",
-        "modeled_open_position_count",
-        "actual_selected_count",
-        "matched_selection_count",
-        "selection_match_rate",
-        "modeled_fill_rate",
-        "actual_fill_rate",
-        "modeled_realized_pnl",
-        "modeled_unrealized_pnl",
-        "position_count",
-        "realized_pnl",
-        "unrealized_pnl",
+def _target_label(target: BacktestTarget | None) -> str | None:
+    if target is None:
+        return None
+    parts = [
+        str(value).strip()
+        for value in (target.bot_id, target.automation_id, target.strategy_id)
+        if str(value or "").strip()
     ]
+    if not parts:
+        return None
+    return " / ".join(parts)
+
+
+def _is_comparable_scalar(value: Any) -> bool:
+    return value is None or isinstance(value, (str, int, float, bool))
+
+
+def _flatten_compare_metrics(
+    payload: Mapping[str, Any],
+    *,
+    prefix: str = "",
+) -> dict[str, Any]:
+    metrics: dict[str, Any] = {}
+    for key, value in payload.items():
+        normalized_key = str(key).strip()
+        if not normalized_key:
+            continue
+        metric_key = (
+            normalized_key if not prefix else f"{prefix}.{normalized_key}"
+        )
+        if _is_comparable_scalar(value):
+            metrics[metric_key] = value
+            continue
+        if isinstance(value, Mapping):
+            metrics.update(_flatten_compare_metrics(value, prefix=metric_key))
+    return metrics
+
+
+def _compare_metric_delta(left_value: Any, right_value: Any) -> float | None:
+    if (
+        left_value is None
+        or right_value is None
+        or isinstance(left_value, bool)
+        or isinstance(right_value, bool)
+    ):
+        return None
+    if isinstance(left_value, (int, float)) and isinstance(right_value, (int, float)):
+        return round(float(left_value) - float(right_value), 4)
+    return None
+
+
+def _ordered_compare_metric_keys(
+    *,
+    preferred_keys: tuple[str, ...] | list[str],
+    left_metrics: Mapping[str, Any],
+    right_metrics: Mapping[str, Any],
+) -> list[str]:
+    ordered: list[str] = []
+    available = set(left_metrics).union(right_metrics)
+    for key in preferred_keys:
+        if key in available and key not in ordered:
+            ordered.append(key)
+    for key in sorted(available):
+        if key not in ordered:
+            ordered.append(key)
+    return ordered
+
+
+def _build_compare_metrics(
+    *,
+    left_metrics: Mapping[str, Any],
+    right_metrics: Mapping[str, Any],
+    preferred_keys: tuple[str, ...] | list[str],
+) -> dict[str, dict[str, Any]]:
     metrics: dict[str, dict[str, Any]] = {}
-    for key in metric_keys:
-        left_value = left_aggregate.get(key)
-        right_value = right_aggregate.get(key)
+    for key in _ordered_compare_metric_keys(
+        preferred_keys=preferred_keys,
+        left_metrics=left_metrics,
+        right_metrics=right_metrics,
+    ):
+        left_value = left_metrics.get(key)
+        right_value = right_metrics.get(key)
         metrics[key] = {
             "left": left_value,
             "right": right_value,
-            "delta": (
-                None
-                if left_value is None or right_value is None
-                else round(_coerce_float(left_value) - _coerce_float(right_value), 4)
-            ),
+            "delta": _compare_metric_delta(left_value, right_value),
         }
-    metrics["fidelity"] = {
-        "left": left_aggregate.get("fidelity"),
-        "right": right_aggregate.get("fidelity"),
-        "delta": None,
+    return metrics
+
+
+def _comparison_subject_for_run_payload(
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    target = BacktestTarget.from_payload(dict(payload.get("target") or {}))
+    aggregate = dict(payload.get("aggregate") or {})
+    metrics = {key: aggregate.get(key) for key in _RUN_COMPARE_METRIC_KEYS}
+    metrics["fidelity"] = aggregate.get("fidelity")
+    return {
+        "kind": "run",
+        "label": _target_label(target) or str(payload.get("id") or "backtest_run"),
+        "target": target,
+        "subject_id": payload.get("id"),
+        "config_root": None,
+        "metrics": metrics,
+        "preferred_keys": [*_RUN_COMPARE_METRIC_KEYS, "fidelity"],
     }
+
+
+def _comparison_subject_for_replay_payload(
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    run = dict(payload.get("run") or {})
+    summary = dict(payload.get("summary") or {})
+    label_parts = [
+        str(value).strip()
+        for value in (
+            run.get("symbol"),
+            run.get("strategy"),
+            run.get("profile"),
+            run.get("run_id"),
+        )
+        if str(value or "").strip()
+    ]
+    metrics = {
+        "status": payload.get("status"),
+        "fidelity": payload.get("fidelity"),
+        "exact_match": summary.get("exact_match"),
+        "stored_candidate_count": summary.get("stored_candidate_count"),
+        "replayed_candidate_count": summary.get("replayed_candidate_count"),
+        "matched_candidate_count": summary.get("matched_candidate_count"),
+        "stored_only_count": summary.get("stored_only_count"),
+        "replayed_only_count": summary.get("replayed_only_count"),
+        "rank_change_count": summary.get("rank_change_count"),
+        "field_drift_count": summary.get("field_drift_count"),
+        "comparison_mode": summary.get("comparison_mode"),
+    }
+    strategy_id = str(run.get("strategy") or "").strip() or None
+    return {
+        "kind": "replay_run",
+        "label": " | ".join(label_parts) or "replay_run",
+        "target": BacktestTarget(strategy_id=strategy_id),
+        "subject_id": run.get("run_id"),
+        "config_root": payload.get("config_root"),
+        "metrics": metrics,
+        "preferred_keys": list(_REPLAY_RUN_COMPARE_METRIC_KEYS),
+    }
+
+
+def _comparison_subject_for_replay_range_payload(
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    target_payload = dict(payload.get("target") or {})
+    target = BacktestTarget.from_payload(
+        {
+            "bot_id": target_payload.get("bot_id"),
+            "automation_id": target_payload.get("automation_id"),
+            "start_date": target_payload.get("start_date"),
+            "end_date": target_payload.get("end_date"),
+            "session_limit": target_payload.get("cycle_limit"),
+        }
+    )
+    summary_metrics = _flatten_compare_metrics(dict(payload.get("summary") or {}))
+    metrics = {
+        "status": payload.get("status"),
+        "source": payload.get("source"),
+        "sample_mode": target_payload.get("sample_mode"),
+        "fidelity": target_payload.get("fidelity"),
+        **summary_metrics,
+    }
+    label = _target_label(target) or "replay_range"
+    start_date = target_payload.get("start_date")
+    end_date = target_payload.get("end_date")
+    if start_date or end_date:
+        label = f"{label} {start_date or '?'}..{end_date or '?'}"
+    if str(payload.get("source") or "").strip():
+        label = f"{label} [{payload.get('source')}]"
+    return {
+        "kind": "replay_range",
+        "label": label,
+        "target": target,
+        "subject_id": (
+            f"replay_range:{target.bot_id or 'unknown'}:{target.automation_id or 'unknown'}:"
+            f"{start_date or 'unknown'}:{end_date or 'unknown'}:{payload.get('source') or 'stored'}"
+        ),
+        "config_root": payload.get("config_root") or target_payload.get("config_root"),
+        "metrics": metrics,
+        "preferred_keys": list(_REPLAY_RANGE_COMPARE_METRIC_KEYS),
+    }
+
+
+def _comparison_subject_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    kind = str(payload.get("kind") or "").strip().lower()
+    if kind == "run":
+        return _comparison_subject_for_run_payload(payload)
+    if kind == "compare":
+        raise ValueError("backtest compare does not accept compare outputs as inputs")
+    if isinstance(payload.get("run"), Mapping) and isinstance(payload.get("summary"), Mapping):
+        return _comparison_subject_for_replay_payload(payload)
+    if (
+        isinstance(payload.get("target"), Mapping)
+        and isinstance(payload.get("summary"), Mapping)
+        and isinstance(payload.get("cycles"), list)
+    ):
+        return _comparison_subject_for_replay_range_payload(payload)
+    raise ValueError("Unsupported backtest export payload")
+
+
+def compare_backtest_payloads(
+    *,
+    left_payload: Mapping[str, Any],
+    right_payload: Mapping[str, Any],
+) -> BacktestRun:
+    left_subject = _comparison_subject_from_payload(left_payload)
+    right_subject = _comparison_subject_from_payload(right_payload)
+    left_kind = str(left_subject.get("kind") or "")
+    right_kind = str(right_subject.get("kind") or "")
+    if left_kind != right_kind:
+        raise ValueError(
+            f"Cannot compare {left_kind or 'unknown'} exports against {right_kind or 'unknown'} exports"
+        )
+    metrics = _build_compare_metrics(
+        left_metrics=dict(left_subject.get("metrics") or {}),
+        right_metrics=dict(right_subject.get("metrics") or {}),
+        preferred_keys=list(left_subject.get("preferred_keys") or []),
+    )
     started_at = datetime.now(UTC)
+    params = {
+        "comparison_type": left_kind,
+        "left_label": left_subject.get("label"),
+        "right_label": right_subject.get("label"),
+        "left_payload_kind": left_kind,
+        "right_payload_kind": right_kind,
+        "left_config_root": left_subject.get("config_root"),
+        "right_config_root": right_subject.get("config_root"),
+    }
     return BacktestRun(
         id=new_backtest_run_id("compare"),
         kind="compare",
@@ -861,11 +1107,23 @@ def compare_backtest_runs(
         created_at=started_at,
         started_at=started_at,
         completed_at=started_at,
-        left_target=left_target,
-        right_target=right_target,
+        left_target=left_subject.get("target"),
+        right_target=right_subject.get("target"),
         comparison_metrics=metrics,
-        left_run_id=left_run.id,
-        right_run_id=right_run.id,
+        params={key: value for key, value in params.items() if value not in (None, "")},
+        left_run_id=left_subject.get("subject_id"),
+        right_run_id=right_subject.get("subject_id"),
+    )
+
+
+def compare_backtest_runs(
+    *,
+    left_run: BacktestRun,
+    right_run: BacktestRun,
+) -> BacktestRun:
+    return compare_backtest_payloads(
+        left_payload=left_run.to_payload(),
+        right_payload=right_run.to_payload(),
     )
 
 
@@ -952,13 +1210,18 @@ def build_backtest_run(
     db_target: str,
     bot_id: str,
     automation_id: str,
+    config_root: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
     limit: int = 200,
     storage: Any | None = None,
 ) -> BacktestRun:
     started_at = datetime.now(UTC)
-    runtime = resolve_entry_runtime(bot_id=bot_id, automation_id=automation_id)
+    runtime = resolve_entry_runtime(
+        bot_id=bot_id,
+        automation_id=automation_id,
+        config_root=config_root,
+    )
     signal_store = storage.signals
     execution_store = storage.execution
     history_store = storage.history
@@ -1281,4 +1544,8 @@ def build_backtest_run(
     )
 
 
-__all__ = ["build_backtest_run", "compare_backtest_runs"]
+__all__ = [
+    "build_backtest_run",
+    "compare_backtest_payloads",
+    "compare_backtest_runs",
+]

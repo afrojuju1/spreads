@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from core.services.automations import ResolvedAutomation
@@ -215,9 +216,12 @@ def build_management_runtime(
 
 
 def _resolved_runtime(
-    bot_id: str, automation_id: str
+    bot_id: str,
+    automation_id: str,
+    *,
+    config_root: str | Path | None = None,
 ) -> tuple[ResolvedBot, ResolvedAutomation]:
-    bots = load_active_bots()
+    bots = load_active_bots(config_root)
     bot = bots.get(bot_id)
     if bot is None:
         raise ValueError(f"Unknown or paused bot_id: {bot_id}")
@@ -234,32 +238,54 @@ def _resolved_runtime(
     return bot, runtime
 
 
-def resolve_entry_runtime(*, bot_id: str, automation_id: str) -> EntryRuntime:
-    bot, runtime = _resolved_runtime(bot_id, automation_id)
+def resolve_entry_runtime(
+    *,
+    bot_id: str,
+    automation_id: str,
+    config_root: str | Path | None = None,
+) -> EntryRuntime:
+    bot, runtime = _resolved_runtime(
+        bot_id,
+        automation_id,
+        config_root=config_root,
+    )
     if not runtime.automation.is_entry:
         raise ValueError(f"Automation {automation_id} is not an entry automation")
     return build_entry_runtime(bot, runtime)
 
 
-def resolve_management_runtime(*, bot_id: str, automation_id: str) -> ManagementRuntime:
-    bot, runtime = _resolved_runtime(bot_id, automation_id)
+def resolve_management_runtime(
+    *,
+    bot_id: str,
+    automation_id: str,
+    config_root: str | Path | None = None,
+) -> ManagementRuntime:
+    bot, runtime = _resolved_runtime(
+        bot_id,
+        automation_id,
+        config_root=config_root,
+    )
     if not runtime.automation.is_management:
         raise ValueError(f"Automation {automation_id} is not a management automation")
     return build_management_runtime(bot, runtime)
 
 
-def resolve_entry_runtimes() -> list[EntryRuntime]:
+def resolve_entry_runtimes(
+    config_root: str | Path | None = None,
+) -> list[EntryRuntime]:
     runtimes: list[EntryRuntime] = []
-    for bot in load_active_bots().values():
+    for bot in load_active_bots(config_root).values():
         for runtime in bot.automations:
             if runtime.automation.is_entry:
                 runtimes.append(build_entry_runtime(bot, runtime))
     return runtimes
 
 
-def resolve_management_runtimes() -> list[ManagementRuntime]:
+def resolve_management_runtimes(
+    config_root: str | Path | None = None,
+) -> list[ManagementRuntime]:
     runtimes: list[ManagementRuntime] = []
-    for bot in load_active_bots().values():
+    for bot in load_active_bots(config_root).values():
         for runtime in bot.automations:
             if runtime.automation.is_management:
                 runtimes.append(build_management_runtime(bot, runtime))

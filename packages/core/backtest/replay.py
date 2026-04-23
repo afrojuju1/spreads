@@ -216,10 +216,12 @@ def _build_base_replay_payload(
     *,
     run: Mapping[str, Any],
     artifact_path: str,
+    config_root: str | None = None,
 ) -> dict[str, Any]:
     return {
         "status": "completed",
         "fidelity": "high",
+        "config_root": config_root,
         "run": {
             "run_id": run.get("run_id"),
             "generated_at": run.get("generated_at"),
@@ -238,15 +240,16 @@ def _build_base_replay_payload(
     }
 
 
-@lru_cache(maxsize=1)
-def _cached_entry_runtimes() -> tuple[Any, ...]:
-    return tuple(resolve_entry_runtimes())
+@lru_cache(maxsize=None)
+def _cached_entry_runtimes(config_root: str | None = None) -> tuple[Any, ...]:
+    return tuple(resolve_entry_runtimes(config_root=config_root))
 
 
 def _upgrade_legacy_runtime_candidate_filter(
     *,
     run: Mapping[str, Any],
     candidate_filter: Mapping[str, Any] | None,
+    config_root: str | None = None,
 ) -> dict[str, Any]:
     payload = dict(candidate_filter or {})
     if not payload:
@@ -279,7 +282,7 @@ def _upgrade_legacy_runtime_candidate_filter(
     run_strategy_family = normalize_strategy_family(run.get("strategy"))
 
     matching_runtimes: list[Any] = []
-    for runtime in _cached_entry_runtimes():
+    for runtime in _cached_entry_runtimes(config_root):
         if normalize_strategy_family(runtime.strategy_id) != run_strategy_family:
             continue
         if run_symbol and run_symbol not in {str(symbol).upper() for symbol in runtime.symbols}:
@@ -308,6 +311,7 @@ def _build_replay_payload_for_run(
     *,
     history_store: Any,
     run: Mapping[str, Any],
+    config_root: str | None = None,
 ) -> dict[str, Any]:
     resolved_run = dict(run)
     stored_candidates = [
@@ -317,6 +321,7 @@ def _build_replay_payload_for_run(
     base_payload = _build_base_replay_payload(
         run=resolved_run,
         artifact_path=artifact_path,
+        config_root=config_root,
     )
     if not artifact_path:
         base_payload["status"] = "unsupported"
@@ -340,6 +345,7 @@ def _build_replay_payload_for_run(
     candidate_filter = _upgrade_legacy_runtime_candidate_filter(
         run=resolved_run,
         candidate_filter=artifact.get("candidate_filter"),
+        config_root=config_root,
     )
 
     replayed_candidates = postprocess_market_slice_candidates(
@@ -1012,16 +1018,22 @@ def _build_alpaca_replay_range_payload(
     end_date: str,
     limit: int,
     storage: Any,
+    config_root: str | None = None,
     sample_mode: str = "intraday",
 ) -> dict[str, Any]:
     signal_store = storage.signals
-    runtime = resolve_entry_runtime(bot_id=bot_id, automation_id=automation_id)
+    runtime = resolve_entry_runtime(
+        bot_id=bot_id,
+        automation_id=automation_id,
+        config_root=config_root,
+    )
     cycle_limit = max(int(limit), 1)
     normalized_sample_mode = _normalize_alpaca_sample_mode(sample_mode)
     if not runtime.symbols:
         return {
             "status": "no_cycles",
             "source": "alpaca",
+            "config_root": config_root,
             "target": {
                 "bot_id": bot_id,
                 "automation_id": automation_id,
@@ -1029,6 +1041,7 @@ def _build_alpaca_replay_range_payload(
                 "end_date": end_date,
                 "cycle_limit": cycle_limit,
                 "sample_mode": normalized_sample_mode,
+                "config_root": config_root,
             },
             "summary": {"cycle_count": 0},
             "cycles": [],
@@ -1382,6 +1395,7 @@ def _build_alpaca_replay_range_payload(
     return {
         "status": "completed" if cycle_rows else "no_cycles",
         "source": "alpaca",
+        "config_root": config_root,
         "target": {
             "bot_id": bot_id,
             "automation_id": automation_id,
@@ -1390,6 +1404,7 @@ def _build_alpaca_replay_range_payload(
             "cycle_limit": cycle_limit,
             "sample_mode": normalized_sample_mode,
             "fidelity": "reduced",
+            "config_root": config_root,
         },
         "summary": {
             "cycle_count": len(cycle_rows),
@@ -1455,6 +1470,7 @@ def build_replay_payload(
     run_id: str | None = None,
     symbol: str | None = None,
     strategy: str | None = None,
+    config_root: str | None = None,
     latest: bool = False,
     storage: Any | None = None,
 ) -> dict[str, Any]:
@@ -1466,7 +1482,11 @@ def build_replay_payload(
         strategy=strategy,
         latest=latest,
     )
-    return _build_replay_payload_for_run(history_store=history_store, run=run)
+    return _build_replay_payload_for_run(
+        history_store=history_store,
+        run=run,
+        config_root=config_root,
+    )
 
 
 @with_storage()
@@ -1479,6 +1499,7 @@ def build_replay_range_payload(
     end_date: str,
     limit: int = 500,
     source: str = "stored",
+    config_root: str | None = None,
     sample_mode: str = "intraday",
     storage: Any | None = None,
 ) -> dict[str, Any]:
@@ -1492,6 +1513,7 @@ def build_replay_range_payload(
             end_date=end_date,
             limit=limit,
             storage=storage,
+            config_root=config_root,
             sample_mode=sample_mode,
         )
     if normalized_source != "stored":
@@ -1575,6 +1597,7 @@ def build_replay_range_payload(
                 replay_payload = _build_replay_payload_for_run(
                     history_store=history_store,
                     run=dict(run_record),
+                    config_root=config_root,
                 )
                 summary_row = _replay_run_summary(replay_payload)
             run_rows.append(summary_row)
@@ -1630,12 +1653,14 @@ def build_replay_range_payload(
     return {
         "status": status,
         "source": "stored",
+        "config_root": config_root,
         "target": {
             "bot_id": bot_id,
             "automation_id": automation_id,
             "start_date": start_date,
             "end_date": end_date,
             "cycle_limit": cycle_limit,
+            "config_root": config_root,
         },
         "summary": summary,
         "cycles": cycle_rows,

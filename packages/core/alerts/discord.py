@@ -5,13 +5,28 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from core.services.option_structures import candidate_legs, payload_display_fields
+from core.services.option_structures import (
+    candidate_legs,
+    net_premium_kind,
+    normalize_strategy_family,
+    payload_display_fields,
+)
 
 
 SUCCESS_GREEN = 0x2ECC71
 BEARISH_RED = 0xE74C3C
 NEUTRAL_YELLOW = 0xF1C40F
 INFO_BLUE = 0x3498DB
+_RUNTIME_READY_ALERTS = frozenset({"runtime_entry_selected"})
+_NON_SIGNAL_STATUS_VALUES = frozenset({"", "clean", "none", "n/a", "unknown"})
+_ALERT_STATUS_TITLES = {
+    "runtime_entry_selected": "ENTRY READY",
+    "new_promotable_idea": "NEW IDEA",
+    "monitor_promoted": "PROMOTED",
+    "side_flip": "SIDE FLIP",
+    "promotable_replaced": "REPLACED",
+    "score_breakout": "SCORE BREAKOUT",
+}
 
 
 def strategy_color(strategy: str, *, alert_type: str) -> int:
@@ -19,10 +34,20 @@ def strategy_color(strategy: str, *, alert_type: str) -> int:
         return NEUTRAL_YELLOW
     if alert_type == "score_breakout":
         return INFO_BLUE
-    normalized = str(strategy or "").strip().lower()
-    if normalized in {"put_credit", "call_debit", "long_call"}:
+    normalized = normalize_strategy_family(strategy)
+    if normalized in {
+        "put_credit_spread",
+        "call_debit_spread",
+        "long_call",
+        "short_put",
+    }:
         return SUCCESS_GREEN
-    if normalized in {"call_credit", "put_debit", "long_put"}:
+    if normalized in {
+        "call_credit_spread",
+        "put_debit_spread",
+        "long_put",
+        "short_call",
+    }:
         return BEARISH_RED
     return NEUTRAL_YELLOW
 
@@ -85,11 +110,465 @@ def compact_ratio(value: Any, *, fallback: str = "n/a") -> str:
     return f"{float(value):.2f}x"
 
 
+def compact_number(
+    value: Any,
+    *,
+    places: int = 1,
+    fallback: str = "n/a",
+) -> str:
+    if value is None:
+        return fallback
+    rendered = float(value)
+    if rendered.is_integer() and places <= 0:
+        return f"{int(rendered)}"
+    return f"{rendered:.{places}f}"
+
+
+def compact_integer(value: Any, *, fallback: str = "n/a") -> str:
+    if value is None:
+        return fallback
+    return f"{int(round(float(value))):,}"
+
+
 def compact_signed_money(value: Any, *, fallback: str = "n/a") -> str:
     if value is None:
         return fallback
     rendered = float(value)
     return f"{rendered:+.2f}"
+
+
+def _expiration_text(candidate: dict[str, Any]) -> str:
+    expiration_date = str(candidate.get("expiration_date") or "").strip()
+    dte_text = compact_dte(candidate.get("days_to_expiration"))
+    if expiration_date and dte_text != "n/a":
+        return f"{expiration_date} ({dte_text})"
+    return expiration_date or dte_text
+
+
+def _strategy_title(strategy: Any) -> str:
+    normalized = normalize_strategy_family(strategy)
+    return normalized.replace("_", " ").upper()
+
+
+def _alert_status_title(alert_type: Any) -> str:
+    normalized = str(alert_type or "").strip().lower()
+    if normalized in _ALERT_STATUS_TITLES:
+        return _ALERT_STATUS_TITLES[normalized]
+    return normalized.replace("_", " ").upper() or "ALERT"
+
+
+def _metric_part(label: str, value: str | None) -> str | None:
+    if value is None:
+        return None
+    rendered = str(value).strip()
+    if not rendered or rendered == "n/a":
+        return None
+    return f"{label} {rendered}"
+
+
+def _join_metric_parts(parts: list[str | None], *, fallback: str = "n/a") -> str:
+    resolved = [part for part in parts if part]
+    return " | ".join(resolved) if resolved else fallback
+
+
+def _leg_token(leg: dict[str, Any]) -> str:
+    strike_text = compact_strike(leg.get("strike"))
+    option_type = str(leg.get("option_type") or "").strip().lower()
+    suffix = {"call": "C", "put": "P"}.get(option_type, "")
+    if strike_text != "n/a":
+        return f"{strike_text}{suffix}"
+    return str(leg.get("symbol") or "n/a")
+
+
+def _leg_qty_text(leg: dict[str, Any]) -> str:
+    raw_value = leg.get("ratio_qty")
+    if raw_value in (None, ""):
+        return "1x"
+    rendered = float(raw_value)
+    return f"{int(rendered)}x" if rendered.is_integer() else f"{rendered:g}x"
+
+
+def _leg_intent_abbrev(leg: dict[str, Any]) -> str:
+    intent = str(leg.get("position_intent") or "").strip().lower()
+    if intent == "sell_to_open":
+        return "STO"
+    if intent == "buy_to_open":
+        return "BTO"
+    if intent == "buy_to_close":
+        return "BTC"
+    if intent == "sell_to_close":
+        return "STC"
+    role = str(leg.get("role") or "").strip().lower()
+    if role == "short":
+        return "STO"
+    if role == "long":
+        return "BTO"
+    return "LEG"
+
+
+def _structure_summary(candidate: dict[str, Any]) -> str:
+    strategy = normalize_strategy_family(candidate.get("strategy"))
+    legs = candidate_legs(candidate)
+    if not legs:
+        return str(payload_display_fields(candidate).get("strike_path") or "n/a")
+    if strategy == "iron_condor":
+        put_long = put_short = call_short = call_long = None
+        for leg in legs:
+            option_type = str(leg.get("option_type") or "").strip().lower()
+            role = str(leg.get("role") or "").strip().lower()
+            if option_type == "put" and role == "long" and put_long is None:
+                put_long = leg
+            elif option_type == "put" and role == "short" and put_short is None:
+                put_short = leg
+            elif option_type == "call" and role == "short" and call_short is None:
+                call_short = leg
+            elif option_type == "call" and role == "long" and call_long is None:
+                call_long = leg
+        if None not in (put_long, put_short, call_short, call_long):
+            return (
+                f"{_leg_token(put_long)} / {_leg_token(put_short)} + "
+                f"{_leg_token(call_short)} / {_leg_token(call_long)}"
+            )
+    return " / ".join(
+        f"{str(leg.get('role') or 'leg').lower()} {_leg_qty_text(leg)} {_leg_token(leg)}"
+        for leg in legs[:4]
+    )
+
+
+def _oi_floor(candidate: dict[str, Any]) -> str | None:
+    short_oi = candidate.get("short_open_interest")
+    long_oi = candidate.get("long_open_interest")
+    values = [
+        int(round(float(value)))
+        for value in (short_oi, long_oi)
+        if value not in (None, "")
+    ]
+    if not values:
+        return None
+    return compact_integer(min(values))
+
+
+def _selection_score(candidate: dict[str, Any]) -> str | None:
+    if candidate.get("quality_score") is None:
+        return None
+    return compact_number(candidate.get("quality_score"), places=1)
+
+
+def _delta_text(candidate: dict[str, Any]) -> str | None:
+    delta = candidate.get("short_delta")
+    if delta is None:
+        return None
+    return compact_number(abs(float(delta)), places=2)
+
+
+def _underlying_spot_text(candidate: dict[str, Any]) -> str | None:
+    if candidate.get("underlying_price") is None:
+        return None
+    return f"${float(candidate['underlying_price']):,.2f}"
+
+
+def _order_price_line(candidate: dict[str, Any]) -> str | None:
+    premium_kind = net_premium_kind(candidate.get("strategy"))
+    midpoint = candidate.get("midpoint_credit")
+    if midpoint is None:
+        return None
+    if premium_kind == "credit":
+        return f"LIMIT CREDIT {compact_money(midpoint)}"
+    if premium_kind == "debit":
+        return f"LIMIT DEBIT {compact_money(midpoint)}"
+    return f"LIMIT {compact_money(midpoint)}"
+
+
+def _ticket_lines(candidate: dict[str, Any]) -> list[str]:
+    underlying = str(candidate.get("underlying_symbol") or "UNKNOWN")
+    expiration = str(candidate.get("expiration_date") or "").strip()
+    lines: list[str] = []
+    for leg in candidate_legs(candidate):
+        line = f"{_leg_intent_abbrev(leg)} {_leg_qty_text(leg)} {underlying} {_leg_token(leg)}"
+        if expiration:
+            line += f" exp {expiration}"
+        lines.append(line)
+    price_line = _order_price_line(candidate)
+    if price_line:
+        lines.append(price_line)
+    return lines
+
+
+def _contract_lines(candidate: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    for leg in candidate_legs(candidate):
+        lines.append(
+            f"{_leg_intent_abbrev(leg)} {_leg_qty_text(leg)} {str(leg.get('symbol') or 'n/a')}"
+        )
+    return lines
+
+
+def _thesis_parts(candidate: dict[str, Any]) -> list[str]:
+    parts: list[str] = []
+    for note in list(candidate.get("selection_notes") or candidate.get("board_notes") or []):
+        rendered = str(note).strip().replace("_", "-")
+        if rendered and rendered not in parts:
+            parts.append(rendered)
+    for status_key in ("setup_status", "calendar_status", "data_status"):
+        rendered = str(candidate.get(status_key) or "").strip().lower()
+        if rendered in _NON_SIGNAL_STATUS_VALUES:
+            continue
+        normalized = rendered.replace("_", "-")
+        if normalized not in parts:
+            parts.append(normalized)
+    return parts
+
+
+def _runtime_description(alert: dict[str, Any]) -> str:
+    details = alert.get("details") if isinstance(alert.get("details"), dict) else {}
+    parts = [_expiration_text(alert["candidate"]), "selected for entry"]
+    execution_mode = str(details.get("execution_mode") or "").strip()
+    approval_mode = str(details.get("approval_mode") or "").strip()
+    if execution_mode:
+        parts.append(execution_mode)
+    if approval_mode:
+        parts.append(approval_mode)
+    return " | ".join(parts)
+
+
+def _spread_description(alert: dict[str, Any]) -> str:
+    alert_type = str(alert.get("alert_type") or "").strip().lower()
+    if alert_type in _RUNTIME_READY_ALERTS:
+        return _runtime_description(alert)
+    return str(alert.get("description") or "").strip()
+
+
+def _single_leg_sections(candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    legs = candidate_legs(candidate)
+    risk_parts = [
+        _metric_part("strike", _leg_token(legs[0]))
+        if legs
+        else _metric_part("strike", compact_strike(candidate.get("short_strike"))),
+        _metric_part("BE", compact_strike(candidate.get("breakeven"))),
+        _metric_part("EM", compact_money(candidate.get("expected_move"))),
+        _metric_part("BE/EM", compact_signed_money(candidate.get("breakeven_vs_expected_move"))),
+    ]
+    liquidity_parts = [
+        _metric_part("OI", _oi_floor(candidate)),
+        _metric_part("size", compact_integer(candidate.get("min_quote_size"))),
+        _metric_part("delta", _delta_text(candidate)),
+        _metric_part("sel", _selection_score(candidate)),
+    ]
+    fields = [
+        {"name": "Ticket", "value": "\n".join(_ticket_lines(candidate)) or "n/a", "inline": False},
+        {
+            "name": "Contracts",
+            "value": "\n".join(_contract_lines(candidate)) or "n/a",
+            "inline": False,
+        },
+        {
+            "name": "Edge",
+            "value": _join_metric_parts(
+                [
+                    _metric_part("POP", compact_pct(candidate.get("probability_of_profit"))),
+                    _metric_part("credit", compact_money(candidate.get("midpoint_credit"))),
+                    _metric_part("fill", compact_pct(candidate.get("fill_ratio"))),
+                    _metric_part("RoR", compact_pct(candidate.get("return_on_risk"))),
+                ]
+            ),
+            "inline": False,
+        },
+        {"name": "Risk", "value": _join_metric_parts(risk_parts), "inline": False},
+        {
+            "name": "Liquidity",
+            "value": _join_metric_parts(
+                [_metric_part("spot", _underlying_spot_text(candidate)), *liquidity_parts]
+            ),
+            "inline": False,
+        },
+    ]
+    thesis_parts = _thesis_parts(candidate)
+    if thesis_parts:
+        fields.append({"name": "Thesis", "value": " | ".join(thesis_parts[:4]), "inline": False})
+    return fields
+
+
+def _vertical_sections(candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    premium_label = "credit" if net_premium_kind(candidate.get("strategy")) == "credit" else "debit"
+    risk_parts = [
+        _metric_part("width", compact_strike(candidate.get("width"))),
+        _metric_part("max loss", compact_money(candidate.get("max_loss"))),
+        _metric_part("BE", compact_strike(candidate.get("breakeven"))),
+        _metric_part("EM", compact_money(candidate.get("expected_move"))),
+    ]
+    liquidity_parts = [
+        _metric_part("OI", _oi_floor(candidate)),
+        _metric_part("size", compact_integer(candidate.get("min_quote_size"))),
+        _metric_part("delta", _delta_text(candidate)),
+        _metric_part("sel", _selection_score(candidate)),
+    ]
+    fields = [
+        {"name": "Ticket", "value": "\n".join(_ticket_lines(candidate)) or "n/a", "inline": False},
+        {
+            "name": "Contracts",
+            "value": "\n".join(_contract_lines(candidate)) or "n/a",
+            "inline": False,
+        },
+        {
+            "name": "Edge",
+            "value": _join_metric_parts(
+                [
+                    _metric_part("POP", compact_pct(candidate.get("probability_of_profit"))),
+                    _metric_part(premium_label, compact_money(candidate.get("midpoint_credit"))),
+                    _metric_part("fill", compact_pct(candidate.get("fill_ratio"))),
+                    _metric_part("RoR", compact_pct(candidate.get("return_on_risk"))),
+                ]
+            ),
+            "inline": False,
+        },
+        {"name": "Risk", "value": _join_metric_parts(risk_parts), "inline": False},
+        {
+            "name": "Liquidity",
+            "value": _join_metric_parts(
+                [_metric_part("spot", _underlying_spot_text(candidate)), *liquidity_parts]
+            ),
+            "inline": False,
+        },
+    ]
+    thesis_parts = _thesis_parts(candidate)
+    if thesis_parts:
+        fields.append({"name": "Thesis", "value": " | ".join(thesis_parts[:4]), "inline": False})
+    return fields
+
+
+def _iron_condor_sections(candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    risk_parts = [
+        _metric_part("width", compact_strike(candidate.get("width"))),
+        _metric_part("max loss", compact_money(candidate.get("max_loss"))),
+        _metric_part(
+            "BE",
+            (
+                f"{compact_strike(candidate.get('lower_breakeven'))} - "
+                f"{compact_strike(candidate.get('upper_breakeven'))}"
+            )
+            if candidate.get("lower_breakeven") is not None
+            and candidate.get("upper_breakeven") is not None
+            else None
+        ),
+        _metric_part("EM", compact_money(candidate.get("expected_move"))),
+    ]
+    positioning_parts = [
+        _metric_part("short/EM", compact_signed_money(candidate.get("short_vs_expected_move"))),
+        _metric_part("BE/EM", compact_signed_money(candidate.get("breakeven_vs_expected_move"))),
+        _metric_part("balance", compact_pct(candidate.get("side_balance_score"))),
+        _metric_part("sym", compact_ratio(candidate.get("wing_symmetry_ratio"))),
+    ]
+    liquidity_parts = [
+        _metric_part("OI", _oi_floor(candidate)),
+        _metric_part("size", compact_integer(candidate.get("min_quote_size"))),
+        _metric_part("legs", compact_integer(len(candidate_legs(candidate)))),
+        _metric_part("sel", _selection_score(candidate)),
+    ]
+    fields = [
+        {"name": "Ticket", "value": "\n".join(_ticket_lines(candidate)) or "n/a", "inline": False},
+        {
+            "name": "Contracts",
+            "value": "\n".join(_contract_lines(candidate)) or "n/a",
+            "inline": False,
+        },
+        {
+            "name": "Edge",
+            "value": _join_metric_parts(
+                [
+                    _metric_part("POP", compact_pct(candidate.get("probability_of_profit"))),
+                    _metric_part("credit", compact_money(candidate.get("midpoint_credit"))),
+                    _metric_part("fill", compact_pct(candidate.get("fill_ratio"))),
+                    _metric_part("RoR", compact_pct(candidate.get("return_on_risk"))),
+                ]
+            ),
+            "inline": False,
+        },
+        {"name": "Risk", "value": _join_metric_parts(risk_parts), "inline": False},
+        {
+            "name": "Positioning",
+            "value": _join_metric_parts(positioning_parts),
+            "inline": False,
+        },
+        {
+            "name": "Liquidity",
+            "value": _join_metric_parts(
+                [_metric_part("spot", _underlying_spot_text(candidate)), *liquidity_parts]
+            ),
+            "inline": False,
+        },
+    ]
+    thesis_parts = _thesis_parts(candidate)
+    if thesis_parts:
+        fields.append({"name": "Thesis", "value": " | ".join(thesis_parts[:4]), "inline": False})
+    return fields
+
+
+def _generic_spread_sections(candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    premium_kind = net_premium_kind(candidate.get("strategy"))
+    premium_label = "credit" if premium_kind == "credit" else "debit" if premium_kind == "debit" else "entry"
+    fields = [
+        {"name": "Ticket", "value": "\n".join(_ticket_lines(candidate)) or "n/a", "inline": False},
+        {
+            "name": "Contracts",
+            "value": "\n".join(_contract_lines(candidate)) or "n/a",
+            "inline": False,
+        },
+        {
+            "name": "Edge",
+            "value": _join_metric_parts(
+                [
+                    _metric_part("POP", compact_pct(candidate.get("probability_of_profit"))),
+                    _metric_part(premium_label, compact_money(candidate.get("midpoint_credit"))),
+                    _metric_part("fill", compact_pct(candidate.get("fill_ratio"))),
+                    _metric_part("RoR", compact_pct(candidate.get("return_on_risk"))),
+                ]
+            ),
+            "inline": False,
+        },
+        {
+            "name": "Risk",
+            "value": _join_metric_parts(
+                [
+                    _metric_part("BE", compact_strike(candidate.get("breakeven"))),
+                    _metric_part("max loss", compact_money(candidate.get("max_loss"))),
+                    _metric_part("EM", compact_money(candidate.get("expected_move"))),
+                    _metric_part("sel", _selection_score(candidate)),
+                ]
+            ),
+            "inline": False,
+        },
+        {
+            "name": "Structure",
+            "value": _join_metric_parts(
+                [
+                    _metric_part("exp", _expiration_text(candidate)),
+                    _metric_part("spot", _underlying_spot_text(candidate)),
+                    _metric_part("shape", _structure_summary(candidate)),
+                ]
+            ),
+            "inline": False,
+        },
+    ]
+    thesis_parts = _thesis_parts(candidate)
+    if thesis_parts:
+        fields.append({"name": "Thesis", "value": " | ".join(thesis_parts[:4]), "inline": False})
+    return fields
+
+
+def _spread_fields(candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    strategy = normalize_strategy_family(candidate.get("strategy"))
+    if strategy in {"short_put", "short_call", "long_call", "long_put"}:
+        return _single_leg_sections(candidate)
+    if strategy in {
+        "call_credit_spread",
+        "put_credit_spread",
+        "call_debit_spread",
+        "put_debit_spread",
+    }:
+        return _vertical_sections(candidate)
+    if strategy == "iron_condor":
+        return _iron_condor_sections(candidate)
+    return _generic_spread_sections(candidate)
 
 
 def _spread_expected_move_line(candidate: dict[str, Any]) -> str | None:
@@ -115,46 +594,12 @@ def _spread_expected_move_line(candidate: dict[str, Any]) -> str | None:
 def _build_spread_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
     candidate = alert["candidate"]
     strategy = str(candidate["strategy"])
-    display_fields = payload_display_fields(candidate)
-    setup_status = str(candidate.get("setup_status") or "unknown")
-    calendar_status = str(candidate.get("calendar_status") or "unknown")
-    data_status = str(candidate.get("data_status") or "unknown")
     title = (
-        f"{alert['symbol']} {compact_dte(candidate.get('days_to_expiration'))} "
-        f"{strategy.replace('_', ' ').title()}"
+        f"{alert['symbol']} {_expiration_text(candidate)} "
+        f"{_strategy_title(strategy)} | {_alert_status_title(alert.get('alert_type'))}"
     )
-    description = alert["description"]
-    fields = [
-        {
-            "name": "Structure",
-            "value": str(display_fields.get("strike_path") or "n/a"),
-            "inline": True,
-        },
-        {
-            "name": "Symbols",
-            "value": str(display_fields.get("symbol_path") or "n/a"),
-            "inline": True,
-        },
-        {"name": "DTE", "value": compact_dte(candidate.get("days_to_expiration")), "inline": True},
-        {"name": "Score", "value": f"{candidate['quality_score']:.1f}", "inline": True},
-        {"name": "Entry", "value": compact_money(candidate.get("midpoint_credit")), "inline": True},
-        {"name": "RoR", "value": compact_pct(candidate.get("return_on_risk")), "inline": True},
-        {"name": "Breakeven", "value": compact_strike(candidate.get("breakeven")), "inline": True},
-        {"name": "OI Floor", "value": str(min(int(candidate.get("short_open_interest") or 0), int(candidate.get("long_open_interest") or 0))), "inline": True},
-        {"name": "Fill", "value": compact_pct(candidate.get("fill_ratio")), "inline": True},
-        {"name": "Min Size", "value": str(int(candidate.get("min_quote_size") or 0)), "inline": True},
-        {"name": "Legs", "value": str(len(candidate_legs(candidate))), "inline": True},
-        {"name": "Statuses", "value": f"{setup_status} | {calendar_status} | {data_status}", "inline": False},
-    ]
-    expected_move_line = _spread_expected_move_line(candidate)
-    if expected_move_line is not None:
-        fields.append({"name": "Expected Move", "value": expected_move_line, "inline": False})
-    selection_notes = (
-        candidate.get("selection_notes") or candidate.get("board_notes") or []
-    )
-    if selection_notes:
-        fields.append({"name": "Why Now", "value": ", ".join(str(note) for note in selection_notes[:3]), "inline": False})
-    fields.append({"name": "Event", "value": alert["alert_type"].replace("_", " "), "inline": True})
+    description = _spread_description(alert)
+    fields = _spread_fields(candidate)
 
     embed = {
         "title": title,

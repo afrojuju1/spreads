@@ -74,7 +74,10 @@ class BacktestCliTests(unittest.TestCase):
             with (
                 patch("core.cli.backtest.REPO_ROOT", repo_root),
                 patch("core.cli.backtest.BACKTEST_OUTPUT_ROOT", output_root),
-                patch("core.cli.backtest.build_backtest_run", return_value=fake_run),
+                patch(
+                    "core.cli.backtest.build_backtest_run",
+                    return_value=fake_run,
+                ) as build_backtest_run_mock,
                 patch(
                     "core.cli.backtest.render_json_payload",
                     side_effect=lambda _console, payload: print(json.dumps(payload)),
@@ -95,6 +98,15 @@ class BacktestCliTests(unittest.TestCase):
                 )
 
             self.assertEqual(result.exit_code, 0, msg=result.stdout)
+            build_backtest_run_mock.assert_called_once_with(
+                db_target="",
+                bot_id="bot-1",
+                automation_id="auto-1",
+                config_root=None,
+                start_date=None,
+                end_date=None,
+                limit=30,
+            )
             payload = json.loads(result.stdout)
             self.assertEqual(payload["kind"], "run")
             self.assertEqual(payload["engine_name"], "backtest")
@@ -104,6 +116,52 @@ class BacktestCliTests(unittest.TestCase):
             sessions_path = repo_root / payload["artifact_paths"]["sessions_csv"]
             self.assertTrue(summary_path.exists())
             self.assertTrue(sessions_path.exists())
+
+    def test_backtest_run_accepts_alternate_config_root(self) -> None:
+        runner = CliRunner()
+        fake_run = _build_run(
+            run_id="run:cli-config-root",
+            automation_id="auto-1",
+            fidelity="high",
+        )
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            output_root = repo_root / "outputs" / "backtests"
+            config_root = repo_root / "alt-config"
+            config_root.mkdir(parents=True, exist_ok=True)
+            with (
+                patch("core.cli.backtest.REPO_ROOT", repo_root),
+                patch("core.cli.backtest.BACKTEST_OUTPUT_ROOT", output_root),
+                patch(
+                    "core.cli.backtest.build_backtest_run",
+                    return_value=fake_run,
+                ) as build_backtest_run_mock,
+            ):
+                result = runner.invoke(
+                    app,
+                    [
+                        "backtest",
+                        "run",
+                        "--bot-id",
+                        "bot-1",
+                        "--automation-id",
+                        "auto-1",
+                        "--config-root",
+                        str(config_root),
+                        "--no-color",
+                    ],
+                )
+
+            self.assertEqual(result.exit_code, 0, msg=result.stdout)
+            build_backtest_run_mock.assert_called_once_with(
+                db_target="",
+                bot_id="bot-1",
+                automation_id="auto-1",
+                config_root=str(config_root),
+                start_date=None,
+                end_date=None,
+                limit=30,
+            )
 
     def test_backtest_compare_reads_run_payloads(self) -> None:
         runner = CliRunner()
@@ -144,6 +202,225 @@ class BacktestCliTests(unittest.TestCase):
             self.assertEqual(payload["engine_name"], "backtest")
             self.assertEqual(payload["metrics"]["fidelity"]["left"], "high")
             self.assertEqual(payload["metrics"]["fidelity"]["right"], "reduced")
+
+    def test_backtest_compare_reads_replay_range_payloads(self) -> None:
+        runner = CliRunner()
+        left_payload = {
+            "status": "completed",
+            "source": "alpaca",
+            "config_root": "/tmp/before",
+            "target": {
+                "bot_id": "bot-1",
+                "automation_id": "auto-1",
+                "start_date": "2026-04-10",
+                "end_date": "2026-04-23",
+                "cycle_limit": 500,
+                "sample_mode": "eod",
+                "fidelity": "reduced",
+                "config_root": "/tmp/before",
+            },
+            "summary": {
+                "cycle_count": 10,
+                "candidate_count": 40,
+                "cycle_status_counts": {"selected": 3, "blocked": 7},
+            },
+            "cycles": [],
+        }
+        right_payload = {
+            "status": "completed",
+            "source": "alpaca",
+            "config_root": "/tmp/after",
+            "target": {
+                "bot_id": "bot-1",
+                "automation_id": "auto-1",
+                "start_date": "2026-04-10",
+                "end_date": "2026-04-23",
+                "cycle_limit": 500,
+                "sample_mode": "eod",
+                "fidelity": "reduced",
+                "config_root": "/tmp/after",
+            },
+            "summary": {
+                "cycle_count": 12,
+                "candidate_count": 55,
+                "cycle_status_counts": {"selected": 4, "blocked": 8},
+            },
+            "cycles": [],
+        }
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            output_root = repo_root / "outputs" / "backtests"
+            left_json = repo_root / "left-replay-range.json"
+            right_json = repo_root / "right-replay-range.json"
+            left_json.write_text(json.dumps(left_payload))
+            right_json.write_text(json.dumps(right_payload))
+            with (
+                patch("core.cli.backtest.REPO_ROOT", repo_root),
+                patch("core.cli.backtest.BACKTEST_OUTPUT_ROOT", output_root),
+                patch(
+                    "core.cli.backtest.render_json_payload",
+                    side_effect=lambda _console, payload: print(json.dumps(payload)),
+                ),
+            ):
+                result = runner.invoke(
+                    app,
+                    [
+                        "backtest",
+                        "compare",
+                        "--left-json",
+                        str(left_json),
+                        "--right-json",
+                        str(right_json),
+                        "--json",
+                        "--no-color",
+                    ],
+                )
+
+            self.assertEqual(result.exit_code, 0, msg=result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["kind"], "compare")
+            self.assertEqual(payload["params"]["comparison_type"], "replay_range")
+            self.assertEqual(payload["params"]["left_config_root"], "/tmp/before")
+            self.assertEqual(payload["params"]["right_config_root"], "/tmp/after")
+            self.assertEqual(payload["metrics"]["cycle_count"]["delta"], -2.0)
+            self.assertEqual(
+                payload["metrics"]["cycle_status_counts.selected"]["delta"],
+                -1.0,
+            )
+
+    def test_backtest_replay_accepts_alternate_config_root(self) -> None:
+        runner = CliRunner()
+        fake_payload = {
+            "status": "completed",
+            "run": {"run_id": "run:cli-replay"},
+            "summary": {},
+            "stored_top": [],
+            "replayed_top": [],
+            "stored_only": [],
+            "replayed_only": [],
+            "rank_changes": [],
+            "field_drifts": [],
+        }
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            output_root = repo_root / "outputs" / "backtests"
+            config_root = repo_root / "alt-config"
+            config_root.mkdir(parents=True, exist_ok=True)
+            with (
+                patch("core.cli.backtest.REPO_ROOT", repo_root),
+                patch("core.cli.backtest.BACKTEST_OUTPUT_ROOT", output_root),
+                patch(
+                    "core.cli.backtest.build_replay_payload",
+                    return_value=fake_payload,
+                ) as build_replay_payload_mock,
+                patch(
+                    "core.cli.backtest.render_json_payload",
+                    side_effect=lambda _console, payload: print(json.dumps(payload)),
+                ),
+            ):
+                result = runner.invoke(
+                    app,
+                    [
+                        "backtest",
+                        "replay",
+                        "--run-id",
+                        "run:cli-replay",
+                        "--config-root",
+                        str(config_root),
+                        "--json",
+                        "--no-color",
+                    ],
+                )
+
+            self.assertEqual(result.exit_code, 0, msg=result.stdout)
+            build_replay_payload_mock.assert_called_once_with(
+                db_target="",
+                run_id="run:cli-replay",
+                symbol=None,
+                strategy=None,
+                config_root=str(config_root),
+                latest=False,
+            )
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["run"]["run_id"], "run:cli-replay")
+            replay_summaries = list(
+                output_root.glob("replay/runs/config-*/run:cli-replay/summary.json")
+            )
+            self.assertEqual(len(replay_summaries), 1)
+            self.assertTrue(replay_summaries[0].exists())
+
+    def test_backtest_replay_range_accepts_alternate_config_root(self) -> None:
+        runner = CliRunner()
+        fake_payload = {
+            "status": "completed",
+            "source": "stored",
+            "target": {},
+            "summary": {},
+            "cycles": [],
+        }
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            output_root = repo_root / "outputs" / "backtests"
+            config_root = repo_root / "alt-config"
+            config_root.mkdir(parents=True, exist_ok=True)
+            with (
+                patch("core.cli.backtest.REPO_ROOT", repo_root),
+                patch("core.cli.backtest.BACKTEST_OUTPUT_ROOT", output_root),
+                patch(
+                    "core.cli.backtest.build_replay_range_payload",
+                    return_value=fake_payload,
+                ) as build_replay_range_payload_mock,
+                patch(
+                    "core.cli.backtest.render_json_payload",
+                    side_effect=lambda _console, payload: print(json.dumps(payload)),
+                ),
+            ):
+                result = runner.invoke(
+                    app,
+                    [
+                        "backtest",
+                        "replay-range",
+                        "--bot-id",
+                        "bot-1",
+                        "--automation-id",
+                        "auto-1",
+                        "--start-date",
+                        "2026-04-20",
+                        "--end-date",
+                        "2026-04-23",
+                        "--config-root",
+                        str(config_root),
+                        "--json",
+                        "--no-color",
+                    ],
+                )
+
+            self.assertEqual(result.exit_code, 0, msg=result.stdout)
+            build_replay_range_payload_mock.assert_called_once_with(
+                db_target="",
+                bot_id="bot-1",
+                automation_id="auto-1",
+                start_date="2026-04-20",
+                end_date="2026-04-23",
+                limit=500,
+                source="stored",
+                config_root=str(config_root),
+                sample_mode="intraday",
+            )
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["source"], "stored")
+            replay_range_summaries = list(
+                output_root.glob(
+                    "replay/ranges/config-*/bot-1/auto-1/2026-04-20_2026-04-23/summary.json"
+                )
+            )
+            replay_range_cycles = list(
+                output_root.glob(
+                    "replay/ranges/config-*/bot-1/auto-1/2026-04-20_2026-04-23/cycles.csv"
+                )
+            )
+            self.assertEqual(len(replay_range_summaries), 1)
+            self.assertEqual(len(replay_range_cycles), 1)
 
     def test_replay_command_no_longer_exists(self) -> None:
         runner = CliRunner()

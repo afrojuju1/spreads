@@ -57,6 +57,11 @@ SHORT_PREMIUM_FAMILIES = {
     "short_call",
     "short_put",
 }
+DEFINED_RISK_SHORT_PREMIUM_FAMILIES = {
+    "call_credit_spread",
+    "put_credit_spread",
+    "iron_condor",
+}
 SUPPORTED_EARNINGS_HORIZONS = {"next_daily", "near_term", "post_event"}
 
 
@@ -726,6 +731,64 @@ def profile_specific_score_components(
             if buffer_delta > 0.0:
                 components["tactical_buffer_delta"] = round(buffer_delta, 3)
             evidence["buffer_ratio"] = round(tactical_buffer_ratio, 4)
+
+        if family in DEFINED_RISK_SHORT_PREMIUM_FAMILIES:
+            expected_value_dollars = _as_float(
+                candidate.get("expected_value_dollars")
+            )
+            if expected_value_dollars is not None:
+                evidence["expected_value_dollars"] = round(expected_value_dollars, 2)
+                if expected_value_dollars > 2.0:
+                    ev_delta = _clamp(
+                        (expected_value_dollars - 2.0) * 0.04,
+                        0.0,
+                        1.5,
+                    )
+                    if ev_delta > 0.0:
+                        components["tactical_expected_value_delta"] = round(
+                            ev_delta,
+                            3,
+                        )
+                elif expected_value_dollars < -2.0:
+                    ev_penalty = _clamp(
+                        (abs(expected_value_dollars) - 2.0) * 0.12,
+                        0.0,
+                        4.0,
+                    )
+                    if ev_penalty > 0.0:
+                        components["tactical_expected_value_penalty"] = round(
+                            ev_penalty,
+                            3,
+                        )
+
+            slippage_adjusted_ev = _as_float(
+                candidate.get("slippage_adjusted_expected_value_dollars")
+            )
+            if slippage_adjusted_ev is not None:
+                evidence["slippage_adjusted_expected_value_dollars"] = round(
+                    slippage_adjusted_ev,
+                    2,
+                )
+                if slippage_adjusted_ev > 1.0:
+                    slippage_ev_delta = _clamp(
+                        (slippage_adjusted_ev - 1.0) * 0.08,
+                        0.0,
+                        2.5,
+                    )
+                    if slippage_ev_delta > 0.0:
+                        components[
+                            "tactical_slippage_adjusted_ev_delta"
+                        ] = round(slippage_ev_delta, 3)
+                elif slippage_adjusted_ev < -1.0:
+                    slippage_ev_penalty = _clamp(
+                        (abs(slippage_adjusted_ev) - 1.0) * 0.28,
+                        0.0,
+                        8.0,
+                    )
+                    if slippage_ev_penalty > 0.0:
+                        components[
+                            "tactical_slippage_adjusted_ev_penalty"
+                        ] = round(slippage_ev_penalty, 3)
 
         if family == "iron_condor":
             side_balance_score = _as_float(candidate.get("side_balance_score"))

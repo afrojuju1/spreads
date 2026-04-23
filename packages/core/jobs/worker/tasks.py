@@ -220,6 +220,7 @@ async def run_options_automation_entry_job(
             bot_id=str(payload["bot_id"]),
             automation_id=str(payload["automation_id"]),
             market_date=payload.get("market_date"),
+            planner_job_run_id=job_run_id,
         )
 
     enriched_payload = dict(payload)

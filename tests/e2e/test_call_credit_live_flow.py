@@ -174,6 +174,63 @@ class CallCreditLiveFlowE2ETests(unittest.TestCase):
             default_scorecard["promotion_score"],
         )
 
+    def test_tactical_put_credit_penalizes_negative_economics(self) -> None:
+        candidate_payload = {
+            "underlying_symbol": "SPY",
+            "strategy": "put_credit",
+            "profile": "weekly",
+            "days_to_expiration": 7,
+            "quality_score": 57.4,
+            "setup_score": 69.0,
+            "setup_status": "favorable",
+            "data_status": "clean",
+            "calendar_status": "clean",
+            "fill_ratio": 0.9,
+            "short_delta": -0.22,
+            "short_delta_target": 0.22,
+            "expected_move": 10.0,
+            "short_vs_expected_move": 0.8,
+            "earnings_phase": "clean",
+        }
+
+        healthy_scorecard = build_candidate_opportunity_score(
+            {
+                **candidate_payload,
+                "expected_value_dollars": 12.0,
+                "slippage_adjusted_expected_value_dollars": 8.0,
+            }
+        )
+        stressed_scorecard = build_candidate_opportunity_score(
+            {
+                **candidate_payload,
+                "expected_value_dollars": -22.32,
+                "slippage_adjusted_expected_value_dollars": -25.32,
+            }
+        )
+
+        self.assertEqual(healthy_scorecard["state"], "monitor")
+        self.assertEqual(stressed_scorecard["state"], "discarded")
+        self.assertGreater(
+            healthy_scorecard["promotion_score"],
+            stressed_scorecard["promotion_score"],
+        )
+        self.assertIn(
+            "tactical_expected_value_delta",
+            healthy_scorecard["profile_score_components"],
+        )
+        self.assertIn(
+            "tactical_slippage_adjusted_ev_delta",
+            healthy_scorecard["profile_score_components"],
+        )
+        self.assertIn(
+            "tactical_expected_value_penalty",
+            stressed_scorecard["profile_score_components"],
+        )
+        self.assertIn(
+            "tactical_slippage_adjusted_ev_penalty",
+            stressed_scorecard["profile_score_components"],
+        )
+
     def test_call_credit_scanner_scoring_execution_management_and_position_sync(
         self,
     ) -> None:

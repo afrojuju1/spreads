@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from core.backtest.replay import (
+    _cached_entry_runtimes,
     _candidate_identity,
     _candidate_match_key,
     _replay_comparison_mode,
     _upgrade_legacy_runtime_candidate_filter,
+    build_replay_payload,
+    build_replay_range_payload,
 )
 
 
@@ -191,6 +196,129 @@ class BacktestReplayMatchingTests(unittest.TestCase):
         self.assertEqual(upgraded["symbols"], ["SPY"])
         self.assertEqual(upgraded["entry_recipe_refs"], ["neutral_range"])
         self.assertEqual(upgraded["allowed_widths"], [2.0, 3.0, 5.0])
+
+    def test_width_only_runtime_filters_use_alternate_config_root_when_supplied(self) -> None:
+        fake_runtime = SimpleNamespace(
+            strategy_id="iron_condor",
+            symbols=("SPY",),
+            entry_recipe_refs=("neutral_range",),
+            build_settings=SimpleNamespace(
+                scanner_profile="weekly",
+                width_points=(2.0, 3.0, 5.0),
+            ),
+        )
+        _cached_entry_runtimes.cache_clear()
+        try:
+            with patch(
+                "core.backtest.replay.resolve_entry_runtimes",
+                return_value=[fake_runtime],
+            ) as resolve_entry_runtimes_mock:
+                upgraded = _upgrade_legacy_runtime_candidate_filter(
+                    run={
+                        "symbol": "SPY",
+                        "strategy": "iron_condor",
+                        "profile": "weekly",
+                    },
+                    candidate_filter={"allowed_widths": [2.0, 3.0, 5.0]},
+                    config_root="/tmp/policy-compare",
+                )
+        finally:
+            _cached_entry_runtimes.cache_clear()
+
+        resolve_entry_runtimes_mock.assert_called_once_with(
+            config_root="/tmp/policy-compare"
+        )
+        self.assertEqual(upgraded["symbols"], ["SPY"])
+        self.assertEqual(upgraded["entry_recipe_refs"], ["neutral_range"])
+        self.assertEqual(upgraded["allowed_widths"], [2.0, 3.0, 5.0])
+
+    def test_build_replay_payload_forwards_config_root_to_run_replay_builder(self) -> None:
+        storage = SimpleNamespace(history=SimpleNamespace())
+        run = {"run_id": "run-1"}
+        payload = {"status": "completed"}
+
+        with (
+            patch(
+                "core.backtest.replay._resolve_target_run",
+                return_value=run,
+            ) as resolve_target_run_mock,
+            patch(
+                "core.backtest.replay._build_replay_payload_for_run",
+                return_value=payload,
+            ) as build_replay_payload_for_run_mock,
+        ):
+            result = build_replay_payload(
+                db_target="",
+                run_id="run-1",
+                config_root="/tmp/policy-compare",
+                storage=storage,
+            )
+
+        resolve_target_run_mock.assert_called_once_with(
+            history_store=storage.history,
+            run_id="run-1",
+            symbol=None,
+            strategy=None,
+            latest=False,
+        )
+        build_replay_payload_for_run_mock.assert_called_once_with(
+            history_store=storage.history,
+            run=run,
+            config_root="/tmp/policy-compare",
+        )
+        self.assertEqual(result, payload)
+
+    def test_build_replay_range_payload_forwards_config_root_to_alpaca_builder(self) -> None:
+        storage = SimpleNamespace()
+        payload = {"status": "completed", "source": "alpaca"}
+
+        with patch(
+            "core.backtest.replay._build_alpaca_replay_range_payload",
+            return_value=payload,
+        ) as build_alpaca_replay_range_payload_mock:
+            result = build_replay_range_payload(
+                db_target="",
+                bot_id="bot-1",
+                automation_id="auto-1",
+                start_date="2026-04-20",
+                end_date="2026-04-23",
+                source="alpaca",
+                config_root="/tmp/policy-compare",
+                storage=storage,
+            )
+
+        build_alpaca_replay_range_payload_mock.assert_called_once_with(
+            db_target="",
+            bot_id="bot-1",
+            automation_id="auto-1",
+            start_date="2026-04-20",
+            end_date="2026-04-23",
+            limit=500,
+            storage=storage,
+            config_root="/tmp/policy-compare",
+            sample_mode="intraday",
+        )
+        self.assertEqual(result, payload)
+
+    def test_build_replay_range_payload_includes_config_root_metadata(self) -> None:
+        storage = SimpleNamespace(
+            signals=SimpleNamespace(list_automation_runs=lambda **_: []),
+            discovery=SimpleNamespace(),
+            history=SimpleNamespace(),
+        )
+
+        payload = build_replay_range_payload(
+            db_target="",
+            bot_id="bot-1",
+            automation_id="auto-1",
+            start_date="2026-04-20",
+            end_date="2026-04-23",
+            config_root="/tmp/policy-compare",
+            storage=storage,
+        )
+
+        self.assertEqual(payload["config_root"], "/tmp/policy-compare")
+        self.assertEqual(payload["target"]["config_root"], "/tmp/policy-compare")
 
 
 if __name__ == "__main__":

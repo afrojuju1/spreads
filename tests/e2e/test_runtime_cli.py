@@ -129,7 +129,7 @@ class RuntimeCliTests(unittest.TestCase):
         with patch(
             "core.cli.runtime.get_discovery_session_detail",
             return_value=payload,
-        ):
+        ) as detail_mock:
             result = runner.invoke(
                 app,
                 [
@@ -142,6 +142,11 @@ class RuntimeCliTests(unittest.TestCase):
             )
 
         self.assertEqual(result.exit_code, 0, msg=result.stdout)
+        detail_mock.assert_called_once_with(
+            db_target=None,
+            pipeline_id="pipeline:demo",
+            market_date="2026-04-21",
+        )
         self.assertIn("Pipeline", result.stdout)
         self.assertIn("Current Cycle", result.stdout)
         self.assertIn("Raw Candidate Summary", result.stdout)

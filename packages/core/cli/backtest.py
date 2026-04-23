@@ -10,7 +10,10 @@ from typing import Any
 
 import typer
 
-from core.backtest import build_backtest_run, compare_backtest_runs
+from core.backtest import (
+    build_backtest_run,
+    compare_backtest_payloads,
+)
 from core.backtest.replay import build_replay_payload, build_replay_range_payload
 from core.cli.ops_render import build_console, render_json_payload
 from core.domain.backtest_models import (
@@ -84,8 +87,21 @@ def _compare_output_path() -> Path:
     return BACKTEST_OUTPUT_ROOT / "compare" / "latest.json"
 
 
-def _replay_output_dir(*, run_id: str) -> Path:
-    return BACKTEST_OUTPUT_ROOT / "replay" / "runs" / run_id
+def _replay_output_dir(*, run_id: str, config_root: str | None = None) -> Path:
+    base_path = BACKTEST_OUTPUT_ROOT / "replay" / "runs"
+    config_fragment = _config_root_output_fragment(config_root)
+    if config_fragment:
+        base_path = base_path / config_fragment
+    return base_path / run_id
+
+
+def _config_root_output_fragment(config_root: str | None) -> str | None:
+    if config_root in (None, ""):
+        return None
+    digest = hashlib.sha256(
+        str(Path(config_root).expanduser().resolve()).encode("utf-8")
+    ).hexdigest()[:10]
+    return f"config-{digest}"
 
 
 def _replay_range_output_dir(
@@ -96,38 +112,23 @@ def _replay_range_output_dir(
     end_date: str,
     source: str = "stored",
     sample_mode: str = "intraday",
+    config_root: str | None = None,
 ) -> Path:
     normalized_source = str(source or "stored").strip().lower()
+    config_fragment = _config_root_output_fragment(config_root)
     if normalized_source != "stored":
         normalized_sample_mode = str(sample_mode or "intraday").strip().lower()
+        base_parts = [BACKTEST_OUTPUT_ROOT, "replay", "ranges", normalized_source]
         if normalized_sample_mode != "intraday":
-            return (
-                BACKTEST_OUTPUT_ROOT
-                / "replay"
-                / "ranges"
-                / normalized_source
-                / normalized_sample_mode
-                / bot_id
-                / automation_id
-                / f"{start_date}_{end_date}"
-            )
-        return (
-            BACKTEST_OUTPUT_ROOT
-            / "replay"
-            / "ranges"
-            / normalized_source
-            / bot_id
-            / automation_id
-            / f"{start_date}_{end_date}"
-        )
-    return (
-        BACKTEST_OUTPUT_ROOT
-        / "replay"
-        / "ranges"
-        / bot_id
-        / automation_id
-        / f"{start_date}_{end_date}"
-    )
+            base_parts.append(normalized_sample_mode)
+        if config_fragment:
+            base_parts.append(config_fragment)
+        base_path = Path(*[str(part) for part in base_parts])
+        return base_path / bot_id / automation_id / f"{start_date}_{end_date}"
+    base_path = BACKTEST_OUTPUT_ROOT / "replay" / "ranges"
+    if config_fragment:
+        base_path = base_path / config_fragment
+    return base_path / bot_id / automation_id / f"{start_date}_{end_date}"
 
 
 def _relative_repo_path(path: Path) -> str:
@@ -310,8 +311,29 @@ def _render_compare_text(run: BacktestRun) -> str:
     artifacts = run.artifact_paths
     left = BacktestTarget() if run.left_target is None else run.left_target
     right = BacktestTarget() if run.right_target is None else run.right_target
+    left_label = str(
+        run.params.get("left_label")
+        or left.automation_id
+        or left.bot_id
+        or left.strategy_id
+        or run.left_run_id
+        or "left"
+    )
+    right_label = str(
+        run.params.get("right_label")
+        or right.automation_id
+        or right.bot_id
+        or right.strategy_id
+        or run.right_run_id
+        or "right"
+    )
     lines = [
-        f"Compare: {left.automation_id} vs {right.automation_id}",
+        f"Compare: {left_label} vs {right_label}",
+        *(
+            []
+            if not str(run.params.get("comparison_type") or "").strip()
+            else [f"Type: {run.params.get('comparison_type')}"]
+        ),
         *(
             []
             if not artifacts.get("comparison_json")
@@ -528,6 +550,11 @@ def run_backtest_command(
     automation_id: str = typer.Option(
         ..., "--automation-id", help="Target automation id."
     ),
+    config_root: str | None = typer.Option(
+        None,
+        "--config-root",
+        help="Alternate options automation config root.",
+    ),
     start_date: str | None = typer.Option(
         None, "--start-date", help="Start date YYYY-MM-DD."
     ),
@@ -549,6 +576,7 @@ def run_backtest_command(
         db_target=db or "",
         bot_id=bot_id,
         automation_id=automation_id,
+        config_root=config_root,
         start_date=start_date,
         end_date=end_date,
         limit=limit,
@@ -567,7 +595,7 @@ def run_backtest_command(
 
 
 @backtest_app.command(
-    "compare", help="Compare two exported backtest run payloads."
+    "compare", help="Compare two exported backtest or replay payloads."
 )
 def compare_backtest_command(
     left_json: str = typer.Option(
@@ -579,9 +607,9 @@ def compare_backtest_command(
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
-    run = compare_backtest_runs(
-        left_run=_read_backtest_run(left_json),
-        right_run=_read_backtest_run(right_json),
+    run = compare_backtest_payloads(
+        left_payload=_read_json_payload(left_json),
+        right_payload=_read_json_payload(right_json),
     )
     run = _write_compare_artifacts(run=run)
     if json_output:
@@ -602,6 +630,11 @@ def replay_backtest_command(
     strategy: str | None = typer.Option(
         None, "--strategy", help="Optional strategy filter when using --latest."
     ),
+    config_root: str | None = typer.Option(
+        None,
+        "--config-root",
+        help="Alternate options automation config root.",
+    ),
     latest: bool = typer.Option(
         False, "--latest", help="Replay the latest stored scan run for the target symbol."
     ),
@@ -617,10 +650,11 @@ def replay_backtest_command(
         run_id=run_id,
         symbol=symbol,
         strategy=strategy,
+        config_root=config_root,
         latest=latest,
     )
     resolved_run_id = str((payload.get("run") or {}).get("run_id") or "latest")
-    output_dir = _replay_output_dir(run_id=resolved_run_id)
+    output_dir = _replay_output_dir(run_id=resolved_run_id, config_root=config_root)
     summary_path = output_dir / "summary.json"
     _write_json_export(str(summary_path), payload)
     if export_json:
@@ -640,6 +674,11 @@ def replay_range_backtest_command(
     bot_id: str = typer.Option(..., "--bot-id", help="Target bot id."),
     automation_id: str = typer.Option(
         ..., "--automation-id", help="Target automation id."
+    ),
+    config_root: str | None = typer.Option(
+        None,
+        "--config-root",
+        help="Alternate options automation config root.",
     ),
     start_date: str = typer.Option(..., "--start-date", help="Start date YYYY-MM-DD."),
     end_date: str = typer.Option(..., "--end-date", help="End date YYYY-MM-DD."),
@@ -674,6 +713,7 @@ def replay_range_backtest_command(
         end_date=end_date,
         limit=limit,
         source=source,
+        config_root=config_root,
         sample_mode=sample_mode,
     )
     output_dir = _replay_range_output_dir(
@@ -683,6 +723,7 @@ def replay_range_backtest_command(
         end_date=end_date,
         source=source,
         sample_mode=sample_mode,
+        config_root=config_root,
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = output_dir / "summary.json"

@@ -309,6 +309,56 @@ class IronCondorLiveFlowE2ETests(unittest.TestCase):
             weak_scorecard["profile_score_components"],
         )
 
+    def test_tactical_condor_scoring_reflects_defined_risk_economics(self) -> None:
+        candidate_payload = {
+            "underlying_symbol": "SPY",
+            "strategy": "iron_condor",
+            "profile": "weekly",
+            "days_to_expiration": 7,
+            "quality_score": 66.0,
+            "setup_score": 57.0,
+            "setup_status": "neutral",
+            "data_status": "clean",
+            "calendar_status": "clean",
+            "fill_ratio": 0.9,
+            "short_delta": 0.18,
+            "short_delta_target": 0.18,
+            "expected_move": 8.0,
+            "short_vs_expected_move": 5.6,
+            "side_balance_score": 0.62,
+            "neutral_regime_signal": 0.71,
+            "residual_iv_richness": 0.66,
+            "earnings_phase": "clean",
+        }
+
+        healthy_scorecard = build_candidate_opportunity_score(
+            {
+                **candidate_payload,
+                "expected_value_dollars": 9.0,
+                "slippage_adjusted_expected_value_dollars": 4.0,
+            }
+        )
+        stressed_scorecard = build_candidate_opportunity_score(
+            {
+                **candidate_payload,
+                "expected_value_dollars": 1.5,
+                "slippage_adjusted_expected_value_dollars": -4.5,
+            }
+        )
+
+        self.assertGreater(
+            healthy_scorecard["promotion_score"],
+            stressed_scorecard["promotion_score"],
+        )
+        self.assertIn(
+            "tactical_slippage_adjusted_ev_delta",
+            healthy_scorecard["profile_score_components"],
+        )
+        self.assertIn(
+            "tactical_slippage_adjusted_ev_penalty",
+            stressed_scorecard["profile_score_components"],
+        )
+
     def test_iron_condor_scanner_scoring_execution_and_position_sync(self) -> None:
         expiration = "2026-04-24"
         candidates = build_iron_condors(

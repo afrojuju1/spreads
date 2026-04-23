@@ -9,12 +9,17 @@ from core.backtest.market_data import (
     summarize_market_outcomes,
 )
 from core.backtest.scanner import run_scanner_backtest
-from core.backtest.service import build_backtest_run, compare_backtest_runs
+from core.backtest.service import (
+    build_backtest_run,
+    compare_backtest_payloads,
+    compare_backtest_runs,
+)
 
 __all__ = [
     "ALPACA_OPTIONS_HISTORY_START",
     "bars_through_date",
     "build_backtest_run",
+    "compare_backtest_payloads",
     "compare_backtest_runs",
     "estimate_structure_bar",
     "latest_bar_on_or_before",
