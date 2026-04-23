@@ -42,8 +42,9 @@
   - `uv run spreads backtest run --bot-id <bot-id> --automation-id <automation-id>`
   - `uv run spreads backtest compare --left-json <path> --right-json <path>`
 - Treat `uv run spreads backtest run` as the canonical historical decision-evaluation path.
-- Treat `uv run spreads analyze` as a legacy post-close report surface, not the canonical backtest or policy-tuning workflow.
+- Do not route new work through removed post-close/post-market analysis surfaces. Use `backtest` for historical decision evaluation and `status`, `trading`, `pipelines`, `jobs`, and `audit` for operator investigation.
 - Do not assume `uv run spreads doctor` exists; it is intentionally deferred.
+- For jobs health, prefer operator-health fields such as `operator_status`, `operator_status_counts`, and `actionable_failed_count` over raw historical job status counts.
 - For runtime verification of the API, workers, scheduler, or web app, prefer the existing `docker compose` services when they are already running instead of starting duplicate local processes.
 - Use `docker compose ps`, `docker compose logs`, and `docker compose restart` for stack-level checks before falling back to ad hoc local `uvicorn`, worker, or scheduler runs.
 - In Docker, the `api` service hot-reloads source changes, but the `worker-runtime`, `worker-discovery`, and `scheduler` processes do not. After changing job, worker, or shared backend runtime code that those services import, restart the affected containers before trusting runtime behavior.

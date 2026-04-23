@@ -15,7 +15,7 @@ Use this skill when the task is to figure out what broke in `spreads`, especiall
 - "how did we do today?"
 - "why were alerts missing?"
 
-Apply it only inside `/Users/adeb/Projects/spreads`.
+Apply it only inside this repo.
 
 Use [docs/current_system_state.md](../../../docs/current_system_state.md) as the canonical source of truth for current runtime ownership and boundary questions.
 
@@ -23,7 +23,7 @@ Current product terminology note:
 
 - `backtest` is the canonical historical-evaluation product
 - `audit` is the canonical operator investigation surface
-- `analyze` and `post-market analyze` remain legacy closed-session report surfaces
+- `analyze` and `post-market analyze` have been removed from the operator workflow
 - do not tell operators to use the removed `spreads replay` command
 
 ## First Principle
@@ -34,15 +34,14 @@ For ops and end-of-day questions, prefer the live Docker-backed state before rea
 
 ## Canonical Owners
 
-- runtime and pipeline detail: `/Users/adeb/Projects/spreads/packages/core/services/live_runtime.py` and `/Users/adeb/Projects/spreads/packages/core/services/pipelines.py`
-- operator health views: `/Users/adeb/Projects/spreads/packages/core/services/ops/`
-- discovery and collection flow: `/Users/adeb/Projects/spreads/packages/core/services/collections/`, `/Users/adeb/Projects/spreads/packages/core/services/scanners/`, `/Users/adeb/Projects/spreads/packages/core/services/live_selection.py`, and `/Users/adeb/Projects/spreads/packages/core/services/opportunity_scoring.py`
-- canonical opportunity state: `/Users/adeb/Projects/spreads/packages/core/services/signal_state.py`, `/Users/adeb/Projects/spreads/packages/core/services/opportunity_generation.py`, and `/Users/adeb/Projects/spreads/packages/core/services/opportunities.py`
-- account and trading health: `/Users/adeb/Projects/spreads/packages/core/services/account_state.py` and `/Users/adeb/Projects/spreads/packages/core/services/ops/trading.py`
-- closed-session analysis: `/Users/adeb/Projects/spreads/packages/core/services/post_market_analysis.py`
-- post-market storage: `/Users/adeb/Projects/spreads/packages/core/storage/post_market_repository.py`
-- alert delivery state: `/Users/adeb/Projects/spreads/packages/core/storage/alert_repository.py`
-- worker and scheduler behavior: `/Users/adeb/Projects/spreads/packages/core/jobs/worker.py`, `/Users/adeb/Projects/spreads/packages/core/jobs/registry.py`, `/Users/adeb/Projects/spreads/packages/core/storage/job_repository.py`
+- runtime and pipeline detail: `packages/core/services/live_runtime.py` and `packages/core/services/pipelines.py`
+- operator health views: `packages/core/services/ops/`
+- discovery and collection flow: `packages/core/services/discovery_runs/`, `packages/core/services/scanners/`, `packages/core/services/live_selection.py`, `packages/core/services/opportunity_scoring.py`, and `packages/core/services/candidate_policy.py`
+- canonical opportunity state: `packages/core/services/signal_state.py`, `packages/core/services/opportunity_generation.py`, and `packages/core/services/opportunities.py`
+- account and trading health: `packages/core/services/account_state.py` and `packages/core/services/ops/trading.py`
+- historical decision evaluation and policy research: `packages/core/backtest/`
+- alert delivery state: `packages/core/storage/alert_repository.py`
+- worker and scheduler behavior: `packages/core/jobs/worker.py`, `packages/core/jobs/registry.py`, and `packages/core/storage/job_repository.py`
 
 ## Canonical Surfaces
 
@@ -73,6 +72,10 @@ Read these fields first:
 - `unrecoverable_slot_count`
 - `risk_status`
 - `risk_note`
+- `trading_allowed`
+- `broker_sync.status`
+- `actionable_failed_count`
+- `operator_status`
 
 Interpret them this way:
 
@@ -82,6 +85,9 @@ Interpret them this way:
 - `missed_slot_count>0` is the main active recovery blocker signal.
 - `unrecoverable_slot_count>0` is audit truth, not automatically a current blocker once recovery is clear.
 - `risk_status=blocked` with healthy capture usually means policy gating, not runtime breakage.
+- `trading_allowed=false` before market open is expected; after open it should become true only when market session, broker sync, account, control, and execution gates are all healthy.
+- Raw historical job failures are diagnostics. Prefer `operator_status`, `operator_status_counts`, and `actionable_failed_count` when deciding whether jobs are currently blocking the system.
+- A historical failed `broker_sync:alpaca` run is not a live blocker if canonical broker-sync state recovered later and jobs health reports `actionable_failed_count=0`.
 
 ## Triage Order
 
@@ -146,27 +152,27 @@ uv run spreads trading
 Always separate:
 
 - actual account PnL
-- modeled post-market idea outcomes
+- modeled backtest, audit, or selection diagnostics
 
 Do not present modeled session results as realized account performance.
 
-### 4. Check Closed-Session Analysis
+### 4. Check Historical Or Session Evaluation
 
 Use:
 
 ```bash
-uv run spreads analyze --date YYYY-MM-DD --label <label>
-uv run spreads post-market analyze --date YYYY-MM-DD --label <label>
-curl -s 'http://localhost:58080/post-market/YYYY-MM-DD/<label>'
+uv run spreads audit <pipeline-id> --date YYYY-MM-DD
+uv run spreads backtest run --bot-id <bot-id> --automation-id <automation-id>
+uv run spreads backtest compare --left-json <path> --right-json <path>
 ```
 
-If the question is automation-config historical evaluation rather than one session label's closed-session report, switch to the canonical `uv run spreads backtest ...` surface instead of ad hoc SQL.
+Use `audit` for one pipeline/date operator investigation. Use `backtest` for automation-config historical decision evaluation, strategy tuning, and policy comparisons.
 
 Look for:
 
-- overall verdict
-- recommendations
-- promotable versus monitor modeled PnL
+- runtime capture and recovery context
+- opportunity counts and promotable versus monitor split
+- selected versus rejected/blocked ideas
 - top and bottom ideas
 
 This is the main way to distinguish:
@@ -193,7 +199,7 @@ Typical split:
 - session healthy, alerts failed: delivery issue
 - session blocked with healthy capture and blocked risk note: policy issue
 - session degraded, alerts thin: upstream capture or selection issue
-- session healthy, analysis weak: strategy issue
+- session healthy, backtest/audit weak: strategy issue
 
 ### Alert Delivery Triage
 
@@ -224,8 +230,8 @@ docker compose logs --tail=100 scheduler worker-runtime
 
 Then inspect:
 
-- `/Users/adeb/Projects/spreads/packages/core/storage/alert_repository.py`
-- `/Users/adeb/Projects/spreads/packages/core/services/alert_delivery.py`
+- `packages/core/storage/alert_repository.py`
+- `packages/core/services/alert_delivery.py`
 
 Classify missing alerts this way:
 
@@ -260,17 +266,16 @@ Use one of these labels in the final diagnosis:
 If the task turns into a code change, finish with:
 
 ```bash
-uv run alembic upgrade head
-uv run spreads jobs seed
-docker compose restart scheduler worker-runtime worker-discovery market-recorder
+uv run ruff check <touched-python-files>
+uv run python -m py_compile <touched-python-files>
 docker compose ps
-docker compose logs --tail=100 scheduler worker-runtime worker-discovery market-recorder api
 uv run spreads status
 uv run spreads trading
 uv run spreads pipelines
+uv run spreads jobs
 ```
 
-Restart `api` or `web` only when needed or when explicitly requested.
+If the change needs live rollout, switch to `spreads-live-rollout` and restart only the affected Docker services.
 
 ## Response Shape
 

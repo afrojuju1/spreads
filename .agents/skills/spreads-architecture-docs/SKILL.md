@@ -5,7 +5,7 @@ description: Maintain the canonical architecture, ownership, and boundary docs f
 
 # Spreads Architecture Docs
 
-Use this skill inside `/Users/adeb/Projects/spreads` when the task is about:
+Use this skill inside the repo root when the task is about:
 
 - updating the system architecture doc
 - clarifying service ownership or boundaries
@@ -42,20 +42,22 @@ When documenting the current system, use these owners:
 
 - discovery and collection:
   - `packages/core/services/scanners/`
-  - `packages/core/services/collections/`
+  - `packages/core/services/discovery_runs/`
   - `packages/core/services/live_selection.py`
   - `packages/core/services/opportunity_scoring.py`
+  - `packages/core/services/candidate_policy.py`
 - canonical opportunity state:
   - `packages/core/services/signal_state.py`
   - `packages/core/services/opportunity_generation.py`
   - `packages/core/services/opportunities.py`
 - runtime, pipeline, and ops read models:
   - `packages/core/services/live_runtime.py`
-  - `packages/core/services/live_collector_health/`
+  - `packages/core/services/discovery_run_health/`
   - `packages/core/services/pipelines.py`
   - `packages/core/services/ops/`
 - execution and portfolio state:
   - `packages/core/services/execution/`
+  - `packages/core/services/execution_portfolio.py`
   - `packages/core/services/session_positions.py`
   - `packages/core/services/broker_sync.py`
   - `packages/core/services/risk_manager.py`

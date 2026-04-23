@@ -5,7 +5,7 @@ description: Roll out spreads backend or live-ops changes that touch schema, job
 
 # Spreads Live Rollout
 
-Use this skill inside `/Users/adeb/Projects/spreads` when the user wants a change to be made live, applied to the running stack, or verified end to end.
+Use this skill inside the repo root when the user wants a change to be made live, applied to the running stack, or verified end to end.
 
 Use [docs/current_system_state.md](../../../docs/current_system_state.md) as the canonical source of truth for current runtime ownership and restart boundaries.
 
@@ -42,10 +42,10 @@ Before rollout, classify what changed:
 
 Use these current code owners while classifying:
 
-- discovery and collection: `services/scanners/`, `services/collections/`, `services/live_selection.py`, `services/opportunity_scoring.py`
+- discovery and collection: `services/scanners/`, `services/discovery_runs/`, `services/live_selection.py`, `services/opportunity_scoring.py`, `services/candidate_policy.py`
 - canonical opportunity state: `services/signal_state.py`, `services/opportunity_generation.py`, `services/opportunities.py`
-- runtime read models: `services/live_runtime.py`, `services/live_collector_health/`, `services/pipelines.py`, `services/ops/`
-- execution and positions: `services/execution/`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py`
+- runtime read models: `services/live_runtime.py`, `services/discovery_run_health/`, `services/pipelines.py`, `services/ops/`
+- execution and positions: `services/execution/`, `services/execution_portfolio.py`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py`
 
 Use that classification to decide the minimum safe rollout.
 
@@ -78,6 +78,8 @@ Apply only the steps that match the change:
   - `docker compose restart market-recorder`
 - API runtime only:
   - usually no explicit restart; Docker API hot-reloads
+- ops read-model only:
+  - usually verify through `uv run spreads ...` and API reads; do not restart workers unless changed code is imported by them
 - web-only code:
   - avoid production builds unless explicitly requested
 
@@ -85,7 +87,7 @@ If multiple backend runtime surfaces changed, restart only the affected services
 
 In practice:
 
-- most changes under `services/scanners/`, `services/collections/`, `services/live_selection.py`, `services/opportunity_scoring.py`, `services/opportunity_generation.py`, or shared backend code imported by collector jobs require at least `worker-discovery`
+- most changes under `services/scanners/`, `services/discovery_runs/`, `services/live_selection.py`, `services/opportunity_scoring.py`, `services/candidate_policy.py`, `services/opportunity_generation.py`, or shared backend code imported by collector jobs require at least `worker-discovery`
 - most changes under `services/execution/`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, or runtime job logic require at least `worker-runtime`
 - if ownership crosses both lanes, restart both workers and the scheduler only when scheduling logic or job dispatch changed
 

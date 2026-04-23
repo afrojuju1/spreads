@@ -20,20 +20,22 @@
 
 ## Canonical Ownership
 
-- discovery and collection flow: `services/scanners/`, `services/discovery_runs/`, `services/live_selection.py`, and `services/opportunity_scoring.py`
+- discovery and collection flow: `services/scanners/`, `services/discovery_runs/`, `services/live_selection.py`, `services/opportunity_scoring.py`, and `services/candidate_policy.py`
 - canonical signal and opportunity state: `services/signal_state.py`, `services/opportunity_generation.py`, and `services/opportunities.py`
 - runtime and operator read models: `services/live_runtime.py`, `services/discovery_run_health/`, `services/pipelines.py`, and `services/ops/`
 - pipeline/session runtime list/detail: `services/pipelines.py`
 - actual account and trading health: `services/account_state.py`
-- execution, portfolio, and reconciliation: `services/execution/`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, and `services/exit_manager.py`
+- execution, portfolio, and reconciliation: `services/execution/`, `services/execution_portfolio.py`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, and `services/exit_manager.py`
 - historical evaluation and policy research: `backtest/`
 - alert delivery state: `storage/alert_repository.py`
 - job execution and scheduler behavior: `jobs/worker.py`, `jobs/registry.py`, and `storage/job_repository.py`
+- broker-sync distinction: `services/broker_sync.py` owns actual broker reconciliation, while `services/ops/broker_sync.py` owns operator-read normalization only.
 
 ## Operator Visibility
 
 - For operator visibility work, reuse these modules with thin adapters instead of introducing parallel API-only logic.
 - For session health and current runtime state, prefer `services/live_runtime.py`, `services/discovery_run_health/`, `services/pipelines.py`, and `services/ops/` over creating new read-model owners.
+- For jobs health, read operator-facing status fields first. Raw historical failed runs can remain visible while `operator_status` and `actionable_failed_count` show whether they still require action.
 - For first-pass ops/runtime checks and historical backtest workflows, follow the repo-level CLI guidance in [../../AGENTS.md](../../AGENTS.md). Keep the canonical command list there instead of repeating it in backend-specific instructions.
 
 ## End-Of-Day And Ops Queries
