@@ -18,6 +18,7 @@ VALID_SCHEDULE_TYPES = {
     "market_close_plus_minutes",
     "manual",
 }
+POLICY_EXTENDS_KEY = "extends"
 
 
 def _canonical_hash(payload: dict[str, Any]) -> str:
@@ -44,6 +45,87 @@ def _as_mapping(value: Any, *, field_name: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{field_name} must be a mapping")
     return dict(value)
+
+
+def _merge_mappings(
+    base: dict[str, Any],
+    override: dict[str, Any],
+) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if key == POLICY_EXTENDS_KEY:
+            continue
+        existing = merged.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            merged[key] = _merge_mappings(existing, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _policy_base_path(
+    *,
+    config_root: Path,
+    policy_kind: str,
+    ref: str,
+    field_name: str,
+    config_path: Path,
+) -> Path:
+    relative = Path(ref)
+    if relative.is_absolute() or relative.suffix or ".." in relative.parts:
+        raise ValueError(
+            f"{field_name}.extends in {config_path} must name a policy under "
+            f"policies/{policy_kind}"
+        )
+    if len(relative.parts) != 1:
+        raise ValueError(
+            f"{field_name}.extends in {config_path} must be a single policy name"
+        )
+    return config_root / "policies" / policy_kind / f"{ref}.yaml"
+
+
+def _resolve_policy_mapping(
+    value: Any,
+    *,
+    field_name: str,
+    policy_kind: str,
+    config_root: Path,
+    config_path: Path,
+    seen: frozenset[Path] = frozenset(),
+) -> dict[str, Any]:
+    mapping = _as_mapping(value, field_name=field_name)
+    extends = mapping.get(POLICY_EXTENDS_KEY)
+    if extends in (None, ""):
+        return {
+            key: policy_value
+            for key, policy_value in mapping.items()
+            if key != POLICY_EXTENDS_KEY
+        }
+
+    ref = _as_text(extends, field_name=f"{field_name}.{POLICY_EXTENDS_KEY}")
+    base_path = _policy_base_path(
+        config_root=config_root,
+        policy_kind=policy_kind,
+        ref=ref,
+        field_name=field_name,
+        config_path=config_path,
+    )
+    if base_path in seen:
+        raise ValueError(f"Cycle detected while resolving {field_name}.extends")
+    if not base_path.exists():
+        raise FileNotFoundError(
+            f"{field_name}.extends references missing policy {base_path}"
+        )
+
+    base_mapping = _resolve_policy_mapping(
+        _load_yaml_mapping(base_path),
+        field_name=f"{policy_kind}_policy:{ref}",
+        policy_kind=policy_kind,
+        config_root=config_root,
+        config_path=base_path,
+        seen=seen | frozenset({base_path}),
+    )
+    return _merge_mappings(base_mapping, mapping)
 
 
 def _schedule_payload(value: Any, *, field_name: str) -> tuple[str, dict[str, Any]]:
@@ -235,7 +317,8 @@ def _load_job_specs(config_root: str | Path | None = None) -> list[DeclaredJobSp
 def _load_discovery_run_configs(
     config_root: str | Path | None = None,
 ) -> list[DiscoveryRunConfig]:
-    root = default_config_root(config_root) / "discovery_runs"
+    config_root_path = default_config_root(config_root)
+    root = config_root_path / "discovery_runs"
     if not root.exists():
         return []
     configs: list[DiscoveryRunConfig] = []
@@ -245,7 +328,13 @@ def _load_discovery_run_configs(
         execution_policy = _as_mapping(
             raw.get("execution_policy"), field_name="execution_policy"
         )
-        risk_policy = _as_mapping(raw.get("risk_policy"), field_name="risk_policy")
+        risk_policy = _resolve_policy_mapping(
+            raw.get("risk_policy"),
+            field_name="risk_policy",
+            policy_kind="risk",
+            config_root=config_root_path,
+            config_path=path,
+        )
         exit_policy = _as_mapping(raw.get("exit_policy"), field_name="exit_policy")
         config = DiscoveryRunConfig(
             discovery_run_id=_as_text(raw.get("discovery_run_id"), field_name="discovery_run_id"),

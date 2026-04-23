@@ -1,0 +1,12 @@
+enabled: true
+allow_live: true
+max_open_positions_per_session: 30
+max_open_positions_per_underlying: 30
+max_open_positions_per_underlying_strategy: 30
+max_contracts_per_position: 20
+max_contracts_per_session: 30
+max_position_notional: 20000.0
+max_session_notional: 30000.0
+max_position_max_loss: 20000.0
+max_session_max_loss: 30000.0
+stale_quote_after_seconds: 900

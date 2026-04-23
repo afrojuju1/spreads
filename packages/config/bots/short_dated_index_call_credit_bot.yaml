@@ -2,9 +2,9 @@ bot_id: short_dated_index_call_credit_bot
 name: Short-Dated Index Call Credit Bot
 limits:
   capital_limit: 5000
-  max_open_positions: 10
-  max_daily_actions: 20
-  max_new_entries_per_day: 3
+  max_open_positions: 30
+  max_daily_actions: 30
+  max_new_entries_per_day: 30
   daily_loss_limit: 250
 runtime:
   live_enabled: false

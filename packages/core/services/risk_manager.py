@@ -3,7 +3,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 import os
 from datetime import UTC, datetime
+from functools import lru_cache
 from typing import Any
+
+import yaml
 
 from core.services.alpaca import (
     create_alpaca_client_from_env,
@@ -25,6 +28,7 @@ from core.services.option_structures import (
 )
 from core.services.positions import enrich_position_row
 from core.services.runtime_identity import parse_live_run_scope_id
+from core.services.strategy_configs import default_config_root
 from core.services.value_coercion import (
     as_text as _as_text,
     coerce_float as _coerce_float,
@@ -34,22 +38,8 @@ from core.storage.serializers import parse_datetime
 
 OPEN_POSITION_STATUSES = ["open", "partial_close"]
 SIZED_SINGLE_LEG_STRATEGIES = {"short_call", "short_put"}
-
-DEFAULT_RISK_POLICY = {
-    "enabled": True,
-    "allow_live": False,
-    "max_open_positions_per_session": 20,
-    "max_open_positions_per_underlying": 1,
-    "max_open_positions_per_underlying_strategy": 1,
-    "max_contracts_per_position": 1,
-    "max_contracts_per_session": 20,
-    "max_position_notional": 1000.0,
-    "max_session_notional": 1000.0,
-    "max_position_max_loss": 1000.0,
-    "max_session_max_loss": 1000.0,
-    "stale_quote_after_seconds": 900,
-}
-DEFAULT_RISK_POLICY_FLAGS = {
+BASELINE_RISK_POLICY_NAME = "baseline"
+RISK_POLICY_DERIVED_FLAGS = {
     "max_contracts_per_position_configured": False,
 }
 
@@ -69,6 +59,27 @@ INT_POLICY_KEYS = {
 }
 FLOAT_POLICY_KEYS = OPTIONAL_FLOAT_POLICY_KEYS
 BOOL_POLICY_KEYS = {"enabled", "allow_live"}
+REQUIRED_BASELINE_RISK_POLICY_KEYS = (
+    BOOL_POLICY_KEYS | INT_POLICY_KEYS | FLOAT_POLICY_KEYS
+)
+
+
+@lru_cache(maxsize=1)
+def _baseline_risk_policy() -> dict[str, Any]:
+    path = (
+        default_config_root()
+        / "policies"
+        / "risk"
+        / f"{BASELINE_RISK_POLICY_NAME}.yaml"
+    )
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError(f"Expected mapping payload in {path}")
+    missing = sorted(REQUIRED_BASELINE_RISK_POLICY_KEYS - set(raw))
+    if missing:
+        rendered = ", ".join(missing)
+        raise ValueError(f"Baseline risk policy {path} is missing: {rendered}")
+    return dict(raw)
 
 
 def _coerce_bool(value: Any) -> bool:
@@ -115,8 +126,11 @@ def normalize_risk_policy(payload: dict[str, Any] | None) -> dict[str, Any]:
         else source
     )
 
-    policy = dict(DEFAULT_RISK_POLICY)
-    policy.update(DEFAULT_RISK_POLICY_FLAGS)
+    policy = dict(_baseline_risk_policy())
+    policy.update(RISK_POLICY_DERIVED_FLAGS)
+    policy["max_contracts_per_position_configured"] = (
+        "max_contracts_per_position" in policy
+    )
     stale_quote_after_seconds = _coerce_float(
         raw_policy.get(
             "stale_quote_after_seconds", raw_policy.get("max_candidate_age_seconds")
