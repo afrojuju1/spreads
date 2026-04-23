@@ -15,6 +15,7 @@ from core.jobs.orchestration import (
 )
 from core.jobs.registry import WORKER_LANES, get_queue_name_for_job_type
 from core.jobs.specs import get_declared_job_row, list_declared_job_rows
+from core.services.broker_sync import BROKER_SYNC_KEY
 from core.services.discovery_run_health.enrichment import (
     enrich_discovery_run_job_run_payload,
 )
@@ -26,12 +27,15 @@ from core.services.discovery_run_health.shared import (
 )
 from core.services.live_pipelines import build_discovery_run_session_schedule
 from core.services.selection_summary import selection_summary_payload as _selection_summary_payload
+from core.storage.serializers import parse_datetime
 from core.services.value_coercion import (
     as_text as _as_text,
     coerce_int as _coerce_int,
     utc_now_iso as _utc_now,
 )
 
+from .broker_sync import broker_sync_payload as _broker_sync_payload
+from .market_session import market_session_context as _market_session_context
 from .shared import (
     JOB_RUN_HEARTBEAT_STALE_AFTER_SECONDS,
     JOB_RUN_QUEUE_STALE_AFTER_SECONDS,
@@ -47,6 +51,94 @@ from .shared import (
     _stream_quote_events_saved,
     _stream_trade_events_saved,
 )
+
+
+def _broker_sync_state_supersedes_run(
+    broker_sync: Mapping[str, Any] | None,
+    run: Mapping[str, Any] | None,
+) -> bool:
+    if not broker_sync or not run:
+        return False
+    if str(run.get("job_key") or "") != BROKER_SYNC_KEY:
+        return False
+    if str(run.get("status") or "").strip().lower() != "failed":
+        return False
+    if str(broker_sync.get("status") or "") not in {"healthy", "idle"}:
+        return False
+    state_updated_at = parse_datetime(broker_sync.get("updated_at"))
+    run_activity_at = parse_datetime(run.get("activity_at") or _activity_at(run))
+    return (
+        state_updated_at is not None
+        and run_activity_at is not None
+        and state_updated_at > run_activity_at
+    )
+
+
+def _broker_sync_recovered_note(broker_sync: Mapping[str, Any]) -> str:
+    updated_at = _as_text(broker_sync.get("updated_at")) or "a later sync"
+    return (
+        f"Broker sync state recovered at {updated_at}; this failed scheduled run "
+        "is historical."
+    )
+
+
+def _apply_broker_sync_run_overrides(
+    run_rows: list[dict[str, Any]],
+    *,
+    broker_sync: Mapping[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if not broker_sync:
+        return run_rows
+    rows: list[dict[str, Any]] = []
+    for row in run_rows:
+        if _broker_sync_state_supersedes_run(broker_sync, row):
+            rows.append(
+                {
+                    **row,
+                    "operator_status": "healthy",
+                    "operator_note": _broker_sync_recovered_note(broker_sync),
+                    "broker_sync_status": broker_sync.get("status"),
+                    "broker_sync_updated_at": broker_sync.get("updated_at"),
+                }
+            )
+        else:
+            rows.append(row)
+    return rows
+
+
+def _apply_broker_sync_definition_overrides(
+    definition_rows: list[dict[str, Any]],
+    *,
+    latest_run_by_key: Mapping[str, Mapping[str, Any]],
+    broker_sync: Mapping[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if not broker_sync:
+        return definition_rows
+    rows: list[dict[str, Any]] = []
+    for row in definition_rows:
+        if _broker_sync_state_supersedes_run(
+            broker_sync,
+            latest_run_by_key.get(str(row.get("job_key") or "")),
+        ):
+            rows.append(
+                {
+                    **row,
+                    "operator_status": broker_sync.get("status"),
+                    "latest_run_operator_status": "healthy",
+                    "schedule_note": _broker_sync_recovered_note(broker_sync),
+                    "broker_sync_status": broker_sync.get("status"),
+                    "broker_sync_updated_at": broker_sync.get("updated_at"),
+                }
+            )
+        else:
+            rows.append(row)
+    return rows
+
+
+def _job_run_is_actionable_failure(row: Mapping[str, Any]) -> bool:
+    if str(row.get("status") or "") != "failed":
+        return False
+    return str(row.get("operator_status") or "") not in {"healthy", "idle"}
 
 
 def _skip_reason_text(run: Mapping[str, Any]) -> str | None:
@@ -503,6 +595,16 @@ def build_jobs_overview(
             statuses=None,
         )
     }
+    broker_sync: dict[str, Any] | None = None
+    if (
+        any(str(row.get("job_key") or "") == BROKER_SYNC_KEY for row in definitions)
+        and storage.broker.schema_ready()
+    ):
+        _, broker_sync = _broker_sync_payload(
+            storage.broker.get_sync_state(BROKER_SYNC_KEY),
+            now=now,
+            market_session=_market_session_context(now=now),
+        )
     definition_rows = [
         _summarize_job_definition(
             definition,
@@ -511,6 +613,11 @@ def build_jobs_overview(
         )
         for definition in definitions
     ]
+    definition_rows = _apply_broker_sync_definition_overrides(
+        definition_rows,
+        latest_run_by_key=latest_run_by_key,
+        broker_sync=broker_sync,
+    )
     run_rows = [
         _summarize_job_run(dict(row), now=now)
         for row in job_store.list_job_runs(
@@ -520,6 +627,10 @@ def build_jobs_overview(
         )
     ]
     run_rows = _sorted_by_activity(run_rows)
+    run_rows = _apply_broker_sync_run_overrides(
+        run_rows,
+        broker_sync=broker_sync,
+    )
     queued_run_rows = [
         dict(row) for row in job_store.list_job_runs(status="queued", limit=200)
     ]
@@ -581,12 +692,15 @@ def build_jobs_overview(
         if str(row.get("job_type") or "") == "discovery_run"
         and is_non_healthy_capture_status(row.get("capture_status"))
     )
-    if status_counts.get("failed", 0):
+    actionable_failed_count = sum(
+        1 for row in run_rows if _job_run_is_actionable_failure(row)
+    )
+    if actionable_failed_count:
         attention.append(
             _attention(
                 severity="high",
                 code="failed_job_runs_present",
-                message=f"{status_counts['failed']} recent job run(s) failed.",
+                message=f"{actionable_failed_count} recent job run(s) failed.",
             )
         )
     actionable_skipped_count = sum(
@@ -691,7 +805,7 @@ def build_jobs_overview(
 
     statuses.append(
         _combine_statuses(
-            "blocked" if status_counts.get("failed", 0) else "healthy",
+            "blocked" if actionable_failed_count else "healthy",
             "degraded"
             if actionable_skipped_count
             or stale_running_count
@@ -726,6 +840,7 @@ def build_jobs_overview(
             "stale_running_count": stale_running_count,
             "stale_queued_job_count": len(stale_queued_run_rows),
             "degraded_capture_count": degraded_capture_count,
+            "actionable_failed_count": actionable_failed_count,
         },
         "attention": attention,
         "details": {
