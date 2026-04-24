@@ -993,9 +993,16 @@ class RuntimeVisibilityTests(unittest.TestCase):
                             "execution_intent_id": "intent-1",
                             "bot_id": runtime.bot_id,
                             "automation_id": runtime.automation_id,
+                            "opportunity_decision_id": "decision-1",
                             "action_type": "open",
                             "state": "filled",
                             "created_at": "2026-04-17T17:27:00Z",
+                            "payload": {
+                                "execution_admission": {
+                                    "status": "admissible",
+                                    "admissible_quantity": 2,
+                                }
+                            },
                         }
                     ]
                 return []
@@ -1051,12 +1058,8 @@ class RuntimeVisibilityTests(unittest.TestCase):
         storage = _Storage()
         with (
             patch(
-                "core.services.automation_runtimes.resolve_entry_runtimes",
-                return_value=[runtime],
-            ),
-            patch(
-                "core.services.automation_runtimes.resolve_management_runtimes",
-                return_value=[],
+                "core.services.automation_runtimes._runtime_catalog",
+                return_value=[("entry", runtime)],
             ),
             patch(
                 "core.services.automation_runtimes.build_bot_metrics",
@@ -1082,6 +1085,8 @@ class RuntimeVisibilityTests(unittest.TestCase):
         self.assertEqual(summary["opportunity_count"], 1)
         self.assertEqual(summary["decision_state_counts"]["selected"], 1)
         self.assertEqual(summary["entry_intent_count"], 1)
+        self.assertEqual(summary["selected_currently_admissible_count"], 1)
+        self.assertEqual(summary["selected_currently_blocked_count"], 0)
         self.assertEqual(summary["open_position_count"], 1)
         self.assertEqual(summary["latest_discovery"]["label"], "explore_10_put_credit_weekly_auto")
         self.assertEqual(

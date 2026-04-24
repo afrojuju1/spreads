@@ -39,10 +39,17 @@ For ops and end-of-day questions, prefer the live Docker-backed state before rea
 - operator health views: `packages/core/services/ops/`
 - discovery and collection flow: `packages/core/services/discovery_runs/`, `packages/core/services/scanners/`, `packages/core/services/live_selection.py`, `packages/core/services/opportunity_scoring.py`, and `packages/core/services/candidate_policy.py`
 - canonical opportunity state: `packages/core/services/signal_state.py`, `packages/core/services/opportunity_generation.py`, and `packages/core/services/opportunities.py`
-- account and trading health: `packages/core/services/account_state.py` and `packages/core/services/ops/trading.py`
+- account snapshot read model: `packages/core/services/account_state.py`
+- execution admission and broker-capacity truth: `packages/core/services/account_capacity.py`, `packages/core/services/risk_manager.py`, `packages/core/services/execution/`, and `packages/core/services/ops/trading.py`
 - historical decision evaluation and policy research: `packages/core/backtest/`
 - alert delivery state: `packages/core/storage/alert_repository.py`
 - worker and scheduler behavior: `packages/core/jobs/worker.py`, `packages/core/jobs/registry.py`, and `packages/core/storage/job_repository.py`
+
+Keep these boundaries straight while triaging:
+
+- selection says whether the idea is good
+- execution admission says whether this account can carry it now
+- alert delivery is a downstream projection of that state, not a separate decision layer
 
 ## Canonical Surfaces
 
@@ -52,6 +59,7 @@ Start with the shipped ops CLI, then fall back to logs or code:
 docker compose ps
 uv run spreads status
 uv run spreads trading
+uv run spreads automations --bot-id <bot-id> --automation-id <automation-id> --date <YYYY-MM-DD> --json
 uv run spreads pipelines
 uv run spreads jobs
 uv run spreads uoa
@@ -75,6 +83,12 @@ Read these fields first:
 - `risk_note`
 - `trading_allowed`
 - `broker_sync.status`
+- `selected_currently_admissible_count`
+- `selected_currently_blocked_count`
+- `blocked_by_buying_power_count`
+- `blocked_by_policy_or_risk_budget_count`
+- `execution_admission.status`
+- `execution_admission.reason`
 - `actionable_failed_count`
 - `operator_status`
 
@@ -87,6 +101,8 @@ Interpret them this way:
 - `unrecoverable_slot_count>0` is audit truth, not automatically a current blocker once recovery is clear.
 - `risk_status=blocked` with healthy capture usually means policy gating, not runtime breakage.
 - `trading_allowed=false` before market open is expected; after open it should become true only when market session, broker sync, account, control, and execution gates are all healthy.
+- `selected_currently_blocked_count>0` is not a selection failure by itself; it means selected opportunities exist but execution admission is blocking this account.
+- `blocked_by_buying_power_count>0` points to broker-capacity pressure; `blocked_by_policy_or_risk_budget_count>0` points to local execution policy or risk budget.
 - Raw historical job failures are diagnostics. Prefer `operator_status`, `operator_status_counts`, and `actionable_failed_count` when deciding whether jobs are currently blocking the system.
 - A historical failed `broker_sync:alpaca` run is not a live blocker if canonical broker-sync state recovered later and jobs health reports `actionable_failed_count=0`.
 
@@ -148,12 +164,15 @@ Use:
 
 ```bash
 uv run spreads trading
+uv run spreads automations --bot-id <bot-id> --automation-id <automation-id> --date YYYY-MM-DD --json
 ```
 
 Always separate:
 
 - actual account PnL
 - modeled backtest, audit, or selection diagnostics
+- selected opportunity truth
+- current execution-admission truth
 
 Do not present modeled session results as realized account performance.
 
@@ -206,6 +225,7 @@ Typical split:
 
 - session healthy, alerts failed: delivery issue
 - session blocked with healthy capture and blocked risk note: policy issue
+- session healthy, selected opportunities present, and execution admission blocked: account-capacity or execution-policy issue
 - session degraded, alerts thin: upstream capture or selection issue
 - session healthy, backtest/audit weak: strategy issue
 

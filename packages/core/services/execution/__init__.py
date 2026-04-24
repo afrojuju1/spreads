@@ -120,6 +120,157 @@ from .shared import (
 )
 
 
+class ExecutionAdmissionError(ValueError):
+    def __init__(self, message: str, *, admission: Mapping[str, Any]) -> None:
+        super().__init__(message)
+        self.admission = dict(admission)
+
+
+def _execution_admission_payload_from_risk_evaluation(
+    risk_evaluation: Mapping[str, Any],
+) -> dict[str, Any]:
+    metrics = (
+        risk_evaluation.get("metrics")
+        if isinstance(risk_evaluation.get("metrics"), Mapping)
+        else {}
+    )
+    position_sizing = (
+        metrics.get("position_sizing")
+        if isinstance(metrics.get("position_sizing"), Mapping)
+        else {}
+    )
+    requested_quantity = max(_coerce_float(metrics.get("requested_quantity")) or 0.0, 0.0)
+    required_buying_power = _coerce_float(metrics.get("required_buying_power"))
+    available_buying_power = _coerce_float(metrics.get("available_broker_buying_power"))
+    reserved_buying_power = _coerce_float(metrics.get("broker_reserved_buying_power"))
+    account_available_buying_power = None
+    if available_buying_power is not None:
+        account_available_buying_power = round(
+            available_buying_power + max(reserved_buying_power or 0.0, 0.0),
+            2,
+        )
+    reason_codes = [
+        str(value).strip()
+        for value in risk_evaluation.get("reason_codes") or []
+        if str(value).strip()
+    ]
+    resolved_status = str(risk_evaluation.get("status") or "unknown").strip().lower()
+    resolved_reason = (
+        None if reason_codes[:1] == ["approved"] else reason_codes[0] if reason_codes else None
+    )
+    admissible_quantity = _coerce_int(metrics.get("recommended_quantity"))
+    if resolved_status == "blocked" and admissible_quantity is None:
+        admissible_quantity = 0
+    return {
+        "status": "admissible" if resolved_status == "approved" else resolved_status,
+        "reason": resolved_reason,
+        "message": str(risk_evaluation.get("note") or "") or None,
+        "evaluated_at": _utc_now(),
+        "admissible_quantity": admissible_quantity,
+        "required_buying_power": required_buying_power,
+        "available_buying_power": available_buying_power,
+        "account_available_buying_power": account_available_buying_power,
+        "reserved_buying_power": reserved_buying_power,
+        "buying_power_basis": _as_text(metrics.get("buying_power_basis")),
+        "buying_power_source_field": _as_text(
+            metrics.get("broker_buying_power_source_field")
+        ),
+        "broker_buying_power_status": _as_text(
+            metrics.get("broker_buying_power_status")
+        ),
+        "limiting_constraint": _as_text(position_sizing.get("limiting_constraint")),
+        "strategy_risk_budget": _coerce_float(metrics.get("strategy_risk_budget")),
+        "requested_quantity": None if requested_quantity <= 0 else int(requested_quantity),
+    }
+
+
+def _execution_admission_payload_from_account_capacity(
+    *,
+    attempt: Mapping[str, Any],
+    account_capacity: Mapping[str, Any],
+) -> dict[str, Any]:
+    required_buying_power = _coerce_float(account_capacity.get("required_buying_power"))
+    available_buying_power = _coerce_float(account_capacity.get("available_buying_power"))
+    reserved_buying_power = _coerce_float(account_capacity.get("reserved_buying_power"))
+    requested_quantity = max(_coerce_float(attempt.get("quantity")) or 0.0, 0.0)
+    admissible_quantity = 0
+    if (
+        requested_quantity > 0
+        and required_buying_power is not None
+        and required_buying_power > 0
+        and available_buying_power is not None
+    ):
+        admissible_quantity = max(
+            int(available_buying_power // (required_buying_power / requested_quantity)),
+            0,
+        )
+    account_available_buying_power = None
+    if available_buying_power is not None:
+        account_available_buying_power = round(
+            available_buying_power + max(reserved_buying_power or 0.0, 0.0),
+            2,
+        )
+    return {
+        "status": "blocked",
+        "reason": _as_text(account_capacity.get("reason")),
+        "message": _as_text(account_capacity.get("message")),
+        "evaluated_at": _utc_now(),
+        "admissible_quantity": admissible_quantity,
+        "required_buying_power": required_buying_power,
+        "available_buying_power": available_buying_power,
+        "account_available_buying_power": account_available_buying_power,
+        "reserved_buying_power": reserved_buying_power,
+        "buying_power_basis": _as_text(
+            estimate_buying_power_requirement(
+                dict(attempt.get("candidate") or {}),
+                1.0,
+                limit_price=_coerce_float(attempt.get("limit_price")),
+            ).get("basis")
+        ),
+        "buying_power_source_field": _as_text(account_capacity.get("source_field")),
+        "broker_buying_power_status": "ok",
+        "limiting_constraint": "available_broker_buying_power",
+        "strategy_risk_budget": None,
+        "requested_quantity": None if requested_quantity <= 0 else int(requested_quantity),
+    }
+
+
+def _execution_admission_payload_from_broker_rejection(
+    *,
+    attempt: Mapping[str, Any],
+    classified_error: Mapping[str, Any],
+) -> dict[str, Any]:
+    quantity = max(_coerce_float(attempt.get("quantity")) or 0.0, 0.0)
+    requirement = estimate_buying_power_requirement(
+        dict(attempt.get("candidate") or {}),
+        quantity,
+        limit_price=_coerce_float(attempt.get("limit_price")),
+    )
+    required_buying_power = _coerce_float(requirement.get("required_buying_power"))
+    if _as_text(classified_error.get("reason")) not in {
+        "insufficient_options_buying_power",
+        "insufficient_buying_power",
+    }:
+        required_buying_power = None
+    return {
+        "status": "blocked",
+        "reason": _as_text(classified_error.get("reason")),
+        "message": _as_text(classified_error.get("message")),
+        "evaluated_at": _utc_now(),
+        "admissible_quantity": 0,
+        "required_buying_power": required_buying_power,
+        "available_buying_power": None,
+        "account_available_buying_power": None,
+        "reserved_buying_power": None,
+        "buying_power_basis": _as_text(requirement.get("basis")),
+        "buying_power_source_field": None,
+        "broker_buying_power_status": "rejected",
+        "limiting_constraint": None,
+        "strategy_risk_budget": None,
+        "requested_quantity": None if quantity <= 0 else int(quantity),
+    }
+
+
 def _opportunity_legs_from_row(opportunity: Mapping[str, Any]) -> list[OpportunityLeg]:
     legs_payload = opportunity.get("legs")
     resolved_legs = normalize_legs(legs_payload)
@@ -1540,7 +1691,12 @@ def submit_live_session_execution(
         if str(risk_evaluation["status"]) in {"blocked", "unknown"}:
             if risk_decision is not None:
                 _publish_risk_decision_event(risk_decision)
-            raise ValueError(str(risk_evaluation["note"]))
+            raise ExecutionAdmissionError(
+                str(risk_evaluation["note"]),
+                admission=_execution_admission_payload_from_risk_evaluation(
+                    risk_evaluation
+                ),
+            )
 
         pipeline_policy_fields = resolve_pipeline_policy_fields(
             profile=candidate_payload.get("profile"),
@@ -2225,6 +2381,12 @@ def run_execution_submit(
                     "Execution failed before submission: "
                     f"{account_capacity['message']}"
                 ),
+                payload_updates={
+                    "execution_admission": _execution_admission_payload_from_account_capacity(
+                        attempt=payload,
+                        account_capacity=account_capacity,
+                    )
+                },
             )
             return {
                 "status": "blocked",
@@ -2305,6 +2467,16 @@ def run_execution_submit(
                 message=(
                     "Execution failed before submission: "
                     f"{classified_error['message']}"
+                ),
+                payload_updates=(
+                    {
+                        "execution_admission": _execution_admission_payload_from_broker_rejection(
+                            attempt=payload,
+                            classified_error=classified_error,
+                        )
+                    }
+                    if bool(classified_error.get("terminal"))
+                    else None
                 ),
             )
             if bool(classified_error.get("terminal")):

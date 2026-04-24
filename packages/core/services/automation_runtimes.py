@@ -11,7 +11,11 @@ from core.services.automation_runtime import (
     build_entry_runtime,
     build_management_runtime,
 )
-from core.services.bot_analytics import build_bot_metrics, summarize_intent_counts
+from core.services.bot_analytics import (
+    build_bot_metrics,
+    summarize_intent_counts,
+    summarize_selected_execution_admission,
+)
 from core.services.bots import load_active_bots
 from core.services.opportunities import list_opportunities
 from core.services.positions import OPEN_POSITION_STATUSES, list_positions
@@ -308,6 +312,10 @@ def _runtime_summary(
     decision_state_counts = Counter(
         str(row.get("state") or "unknown") for row in decisions
     )
+    execution_admission_summary = summarize_selected_execution_admission(
+        decisions=decisions,
+        intents=intents,
+    )
     intent_summary = summarize_intent_counts(
         [
             (
@@ -353,6 +361,7 @@ def _runtime_summary(
         "live_opportunity_count": live_opportunity_count,
         "decision_count": int(sum(decision_state_counts.values())),
         "decision_state_counts": dict(sorted(decision_state_counts.items())),
+        **execution_admission_summary,
         **intent_summary,
         **position_metrics,
         "latest_automation_run": latest_run,

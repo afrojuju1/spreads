@@ -92,6 +92,8 @@ class EntryDecisionAuditTests(unittest.TestCase):
         self.assertEqual(audit["summary"]["filled_count"], 1)
         self.assertEqual(audit["summary"]["repriced_count"], 1)
         self.assertEqual(audit["summary"]["no_intent_count"], 0)
+        self.assertEqual(audit["summary"]["selected_currently_admissible_count"], 1)
+        self.assertEqual(audit["summary"]["selected_currently_blocked_count"], 0)
         sample = audit["samples"][0]
         self.assertEqual(sample["outcome_bucket"], "filled")
         self.assertEqual(sample["intent_state"], "filled")
@@ -172,6 +174,83 @@ class EntryDecisionAuditTests(unittest.TestCase):
         )
         self.assertEqual(audit["samples"][0]["outcome_bucket"], "no_intent")
         self.assertEqual(audit["samples"][1]["outcome_bucket"], "revoked")
+
+    def test_execution_admission_summary_counts_buying_power_and_policy_blocks(self) -> None:
+        decided_at = datetime(2026, 4, 20, 15, 0, tzinfo=UTC)
+        audit = _build_entry_decision_audit(
+            decisions=[
+                {
+                    "opportunity_decision_id": "decision-bp",
+                    "state": "selected",
+                    "decided_at": decided_at,
+                    "policy_ref": {"strategy_id": "short_put"},
+                    "payload": {
+                        "opportunity": {
+                            "opportunity_id": "opp-bp",
+                            "underlying_symbol": "SPY",
+                            "strategy_family": "short_put",
+                        }
+                    },
+                    "reason_codes": ["selected_for_entry"],
+                },
+                {
+                    "opportunity_decision_id": "decision-policy",
+                    "state": "selected",
+                    "decided_at": decided_at + timedelta(seconds=1),
+                    "policy_ref": {"strategy_id": "put_credit"},
+                    "payload": {
+                        "opportunity": {
+                            "opportunity_id": "opp-policy",
+                            "underlying_symbol": "QQQ",
+                            "strategy_family": "put_credit",
+                        }
+                    },
+                    "reason_codes": ["selected_for_entry"],
+                },
+            ],
+            intents=[
+                {
+                    "execution_intent_id": "intent-bp",
+                    "opportunity_decision_id": "decision-bp",
+                    "execution_attempt_id": None,
+                    "state": "failed",
+                    "created_at": decided_at + timedelta(seconds=2),
+                    "payload": {
+                        "dispatch_status": "failed",
+                        "execution_admission": {
+                            "status": "blocked",
+                            "reason": "insufficient_options_buying_power",
+                        },
+                    },
+                    "policy_ref": {"strategy_id": "short_put"},
+                },
+                {
+                    "execution_intent_id": "intent-policy",
+                    "opportunity_decision_id": "decision-policy",
+                    "execution_attempt_id": None,
+                    "state": "failed",
+                    "created_at": decided_at + timedelta(seconds=3),
+                    "payload": {
+                        "dispatch_status": "failed",
+                        "execution_admission": {
+                            "status": "blocked",
+                            "reason": "strategy_risk_budget_exceeded",
+                        },
+                    },
+                    "policy_ref": {"strategy_id": "put_credit"},
+                },
+            ],
+            attempts=[],
+            events=[],
+        )
+
+        self.assertEqual(audit["summary"]["selected_currently_admissible_count"], 0)
+        self.assertEqual(audit["summary"]["selected_currently_blocked_count"], 2)
+        self.assertEqual(audit["summary"]["blocked_by_buying_power_count"], 1)
+        self.assertEqual(
+            audit["summary"]["blocked_by_policy_or_risk_budget_count"],
+            1,
+        )
 
 
 if __name__ == "__main__":

@@ -337,6 +337,20 @@ def build_trading_health(
         storage=storage,
         market_date=market_date,
     )
+    automation_execution_admission = (
+        (
+            (details["automation_performance"].get("entry_decision_audit") or {}).get(
+                "summary"
+            )
+        )
+        if isinstance(details["automation_performance"], Mapping)
+        else {}
+    )
+    details["automation_execution_admission"] = (
+        dict(automation_execution_admission)
+        if isinstance(automation_execution_admission, Mapping)
+        else {}
+    )
     automation_dispatch_gap = _automation_dispatch_gap_summary(
         details["automation_performance"]
     )
@@ -626,6 +640,30 @@ def build_trading_health(
         "automation_daily_pnl": _coerce_float(
             (details.get("automation_performance") or {}).get("daily_total_pnl")
         ),
+        "selected_currently_admissible_count": _coerce_int(
+            (details.get("automation_execution_admission") or {}).get(
+                "selected_currently_admissible_count"
+            )
+        )
+        or 0,
+        "selected_currently_blocked_count": _coerce_int(
+            (details.get("automation_execution_admission") or {}).get(
+                "selected_currently_blocked_count"
+            )
+        )
+        or 0,
+        "blocked_by_buying_power_count": _coerce_int(
+            (details.get("automation_execution_admission") or {}).get(
+                "blocked_by_buying_power_count"
+            )
+        )
+        or 0,
+        "blocked_by_policy_or_risk_budget_count": _coerce_int(
+            (details.get("automation_execution_admission") or {}).get(
+                "blocked_by_policy_or_risk_budget_count"
+            )
+        )
+        or 0,
         "account_error": account_error,
     }
 

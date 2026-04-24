@@ -646,6 +646,14 @@ class EarningsFlowTests(unittest.TestCase):
         }
         automation_performance = {
             "daily_total_pnl": 0.0,
+            "entry_decision_audit": {
+                "summary": {
+                    "selected_currently_admissible_count": 1,
+                    "selected_currently_blocked_count": 2,
+                    "blocked_by_buying_power_count": 1,
+                    "blocked_by_policy_or_risk_budget_count": 1,
+                }
+            },
             "entry_funnel": {
                 "overall": {
                     "selected": 3,
@@ -699,6 +707,22 @@ class EarningsFlowTests(unittest.TestCase):
         self.assertEqual(trading_status["status"], "degraded")
         self.assertEqual(system_status["summary"]["automation_dispatch_gap_count"], 3)
         self.assertEqual(trading_status["summary"]["automation_dispatch_gap_count"], 3)
+        self.assertEqual(
+            trading_status["summary"]["selected_currently_admissible_count"],
+            1,
+        )
+        self.assertEqual(
+            trading_status["summary"]["selected_currently_blocked_count"],
+            2,
+        )
+        self.assertEqual(
+            trading_status["summary"]["blocked_by_buying_power_count"],
+            1,
+        )
+        self.assertEqual(
+            trading_status["summary"]["blocked_by_policy_or_risk_budget_count"],
+            1,
+        )
         self.assertIn(
             "automation_entry_dispatch_gap",
             {item["code"] for item in system_status["attention"]},

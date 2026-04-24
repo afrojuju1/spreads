@@ -510,6 +510,26 @@ class SingleLegPositionSizingTests(unittest.TestCase):
     ) -> None:
         class _ExecutionStore:
             def __init__(self) -> None:
+                self.intent = {
+                    "execution_intent_id": "intent-1",
+                    "bot_id": "short_dated_etf_short_put_bot",
+                    "automation_id": "etf_short_put_entry",
+                    "opportunity_decision_id": "decision-1",
+                    "strategy_position_id": None,
+                    "execution_attempt_id": "attempt-1",
+                    "action_type": "open",
+                    "slot_key": "entry:test",
+                    "claim_token": None,
+                    "policy_ref": {"strategy_id": "short_put"},
+                    "config_hash": "cfg-1",
+                    "state": "claimed",
+                    "expires_at": None,
+                    "superseded_by_id": None,
+                    "payload": {},
+                    "created_at": "2026-04-21T15:00:00Z",
+                    "updated_at": "2026-04-21T15:00:00Z",
+                }
+                self.intent_events: list[dict[str, object]] = []
                 self.attempt = {
                     "execution_attempt_id": "attempt-1",
                     "session_id": "live:test:2026-04-21",
@@ -534,6 +554,7 @@ class SingleLegPositionSizingTests(unittest.TestCase):
                         ],
                     },
                     "request": {
+                        "execution_intent_id": "intent-1",
                         "order": {
                             "symbol": "SPY260427P00500000",
                             "side": "sell",
@@ -564,6 +585,21 @@ class SingleLegPositionSizingTests(unittest.TestCase):
             ) -> None:
                 self.attempt.update(changes)
 
+            def get_execution_intent(
+                self,
+                execution_intent_id: str,
+            ) -> dict[str, object] | None:
+                if execution_intent_id != "intent-1":
+                    return None
+                return dict(self.intent)
+
+            def upsert_execution_intent(self, **payload: object) -> dict[str, object]:
+                self.intent.update(payload)
+                return dict(self.intent)
+
+            def append_execution_intent_event(self, **payload: object) -> None:
+                self.intent_events.append(dict(payload))
+
             def list_orders(self, **_: object) -> list[dict[str, object]]:
                 return []
 
@@ -571,7 +607,7 @@ class SingleLegPositionSizingTests(unittest.TestCase):
                 return []
 
             def intent_schema_ready(self) -> bool:
-                return False
+                return True
 
             def list_attempts_by_status(
                 self,
@@ -618,6 +654,14 @@ class SingleLegPositionSizingTests(unittest.TestCase):
         self.assertEqual(result["reason"], "insufficient_broker_buying_power")
         self.assertFalse(broker_client.submitted)
         self.assertEqual(storage.execution.attempt["status"], "failed")
+        self.assertEqual(
+            storage.execution.intent["payload"]["execution_admission"]["status"],
+            "blocked",
+        )
+        self.assertEqual(
+            storage.execution.intent["payload"]["execution_admission"]["reason"],
+            "insufficient_broker_buying_power",
+        )
 
     def test_classify_alpaca_request_error_marks_buying_power_rejections_terminal(
         self,
@@ -636,6 +680,164 @@ class SingleLegPositionSizingTests(unittest.TestCase):
 
         self.assertEqual(classified["reason"], "insufficient_options_buying_power")
         self.assertTrue(classified["terminal"])
+
+    def test_run_execution_submit_updates_intent_on_terminal_broker_rejection(
+        self,
+    ) -> None:
+        class _ExecutionStore:
+            def __init__(self) -> None:
+                self.intent = {
+                    "execution_intent_id": "intent-1",
+                    "bot_id": "short_dated_etf_short_put_bot",
+                    "automation_id": "etf_short_put_entry",
+                    "opportunity_decision_id": "decision-1",
+                    "strategy_position_id": None,
+                    "execution_attempt_id": "attempt-1",
+                    "action_type": "open",
+                    "slot_key": "entry:test",
+                    "claim_token": None,
+                    "policy_ref": {"strategy_id": "short_put"},
+                    "config_hash": "cfg-1",
+                    "state": "claimed",
+                    "expires_at": None,
+                    "superseded_by_id": None,
+                    "payload": {},
+                    "created_at": "2026-04-21T15:00:00Z",
+                    "updated_at": "2026-04-21T15:00:00Z",
+                }
+                self.attempt = {
+                    "execution_attempt_id": "attempt-1",
+                    "session_id": "live:test:2026-04-21",
+                    "session_date": "2026-04-21",
+                    "underlying_symbol": "SPY",
+                    "strategy": "short_put",
+                    "trade_intent": "open",
+                    "status": "pending_submission",
+                    "quantity": 1,
+                    "limit_price": 2.5,
+                    "requested_at": "2026-04-21T15:00:00Z",
+                    "position_id": None,
+                    "candidate": {
+                        "strategy": "short_put",
+                        "midpoint_credit": 2.5,
+                        "legs": [
+                            {
+                                "symbol": "SPY260427P00500000",
+                                "role": "short",
+                                "expiration_date": "2026-04-27",
+                                "strike": 500.0,
+                                "option_type": "put",
+                            }
+                        ],
+                    },
+                    "request": {
+                        "execution_intent_id": "intent-1",
+                        "order": {
+                            "symbol": "SPY260427P00500000",
+                            "side": "sell",
+                            "position_intent": "sell_to_open",
+                            "qty": "1",
+                            "type": "limit",
+                            "limit_price": "2.50",
+                            "time_in_force": "day",
+                        },
+                        "execution_policy": {},
+                        "exit_policy": {},
+                    },
+                }
+
+            def schema_ready(self) -> bool:
+                return True
+
+            def get_attempt(self, execution_attempt_id: str) -> dict[str, object] | None:
+                if execution_attempt_id != "attempt-1":
+                    return None
+                return dict(self.attempt)
+
+            def update_attempt(
+                self,
+                *,
+                execution_attempt_id: str,
+                **changes: object,
+            ) -> None:
+                self.attempt.update(changes)
+
+            def list_orders(self, **_: object) -> list[dict[str, object]]:
+                return []
+
+            def list_fills(self, **_: object) -> list[dict[str, object]]:
+                return []
+
+            def intent_schema_ready(self) -> bool:
+                return True
+
+            def get_execution_intent(
+                self,
+                execution_intent_id: str,
+            ) -> dict[str, object] | None:
+                if execution_intent_id != "intent-1":
+                    return None
+                return dict(self.intent)
+
+            def upsert_execution_intent(self, **payload: object) -> dict[str, object]:
+                self.intent.update(payload)
+                return dict(self.intent)
+
+            def append_execution_intent_event(self, **_: object) -> None:
+                pass
+
+            def list_attempts_by_status(
+                self,
+                **_: object,
+            ) -> list[dict[str, object]]:
+                return [dict(self.attempt)]
+
+        class _Storage:
+            def __init__(self) -> None:
+                self.execution = _ExecutionStore()
+
+        class _BrokerClient:
+            def get_account(self) -> dict[str, object]:
+                return {"options_buying_power": "500000"}
+
+            def submit_order(self, payload: dict[str, object]) -> dict[str, object]:
+                raise AlpacaRequestError(
+                    "forbidden",
+                    status_code=403,
+                    url="https://paper-api.alpaca.markets/v2/orders",
+                    response_body=(
+                        '{"message":"insufficient options buying power '
+                        '(required: 191124, available: 8734.72)"}'
+                    ),
+                )
+
+        storage = _Storage()
+        with (
+            patch(
+                "core.services.execution._validate_live_deployment_quality",
+                return_value={"ok": True},
+            ),
+            patch(
+                "core.services.execution.create_alpaca_client_from_env",
+                return_value=_BrokerClient(),
+            ),
+        ):
+            result = run_execution_submit(
+                db_target="test",
+                execution_attempt_id="attempt-1",
+                storage=storage,
+            )
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["reason"], "insufficient_options_buying_power")
+        self.assertEqual(
+            storage.execution.intent["payload"]["execution_admission"]["status"],
+            "blocked",
+        )
+        self.assertEqual(
+            storage.execution.intent["payload"]["execution_admission"]["reason"],
+            "insufficient_options_buying_power",
+        )
 
 
 if __name__ == "__main__":

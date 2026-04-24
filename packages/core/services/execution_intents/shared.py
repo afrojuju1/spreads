@@ -240,6 +240,7 @@ def sync_execution_intent_from_attempt(
     state: str,
     event_type: str,
     event_payload: dict[str, Any] | None = None,
+    payload_updates: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     execution_attempt_id = _as_text(attempt.get("execution_attempt_id"))
     strategy_position_id = _as_text(attempt.get("position_id")) or _as_text(
@@ -265,6 +266,7 @@ def sync_execution_intent_from_attempt(
                 if strategy_position_id is None
                 else {"strategy_position_id": strategy_position_id}
             ),
+            **({} if payload_updates is None else dict(payload_updates)),
         },
         updated_at=updated_at,
     )

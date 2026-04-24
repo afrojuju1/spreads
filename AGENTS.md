@@ -15,6 +15,11 @@
 - Prefer clean, reusable, modular code over narrow patch work.
 - Before implementing, check whether the change duplicates logic, creates a parallel path, or deepens a weak abstraction. If it does, prefer a small structural cleanup or shared helper/service extraction.
 - Extend one canonical path per behavior instead of maintaining near-duplicate flows.
+- Keep the current runtime boundary explicit:
+  - selection is account-agnostic opportunity truth
+  - execution admission is a separate execution/risk concern
+  - alerts are downstream job-backed projections, not source-of-truth state
+- Treat `packages/core/services/account_state.py` as a broker/account read model. Put buying-power estimation, execution admission, and deterministic broker-reject handling under `account_capacity.py`, `risk_manager.py`, and `services/execution/`, not back into the account snapshot layer.
 - If the current architecture is weak, call it out explicitly and propose the better approach before proceeding. Weigh:
   - current callers
   - migration cost
@@ -34,6 +39,7 @@
 - For operator visibility or runtime triage, prefer the shipped ops CLI first when it fits the question:
   - `uv run spreads status`
   - `uv run spreads trading`
+  - `uv run spreads automations --bot-id <bot-id> --automation-id <automation-id> --date <YYYY-MM-DD> --json`
   - `uv run spreads pipelines`
   - `uv run spreads jobs`
   - `uv run spreads uoa`

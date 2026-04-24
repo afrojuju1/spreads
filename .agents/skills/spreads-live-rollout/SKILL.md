@@ -28,6 +28,12 @@ Prefer the repo's canonical rollout path over ad hoc commands:
 
 Do not start duplicate local API, worker, scheduler, or recorder processes if the Docker stack is already running.
 
+Keep this boundary explicit while rolling changes out:
+
+- selection is account-agnostic opportunity state
+- execution admission belongs to execution/risk/account-capacity
+- alerts are downstream job-backed projections of stored state
+
 ## Change Classification
 
 Before rollout, classify what changed:
@@ -46,7 +52,8 @@ Use these current code owners while classifying:
 - discovery and collection: `services/scanners/`, `services/discovery_runs/`, `services/live_selection.py`, `services/opportunity_scoring.py`, `services/candidate_policy.py`
 - canonical opportunity state: `services/signal_state.py`, `services/opportunity_generation.py`, `services/opportunities.py`
 - runtime read models: `services/live_runtime.py`, `services/discovery_run_health/`, `services/pipelines.py`, `services/ops/`
-- execution and positions: `services/execution/`, `services/execution_portfolio.py`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py`
+- account snapshot and broker read model: `services/account_state.py`
+- execution admission and positions: `services/account_capacity.py`, `services/execution/`, `services/execution_portfolio.py`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py`
 
 Use that classification to decide the minimum safe rollout.
 
@@ -114,6 +121,7 @@ Use the ops CLI first:
 docker compose ps
 uv run spreads status
 uv run spreads trading
+uv run spreads automations --bot-id <bot-id> --automation-id <automation-id> --date <YYYY-MM-DD> --json
 uv run spreads pipelines
 ```
 
@@ -139,6 +147,7 @@ Do not assume reseeding alone changes already-enqueued runs.
 - `capture_status=healthy` plus `risk_status=blocked` is a policy gate, not a collector outage.
 - `recovery_state=clear` means recovery is no longer the blocker.
 - recorder-backed quote rows are the canonical live stream path; a direct collector stream should be treated as fallback or a bug depending on current code.
+- selected opportunities with blocked execution-admission counters are not alert failures and not selection bugs by themselves; verify intent `execution_admission` state before changing scanners or alerting.
 
 ## Rollout Close-Out
 

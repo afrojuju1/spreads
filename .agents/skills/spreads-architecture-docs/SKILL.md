@@ -50,12 +50,15 @@ When documenting the current system, use these owners:
   - `packages/core/services/signal_state.py`
   - `packages/core/services/opportunity_generation.py`
   - `packages/core/services/opportunities.py`
+- account snapshots and operator-facing read models:
+  - `packages/core/services/account_state.py`
+  - `packages/core/services/ops/`
 - runtime, pipeline, and ops read models:
   - `packages/core/services/live_runtime.py`
   - `packages/core/services/discovery_run_health/`
   - `packages/core/services/pipelines.py`
-  - `packages/core/services/ops/`
-- execution and portfolio state:
+- execution admission and portfolio state:
+  - `packages/core/services/account_capacity.py`
   - `packages/core/services/execution/`
   - `packages/core/services/execution_portfolio.py`
   - `packages/core/services/session_positions.py`
@@ -88,9 +91,10 @@ When editing repo instructions:
 When editing repo-local skills under `.agents/skills`:
 
 - keep commands aligned with the real CLI surface under `uv run spreads ...`
-- prefer `status`, `trading`, `pipelines`, `jobs`, `uoa`, `audit`, and `backtest`
+- prefer `status`, `trading`, `automations`, `pipelines`, `jobs`, `uoa`, `audit`, and `backtest`
 - keep runtime ownership aligned with `docs/current_system_state.md`
 - refresh stale service references when package splits change ownership
+- keep selection, execution-admission, and alert-projection boundaries explicit instead of letting them collapse into one vague “trading” layer
 
 ## Quality Bar
 
@@ -99,3 +103,4 @@ When editing repo-local skills under `.agents/skills`:
 - clear separation between current architecture and target architecture
 - explicit note when a doc is historical, supporting, or canonical
 - no fake abstractions or naming that hides the real service owner
+- no documentation drift that treats alerts as the source of truth or pushes execution-admission logic back into account snapshot/read-model services

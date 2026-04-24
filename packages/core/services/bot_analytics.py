@@ -31,6 +31,10 @@ ENTRY_DECISION_AUDIT_COUNT_KEYS = (
     "expired_count",
     "canceled_count",
     "repriced_count",
+    "selected_currently_admissible_count",
+    "selected_currently_blocked_count",
+    "blocked_by_buying_power_count",
+    "blocked_by_policy_or_risk_budget_count",
     "row_count",
 )
 ENTRY_DECISION_AUDIT_BUCKET_TO_COUNT_KEY = {
@@ -52,6 +56,24 @@ ENTRY_DECISION_AUDIT_BUCKET_PRIORITY = {
     "pending_dispatch": 5,
     "submitted_working": 6,
     "filled": 7,
+}
+BUYING_POWER_ADMISSION_REASONS = {
+    "insufficient_broker_buying_power",
+    "insufficient_buying_power",
+    "insufficient_options_buying_power",
+}
+POLICY_OR_RISK_BUDGET_ADMISSION_REASONS = {
+    "max_contracts_per_position_exceeded",
+    "max_contracts_per_session_exceeded",
+    "max_open_positions_per_session_exceeded",
+    "max_open_positions_per_underlying_exceeded",
+    "max_open_positions_per_underlying_strategy_exceeded",
+    "max_position_notional_exceeded",
+    "max_position_max_loss_exceeded",
+    "max_session_notional_exceeded",
+    "max_session_max_loss_exceeded",
+    "strategy_risk_budget_exceeded",
+    "max_risk_per_trade_exhausted",
 }
 
 
@@ -114,6 +136,65 @@ def _strategy_name_from_payload(
 
 def _increment_counts(target: dict[str, int], key: str, amount: int = 1) -> None:
     target[key] = int(target.get(key) or 0) + int(amount)
+
+
+def _update_execution_admission_counts(
+    summary: dict[str, Any],
+    execution_admission: Mapping[str, Any],
+) -> None:
+    status = _as_text(execution_admission.get("status"))
+    reason = _as_text(execution_admission.get("reason"))
+    if status == "admissible":
+        _increment_counts(summary, "selected_currently_admissible_count")
+        return
+    if status != "blocked":
+        return
+    _increment_counts(summary, "selected_currently_blocked_count")
+    if reason in BUYING_POWER_ADMISSION_REASONS:
+        _increment_counts(summary, "blocked_by_buying_power_count")
+    if reason in POLICY_OR_RISK_BUDGET_ADMISSION_REASONS:
+        _increment_counts(summary, "blocked_by_policy_or_risk_budget_count")
+
+
+def summarize_selected_execution_admission(
+    *,
+    decisions: list[dict[str, Any]],
+    intents: list[dict[str, Any]],
+) -> dict[str, int]:
+    summary = {
+        "selected_currently_admissible_count": 0,
+        "selected_currently_blocked_count": 0,
+        "blocked_by_buying_power_count": 0,
+        "blocked_by_policy_or_risk_budget_count": 0,
+    }
+    selected_decision_ids = {
+        str(row["opportunity_decision_id"])
+        for row in decisions
+        if str(row.get("state") or "") == "selected"
+        and _as_text(row.get("opportunity_decision_id")) is not None
+    }
+    if not selected_decision_ids:
+        return summary
+
+    latest_intent_by_decision: dict[str, dict[str, Any]] = {}
+    for intent in intents:
+        opportunity_decision_id = _as_text(intent.get("opportunity_decision_id"))
+        if opportunity_decision_id is None or opportunity_decision_id not in selected_decision_ids:
+            continue
+        current = latest_intent_by_decision.get(opportunity_decision_id)
+        current_created_at = None if current is None else _coerce_datetime(current.get("created_at"))
+        intent_created_at = _coerce_datetime(intent.get("created_at"))
+        if current is None or (intent_created_at or datetime(1970, 1, 1, tzinfo=UTC)) >= (
+            current_created_at or datetime(1970, 1, 1, tzinfo=UTC)
+        ):
+            latest_intent_by_decision[opportunity_decision_id] = dict(intent)
+
+    for latest_intent in latest_intent_by_decision.values():
+        _update_execution_admission_counts(
+            summary,
+            _intent_execution_admission(latest_intent),
+        )
+    return summary
 
 
 def summarize_intent_counts(
@@ -658,6 +739,7 @@ def _build_entry_decision_audit(
             latest_attempt=latest_attempt,
         )
         execution_admission = _intent_execution_admission(latest_intent)
+        _update_execution_admission_counts(summary, execution_admission)
         if terminal_reason:
             reason_counts.update([terminal_reason])
         rows.append(

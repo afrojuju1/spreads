@@ -619,6 +619,22 @@ def _render_automation_runtime_summary(
         _render_count_map(payload.get("decision_state_counts")),
     )
     table.add_row(
+        "Selected Admissible",
+        _render_value(payload.get("selected_currently_admissible_count")),
+    )
+    table.add_row(
+        "Selected Blocked",
+        _render_value(payload.get("selected_currently_blocked_count")),
+    )
+    table.add_row(
+        "Blocked Buying Power",
+        _render_value(payload.get("blocked_by_buying_power_count")),
+    )
+    table.add_row(
+        "Blocked Policy/Risk",
+        _render_value(payload.get("blocked_by_policy_or_risk_budget_count")),
+    )
+    table.add_row(
         "Entry Intents",
         _render_value(payload.get("entry_intent_count")),
     )
@@ -853,6 +869,24 @@ def _render_automation_performance(
         overview.add_row("Canceled", _render_value(audit_summary.get("canceled_count")))
         overview.add_row("Repriced", _render_value(audit_summary.get("repriced_count")))
         overview.add_row(
+            "Selected Admissible",
+            _render_value(audit_summary.get("selected_currently_admissible_count")),
+        )
+        overview.add_row(
+            "Selected Blocked",
+            _render_value(audit_summary.get("selected_currently_blocked_count")),
+        )
+        overview.add_row(
+            "Blocked Buying Power",
+            _render_value(audit_summary.get("blocked_by_buying_power_count")),
+        )
+        overview.add_row(
+            "Blocked Policy/Risk",
+            _render_value(
+                audit_summary.get("blocked_by_policy_or_risk_budget_count")
+            ),
+        )
+        overview.add_row(
             "Reasons",
             _render_count_map(
                 audit_summary.get("terminal_reason_counts"),
@@ -1003,6 +1037,8 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
         (
             f"opps {_render_value(summary.get('automation_opportunity_count'))} | "
             f"selected {_render_value(summary.get('automation_selected_count'))} | "
+            f"admit {_render_value(summary.get('selected_currently_admissible_count'))} | "
+            f"blocked {_render_value(summary.get('selected_currently_blocked_count'))} | "
             f"positions {_render_value(summary.get('automation_open_position_count'))} | "
             f"entry intents {_render_value(summary.get('automation_entry_intent_count'))} | "
             f"mgmt intents {_render_value(summary.get('automation_management_intent_count'))} | "

@@ -331,6 +331,7 @@ def _sync_linked_execution_intent(
     state: str | None = None,
     event_type: str,
     message: str,
+    payload_updates: dict[str, Any] | None = None,
 ) -> None:
     from core.services.execution_intents.shared import sync_execution_intent_from_attempt
 
@@ -354,6 +355,7 @@ def _sync_linked_execution_intent(
             "message": message,
             "attempt_status": str(attempt.get("status") or ""),
         },
+        payload_updates=payload_updates,
     )
 
 

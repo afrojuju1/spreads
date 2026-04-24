@@ -17,6 +17,7 @@ from core.services.alpaca import (
     resolve_trading_environment,
 )
 from core.services.execution import (
+    ExecutionAdmissionError,
     submit_opportunity_execution,
     submit_position_close_by_id,
 )
@@ -290,6 +291,33 @@ def submit_execution_intent(
             raise ValueError(
                 f"Execution intent {execution_intent_id} is missing its source reference"
             )
+    except ExecutionAdmissionError as exc:
+        failed_intent = _update_intent(
+            execution_store,
+            dict(claimed_intent),
+            state="failed",
+            payload_updates={
+                "dispatch_status": "failed",
+                "error": str(exc),
+                "execution_admission": dict(exc.admission),
+            },
+            updated_at=_utc_now(),
+        )
+        _append_event(
+            execution_store,
+            execution_intent_id=execution_intent_id,
+            event_type="failed",
+            payload={
+                "error": str(exc),
+                "execution_admission": dict(exc.admission),
+            },
+        )
+        return {
+            "action": "submit_execution_intent",
+            "changed": False,
+            "message": str(exc),
+            "execution_intent": failed_intent,
+        }
     except Exception as exc:
         failed_intent = _update_intent(
             execution_store,
