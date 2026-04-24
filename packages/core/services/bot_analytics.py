@@ -507,6 +507,24 @@ def _decision_terminal_reason(
     return None
 
 
+def _intent_execution_admission(
+    latest_intent: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    if latest_intent is None:
+        return {}
+    payload = (
+        latest_intent.get("payload")
+        if isinstance(latest_intent.get("payload"), Mapping)
+        else {}
+    )
+    admission = (
+        payload.get("execution_admission")
+        if isinstance(payload.get("execution_admission"), Mapping)
+        else {}
+    )
+    return dict(admission)
+
+
 def _decision_outcome_bucket(
     *,
     latest_intent: Mapping[str, Any] | None,
@@ -639,6 +657,7 @@ def _build_entry_decision_audit(
             latest_event=latest_event,
             latest_attempt=latest_attempt,
         )
+        execution_admission = _intent_execution_admission(latest_intent)
         if terminal_reason:
             reason_counts.update([terminal_reason])
         rows.append(
@@ -700,6 +719,37 @@ def _build_entry_decision_audit(
                         0.0,
                     ),
                     2,
+                ),
+                "execution_admission_status": _as_text(
+                    execution_admission.get("status")
+                ),
+                "execution_admission_reason": _as_text(
+                    execution_admission.get("reason")
+                ),
+                "admissible_quantity": (
+                    None
+                    if execution_admission.get("admissible_quantity") in (None, "")
+                    else _coerce_int_value(
+                        execution_admission.get("admissible_quantity")
+                    )
+                ),
+                "required_buying_power": (
+                    None
+                    if execution_admission.get("required_buying_power") in (None, "")
+                    else round(
+                        _coerce_float(execution_admission.get("required_buying_power")),
+                        2,
+                    )
+                ),
+                "available_buying_power": (
+                    None
+                    if execution_admission.get("available_buying_power") in (None, "")
+                    else round(
+                        _coerce_float(
+                            execution_admission.get("available_buying_power")
+                        ),
+                        2,
+                    )
                 ),
             }
         )

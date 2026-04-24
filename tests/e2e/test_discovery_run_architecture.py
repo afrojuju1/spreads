@@ -343,6 +343,30 @@ class _DecisionStorage:
         self.jobs = jobs
 
 
+def _execution_admission_snapshot(
+    *,
+    status: str = "admissible",
+    reason: str | None = None,
+    admissible_quantity: int | None = 2,
+) -> dict[str, object]:
+    return {
+        "status": status,
+        "reason": reason,
+        "message": "snapshot",
+        "evaluated_at": "2026-04-15T15:00:00Z",
+        "admissible_quantity": admissible_quantity,
+        "required_buying_power": 36000.0,
+        "available_buying_power": 90000.0,
+        "account_available_buying_power": 90000.0,
+        "reserved_buying_power": 0.0,
+        "buying_power_basis": "cash_secured_put",
+        "buying_power_source_field": "options_buying_power",
+        "broker_buying_power_status": "ok",
+        "limiting_constraint": "available_broker_buying_power",
+        "strategy_risk_budget": 500.0,
+    }
+
+
 class _RepositoryCapabilities:
     def has_tables(self, *_: object) -> bool:
         return True
@@ -3743,6 +3767,10 @@ class DiscoveryRunArchitectureE2ETests(unittest.TestCase):
                 "core.services.decision_engine.evaluate_entry_controls",
                 return_value=(True, None, {"open_positions": 0}),
             ),
+            patch(
+                "core.services.decision_engine.build_execution_admission_snapshot",
+                return_value=_execution_admission_snapshot(),
+            ),
         ):
             result = run_entry_automation_decision(
                 db_target="postgresql://example",
@@ -3756,6 +3784,11 @@ class DiscoveryRunArchitectureE2ETests(unittest.TestCase):
         self.assertEqual(result["opportunity_count"], 1)
         self.assertEqual(len(execution.upserted_intents), 1)
         self.assertEqual(execution.upserted_intents[0]["payload"]["opportunity_id"], "opp-ready")
+        self.assertEqual(
+            execution.upserted_intents[0]["payload"]["execution_admission"]["status"],
+            "admissible",
+        )
+        self.assertEqual(result["execution_admission"]["admissible_quantity"], 2)
 
     def test_entry_decision_prefers_automation_scoped_opportunities(self) -> None:
         bot = load_active_bots()["short_dated_index_credit_bot"]
@@ -3803,6 +3836,10 @@ class DiscoveryRunArchitectureE2ETests(unittest.TestCase):
             patch(
                 "core.services.decision_engine.evaluate_entry_controls",
                 return_value=(True, None, {"open_positions": 0}),
+            ),
+            patch(
+                "core.services.decision_engine.build_execution_admission_snapshot",
+                return_value=_execution_admission_snapshot(),
             ),
         ):
             result = run_entry_automation_decision(
@@ -3878,6 +3915,10 @@ class DiscoveryRunArchitectureE2ETests(unittest.TestCase):
                 "core.services.decision_engine.evaluate_entry_controls",
                 return_value=(True, None, {"open_positions": 0}),
             ),
+            patch(
+                "core.services.decision_engine.build_execution_admission_snapshot",
+                return_value=_execution_admission_snapshot(),
+            ),
         ):
             result = run_entry_automation_decision(
                 db_target="postgresql://example",
@@ -3930,6 +3971,10 @@ class DiscoveryRunArchitectureE2ETests(unittest.TestCase):
             patch(
                 "core.services.decision_engine.evaluate_entry_controls",
                 return_value=(True, None, {"open_positions": 0}),
+            ),
+            patch(
+                "core.services.decision_engine.build_execution_admission_snapshot",
+                return_value=_execution_admission_snapshot(),
             ),
         ):
             run_entry_automation_decision(
@@ -4001,6 +4046,10 @@ class DiscoveryRunArchitectureE2ETests(unittest.TestCase):
                     "job_run_id": "options_automation_execute:adhoc:test",
                     "job_key": "options_automation_execute:adhoc",
                 },
+            ),
+            patch(
+                "core.services.decision_engine.build_execution_admission_snapshot",
+                return_value=_execution_admission_snapshot(),
             ),
         ):
             result = run_entry_automation_decision(

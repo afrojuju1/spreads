@@ -6,7 +6,12 @@ from core.alerts.discord import build_discord_payload
 
 
 class DiscordAlertPayloadTests(unittest.TestCase):
-    def _runtime_alert(self, *, candidate: dict[str, object]) -> dict[str, object]:
+    def _runtime_alert(
+        self,
+        *,
+        candidate: dict[str, object],
+        execution_admission: dict[str, object] | None = None,
+    ) -> dict[str, object]:
         return {
             "symbol": str(candidate["underlying_symbol"]),
             "alert_type": "runtime_entry_selected",
@@ -19,7 +24,18 @@ class DiscordAlertPayloadTests(unittest.TestCase):
             "details": {
                 "execution_mode": "paper",
                 "approval_mode": "auto",
+                "execution_admission_status": (
+                    None
+                    if execution_admission is None
+                    else execution_admission.get("status")
+                ),
+                "execution_admission_reason": (
+                    None
+                    if execution_admission is None
+                    else execution_admission.get("reason")
+                ),
             },
+            "execution_admission": execution_admission,
         }
 
     def test_short_put_payload_surfaces_pop_and_runtime_status(self) -> None:
@@ -58,7 +74,14 @@ class DiscordAlertPayloadTests(unittest.TestCase):
                             "option_type": "put",
                         }
                     ],
-                }
+                },
+                execution_admission={
+                    "status": "admissible",
+                    "admissible_quantity": 3,
+                    "required_buying_power": 27000.0,
+                    "available_buying_power": 120000.0,
+                    "reserved_buying_power": 0.0,
+                },
             )
         )
 
@@ -68,7 +91,7 @@ class DiscordAlertPayloadTests(unittest.TestCase):
         )
         self.assertEqual(
             embed["description"],
-            "2026-04-27 (4DTE) | selected for entry | paper | auto",
+            "2026-04-27 (4DTE) | selected for entry | paper | auto | acct qty 3",
         )
         ticket_field = next(
             field for field in embed["fields"] if field["name"] == "Ticket"
@@ -79,6 +102,13 @@ class DiscordAlertPayloadTests(unittest.TestCase):
             field for field in embed["fields"] if field["name"] == "Contracts"
         )
         self.assertIn("IWM260427P00270000", contracts_field["value"])
+        execution_field = next(
+            field for field in embed["fields"] if field["name"] == "Execution"
+        )
+        self.assertIn("status admissible", execution_field["value"])
+        self.assertIn("qty 3", execution_field["value"])
+        self.assertIn("req $27,000", execution_field["value"])
+        self.assertIn("avail $120,000", execution_field["value"])
         edge_field = next(field for field in embed["fields"] if field["name"] == "Edge")
         self.assertIn("POP 85.5%", edge_field["value"])
         self.assertIn("credit $0.38", edge_field["value"])
@@ -224,13 +254,25 @@ class DiscordAlertPayloadTests(unittest.TestCase):
                             "option_type": "call",
                         },
                     ],
-                }
+                },
+                execution_admission={
+                    "status": "blocked",
+                    "reason": "insufficient_broker_buying_power",
+                    "admissible_quantity": 0,
+                    "required_buying_power": 352.0,
+                    "available_buying_power": 200.0,
+                    "reserved_buying_power": 100.0,
+                },
             )
         )
 
         embed = payload["embeds"][0]
         self.assertEqual(
             embed["title"], "SPY 2026-04-27 (4DTE) IRON CONDOR | ENTRY READY"
+        )
+        self.assertEqual(
+            embed["description"],
+            "2026-04-27 (4DTE) | selected for entry | paper | auto | acct blocked",
         )
         ticket_field = next(
             field for field in embed["fields"] if field["name"] == "Ticket"
@@ -245,6 +287,13 @@ class DiscordAlertPayloadTests(unittest.TestCase):
         )
         self.assertIn("short/EM +1.90", positioning_field["value"])
         self.assertIn("balance 92.0%", positioning_field["value"])
+        execution_field = next(
+            field for field in embed["fields"] if field["name"] == "Execution"
+        )
+        self.assertIn("status blocked", execution_field["value"])
+        self.assertIn("qty 0", execution_field["value"])
+        self.assertIn("why insufficient-broker-buying-power", execution_field["value"])
+        self.assertIn("reserved $100", execution_field["value"])
         liquidity_field = next(
             field for field in embed["fields"] if field["name"] == "Liquidity"
         )

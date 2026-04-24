@@ -45,6 +45,12 @@ class EntryDecisionAuditTests(unittest.TestCase):
                     "payload": {
                         "dispatch_status": "filled",
                         "reprice_count": 1,
+                        "execution_admission": {
+                            "status": "admissible",
+                            "admissible_quantity": 2,
+                            "required_buying_power": 36000.0,
+                            "available_buying_power": 90000.0,
+                        },
                     },
                     "policy_ref": {"strategy_id": "put_credit"},
                 },
@@ -91,6 +97,9 @@ class EntryDecisionAuditTests(unittest.TestCase):
         self.assertEqual(sample["intent_state"], "filled")
         self.assertEqual(sample["reprice_count"], 1)
         self.assertEqual(sample["execution_intent_id"], "intent-2")
+        self.assertEqual(sample["execution_admission_status"], "admissible")
+        self.assertEqual(sample["admissible_quantity"], 2)
+        self.assertEqual(sample["required_buying_power"], 36000.0)
 
     def test_no_intent_and_revoked_selection_are_counted_separately(self) -> None:
         decided_at = datetime(2026, 4, 20, 15, 0, tzinfo=UTC)

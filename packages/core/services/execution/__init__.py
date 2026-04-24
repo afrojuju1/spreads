@@ -6,6 +6,12 @@ from typing import Any
 
 from core.db.decorators import with_storage
 from core.domain.opportunity_models import Opportunity, OpportunityLeg
+from core.integrations.alpaca.client import AlpacaRequestError
+from core.integrations.alpaca.errors import classify_alpaca_request_error
+from core.services.account_capacity import (
+    estimate_buying_power_requirement,
+    resolve_available_buying_power,
+)
 from core.services.alpaca import create_alpaca_client_from_env
 from core.services.automation_runtime import resolve_entry_runtime
 from core.services.candidate_policy import (
@@ -28,8 +34,10 @@ from core.services.exit_manager import (
     resolve_exit_policy_snapshot,
 )
 from core.services.execution_lifecycle import (
+    OPEN_ATTEMPT_STATUS_LIST,
     PENDING_SUBMISSION_STATUS,
     SUBMIT_UNKNOWN_STATUS,
+    resolve_execution_attempt_filled_quantity,
 )
 from core.services.execution_portfolio import build_structure_quote_snapshot
 from core.services.option_structures import (
@@ -706,6 +714,122 @@ def _validate_live_deployment_quality(
             "live_return_on_risk": live_return_on_risk,
             "minimum_return_on_risk": minimum_return_on_risk,
         },
+    }
+
+
+def _pending_open_attempt_buying_power(
+    *,
+    execution_store: Any,
+    exclude_execution_attempt_id: str | None = None,
+) -> float:
+    list_for_status = getattr(execution_store, "list_attempts_by_status", None)
+    if not callable(list_for_status):
+        return 0.0
+    rows = list_for_status(
+        statuses=list(OPEN_ATTEMPT_STATUS_LIST),
+        trade_intent=OPEN_TRADE_INTENT,
+        limit=200,
+    )
+    reserved_buying_power = 0.0
+    for row in rows:
+        attempt = dict(row)
+        if (
+            exclude_execution_attempt_id is not None
+            and _as_text(attempt.get("execution_attempt_id"))
+            == exclude_execution_attempt_id
+        ):
+            continue
+        requested_quantity = max(_coerce_float(attempt.get("quantity")) or 0.0, 0.0)
+        if requested_quantity <= 0:
+            continue
+        filled_quantity = min(
+            resolve_execution_attempt_filled_quantity(attempt),
+            requested_quantity,
+        )
+        pending_quantity = max(requested_quantity - filled_quantity, 0.0)
+        if pending_quantity <= 0:
+            continue
+        requirement = estimate_buying_power_requirement(
+            dict(attempt.get("candidate") or {}),
+            pending_quantity,
+            limit_price=_coerce_float(attempt.get("limit_price")),
+        )
+        required_buying_power = _coerce_float(
+            requirement.get("required_buying_power")
+        )
+        if required_buying_power is None:
+            continue
+        reserved_buying_power += required_buying_power
+    return round(reserved_buying_power, 2)
+
+
+def _validate_submit_account_capacity(
+    *,
+    execution_store: Any,
+    attempt: Mapping[str, Any],
+    client: Any,
+) -> dict[str, Any]:
+    requirement = estimate_buying_power_requirement(
+        dict(attempt.get("candidate") or {}),
+        _coerce_float(attempt.get("quantity")) or 0.0,
+        limit_price=_coerce_float(attempt.get("limit_price")),
+    )
+    required_buying_power = _coerce_float(requirement.get("required_buying_power"))
+    if required_buying_power is None:
+        return {"ok": True}
+
+    try:
+        account_payload = client.get_account()
+    except Exception as exc:
+        return {
+            "ok": True,
+            "status": "unavailable",
+            "error_text": str(exc),
+        }
+
+    available_snapshot = resolve_available_buying_power(account_payload)
+    available_buying_power = _coerce_float(
+        available_snapshot.get("available_buying_power")
+    )
+    if available_buying_power is None:
+        return {
+            "ok": True,
+            "status": "unavailable",
+            "error_text": "Broker account payload did not include usable buying power fields.",
+        }
+
+    reserved_buying_power = _pending_open_attempt_buying_power(
+        execution_store=execution_store,
+        exclude_execution_attempt_id=_as_text(attempt.get("execution_attempt_id")),
+    )
+    remaining_buying_power = round(
+        max(available_buying_power - reserved_buying_power, 0.0),
+        2,
+    )
+    if required_buying_power > remaining_buying_power:
+        source_field = _as_text(available_snapshot.get("source_field"))
+        source_note = "" if source_field is None else f" from {source_field}"
+        return {
+            "ok": False,
+            "reason": "insufficient_broker_buying_power",
+            "message": (
+                "Open execution is blocked because broker buying power is insufficient"
+                f"{source_note} (requires {required_buying_power:.2f}, "
+                f"available {remaining_buying_power:.2f} after "
+                f"{reserved_buying_power:.2f} reserved)."
+            ),
+            "required_buying_power": required_buying_power,
+            "available_buying_power": remaining_buying_power,
+            "reserved_buying_power": reserved_buying_power,
+            "source_field": source_field,
+        }
+    return {
+        "ok": True,
+        "status": "ok",
+        "required_buying_power": required_buying_power,
+        "available_buying_power": remaining_buying_power,
+        "reserved_buying_power": reserved_buying_power,
+        "source_field": _as_text(available_snapshot.get("source_field")),
     }
 
 
@@ -2071,6 +2195,44 @@ def run_execution_submit(
                     else {"live_quote": dict(live_deployment_quality["live_quote"])}
                 ),
             }
+        account_capacity = _validate_submit_account_capacity(
+            execution_store=execution_store,
+            attempt=payload,
+            client=client,
+        )
+        if not account_capacity["ok"]:
+            execution_store.update_attempt(
+                execution_attempt_id=execution_attempt_id,
+                status="failed",
+                completed_at=_utc_now(),
+                error_text=str(account_capacity["message"]),
+                position_id=_as_text(payload.get("position_id")),
+            )
+            failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
+            _publish_execution_attempt_event(
+                failed_attempt,
+                message=(
+                    "Execution failed before submission: "
+                    f"{account_capacity['message']}"
+                ),
+            )
+            _sync_linked_execution_intent(
+                execution_store=execution_store,
+                attempt=failed_attempt,
+                state="failed",
+                event_type="failed",
+                message=(
+                    "Execution failed before submission: "
+                    f"{account_capacity['message']}"
+                ),
+            )
+            return {
+                "status": "blocked",
+                "reason": str(account_capacity["reason"]),
+                "execution_attempt_id": execution_attempt_id,
+                "message": str(account_capacity["message"]),
+                "attempt": failed_attempt,
+            }
     requested_at = _as_text(payload.get("requested_at")) or _utc_now()
     client_order_id = _as_text(payload.get("client_order_id"))
     order_request = _normalize_submit_order_request(
@@ -2116,6 +2278,77 @@ def run_execution_submit(
             "message": message,
             "attempt": synced_attempt,
         }
+    except AlpacaRequestError as exc:
+        if submitted_order is None:
+            classified_error = classify_alpaca_request_error(exc)
+            execution_store.update_attempt(
+                execution_attempt_id=execution_attempt_id,
+                status="failed",
+                client_order_id=client_order_id,
+                completed_at=requested_at,
+                error_text=str(classified_error["message"]),
+                position_id=_as_text(payload.get("position_id")),
+            )
+            failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
+            _publish_execution_attempt_event(
+                failed_attempt,
+                message=(
+                    "Execution failed before submission: "
+                    f"{classified_error['message']}"
+                ),
+            )
+            _sync_linked_execution_intent(
+                execution_store=execution_store,
+                attempt=failed_attempt,
+                state="failed",
+                event_type="failed",
+                message=(
+                    "Execution failed before submission: "
+                    f"{classified_error['message']}"
+                ),
+            )
+            if bool(classified_error.get("terminal")):
+                return {
+                    "status": "blocked",
+                    "reason": str(classified_error["reason"]),
+                    "execution_attempt_id": execution_attempt_id,
+                    "message": str(classified_error["message"]),
+                    "attempt": failed_attempt,
+                }
+            raise
+        broker_order_id = _as_text(submitted_order.get("id"))
+        submitted_status = str(submitted_order.get("status") or "submitted").lower()
+        execution_store.update_attempt(
+            execution_attempt_id=execution_attempt_id,
+            status=submitted_status,
+            broker_order_id=broker_order_id,
+            client_order_id=_as_text(submitted_order.get("client_order_id"))
+            or client_order_id,
+            submitted_at=_as_text(submitted_order.get("submitted_at")) or requested_at,
+            completed_at=_resolve_completed_at(submitted_order)
+            if _is_terminal_status(submitted_status)
+            else None,
+            error_text=str(exc),
+            position_id=_as_text(payload.get("position_id")),
+        )
+        failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
+        _publish_execution_attempt_event(
+            failed_attempt,
+            message=(
+                f"Order {broker_order_id or execution_attempt_id} was submitted, "
+                f"but local execution sync failed: {exc}"
+            ),
+        )
+        _sync_linked_execution_intent(
+            execution_store=execution_store,
+            attempt=failed_attempt,
+            event_type="submit_unknown",
+            message=(
+                f"Order {broker_order_id or execution_attempt_id} was submitted, "
+                f"but local execution sync failed: {exc}"
+            ),
+        )
+        raise
     except Exception as exc:
         if submitted_order is None:
             execution_store.update_attempt(

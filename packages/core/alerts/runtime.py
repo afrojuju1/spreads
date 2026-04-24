@@ -84,12 +84,51 @@ def _candidate_payload(
     return candidate
 
 
+def _execution_admission_payload(
+    execution_intent: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(execution_intent, Mapping):
+        return None
+    payload = execution_intent.get("payload")
+    if not isinstance(payload, Mapping):
+        return None
+    raw = payload.get("execution_admission")
+    if not isinstance(raw, Mapping):
+        return None
+    admission = {
+        "status": _as_text(raw.get("status")),
+        "reason": _as_text(raw.get("reason")),
+        "message": _as_text(raw.get("message")),
+        "evaluated_at": _as_text(raw.get("evaluated_at")),
+        "admissible_quantity": (
+            None
+            if raw.get("admissible_quantity") in (None, "")
+            else int(raw.get("admissible_quantity"))
+        ),
+        "required_buying_power": _as_float(raw.get("required_buying_power")),
+        "available_buying_power": _as_float(raw.get("available_buying_power")),
+        "account_available_buying_power": _as_float(
+            raw.get("account_available_buying_power")
+        ),
+        "reserved_buying_power": _as_float(raw.get("reserved_buying_power")),
+        "buying_power_basis": _as_text(raw.get("buying_power_basis")),
+        "buying_power_source_field": _as_text(raw.get("buying_power_source_field")),
+        "broker_buying_power_status": _as_text(raw.get("broker_buying_power_status")),
+        "limiting_constraint": _as_text(raw.get("limiting_constraint")),
+        "strategy_risk_budget": _as_float(raw.get("strategy_risk_budget")),
+    }
+    if not any(value not in (None, "") for value in admission.values()):
+        return None
+    return admission
+
+
 def _alert_description(
     *,
     bot_id: str,
     automation_id: str,
     decision: Mapping[str, Any],
     execution_intent: Mapping[str, Any] | None,
+    execution_admission: Mapping[str, Any] | None,
     execution_mode: str | None,
     approval_mode: str | None,
 ) -> str:
@@ -110,6 +149,17 @@ def _alert_description(
         details.append(f"approval {approval_mode}")
     if intent_id:
         details.append(f"intent {intent_id}")
+    if isinstance(execution_admission, Mapping):
+        admission_status = _as_text(execution_admission.get("status"))
+        admission_reason = _as_text(execution_admission.get("reason"))
+        admissible_quantity = execution_admission.get("admissible_quantity")
+        if admission_status == "admissible" and admissible_quantity not in (None, ""):
+            details.append(f"account qty {int(admissible_quantity)}")
+        elif admission_status:
+            rendered = f"account {admission_status}"
+            if admission_reason:
+                rendered += f" {admission_reason}"
+            details.append(rendered)
     return "; ".join(details) + "."
 
 
@@ -156,6 +206,7 @@ def plan_runtime_entry_selected_alert(
     decision_id = _as_text(decision.get("opportunity_decision_id"))
     score = _selected_score(opportunity=opportunity, decision=decision)
     reason_codes = [str(value) for value in list(decision.get("reason_codes") or [])]
+    execution_admission = _execution_admission_payload(execution_intent)
     details = {
         "bot_id": bot_id,
         "automation_id": automation_id,
@@ -168,6 +219,12 @@ def plan_runtime_entry_selected_alert(
         "reason_codes": reason_codes,
         "execution_mode": execution_mode,
         "approval_mode": approval_mode,
+        "execution_admission_status": None
+        if execution_admission is None
+        else execution_admission.get("status"),
+        "execution_admission_reason": None
+        if execution_admission is None
+        else execution_admission.get("reason"),
     }
     payload = {
         "created_at": _as_text(decision.get("decided_at")) or _as_text(
@@ -181,11 +238,13 @@ def plan_runtime_entry_selected_alert(
         "strategy_mode": str(opportunity.get("strategy_family") or "runtime_entry"),
         "profile": str(opportunity.get("profile") or "runtime"),
         "candidate": candidate,
+        "execution_admission": execution_admission,
         "description": _alert_description(
             bot_id=bot_id,
             automation_id=automation_id,
             decision=decision,
             execution_intent=execution_intent,
+            execution_admission=execution_admission,
             execution_mode=execution_mode,
             approval_mode=approval_mode,
         ),

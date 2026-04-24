@@ -8,6 +8,10 @@ from typing import Any
 
 import yaml
 
+from core.services.account_capacity import (
+    estimate_buying_power_requirement,
+    resolve_available_buying_power,
+)
 from core.services.alpaca import (
     create_alpaca_client_from_env,
     resolve_trading_environment,
@@ -42,6 +46,7 @@ BASELINE_RISK_POLICY_NAME = "baseline"
 RISK_POLICY_DERIVED_FLAGS = {
     "max_contracts_per_position_configured": False,
 }
+ACCOUNT_CAPACITY_REQUEST_TIMEOUT_SECONDS = 5.0
 
 OPTIONAL_FLOAT_POLICY_KEYS = {
     "max_position_notional",
@@ -90,6 +95,10 @@ def _coerce_bool(value: Any) -> bool:
     if isinstance(value, (int, float)):
         return bool(value)
     return False
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _candidate_payload(candidate: dict[str, Any]) -> dict[str, Any]:
@@ -249,6 +258,7 @@ def build_candidate_position_sizing(
     max_position_max_loss: float | None = None,
     remaining_session_max_loss: float | None = None,
     strategy_risk_budget: float | None = None,
+    available_broker_buying_power: float | None = None,
 ) -> dict[str, Any]:
     candidate_payload = _candidate_payload(candidate)
     strategy_family = str(
@@ -260,6 +270,14 @@ def build_candidate_position_sizing(
     applies = strategy_supports_position_sizing(strategy_family)
     per_contract_entry_notional = _candidate_entry_notional(candidate, 1.0, limit_price)
     per_contract_max_loss = _candidate_max_loss(candidate, 1.0)
+    buying_power_requirement = estimate_buying_power_requirement(
+        candidate,
+        1.0,
+        limit_price=limit_price,
+    )
+    per_contract_required_buying_power = _coerce_float(
+        buying_power_requirement.get("required_buying_power")
+    )
     constraints: list[tuple[str, int]] = []
 
     def _append_constraint(name: str, value: int | None) -> None:
@@ -295,12 +313,24 @@ def build_candidate_position_sizing(
         "max_risk_per_trade",
         _max_contracts_for_budget(per_contract_max_loss, strategy_risk_budget),
     )
+    _append_constraint(
+        "available_broker_buying_power",
+        _max_contracts_for_budget(
+            per_contract_required_buying_power,
+            available_broker_buying_power,
+        ),
+    )
 
     recommended_quantity = 1
     limiting_constraint = None
-    if applies and constraints:
+    effective_constraints = constraints
+    if not applies:
+        effective_constraints = [
+            item for item in constraints if item[0] == "available_broker_buying_power"
+        ]
+    if effective_constraints:
         limiting_constraint, recommended_quantity = min(
-            constraints,
+            effective_constraints,
             key=lambda item: (item[1], item[0]),
         )
 
@@ -319,7 +349,13 @@ def build_candidate_position_sizing(
         "strategy_family": strategy_family or None,
         "per_contract_entry_notional": per_contract_entry_notional,
         "per_contract_max_loss": per_contract_max_loss,
+        "per_contract_required_buying_power": per_contract_required_buying_power,
+        "buying_power_basis": _as_text(buying_power_requirement.get("basis")),
+        "available_broker_buying_power": available_broker_buying_power,
         "constraints": {name: value for name, value in constraints},
+        "effective_constraints": {
+            name: value for name, value in effective_constraints
+        },
         "limiting_constraint": limiting_constraint,
         "recommended_quantity": int(recommended_quantity),
         "recommended_entry_notional": recommended_entry_notional,
@@ -363,10 +399,11 @@ def build_open_candidate_position_sizing(
     open_attempts = _open_attempts(execution_store, session_id=session_id)
     pending_attempts = _pending_open_attempt_exposures(open_attempts)
     session_metrics = _session_open_metrics(open_positions, pending_attempts)
+    broker_buying_power = live_broker_buying_power_snapshot(execution_store)
     session_notional = session_metrics["active_entry_notional_total"]
     session_max_loss = session_metrics["active_max_loss_total"]
     open_contracts = session_metrics["active_open_contract_count"]
-    return build_candidate_position_sizing(
+    sizing = build_candidate_position_sizing(
         candidate=candidate,
         limit_price=limit_price,
         max_contracts_per_position=_effective_max_contracts_per_position(
@@ -402,7 +439,32 @@ def build_open_candidate_position_sizing(
             )
         ),
         strategy_risk_budget=strategy_risk_budget,
+        available_broker_buying_power=_coerce_float(
+            broker_buying_power.get("remaining_buying_power")
+        ),
     )
+    return {
+        **sizing,
+        "broker_buying_power_status": _as_text(broker_buying_power.get("status")),
+        "broker_buying_power_source_field": _as_text(
+            broker_buying_power.get("source_field")
+        ),
+        "broker_account_available_buying_power": _coerce_float(
+            broker_buying_power.get("available_buying_power")
+        ),
+        "broker_reserved_buying_power": _coerce_float(
+            broker_buying_power.get("reserved_buying_power")
+        ),
+        "broker_capacity_error_text": _as_text(
+            broker_buying_power.get("error_text")
+        ),
+        "broker_reservation_count": _coerce_int(
+            broker_buying_power.get("reservation_count")
+        ),
+        "broker_unsupported_reservation_count": _coerce_int(
+            broker_buying_power.get("unsupported_reservation_count")
+        ),
+    }
 
 
 def _open_positions(execution_store: Any, *, session_id: str) -> list[dict[str, Any]]:
@@ -446,6 +508,18 @@ def _open_attempts(execution_store: Any, *, session_id: str) -> list[dict[str, A
     return filtered
 
 
+def _account_open_attempts(execution_store: Any) -> list[dict[str, Any]]:
+    list_for_status = getattr(execution_store, "list_attempts_by_status", None)
+    if not callable(list_for_status):
+        return []
+    rows = list_for_status(
+        statuses=list(OPEN_ATTEMPT_STATUS_LIST),
+        trade_intent="open",
+        limit=200,
+    )
+    return [dict(row) for row in rows]
+
+
 def _pending_open_attempt_quantity(attempt: Mapping[str, Any]) -> float:
     requested_quantity = _coerce_float(attempt.get("quantity")) or 0.0
     if requested_quantity <= 0:
@@ -475,6 +549,8 @@ def _pending_open_attempt_exposures(
                 "underlying_symbol": _as_text(attempt.get("underlying_symbol")),
                 "strategy": _as_text(attempt.get("strategy")),
                 "pending_quantity": pending_quantity,
+                "limit_price": _coerce_float(attempt.get("limit_price")),
+                "candidate": candidate_payload,
                 "pending_entry_notional": _candidate_entry_notional(
                     candidate_payload,
                     pending_quantity,
@@ -493,6 +569,176 @@ def _pending_open_attempt_exposures(
             }
         )
     return exposures
+
+
+def live_broker_buying_power_snapshot(execution_store: Any) -> dict[str, Any]:
+    open_attempts = _account_open_attempts(execution_store)
+    pending_attempts = _pending_open_attempt_exposures(open_attempts)
+    reserved_buying_power = 0.0
+    reservation_count = 0
+    unsupported_reservation_count = 0
+    for attempt in pending_attempts:
+        requirement = estimate_buying_power_requirement(
+            dict(attempt.get("candidate") or {}),
+            _coerce_float(attempt.get("pending_quantity")) or 0.0,
+            limit_price=_coerce_float(attempt.get("limit_price")),
+        )
+        required_buying_power = _coerce_float(
+            requirement.get("required_buying_power")
+        )
+        if required_buying_power is None:
+            unsupported_reservation_count += 1
+            continue
+        reservation_count += 1
+        reserved_buying_power += required_buying_power
+
+    try:
+        account_payload = create_alpaca_client_from_env(
+            request_timeout_seconds=ACCOUNT_CAPACITY_REQUEST_TIMEOUT_SECONDS,
+        ).get_account()
+    except Exception as exc:
+        return {
+            "status": "unavailable",
+            "source_field": None,
+            "available_buying_power": None,
+            "reserved_buying_power": round(reserved_buying_power, 2),
+            "remaining_buying_power": None,
+            "reservation_count": reservation_count,
+            "unsupported_reservation_count": unsupported_reservation_count,
+            "error_text": str(exc),
+        }
+
+    available_snapshot = resolve_available_buying_power(account_payload)
+    available_buying_power = _coerce_float(
+        available_snapshot.get("available_buying_power")
+    )
+    if available_buying_power is None:
+        return {
+            "status": "unavailable",
+            "source_field": _as_text(available_snapshot.get("source_field")),
+            "available_buying_power": None,
+            "reserved_buying_power": round(reserved_buying_power, 2),
+            "remaining_buying_power": None,
+            "reservation_count": reservation_count,
+            "unsupported_reservation_count": unsupported_reservation_count,
+            "error_text": "Broker account payload did not include usable buying power fields.",
+        }
+
+    return {
+        "status": "ok",
+        "source_field": _as_text(available_snapshot.get("source_field")),
+        "available_buying_power": round(available_buying_power, 2),
+        "reserved_buying_power": round(reserved_buying_power, 2),
+        "remaining_buying_power": round(
+            max(available_buying_power - reserved_buying_power, 0.0),
+            2,
+        ),
+        "reservation_count": reservation_count,
+        "unsupported_reservation_count": unsupported_reservation_count,
+        "error_text": None,
+    }
+
+
+def build_execution_admission_snapshot(
+    *,
+    execution_store: Any,
+    candidate: dict[str, Any],
+    limit_price: float | None,
+    strategy_risk_budget: float | None = None,
+) -> dict[str, Any]:
+    broker_buying_power = live_broker_buying_power_snapshot(execution_store)
+    buying_power_requirement = estimate_buying_power_requirement(
+        candidate,
+        1.0,
+        limit_price=limit_price,
+    )
+    required_buying_power = _coerce_float(
+        buying_power_requirement.get("required_buying_power")
+    )
+    available_buying_power = _coerce_float(
+        broker_buying_power.get("remaining_buying_power")
+    )
+    sizing = build_candidate_position_sizing(
+        candidate=candidate,
+        limit_price=limit_price,
+        strategy_risk_budget=strategy_risk_budget,
+        available_broker_buying_power=available_buying_power,
+    )
+    limiting_constraint = _as_text(sizing.get("limiting_constraint"))
+    admissible_quantity = _coerce_int(sizing.get("recommended_quantity"))
+    snapshot = {
+        "status": "unknown",
+        "reason": None,
+        "message": None,
+        "evaluated_at": _utc_now(),
+        "admissible_quantity": None,
+        "required_buying_power": required_buying_power,
+        "available_buying_power": available_buying_power,
+        "account_available_buying_power": _coerce_float(
+            broker_buying_power.get("available_buying_power")
+        ),
+        "reserved_buying_power": _coerce_float(
+            broker_buying_power.get("reserved_buying_power")
+        ),
+        "buying_power_basis": _as_text(buying_power_requirement.get("basis")),
+        "buying_power_source_field": _as_text(broker_buying_power.get("source_field")),
+        "broker_buying_power_status": _as_text(broker_buying_power.get("status")),
+        "limiting_constraint": limiting_constraint,
+        "strategy_risk_budget": strategy_risk_budget,
+    }
+    if str(broker_buying_power.get("status") or "") != "ok":
+        return {
+            **snapshot,
+            "reason": "broker_buying_power_unavailable",
+            "message": _as_text(broker_buying_power.get("error_text"))
+            or "Broker buying power is unavailable.",
+        }
+    if required_buying_power is None:
+        return {
+            **snapshot,
+            "reason": "unsupported_buying_power_estimate",
+            "message": "Buying power estimate is unavailable for this structure.",
+        }
+
+    resolved_quantity = max(int(admissible_quantity or 0), 0)
+    if resolved_quantity <= 0:
+        reason = "insufficient_broker_buying_power"
+        message = "Current account buying power cannot carry one contract."
+        if limiting_constraint == "max_risk_per_trade":
+            reason = "max_risk_per_trade_exhausted"
+            message = "Configured strategy risk budget does not allow one contract."
+        elif limiting_constraint not in {None, "", "available_broker_buying_power"}:
+            reason = "execution_capacity_unavailable"
+            message = "Current execution capacity does not allow one contract."
+        if (
+            available_buying_power is not None
+            and required_buying_power is not None
+            and reason == "insufficient_broker_buying_power"
+        ):
+            message = (
+                "Current account buying power cannot carry one contract "
+                f"(requires {required_buying_power:.2f}, "
+                f"available {available_buying_power:.2f})."
+            )
+        return {
+            **snapshot,
+            "status": "blocked",
+            "reason": reason,
+            "message": message,
+            "admissible_quantity": 0,
+        }
+
+    message = f"Current account can carry up to {resolved_quantity} contract"
+    if resolved_quantity != 1:
+        message += "s"
+    message += " now."
+    return {
+        **snapshot,
+        "status": "admissible",
+        "reason": None,
+        "message": message,
+        "admissible_quantity": resolved_quantity,
+    }
 
 
 def _broker_position_side(position: Mapping[str, Any]) -> str | None:
@@ -871,6 +1117,14 @@ def evaluate_open_execution(
     session_notional = session_metrics["active_entry_notional_total"]
     session_max_loss = session_metrics["active_max_loss_total"]
     open_contracts = session_metrics["active_open_contract_count"]
+    buying_power_requirement = estimate_buying_power_requirement(
+        candidate,
+        quantity,
+        limit_price=limit_price,
+    )
+    required_buying_power = _coerce_float(
+        buying_power_requirement.get("required_buying_power")
+    )
     metrics = {
         **session_metrics,
         "requested_quantity": int(quantity),
@@ -897,6 +1151,8 @@ def evaluate_open_execution(
             len(matching_strategy) + len(matching_pending_strategy)
         ),
         "strategy_risk_budget": strategy_risk_budget,
+        "required_buying_power": required_buying_power,
+        "buying_power_basis": _as_text(buying_power_requirement.get("basis")),
     }
     sizing = build_open_candidate_position_sizing(
         execution_store=execution_store,
@@ -910,6 +1166,18 @@ def evaluate_open_execution(
     metrics["recommended_quantity"] = int(sizing["recommended_quantity"])
     metrics["recommended_position_max_loss"] = sizing["recommended_max_loss"]
     metrics["recommended_position_notional"] = sizing["recommended_entry_notional"]
+    metrics["available_broker_buying_power"] = _coerce_float(
+        sizing.get("available_broker_buying_power")
+    )
+    metrics["broker_buying_power_status"] = _as_text(
+        sizing.get("broker_buying_power_status")
+    )
+    metrics["broker_reserved_buying_power"] = _coerce_float(
+        sizing.get("broker_reserved_buying_power")
+    )
+    metrics["broker_buying_power_source_field"] = _as_text(
+        sizing.get("broker_buying_power_source_field")
+    )
 
     kill_switch_reason = _kill_switch_reason()
     if kill_switch_reason is not None:
@@ -1125,6 +1393,29 @@ def evaluate_open_execution(
             "note": "Open execution exceeds strategy max_risk_per_trade.",
             "reason_codes": ["strategy_risk_budget_exceeded"],
             "blockers": ["strategy_risk_budget_exceeded"],
+            "policy": normalized_policy,
+            "metrics": metrics,
+        }
+
+    available_broker_buying_power = _coerce_float(
+        sizing.get("available_broker_buying_power")
+    )
+    if (
+        required_buying_power is not None
+        and available_broker_buying_power is not None
+        and required_buying_power > available_broker_buying_power
+    ):
+        source_field = _as_text(sizing.get("broker_buying_power_source_field"))
+        source_note = "" if source_field is None else f" from {source_field}"
+        return {
+            "status": "blocked",
+            "note": (
+                "Open execution exceeds available broker buying power"
+                f"{source_note} (requires {required_buying_power:.2f}, "
+                f"available {available_broker_buying_power:.2f})."
+            ),
+            "reason_codes": ["insufficient_broker_buying_power"],
+            "blockers": ["insufficient_broker_buying_power"],
             "policy": normalized_policy,
             "metrics": metrics,
         }

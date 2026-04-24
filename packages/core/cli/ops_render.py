@@ -873,6 +873,8 @@ def _render_automation_performance(
         table.add_column("Strategy")
         table.add_column("Symbol")
         table.add_column("Outcome")
+        table.add_column("Admit")
+        table.add_column("Qty", justify="right")
         table.add_column("Intent")
         table.add_column("Attempt")
         table.add_column("Reprice", justify="right")
@@ -886,13 +888,19 @@ def _render_automation_performance(
                 str(row.get("strategy") or "-"),
                 str(row.get("underlying_symbol") or "-"),
                 str(row.get("outcome_bucket") or "-"),
+                str(row.get("execution_admission_status") or "-"),
+                _render_value(row.get("admissible_quantity")),
                 str(row.get("intent_state") or "-"),
                 str(row.get("attempt_status") or "-"),
                 _render_value(row.get("reprice_count")),
                 _render_duration(row.get("decision_to_intent_seconds")),
                 _render_duration(row.get("intent_to_submit_seconds")),
                 _render_duration(row.get("submit_to_terminal_seconds")),
-                str(row.get("terminal_reason") or "-"),
+                str(
+                    row.get("terminal_reason")
+                    or row.get("execution_admission_reason")
+                    or "-"
+                ),
             )
         console.print(table)
 

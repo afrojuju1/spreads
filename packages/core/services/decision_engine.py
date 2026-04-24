@@ -14,6 +14,7 @@ from core.services.execution_intents import request_options_automation_dispatch
 from core.services.execution_intents.shared import issue_pending_execution_intent
 from core.services.management_recipes import build_exit_policy_from_recipe_refs
 from core.services.option_structures import normalize_strategy_family
+from core.services.risk_manager import build_execution_admission_snapshot
 from core.services.runtime_policy import build_runtime_policy_ref
 from core.services.automation_runtime import resolve_entry_runtime
 
@@ -59,6 +60,50 @@ def _normalized_blockers(value: Any) -> list[str]:
         if rendered and rendered not in blockers:
             blockers.append(rendered)
     return blockers
+
+
+def _as_float(value: Any) -> float | None:
+    try:
+        if value not in (None, ""):
+            return float(value)
+    except (TypeError, ValueError):
+        return None
+    return None
+
+
+def _selected_execution_admission(
+    *,
+    execution_store: Any,
+    runtime: Any,
+    opportunity: dict[str, Any],
+) -> dict[str, Any]:
+    strategy_risk_budget = _as_float(
+        getattr(runtime.build_settings, "risk_defaults", {}).get("max_risk_per_trade")
+    )
+    try:
+        return build_execution_admission_snapshot(
+            execution_store=execution_store,
+            candidate=opportunity,
+            limit_price=None,
+            strategy_risk_budget=strategy_risk_budget,
+        )
+    except Exception as exc:
+        return {
+            "status": "unknown",
+            "reason": "execution_admission_unavailable",
+            "message": str(exc),
+            "evaluated_at": _utc_now(),
+            "admissible_quantity": None,
+            "required_buying_power": None,
+            "available_buying_power": None,
+            "account_available_buying_power": None,
+            "reserved_buying_power": None,
+            "buying_power_basis": None,
+            "buying_power_source_field": None,
+            "broker_buying_power_status": None,
+            "limiting_constraint": None,
+            "strategy_risk_budget": strategy_risk_budget,
+        }
 
 
 def _opportunity_blockers(row: dict[str, Any]) -> list[str]:
@@ -191,6 +236,7 @@ def run_entry_automation_decision(
     selected_intent: dict[str, Any] | None = None
     selected_decision: dict[str, Any] | None = None
     selected_opportunity: dict[str, Any] | None = None
+    selected_execution_admission: dict[str, Any] | None = None
     dispatch_job_run_id: str | None = None
     for decision_plan, opportunity in zip(
         plan["decisions"], opportunities, strict=False
@@ -245,6 +291,11 @@ def run_entry_automation_decision(
                 payload={"slot_key": slot_key},
             )
             continue
+        selected_execution_admission = _selected_execution_admission(
+            execution_store=execution_store,
+            runtime=runtime,
+            opportunity=opportunity,
+        )
         selected_intent = issue_pending_execution_intent(
             execution_store,
             execution_intent_id=_intent_id(str(decision["opportunity_decision_id"])),
@@ -267,6 +318,7 @@ def run_entry_automation_decision(
                 "underlying_symbol": opportunity.get("underlying_symbol"),
                 "execution_mode": runtime.automation.automation.execution_mode,
                 "approval_mode": runtime.automation.automation.approval_mode,
+                "execution_admission": selected_execution_admission,
                 "exit_policy": build_exit_policy_from_recipe_refs(
                     tuple(runtime.automation.strategy_config.management_recipe_refs)
                 ),
@@ -349,6 +401,7 @@ def run_entry_automation_decision(
         "execution_intent_id": None
         if selected_intent is None
         else str(selected_intent.get("execution_intent_id")),
+        "execution_admission": selected_execution_admission,
         "dispatch_job_run_id": dispatch_job_run_id,
         "runtime_alert": runtime_alert,
     }

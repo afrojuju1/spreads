@@ -137,6 +137,13 @@ def compact_signed_money(value: Any, *, fallback: str = "n/a") -> str:
     return f"{rendered:+.2f}"
 
 
+def _normalized_reason_text(value: Any) -> str | None:
+    rendered = str(value or "").strip().lower()
+    if not rendered:
+        return None
+    return rendered.replace("_", "-")
+
+
 def _expiration_text(candidate: dict[str, Any]) -> str:
     expiration_date = str(candidate.get("expiration_date") or "").strip()
     dte_text = compact_dte(candidate.get("days_to_expiration"))
@@ -328,6 +335,14 @@ def _runtime_description(alert: dict[str, Any]) -> str:
         parts.append(execution_mode)
     if approval_mode:
         parts.append(approval_mode)
+    execution_admission = _execution_admission(alert)
+    if execution_admission is not None:
+        admission_status = str(execution_admission.get("status") or "").strip().lower()
+        admissible_quantity = execution_admission.get("admissible_quantity")
+        if admission_status == "admissible" and admissible_quantity not in (None, ""):
+            parts.append(f"acct qty {compact_integer(admissible_quantity)}")
+        elif admission_status:
+            parts.append(f"acct {admission_status}")
     return " | ".join(parts)
 
 
@@ -336,6 +351,54 @@ def _spread_description(alert: dict[str, Any]) -> str:
     if alert_type in _RUNTIME_READY_ALERTS:
         return _runtime_description(alert)
     return str(alert.get("description") or "").strip()
+
+
+def _execution_admission(alert: dict[str, Any]) -> dict[str, Any] | None:
+    raw = alert.get("execution_admission")
+    if isinstance(raw, dict):
+        return dict(raw)
+    details = alert.get("details") if isinstance(alert.get("details"), dict) else {}
+    status = str(details.get("execution_admission_status") or "").strip()
+    reason = str(details.get("execution_admission_reason") or "").strip()
+    if not status and not reason:
+        return None
+    return {
+        "status": status or None,
+        "reason": reason or None,
+    }
+
+
+def _execution_field(alert: dict[str, Any]) -> dict[str, Any] | None:
+    execution_admission = _execution_admission(alert)
+    if execution_admission is None:
+        return None
+    status = str(execution_admission.get("status") or "").strip().lower()
+    parts = [
+        _metric_part("status", status or None),
+        _metric_part(
+            "qty",
+            compact_integer(execution_admission.get("admissible_quantity")),
+        ),
+        _metric_part(
+            "req",
+            compact_money(execution_admission.get("required_buying_power")),
+        ),
+        _metric_part(
+            "avail",
+            compact_money(execution_admission.get("available_buying_power")),
+        ),
+    ]
+    reserved_buying_power = execution_admission.get("reserved_buying_power")
+    if reserved_buying_power not in (None, "", 0, 0.0):
+        parts.append(_metric_part("reserved", compact_money(reserved_buying_power)))
+    reason_text = _normalized_reason_text(execution_admission.get("reason"))
+    if reason_text is not None and status != "admissible":
+        parts.append(_metric_part("why", reason_text))
+    return {
+        "name": "Execution",
+        "value": _join_metric_parts(parts),
+        "inline": False,
+    }
 
 
 def _single_leg_sections(candidate: dict[str, Any]) -> list[dict[str, Any]]:
@@ -600,6 +663,11 @@ def _build_spread_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
     )
     description = _spread_description(alert)
     fields = _spread_fields(candidate)
+    if str(alert.get("alert_type") or "").strip().lower() in _RUNTIME_READY_ALERTS:
+        execution_field = _execution_field(alert)
+        if execution_field is not None:
+            insert_index = min(2, len(fields))
+            fields.insert(insert_index, execution_field)
 
     embed = {
         "title": title,
