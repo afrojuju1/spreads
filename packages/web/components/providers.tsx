@@ -48,11 +48,14 @@ type RealtimeNotice = {
   tone: RealtimeNoticeTone;
 };
 
+type RealtimeEventListener = (event: GlobalRealtimeEvent) => void;
+
 type RealtimeActivityContextValue = {
   connectionState: RealtimeConnectionState;
   latestSummary: string | null;
   notices: RealtimeNotice[];
   dismissNotice: (noticeId: string) => void;
+  subscribeRealtimeEvent: (listener: RealtimeEventListener) => () => void;
 };
 
 type LayoutChromeContextValue = {
@@ -77,6 +80,7 @@ const RealtimeActivityContext = createContext<RealtimeActivityContextValue>({
   latestSummary: null,
   notices: [],
   dismissNotice: () => {},
+  subscribeRealtimeEvent: () => () => {},
 });
 
 const LayoutChromeContext = createContext<LayoutChromeContextValue>({
@@ -267,15 +271,18 @@ function formatNoticeTime(timestamp: string): string {
 function GlobalRealtimeBridge({
   onConnectionStateChange,
   onNotice,
+  onEvent,
 }: {
   onConnectionStateChange: (state: RealtimeConnectionState) => void;
   onNotice: (notice: RealtimeNotice) => void;
+  onEvent: (event: GlobalRealtimeEvent) => void;
 }) {
   const queryClient = useQueryClient();
   const reconnectTimerRef = useRef<number | null>(null);
 
   const handleRealtimeEvent = useEffectEvent((payload: string) => {
     const realtimeEvent = parseGlobalRealtimeEvent(payload);
+    onEvent(realtimeEvent);
     const pipelineId = readText(realtimeEvent.payload.pipeline_id);
     const botId = readText(realtimeEvent.payload.bot_id);
     const automationId = readText(realtimeEvent.payload.automation_id);
@@ -484,6 +491,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   const [isThemeReady, setIsThemeReady] = useState(false);
   const seenNoticeIdsRef = useRef<Set<string>>(new Set());
   const noticeTimersRef = useRef<Map<string, number>>(new Map());
+  const realtimeListenersRef = useRef<Set<RealtimeEventListener>>(new Set());
 
   useEffect(() => {
     const stored = parseThemePreference(
@@ -527,6 +535,19 @@ export function Providers({ children }: { children: React.ReactNode }) {
     noticeTimersRef.current.set(notice.id, timer);
   };
 
+  const emitRealtimeEvent = (event: GlobalRealtimeEvent) => {
+    for (const listener of realtimeListenersRef.current) {
+      listener(event);
+    }
+  };
+
+  const subscribeRealtimeEvent = (listener: RealtimeEventListener) => {
+    realtimeListenersRef.current.add(listener);
+    return () => {
+      realtimeListenersRef.current.delete(listener);
+    };
+  };
+
   const setThemePreference = (nextThemePreference: ThemePreference) => {
     setThemePreferenceState(nextThemePreference);
     applyThemePreference(nextThemePreference, document.documentElement);
@@ -558,11 +579,13 @@ export function Providers({ children }: { children: React.ReactNode }) {
               latestSummary,
               notices,
               dismissNotice,
+              subscribeRealtimeEvent,
             }}
           >
             <GlobalRealtimeBridge
               onConnectionStateChange={setConnectionState}
               onNotice={pushNotice}
+              onEvent={emitRealtimeEvent}
             />
             {children}
             <ShellActivityToasts />

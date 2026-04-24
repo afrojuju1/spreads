@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from datetime import UTC, datetime
 from typing import Any
 
 from core.db.decorators import with_storage
+from core.jobs.adhoc import enqueue_ad_hoc_job
+from core.jobs.registry import DISCOVERY_RUN_JOB_TYPE
 from core.services.control_plane import get_control_state_snapshot
+from core.services.discovery_runs.shared import session_date_for_generated_at
 from core.services.execution import (
     list_session_execution_attempts,
     normalize_execution_policy,
@@ -23,10 +27,20 @@ from core.services.risk_manager import (
     normalize_risk_policy,
 )
 from core.services.runtime_identity import (
+    build_pipeline_id,
     build_live_run_scope_id,
     parse_pipeline_id,
 )
+from core.services.strategy_specs import resolve_strategy_spec
 from core.storage.serializers import parse_datetime
+
+MANUAL_PIPELINE_LABEL_PREFIX = "manual"
+MANUAL_PIPELINE_PROFILE = "weekly"
+MANUAL_PIPELINE_TOP = 5
+MANUAL_PIPELINE_PER_SYMBOL_TOP = 3
+MANUAL_PIPELINE_INTERVAL_SECONDS = 300
+MANUAL_PIPELINE_QUOTE_CAPTURE_SECONDS = 20
+MANUAL_PIPELINE_TRADE_CAPTURE_SECONDS = 10
 
 
 def _parse_sort_value(value: str | None):
@@ -49,6 +63,63 @@ def _latest_activity_timestamp(*values: str | None) -> str | None:
             best_timestamp = parsed
             best_value = normalized
     return best_value
+
+
+def _as_utc_iso(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _manual_job_run_id(job_key: str, scheduled_for: datetime) -> str:
+    slot = scheduled_for.astimezone(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    return f"{job_key}:{slot}"
+
+
+def _normalize_manual_symbol(value: str) -> str:
+    normalized = str(value or "").strip().upper()
+    if not normalized:
+        raise ValueError("symbol is required")
+    if not all(char.isalnum() or char in {".", "-", "_"} for char in normalized):
+        raise ValueError("symbol contains unsupported characters")
+    return normalized
+
+
+def _resolve_pipeline_run_strategy(
+    *,
+    strategy_mode: str,
+    strategy_family: str | None,
+) -> tuple[str, str | None, str]:
+    normalized_mode = str(strategy_mode or "auto").strip().lower()
+    if normalized_mode not in {"auto", "manual"}:
+        raise ValueError("strategy_mode must be auto or manual")
+    if normalized_mode == "auto":
+        return "auto", None, "auto"
+    normalized_family = str(strategy_family or "").strip().lower()
+    if not normalized_family:
+        raise ValueError("strategy_family is required when strategy_mode is manual")
+    if normalized_family == "auto":
+        raise ValueError("strategy_family cannot be auto in manual mode")
+    strategy_spec = resolve_strategy_spec(normalized_family)
+    return (
+        "manual",
+        normalized_family,
+        str(strategy_spec.scanner_strategy),
+    )
+
+
+def _manual_pipeline_label(
+    *,
+    symbol: str,
+    strategy_mode: str,
+    strategy_family: str | None,
+) -> str:
+    strategy_token = (
+        "auto" if strategy_mode == "auto" else str(strategy_family or "manual")
+    )
+    return (
+        f"{MANUAL_PIPELINE_LABEL_PREFIX}_{symbol.lower()}_{strategy_token.lower()}"
+        .replace("-", "_")
+        .replace(".", "_")
+    )
 
 
 def _discovery_run_event_sort_key(event: Mapping[str, Any]) -> tuple[Any, int]:
@@ -403,6 +474,120 @@ def list_pipelines(
         reverse=True,
     )
     return {"pipelines": summaries[:limit]}
+
+
+@with_storage()
+def start_pipeline_run(
+    *,
+    db_target: str,
+    symbol: str,
+    strategy_mode: str = "auto",
+    strategy_family: str | None = None,
+    storage: Any | None = None,
+) -> dict[str, Any]:
+    del db_target
+    job_store = storage.jobs
+    if not job_store.schema_ready():
+        raise RuntimeError("Job schema is unavailable.")
+
+    normalized_symbol = _normalize_manual_symbol(symbol)
+    (
+        resolved_strategy_mode,
+        resolved_strategy_family,
+        scanner_strategy,
+    ) = _resolve_pipeline_run_strategy(
+        strategy_mode=strategy_mode,
+        strategy_family=strategy_family,
+    )
+    label = _manual_pipeline_label(
+        symbol=normalized_symbol,
+        strategy_mode=resolved_strategy_mode,
+        strategy_family=resolved_strategy_family,
+    )
+    pipeline_id = build_pipeline_id(label)
+    scheduled_for = datetime.now(UTC)
+    scheduled_for_iso = _as_utc_iso(scheduled_for)
+    session_date = session_date_for_generated_at(scheduled_for_iso)
+    session_id = build_live_run_scope_id(label, session_date)
+    job_key = f"discovery_run:adhoc:{label}"
+    job_run_id = _manual_job_run_id(job_key, scheduled_for)
+    payload = {
+        "job_key": job_key,
+        "job_type": DISCOVERY_RUN_JOB_TYPE,
+        "label": label,
+        "pipeline_id": pipeline_id,
+        "session_id": session_id,
+        "session_date": session_date,
+        "scheduled_for": scheduled_for_iso,
+        "slot_at": scheduled_for_iso,
+        "symbols": normalized_symbol,
+        "strategy": scanner_strategy,
+        "strategy_mode": resolved_strategy_mode,
+        "strategy_family": resolved_strategy_family,
+        "profile": MANUAL_PIPELINE_PROFILE,
+        "greeks_source": "auto",
+        "top": MANUAL_PIPELINE_TOP,
+        "per_symbol_top": MANUAL_PIPELINE_PER_SYMBOL_TOP,
+        "interval_seconds": MANUAL_PIPELINE_INTERVAL_SECONDS,
+        "quote_capture_seconds": MANUAL_PIPELINE_QUOTE_CAPTURE_SECONDS,
+        "trade_capture_seconds": MANUAL_PIPELINE_TRADE_CAPTURE_SECONDS,
+        "allow_off_hours": True,
+        "session_start_offset_minutes": 0,
+        "session_end_offset_minutes": 0,
+        "options_automation_enabled": False,
+        "singleton_scope": f"manual:{label}",
+        "manual_run": True,
+    }
+    job_run, _created = job_store.create_job_run(
+        job_run_id=job_run_id,
+        job_key=job_key,
+        arq_job_id=job_run_id,
+        job_type=DISCOVERY_RUN_JOB_TYPE,
+        status="queued",
+        scheduled_for=scheduled_for,
+        session_id=session_id,
+        slot_at=scheduled_for,
+        payload=payload,
+    )
+    try:
+        enqueued = enqueue_ad_hoc_job(
+            job_type=DISCOVERY_RUN_JOB_TYPE,
+            job_key=job_key,
+            job_run_id=job_run_id,
+            arq_job_id=job_run_id,
+            payload=payload,
+        )
+    except Exception as exc:
+        job_store.update_job_run_status(
+            job_run_id=job_run_id,
+            status="failed",
+            expected_arq_job_id=job_run_id,
+            finished_at=datetime.now(UTC),
+            error_text=str(exc),
+        )
+        raise RuntimeError(f"Pipeline run queueing failed: {exc}") from exc
+    if enqueued is None:
+        job_store.update_job_run_status(
+            job_run_id=job_run_id,
+            status="failed",
+            expected_arq_job_id=job_run_id,
+            finished_at=datetime.now(UTC),
+            error_text="Discovery run was not enqueued.",
+        )
+        raise RuntimeError("Pipeline run was not enqueued.")
+    return {
+        "job_run_id": str(job_run["job_run_id"]),
+        "job_key": str(job_run["job_key"]),
+        "pipeline_id": pipeline_id,
+        "label": label,
+        "session_id": session_id,
+        "scheduled_for": scheduled_for_iso,
+        "status": str(job_run["status"]),
+        "symbol": normalized_symbol,
+        "strategy_mode": resolved_strategy_mode,
+        "strategy_family": resolved_strategy_family,
+        "profile": MANUAL_PIPELINE_PROFILE,
+    }
 
 
 @with_storage()

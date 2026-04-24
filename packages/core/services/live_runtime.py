@@ -43,11 +43,14 @@ def list_latest_live_sessions(
 
     job_store = storage.jobs
     signal_store = storage.signals
-    pipeline_rows = _list_runtime_pipelines(job_store)
-    if not pipeline_rows:
-        pipeline_rows = [
-            dict(row) for row in discovery_store.list_pipelines(limit=max(limit, 1))
-        ]
+    pipeline_rows_by_id = {
+        str(row["pipeline_id"]): dict(row)
+        for row in _list_runtime_pipelines(job_store)
+    }
+    for row in discovery_store.list_pipelines(limit=max(limit * 5, limit, 1)):
+        payload = dict(row)
+        pipeline_rows_by_id.setdefault(str(payload["pipeline_id"]), payload)
+    pipeline_rows = list(pipeline_rows_by_id.values())
     latest_cycles = _latest_cycles_for_market_date(
         discovery_store=discovery_store,
         pipeline_rows=pipeline_rows,

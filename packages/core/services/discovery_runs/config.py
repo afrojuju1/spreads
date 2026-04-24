@@ -32,6 +32,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--strategy",
         default="combined",
         choices=(
+            "auto",
             "call_credit",
             "put_credit",
             "call_debit",

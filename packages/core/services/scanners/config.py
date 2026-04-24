@@ -176,6 +176,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--strategy",
         default="call_credit",
         choices=(
+            "auto",
             "call_credit",
             "put_credit",
             "call_debit",
@@ -190,7 +191,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "combined",
         ),
         help=(
-            "Options structure strategy. Use combined to evaluate both call and put credit spreads. "
+            "Options structure strategy. Use auto to evaluate the supported manual-scan families, "
+            "or combined to evaluate both call and put credit spreads. "
             "Default: call_credit"
         ),
     )

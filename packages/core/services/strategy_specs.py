@@ -454,25 +454,37 @@ def all_strategy_specs() -> tuple[StrategySpec, ...]:
 
 
 def strategy_display_label(strategy: str) -> str:
+    if strategy == "auto":
+        return "Auto"
     if strategy == "combined":
         return "Combined"
     return resolve_strategy_spec(strategy).display_label
 
 
 def strategy_option_type(strategy: str) -> str:
-    if strategy == "combined":
+    if strategy in {"combined", "auto"}:
         return "call"
     spec = resolve_strategy_spec(strategy)
     return spec.option_type or "call"
 
 
 def strategy_direction(strategy: str) -> str:
-    if strategy == "combined":
+    if strategy in {"combined", "auto"}:
         return "neutral"
     return resolve_strategy_spec(strategy).direction
 
 
 def concrete_strategies(strategy: str) -> tuple[str, ...]:
+    if strategy == "auto":
+        return (
+            "call_credit",
+            "put_credit",
+            "call_debit",
+            "put_debit",
+            "long_call",
+            "long_put",
+            "iron_condor",
+        )
     if strategy == "combined":
         return ("call_credit", "put_credit")
     return (resolve_strategy_spec(strategy).scanner_strategy,)

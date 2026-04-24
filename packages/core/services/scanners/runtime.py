@@ -600,7 +600,9 @@ def scan_symbol_across_strategies(
             )
         except Exception as exc:
             label = (
-                f"{symbol}:{strategy}" if base_args.strategy == "combined" else symbol
+                f"{symbol}:{strategy}"
+                if base_args.strategy in {"combined", "auto"}
+                else symbol
             )
             failures.append(
                 UniverseScanFailure(symbol=label, error=str(exc).splitlines()[0])

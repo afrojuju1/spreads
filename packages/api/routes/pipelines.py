@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
-from api.errors import bad_request_error, not_found_error
+from api.errors import bad_request_error, not_found_error, service_unavailable_error
+from api.schemas.pipelines import PipelineRunRequest
 from core.runtime.config import default_database_url
 from core.services.discovery_sessions import (
     get_discovery_session_detail,
@@ -10,6 +11,7 @@ from core.services.discovery_sessions import (
     list_discovery_sessions,
 )
 from core.services.market_dates import resolve_market_date
+from core.services.pipelines import start_pipeline_run
 
 router = APIRouter()
 
@@ -75,3 +77,21 @@ def list_pipeline_cycles_route(
         market_date=resolved_market_date,
         limit=limit,
     )
+
+
+@router.post("/pipelines/run")
+def start_pipeline_run_route(
+    payload: PipelineRunRequest,
+    db: str | None = None,
+) -> dict[str, object]:
+    try:
+        return start_pipeline_run(
+            db_target=_db_target(db),
+            symbol=payload.symbol,
+            strategy_mode=payload.strategy_mode,
+            strategy_family=payload.strategy_family,
+        )
+    except ValueError as exc:
+        raise bad_request_error(exc) from exc
+    except RuntimeError as exc:
+        raise service_unavailable_error(exc) from exc

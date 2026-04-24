@@ -404,12 +404,14 @@ async def run_discovery_run_job(
         )
 
     def runner(heartbeat: Any) -> dict[str, Any]:
-        discovery_run_spec = get_declared_discovery_run_spec(job_key)
-        if discovery_run_spec is None:
-            raise ValueError(f"Unknown discovery-run spec: {job_key}")
         args = build_collection_args(
             payload,
-            options_automation_scope=discovery_run_spec.options_automation_scope,
+            options_automation_scope=(
+                {"enabled": False}
+                if (discovery_run_spec := get_declared_discovery_run_spec(job_key))
+                is None
+                else discovery_run_spec.options_automation_scope
+            ),
         )
         session_id = payload.get("session_id")
         slot_at = payload.get("slot_at")

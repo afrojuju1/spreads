@@ -8,11 +8,18 @@ import {
   BriefcaseBusiness,
   CandlestickChart,
   Radar,
+  Search,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
 export const LAYOUT_NAV_ITEMS = [
+  {
+    href: "/scan",
+    label: "Scan",
+    caption: "manual run",
+    icon: Search,
+  },
   {
     href: "/opportunities",
     label: "Opportunities",
