@@ -23,6 +23,7 @@ Current product terminology note:
 
 - `backtest` is the canonical historical-evaluation product
 - `audit` is the canonical operator investigation surface
+- `backtest compare` is the canonical comparison surface for exported `run`, `replay`, and `replay-range` payloads
 - `analyze` and `post-market analyze` have been removed from the operator workflow
 - do not tell operators to use the removed `spreads replay` command
 
@@ -163,10 +164,17 @@ Use:
 ```bash
 uv run spreads audit <pipeline-id> --date YYYY-MM-DD
 uv run spreads backtest run --bot-id <bot-id> --automation-id <automation-id>
+uv run spreads backtest replay-range --bot-id <bot-id> --automation-id <automation-id> --start-date YYYY-MM-DD --end-date YYYY-MM-DD --source alpaca --config-root <config-root> --export-json <path>
 uv run spreads backtest compare --left-json <path> --right-json <path>
 ```
 
 Use `audit` for one pipeline/date operator investigation. Use `backtest` for automation-config historical decision evaluation, strategy tuning, and policy comparisons.
+
+For before/after policy studies:
+
+1. create isolated `before/` and `after/` config roots instead of editing active config in place
+2. replay the same date window through both roots with `backtest replay-range`
+3. compare the exported JSON payloads with `backtest compare`
 
 Look for:
 

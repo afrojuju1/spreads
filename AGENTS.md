@@ -40,8 +40,15 @@
   - `uv run spreads audit <pipeline-id> --date <YYYY-MM-DD>`
 - For offline selection research or policy tuning, prefer the canonical backtest CLI before ad hoc scripts or raw SQL:
   - `uv run spreads backtest run --bot-id <bot-id> --automation-id <automation-id>`
+  - `uv run spreads backtest replay --run-id <run-id> --config-root <config-root>`
+  - `uv run spreads backtest replay-range --bot-id <bot-id> --automation-id <automation-id> --start-date <YYYY-MM-DD> --end-date <YYYY-MM-DD> --source alpaca --config-root <config-root>`
   - `uv run spreads backtest compare --left-json <path> --right-json <path>`
 - Treat `uv run spreads backtest run` as the canonical historical decision-evaluation path.
+- Treat `uv run spreads backtest compare` as the canonical comparison surface for exported `run`, `replay`, and `replay-range` payloads.
+- For before/after policy studies, prefer isolated config roots over editing active config in place. Canonical recipe:
+  - create `before/` and `after/` config roots
+  - run the same `uv run spreads backtest replay-range ... --source alpaca --config-root <root> --export-json <path>` window against both
+  - compare those exports with `uv run spreads backtest compare --left-json <before.json> --right-json <after.json>`
 - Do not route new work through removed post-close/post-market analysis surfaces. Use `backtest` for historical decision evaluation and `status`, `trading`, `pipelines`, `jobs`, and `audit` for operator investigation.
 - Do not assume `uv run spreads doctor` exists; it is intentionally deferred.
 - For jobs health, prefer operator-health fields such as `operator_status`, `operator_status_counts`, and `actionable_failed_count` over raw historical job status counts.

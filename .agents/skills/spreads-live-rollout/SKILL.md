@@ -38,6 +38,7 @@ Before rollout, classify what changed:
 - code imported by `worker-discovery`
 - scheduler enqueue logic changed
 - `market-recorder` code changed
+- backtest-only or CLI-only code changed
 - API-only or web-only code changed
 
 Use these current code owners while classifying:
@@ -76,6 +77,8 @@ Apply only the steps that match the change:
   - `docker compose restart scheduler`
 - recorder code changed:
   - `docker compose restart market-recorder`
+- backtest-only or CLI-only code:
+  - no Docker restart; validate through the CLI or targeted tests
 - API runtime only:
   - usually no explicit restart; Docker API hot-reloads
 - ops read-model only:
@@ -90,6 +93,18 @@ In practice:
 - most changes under `services/scanners/`, `services/discovery_runs/`, `services/live_selection.py`, `services/opportunity_scoring.py`, `services/candidate_policy.py`, `services/opportunity_generation.py`, or shared backend code imported by collector jobs require at least `worker-discovery`
 - most changes under `services/execution/`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, or runtime job logic require at least `worker-runtime`
 - if ownership crosses both lanes, restart both workers and the scheduler only when scheduling logic or job dispatch changed
+- most changes limited to `packages/core/backtest/`, `packages/core/cli/backtest.py`, or exported artifact comparison paths do not require worker or scheduler restarts
+
+## Policy Study Recipe
+
+When the goal is to compare policy variants rather than roll one variant live:
+
+1. keep the active `packages/config` tree untouched
+2. create isolated `before/` and `after/` config roots
+3. run the same `uv run spreads backtest replay-range ... --source alpaca --config-root <root> --export-json <path>` window against both roots
+4. compare those exports with `uv run spreads backtest compare --left-json <before.json> --right-json <after.json>`
+
+Use the live rollout path only after the policy-study evidence is good enough to justify changing the active config tree.
 
 ## Verification After Rollout
 
