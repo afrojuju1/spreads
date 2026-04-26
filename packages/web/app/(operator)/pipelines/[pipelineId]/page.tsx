@@ -6,6 +6,7 @@ type PipelineDetailPageProps = {
   }>;
   searchParams: Promise<{
     marketDate?: string;
+    cycleId?: string;
   }>;
 };
 
@@ -14,12 +15,13 @@ export default async function PipelineDetailPage({
   searchParams,
 }: PipelineDetailPageProps) {
   const { pipelineId } = await params;
-  const { marketDate } = await searchParams;
+  const { marketDate, cycleId } = await searchParams;
 
   return (
     <PipelineDetailPageContent
       pipelineId={decodeURIComponent(pipelineId)}
       marketDate={marketDate}
+      cycleId={cycleId}
     />
   );
 }

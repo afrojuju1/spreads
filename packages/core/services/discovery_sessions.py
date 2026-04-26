@@ -29,12 +29,14 @@ def get_discovery_session_detail(
     db_target: str,
     pipeline_id: str,
     market_date: str | None = None,
+    cycle_id: str | None = None,
     storage: Any | None = None,
 ) -> dict[str, Any]:
     return get_pipeline_detail(
         db_target=db_target,
         pipeline_id=pipeline_id,
         market_date=market_date,
+        cycle_id=cycle_id,
         storage=storage,
     )
 

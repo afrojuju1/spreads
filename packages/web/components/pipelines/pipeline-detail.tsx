@@ -30,6 +30,7 @@ import {
 type PipelineDetailPageContentProps = {
   pipelineId: string;
   marketDate?: string;
+  cycleId?: string;
 };
 
 type DetailRecord = Record<string, unknown>;
@@ -220,14 +221,15 @@ function autoExecutionBlockers(summary: Record<string, unknown> | null | undefin
 export function PipelineDetailPageContent({
   pipelineId,
   marketDate,
+  cycleId,
 }: PipelineDetailPageContentProps) {
   const pipelinesQuery = useQuery({
     queryKey: ["pipelines"],
     queryFn: () => getPipelines({ limit: 120 }),
   });
   const detailQuery = useQuery({
-    queryKey: ["pipelines", pipelineId, marketDate ?? ""],
-    queryFn: () => getPipelineDetail(pipelineId, { marketDate }),
+    queryKey: ["pipelines", pipelineId, marketDate ?? "", cycleId ?? ""],
+    queryFn: () => getPipelineDetail(pipelineId, { marketDate, cycleId }),
   });
 
   const pipelineRows = pipelinesQuery.data?.pipelines ?? [];
@@ -291,6 +293,9 @@ export function PipelineDetailPageContent({
                 value={readString(detail.latest_slot?.capture_status, "") || undefined}
               />
               <TradeabilityBadge value={detail.tradeability_state} />
+              {detail.current_cycle?.cycle_id ? (
+                <Badge variant="outline">{readString(detail.current_cycle.cycle_id)}</Badge>
+              ) : null}
               {detail.latest_auto_execution ? (
                 <AutoExecutionStatusBadge value={detail.latest_auto_execution.status} />
               ) : null}

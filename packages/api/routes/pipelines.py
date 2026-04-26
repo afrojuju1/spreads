@@ -43,6 +43,7 @@ def list_pipelines_route(
 def get_pipeline_route(
     pipeline_id: str,
     market_date: str | None = None,
+    cycle_id: str | None = None,
     db: str | None = None,
 ) -> dict[str, object]:
     try:
@@ -53,6 +54,7 @@ def get_pipeline_route(
             db_target=_db_target(db),
             pipeline_id=pipeline_id,
             market_date=resolved_market_date,
+            cycle_id=cycle_id,
         )
     except ValueError as exc:
         raise not_found_error(exc) from exc

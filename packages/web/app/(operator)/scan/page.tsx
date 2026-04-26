@@ -1,5 +1,19 @@
 import { ManualScanPageContent } from "@/components/pipelines/manual-scan-page";
 
-export default function ScanPage() {
-  return <ManualScanPageContent />;
+type ScanPageProps = {
+  searchParams: Promise<{
+    pipelineId?: string;
+    cycleId?: string;
+  }>;
+};
+
+export default async function ScanPage({ searchParams }: ScanPageProps) {
+  const { pipelineId, cycleId } = await searchParams;
+
+  return (
+    <ManualScanPageContent
+      initialPipelineId={pipelineId}
+      initialCycleId={cycleId}
+    />
+  );
 }

@@ -838,6 +838,7 @@ export function getPipelineDetail(
   pipelineId: string,
   filters?: {
     marketDate?: string;
+    cycleId?: string;
   },
 ) {
   return fetchApi(
@@ -845,6 +846,7 @@ export function getPipelineDetail(
     pipelineDetailSchema,
     {
       market_date: filters?.marketDate,
+      cycle_id: filters?.cycleId,
     },
   );
 }
@@ -979,14 +981,23 @@ export function parseGlobalRealtimeEvent(payload: string) {
 export function buildPipelineHref(
   pipelineId?: string | null,
   marketDate?: string | null,
+  cycleId?: string | null,
 ) {
   if (!pipelineId) {
     return "/pipelines";
   }
-  if (!marketDate) {
+  const params = new URLSearchParams();
+  if (marketDate) {
+    params.set("marketDate", marketDate);
+  }
+  if (cycleId) {
+    params.set("cycleId", cycleId);
+  }
+  const query = params.toString();
+  if (!query) {
     return `/pipelines/${encodeURIComponent(pipelineId)}`;
   }
-  return `/pipelines/${encodeURIComponent(pipelineId)}?marketDate=${encodeURIComponent(marketDate)}`;
+  return `/pipelines/${encodeURIComponent(pipelineId)}?${query}`;
 }
 
 export function buildRuntimeHref(

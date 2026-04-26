@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useEffectEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { differenceInCalendarDays, parseISO } from "date-fns";
+import { usePathname, useRouter } from "next/navigation";
 import {
   CandlestickChart,
   LoaderCircle,
@@ -71,6 +72,20 @@ type ActiveRunState = {
   startedAt: string | null;
   finishedAt: string | null;
 };
+
+function readInitialQueryValue(
+  explicitValue: string | undefined,
+  key: string,
+): string | null {
+  const directValue = readEventText(explicitValue);
+  if (directValue != null) {
+    return directValue;
+  }
+  if (typeof window === "undefined") {
+    return null;
+  }
+  return readEventText(new URLSearchParams(window.location.search).get(key));
+}
 
 function humanizeStrategy(value: string | null | undefined): string {
   const normalized = readString(value, "unknown").replaceAll("_", " ");
@@ -202,13 +217,28 @@ function OpportunityCard({
   );
 }
 
-export function ManualScanPageContent() {
+type ManualScanPageContentProps = {
+  initialPipelineId?: string;
+  initialCycleId?: string;
+};
+
+export function ManualScanPageContent({
+  initialPipelineId,
+  initialCycleId,
+}: ManualScanPageContentProps) {
+  const router = useRouter();
+  const pathname = usePathname();
   const queryClient = useQueryClient();
   const { subscribeRealtimeEvent } = useRealtimeActivity();
   const [symbol, setSymbol] = useState("SPY");
   const [strategy, setStrategy] = useState("auto");
   const [activeRun, setActiveRun] = useState<ActiveRunState | null>(null);
-  const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(null);
+  const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(
+    readInitialQueryValue(initialPipelineId, "pipelineId"),
+  );
+  const [selectedCycleId, setSelectedCycleId] = useState<string | null>(
+    readInitialQueryValue(initialCycleId, "cycleId"),
+  );
 
   const pipelinesQuery = useQuery({
     queryKey: ["pipelines", "manual-scan"],
@@ -224,13 +254,23 @@ export function ManualScanPageContent() {
   );
   const effectiveSelectedPipelineId =
     selectedPipelineId ?? manualPipelines[0]?.pipeline_id ?? null;
+  const effectiveSelectedCycleId = selectedCycleId ?? undefined;
 
   const selectedPipelineQuery = useQuery({
-    queryKey: ["pipelines", effectiveSelectedPipelineId ?? "", "manual-detail"],
-    queryFn: () => getPipelineDetail(String(effectiveSelectedPipelineId)),
+    queryKey: [
+      "pipelines",
+      effectiveSelectedPipelineId ?? "",
+      effectiveSelectedCycleId ?? "",
+      "manual-detail",
+    ],
+    queryFn: () =>
+      getPipelineDetail(String(effectiveSelectedPipelineId), {
+        cycleId: effectiveSelectedCycleId,
+      }),
     enabled:
       effectiveSelectedPipelineId != null &&
-      (activeRun == null ||
+      (effectiveSelectedCycleId != null ||
+        activeRun == null ||
         activeRun.pipelineId !== effectiveSelectedPipelineId ||
         TERMINAL_JOB_STATUSES.has(activeRun.status)),
     retry: false,
@@ -246,6 +286,7 @@ export function ManualScanPageContent() {
     onSuccess: async (run) => {
       setActiveRun(buildInitialRunState(run));
       setSelectedPipelineId(run.pipeline_id);
+      setSelectedCycleId(null);
       await queryClient.invalidateQueries({ queryKey: ["pipelines"] });
     },
   });
@@ -280,9 +321,8 @@ export function ManualScanPageContent() {
     if (TERMINAL_JOB_STATUSES.has(status)) {
       void queryClient.invalidateQueries({ queryKey: ["pipelines"] });
       if (status === "succeeded") {
-        void queryClient.invalidateQueries({
-          queryKey: ["pipelines", activeRun.pipelineId, "manual-detail"],
-        });
+        setSelectedCycleId(null);
+        void queryClient.invalidateQueries({ queryKey: ["pipelines", activeRun.pipelineId] });
       }
     }
   });
@@ -294,6 +334,28 @@ export function ManualScanPageContent() {
     return subscribeRealtimeEvent(handleRealtimeEvent);
   }, [activeRun, subscribeRealtimeEvent]);
 
+  useEffect(() => {
+    if (!pathname) {
+      return;
+    }
+    const params = new URLSearchParams();
+    if (effectiveSelectedPipelineId) {
+      params.set("pipelineId", effectiveSelectedPipelineId);
+    }
+    if (effectiveSelectedPipelineId && selectedCycleId) {
+      params.set("cycleId", selectedCycleId);
+    }
+    const query = params.toString();
+    const nextHref = query ? `${pathname}?${query}` : pathname;
+    const currentHref =
+      typeof window === "undefined"
+        ? pathname
+        : `${window.location.pathname}${window.location.search}`;
+    if (nextHref !== currentHref) {
+      router.replace(nextHref, { scroll: false });
+    }
+  }, [effectiveSelectedPipelineId, pathname, router, selectedCycleId]);
+
   if (pipelinesQuery.isLoading) {
     return <LoadingState />;
   }
@@ -301,6 +363,7 @@ export function ManualScanPageContent() {
   const pipelineDetail = selectedPipelineQuery.data;
   const liveOpportunities = pipelineDetail?.opportunities ?? [];
   const analysisOnly = pipelineDetail?.analysis_only_opportunities ?? [];
+  const currentCycleId = readString(pipelineDetail?.current_cycle?.cycle_id, "");
   const topCandidate = liveOpportunities[0] ?? null;
   const alternatives = topCandidate == null ? liveOpportunities : liveOpportunities.slice(1);
 
@@ -484,7 +547,10 @@ export function ManualScanPageContent() {
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => setSelectedPipelineId(pipeline.pipeline_id)}
+                    onClick={() => {
+                      setSelectedPipelineId(pipeline.pipeline_id);
+                      setSelectedCycleId(null);
+                    }}
                   >
                     Select
                   </Button>
@@ -528,9 +594,18 @@ export function ManualScanPageContent() {
           <div className="flex flex-col gap-3">
             {pipelineDetail.cycles.slice(0, 8).map((rawCycle, index) => {
               const cycle = rawCycle as Record<string, unknown>;
+              const cycleId = readString(
+                cycle.cycle_id,
+                `${pipelineDetail.pipeline_id}:${index}`,
+              );
+              const cycleMarketDate = readString(
+                cycle.market_date,
+                pipelineDetail.market_date,
+              );
+              const isSelected = cycleId !== "" && cycleId === currentCycleId;
               return (
                 <div
-                  key={readString(cycle.cycle_id, `${pipelineDetail.pipeline_id}:${index}`)}
+                  key={cycleId}
                   className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-background/70 px-4 py-4 md:flex-row md:items-center md:justify-between"
                 >
                   <div className="min-w-0">
@@ -554,8 +629,25 @@ export function ManualScanPageContent() {
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Badge variant="outline">
-                      {readString(cycle.cycle_id, "cycle")}
+                      {cycleId}
                     </Badge>
+                    <Button
+                      type="button"
+                      variant={isSelected ? "default" : "outline"}
+                      onClick={() => setSelectedCycleId(cycleId)}
+                    >
+                      Inspect Run
+                    </Button>
+                    <Link
+                      href={buildPipelineHref(
+                        pipelineDetail.pipeline_id,
+                        cycleMarketDate,
+                        cycleId,
+                      )}
+                      className={buttonVariants({ variant: "outline", size: "default" })}
+                    >
+                      Open Diagnostics
+                    </Link>
                   </div>
                 </div>
               );
@@ -588,9 +680,19 @@ export function ManualScanPageContent() {
           <div className="flex flex-col gap-4">
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="outline">{pipelineDetail.label}</Badge>
+              {currentCycleId ? <Badge variant="outline">{currentCycleId}</Badge> : null}
               <RuntimeStatusBadge value={pipelineDetail.status} />
               <TradeabilityBadge value={pipelineDetail.tradeability_state} />
               <CaptureStatusBadge value={pipelineDetail.quote_capture.capture_status} />
+              {selectedCycleId != null ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setSelectedCycleId(null)}
+                >
+                  View Latest
+                </Button>
+              ) : null}
             </div>
 
             {topCandidate == null ? (
@@ -649,6 +751,7 @@ export function ManualScanPageContent() {
                 href={buildPipelineHref(
                   pipelineDetail.pipeline_id,
                   pipelineDetail.market_date,
+                  currentCycleId || null,
                 )}
                 className={buttonVariants({ variant: "outline" })}
               >

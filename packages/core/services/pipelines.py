@@ -20,6 +20,7 @@ from core.services.discovery_run_health.tradeability import (
 )
 from core.services.live_runtime import (
     get_live_session,
+    get_live_session_for_cycle,
     list_latest_live_sessions,
 )
 from core.services.risk_manager import (
@@ -596,7 +597,48 @@ def get_pipeline_detail(
     db_target: str,
     pipeline_id: str,
     market_date: str | None,
+    cycle_id: str | None = None,
     storage: Any | None = None,
+) -> dict[str, Any]:
+    if cycle_id is None:
+        live_session = get_live_session(
+            storage=storage,
+            pipeline_id=pipeline_id,
+            market_date=market_date,
+        )
+    else:
+        live_session = get_live_session_for_cycle(
+            storage=storage,
+            cycle_id=cycle_id,
+        )
+        resolved_pipeline_id = str(
+            live_session.get("pipeline", {}).get("pipeline_id")
+            or live_session.get("cycle", {}).get("pipeline_id")
+            or ""
+        )
+        if resolved_pipeline_id != pipeline_id:
+            raise ValueError(
+                f"cycle_id={cycle_id} does not belong to pipeline_id={pipeline_id}"
+            )
+        resolved_market_date = str(live_session.get("market_date") or "")
+        if market_date is not None and resolved_market_date != market_date:
+            raise ValueError(
+                f"cycle_id={cycle_id} does not belong to market_date={market_date}"
+            )
+    return _build_pipeline_detail_payload(
+        db_target=db_target,
+        storage=storage,
+        live_session=live_session,
+        selected_cycle_id=cycle_id,
+    )
+
+
+def _build_pipeline_detail_payload(
+    *,
+    db_target: str,
+    storage: Any,
+    live_session: Mapping[str, Any],
+    selected_cycle_id: str | None = None,
 ) -> dict[str, Any]:
     discovery_store = storage.discovery
     alert_store = storage.alerts
@@ -604,13 +646,11 @@ def get_pipeline_detail(
     risk_store = getattr(storage, "risk", None)
     signal_store = storage.signals
 
-    live_session = get_live_session(
-        storage=storage,
-        pipeline_id=pipeline_id,
-        market_date=market_date,
-    )
     pipeline = dict(live_session["pipeline"])
     latest_cycle = dict(live_session["cycle"])
+    pipeline_id = str(
+        latest_cycle.get("pipeline_id") or pipeline.get("pipeline_id") or ""
+    ) or build_pipeline_id(str(latest_cycle["label"]))
     label = str(live_session["label"])
     resolved_market_date = str(live_session["market_date"])
     legacy_session_id = str(live_session["session_id"])
@@ -660,15 +700,18 @@ def get_pipeline_detail(
             limit=200,
         )
     ]
-    events = [
-        dict(event)
-        for event in discovery_store.list_events(
-            label=label,
-            session_date=resolved_market_date,
-            limit=400,
-            ascending=False,
-        )
-    ]
+    if selected_cycle_id is None:
+        events = [
+            dict(event)
+            for event in discovery_store.list_events(
+                label=label,
+                session_date=resolved_market_date,
+                limit=400,
+                ascending=False,
+            )
+        ]
+    else:
+        events = [dict(event) for event in list(live_session.get("cycle_events") or [])]
     events.sort(key=_discovery_run_event_sort_key)
 
     updated_at = _latest_activity_timestamp(
