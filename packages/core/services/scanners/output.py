@@ -357,6 +357,7 @@ def write_csv(path: str, candidates: list[SpreadCandidate]) -> None:
         "earnings_primary_source",
         "earnings_supporting_sources",
         "earnings_consensus_status",
+        "earnings_enrichment",
         "setup_status",
         "setup_score",
         "setup_reasons",

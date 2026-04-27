@@ -1,0 +1,9 @@
+bot_id: short_dated_earnings_long_strangle_bot
+name: Short-Dated Earnings Long Strangle Bot
+limits:
+  extends: baseline
+runtime:
+  extends: short_dated_default
+automations:
+  - earnings_long_strangle_entry
+  - earnings_long_strangle_manage

@@ -22,6 +22,7 @@ from core.domain.backtest_models import (
     BacktestTarget,
     new_backtest_artifact_id,
 )
+from core.services.scanners.config import normalize_calendar_confidence_policy
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -87,11 +88,32 @@ def _compare_output_path() -> Path:
     return BACKTEST_OUTPUT_ROOT / "compare" / "latest.json"
 
 
-def _replay_output_dir(*, run_id: str, config_root: str | None = None) -> Path:
+def _calendar_confidence_policy_output_fragment(
+    calendar_confidence_policy: str | None,
+) -> str | None:
+    if calendar_confidence_policy in (None, ""):
+        return None
+    normalized = normalize_calendar_confidence_policy(calendar_confidence_policy)
+    if normalized == "strict":
+        return None
+    return f"calendar-confidence-{normalized}"
+
+
+def _replay_output_dir(
+    *,
+    run_id: str,
+    config_root: str | None = None,
+    calendar_confidence_policy: str | None = None,
+) -> Path:
     base_path = BACKTEST_OUTPUT_ROOT / "replay" / "runs"
     config_fragment = _config_root_output_fragment(config_root)
     if config_fragment:
         base_path = base_path / config_fragment
+    policy_fragment = _calendar_confidence_policy_output_fragment(
+        calendar_confidence_policy
+    )
+    if policy_fragment:
+        base_path = base_path / policy_fragment
     return base_path / run_id
 
 
@@ -113,9 +135,13 @@ def _replay_range_output_dir(
     source: str = "stored",
     sample_mode: str = "intraday",
     config_root: str | None = None,
+    calendar_confidence_policy: str | None = None,
 ) -> Path:
     normalized_source = str(source or "stored").strip().lower()
     config_fragment = _config_root_output_fragment(config_root)
+    policy_fragment = _calendar_confidence_policy_output_fragment(
+        calendar_confidence_policy
+    )
     if normalized_source != "stored":
         normalized_sample_mode = str(sample_mode or "intraday").strip().lower()
         base_parts = [BACKTEST_OUTPUT_ROOT, "replay", "ranges", normalized_source]
@@ -123,11 +149,15 @@ def _replay_range_output_dir(
             base_parts.append(normalized_sample_mode)
         if config_fragment:
             base_parts.append(config_fragment)
+        if policy_fragment:
+            base_parts.append(policy_fragment)
         base_path = Path(*[str(part) for part in base_parts])
         return base_path / bot_id / automation_id / f"{start_date}_{end_date}"
     base_path = BACKTEST_OUTPUT_ROOT / "replay" / "ranges"
     if config_fragment:
         base_path = base_path / config_fragment
+    if policy_fragment:
+        base_path = base_path / policy_fragment
     return base_path / bot_id / automation_id / f"{start_date}_{end_date}"
 
 
@@ -635,6 +665,15 @@ def replay_backtest_command(
         "--config-root",
         help="Alternate options automation config root.",
     ),
+    calendar_confidence_policy: str | None = typer.Option(
+        None,
+        "--calendar-confidence-policy",
+        help=(
+            "Research override for the single-name low-confidence calendar gate. "
+            "Use consensus to allow multi-source/date-confirmed earnings records, "
+            "or off to disable the gate."
+        ),
+    ),
     latest: bool = typer.Option(
         False, "--latest", help="Replay the latest stored scan run for the target symbol."
     ),
@@ -651,10 +690,15 @@ def replay_backtest_command(
         symbol=symbol,
         strategy=strategy,
         config_root=config_root,
+        calendar_confidence_policy=calendar_confidence_policy,
         latest=latest,
     )
     resolved_run_id = str((payload.get("run") or {}).get("run_id") or "latest")
-    output_dir = _replay_output_dir(run_id=resolved_run_id, config_root=config_root)
+    output_dir = _replay_output_dir(
+        run_id=resolved_run_id,
+        config_root=config_root,
+        calendar_confidence_policy=calendar_confidence_policy,
+    )
     summary_path = output_dir / "summary.json"
     _write_json_export(str(summary_path), payload)
     if export_json:
@@ -695,6 +739,15 @@ def replay_range_backtest_command(
         "--sample-mode",
         help="Alpaca replay sampling mode. intraday uses recorded or scheduled cycle timestamps with intraday bars; eod uses one market-close daily sample without intraday data.",
     ),
+    calendar_confidence_policy: str | None = typer.Option(
+        None,
+        "--calendar-confidence-policy",
+        help=(
+            "Research override for the single-name low-confidence calendar gate. "
+            "Use consensus to allow multi-source/date-confirmed earnings records, "
+            "or off to disable the gate."
+        ),
+    ),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
     export_json: str | None = typer.Option(
@@ -715,6 +768,7 @@ def replay_range_backtest_command(
         source=source,
         config_root=config_root,
         sample_mode=sample_mode,
+        calendar_confidence_policy=calendar_confidence_policy,
     )
     output_dir = _replay_range_output_dir(
         bot_id=bot_id,
@@ -724,6 +778,7 @@ def replay_range_backtest_command(
         source=source,
         sample_mode=sample_mode,
         config_root=config_root,
+        calendar_confidence_policy=calendar_confidence_policy,
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = output_dir / "summary.json"

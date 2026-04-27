@@ -1,0 +1,9 @@
+bot_id: short_dated_earnings_call_debit_bot
+name: Short-Dated Earnings Call Debit Bot
+limits:
+  extends: baseline
+runtime:
+  extends: short_dated_default
+automations:
+  - earnings_call_debit_entry
+  - earnings_call_debit_manage

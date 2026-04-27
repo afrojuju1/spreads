@@ -66,10 +66,16 @@ PROFILE_FALLBACK_RANKING_STRATEGY_FAMILIES = frozenset(
     }
 )
 
+CALENDAR_CONFIDENCE_POLICIES = ("strict", "consensus", "off")
+
 
 @lru_cache(maxsize=4)
 def _cached_strategy_configs(config_root: str) -> tuple[Any, ...]:
     return tuple(load_strategy_configs(config_root).values())
+
+
+def _normalized_strategy_config_root(config_root: str | Path | None = None) -> str:
+    return str(default_config_root(config_root))
 
 
 def _aggregate_ranking_builder_params(
@@ -99,10 +105,13 @@ def _config_backed_ranking_builder_params(
     *,
     profile_name: str,
     strategy_family: str,
+    config_root: str | Path | None = None,
 ) -> dict[str, float]:
     configs = tuple(
         strategy_config
-        for strategy_config in _cached_strategy_configs(str(default_config_root()))
+        for strategy_config in _cached_strategy_configs(
+            _normalized_strategy_config_root(config_root)
+        )
         if strategy_config.enabled
         and strategy_config.scanner_profile == profile_name
         and strategy_config.strategy_family == strategy_family
@@ -114,11 +123,13 @@ def resolve_ranking_builder_params(
     *,
     profile_name: str,
     strategy_family: str,
+    config_root: str | Path | None = None,
 ) -> tuple[str, dict[str, float]]:
     normalized_strategy_family = normalize_strategy_family(strategy_family)
     config_backed_params = _config_backed_ranking_builder_params(
         profile_name=profile_name,
         strategy_family=normalized_strategy_family,
+        config_root=config_root,
     )
     if config_backed_params:
         return "strategy_config", config_backed_params
@@ -152,6 +163,13 @@ def resolve_universe_symbols(universe_label: str) -> tuple[str, ...]:
     if preset is not None:
         return preset
     return load_universe_symbols(normalized)
+
+
+def normalize_calendar_confidence_policy(value: str | None) -> str:
+    normalized = str(value or "strict").strip().lower()
+    if normalized not in CALENDAR_CONFIDENCE_POLICIES:
+        raise ValueError(f"Unsupported calendar confidence policy: {value}")
+    return normalized
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -348,6 +366,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--data-policy",
         default="strict",
         choices=("strict", "warn", "off"),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--calendar-confidence-policy",
+        default="strict",
+        choices=CALENDAR_CONFIDENCE_POLICIES,
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
@@ -588,13 +612,26 @@ def apply_scan_evaluation_context(
     return args
 
 
-def apply_profile_defaults(args: argparse.Namespace, underlying_type: str) -> None:
+def apply_profile_defaults(
+    args: argparse.Namespace,
+    underlying_type: str,
+    *,
+    config_root: str | Path | None = None,
+) -> None:
     profile = PROFILE_CONFIGS[args.profile]
     underlying_key = infer_underlying_key(underlying_type)
     normalized_strategy = normalize_strategy_family(args.strategy)
+    effective_config_root = (
+        config_root
+        if config_root is not None
+        else getattr(args, "config_root", None)
+    )
+    if effective_config_root not in (None, ""):
+        args.config_root = _normalized_strategy_config_root(effective_config_root)
     _ranking_source, ranking_builder_params = resolve_ranking_builder_params(
         profile_name=args.profile,
         strategy_family=normalized_strategy,
+        config_root=getattr(args, "config_root", None),
     )
     strategy_profile_override = resolve_strategy_profile_override(
         profile_name=args.profile,
@@ -735,6 +772,7 @@ def build_filter_payload(args: argparse.Namespace) -> dict[str, Any]:
         "setup_filter": args.setup_filter,
         "expand_duplicates": args.expand_duplicates,
         "data_policy": args.data_policy,
+        "calendar_confidence_policy": args.calendar_confidence_policy,
         "min_fill_ratio": args.min_fill_ratio,
         "min_short_vs_expected_move_ratio": args.min_short_vs_expected_move_ratio,
         "min_breakeven_vs_expected_move_ratio": args.min_breakeven_vs_expected_move_ratio,
@@ -855,13 +893,20 @@ def validate_resolved_args(args: argparse.Namespace) -> None:
 
 
 def resolve_symbol_scan_args(
-    *, symbol: str, base_args: argparse.Namespace
+    *,
+    symbol: str,
+    base_args: argparse.Namespace,
+    config_root: str | Path | None = None,
 ) -> tuple[argparse.Namespace, str]:
     normalized_symbol = symbol.upper()
     underlying_type = classify_underlying_type(normalized_symbol)
     symbol_args = clone_args(base_args)
     symbol_args.symbol = normalized_symbol
-    apply_profile_defaults(symbol_args, underlying_type)
+    apply_profile_defaults(
+        symbol_args,
+        underlying_type,
+        config_root=config_root,
+    )
     validate_resolved_args(symbol_args)
     validate_profile_scope(normalized_symbol, symbol_args, underlying_type)
     return symbol_args, underlying_type

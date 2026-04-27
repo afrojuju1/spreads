@@ -37,6 +37,7 @@
 - For session health and current runtime state, prefer `services/live_runtime.py`, `services/discovery_run_health/`, `services/pipelines.py`, and `services/ops/` over creating new read-model owners.
 - For jobs health, read operator-facing status fields first. Raw historical failed runs can remain visible while `operator_status` and `actionable_failed_count` show whether they still require action.
 - For first-pass ops/runtime checks and historical backtest workflows, follow the repo-level CLI guidance in [../../AGENTS.md](../../AGENTS.md). Keep the canonical command list there instead of repeating it in backend-specific instructions.
+- Default verification should be live/runtime validation against the running stack or shipped CLI. Do not add or update backend tests unless the user explicitly asks for test work.
 
 ## End-Of-Day And Ops Queries
 

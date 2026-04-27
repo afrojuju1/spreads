@@ -94,6 +94,7 @@ class DiscoveryRunConfig:
     execution_policy: dict[str, Any]
     risk_policy: dict[str, Any]
     exit_policy: dict[str, Any]
+    scanner_args: dict[str, Any]
     singleton_scope: str | None
     config_path: Path
     config_hash: str
@@ -154,6 +155,7 @@ class DiscoveryRunSpec:
             "exit_policy": dict(self.config.exit_policy),
             "declared_config_hash": self.config.config_hash,
             **dict(self.scope.get("scanner_args") or {}),
+            **dict(self.config.scanner_args),
         }
         if universe_ref:
             payload["universe"] = universe_ref
@@ -254,6 +256,11 @@ def _load_discovery_run_configs(
             config_root=config_root_path,
             config_path=path,
         )
+        scanner_args = (
+            {}
+            if raw.get("scanner_args") is None
+            else _as_mapping(raw.get("scanner_args"), field_name="scanner_args")
+        )
         config = DiscoveryRunConfig(
             discovery_run_id=_as_text(raw.get("discovery_run_id"), field_name="discovery_run_id"),
             job_key=_as_text(raw.get("job_key"), field_name="job_key"),
@@ -284,6 +291,7 @@ def _load_discovery_run_configs(
             execution_policy=execution_policy,
             risk_policy=risk_policy,
             exit_policy=exit_policy,
+            scanner_args=scanner_args,
             singleton_scope=(
                 None
                 if raw.get("singleton_scope") in (None, "")
@@ -325,6 +333,7 @@ def _load_discovery_run_configs(
                     "execution_policy": execution_policy,
                     "risk_policy": risk_policy,
                     "exit_policy": exit_policy,
+                    "scanner_args": scanner_args,
                     "singleton_scope": raw.get("singleton_scope"),
                 }
             ),

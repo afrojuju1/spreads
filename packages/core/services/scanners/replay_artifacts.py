@@ -51,6 +51,7 @@ _SYMBOL_ARG_KEYS = (
     "setup_filter",
     "expand_duplicates",
     "data_policy",
+    "calendar_confidence_policy",
     "min_fill_ratio",
     "min_short_vs_expected_move_ratio",
     "min_breakeven_vs_expected_move_ratio",
@@ -260,6 +261,9 @@ def deserialize_calendar_decisions_by_expiration(
             ),
             earnings_consensus_status=str(
                 decision_payload.get("earnings_consensus_status") or "missing"
+            ),
+            earnings_enrichment=dict(
+                decision_payload.get("earnings_enrichment") or {}
             ),
         )
     return decisions

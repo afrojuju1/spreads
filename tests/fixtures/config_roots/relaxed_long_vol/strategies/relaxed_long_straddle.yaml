@@ -1,0 +1,36 @@
+strategy_config_id: relaxed_long_straddle
+strategy:
+  family: long_straddle
+enabled: true
+build:
+  dte:
+    min: 2
+    max: 10
+  entry_delta:
+    min: 0.20
+    max: 0.35
+    target: 0.25
+  ranking:
+    min_probability_of_profit: 0.11
+    min_expected_value_dollars: 0
+    min_slippage_adjusted_expected_value_dollars: 0
+    max_entry_slippage_dollars: 99
+    max_model_implied_volatility: 1.0
+    weights:
+      probability_of_profit: 0.19
+      expected_value_dollars: 0.27
+      slippage_adjusted_expected_value_dollars: 0.33
+      entry_slippage_dollars: 0.13
+      model_implied_volatility: 0.08
+recipes:
+  entry: []
+  management:
+    - take_profit_50pct
+liquidity:
+  min_open_interest: 200
+  max_leg_spread_pct_mid: 0.15
+  max_quote_age_seconds: 30
+risk:
+  min_return_on_risk: 0.05
+  max_risk_per_trade: 500
+  max_credit_slippage_pct: 0.25

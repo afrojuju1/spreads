@@ -41,6 +41,7 @@ ETF_INDEX_PROXY_SYMBOLS = {
 SOURCE_FRESHNESS_HOURS = {
     "dolt_earnings_calendar": 24,
     "alpha_vantage_earnings_calendar": 24,
+    "finviz_earnings": 24,
     "alpaca_corporate_actions": 24,
     "macro_calendar": 0,
 }

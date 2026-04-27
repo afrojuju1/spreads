@@ -1,0 +1,10 @@
+extends: short_dated_weekly
+discovery_run_id: short_dated_earnings_long_strangle
+job_key: discovery_run:options_automation_short_dated_earnings_long_strangle
+label: explore_10_long_strangle_weekly_auto
+scanner_strategy: long_strangle
+singleton_scope: options_automation_short_dated_earnings_long_strangle
+execution_policy:
+  extends: shadow_midpoint
+scanner_args:
+  calendar_confidence_policy: "off"

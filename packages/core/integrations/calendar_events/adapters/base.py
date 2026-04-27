@@ -9,6 +9,7 @@ class BaseCalendarEventAdapter(ABC):
     source_name = "base"
     source_confidence = "unknown"
     refresh_always = False
+    contributes_to_coverage = True
 
     def coverage_query(self, query: CalendarEventQuery) -> CalendarEventQuery:
         return query

@@ -258,14 +258,19 @@ def _requested_policy_payload(
     source_policies: dict[str, Any],
     active_policy_rollouts: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
+    base_policy = (
+        dict(source_policies.get(policy_name) or {})
+        if isinstance(source_policies.get(policy_name), Mapping)
+        else {}
+    )
+    rollout = active_policy_rollouts.get(policy_name)
+    if rollout is not None and isinstance(rollout.get("policy"), dict):
+        base_policy.update(dict(rollout["policy"]))
     if isinstance(request_metadata, dict) and isinstance(
         request_metadata.get(policy_name), dict
     ):
-        return dict(request_metadata[policy_name])
-    rollout = active_policy_rollouts.get(policy_name)
-    if rollout is not None and isinstance(rollout.get("policy"), dict):
-        return dict(rollout["policy"])
-    return dict(source_policies[policy_name])
+        base_policy.update(dict(request_metadata[policy_name]))
+    return base_policy
 
 
 def _build_policy_refs(

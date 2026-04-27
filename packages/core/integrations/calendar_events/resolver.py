@@ -13,6 +13,7 @@ from .adapters.alpha_vantage_earnings_calendar import (
 )
 from .adapters.base import BaseCalendarEventAdapter
 from .adapters.earnings_calendar import EarningsCalendarAdapter
+from .adapters.finviz_earnings import FinvizEarningsAdapter
 from .adapters.macro_calendar import MacroCalendarAdapter
 from .config import (
     DEFAULT_MACRO_CALENDAR_PATH,
@@ -66,6 +67,14 @@ def _record_payload(record: CalendarEventRecord) -> dict[str, object]:
     except json.JSONDecodeError:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _compact_payload(payload: dict[str, object]) -> dict[str, object]:
+    return {
+        key: value
+        for key, value in payload.items()
+        if value not in (None, "", (), [], {})
+    }
 
 
 def _earnings_session_timing(record: CalendarEventRecord) -> str:
@@ -209,6 +218,96 @@ def _days_until(window_start: datetime, scheduled_at: datetime) -> int:
     return (scheduled_at.date() - window_start.date()).days
 
 
+def _select_shadow_earnings_record(
+    records: list[CalendarEventRecord],
+    *,
+    source: str,
+    anchor_event_date: str | None,
+    as_of: str,
+) -> CalendarEventRecord | None:
+    shadow_records = [
+        record for record in records if record.event_type == "earnings" and record.source == source
+    ]
+    if not shadow_records:
+        return None
+
+    if anchor_event_date:
+        same_day = [
+            record for record in shadow_records if record.scheduled_at[:10] == anchor_event_date
+        ]
+        if same_day:
+            return max(same_day, key=lambda item: _parse_datetime(item.source_updated_at))
+
+        anchor_dt = datetime.combine(date.fromisoformat(anchor_event_date), time(12, 0), tzinfo=UTC)
+        nearest = min(
+            shadow_records,
+            key=lambda item: (
+                abs((_parse_datetime(item.scheduled_at) - anchor_dt).days),
+                -_parse_datetime(item.source_updated_at).timestamp(),
+            ),
+        )
+        if abs((_parse_datetime(nearest.scheduled_at).date() - anchor_dt.date()).days) <= 3:
+            return nearest
+
+    as_of_dt = _parse_datetime(as_of)
+    future_records = [
+        record for record in shadow_records if _parse_datetime(record.scheduled_at) >= as_of_dt
+    ]
+    if future_records:
+        return min(future_records, key=lambda item: _parse_datetime(item.scheduled_at))
+    return max(shadow_records, key=lambda item: _parse_datetime(item.scheduled_at))
+
+
+def _shadow_earnings_enrichment(
+    records: list[CalendarEventRecord],
+    *,
+    anchor_event_date: str | None,
+    as_of: str,
+) -> dict[str, object]:
+    record = _select_shadow_earnings_record(
+        records,
+        source="finviz_earnings",
+        anchor_event_date=anchor_event_date,
+        as_of=as_of,
+    )
+    if record is None:
+        return {}
+
+    payload = _record_payload(record)
+    company_profile = payload.get("companyProfile")
+    if not isinstance(company_profile, dict):
+        company_profile = {}
+    return _compact_payload(
+        {
+            "source": record.source,
+            "matchedEventDate": record.scheduled_at[:10],
+            "matchedScheduledAt": record.scheduled_at,
+            "matchedStatus": record.status,
+            "sourcePageEarningsDate": _as_text(payload.get("sourcePageEarningsDate")),
+            "sessionTiming": _as_text(payload.get("sessionTiming")),
+            "fiscalPeriod": _as_text(payload.get("fiscalPeriod")),
+            "fiscalEndDate": _as_text(payload.get("fiscalEndDate")),
+            "epsEstimate": payload.get("epsEstimate"),
+            "epsActual": payload.get("epsActual"),
+            "epsReportedEstimate": payload.get("epsReportedEstimate"),
+            "epsReportedActual": payload.get("epsReportedActual"),
+            "salesEstimate": payload.get("salesEstimate"),
+            "salesActual": payload.get("salesActual"),
+            "epsAnalysts": payload.get("epsAnalysts"),
+            "epsReportedAnalysts": payload.get("epsReportedAnalysts"),
+            "salesAnalysts": payload.get("salesAnalysts"),
+            "oneDayPriceReaction": payload.get("oneDayPriceReaction"),
+            "oneDayPriceReactionVsSpy": payload.get("oneDayPriceReactionVsSpy"),
+            "sector": _as_text(company_profile.get("sector")),
+            "industry": _as_text(company_profile.get("industry")),
+            "country": _as_text(company_profile.get("country")),
+            "sizeBucket": _as_text(company_profile.get("sizeBucket")),
+            "exchange": _as_text(company_profile.get("exchange")),
+            "marketCap": _as_text(company_profile.get("marketCap")),
+        }
+    )
+
+
 def _build_reason(record: CalendarEventRecord) -> CalendarEventReason:
     if record.event_type == "earnings":
         return CalendarEventReason(
@@ -318,13 +417,19 @@ class CalendarEventResolver:
                 freshness_hours=freshness_hours,
             )
             if has_fresh_coverage:
-                covered_sources.append(adapter.source_name)
-                confidences.append(adapter.source_confidence)
-                state = self.store.get_refresh_state(source=adapter.source_name, scope_key=scope_key)
-                if state is not None:
-                    source_updates.append(state["refreshed_at"])
+                if adapter.contributes_to_coverage:
+                    covered_sources.append(adapter.source_name)
+                    confidences.append(adapter.source_confidence)
+                    state = self.store.get_refresh_state(
+                        source=adapter.source_name,
+                        scope_key=scope_key,
+                    )
+                    if state is not None:
+                        source_updates.append(state["refreshed_at"])
                 continue
 
+            if not adapter.contributes_to_coverage:
+                continue
             code = f"{adapter.source_name}_unavailable"
             severity = "high" if adapter.source_name in required_sources else "low"
             reasons.append(
@@ -432,6 +537,15 @@ class CalendarEventResolver:
         earnings_consensus_status = str(
             (anchor_consensus or {}).get("consensus_status") or "missing"
         )
+        earnings_enrichment = (
+            {}
+            if underlying_type != "single_name_equity"
+            else _shadow_earnings_enrichment(
+                earnings_records,
+                anchor_event_date=earnings_snapshot.event_date,
+                as_of=query.window_start,
+            )
+        )
 
         return CalendarEventContext(
             status=status,
@@ -458,6 +572,7 @@ class CalendarEventResolver:
             earnings_primary_source=earnings_primary_source,
             earnings_supporting_sources=supporting_sources,
             earnings_consensus_status=earnings_consensus_status,
+            earnings_enrichment=earnings_enrichment,
         )
 
 
@@ -471,7 +586,10 @@ def build_calendar_event_resolver(
     alpha_vantage_api_key: str | None = None,
 ) -> CalendarEventResolver:
     store = CalendarEventStore(database_url or default_database_url())
-    adapters: list[BaseCalendarEventAdapter] = [EarningsCalendarAdapter()]
+    adapters: list[BaseCalendarEventAdapter] = [
+        EarningsCalendarAdapter(),
+        FinvizEarningsAdapter(),
+    ]
     resolved_alpha_vantage_api_key = (
         alpha_vantage_api_key or default_alpha_vantage_api_key()
     )

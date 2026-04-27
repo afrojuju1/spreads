@@ -339,6 +339,7 @@ class BacktestCliTests(unittest.TestCase):
                 symbol=None,
                 strategy=None,
                 config_root=str(config_root),
+                calendar_confidence_policy=None,
                 latest=False,
             )
             payload = json.loads(result.stdout)
@@ -406,6 +407,7 @@ class BacktestCliTests(unittest.TestCase):
                 source="stored",
                 config_root=str(config_root),
                 sample_mode="intraday",
+                calendar_confidence_policy=None,
             )
             payload = json.loads(result.stdout)
             self.assertEqual(payload["source"], "stored")
@@ -421,6 +423,133 @@ class BacktestCliTests(unittest.TestCase):
             )
             self.assertEqual(len(replay_range_summaries), 1)
             self.assertEqual(len(replay_range_cycles), 1)
+
+    def test_backtest_replay_accepts_calendar_confidence_policy_override(self) -> None:
+        runner = CliRunner()
+        fake_payload = {
+            "status": "completed",
+            "run": {"run_id": "run:cli-replay"},
+            "summary": {},
+            "stored_top": [],
+            "replayed_top": [],
+            "stored_only": [],
+            "replayed_only": [],
+            "rank_changes": [],
+            "field_drifts": [],
+        }
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            output_root = repo_root / "outputs" / "backtests"
+            with (
+                patch("core.cli.backtest.REPO_ROOT", repo_root),
+                patch("core.cli.backtest.BACKTEST_OUTPUT_ROOT", output_root),
+                patch(
+                    "core.cli.backtest.build_replay_payload",
+                    return_value=fake_payload,
+                ) as build_replay_payload_mock,
+                patch(
+                    "core.cli.backtest.render_json_payload",
+                    side_effect=lambda _console, payload: print(json.dumps(payload)),
+                ),
+            ):
+                result = runner.invoke(
+                    app,
+                    [
+                        "backtest",
+                        "replay",
+                        "--run-id",
+                        "run:cli-replay",
+                        "--calendar-confidence-policy",
+                        "consensus",
+                        "--json",
+                        "--no-color",
+                    ],
+                )
+
+            self.assertEqual(result.exit_code, 0, msg=result.stdout)
+            build_replay_payload_mock.assert_called_once_with(
+                db_target="",
+                run_id="run:cli-replay",
+                symbol=None,
+                strategy=None,
+                config_root=None,
+                calendar_confidence_policy="consensus",
+                latest=False,
+            )
+            replay_summaries = list(
+                output_root.glob(
+                    "replay/runs/calendar-confidence-consensus/run:cli-replay/summary.json"
+                )
+            )
+            self.assertEqual(len(replay_summaries), 1)
+
+    def test_backtest_replay_range_accepts_calendar_confidence_policy_override(self) -> None:
+        runner = CliRunner()
+        fake_payload = {
+            "status": "completed",
+            "source": "alpaca",
+            "target": {},
+            "summary": {},
+            "cycles": [],
+        }
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            output_root = repo_root / "outputs" / "backtests"
+            with (
+                patch("core.cli.backtest.REPO_ROOT", repo_root),
+                patch("core.cli.backtest.BACKTEST_OUTPUT_ROOT", output_root),
+                patch(
+                    "core.cli.backtest.build_replay_range_payload",
+                    return_value=fake_payload,
+                ) as build_replay_range_payload_mock,
+                patch(
+                    "core.cli.backtest.render_json_payload",
+                    side_effect=lambda _console, payload: print(json.dumps(payload)),
+                ),
+            ):
+                result = runner.invoke(
+                    app,
+                    [
+                        "backtest",
+                        "replay-range",
+                        "--bot-id",
+                        "bot-1",
+                        "--automation-id",
+                        "auto-1",
+                        "--start-date",
+                        "2026-04-20",
+                        "--end-date",
+                        "2026-04-23",
+                        "--source",
+                        "alpaca",
+                        "--sample-mode",
+                        "eod",
+                        "--calendar-confidence-policy",
+                        "consensus",
+                        "--json",
+                        "--no-color",
+                    ],
+                )
+
+            self.assertEqual(result.exit_code, 0, msg=result.stdout)
+            build_replay_range_payload_mock.assert_called_once_with(
+                db_target="",
+                bot_id="bot-1",
+                automation_id="auto-1",
+                start_date="2026-04-20",
+                end_date="2026-04-23",
+                limit=500,
+                source="alpaca",
+                config_root=None,
+                sample_mode="eod",
+                calendar_confidence_policy="consensus",
+            )
+            replay_range_summaries = list(
+                output_root.glob(
+                    "replay/ranges/alpaca/eod/calendar-confidence-consensus/bot-1/auto-1/2026-04-20_2026-04-23/summary.json"
+                )
+            )
+            self.assertEqual(len(replay_range_summaries), 1)
 
     def test_replay_command_no_longer_exists(self) -> None:
         runner = CliRunner()

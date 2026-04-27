@@ -173,6 +173,7 @@ class SpreadCandidate:
     earnings_primary_source: str | None = None
     earnings_supporting_sources: tuple[str, ...] = ()
     earnings_consensus_status: str = "missing"
+    earnings_enrichment: dict[str, Any] = field(default_factory=dict)
     setup_status: str = "unknown"
     setup_score: float | None = None
     setup_reasons: tuple[str, ...] = ()

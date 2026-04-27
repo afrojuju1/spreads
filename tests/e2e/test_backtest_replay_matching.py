@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -12,6 +13,11 @@ from core.backtest.replay import (
     _upgrade_legacy_runtime_candidate_filter,
     build_replay_payload,
     build_replay_range_payload,
+)
+
+TEST_FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures"
+RELAXED_LONG_VOL_CONFIG_ROOT = (
+    TEST_FIXTURE_ROOT / "config_roots" / "relaxed_long_vol"
 )
 
 
@@ -251,6 +257,7 @@ class BacktestReplayMatchingTests(unittest.TestCase):
                 db_target="",
                 run_id="run-1",
                 config_root="/tmp/policy-compare",
+                calendar_confidence_policy="consensus",
                 storage=storage,
             )
 
@@ -265,6 +272,7 @@ class BacktestReplayMatchingTests(unittest.TestCase):
             history_store=storage.history,
             run=run,
             config_root="/tmp/policy-compare",
+            calendar_confidence_policy="consensus",
         )
         self.assertEqual(result, payload)
 
@@ -284,6 +292,7 @@ class BacktestReplayMatchingTests(unittest.TestCase):
                 end_date="2026-04-23",
                 source="alpaca",
                 config_root="/tmp/policy-compare",
+                calendar_confidence_policy="consensus",
                 storage=storage,
             )
 
@@ -297,6 +306,7 @@ class BacktestReplayMatchingTests(unittest.TestCase):
             storage=storage,
             config_root="/tmp/policy-compare",
             sample_mode="intraday",
+            calendar_confidence_policy="consensus",
         )
         self.assertEqual(result, payload)
 
@@ -314,11 +324,103 @@ class BacktestReplayMatchingTests(unittest.TestCase):
             start_date="2026-04-20",
             end_date="2026-04-23",
             config_root="/tmp/policy-compare",
+            calendar_confidence_policy="off",
             storage=storage,
         )
 
         self.assertEqual(payload["config_root"], "/tmp/policy-compare")
         self.assertEqual(payload["target"]["config_root"], "/tmp/policy-compare")
+        self.assertEqual(payload["target"]["calendar_confidence_policy"], "off")
+
+    def test_alpaca_replay_range_attaches_config_root_to_scanner_args(self) -> None:
+        storage = SimpleNamespace(signals=SimpleNamespace())
+        runtime = SimpleNamespace(
+            bot=SimpleNamespace(bot=SimpleNamespace()),
+            symbols=("AAPL",),
+            automation=SimpleNamespace(automation=SimpleNamespace(schedule={})),
+            build_settings=SimpleNamespace(scanner_profile="weekly"),
+            trigger_policy={},
+        )
+        captured_config_roots: list[str | None] = []
+
+        def _record_market_slice_args(
+            *,
+            symbol: str,
+            base_scanner_args: object,
+            runtimes: object,
+        ) -> object:
+            captured_config_roots.append(getattr(base_scanner_args, "config_root", None))
+            return SimpleNamespace(stock_feed="sip", feed="indicative")
+
+        with (
+            patch(
+                "core.backtest.replay.resolve_entry_runtime",
+                return_value=runtime,
+            ),
+            patch(
+                "core.backtest.replay._alpaca_replay_dependencies",
+                return_value=(SimpleNamespace(), object(), object()),
+            ),
+            patch(
+                "core.backtest.replay._alpaca_trading_dates",
+                return_value=["2026-04-24"],
+            ),
+            patch(
+                "core.backtest.replay.build_market_slice_args",
+                side_effect=_record_market_slice_args,
+            ),
+            patch(
+                "core.backtest.replay.build_historical_symbol_session_data_from_alpaca",
+                return_value=object(),
+            ),
+            patch(
+                "core.backtest.replay.build_historical_symbol_market_slice_from_session_data",
+                return_value=object(),
+            ),
+            patch(
+                "core.backtest.replay.build_entry_runtime_symbol_candidates_from_market_slice",
+                return_value={
+                    "symbol": "AAPL",
+                    "replay_details": {
+                        "raw_candidate_count": 0,
+                        "postprocess_candidate_count": 0,
+                    },
+                    "all_rows": [],
+                    "rows": [],
+                    "runtime_filter_reason_counts": {},
+                },
+            ),
+            patch(
+                "core.backtest.replay.select_live_opportunities",
+                return_value={"opportunities": [], "symbol_candidates": {}},
+            ),
+            patch(
+                "core.backtest.replay.evaluate_entry_controls",
+                return_value=(True, None, {}),
+            ),
+            patch(
+                "core.backtest.replay.plan_entry_selection",
+                return_value={"selected": None, "eligible_opportunity_count": 0},
+            ),
+        ):
+            payload = build_replay_range_payload(
+                db_target="",
+                bot_id="bot-1",
+                automation_id="auto-1",
+                start_date="2026-04-24",
+                end_date="2026-04-24",
+                limit=1,
+                source="alpaca",
+                config_root=str(RELAXED_LONG_VOL_CONFIG_ROOT),
+                sample_mode="eod",
+                storage=storage,
+            )
+
+        self.assertEqual(
+            captured_config_roots,
+            [str(RELAXED_LONG_VOL_CONFIG_ROOT)],
+        )
+        self.assertEqual(payload["config_root"], str(RELAXED_LONG_VOL_CONFIG_ROOT))
 
 
 if __name__ == "__main__":

@@ -80,6 +80,7 @@ class CalendarEventContext:
     earnings_primary_source: str | None = None
     earnings_supporting_sources: tuple[str, ...] = field(default_factory=tuple)
     earnings_consensus_status: EarningsConsensusStatus = "missing"
+    earnings_enrichment: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -104,3 +105,4 @@ class CalendarPolicyDecision:
     earnings_primary_source: str | None = None
     earnings_supporting_sources: tuple[str, ...] = field(default_factory=tuple)
     earnings_consensus_status: EarningsConsensusStatus = "missing"
+    earnings_enrichment: dict[str, object] = field(default_factory=dict)

@@ -14,9 +14,47 @@ from core.domain.profiles import (
 from core.integrations.calendar_events.models import CalendarPolicyDecision
 from core.integrations.calendar_events.policy import apply_strategy_calendar_policy
 from core.services.scanners.market_data import option_expiry_close
-from core.services.scanners.config import resolve_scan_session_bucket
+from core.services.scanners.config import (
+    normalize_calendar_confidence_policy,
+    resolve_scan_session_bucket,
+)
 from core.services.option_structures import candidate_legs, legs_identity_key
 from core.services.ranking_policy import evaluate_candidate_ranking_policy
+
+
+_CONSENSUS_BACKED_EARNINGS_STATUSES = {"consensus", "date_only"}
+_RESEARCH_GRADE_EARNINGS_TIMING_CONFIDENCE = {"medium", "high"}
+
+
+def _calendar_confidence_reason(
+    candidate: SpreadCandidate,
+    *,
+    underlying_type: str,
+    args: argparse.Namespace,
+) -> str | None:
+    if underlying_type != "single_name_equity":
+        return None
+    if str(candidate.calendar_confidence or "").strip().lower() != "low":
+        return None
+
+    policy = normalize_calendar_confidence_policy(
+        getattr(args, "calendar_confidence_policy", None)
+    )
+    if policy == "off":
+        return None
+    if policy == "consensus":
+        consensus_status = str(
+            candidate.earnings_consensus_status or "missing"
+        ).strip().lower()
+        timing_confidence = str(
+            candidate.earnings_timing_confidence or "unknown"
+        ).strip().lower()
+        if (
+            consensus_status in _CONSENSUS_BACKED_EARNINGS_STATUSES
+            and timing_confidence in _RESEARCH_GRADE_EARNINGS_TIMING_CONFIDENCE
+        ):
+            return None
+    return "Calendar data confidence is low for this single-name candidate"
 
 
 def assess_data_quality(
@@ -93,11 +131,13 @@ def assess_data_quality(
             penalized = True
         reasons.append(reason)
 
-    if (
-        underlying_type == "single_name_equity"
-        and candidate.calendar_confidence == "low"
-    ):
-        reason = "Calendar data confidence is low for this single-name candidate"
+    calendar_confidence_reason = _calendar_confidence_reason(
+        candidate,
+        underlying_type=underlying_type,
+        args=args,
+    )
+    if calendar_confidence_reason:
+        reason = calendar_confidence_reason
         if args.data_policy == "strict":
             blocked = True
         else:
@@ -365,6 +405,7 @@ def attach_calendar_decisions_from_map(
                 earnings_primary_source=decision.earnings_primary_source,
                 earnings_supporting_sources=decision.earnings_supporting_sources,
                 earnings_consensus_status=decision.earnings_consensus_status,
+                earnings_enrichment=dict(decision.earnings_enrichment),
             )
         )
     return filtered_candidates

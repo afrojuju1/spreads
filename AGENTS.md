@@ -32,6 +32,7 @@
 ## Dev Workflow
 
 - This repo is in active development by default.
+- Do not add, update, or expand automated tests unless the user explicitly asks for test work.
 - This repo has repo-local Codex skills under `.agents/skills`. Prefer these direct repo skills when the task matches:
   - `spreads-incident-triage` for runtime incidents, degraded collectors, trading blocks, and "what broke?" questions
   - `spreads-live-rollout` for changes that must be applied to the running Docker-backed system
@@ -60,6 +61,7 @@
 - For jobs health, prefer operator-health fields such as `operator_status`, `operator_status_counts`, and `actionable_failed_count` over raw historical job status counts.
 - For runtime verification of the API, workers, scheduler, or web app, prefer the existing `docker compose` services when they are already running instead of starting duplicate local processes.
 - Use `docker compose ps`, `docker compose logs`, and `docker compose restart` for stack-level checks before falling back to ad hoc local `uvicorn`, worker, or scheduler runs.
+- Prefer live validation through the running stack and shipped ops CLI before unit/integration test work unless the user explicitly asks for tests.
 - In Docker, the `api` service hot-reloads source changes, but the `worker-runtime`, `worker-discovery`, and `scheduler` processes do not. After changing job, worker, or shared backend runtime code that those services import, restart the affected containers before trusting runtime behavior.
 - Do not run production build commands such as `npm run build` or `next build` unless the user explicitly asks for a production check or release validation.
 - Do not run repo-wide Python compile checks such as `python -m compileall` unless the user explicitly asks for them.
@@ -69,7 +71,7 @@
 
 - For storage-backed backend work, use the repo’s configured Postgres target via existing helpers; do not assume SQLite or ad hoc local storage.
 - For new API work, start with the narrowest interface that satisfies the current use case and expand only when there is a real caller.
-- Prefer targeted service, API, and data-backed smoke checks during normal development; avoid broad verification unless the user asks.
+- Prefer targeted live/runtime smoke checks during normal development; avoid broad automated-test verification unless the user explicitly asks for it.
 - Read and follow the more specific backend instructions in [packages/core/AGENTS.md](packages/core/AGENTS.md) when working under `packages/core`.
 - Read and follow the API-specific instructions in [packages/api/AGENTS.md](packages/api/AGENTS.md) when working under `packages/api`.
 

@@ -1,0 +1,10 @@
+extends: short_dated_weekly
+discovery_run_id: short_dated_earnings_put_debit
+job_key: discovery_run:options_automation_short_dated_earnings_put_debit
+label: explore_10_put_debit_weekly_auto
+scanner_strategy: put_debit
+singleton_scope: options_automation_short_dated_earnings_put_debit
+execution_policy:
+  extends: shadow_midpoint
+scanner_args:
+  calendar_confidence_policy: "off"

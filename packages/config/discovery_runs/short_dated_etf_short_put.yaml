@@ -6,3 +6,4 @@ scanner_strategy: short_put
 singleton_scope: options_automation_short_dated_etf_short_put
 execution_policy:
   extends: shadow_midpoint
+  quantity: 5

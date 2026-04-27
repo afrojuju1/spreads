@@ -70,6 +70,7 @@ def apply_strategy_calendar_policy(
         earnings_primary_source=context.earnings_primary_source,
         earnings_supporting_sources=context.earnings_supporting_sources,
         earnings_consensus_status=context.earnings_consensus_status,
+        earnings_enrichment=dict(context.earnings_enrichment),
     )
 
 

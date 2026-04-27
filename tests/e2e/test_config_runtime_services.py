@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -39,6 +40,7 @@ from core.services.scanners.config import (
     resolve_symbol_scan_args,
     resolve_ranking_builder_params,
 )
+from core.services.scanners.postprocess import assess_data_quality
 from core.services.scanners.replay_artifacts import (
     deserialize_symbol_args,
     serialize_symbol_args,
@@ -50,6 +52,11 @@ from core.services.runtime_candidate_filters import (
 )
 from core.services.strategy_builders import (
     build_runtime_scan_args,
+)
+
+TEST_FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures"
+RELAXED_LONG_VOL_CONFIG_ROOT = (
+    TEST_FIXTURE_ROOT / "config_roots" / "relaxed_long_vol"
 )
 
 
@@ -95,6 +102,53 @@ class StrategyBuilderServiceTests(unittest.TestCase):
 
         self.assertEqual(args.min_short_vs_expected_move_ratio, -0.30)
         self.assertEqual(args.min_breakeven_vs_expected_move_ratio, -0.35)
+
+    def test_build_runtime_scan_args_uses_alternate_config_root_for_missing_ranking_thresholds(
+        self,
+    ) -> None:
+        runtime = SimpleNamespace(
+            build_settings=SimpleNamespace(
+                scanner_strategy="long_straddle",
+                scanner_profile="weekly",
+                dte_min=2,
+                dte_max=10,
+                short_delta_min=0.20,
+                short_delta_max=0.35,
+                short_delta_target=0.25,
+                width_points=(),
+                min_open_interest=200,
+                max_leg_spread_pct_mid=0.15,
+                min_return_on_risk=0.05,
+                min_fill_ratio=None,
+                min_short_vs_expected_move_ratio=None,
+                min_breakeven_vs_expected_move_ratio=None,
+                ranking_policy={
+                    "ranking_min_probability_of_profit": 0.11,
+                    "ranking_weight_probability_of_profit": 0.19,
+                    "ranking_weight_expected_value_dollars": 0.27,
+                    "ranking_weight_slippage_adjusted_expected_value_dollars": 0.33,
+                    "ranking_weight_entry_slippage_dollars": 0.13,
+                    "ranking_weight_model_implied_volatility": 0.08,
+                },
+            )
+        )
+        base_args = parse_scanner_args(["--strategy", "long_straddle", "--profile", "weekly"])
+        base_args.config_root = str(RELAXED_LONG_VOL_CONFIG_ROOT)
+
+        args = build_runtime_scan_args(
+            symbol="AAPL",
+            base_scanner_args=base_args,
+            runtime=runtime,
+        )
+
+        self.assertEqual(args.ranking_min_probability_of_profit, 0.11)
+        self.assertEqual(args.ranking_min_expected_value_dollars, 0.0)
+        self.assertEqual(
+            args.ranking_min_slippage_adjusted_expected_value_dollars,
+            0.0,
+        )
+        self.assertEqual(args.ranking_max_entry_slippage_dollars, 99.0)
+        self.assertEqual(args.ranking_max_model_implied_volatility, 1.0)
 
     def test_runtime_candidate_filter_matches_runtime_gate_for_iron_condors(self) -> None:
         runtime = resolve_entry_runtime(
@@ -209,6 +263,7 @@ class CollectionConfigTests(unittest.TestCase):
         args.evaluation_date = "2026-04-21"
         args.evaluation_timestamp = "2026-04-21T18:55:00+00:00"
         args.session_bucket_override = "midday"
+        args.calendar_confidence_policy = "consensus"
 
         restored = deserialize_symbol_args(serialize_symbol_args(args))
 
@@ -219,6 +274,96 @@ class CollectionConfigTests(unittest.TestCase):
             "2026-04-21T18:55:00+00:00",
         )
         self.assertEqual(restored.session_bucket_override, "midday")
+        self.assertEqual(restored.calendar_confidence_policy, "consensus")
+
+    def test_low_confidence_calendar_blocks_single_names_by_default(self) -> None:
+        base_args = parse_scanner_args(
+            ["--symbol", "AAPL", "--strategy", "call_debit", "--profile", "weekly"]
+        )
+        args, _underlying_type = resolve_symbol_scan_args(
+            symbol="AAPL",
+            base_args=base_args,
+        )
+
+        status, reasons = assess_data_quality(
+            SimpleNamespace(
+                strategy="call_debit",
+                expected_move=1.0,
+                modeled_move_vs_break_even_move=1.0,
+                short_vs_expected_move=1.0,
+                breakeven_vs_expected_move=1.0,
+                fill_ratio=1.0,
+                calendar_confidence="low",
+                earnings_consensus_status="consensus",
+                earnings_timing_confidence="high",
+            ),
+            underlying_type="single_name_equity",
+            args=args,
+        )
+
+        self.assertEqual(status, "blocked")
+        self.assertEqual(
+            reasons,
+            ("Calendar data confidence is low for this single-name candidate",),
+        )
+
+    def test_consensus_calendar_confidence_policy_allows_supported_earnings_dates(self) -> None:
+        base_args = parse_scanner_args(
+            ["--symbol", "AAPL", "--strategy", "call_debit", "--profile", "weekly"]
+        )
+        args, _underlying_type = resolve_symbol_scan_args(
+            symbol="AAPL",
+            base_args=base_args,
+        )
+        args.calendar_confidence_policy = "consensus"
+
+        status, reasons = assess_data_quality(
+            SimpleNamespace(
+                strategy="call_debit",
+                expected_move=1.0,
+                modeled_move_vs_break_even_move=1.0,
+                short_vs_expected_move=1.0,
+                breakeven_vs_expected_move=1.0,
+                fill_ratio=1.0,
+                calendar_confidence="low",
+                earnings_consensus_status="date_only",
+                earnings_timing_confidence="medium",
+            ),
+            underlying_type="single_name_equity",
+            args=args,
+        )
+
+        self.assertEqual(status, "clean")
+        self.assertEqual(reasons, ())
+
+    def test_off_calendar_confidence_policy_disables_low_confidence_gate(self) -> None:
+        base_args = parse_scanner_args(
+            ["--symbol", "AAPL", "--strategy", "call_debit", "--profile", "weekly"]
+        )
+        args, _underlying_type = resolve_symbol_scan_args(
+            symbol="AAPL",
+            base_args=base_args,
+        )
+        args.calendar_confidence_policy = "off"
+
+        status, reasons = assess_data_quality(
+            SimpleNamespace(
+                strategy="call_debit",
+                expected_move=1.0,
+                modeled_move_vs_break_even_move=1.0,
+                short_vs_expected_move=1.0,
+                breakeven_vs_expected_move=1.0,
+                fill_ratio=1.0,
+                calendar_confidence="low",
+                earnings_consensus_status="missing",
+                earnings_timing_confidence="unknown",
+            ),
+            underlying_type="single_name_equity",
+            args=args,
+        )
+
+        self.assertEqual(status, "clean")
+        self.assertEqual(reasons, ())
 
     def test_parse_scanner_args_allows_zero_width_single_leg_strategies(self) -> None:
         for strategy in ("long_call", "long_put", "short_call", "short_put"):
@@ -328,9 +473,60 @@ class CollectionConfigTests(unittest.TestCase):
         self,
     ) -> None:
         cases = {
-            "call_credit": (0.60, 10.0, 8.0, 12.0, 0.18, 0.42),
-            "put_credit": (0.60, 10.0, 8.0, 12.0, 0.18, 0.42),
-            "iron_condor": (0.64, 12.0, 10.0, 16.0, 0.20, 0.48),
+            "call_credit": {
+                "ranking_min_probability_of_profit": 0.60,
+                "ranking_min_expected_value_dollars": 10.0,
+                "ranking_min_slippage_adjusted_expected_value_dollars": 8.0,
+                "ranking_max_entry_slippage_dollars": 12.0,
+                "ranking_min_model_implied_volatility": 0.18,
+                "ranking_weight_probability_of_profit": 0.42,
+            },
+            "put_credit": {
+                "ranking_min_probability_of_profit": 0.60,
+                "ranking_max_entry_slippage_dollars": 12.0,
+                "ranking_min_model_implied_volatility": 0.18,
+                "ranking_weight_probability_of_profit": 0.42,
+            },
+            "iron_condor": {
+                "ranking_min_probability_of_profit": 0.64,
+                "ranking_min_expected_value_dollars": 1.0,
+                "ranking_min_slippage_adjusted_expected_value_dollars": 0.0,
+                "ranking_max_entry_slippage_dollars": 16.0,
+                "ranking_min_model_implied_volatility": 0.20,
+                "ranking_weight_probability_of_profit": 0.48,
+            },
+            "call_debit": {
+                "ranking_min_probability_of_profit": 0.40,
+                "ranking_min_expected_value_dollars": 10.0,
+                "ranking_min_slippage_adjusted_expected_value_dollars": 6.0,
+                "ranking_max_entry_slippage_dollars": 12.0,
+                "ranking_max_model_implied_volatility": 0.42,
+                "ranking_weight_probability_of_profit": 0.28,
+            },
+            "put_debit": {
+                "ranking_min_probability_of_profit": 0.40,
+                "ranking_min_expected_value_dollars": 10.0,
+                "ranking_min_slippage_adjusted_expected_value_dollars": 6.0,
+                "ranking_max_entry_slippage_dollars": 12.0,
+                "ranking_max_model_implied_volatility": 0.42,
+                "ranking_weight_probability_of_profit": 0.28,
+            },
+            "long_straddle": {
+                "ranking_min_probability_of_profit": 0.28,
+                "ranking_min_expected_value_dollars": 10.0,
+                "ranking_min_slippage_adjusted_expected_value_dollars": 6.0,
+                "ranking_max_entry_slippage_dollars": 12.0,
+                "ranking_max_model_implied_volatility": 0.34,
+                "ranking_weight_probability_of_profit": 0.18,
+            },
+            "long_strangle": {
+                "ranking_min_probability_of_profit": 0.28,
+                "ranking_min_expected_value_dollars": 10.0,
+                "ranking_min_slippage_adjusted_expected_value_dollars": 6.0,
+                "ranking_max_entry_slippage_dollars": 12.0,
+                "ranking_max_model_implied_volatility": 0.34,
+                "ranking_weight_probability_of_profit": 0.18,
+            },
         }
 
         for strategy, expected in cases.items():
@@ -340,29 +536,37 @@ class CollectionConfigTests(unittest.TestCase):
             )
 
             self.assertEqual(source, "strategy_config")
-            self.assertEqual(
-                (
-                    params["ranking_min_probability_of_profit"],
-                    params["ranking_min_expected_value_dollars"],
-                    params["ranking_min_slippage_adjusted_expected_value_dollars"],
-                    params["ranking_max_entry_slippage_dollars"],
-                    params["ranking_min_model_implied_volatility"],
-                    params["ranking_weight_probability_of_profit"],
-                ),
-                expected,
-            )
+            for key, value in expected.items():
+                self.assertEqual(params.get(key), value)
+
+    def test_resolve_ranking_builder_params_honors_alternate_config_root(self) -> None:
+        source, params = resolve_ranking_builder_params(
+            profile_name="weekly",
+            strategy_family="long_straddle",
+            config_root=RELAXED_LONG_VOL_CONFIG_ROOT,
+        )
+
+        self.assertEqual(source, "strategy_config")
+        self.assertEqual(params["ranking_min_probability_of_profit"], 0.11)
+        self.assertEqual(params["ranking_min_expected_value_dollars"], 0.0)
+        self.assertEqual(
+            params["ranking_min_slippage_adjusted_expected_value_dollars"],
+            0.0,
+        )
+        self.assertEqual(params["ranking_max_entry_slippage_dollars"], 99.0)
+        self.assertEqual(params["ranking_max_model_implied_volatility"], 1.0)
 
     def test_resolve_ranking_builder_params_uses_explicit_profile_fallback_for_legacy_families(
         self,
     ) -> None:
         source, params = resolve_ranking_builder_params(
             profile_name="weekly",
-            strategy_family="call_debit",
+            strategy_family="long_call",
         )
 
         self.assertEqual(source, "profile_fallback")
-        self.assertEqual(params["ranking_min_probability_of_profit"], 0.40)
-        self.assertEqual(params["ranking_weight_probability_of_profit"], 0.28)
+        self.assertEqual(params["ranking_min_probability_of_profit"], 0.34)
+        self.assertEqual(params["ranking_weight_probability_of_profit"], 0.22)
 
     def test_build_raw_candidate_summary_includes_ranking_vectors_and_blocked_exemplars(
         self,
@@ -537,6 +741,24 @@ class CollectionConfigTests(unittest.TestCase):
         self.assertEqual(scope["scanner_args"]["short_delta_max"], 0.28)
         self.assertAlmostEqual(scope["scanner_args"]["short_delta_target"], 0.23)
 
+    def test_call_debit_discovery_run_scope_uses_liquid_stock_seed_universe(self) -> None:
+        scope = build_discovery_run_scope(
+            scanner_strategy="call_debit",
+            scanner_profile="weekly",
+        )
+
+        self.assertTrue(scope["enabled"])
+        self.assertEqual(scope["universe_ref"], "liquid_stocks")
+        self.assertEqual(
+            tuple(scope["symbols"]),
+            ("AAPL", "AMD", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "TSLA"),
+        )
+        self.assertEqual(scope["scanner_args"]["min_dte"], 4)
+        self.assertEqual(scope["scanner_args"]["max_dte"], 10)
+        self.assertEqual(scope["scanner_args"]["short_delta_min"], 0.20)
+        self.assertEqual(scope["scanner_args"]["short_delta_max"], 0.35)
+        self.assertAlmostEqual(scope["scanner_args"]["short_delta_target"], 0.27)
+
     def test_build_scanner_args_preserves_seeded_scanner_overrides(self) -> None:
         args = build_collection_args(
             {
@@ -663,6 +885,47 @@ class OpportunityProjectionTests(unittest.TestCase):
             payload["blockers"],
             ["return_on_risk_below_promotable_floor"],
         )
+
+    def test_build_runtime_opportunity_payload_marks_shadow_runtime_candidates_analysis_only(
+        self,
+    ) -> None:
+        runtime = resolve_entry_runtime(
+            bot_id="short_dated_earnings_long_straddle_bot",
+            automation_id="earnings_long_straddle_entry",
+        )
+        payload = build_runtime_opportunity_payload(
+            runtime=runtime,
+            label="explore_10_long_straddle_weekly_auto",
+            session_date="2026-04-17",
+            generated_at="2026-04-17T19:00:20Z",
+            cycle_id="cycle-discovery-run",
+            automation_run_id="run-1",
+            row={
+                "selection_state": "monitor",
+                "selection_rank": 1,
+                "state_reason": "selected_monitor",
+                "eligibility": "live",
+                "candidate": {
+                    "underlying_symbol": runtime.symbols[0],
+                    "strategy": "long_straddle",
+                    "profile": "weekly",
+                    "expiration_date": "2026-04-24",
+                    "midpoint_credit": 9.9,
+                    "natural_credit": 10.3,
+                    "max_profit": 120.0,
+                    "max_loss": 990.0,
+                    "return_on_risk": 0.12,
+                    "fill_ratio": 0.96,
+                    "order_payload": {"limit_price": 9.9},
+                },
+            },
+            source_row=None,
+        )
+
+        self.assertEqual(payload["eligibility"], "analysis_only")
+        self.assertEqual(payload["eligibility_state"], "analysis_only")
+        self.assertIn("analysis_only", payload["blockers"])
+        self.assertEqual(payload["evidence"]["execution_mode"], "shadow")
 
 
 class RuntimeVisibilityTests(unittest.TestCase):

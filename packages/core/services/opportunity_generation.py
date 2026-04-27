@@ -84,6 +84,16 @@ def _opportunity_blockers(
     return blockers
 
 
+def _runtime_opportunity_eligibility(
+    runtime: EntryRuntime,
+    row: dict[str, Any],
+) -> str:
+    eligibility = str(row.get("eligibility") or "live").strip().lower() or "live"
+    if runtime.automation.automation.execution_mode == "shadow" and eligibility == "live":
+        return "analysis_only"
+    return eligibility
+
+
 def _execution_shape(candidate: dict[str, Any]) -> dict[str, Any]:
     return {
         "underlying_symbol": candidate.get("underlying_symbol"),
@@ -183,7 +193,7 @@ def build_runtime_opportunity_payload(
         if isinstance(row.get("candidate"), dict)
         else dict(row)
     )
-    eligibility = str(row.get("eligibility") or "live")
+    eligibility = _runtime_opportunity_eligibility(runtime, row)
     blockers = _opportunity_blockers(candidate, eligibility=eligibility)
     policy_fields = resolve_runtime_policy_fields(
         profile=runtime.build_settings.scanner_profile,
@@ -260,6 +270,8 @@ def build_runtime_opportunity_payload(
             "runtime_kind": "entry",
             "entry_recipe_refs": list(runtime.entry_recipe_refs),
             "trigger_policy": dict(runtime.trigger_policy),
+            "execution_mode": runtime.automation.automation.execution_mode,
+            "approval_mode": runtime.automation.automation.approval_mode,
             "selection_state": row.get("selection_state"),
             "selection_rank": row.get("selection_rank"),
             "generated_at": generated_at,

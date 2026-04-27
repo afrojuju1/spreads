@@ -1,0 +1,16 @@
+automation_id: earnings_long_strangle_entry
+strategy_config: short_dated_earnings_long_strangle
+kind: entry
+schedule:
+  cadence_minutes: 5
+  market_hours_only: true
+  window:
+    start_et: "09:45"
+    end_et: "14:30"
+universe: liquid_stocks
+triggers:
+  min_opportunity_score: 60
+execution:
+  approval_mode: auto
+  mode: shadow
+enabled: true

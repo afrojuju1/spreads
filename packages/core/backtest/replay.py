@@ -19,6 +19,8 @@ from core.services.live_selection import select_live_opportunities
 from core.services.replay_filters import candidate_matches_filter
 from core.services.scanners.config import (
     apply_scan_evaluation_context,
+    clone_args,
+    normalize_calendar_confidence_policy,
     parse_args as parse_scanner_args,
 )
 from core.services.scanners.historical import (
@@ -217,11 +219,13 @@ def _build_base_replay_payload(
     run: Mapping[str, Any],
     artifact_path: str,
     config_root: str | None = None,
+    calendar_confidence_policy: str | None = None,
 ) -> dict[str, Any]:
     return {
         "status": "completed",
         "fidelity": "high",
         "config_root": config_root,
+        "calendar_confidence_policy": calendar_confidence_policy,
         "run": {
             "run_id": run.get("run_id"),
             "generated_at": run.get("generated_at"),
@@ -312,16 +316,23 @@ def _build_replay_payload_for_run(
     history_store: Any,
     run: Mapping[str, Any],
     config_root: str | None = None,
+    calendar_confidence_policy: str | None = None,
 ) -> dict[str, Any]:
     resolved_run = dict(run)
     stored_candidates = [
         dict(row) for row in history_store.list_candidates(resolved_run["run_id"])
     ]
     artifact_path = str(resolved_run.get("output_path") or "").strip()
+    override_calendar_confidence_policy = (
+        None
+        if calendar_confidence_policy in (None, "")
+        else normalize_calendar_confidence_policy(calendar_confidence_policy)
+    )
     base_payload = _build_base_replay_payload(
         run=resolved_run,
         artifact_path=artifact_path,
         config_root=config_root,
+        calendar_confidence_policy=override_calendar_confidence_policy,
     )
     if not artifact_path:
         base_payload["status"] = "unsupported"
@@ -339,6 +350,8 @@ def _build_replay_payload_for_run(
     market_slice = deserialize_market_slice(dict(artifact["market_slice"]))
     setup_context = deserialize_setup_context(artifact.get("setup_context"))
     symbol_args = deserialize_symbol_args(artifact.get("symbol_args"))
+    if override_calendar_confidence_policy is not None:
+        symbol_args.calendar_confidence_policy = override_calendar_confidence_policy
     calendar_decisions_by_expiration = deserialize_calendar_decisions_by_expiration(
         artifact.get("calendar_decisions_by_expiration")
     )
@@ -1020,6 +1033,7 @@ def _build_alpaca_replay_range_payload(
     storage: Any,
     config_root: str | None = None,
     sample_mode: str = "intraday",
+    calendar_confidence_policy: str | None = None,
 ) -> dict[str, Any]:
     signal_store = storage.signals
     runtime = resolve_entry_runtime(
@@ -1029,6 +1043,16 @@ def _build_alpaca_replay_range_payload(
     )
     cycle_limit = max(int(limit), 1)
     normalized_sample_mode = _normalize_alpaca_sample_mode(sample_mode)
+    base_scanner_args = parse_scanner_args([])
+    if config_root not in (None, ""):
+        base_scanner_args.config_root = str(config_root)
+    if calendar_confidence_policy not in (None, ""):
+        base_scanner_args.calendar_confidence_policy = (
+            normalize_calendar_confidence_policy(calendar_confidence_policy)
+        )
+    effective_calendar_confidence_policy = normalize_calendar_confidence_policy(
+        getattr(base_scanner_args, "calendar_confidence_policy", None)
+    )
     if not runtime.symbols:
         return {
             "status": "no_cycles",
@@ -1041,6 +1065,7 @@ def _build_alpaca_replay_range_payload(
                 "end_date": end_date,
                 "cycle_limit": cycle_limit,
                 "sample_mode": normalized_sample_mode,
+                "calendar_confidence_policy": effective_calendar_confidence_policy,
                 "config_root": config_root,
             },
             "summary": {"cycle_count": 0},
@@ -1050,14 +1075,13 @@ def _build_alpaca_replay_range_payload(
     client, calendar_resolver, greeks_provider = _alpaca_replay_dependencies(
         db_target=db_target
     )
-    scanner_args = parse_scanner_args([])
     anchor_symbol = str(runtime.symbols[0]).upper()
     session_dates = _alpaca_trading_dates(
         client=client,
         anchor_symbol=anchor_symbol,
         start_date=max(start_date, ALPACA_OPTIONS_HISTORY_START.isoformat()),
         end_date=end_date,
-        stock_feed=str(getattr(scanner_args, "stock_feed", "sip") or "sip"),
+        stock_feed=str(getattr(base_scanner_args, "stock_feed", "sip") or "sip"),
     )
     replay_label = f"alpaca_replay:{bot_id}:{automation_id}"
     option_bar_timeframe = _option_bar_timeframe_for_sample_mode(
@@ -1115,7 +1139,7 @@ def _build_alpaca_replay_range_payload(
             try:
                 market_slice_args = build_market_slice_args(
                     symbol=normalized_symbol,
-                    base_scanner_args=parse_scanner_args([]),
+                    base_scanner_args=clone_args(base_scanner_args),
                     runtimes=[runtime],
                 )
                 apply_scan_evaluation_context(
@@ -1146,7 +1170,7 @@ def _build_alpaca_replay_range_payload(
             as_of = cycle_spec["as_of"]
             generated_at = str(cycle_spec["generated_at"])
             session_scanner_args = apply_scan_evaluation_context(
-                parse_scanner_args([]),
+                clone_args(base_scanner_args),
                 evaluation_timestamp=as_of,
                 evaluation_date=session_date,
             )
@@ -1404,6 +1428,7 @@ def _build_alpaca_replay_range_payload(
             "cycle_limit": cycle_limit,
             "sample_mode": normalized_sample_mode,
             "fidelity": "reduced",
+            "calendar_confidence_policy": effective_calendar_confidence_policy,
             "config_root": config_root,
         },
         "summary": {
@@ -1471,6 +1496,7 @@ def build_replay_payload(
     symbol: str | None = None,
     strategy: str | None = None,
     config_root: str | None = None,
+    calendar_confidence_policy: str | None = None,
     latest: bool = False,
     storage: Any | None = None,
 ) -> dict[str, Any]:
@@ -1486,6 +1512,7 @@ def build_replay_payload(
         history_store=history_store,
         run=run,
         config_root=config_root,
+        calendar_confidence_policy=calendar_confidence_policy,
     )
 
 
@@ -1501,6 +1528,7 @@ def build_replay_range_payload(
     source: str = "stored",
     config_root: str | None = None,
     sample_mode: str = "intraday",
+    calendar_confidence_policy: str | None = None,
     storage: Any | None = None,
 ) -> dict[str, Any]:
     normalized_source = str(source or "stored").strip().lower()
@@ -1515,6 +1543,7 @@ def build_replay_range_payload(
             storage=storage,
             config_root=config_root,
             sample_mode=sample_mode,
+            calendar_confidence_policy=calendar_confidence_policy,
         )
     if normalized_source != "stored":
         raise ValueError(f"Unsupported replay source: {source}")
@@ -1598,6 +1627,7 @@ def build_replay_range_payload(
                     history_store=history_store,
                     run=dict(run_record),
                     config_root=config_root,
+                    calendar_confidence_policy=calendar_confidence_policy,
                 )
                 summary_row = _replay_run_summary(replay_payload)
             run_rows.append(summary_row)
@@ -1660,6 +1690,11 @@ def build_replay_range_payload(
             "start_date": start_date,
             "end_date": end_date,
             "cycle_limit": cycle_limit,
+            "calendar_confidence_policy": (
+                normalize_calendar_confidence_policy(calendar_confidence_policy)
+                if calendar_confidence_policy not in (None, "")
+                else None
+            ),
             "config_root": config_root,
         },
         "summary": summary,
