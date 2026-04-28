@@ -28,6 +28,7 @@ from core.services.discovery_runs.scanning import (
     build_symbol_strategy_candidates,
     run_universe_cycle,
 )
+from core.services.scanners.config import resolve_symbols
 from core.services.discovery_runs.shared import session_date_for_generated_at
 from core.services.execution import submit_auto_session_execution
 from core.services.discovery_run_health.enrichment import (
@@ -157,45 +158,39 @@ def run_collection_cycle(
         datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
     )
     session_date = session_date_for_generated_at(generated_at)
-    if heartbeat is not None:
-        heartbeat()
-    symbols, universe_label, scan_results, failures, _raw_top_candidates = (
-        run_universe_cycle(
-            scanner_args=scanner_args,
-            client=client,
-            calendar_resolver=calendar_resolver,
-            greeks_provider=greeks_provider,
-            history_store=history_store,
-        )
-    )
-    label = str(getattr(args, "label", "") or "").strip() or build_live_snapshot_label(
-        universe_label=universe_label,
-        strategy=args.strategy,
-        profile=args.profile,
-        greeks_source=args.greeks_source,
-    )
-    cycle_id = build_cycle_id(label)
-    run_ids = {
-        (result.symbol, result.args.strategy): result.run_id for result in scan_results
-    }
     options_scope = getattr(args, "options_automation_scope", {"enabled": False})
     automation_mode = bool(options_scope.get("enabled"))
     entry_runtimes = [
         build_entry_runtime(bot, automation)
         for bot, automation in list(options_scope.get("entry_runtimes") or [])
     ]
+    resolved_symbols, resolved_universe_label = resolve_symbols(scanner_args)
+    scoped_symbols = sorted(
+        {
+            str(symbol).upper()
+            for runtime in entry_runtimes
+            for symbol in list(runtime.symbols)
+            if str(symbol).strip()
+        }
+    )
+    symbols = scoped_symbols or resolved_symbols
+    universe_label = resolved_universe_label
+    label = str(getattr(args, "label", "") or "").strip() or build_live_snapshot_label(
+        universe_label=universe_label,
+        strategy=args.strategy,
+        profile=args.profile,
+        greeks_source=args.greeks_source,
+    )
+    scanner_args.session_label = label
+    cycle_id = build_cycle_id(label)
+    scan_results: list[Any] = []
+    failures: list[UniverseScanFailure] = []
+    symbol_strategy_candidates: dict[str, list[dict[str, Any]]] = {}
     runtime_candidate_rows_by_owner: dict[
         tuple[str, str], dict[str, list[dict[str, Any]]]
     ] = {}
-    symbol_strategy_candidates = build_symbol_strategy_candidates(
-        scan_results,
-        run_ids,
-        max_per_strategy=WATCHLIST_PER_STRATEGY,
-    )
-    symbol_strategy_candidates = _filter_scope_candidates(
-        symbol_strategy_candidates,
-        scope=options_scope,
-    )
+    if heartbeat is not None:
+        heartbeat()
     if bool(options_scope.get("enabled")) and entry_runtimes:
         try:
             runtime_candidate_rows_by_owner = build_entry_runtime_candidates(
@@ -211,10 +206,61 @@ def run_collection_cycle(
             merged_runtime_candidates = _merge_runtime_candidate_rows(
                 runtime_candidate_rows_by_owner
             )
-            if merged_runtime_candidates:
-                symbol_strategy_candidates = merged_runtime_candidates
+            symbol_strategy_candidates = merged_runtime_candidates
         except Exception as exc:
             print(f"Exact runtime builder unavailable: {exc}")
+            (
+                symbols,
+                universe_label,
+                scan_results,
+                failures,
+                _raw_top_candidates,
+            ) = run_universe_cycle(
+                scanner_args=scanner_args,
+                client=client,
+                calendar_resolver=calendar_resolver,
+                greeks_provider=greeks_provider,
+                history_store=history_store,
+            )
+            run_ids = {
+                (result.symbol, result.args.strategy): result.run_id
+                for result in scan_results
+            }
+            symbol_strategy_candidates = build_symbol_strategy_candidates(
+                scan_results,
+                run_ids,
+                max_per_strategy=WATCHLIST_PER_STRATEGY,
+            )
+            symbol_strategy_candidates = _filter_scope_candidates(
+                symbol_strategy_candidates,
+                scope=options_scope,
+            )
+    else:
+        (
+            symbols,
+            universe_label,
+            scan_results,
+            failures,
+            _raw_top_candidates,
+        ) = run_universe_cycle(
+            scanner_args=scanner_args,
+            client=client,
+            calendar_resolver=calendar_resolver,
+            greeks_provider=greeks_provider,
+            history_store=history_store,
+        )
+        run_ids = {
+            (result.symbol, result.args.strategy): result.run_id for result in scan_results
+        }
+        symbol_strategy_candidates = build_symbol_strategy_candidates(
+            scan_results,
+            run_ids,
+            max_per_strategy=WATCHLIST_PER_STRATEGY,
+        )
+        symbol_strategy_candidates = _filter_scope_candidates(
+            symbol_strategy_candidates,
+            scope=options_scope,
+        )
     capture_snapshot = capture_live_option_market_state(
         args=args,
         scanner_args=scanner_args,
@@ -377,6 +423,8 @@ def run_collection_cycle(
                 job_run_id=None if tick_context is None else tick_context.job_run_id,
                 top_promotable=args.top,
                 top_monitor=WATCHLIST_TOP,
+                selection_memory=selection_memory,
+                signal_cycle_context=signal_cycle_context,
             )
         except Exception as exc:
             print(f"Options automation runtime sync unavailable: {exc}")

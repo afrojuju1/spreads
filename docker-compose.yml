@@ -86,7 +86,7 @@ services:
       context: .
     restart: unless-stopped
     deploy:
-      replicas: 3
+      replicas: 4
     depends_on:
       postgres:
         condition: service_healthy

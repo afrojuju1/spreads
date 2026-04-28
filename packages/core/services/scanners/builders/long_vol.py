@@ -33,6 +33,8 @@ def build_long_straddles(
     args: argparse.Namespace,
 ) -> list[SpreadCandidate]:
     candidates: list[SpreadCandidate] = []
+    delta_min = max(float(getattr(args, "short_delta_min", 0.3) or 0.3), 0.0)
+    delta_max = min(float(getattr(args, "short_delta_max", 0.7) or 0.7), 1.0)
 
     for expiration_date, call_contracts in sorted(call_contracts_by_expiration.items()):
         put_contracts = put_contracts_by_expiration.get(expiration_date, [])
@@ -77,7 +79,9 @@ def build_long_straddles(
             put_delta = abs(put_snapshot.delta or 0.0)
             if call_snapshot.delta is None or put_snapshot.delta is None:
                 continue
-            if abs(call_delta - 0.50) > 0.20 or abs(put_delta - 0.50) > 0.20:
+            if not (delta_min <= call_delta <= delta_max):
+                continue
+            if not (delta_min <= put_delta <= delta_max):
                 continue
 
             midpoint_credit = round(call_snapshot.midpoint + put_snapshot.midpoint, 4)

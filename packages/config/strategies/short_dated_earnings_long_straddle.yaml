@@ -7,9 +7,9 @@ build:
     min: 2
     max: 10
   entry_delta:
-    min: 0.20
-    max: 0.35
-    target: 0.25
+    min: 0.45
+    max: 0.55
+    target: 0.50
   ranking:
     min_probability_of_profit: 0.28
     min_expected_value_dollars: 10

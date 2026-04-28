@@ -177,6 +177,50 @@ def _read_previous_runtime_selection(
     return previous_promotable, selection_memory
 
 
+def _project_runtime_rows_from_persisted(
+    *,
+    persisted_opportunities: list[dict[str, Any]],
+    filtered_candidates: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    allowed_candidates_by_symbol: dict[str, set[str]] = {}
+    for symbol, rows in filtered_candidates.items():
+        candidate_ids = {
+            _candidate_identity(dict(candidate))
+            for candidate in list(rows or [])
+            if _candidate_identity(dict(candidate))
+        }
+        if candidate_ids:
+            allowed_candidates_by_symbol[str(symbol).upper()] = candidate_ids
+
+    projected_rows: list[dict[str, Any]] = []
+    for row in persisted_opportunities:
+        payload = (
+            row.get("candidate") if isinstance(row.get("candidate"), dict) else row
+        )
+        candidate = dict(payload)
+        symbol = str(candidate.get("underlying_symbol") or "").upper()
+        if not symbol:
+            continue
+        allowed_ids = allowed_candidates_by_symbol.get(symbol)
+        if not allowed_ids:
+            continue
+        candidate_id = _candidate_identity(candidate)
+        if candidate_id not in allowed_ids:
+            continue
+        projected_rows.append(dict(row))
+
+    projected_rows.sort(
+        key=lambda row: (
+            0
+            if row.get("selection_rank") not in (None, "")
+            else 1,
+            int(row.get("selection_rank") or 0),
+            str(row.get("underlying_symbol") or ""),
+        )
+    )
+    return projected_rows
+
+
 def build_runtime_opportunity_payload(
     *,
     runtime: EntryRuntime,
@@ -313,6 +357,8 @@ def sync_entry_runtime_opportunities(
     job_run_id: str | None,
     top_promotable: int,
     top_monitor: int,
+    selection_memory: dict[str, Any] | None = None,
+    signal_cycle_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not signal_store.automation_runtime_schema_ready():
         return {
@@ -358,17 +404,29 @@ def sync_entry_runtime_opportunities(
                 runtime=runtime,
             )
         )
-        selection = select_live_opportunities(
-            label=label,
-            cycle_id=cycle_id,
-            generated_at=generated_at,
-            symbol_candidates=filtered_candidates,
-            previous_promotable=previous_promotable,
-            previous_selection_memory=previous_selection_memory,
-            top_promotable=top_promotable,
-            top_monitor=top_monitor,
-            profile=runtime.build_settings.scanner_profile,
-        )
+        selected_rows: list[dict[str, Any]]
+        runtime_selection_memory: dict[str, Any]
+        if owner_candidates is not None:
+            selected_rows = _project_runtime_rows_from_persisted(
+                persisted_opportunities=persisted_opportunities,
+                filtered_candidates=filtered_candidates,
+            )
+            runtime_selection_memory = dict(selection_memory or {})
+        else:
+            selection = select_live_opportunities(
+                label=label,
+                cycle_id=cycle_id,
+                generated_at=generated_at,
+                symbol_candidates=filtered_candidates,
+                previous_promotable=previous_promotable,
+                previous_selection_memory=previous_selection_memory,
+                top_promotable=top_promotable,
+                top_monitor=top_monitor,
+                profile=runtime.build_settings.scanner_profile,
+                signal_cycle_context=signal_cycle_context,
+            )
+            selected_rows = list(selection["opportunities"])
+            runtime_selection_memory = dict(selection.get("selection_memory") or {})
         automation_run_id = build_automation_run_id(
             cycle_id, runtime.bot_id, runtime.automation_id
         )
@@ -387,15 +445,15 @@ def sync_entry_runtime_opportunities(
             status="completed",
             result={
                 "candidate_symbol_count": len(filtered_candidates),
-                "opportunity_count": len(selection["opportunities"]),
-                "selection_memory": dict(selection.get("selection_memory") or {}),
+                "opportunity_count": len(selected_rows),
+                "selection_memory": runtime_selection_memory,
             },
             config_hash=runtime.config_hash,
         )
         automation_runs_upserted += 1
 
         active_runtime_opportunity_ids: list[str] = []
-        for row in selection["opportunities"]:
+        for row in selected_rows:
             candidate = (
                 dict(row.get("candidate"))
                 if isinstance(row.get("candidate"), dict)
