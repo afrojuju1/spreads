@@ -15,6 +15,7 @@ from core.services.runtime_identity import build_live_run_scope_id
 from core.services.uoa_quote_summary import build_uoa_quote_summary
 from core.services.uoa_root_decisions import build_uoa_root_decisions
 from core.services.uoa_trade_baselines import build_uoa_trade_baselines
+from core.services.uoa_trade_enrichment import enrich_uoa_trade_records
 from core.services.uoa_trade_summary import build_uoa_trade_summary
 from core.storage.event_repository import EventRepository
 from core.storage.run_history_repository import RunHistoryRepository
@@ -291,11 +292,16 @@ def capture_live_option_market_state(
         *stream_quote_records,
         *recovery_quote_records,
     ]
+    enriched_trade_records = enrich_uoa_trade_records(
+        trades=stream_trade_records,
+        quotes=reactive_quote_records,
+        contract_metadata_by_symbol=contract_metadata_by_symbol,
+    )
     uoa_summary = build_uoa_trade_summary(
         as_of=generated_at,
         expected_trade_symbols=expected_trade_symbols,
         contract_metadata_by_symbol=contract_metadata_by_symbol,
-        trades=stream_trade_records,
+        trades=enriched_trade_records,
         top_contracts_limit=max(len(expected_trade_symbols), 10),
         top_roots_limit=max(len(expected_uoa_roots), 10),
     )

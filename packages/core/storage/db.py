@@ -6,7 +6,6 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from core.runtime.config import (
-    DEFAULT_POSTGRES_URL,
     default_database_url,
     normalize_database_url,
 )

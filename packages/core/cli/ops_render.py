@@ -140,6 +140,25 @@ def _render_session_schedule(value: Any, *, length: int = 72) -> str:
     return _truncate(rendered, length=length)
 
 
+def _uoa_decision_rows(details: dict[str, Any]) -> list[dict[str, Any]]:
+    rows_by_symbol: dict[str, dict[str, Any]] = {}
+    for key in ("top_high_roots", "top_promotable_roots", "top_monitor_roots"):
+        for row in list(details.get(key) or []):
+            if not isinstance(row, dict):
+                continue
+            symbol = str(row.get("underlying_symbol") or "").strip()
+            if not symbol or symbol in rows_by_symbol:
+                continue
+            rows_by_symbol[symbol] = dict(row)
+    return sorted(
+        rows_by_symbol.values(),
+        key=lambda row: (
+            -float(row.get("decision_score") or -1.0),
+            str(row.get("underlying_symbol") or ""),
+        ),
+    )
+
+
 def _render_session_state(value: Any, *, length: int = 40) -> str:
     payload = value if isinstance(value, dict) else {}
     state = str(payload.get("state") or "").strip()
@@ -1827,6 +1846,20 @@ def _render_uoa_detail(console: Console, payload: dict[str, Any]) -> None:
         ),
     )
     overview.add_row(
+        "Selected",
+        (
+            f"promotable {_render_value(summary.get('selected_promotable_count'))} | "
+            f"monitor {_render_value(summary.get('selected_monitor_count'))}"
+        ),
+    )
+    overview.add_row(
+        "Live-Eligible",
+        (
+            f"promotable {_render_value(summary.get('live_selected_promotable_count'))} | "
+            f"monitor {_render_value(summary.get('live_selected_monitor_count'))}"
+        ),
+    )
+    overview.add_row(
         "Top Decision",
         (
             f"{_render_value(summary.get('top_decision_symbol'))} "
@@ -1887,7 +1920,7 @@ def _render_uoa_detail(console: Console, payload: dict[str, Any]) -> None:
             table.add_row(str(row.get("name") or "-"), _render_value(row.get("count")))
         console.print(table)
 
-    decision_rows = list(details.get("top_monitor_roots") or [])
+    decision_rows = _uoa_decision_rows(details)
     if decision_rows:
         table = Table(title="Decision Roots", header_style="bold")
         table.add_column("Symbol")
@@ -1898,7 +1931,7 @@ def _render_uoa_detail(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Vol/OI", justify="right")
         table.add_column("Quote")
         table.add_column("Why")
-        for row in decision_rows:
+        for row in decision_rows[:5]:
             table.add_row(
                 str(row.get("underlying_symbol") or "-"),
                 str(row.get("decision_state") or "-"),

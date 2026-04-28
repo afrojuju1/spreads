@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from datetime import date
+from math import sqrt
 from typing import Any
 
 from core.common import clamp, parse_float, parse_int
-from core.storage.serializers import parse_datetime, render_value
+from core.storage.serializers import parse_date, parse_datetime, render_value
 from core.services.uoa_trade_summary import parse_option_symbol_details
 
 
@@ -19,6 +19,16 @@ def _volume_oi_ratio(*, volume: int | None, open_interest: int | None) -> float 
     if volume is None or open_interest is None or open_interest <= 0:
         return None
     return round(volume / open_interest, 4)
+
+
+def _open_interest_age_days(*, as_of_date: date | None, open_interest_date: Any) -> int | None:
+    if as_of_date is None or open_interest_date in (None, ""):
+        return None
+    try:
+        parsed = parse_date(open_interest_date)
+    except (TypeError, ValueError):
+        return None
+    return max((as_of_date - parsed).days, 0)
 
 
 def _quote_thresholds(dte: int | None) -> dict[str, float]:
@@ -47,6 +57,19 @@ def _quality_state(*, is_fresh: bool, passes_liquidity_gate: bool, quality_score
     return "weak"
 
 
+def _moneyness_bucket(percent_otm: float | None) -> str | None:
+    if percent_otm is None:
+        return None
+    absolute = abs(percent_otm)
+    if absolute <= 0.01:
+        return "atm"
+    if absolute <= 0.03:
+        return "near_atm"
+    if absolute <= 0.08:
+        return "otm"
+    return "far_otm"
+
+
 def build_uoa_quote_summary(
     *,
     as_of: str,
@@ -55,6 +78,7 @@ def build_uoa_quote_summary(
     quotes: Sequence[Mapping[str, Any]] | None,
 ) -> dict[str, Any]:
     as_of_dt = parse_datetime(as_of)
+    as_of_date = None if as_of_dt is None else as_of_dt.date()
     latest_by_symbol: dict[str, dict[str, Any]] = {}
     expected_symbols = sorted({str(item or "").strip() for item in expected_quote_symbols or [] if str(item or "").strip()})
     metadata_map = {} if contract_metadata_by_symbol is None else dict(contract_metadata_by_symbol)
@@ -116,6 +140,11 @@ def build_uoa_quote_summary(
             else:
                 percent_otm = round((underlying_price - strike_price) / underlying_price, 4)
         open_interest = parse_int(metadata.get("open_interest"))
+        open_interest_date = metadata.get("open_interest_date")
+        open_interest_age_days = _open_interest_age_days(
+            as_of_date=as_of_date,
+            open_interest_date=open_interest_date,
+        )
         volume = parse_int(metadata.get("volume"))
         volume_oi_ratio = _volume_oi_ratio(volume=volume, open_interest=open_interest)
         quality_score = round(
@@ -136,11 +165,18 @@ def build_uoa_quote_summary(
             "strike_price": strike_price,
             "underlying_price": underlying_price,
             "percent_otm": percent_otm,
+            "atm_distance_pct": None if percent_otm is None else round(abs(percent_otm), 4),
+            "moneyness_bucket": _moneyness_bucket(percent_otm),
             "open_interest": open_interest,
+            "open_interest_date": open_interest_date,
+            "open_interest_age_days": open_interest_age_days,
             "volume": volume,
             "volume_oi_ratio": volume_oi_ratio,
             "implied_volatility": parse_float(metadata.get("implied_volatility")),
             "delta": parse_float(metadata.get("delta")),
+            "gamma": parse_float(metadata.get("gamma")),
+            "vega": parse_float(metadata.get("vega")),
+            "rho": parse_float(metadata.get("rho")),
             "bid": round(bid, 4),
             "ask": round(ask, 4),
             "midpoint": round(midpoint, 4),
@@ -161,6 +197,8 @@ def build_uoa_quote_summary(
                 passes_liquidity_gate=passes_liquidity_gate,
                 quality_score=quality_score,
             ),
+            "is_front_expiry": False,
+            "is_next_expiry": False,
         }
         contracts.append(summary)
         underlying_symbol = str(summary.get("underlying_symbol") or "").strip()
@@ -203,6 +241,103 @@ def build_uoa_quote_summary(
                 str(item["option_symbol"]),
             ),
         )
+        usable_contracts = [
+            item
+            for item in root_contracts
+            if bool(item.get("is_fresh"))
+            and bool(item.get("passes_liquidity_gate"))
+            and item.get("implied_volatility") is not None
+        ]
+        expiries: list[tuple[int, str, dict[str, Any], dict[str, Any]]] = []
+        expiries_by_date: dict[str, dict[str, dict[str, Any] | int | str]] = {}
+        for contract in usable_contracts:
+            expiry = str(contract.get("expiration_date") or "").strip()
+            dte = parse_int(contract.get("dte"))
+            option_type = str(contract.get("option_type") or "").strip().lower()
+            if not expiry or dte is None or option_type not in {"call", "put"}:
+                continue
+            payload = expiries_by_date.setdefault(
+                expiry,
+                {"dte": dte, "call": None, "put": None},
+            )
+            existing = payload.get(option_type)
+            current_distance = abs(float(contract.get("atm_distance_pct") or 99.0))
+            existing_distance = (
+                99.0
+                if not isinstance(existing, Mapping)
+                else abs(float(existing.get("atm_distance_pct") or 99.0))
+            )
+            if not isinstance(existing, Mapping) or current_distance < existing_distance:
+                payload[option_type] = contract
+        for expiry, payload in expiries_by_date.items():
+            call_contract = payload.get("call")
+            put_contract = payload.get("put")
+            dte = parse_int(payload.get("dte"))
+            if isinstance(call_contract, Mapping) and isinstance(put_contract, Mapping) and dte is not None:
+                expiries.append((dte, expiry, dict(call_contract), dict(put_contract)))
+        expiries.sort(key=lambda item: (item[0], item[1]))
+        front_expiry_entry = expiries[0] if expiries else None
+        next_expiry_entry = expiries[1] if len(expiries) > 1 else None
+        if front_expiry_entry is not None:
+            front_expiry = front_expiry_entry[1]
+            for contract in root_contracts:
+                if str(contract.get("expiration_date") or "").strip() == front_expiry:
+                    contract["is_front_expiry"] = True
+        if next_expiry_entry is not None:
+            next_expiry = next_expiry_entry[1]
+            for contract in root_contracts:
+                if str(contract.get("expiration_date") or "").strip() == next_expiry:
+                    contract["is_next_expiry"] = True
+        front_expiry_dte = None if front_expiry_entry is None else int(front_expiry_entry[0])
+        front_atm_call = None if front_expiry_entry is None else front_expiry_entry[2]
+        front_atm_put = None if front_expiry_entry is None else front_expiry_entry[3]
+        next_expiry_dte = None if next_expiry_entry is None else int(next_expiry_entry[0])
+        next_atm_call = None if next_expiry_entry is None else next_expiry_entry[2]
+        next_atm_put = None if next_expiry_entry is None else next_expiry_entry[3]
+        front_expiry_atm_iv = None
+        if front_atm_call is not None and front_atm_put is not None:
+            front_expiry_atm_iv = round(
+                (
+                    float(front_atm_call.get("implied_volatility") or 0.0)
+                    + float(front_atm_put.get("implied_volatility") or 0.0)
+                )
+                / 2.0,
+                4,
+            )
+        next_expiry_atm_iv = None
+        if next_atm_call is not None and next_atm_put is not None:
+            next_expiry_atm_iv = round(
+                (
+                    float(next_atm_call.get("implied_volatility") or 0.0)
+                    + float(next_atm_put.get("implied_volatility") or 0.0)
+                )
+                / 2.0,
+                4,
+            )
+        front_next_term_slope = (
+            None
+            if front_expiry_atm_iv is None or next_expiry_atm_iv is None
+            else round(front_expiry_atm_iv - next_expiry_atm_iv, 4)
+        )
+        front_atm_call_put_iv_gap = (
+            None
+            if front_atm_call is None or front_atm_put is None
+            else round(
+                float(front_atm_call.get("implied_volatility") or 0.0)
+                - float(front_atm_put.get("implied_volatility") or 0.0),
+                4,
+            )
+        )
+        front_expiry_implied_move_pct = (
+            None
+            if front_expiry_atm_iv is None or front_expiry_dte is None
+            else round(front_expiry_atm_iv * sqrt(max(front_expiry_dte, 1) / 365.0), 4)
+        )
+        surface_coverage_state = "missing"
+        if front_expiry_atm_iv is not None and next_expiry_atm_iv is not None:
+            surface_coverage_state = "strong"
+        elif front_expiry_atm_iv is not None:
+            surface_coverage_state = "partial"
         root_map[underlying_symbol] = {
             "underlying_symbol": underlying_symbol,
             "observed_contract_count": int(root["observed_contract_count"]),
@@ -221,6 +356,30 @@ def build_uoa_quote_summary(
                 passes_liquidity_gate=int(root["liquid_contract_count"]) > 0,
                 quality_score=average_quality_score,
             ),
+            "surface_coverage_state": surface_coverage_state,
+            "front_expiry": None if front_expiry_entry is None else front_expiry_entry[1],
+            "front_expiry_dte": front_expiry_dte,
+            "front_expiry_atm_call_symbol": None
+            if front_atm_call is None
+            else front_atm_call.get("option_symbol"),
+            "front_expiry_atm_put_symbol": None
+            if front_atm_put is None
+            else front_atm_put.get("option_symbol"),
+            "front_expiry_atm_iv": front_expiry_atm_iv,
+            "next_expiry": None if next_expiry_entry is None else next_expiry_entry[1],
+            "next_expiry_dte": next_expiry_dte,
+            "next_expiry_atm_iv": next_expiry_atm_iv,
+            "front_next_term_slope": front_next_term_slope,
+            "front_atm_call_put_iv_gap": front_atm_call_put_iv_gap,
+            "front_expiry_implied_move_pct": front_expiry_implied_move_pct,
+            "surface_score_inputs": {
+                "surface_coverage_state": surface_coverage_state,
+                "front_expiry_atm_iv": front_expiry_atm_iv,
+                "next_expiry_atm_iv": next_expiry_atm_iv,
+                "front_next_term_slope": front_next_term_slope,
+                "front_atm_call_put_iv_gap": front_atm_call_put_iv_gap,
+                "front_expiry_implied_move_pct": front_expiry_implied_move_pct,
+            },
             "top_contracts": [dict(item) for item in root_contracts[:3]],
         }
 

@@ -1,0 +1,9 @@
+extends: short_dated_weekly
+discovery_run_id: uoa_default_weekly
+job_key: discovery_run:uoa_default_weekly
+label: uoa_default_weekly_auto
+uoa_only: true
+scanner_strategy: combined
+singleton_scope: uoa_default_weekly
+scanner_args:
+  calendar_confidence_policy: "off"

@@ -314,6 +314,26 @@ def active_entry_automations(
     return entries
 
 
+def build_uoa_symbols(
+    config_root: str | Path | None = None,
+    *,
+    scanner_profile: str | None = None,
+) -> tuple[str, ...]:
+    entries = active_entry_automations(
+        config_root,
+        scanner_profile=scanner_profile,
+    )
+    symbols = sorted(
+        {
+            str(symbol).upper()
+            for _bot, automation in entries
+            for symbol in automation.symbols
+            if str(symbol).strip()
+        }
+    )
+    return tuple(symbols)
+
+
 def build_discovery_run_scope(
     config_root: str | Path | None = None,
     *,
@@ -497,6 +517,7 @@ __all__ = [
     "active_entry_automations",
     "build_discovery_run_scope",
     "build_discovery_run_scopes",
+    "build_uoa_symbols",
     "bot_time_reached",
     "load_active_bots",
     "load_bots",

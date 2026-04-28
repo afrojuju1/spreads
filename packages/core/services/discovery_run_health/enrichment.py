@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from core.services.selection_summary import automation_summary_payload
-from core.services.selection_terms import normalize_uoa_decision_state
+from core.services.uoa_terms import normalize_uoa_decision_state
 
 from .capture import build_quote_capture_summary, build_trade_capture_summary
 from .selection import normalize_selection_summary
@@ -140,10 +140,24 @@ def normalize_uoa_decisions_payload(
     normalized_overview = {
         key: value
         for key, value in overview.items()
-        if key not in {"watchlist_count", "board_count"}
+        if key not in {"watchlist_count", "board_count", "monitor_count", "promotable_count"}
     }
-    normalized_overview.setdefault("monitor_count", overview.get("watchlist_count"))
-    normalized_overview.setdefault("promotable_count", overview.get("board_count"))
+    emerging_count = (
+        overview.get("emerging_count")
+        if overview.get("emerging_count") is not None
+        else overview.get("watchlist_count", overview.get("monitor_count"))
+    )
+    notable_count = (
+        overview.get("notable_count")
+        if overview.get("notable_count") is not None
+        else overview.get("board_count", overview.get("promotable_count"))
+    )
+    normalized_overview["emerging_count"] = emerging_count
+    normalized_overview["notable_count"] = notable_count
+    normalized_overview.setdefault("watchlist_count", emerging_count)
+    normalized_overview.setdefault("monitor_count", emerging_count)
+    normalized_overview.setdefault("board_count", notable_count)
+    normalized_overview.setdefault("promotable_count", notable_count)
     normalized_top_decision_state = normalize_uoa_decision_state(
         normalized_overview.get("top_decision_state")
     )
@@ -154,17 +168,25 @@ def normalize_uoa_decisions_payload(
         for item in list(source.get("roots") or [])
         if isinstance(item, Mapping)
     ]
-    top_monitor_roots = [
+    top_emerging_roots = [
         _normalize_uoa_root(item)
         for item in list(
-            source.get("top_monitor_roots", source.get("top_watchlist_roots")) or []
+            source.get(
+                "top_emerging_roots",
+                source.get("top_watchlist_roots", source.get("top_monitor_roots")),
+            )
+            or []
         )
         if isinstance(item, Mapping)
     ]
-    top_promotable_roots = [
+    top_notable_roots = [
         _normalize_uoa_root(item)
         for item in list(
-            source.get("top_promotable_roots", source.get("top_board_roots")) or []
+            source.get(
+                "top_notable_roots",
+                source.get("top_board_roots", source.get("top_promotable_roots")),
+            )
+            or []
         )
         if isinstance(item, Mapping)
     ]
@@ -173,17 +195,34 @@ def normalize_uoa_decisions_payload(
         for item in list(source.get("top_high_roots") or [])
         if isinstance(item, Mapping)
     ]
+    top_critical_roots = [
+        _normalize_uoa_root(item)
+        for item in list(source.get("top_critical_roots") or [])
+        if isinstance(item, Mapping)
+    ]
     return {
         **{
             key: value
             for key, value in source.items()
-            if key not in {"overview", "top_watchlist_roots", "top_board_roots"}
+            if key
+            not in {
+                "overview",
+                "top_watchlist_roots",
+                "top_board_roots",
+                "top_monitor_roots",
+                "top_promotable_roots",
+            }
         },
         "overview": normalized_overview,
         "roots": roots,
-        "top_monitor_roots": top_monitor_roots,
-        "top_promotable_roots": top_promotable_roots,
+        "top_emerging_roots": top_emerging_roots,
+        "top_notable_roots": top_notable_roots,
         "top_high_roots": top_high_roots,
+        "top_critical_roots": top_critical_roots,
+        "top_watchlist_roots": top_emerging_roots,
+        "top_monitor_roots": top_emerging_roots,
+        "top_board_roots": top_notable_roots,
+        "top_promotable_roots": top_notable_roots,
     }
 
 

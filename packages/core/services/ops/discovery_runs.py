@@ -137,6 +137,11 @@ def _latest_discovery_runs(
     }
     latest_discovery_runs: list[dict[str, Any]] = []
     for definition in discovery_run_definitions:
+        payload = (
+            definition.get("payload") if isinstance(definition.get("payload"), Mapping) else {}
+        )
+        if bool(payload.get("uoa_only", False)):
+            continue
         session = latest_session_by_pipeline_id.get(str(definition["pipeline_id"]))
         run = (
             None

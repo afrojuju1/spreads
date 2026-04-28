@@ -6,7 +6,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from core.services.bots import build_discovery_run_scope, load_active_bots
+from core.services.bots import (
+    build_discovery_run_scope,
+    build_uoa_symbols,
+    load_active_bots,
+)
 from core.services.config_inheritance import (
     as_mapping as _as_mapping,
     as_required_text as _as_text,
@@ -74,6 +78,7 @@ class DiscoveryRunConfig:
     discovery_run_id: str
     job_key: str
     label: str
+    uoa_only: bool
     scanner_strategy: str
     scanner_profile: str
     enabled: bool
@@ -107,6 +112,8 @@ class DiscoveryRunSpec:
 
     @property
     def enabled(self) -> bool:
+        if self.config.uoa_only:
+            return self.config.enabled and bool(self.scope.get("symbols"))
         return self.config.enabled and bool(self.scope.get("enabled"))
 
     @property
@@ -127,6 +134,8 @@ class DiscoveryRunSpec:
 
     @property
     def options_automation_scope(self) -> dict[str, Any]:
+        if self.config.uoa_only:
+            return {"enabled": False}
         return dict(self.scope)
 
     def payload(self) -> dict[str, Any]:
@@ -135,6 +144,7 @@ class DiscoveryRunSpec:
         payload = {
             "job_key": self.config.job_key,
             "label": self.config.label,
+            "uoa_only": self.config.uoa_only,
             "symbols": ",".join(symbols),
             "strategy": self.config.scanner_strategy,
             "profile": self.config.scanner_profile,
@@ -149,7 +159,7 @@ class DiscoveryRunSpec:
             "allow_off_hours": self.config.allow_off_hours,
             "session_start_offset_minutes": self.config.session_start_offset_minutes,
             "session_end_offset_minutes": self.config.session_end_offset_minutes,
-            "options_automation_enabled": True,
+            "options_automation_enabled": not self.config.uoa_only,
             "execution_policy": dict(self.config.execution_policy),
             "risk_policy": dict(self.config.risk_policy),
             "exit_policy": dict(self.config.exit_policy),
@@ -159,6 +169,8 @@ class DiscoveryRunSpec:
         }
         if universe_ref:
             payload["universe"] = universe_ref
+        elif symbols:
+            payload["universe"] = None
         elif not symbols:
             payload["universe"] = "0dte_core"
         return payload
@@ -265,6 +277,7 @@ def _load_discovery_run_configs(
             discovery_run_id=_as_text(raw.get("discovery_run_id"), field_name="discovery_run_id"),
             job_key=_as_text(raw.get("job_key"), field_name="job_key"),
             label=_as_text(raw.get("label"), field_name="label"),
+            uoa_only=bool(raw.get("uoa_only", False)),
             scanner_strategy=_as_text(
                 raw.get("scanner_strategy"), field_name="scanner_strategy"
             ),
@@ -303,6 +316,7 @@ def _load_discovery_run_configs(
                     "discovery_run_id": raw.get("discovery_run_id"),
                     "job_key": raw.get("job_key"),
                     "label": raw.get("label"),
+                    "uoa_only": bool(raw.get("uoa_only", False)),
                     "scanner_strategy": raw.get("scanner_strategy"),
                     "scanner_profile": raw.get("scanner_profile"),
                     "enabled": bool(raw.get("enabled", True)),
@@ -342,16 +356,36 @@ def _load_discovery_run_configs(
     return configs
 
 
+def _build_discovery_run_scope(
+    config: DiscoveryRunConfig,
+    *,
+    config_root: str | Path | None = None,
+) -> dict[str, Any]:
+    if not config.uoa_only:
+        return build_discovery_run_scope(
+            config_root=config_root,
+            scanner_strategy=config.scanner_strategy,
+            scanner_profile=config.scanner_profile,
+        )
+    symbols = build_uoa_symbols(
+        config_root=config_root,
+        scanner_profile=config.scanner_profile,
+    )
+    return {
+        "enabled": bool(symbols),
+        "symbols": symbols,
+        "scanner_strategy": None,
+        "scanner_profile": config.scanner_profile,
+        "entry_runtimes": [],
+    }
+
+
 def load_declared_discovery_run_specs(
     config_root: str | Path | None = None,
 ) -> list[DiscoveryRunSpec]:
     specs: list[DiscoveryRunSpec] = []
     for config in _load_discovery_run_configs(config_root):
-        scope = build_discovery_run_scope(
-            config_root=config_root,
-            scanner_strategy=config.scanner_strategy,
-            scanner_profile=config.scanner_profile,
-        )
+        scope = _build_discovery_run_scope(config, config_root=config_root)
         specs.append(DiscoveryRunSpec(config=config, scope=scope))
     return specs
 

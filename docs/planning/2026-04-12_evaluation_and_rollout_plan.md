@@ -93,6 +93,15 @@ It should reconstruct, for each cycle:
 
 The replay output should be stored in canonical tables or equivalent structured artifacts so results are queryable.
 
+Replay and shadow artifacts should also preserve structured decision traces:
+
+- the evidence used at each decision stage
+- the scoring or policy outputs emitted by that stage
+- operator-facing notes or tool outputs produced during diagnosis
+- compact schema fields such as `stage`, `input_artifact_refs`, `derived_features`, `scores`, `blockers`, `selected_action`, `tool_output_refs`, and `timestamps`
+
+These traces are for audit, comparison, and operator understanding. They are not a license for a separate assistant path to become the source of truth or for free-form model reasoning capture to become a required runtime dependency.
+
 ## Offline Metrics
 
 ### Ranking Metrics
@@ -146,6 +155,15 @@ It should:
 - persist all decisions
 - emit operator-visible comparisons against the current live system
 - record what it would have allocated and why
+
+If an operator or research assistant is added on top of shadow artifacts, it should follow four rules:
+
+- use a registry of read-only tools with explicit `when to use` and `when not to use` guidance
+- in V1, read only persisted evaluation, shadow, audit, and backtest artifacts rather than calling live broker, market-data, or execution surfaces directly
+- allow concurrent execution only for clearly parallel-safe read-only queries such as artifact reads, report lookups, backtest comparisons, and log searches
+- keep state-changing or live-execution actions outside the assistant path
+
+Anything that mutates state, refreshes caches, triggers jobs, or touches live runtime control surfaces should remain serialized and outside the assistant path.
 
 Shadow mode should last long enough to cover:
 

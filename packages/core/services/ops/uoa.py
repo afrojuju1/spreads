@@ -249,6 +249,36 @@ def _uoa_overall_status(
     return "unknown"
 
 
+def _uoa_selected_opportunity_counts(
+    state: Mapping[str, Any],
+    *,
+    promotable_candidates: list[dict[str, Any]],
+    monitor_candidates: list[dict[str, Any]],
+) -> tuple[dict[str, int], dict[str, int]]:
+    candidate_counts = dict(state.get("candidate_counts") or {})
+    live_selection_counts = {
+        "promotable": int(
+            _coerce_int(dict(state.get("selection_counts") or {}).get("promotable")) or 0
+        ),
+        "monitor": int(
+            _coerce_int(dict(state.get("selection_counts") or {}).get("monitor")) or 0
+        ),
+    }
+    selection_counts = {
+        "candidate_count": int(
+            _coerce_int(candidate_counts.get("candidate_count"))
+            or (len(promotable_candidates) + len(monitor_candidates))
+        ),
+        "promotable": int(
+            _coerce_int(candidate_counts.get("promotable")) or len(promotable_candidates)
+        ),
+        "monitor": int(
+            _coerce_int(candidate_counts.get("monitor")) or len(monitor_candidates)
+        ),
+    }
+    return selection_counts, live_selection_counts
+
+
 def _build_uoa_payload(
     *,
     state: Mapping[str, Any],
@@ -258,6 +288,11 @@ def _build_uoa_payload(
 ) -> dict[str, Any]:
     cycle = state.get("cycle") if isinstance(state.get("cycle"), Mapping) else {}
     job_run = state.get("job_run") if isinstance(state.get("job_run"), Mapping) else {}
+    display_label = (
+        str(state.get("display_label") or "").strip()
+        if requested_label is None
+        else ""
+    )
     quote_capture = dict(state.get("quote_capture") or {})
     trade_capture = dict(state.get("trade_capture") or {})
     uoa_summary = (
@@ -345,6 +380,11 @@ def _build_uoa_payload(
         if isinstance(uoa_overview, Mapping)
         else None
     )
+    selection_counts, live_selection_counts = _uoa_selected_opportunity_counts(
+        state,
+        promotable_candidates=promotable_candidates,
+        monitor_candidates=monitor_candidates,
+    )
 
     attention: list[dict[str, str]] = []
     cycle_present = bool(cycle)
@@ -402,7 +442,8 @@ def _build_uoa_payload(
         "generated_at": generated_at,
         "summary": {
             "view": view,
-            "label": cycle.get("label") or requested_label,
+            "label": requested_label or display_label or cycle.get("label"),
+            "source_label": cycle.get("label") or requested_label,
             "cycle_id": cycle.get("cycle_id"),
             "session_id": cycle.get("session_id") or job_run.get("session_id"),
             "session_date": cycle.get("session_date"),
@@ -425,21 +466,28 @@ def _build_uoa_payload(
             "top_decision_symbol": uoa_decision_overview.get("top_decision_symbol"),
             "top_decision_state": uoa_decision_overview.get("top_decision_state"),
             "top_decision_score": uoa_decision_overview.get("top_decision_score"),
+            "selected_candidate_count": int(
+                selection_counts.get("candidate_count") or 0
+            ),
             "selected_promotable_count": int(
-                dict(state.get("selection_counts") or {}).get(
-                    PROMOTABLE_SELECTION_STATE
-                )
-                or 0
+                selection_counts.get(PROMOTABLE_SELECTION_STATE) or 0
             ),
             "selected_monitor_count": int(
-                dict(state.get("selection_counts") or {}).get(MONITOR_SELECTION_STATE)
-                or 0
+                selection_counts.get(MONITOR_SELECTION_STATE) or 0
+            ),
+            "live_selected_promotable_count": int(
+                live_selection_counts.get(PROMOTABLE_SELECTION_STATE) or 0
+            ),
+            "live_selected_monitor_count": int(
+                live_selection_counts.get(MONITOR_SELECTION_STATE) or 0
             ),
             "event_count": len(list(state.get("cycle_events") or [])),
         },
         "attention": attention,
         "details": {
             "view": view,
+            "display_label": display_label or None,
+            "source_label": cycle.get("label") or requested_label,
             "job_run": dict(job_run),
             "cycle": dict(cycle),
             "quote_capture": quote_capture,
@@ -456,7 +504,8 @@ def _build_uoa_payload(
             "monitor_candidates": monitor_candidates,
             "cycle_events": cycle_events,
             "selection_memory": dict(cycle.get("selection_memory") or {}),
-            "selection_counts": dict(state.get("selection_counts") or {}),
+            "selection_counts": selection_counts,
+            "live_selection_counts": live_selection_counts,
             "top_exclusion_reasons": top_exclusion_reasons,
             "top_conditions": top_conditions,
         },

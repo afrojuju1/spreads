@@ -117,15 +117,20 @@ Short log of proposed features, why they matter, and the current direction.
 - Priority: high
 - Scope: shared research / truth layer
 - Why: every board, pattern, and alert needs one common answer to what happened next and whether our scores actually mean anything
-- Direction: unify outcome analytics, forward evaluation, and score calibration into one downstream engine
-- V1: continuation, fade, max excursion, adverse excursion, time-to-confirm, time-to-fail, and score-bucket quality summaries
-- Next: make this the default downstream layer for UOA, chart patterns, catalyst signals, and boards
+- Direction: unify outcome analytics, forward evaluation, and score calibration into one downstream engine, with operator-facing research surfaces that read canonical artifacts instead of creating a parallel decision path
+- V1: continuation, fade, max excursion, adverse excursion, time-to-confirm, time-to-fail, score-bucket quality summaries, structured decision traces, and read-only research tooling over stored evaluation artifacts
+- Next: make this the default downstream layer for UOA, chart patterns, catalyst signals, and boards, then expose those artifacts through a reusable research-assistant surface as a downstream consumer rather than a core engine dependency
 
 ### Notes
 
 - Folds together post-signal outcome analytics, the evaluation engine, and signal calibration
 - Core inputs: stock bars, stock snapshots, option bars, option trades, and relative-strength context
 - Highest-leverage proposed platform layer in the tracker
+- Evaluation artifacts should include structured decision traces so replay and shadow diagnostics are operator-auditable without depending on free-form model reasoning capture
+- Structured decision traces should be compact and schema-driven, including fields such as `stage`, `input_artifact_refs`, `derived_features`, `scores`, `blockers`, `selected_action`, `tool_output_refs`, and `timestamps`
+- Any research-assistant layer on top of this engine should use a tool registry with explicit `when to use` and `when not to use` guidance per tool instead of a loose prompt-only tool surface
+- Read-only research tools should support concurrent execution only for clearly parallel-safe queries such as artifact reads, report lookups, backtest comparisons, and log searches
+- State-changing, cache-refreshing, job-triggering, or live-runtime actions should stay serialized and outside the assistant path
 
 ## 11. Catalyst And Event Intelligence
 

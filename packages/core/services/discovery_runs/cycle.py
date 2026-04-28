@@ -9,6 +9,7 @@ from core.alerts.dispatcher import dispatch_cycle_alerts
 from core.domain.models import UniverseScanFailure
 from core.integrations.alpaca.client import AlpacaClient
 from core.services.automation_runtime import build_entry_runtime
+from core.services.bots import build_uoa_symbols
 from core.services.candidate_history_recovery import (
     recover_session_candidates_from_history,
 )
@@ -61,6 +62,21 @@ from core.storage.signal_repository import SignalRepository
 WATCHLIST_PER_STRATEGY = 3
 WATCHLIST_TOP = 12
 WATCHLIST_QUOTE_CAPTURE_TOP = 6
+
+
+def _configured_uoa_symbols(args: argparse.Namespace) -> list[str]:
+    configured_symbols = list(
+        build_uoa_symbols(
+            scanner_profile=str(getattr(args, "profile", "") or "").strip() or None
+        )
+    )
+    if configured_symbols:
+        return configured_symbols
+    return [
+        token.strip().upper()
+        for token in str(getattr(args, "symbols", "") or "").split(",")
+        if token.strip()
+    ]
 
 
 def build_cycle_id(label: str) -> str:
@@ -158,6 +174,7 @@ def run_collection_cycle(
         datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
     )
     session_date = session_date_for_generated_at(generated_at)
+    uoa_only = bool(getattr(args, "uoa_only", False))
     options_scope = getattr(args, "options_automation_scope", {"enabled": False})
     automation_mode = bool(options_scope.get("enabled"))
     entry_runtimes = [
@@ -191,7 +208,39 @@ def run_collection_cycle(
     ] = {}
     if heartbeat is not None:
         heartbeat()
-    if bool(options_scope.get("enabled")) and entry_runtimes:
+    if uoa_only:
+        symbols = _configured_uoa_symbols(args)
+        args.symbols = ",".join(symbols) if symbols else None
+        args.universe = None
+        scanner_args.symbols = args.symbols
+        scanner_args.universe = None
+        scanner_args.symbols_file = None
+        if symbols:
+            (
+                symbols,
+                universe_label,
+                scan_results,
+                failures,
+                _raw_top_candidates,
+            ) = run_universe_cycle(
+                scanner_args=scanner_args,
+                client=client,
+                calendar_resolver=calendar_resolver,
+                greeks_provider=greeks_provider,
+                history_store=history_store,
+            )
+            run_ids = {
+                (result.symbol, result.args.strategy): result.run_id
+                for result in scan_results
+            }
+            symbol_strategy_candidates = build_symbol_strategy_candidates(
+                scan_results,
+                run_ids,
+                max_per_strategy=WATCHLIST_PER_STRATEGY,
+            )
+        else:
+            universe_label = "uoa_only"
+    elif bool(options_scope.get("enabled")) and entry_runtimes:
         try:
             runtime_candidate_rows_by_owner = build_entry_runtime_candidates(
                 entry_runtimes=entry_runtimes,
@@ -292,39 +341,28 @@ def run_collection_cycle(
     runtime_monitor_payloads: list[dict[str, Any]] = []
     selection_memory: dict[str, Any] = {}
     events: list[dict[str, Any]] = []
-    previous_promotable, previous_selection_memory = read_previous_selection(
-        discovery_store, label
-    )
-    selection = select_live_opportunities(
-        label=label,
-        cycle_id=cycle_id,
-        generated_at=generated_at,
-        symbol_candidates=symbol_strategy_candidates,
-        previous_promotable=previous_promotable,
-        previous_selection_memory=previous_selection_memory,
-        top_promotable=args.top,
-        top_monitor=WATCHLIST_TOP,
-        profile=args.profile,
-        signal_cycle_context=signal_cycle_context,
-    )
-    symbol_strategy_candidates = _filter_scope_candidates(
-        dict(selection.get("symbol_candidates") or {}),
-        scope=options_scope,
-    )
-    discovery_run_promotable_payloads = list(selection["promotable_candidates"])
-    discovery_run_monitor_payloads = list(selection["monitor_candidates"])
-    if (
-        args.profile == "0dte"
-        and not discovery_run_promotable_payloads
-        and not discovery_run_monitor_payloads
-    ):
-        recovered_payloads = recover_session_candidates_from_history(
-            history_store=history_store,
-            session_date=session_date,
-            session_label=label,
-            generated_at=generated_at,
-            top=WATCHLIST_TOP,
-            max_per_strategy=WATCHLIST_PER_STRATEGY,
+    selection_summary = build_selection_summary([])
+    automation_summary = {
+        "automation_runs_upserted": 0,
+        "runtime_opportunities_upserted": 0,
+        "runtime_opportunities_expired": 0,
+        "runtime_selection_summary": build_selection_summary([]),
+    }
+    signal_sync = {
+        "signal_states_upserted": 0,
+        "signal_transitions_recorded": 0,
+        "opportunities_upserted": 0,
+        "opportunities_expired": 0,
+    }
+    automation_sync = {
+        "automation_runs_upserted": 0,
+        "runtime_opportunities_upserted": 0,
+        "runtime_opportunities_expired": 0,
+        "opportunities": [],
+    }
+    if not uoa_only:
+        previous_promotable, previous_selection_memory = read_previous_selection(
+            discovery_store, label
         )
         selection = select_live_opportunities(
             label=label,
@@ -336,7 +374,6 @@ def run_collection_cycle(
             top_promotable=args.top,
             top_monitor=WATCHLIST_TOP,
             profile=args.profile,
-            recovered_candidates=recovered_payloads,
             signal_cycle_context=signal_cycle_context,
         )
         symbol_strategy_candidates = _filter_scope_candidates(
@@ -345,20 +382,54 @@ def run_collection_cycle(
         )
         discovery_run_promotable_payloads = list(selection["promotable_candidates"])
         discovery_run_monitor_payloads = list(selection["monitor_candidates"])
-    discovery_run_opportunities = _filter_scope_rows(
-        list(selection["opportunities"]),
-        scope=options_scope,
-    )
-    discovery_run_promotable_payloads = _filter_scope_rows(
-        discovery_run_promotable_payloads,
-        scope=options_scope,
-    )
-    discovery_run_monitor_payloads = _filter_scope_rows(
-        discovery_run_monitor_payloads,
-        scope=options_scope,
-    )
-    selection_memory = dict(selection["selection_memory"])
-    events = _filter_scope_rows(list(selection["events"]), scope=options_scope)
+        if (
+            args.profile == "0dte"
+            and not discovery_run_promotable_payloads
+            and not discovery_run_monitor_payloads
+        ):
+            recovered_payloads = recover_session_candidates_from_history(
+                history_store=history_store,
+                session_date=session_date,
+                session_label=label,
+                generated_at=generated_at,
+                top=WATCHLIST_TOP,
+                max_per_strategy=WATCHLIST_PER_STRATEGY,
+            )
+            selection = select_live_opportunities(
+                label=label,
+                cycle_id=cycle_id,
+                generated_at=generated_at,
+                symbol_candidates=symbol_strategy_candidates,
+                previous_promotable=previous_promotable,
+                previous_selection_memory=previous_selection_memory,
+                top_promotable=args.top,
+                top_monitor=WATCHLIST_TOP,
+                profile=args.profile,
+                recovered_candidates=recovered_payloads,
+                signal_cycle_context=signal_cycle_context,
+            )
+            symbol_strategy_candidates = _filter_scope_candidates(
+                dict(selection.get("symbol_candidates") or {}),
+                scope=options_scope,
+            )
+            discovery_run_promotable_payloads = list(
+                selection["promotable_candidates"]
+            )
+            discovery_run_monitor_payloads = list(selection["monitor_candidates"])
+        discovery_run_opportunities = _filter_scope_rows(
+            list(selection["opportunities"]),
+            scope=options_scope,
+        )
+        discovery_run_promotable_payloads = _filter_scope_rows(
+            discovery_run_promotable_payloads,
+            scope=options_scope,
+        )
+        discovery_run_monitor_payloads = _filter_scope_rows(
+            discovery_run_monitor_payloads,
+            scope=options_scope,
+        )
+        selection_memory = dict(selection["selection_memory"])
+        events = _filter_scope_rows(list(selection["events"]), scope=options_scope)
     raw_candidate_summary = build_raw_candidate_summary(
         scan_results,
         symbol_strategy_candidates,
@@ -379,79 +450,68 @@ def run_collection_cycle(
         opportunities=discovery_run_opportunities,
         events=events,
     )
-    signal_sync = {
-        "signal_states_upserted": 0,
-        "signal_transitions_recorded": 0,
-        "opportunities_upserted": 0,
-        "opportunities_expired": 0,
-    }
-    try:
-        signal_sync = sync_discovery_run_signal_layer(
-            signal_store=signal_store,
-            label=label,
-            session_date=session_date,
-            generated_at=generated_at,
-            cycle_id=cycle_id,
-            strategy=args.strategy,
-            profile=args.profile,
-            symbols=symbols,
-            symbol_candidates=symbol_strategy_candidates,
-            selection_memory=selection_memory,
-            failures=[asdict(failure) for failure in failures],
-            persisted_opportunities=persisted_opportunities,
-        )
-    except Exception as exc:
-        print(f"Signal-state sync unavailable: {exc}")
-    automation_sync = {
-        "automation_runs_upserted": 0,
-        "runtime_opportunities_upserted": 0,
-        "runtime_opportunities_expired": 0,
-        "opportunities": [],
-    }
-    if bool(options_scope.get("enabled")):
+    if not uoa_only:
         try:
-            automation_sync = sync_entry_runtime_opportunities(
+            signal_sync = sync_discovery_run_signal_layer(
                 signal_store=signal_store,
                 label=label,
                 session_date=session_date,
                 generated_at=generated_at,
                 cycle_id=cycle_id,
-                entry_runtimes=entry_runtimes,
+                strategy=args.strategy,
+                profile=args.profile,
+                symbols=symbols,
                 symbol_candidates=symbol_strategy_candidates,
-                runtime_candidate_rows_by_owner=runtime_candidate_rows_by_owner,
-                persisted_opportunities=persisted_opportunities,
-                job_run_id=None if tick_context is None else tick_context.job_run_id,
-                top_promotable=args.top,
-                top_monitor=WATCHLIST_TOP,
                 selection_memory=selection_memory,
-                signal_cycle_context=signal_cycle_context,
+                failures=[asdict(failure) for failure in failures],
+                persisted_opportunities=persisted_opportunities,
             )
         except Exception as exc:
-            print(f"Options automation runtime sync unavailable: {exc}")
-        runtime_opportunities = [
-            dict(row) for row in list(automation_sync.get("opportunities") or [])
-        ]
-        runtime_promotable_payloads = [
-            dict(row)
-            for row in runtime_opportunities
-            if str(row.get("selection_state") or "") == "promotable"
-        ]
-        runtime_monitor_payloads = [
-            dict(row)
-            for row in runtime_opportunities
-            if str(row.get("selection_state") or "") == "monitor"
-        ]
-    selection_summary = build_selection_summary(discovery_run_opportunities)
-    automation_summary = {
-        "automation_runs_upserted": int(automation_sync["automation_runs_upserted"]),
-        "runtime_opportunities_upserted": int(
-            automation_sync["runtime_opportunities_upserted"]
-        ),
-        "runtime_opportunities_expired": int(
-            automation_sync["runtime_opportunities_expired"]
-        ),
-        "runtime_selection_summary": build_selection_summary(runtime_opportunities),
-    }
+            print(f"Signal-state sync unavailable: {exc}")
+        if bool(options_scope.get("enabled")):
+            try:
+                automation_sync = sync_entry_runtime_opportunities(
+                    signal_store=signal_store,
+                    label=label,
+                    session_date=session_date,
+                    generated_at=generated_at,
+                    cycle_id=cycle_id,
+                    entry_runtimes=entry_runtimes,
+                    symbol_candidates=symbol_strategy_candidates,
+                    runtime_candidate_rows_by_owner=runtime_candidate_rows_by_owner,
+                    persisted_opportunities=persisted_opportunities,
+                    job_run_id=None if tick_context is None else tick_context.job_run_id,
+                    top_promotable=args.top,
+                    top_monitor=WATCHLIST_TOP,
+                    selection_memory=selection_memory,
+                    signal_cycle_context=signal_cycle_context,
+                )
+            except Exception as exc:
+                print(f"Options automation runtime sync unavailable: {exc}")
+            runtime_opportunities = [
+                dict(row) for row in list(automation_sync.get("opportunities") or [])
+            ]
+            runtime_promotable_payloads = [
+                dict(row)
+                for row in runtime_opportunities
+                if str(row.get("selection_state") or "") == "promotable"
+            ]
+            runtime_monitor_payloads = [
+                dict(row)
+                for row in runtime_opportunities
+                if str(row.get("selection_state") or "") == "monitor"
+            ]
+        selection_summary = build_selection_summary(discovery_run_opportunities)
+        automation_summary = {
+            "automation_runs_upserted": int(automation_sync["automation_runs_upserted"]),
+            "runtime_opportunities_upserted": int(
+                automation_sync["runtime_opportunities_upserted"]
+            ),
+            "runtime_opportunities_expired": int(
+                automation_sync["runtime_opportunities_expired"]
+            ),
+            "runtime_selection_summary": build_selection_summary(runtime_opportunities),
+        }
     capture_promotable_payloads = discovery_run_promotable_payloads
     capture_monitor_payloads = discovery_run_monitor_payloads
     capture_opportunities = discovery_run_opportunities
@@ -473,7 +533,12 @@ def run_collection_cycle(
     }
     if tick_context is not None and recovery_store is not None:
         try:
-            if bool(options_scope.get("enabled")):
+            if uoa_only:
+                capture_targets = {
+                    "promotable": [],
+                    "monitor": [],
+                }
+            elif bool(options_scope.get("enabled")):
                 runtime_capture_opportunities = list(
                     automation_sync.get("opportunities") or []
                 )
@@ -575,7 +640,19 @@ def run_collection_cycle(
             print(f"Live capture history gate unavailable: {exc}")
     options_scope_enabled = bool(options_scope.get("enabled"))
     gate_allows_alerts = bool(live_action_gate.get("allow_alerts"))
-    if options_scope_enabled:
+    if uoa_only:
+        live_action_gate = {
+            **dict(live_action_gate),
+            "status": "uoa_only",
+            "reason_code": "uoa_only",
+            "message": "Discovery run is UOA-only and does not own live selection, execution, or opportunity alerts.",
+            "allow_auto_execution": False,
+            "allow_alerts": gate_allows_alerts,
+            "allow_discovery_opportunity_alerts": False,
+            "allow_uoa_alerts": gate_allows_alerts,
+            "opportunity_alert_owner": "uoa_only",
+        }
+    elif options_scope_enabled:
         live_action_gate = {
             **dict(live_action_gate),
             "status": "bot_runtime_owned",
@@ -625,9 +702,11 @@ def run_collection_cycle(
     alerts: list[dict[str, Any]] = []
     if bool(live_action_gate.get("allow_alerts")):
         alert_promotable_payloads = (
-            [] if options_scope_enabled else discovery_run_promotable_payloads
+            []
+            if options_scope_enabled or uoa_only
+            else discovery_run_promotable_payloads
         )
-        alert_events = [] if options_scope_enabled else events
+        alert_events = [] if options_scope_enabled or uoa_only else events
         try:
             alerts = dispatch_cycle_alerts(
                 discovery_store=discovery_store,
