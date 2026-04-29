@@ -19,6 +19,10 @@ EMERGING_DECISION_FLOOR = 60.0
 NOTABLE_DECISION_FLOOR = 75.0
 HIGH_DECISION_FLOOR = 80.0
 CRITICAL_DECISION_FLOOR = 90.0
+HIGH_MIN_SCOREABLE_PREMIUM = 1_000.0
+HIGH_MIN_ABS_SIGNED_DELTA_NOTIONAL = 100_000.0
+HIGH_MIN_ABS_SIGNED_VEGA_NOTIONAL = 250.0
+HIGH_MIN_LIQUID_CONTRACT_COUNT = 3
 
 
 def _score_log_scale(value: float, *, ceiling: float) -> float:
@@ -116,9 +120,45 @@ def _quote_context_score(
     )
 
 
+def _stock_context_score(summary: Mapping[str, Any] | None) -> float:
+    if not summary:
+        return 50.0
+    feed_score = clamp(float(summary.get("feed_score") or 50.0) / 100.0)
+    feed_rank = int(summary.get("feed_rank") or 0)
+    rank_score = 0.0
+    if feed_rank > 0:
+        rank_score = clamp((15.0 - min(float(feed_rank), 15.0)) / 14.0) * 15.0
+    move_percent = abs(float(summary.get("move_percent") or 0.0))
+    move_score = clamp(move_percent / 8.0) * 15.0
+    news_count = max(int(summary.get("news_count") or 0), 0)
+    news_score = clamp(news_count / 3.0) * 10.0
+    daily_volume = max(int(summary.get("daily_volume") or 0), 0)
+    volume_score = _score_log_scale(float(daily_volume), ceiling=50_000_000.0) * 10.0
+    return round(
+        feed_score * 50.0
+        + rank_score
+        + move_score
+        + news_score
+        + volume_score,
+        1,
+    )
+
+
+def _high_absolute_flow_confirmed(root: Mapping[str, Any]) -> bool:
+    scoreable_premium = float(root.get("scoreable_premium") or 0.0)
+    abs_signed_delta_notional = abs(float(root.get("signed_delta_notional") or 0.0))
+    abs_signed_vega_notional = abs(float(root.get("signed_vega_notional") or 0.0))
+    return (
+        scoreable_premium >= HIGH_MIN_SCOREABLE_PREMIUM
+        or abs_signed_delta_notional >= HIGH_MIN_ABS_SIGNED_DELTA_NOTIONAL
+        or abs_signed_vega_notional >= HIGH_MIN_ABS_SIGNED_VEGA_NOTIONAL
+    )
+
+
 def _apply_state_cap(
     *,
     base_state: str,
+    root: Mapping[str, Any],
     quote_context: Mapping[str, Any] | None,
     quote_context_score: float,
 ) -> tuple[str, list[str]]:
@@ -144,6 +184,15 @@ def _apply_state_cap(
     elif quote_context_score < 70.0 and state == UOA_CRITICAL_DECISION_STATE:
         state = UOA_HIGH_DECISION_STATE
         reason_codes.append("critical_suppressed_quote_context")
+    if uoa_decision_state_rank(state) >= uoa_decision_state_rank(UOA_HIGH_DECISION_STATE):
+        liquid_contract_count = int(quote_context.get("liquid_contract_count") or 0)
+        if liquid_contract_count < HIGH_MIN_LIQUID_CONTRACT_COUNT:
+            state = UOA_NOTABLE_DECISION_STATE
+            reason_codes.append("high_suppressed_low_liquid_contract_count")
+    if uoa_decision_state_rank(state) >= uoa_decision_state_rank(UOA_HIGH_DECISION_STATE):
+        if not _high_absolute_flow_confirmed(root):
+            state = UOA_NOTABLE_DECISION_STATE
+            reason_codes.append("high_suppressed_absolute_flow_below_floor")
     return state, reason_codes
 
 
@@ -344,6 +393,7 @@ def build_uoa_root_decisions(
     baselines_by_symbol: Mapping[str, Mapping[str, Any]] | None,
     quote_summary: Mapping[str, Any] | None = None,
     capture_window_seconds: float,
+    stock_context_by_symbol: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     summary_payload = {} if uoa_summary is None else dict(uoa_summary)
     roots = [
@@ -353,6 +403,15 @@ def build_uoa_root_decisions(
     ]
     duration_minutes = max(float(capture_window_seconds), 1.0) / 60.0
     baseline_map = {} if baselines_by_symbol is None else dict(baselines_by_symbol)
+    stock_context_map = (
+        {}
+        if stock_context_by_symbol is None
+        else {
+            str(symbol): dict(payload)
+            for symbol, payload in stock_context_by_symbol.items()
+            if isinstance(payload, Mapping)
+        }
+    )
     quote_summary_payload = {} if quote_summary is None else dict(quote_summary)
     quote_roots = quote_summary_payload.get("roots")
     quote_root_map = (
@@ -415,6 +474,7 @@ def build_uoa_root_decisions(
 
         quote_root = quote_root_map.get(symbol)
         quote_context = _quote_context(quote_root)
+        stock_context = stock_context_map.get(symbol)
         flow_anomaly_score = _flow_anomaly_score(
             root=root,
             max_premium_ratio=max_premium_ratio,
@@ -429,7 +489,7 @@ def build_uoa_root_decisions(
             quote_root,
             open_interest_freshness_score=root.get("open_interest_freshness_score"),
         )
-        stock_context_score = 50.0
+        stock_context_score = _stock_context_score(stock_context)
         directional_interest_score = round(
             flow_anomaly_score * 0.45
             + directional_flow_score * 0.35
@@ -458,6 +518,7 @@ def build_uoa_root_decisions(
         base_state = _decision_state(root_interest_score)
         state, cap_reason_codes = _apply_state_cap(
             base_state=base_state,
+            root=root,
             quote_context=quote_context,
             quote_context_score=quote_context_score,
         )
@@ -521,6 +582,11 @@ def build_uoa_root_decisions(
                     "front_expiry_concentration_score": root.get("front_expiry_concentration_score"),
                     "positive_vega_share": root.get("positive_vega_share"),
                     "aggressor_known_ratio": root.get("aggressor_known_ratio"),
+                    "feed_rank": None if not stock_context else stock_context.get("feed_rank"),
+                    "feed_score": None if not stock_context else stock_context.get("feed_score"),
+                    "daily_volume": None if not stock_context else stock_context.get("daily_volume"),
+                    "move_percent": None if not stock_context else stock_context.get("move_percent"),
+                    "news_count": None if not stock_context else stock_context.get("news_count"),
                 },
                 "current": {
                     "root_score": root.get("root_score"),
@@ -528,6 +594,12 @@ def build_uoa_root_decisions(
                     "scoreable_trade_count": int(root.get("scoreable_trade_count") or 0),
                     "scoreable_contract_count": int(root.get("scoreable_contract_count") or 0),
                     "scoreable_size": int(root.get("scoreable_size") or 0),
+                    "call_scoreable_premium": float(root.get("call_scoreable_premium") or 0.0),
+                    "put_scoreable_premium": float(root.get("put_scoreable_premium") or 0.0),
+                    "call_scoreable_trade_count": int(root.get("call_scoreable_trade_count") or 0),
+                    "put_scoreable_trade_count": int(root.get("put_scoreable_trade_count") or 0),
+                    "call_scoreable_contract_count": int(root.get("call_scoreable_contract_count") or 0),
+                    "put_scoreable_contract_count": int(root.get("put_scoreable_contract_count") or 0),
                     "supporting_volume": int(root.get("supporting_volume") or 0),
                     "supporting_open_interest": int(root.get("supporting_open_interest") or 0),
                     "supporting_volume_oi_ratio": root.get("supporting_volume_oi_ratio"),
@@ -544,6 +616,7 @@ def build_uoa_root_decisions(
                     "directional_bias": directional_bias,
                 },
                 "quote_context": quote_context,
+                "stock_context": stock_context,
                 "baselines": {
                     "rolling_5m": _baseline_payload(rolling),
                     "session_to_time": _baseline_payload(session),

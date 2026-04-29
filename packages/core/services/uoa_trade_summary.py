@@ -548,6 +548,8 @@ def build_uoa_trade_summary(
                 "put_scoreable_premium": 0.0,
                 "call_scoreable_trade_count": 0,
                 "put_scoreable_trade_count": 0,
+                "call_scoreable_contract_count": 0,
+                "put_scoreable_contract_count": 0,
                 "contracts": [],
             }
             roots[underlying_symbol] = root
@@ -588,9 +590,13 @@ def build_uoa_trade_summary(
         if contract.get("option_type") == "call":
             root["call_scoreable_premium"] += float(contract["scoreable_premium"])
             root["call_scoreable_trade_count"] += int(contract["scoreable_trade_count"])
+            if int(contract["scoreable_trade_count"]) > 0:
+                root["call_scoreable_contract_count"] += 1
         elif contract.get("option_type") == "put":
             root["put_scoreable_premium"] += float(contract["scoreable_premium"])
             root["put_scoreable_trade_count"] += int(contract["scoreable_trade_count"])
+            if int(contract["scoreable_trade_count"]) > 0:
+                root["put_scoreable_contract_count"] += 1
         root["contracts"].append(contract)
 
     root_summaries: list[dict[str, Any]] = []
@@ -731,6 +737,8 @@ def build_uoa_trade_summary(
             "put_scoreable_premium": put_premium,
             "call_scoreable_trade_count": int(root["call_scoreable_trade_count"]),
             "put_scoreable_trade_count": int(root["put_scoreable_trade_count"]),
+            "call_scoreable_contract_count": int(root["call_scoreable_contract_count"]),
+            "put_scoreable_contract_count": int(root["put_scoreable_contract_count"]),
             "dominant_flow": dominant_flow,
             "dominant_flow_ratio": round(dominant_flow_ratio, 4),
             "call_put_balance_score": call_put_balance_score,

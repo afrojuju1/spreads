@@ -116,9 +116,12 @@ def dispatch_cycle_alerts(
         ),
         *build_uoa_alert_decisions(
             label=label,
+            cycle_id=cycle_id,
+            generated_at=generated_at,
             session_date=session_date,
             uoa_decisions=uoa_decisions,
             get_alert_state=get_state,
+            list_alert_events=alert_store.list_alert_events,
         ),
     ]
 

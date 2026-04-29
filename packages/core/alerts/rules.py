@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from core.services.option_structures import payload_display_fields, payload_structure_identity
@@ -19,6 +19,8 @@ SCORE_BREAKOUT_DELTA = 10.0
 STRICT_SCORE_BREAKOUT_DELTA = 12.0
 SAME_SIDE_REPLACEMENT_MIN_SCORE_GAIN = 5.0
 UOA_ALERT_STATES = ("high",)
+UOA_ALERT_COOLDOWN_SECONDS = 10 * 60
+UOA_ALERT_RENOTIFY_SCORE_DELTA = 8.0
 
 
 @dataclass(frozen=True)
@@ -76,10 +78,81 @@ def uoa_threshold_dedupe_key(
     session_date: str,
     symbol: str,
     *,
+    cycle_id: str,
     decision_state: str,
     dominant_flow: str,
+    flow_shape: str,
+    directional_bias: str,
 ) -> str:
-    return f"{label}|{session_date}|{symbol}|uoa_flow|{decision_state}|{dominant_flow}"
+    return (
+        f"{label}|{session_date}|{symbol}|uoa_flow|{decision_state}|"
+        f"{flow_shape}|{directional_bias}|{dominant_flow}|cycle_{cycle_id}"
+    )
+
+
+def _parse_alert_timestamp(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    rendered = str(value).strip()
+    if not rendered:
+        return None
+    return parse_utc_timestamp(rendered)
+
+
+def _recent_uoa_alert_matches(
+    state: dict[str, Any],
+    *,
+    decision_state: str,
+    dominant_flow: str,
+    flow_shape: str,
+    directional_bias: str,
+) -> bool:
+    if str(state.get("decision_state") or "").strip() != decision_state:
+        return False
+    prior_flow_shape = str(state.get("flow_shape") or "").strip()
+    prior_directional_bias = str(state.get("directional_bias") or "").strip()
+    prior_dominant_flow = str(state.get("dominant_flow") or "").strip()
+    if prior_flow_shape or prior_directional_bias:
+        return (
+            prior_flow_shape == flow_shape
+            and prior_directional_bias == directional_bias
+            and prior_dominant_flow == dominant_flow
+        )
+    return prior_dominant_flow == dominant_flow
+
+
+def _should_suppress_recent_uoa_alert(
+    row: dict[str, Any],
+    *,
+    current_created_at: datetime,
+    decision_state: str,
+    dominant_flow: str,
+    flow_shape: str,
+    directional_bias: str,
+    decision_score: float,
+) -> bool:
+    created_at = _parse_alert_timestamp(row.get("created_at"))
+    if created_at is None:
+        return False
+    age = current_created_at - created_at
+    if age < timedelta(0) or age > timedelta(seconds=UOA_ALERT_COOLDOWN_SECONDS):
+        return False
+    state = dict(row.get("state") or {})
+    if not _recent_uoa_alert_matches(
+        state,
+        decision_state=decision_state,
+        dominant_flow=dominant_flow,
+        flow_shape=flow_shape,
+        directional_bias=directional_bias,
+    ):
+        return False
+    status = str(row.get("status") or "").strip().lower()
+    if status in {"pending", "dispatching", "retry_wait"}:
+        return True
+    prior_score = float(state.get("decision_score") or 0.0)
+    return decision_score - prior_score < UOA_ALERT_RENOTIFY_SCORE_DELTA
 
 
 def candidate_profile(label: str, candidate: dict[str, Any] | DiscoveryRunCandidateRecord) -> str:
@@ -347,12 +420,16 @@ def build_score_breakout_decisions(
 def build_uoa_alert_decisions(
     *,
     label: str,
+    cycle_id: str,
+    generated_at: str,
     session_date: str,
     uoa_decisions: dict[str, Any] | None,
     get_alert_state: callable,
+    list_alert_events: callable,
 ) -> list[AlertDecision]:
     payload = {} if uoa_decisions is None else dict(uoa_decisions)
     roots = payload.get("roots") or []
+    current_created_at = parse_utc_timestamp(generated_at)
     decisions: list[AlertDecision] = []
     for root in roots:
         if not isinstance(root, dict):
@@ -364,14 +441,63 @@ def build_uoa_alert_decisions(
         if not symbol:
             continue
         dominant_flow = str((root.get("current") or {}).get("dominant_flow") or "mixed")
+        flow_shape = str(
+            root.get("flow_shape")
+            or (root.get("current") or {}).get("flow_shape")
+            or "mixed"
+        ).strip()
+        directional_bias = str(
+            root.get("directional_bias")
+            or (root.get("current") or {}).get("directional_bias")
+            or "mixed"
+        ).strip()
+        if flow_shape == "directional_bullish":
+            flow_descriptor = "directional bullish"
+        elif flow_shape == "directional_bearish":
+            flow_descriptor = "directional bearish"
+        elif flow_shape == "volatility_demand":
+            flow_descriptor = "volatility demand"
+        elif directional_bias in {"bullish", "bearish"}:
+            flow_descriptor = directional_bias
+        else:
+            flow_descriptor = "mixed flow"
+        decision_score = float(root.get("decision_score") or 0.0)
         dedupe_key = uoa_threshold_dedupe_key(
             label,
             session_date,
             symbol,
+            cycle_id=cycle_id,
             decision_state=decision_state,
             dominant_flow=dominant_flow,
+            flow_shape=flow_shape,
+            directional_bias=directional_bias,
         )
         if get_alert_state(dedupe_key) is not None:
+            continue
+        recent_rows = list_alert_events(
+            session_date=session_date,
+            label=label,
+            symbol=symbol,
+            limit=8,
+        )
+        suppressed_recent = False
+        for recent_row in recent_rows:
+            if not isinstance(recent_row, dict):
+                continue
+            if str(recent_row.get("alert_type") or "").strip() != f"uoa_{decision_state}":
+                continue
+            if _should_suppress_recent_uoa_alert(
+                recent_row,
+                current_created_at=current_created_at,
+                decision_state=decision_state,
+                dominant_flow=dominant_flow,
+                flow_shape=flow_shape,
+                directional_bias=directional_bias,
+                decision_score=decision_score,
+            ):
+                suppressed_recent = True
+                break
+        if suppressed_recent:
             continue
         current = root.get("current") if isinstance(root.get("current"), dict) else {}
         premium = float(current.get("scoreable_premium") or 0.0)
@@ -388,7 +514,7 @@ def build_uoa_alert_decisions(
                 dedupe_key=dedupe_key,
                 symbol=symbol,
                 description=(
-                    f"{symbol} {dominant_flow} UOA {decision_state}: "
+                    f"{symbol} {flow_descriptor} UOA {decision_state}: "
                     f"${premium:,.0f} premium across {trade_count} trade"
                     f"{'' if trade_count == 1 else 's'} / {contract_count} contract"
                     f"{'' if contract_count == 1 else 's'}{volume_context}"
@@ -396,8 +522,10 @@ def build_uoa_alert_decisions(
                 candidate=root,
                 dedupe_state={
                     "decision_state": decision_state,
-                    "decision_score": float(root.get("decision_score") or 0.0),
+                    "decision_score": decision_score,
                     "dominant_flow": dominant_flow,
+                    "flow_shape": flow_shape,
+                    "directional_bias": directional_bias,
                     "root_score": float(current.get("root_score") or 0.0),
                     "reason_codes": list(root.get("reason_codes") or []),
                 },

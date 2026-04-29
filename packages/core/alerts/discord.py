@@ -703,24 +703,100 @@ def _uoa_dte_preview(contracts: list[dict[str, Any]]) -> str:
     return ", ".join(f"{value}DTE" for value in values[:3])
 
 
+def _uoa_flow_shape(candidate: dict[str, Any], current: dict[str, Any]) -> str:
+    return str(candidate.get("flow_shape") or current.get("flow_shape") or "mixed").strip()
+
+
+def _uoa_directional_bias(candidate: dict[str, Any], current: dict[str, Any]) -> str:
+    return str(candidate.get("directional_bias") or current.get("directional_bias") or "mixed").strip()
+
+
+def _uoa_title_descriptor(*, flow_shape: str, directional_bias: str) -> str:
+    if flow_shape == "directional_bullish":
+        return "BULLISH"
+    if flow_shape == "directional_bearish":
+        return "BEARISH"
+    if flow_shape == "volatility_demand":
+        return "VOLATILITY DEMAND"
+    if directional_bias == "bullish":
+        return "BULLISH"
+    if directional_bias == "bearish":
+        return "BEARISH"
+    return "MIXED FLOW"
+
+
+def _uoa_embed_color(
+    *,
+    flow_shape: str,
+    directional_bias: str,
+    dominant_flow: str,
+    decision_state: str,
+) -> int:
+    if flow_shape == "directional_bullish":
+        return SUCCESS_GREEN
+    if flow_shape == "directional_bearish":
+        return BEARISH_RED
+    if flow_shape == "volatility_demand":
+        return NEUTRAL_YELLOW
+    if directional_bias == "bullish":
+        return SUCCESS_GREEN
+    if directional_bias == "bearish":
+        return BEARISH_RED
+    return _uoa_color(dominant_flow=dominant_flow, decision_state=decision_state)
+
+
+def _uoa_expiry_text(expiration_date: Any, dte: Any) -> str:
+    expiration = str(expiration_date or "").strip()
+    dte_text = compact_dte(dte, fallback="")
+    if expiration and dte_text:
+        return f"{expiration} ({dte_text})"
+    if expiration:
+        return expiration
+    return dte_text or "n/a"
+
+
+def _uoa_root_expiry_text(
+    *,
+    quote_context: dict[str, Any],
+    contracts: list[dict[str, Any]],
+) -> str:
+    front_expiry = quote_context.get("front_expiry")
+    front_expiry_dte = quote_context.get("front_expiry_dte")
+    if front_expiry or front_expiry_dte is not None:
+        return _uoa_expiry_text(front_expiry, front_expiry_dte)
+    if contracts:
+        contract = contracts[0]
+        return _uoa_expiry_text(contract.get("expiration_date"), contract.get("dte"))
+    return "n/a"
+
+
 def _uoa_contract_line(contract: dict[str, Any]) -> str:
     option_type = str(contract.get("option_type") or "?").upper()[:1]
     strike = contract.get("strike_price")
     strike_text = "?"
     if strike is not None:
         strike_text = f"{float(strike):.0f}" if float(strike).is_integer() else f"{float(strike):.2f}"
-    dte = contract.get("dte")
-    dte_text = "n/a" if dte is None else f"{int(dte)}DTE"
-    flow_size = int(contract.get("scoreable_size") or 0)
+    expiry_text = _uoa_expiry_text(contract.get("expiration_date"), contract.get("dte"))
+    trade_count = int(contract.get("scoreable_trade_count") or 0)
+    total_size = int(contract.get("scoreable_size") or 0)
     premium = compact_money(contract.get("scoreable_premium"))
-    midpoint = compact_value(contract.get("midpoint"))
-    spread_pct = compact_pct(contract.get("spread_pct"))
-    session_volume = compact_count(contract.get("volume"))
-    open_interest = compact_count(contract.get("open_interest"))
-    volume_oi_ratio = compact_ratio(contract.get("volume_oi_ratio"))
     return (
-        f"{strike_text}{option_type} {dte_text} flow {compact_count(flow_size)} prem {premium} "
-        f"vol {session_volume} oi {open_interest} v/oi {volume_oi_ratio} mid {midpoint} spr {spread_pct}"
+        f"{option_type} {strike_text} | {expiry_text} | "
+        f"{trade_count} prints | size {compact_count(total_size)} | {premium}"
+    )
+
+
+def _uoa_side_breakdown(current: dict[str, Any], *, side: str) -> str | None:
+    premium = current.get(f"{side}_scoreable_premium")
+    trades = current.get(f"{side}_scoreable_trade_count")
+    contracts = current.get(f"{side}_scoreable_contract_count")
+    if all(value is None for value in (premium, trades, contracts)):
+        return None
+    contracts_text = "n/a" if contracts is None else str(int(contracts or 0))
+    return (
+        f"prints {int(trades or 0)}\n"
+        f"premium {compact_money(premium or 0.0)}\n"
+        f"active ctrs {contracts_text}"
     )
 
 
@@ -732,7 +808,16 @@ def _build_uoa_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
     contracts = [dict(item) for item in (candidate.get("top_contracts") or []) if isinstance(item, dict)]
     decision_state = str(candidate.get("decision_state") or "none")
     dominant_flow = str(current.get("dominant_flow") or "mixed")
-    title = f"{alert['symbol']} {dominant_flow.upper()} UOA {decision_state.upper()}"
+    flow_shape = _uoa_flow_shape(candidate, current)
+    directional_bias = _uoa_directional_bias(candidate, current)
+    title = (
+        f"{alert['symbol']} "
+        f"{_uoa_title_descriptor(flow_shape=flow_shape, directional_bias=directional_bias)} "
+        f"UOA {decision_state.upper()}"
+    )
+    expiry_text = _uoa_root_expiry_text(quote_context=quote_context, contracts=contracts)
+    score_text = f"{float(candidate.get('decision_score') or 0.0):.1f}"
+    root_premium = compact_money(current.get("scoreable_premium"))
     baseline_parts: list[str] = []
     max_premium_ratio = deltas.get("max_premium_rate_ratio")
     max_trade_ratio = deltas.get("max_trade_rate_ratio")
@@ -745,33 +830,51 @@ def _build_uoa_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
         f"{int(quote_context.get('fresh_contract_count') or 0)} fresh",
         f"{int(quote_context.get('liquid_contract_count') or 0)} liquid",
     ]
+    call_side = _uoa_side_breakdown(current, side="call")
+    put_side = _uoa_side_breakdown(current, side="put")
+    root_stats = (
+        f"{int(current.get('scoreable_trade_count') or 0)} trade prints | "
+        f"{int(current.get('scoreable_contract_count') or 0)} active contracts | "
+        f"total size {compact_count(current.get('scoreable_size'))}\n"
+        f"{compact_count(current.get('supporting_volume'))} vol | "
+        f"{compact_count(current.get('supporting_open_interest'))} oi | "
+        f"{compact_ratio(current.get('supporting_volume_oi_ratio'))} vol/oi\n"
+        f"quotes {' | '.join(quote_parts)}"
+    )
+    trigger_parts: list[str] = []
+    if flow_shape == "volatility_demand":
+        trigger_parts.append("two-sided vol demand")
+    elif flow_shape == "directional_bullish":
+        trigger_parts.append("directional bullish")
+    elif flow_shape == "directional_bearish":
+        trigger_parts.append("directional bearish")
+    elif directional_bias in {"bullish", "bearish"}:
+        trigger_parts.append(directional_bias)
+    trigger_parts.extend(baseline_parts)
     fields = [
-        {"name": "State", "value": decision_state, "inline": True},
-        {"name": "Score", "value": f"{float(candidate.get('decision_score') or 0.0):.1f}", "inline": True},
-        {"name": "DTE", "value": _uoa_dte_preview(contracts), "inline": True},
-        {"name": "Premium", "value": compact_money(current.get("scoreable_premium")), "inline": True},
-        {"name": "Flow Size", "value": compact_count(current.get("scoreable_size")), "inline": True},
-        {"name": "Trades", "value": str(int(current.get("scoreable_trade_count") or 0)), "inline": True},
-        {"name": "Contracts", "value": str(int(current.get("scoreable_contract_count") or 0)), "inline": True},
-        {"name": "Session Vol", "value": compact_count(current.get("supporting_volume")), "inline": True},
-        {"name": "Session OI", "value": compact_count(current.get("supporting_open_interest")), "inline": True},
-        {"name": "Vol/OI", "value": compact_ratio(current.get("supporting_volume_oi_ratio")), "inline": True},
-        {"name": "Quotes", "value": " | ".join(quote_parts), "inline": True},
+        {"name": "CALL SIDE", "value": call_side or "prints 0\npremium $0\nactive ctrs 0", "inline": True},
+        {"name": "PUT SIDE", "value": put_side or "prints 0\npremium $0\nactive ctrs 0", "inline": True},
+        {"name": "Root Stats", "value": root_stats, "inline": False},
     ]
-    if baseline_parts:
-        fields.append({"name": "Baselines", "value": " | ".join(baseline_parts), "inline": False})
     if contracts:
         fields.append(
             {
-                "name": "Top Contracts",
+                "name": "Contract Ladder",
                 "value": "\n".join(_uoa_contract_line(contract) for contract in contracts[:3]),
                 "inline": False,
             }
         )
+    if trigger_parts:
+        fields.append({"name": "Why", "value": " | ".join(trigger_parts), "inline": False})
     embed = {
         "title": title,
-        "description": alert["description"],
-        "color": _uoa_color(dominant_flow=dominant_flow, decision_state=decision_state),
+        "description": f"{expiry_text} | score {score_text} | root prem {root_premium}",
+        "color": _uoa_embed_color(
+            flow_shape=flow_shape,
+            directional_bias=directional_bias,
+            dominant_flow=dominant_flow,
+            decision_state=decision_state,
+        ),
         "fields": fields,
         "footer": {"text": f"{alert['label']} | {alert['profile']} | {alert['strategy_mode']}"},
         "timestamp": alert["created_at"],
