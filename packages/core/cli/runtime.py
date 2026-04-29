@@ -5,7 +5,12 @@ from typing import Any
 
 import typer
 
-from core.cli.ops_render import build_console, render_json_payload, render_pipelines_view
+from core.cli.ops_render import (
+    build_console,
+    render_automations_view,
+    render_json_payload,
+    render_pipelines_view,
+)
 from core.services.discovery_sessions import (
     get_discovery_session_detail,
     list_discovery_sessions,
@@ -63,6 +68,7 @@ def automations_command(
     limit: int = typer.Option(50, "--limit", help="Maximum runtimes to list."),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
+    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
     if (bot_id is None) ^ (automation_id is None):
         raise typer.BadParameter(
@@ -79,7 +85,11 @@ def automations_command(
             limit=limit,
         )
     )
-    _print_payload(payload, json_output=json_output)
+    console = build_console(no_color=no_color)
+    if json_output:
+        render_json_payload(console, payload)
+        return
+    render_automations_view(console, payload)
 
 
 def opportunities_command(

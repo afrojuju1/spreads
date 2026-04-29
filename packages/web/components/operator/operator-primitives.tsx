@@ -23,8 +23,11 @@ export function readNumber(value: unknown, fallback = 0): number {
   return fallback;
 }
 
-export function readString(value: unknown, fallback = "—"): string {
-  return typeof value === "string" && trim(value) !== "" ? value : fallback;
+export function readString(value: unknown, fallback: unknown = "—"): string {
+  if (typeof value === "string" && trim(value) !== "") {
+    return value;
+  }
+  return typeof fallback === "string" ? fallback : "—";
 }
 
 export function formatDate(value: string | null | undefined): string {
@@ -69,8 +72,8 @@ export function formatSignedCurrency(
   }).format(value);
 }
 
-export function formatScore(value: number): string {
-  return value.toFixed(1);
+export function formatScore(value: number | null | undefined): string {
+  return value == null ? "—" : value.toFixed(1);
 }
 
 export function formatQuantity(value: number | null | undefined): string {
@@ -148,7 +151,7 @@ export function valueTone(value: number | null | undefined): string {
 export function RuntimeStatusBadge({
   value,
 }: {
-  value: string | null | undefined;
+  value: unknown;
 }) {
   const resolved = readString(value, "idle");
   return (
@@ -167,7 +170,7 @@ export function RuntimeStatusBadge({
 export function CaptureStatusBadge({
   value,
 }: {
-  value: string | null | undefined;
+  value: unknown;
 }) {
   const resolved = readString(value, "unknown");
   return (
@@ -201,7 +204,7 @@ function tradeabilityTone(value: string): string {
 export function TradeabilityBadge({
   value,
 }: {
-  value: string | null | undefined;
+  value: unknown;
 }) {
   const resolved = readString(value, "unknown");
   return (
@@ -233,7 +236,7 @@ function autoExecutionTone(value: string): string {
 export function AutoExecutionStatusBadge({
   value,
 }: {
-  value: string | null | undefined;
+  value: unknown;
 }) {
   const resolved = readString(value, "unknown");
   return (
@@ -270,7 +273,7 @@ function executionTone(value: string): string {
 export function ExecutionStatusBadge({
   value,
 }: {
-  value: string | null | undefined;
+  value: unknown;
 }) {
   const resolved = readString(value, "unknown");
   return (
@@ -303,7 +306,7 @@ function portfolioTone(value: string): string {
 export function PortfolioStatusBadge({
   value,
 }: {
-  value: string | null | undefined;
+  value: unknown;
 }) {
   const resolved = readString(value, "unknown");
   return (
@@ -336,7 +339,7 @@ function riskTone(value: string): string {
 export function RiskStatusBadge({
   value,
 }: {
-  value: string | null | undefined;
+  value: unknown;
 }) {
   const resolved = readString(value, "unknown");
   return (
@@ -370,7 +373,7 @@ function reconciliationTone(value: string): string {
 export function ReconciliationStatusBadge({
   value,
 }: {
-  value: string | null | undefined;
+  value: unknown;
 }) {
   const resolved = readString(value, "unknown");
   return (
@@ -389,7 +392,7 @@ export function ReconciliationStatusBadge({
 export function AccountEnvironmentBadge({
   value,
 }: {
-  value: string | null | undefined;
+  value: unknown;
 }) {
   const resolved = readString(value, "custom");
   const tone =

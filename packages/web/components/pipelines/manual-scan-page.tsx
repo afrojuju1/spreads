@@ -430,7 +430,10 @@ export function ManualScanPageContent({
               <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
                 Strategy
               </div>
-              <Select value={strategy} onValueChange={setStrategy}>
+              <Select
+                value={strategy}
+                onValueChange={(value) => setStrategy(value ?? "auto")}
+              >
                 <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>

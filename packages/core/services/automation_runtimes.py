@@ -20,6 +20,7 @@ from core.services.bots import load_active_bots
 from core.services.opportunities import list_opportunities
 from core.services.positions import OPEN_POSITION_STATUSES, list_positions
 from core.services.runtime_identity import build_live_run_scope_id, build_pipeline_id
+from core.services.selection_summary import selection_summary_payload
 from core.storage.serializers import parse_datetime
 
 RuntimeConfig = EntryRuntime | ManagementRuntime
@@ -337,6 +338,17 @@ def _runtime_summary(
         market_date=resolved_market_date,
     )
     latest_run = automation_runs[0] if automation_runs else None
+    latest_runtime_selection_summary = {}
+    if latest_run is not None:
+        result_payload = (
+            latest_run.get("result")
+            if isinstance(latest_run.get("result"), dict)
+            else latest_run.get("result_json")
+        )
+        if isinstance(result_payload, dict):
+            latest_runtime_selection_summary = selection_summary_payload(
+                result_payload.get("runtime_selection_summary")
+            )
     latest_discovery = None
     if latest_run is not None:
         latest_discovery = _latest_discovery_payload(
@@ -365,6 +377,7 @@ def _runtime_summary(
         **intent_summary,
         **position_metrics,
         "latest_automation_run": latest_run,
+        "latest_runtime_selection_summary": latest_runtime_selection_summary,
         "latest_discovery": latest_discovery,
         "bot_metrics": (
             build_bot_metrics(

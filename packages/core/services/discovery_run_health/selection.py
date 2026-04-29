@@ -171,6 +171,11 @@ def normalize_selection_summary(
     )
     return {
         "opportunity_count": _read_int(summary, "opportunity_count"),
+        "candidate_symbol_count": _read_int(summary, "candidate_symbol_count"),
+        "candidate_count": _read_int(summary, "candidate_count"),
+        "matched_discovery_opportunity_count": _read_int(
+            summary, "matched_discovery_opportunity_count"
+        ),
         "strategy_family_counts": {
             str(key): _read_int(summary.get("strategy_family_counts"), key)
             for key in sorted(dict(summary.get("strategy_family_counts") or {}))
@@ -182,6 +187,18 @@ def normalize_selection_summary(
         "selection_state_counts": {
             str(key): _read_int(summary.get("selection_state_counts"), key)
             for key in sorted(dict(summary.get("selection_state_counts") or {}))
+        },
+        "scoring_state_counts": {
+            str(key): _read_int(summary.get("scoring_state_counts"), key)
+            for key in sorted(dict(summary.get("scoring_state_counts") or {}))
+        },
+        "runtime_filter_reason_counts": {
+            str(key): _read_int(summary.get("runtime_filter_reason_counts"), key)
+            for key in sorted(dict(summary.get("runtime_filter_reason_counts") or {}))
+        },
+        "rejection_reason_counts": {
+            str(key): _read_int(summary.get("rejection_reason_counts"), key)
+            for key in sorted(dict(summary.get("rejection_reason_counts") or {}))
         },
         "blocker_counts": {
             category: {
@@ -198,6 +215,20 @@ def normalize_selection_summary(
         },
         "shadow_only_count": _read_int(summary, "shadow_only_count"),
         "auto_live_eligible_count": _read_int(summary, "auto_live_eligible_count"),
+        "selection_source": (
+            None
+            if summary.get("selection_source") in (None, "")
+            else str(summary.get("selection_source"))
+        ),
+        "status": None if summary.get("status") in (None, "") else str(summary.get("status")),
+        "message": (
+            None if summary.get("message") in (None, "") else str(summary.get("message"))
+        ),
+        "top_candidates": [
+            dict(item)
+            for item in list(summary.get("top_candidates") or [])
+            if isinstance(item, Mapping)
+        ],
     }
 
 

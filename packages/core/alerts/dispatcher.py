@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -35,9 +36,11 @@ def alert_payload(
     session_date: str,
     alert: AlertDecision,
 ) -> dict[str, Any]:
+    deploy_env = str(os.environ.get("SPREADS_DEPLOY_ENV") or "").strip() or "unknown"
     return {
         "created_at": generated_at,
         "session_date": session_date,
+        "deploy_env": deploy_env,
         "label": label,
         "cycle_id": cycle_id,
         "symbol": alert.symbol,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import Counter
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from core.services.live_selection import select_live_opportunities
@@ -175,6 +177,205 @@ def _read_previous_runtime_selection(
             continue
         previous_promotable[symbol] = dict(candidate)
     return previous_promotable, selection_memory
+
+
+def _selection_score(row: Mapping[str, Any]) -> float:
+    for key in ("execution_score", "promotion_score", "quality_score"):
+        value = _coerce_float(row.get(key))
+        if value is not None:
+            return value
+    return 0.0
+
+
+def _sorted_runtime_candidates(
+    candidates: Sequence[Mapping[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    rows = [dict(row) for row in list(candidates or []) if isinstance(row, Mapping)]
+    return sorted(
+        rows,
+        key=lambda row: (
+            _selection_score(row),
+            _coerce_float(row.get("execution_score")) or 0.0,
+            _coerce_float(row.get("promotion_score")) or 0.0,
+            _coerce_float(row.get("quality_score")) or 0.0,
+            _coerce_float(row.get("return_on_risk")) or 0.0,
+            _coerce_float(row.get("midpoint_credit")) or 0.0,
+        ),
+        reverse=True,
+    )
+
+
+def _normalized_text_list(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    normalized: list[str] = []
+    for item in value:
+        rendered = str(item or "").strip()
+        if rendered and rendered not in normalized:
+            normalized.append(rendered)
+    return normalized
+
+
+def _runtime_candidate_reason_codes(candidate: Mapping[str, Any]) -> list[str]:
+    reason_codes: list[str] = []
+    for field in (
+        "scoring_blockers",
+        "execution_blockers",
+        "ranking_policy_blockers",
+    ):
+        for blocker in _normalized_text_list(candidate.get(field)):
+            if blocker not in reason_codes:
+                reason_codes.append(blocker)
+    scoring_state = str(candidate.get("scoring_state") or "").strip().lower()
+    score_thresholds = (
+        candidate.get("score_thresholds")
+        if isinstance(candidate.get("score_thresholds"), Mapping)
+        else {}
+    )
+    monitor_floor = _coerce_float(score_thresholds.get("monitor_floor"))
+    if (
+        monitor_floor is not None
+        and _selection_score(candidate) < monitor_floor
+        and "score_below_monitor_floor" not in reason_codes
+    ):
+        reason_codes.append("score_below_monitor_floor")
+    if scoring_state == "blocked" and not reason_codes:
+        reason_codes.append("scoring_state_blocked")
+    if not reason_codes:
+        reason_codes.append("not_retained_in_live_selection")
+    return reason_codes
+
+
+def _runtime_candidate_preview(
+    candidate: Mapping[str, Any],
+    *,
+    min_opportunity_score: float | None,
+) -> dict[str, Any]:
+    score_thresholds = (
+        candidate.get("score_thresholds")
+        if isinstance(candidate.get("score_thresholds"), Mapping)
+        else {}
+    )
+    selection_score = _selection_score(candidate)
+    min_score = None if min_opportunity_score is None else float(min_opportunity_score)
+    return {
+        "underlying_symbol": candidate.get("underlying_symbol"),
+        "strategy": candidate.get("strategy"),
+        "structure_identity": _candidate_identity(dict(candidate)),
+        "quality_score": _coerce_float(candidate.get("quality_score")),
+        "promotion_score": _coerce_float(candidate.get("promotion_score")),
+        "execution_score": _coerce_float(candidate.get("execution_score")),
+        "selection_score": round(selection_score, 1),
+        "selection_state": candidate.get("selection_state"),
+        "scoring_state": candidate.get("scoring_state"),
+        "scoring_state_reason": candidate.get("scoring_state_reason"),
+        "setup_status": candidate.get("setup_status"),
+        "ranking_policy_status": candidate.get("ranking_policy_status"),
+        "monitor_floor": _coerce_float(score_thresholds.get("monitor_floor")),
+        "promotion_floor": _coerce_float(score_thresholds.get("promotion_floor")),
+        "min_opportunity_score": min_score,
+        "min_opportunity_score_delta": None
+        if min_score is None
+        else round(selection_score - min_score, 1),
+        "reason_codes": _runtime_candidate_reason_codes(candidate),
+    }
+
+
+def _build_runtime_selection_summary(
+    *,
+    runtime: EntryRuntime,
+    filtered_candidates: Mapping[str, list[Mapping[str, Any]]],
+    runtime_filter_reason_counts: Mapping[str, int] | None,
+    selected_rows: Sequence[Mapping[str, Any]],
+    selection_memory: Mapping[str, Any] | None,
+    projected_from_discovery: bool,
+) -> dict[str, Any]:
+    flattened_candidates: list[dict[str, Any]] = []
+    scoring_state_counts: Counter[str] = Counter()
+    rejection_reason_counts: Counter[str] = Counter()
+    top_candidates: list[dict[str, Any]] = []
+    selected_ids = {
+        (
+            str(row.get("underlying_symbol") or "").upper(),
+            _candidate_identity(dict(row.get("candidate") or row)),
+        )
+        for row in list(selected_rows or [])
+        if str(row.get("underlying_symbol") or "").strip()
+    }
+
+    for rows in filtered_candidates.values():
+        ranked_rows = _sorted_runtime_candidates(rows)
+        flattened_candidates.extend(ranked_rows)
+        for candidate in ranked_rows:
+            scoring_state = str(candidate.get("scoring_state") or "").strip().lower()
+            scoring_state_counts[scoring_state or "unknown"] += 1
+            candidate_key = (
+                str(candidate.get("underlying_symbol") or "").upper(),
+                _candidate_identity(dict(candidate)),
+            )
+            if candidate_key not in selected_ids:
+                rejection_reason_counts.update(
+                    _runtime_candidate_reason_codes(candidate)
+                )
+
+    min_score = _coerce_float(
+        runtime.automation.automation.trigger_policy.get("min_opportunity_score")
+    )
+    for candidate in _sorted_runtime_candidates(flattened_candidates)[:3]:
+        top_candidates.append(
+            _runtime_candidate_preview(
+                candidate,
+                min_opportunity_score=min_score,
+            )
+        )
+
+    candidate_symbol_count = len(filtered_candidates)
+    candidate_count = len(flattened_candidates)
+    opportunity_count = len(list(selected_rows or []))
+    if opportunity_count > 0:
+        status = "opportunities_selected"
+        message = (
+            f"{opportunity_count} runtime opportunit"
+            f"{'y' if opportunity_count == 1 else 'ies'} selected from "
+            f"{candidate_count} filtered candidate"
+            f"{'' if candidate_count == 1 else 's'}."
+        )
+    elif candidate_count <= 0:
+        status = "no_runtime_candidates"
+        message = "No runtime candidates matched this automation in the current cycle."
+    elif projected_from_discovery:
+        status = "no_discovery_opportunity_match"
+        message = (
+            "Runtime candidates existed, but discovery did not persist any matching "
+            "live opportunities for this cycle."
+        )
+    else:
+        status = "no_runtime_opportunities"
+        message = (
+            "Runtime candidates existed, but none cleared live selection for this cycle."
+        )
+
+    return {
+        "selection_source": (
+            "discovery_projection" if projected_from_discovery else "live_selection"
+        ),
+        "status": status,
+        "message": message,
+        "candidate_symbol_count": candidate_symbol_count,
+        "candidate_count": candidate_count,
+        "opportunity_count": opportunity_count,
+        "matched_discovery_opportunity_count": opportunity_count
+        if projected_from_discovery
+        else None,
+        "runtime_filter_reason_counts": {
+            str(key): int(value)
+            for key, value in dict(runtime_filter_reason_counts or {}).items()
+        },
+        "scoring_state_counts": dict(scoring_state_counts),
+        "rejection_reason_counts": dict(rejection_reason_counts),
+        "selection_memory": dict(selection_memory or {}),
+        "top_candidates": top_candidates,
+    }
 
 
 def _project_runtime_rows_from_persisted(
@@ -398,7 +599,7 @@ def sync_entry_runtime_opportunities(
                 for symbol, rows in symbol_candidates.items()
             }
         )
-        filtered_candidates, _runtime_filter_reason_counts = (
+        filtered_candidates, runtime_filter_reason_counts = (
             filter_runtime_symbol_candidates(
                 symbol_candidates=source_candidates,
                 runtime=runtime,
@@ -427,6 +628,14 @@ def sync_entry_runtime_opportunities(
             )
             selected_rows = list(selection["opportunities"])
             runtime_selection_memory = dict(selection.get("selection_memory") or {})
+        runtime_selection_summary = _build_runtime_selection_summary(
+            runtime=runtime,
+            filtered_candidates=filtered_candidates,
+            runtime_filter_reason_counts=runtime_filter_reason_counts,
+            selected_rows=selected_rows,
+            selection_memory=runtime_selection_memory,
+            projected_from_discovery=owner_candidates is not None,
+        )
         automation_run_id = build_automation_run_id(
             cycle_id, runtime.bot_id, runtime.automation_id
         )
@@ -445,8 +654,12 @@ def sync_entry_runtime_opportunities(
             status="completed",
             result={
                 "candidate_symbol_count": len(filtered_candidates),
+                "candidate_count": sum(
+                    len(list(rows or [])) for rows in filtered_candidates.values()
+                ),
                 "opportunity_count": len(selected_rows),
                 "selection_memory": runtime_selection_memory,
+                "runtime_selection_summary": runtime_selection_summary,
             },
             config_hash=runtime.config_hash,
         )

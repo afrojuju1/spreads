@@ -17,6 +17,9 @@ from core.services.discovery_runs.capture.candidates import (
     build_preselection_capture_candidates,
 )
 from core.services.discovery_runs.capture.runtime import capture_live_option_market_state
+from core.services.discovery_runs.capture.uoa_watchlist import (
+    build_uoa_capture_candidates_from_symbols,
+)
 from core.services.discovery_runs.config import (
     _filter_scope_candidates,
     _filter_scope_rows,
@@ -242,6 +245,8 @@ def run_collection_cycle(
     runtime_candidate_rows_by_owner: dict[
         tuple[str, str], dict[str, list[dict[str, Any]]]
     ] = {}
+    uoa_capture_candidates: list[dict[str, Any]] = []
+    uoa_watchlist_summary: dict[str, Any] = {}
     symbol_source = {
         "kind": "resolved_scope",
         "status": "ready",
@@ -264,38 +269,31 @@ def run_collection_cycle(
         scanner_args.symbols = args.symbols
         scanner_args.universe = None
         scanner_args.symbols_file = None
+        if str(symbol_source.get("kind") or "") == "fallback_universe":
+            universe_label = str(
+                symbol_source.get("fallback_universe_ref") or "fallback_universe"
+            )
+        elif str(symbol_source.get("feed_id") or "").strip():
+            universe_label = f"symbol_feed:{symbol_source['feed_id']}"
+        else:
+            universe_label = "uoa_only"
         if symbols:
             (
-                symbols,
-                universe_label,
-                scan_results,
-                failures,
-                _raw_top_candidates,
-            ) = run_universe_cycle(
+                uoa_capture_candidates,
+                uoa_failures,
+                uoa_watchlist_summary,
+            ) = build_uoa_capture_candidates_from_symbols(
+                symbols=symbols,
                 scanner_args=scanner_args,
                 client=client,
-                calendar_resolver=calendar_resolver,
                 greeks_provider=greeks_provider,
-                history_store=history_store,
+                feed_entries_by_symbol={
+                    str(item.get("symbol") or "").strip().upper(): dict(item)
+                    for item in list(symbol_source.get("entries") or [])
+                    if str(item.get("symbol") or "").strip()
+                },
             )
-            run_ids = {
-                (result.symbol, result.args.strategy): result.run_id
-                for result in scan_results
-            }
-            symbol_strategy_candidates = build_symbol_strategy_candidates(
-                scan_results,
-                run_ids,
-                max_per_strategy=WATCHLIST_PER_STRATEGY,
-            )
-        else:
-            if str(symbol_source.get("kind") or "") == "fallback_universe":
-                universe_label = str(
-                    symbol_source.get("fallback_universe_ref") or "fallback_universe"
-                )
-            elif str(symbol_source.get("feed_id") or "").strip():
-                universe_label = f"symbol_feed:{symbol_source['feed_id']}"
-            else:
-                universe_label = "uoa_only"
+            failures.extend(uoa_failures)
     elif bool(options_scope.get("enabled")) and entry_runtimes:
         try:
             runtime_candidate_rows_by_owner = build_entry_runtime_candidates(
@@ -378,8 +376,10 @@ def run_collection_cycle(
         generated_at=generated_at,
         session_date=session_date,
         tick_context=tick_context,
-        capture_candidates=build_preselection_capture_candidates(
-            symbol_strategy_candidates
+        capture_candidates=(
+            list(uoa_capture_candidates)
+            if uoa_only
+            else build_preselection_capture_candidates(symbol_strategy_candidates)
         ),
     )
     signal_cycle_context = {
@@ -490,6 +490,8 @@ def run_collection_cycle(
         scan_results,
         symbol_strategy_candidates,
     )
+    if uoa_only and uoa_watchlist_summary:
+        raw_candidate_summary["uoa_watchlist_summary"] = dict(uoa_watchlist_summary)
     persisted_opportunities = discovery_store.save_cycle(
         cycle_id=cycle_id,
         label=label,

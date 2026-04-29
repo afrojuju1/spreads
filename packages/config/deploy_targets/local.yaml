@@ -1,0 +1,19 @@
+name: local
+mode: local
+description: Private single-host deployment on the current machine.
+deploy_root: .
+compose_file: docker-compose.prod.yml
+env_file: .env.deploy.local
+compose_project_name: spreads-local
+bind_host: 127.0.0.1
+api_port: 58080
+postgres_port: 55432
+redis_port: 56379
+web_port: 53000
+worker_runtime_replicas: 1
+worker_discovery_replicas: 2
+web_enabled: true
+postgres_volume_name: spreads_local_postgres_data
+docker_log_driver: local
+docker_log_max_size: 10m
+docker_log_max_file: 5

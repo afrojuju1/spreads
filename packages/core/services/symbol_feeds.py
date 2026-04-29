@@ -612,6 +612,11 @@ def resolve_symbol_feed_symbols(
             "generated_at": snapshot.get("generated_at"),
             "age_seconds": snapshot.get("age_seconds"),
             "symbols": list(snapshot.get("symbols") or []),
+            "entries": [
+                dict(item)
+                for item in list(snapshot.get("entries") or [])
+                if isinstance(item, Mapping)
+            ],
             "summary": dict(snapshot.get("summary") or {}),
             "degradation": dict(snapshot.get("degradation") or {}),
         }
@@ -643,6 +648,11 @@ def resolve_symbol_feed_symbols(
         "feed_id": str(feed_id),
         "job_key": str(job_key),
         "symbols": [],
+        "entries": [
+            dict(item)
+            for item in list(snapshot.get("entries") or [])
+            if isinstance(item, Mapping)
+        ],
         "summary": dict(snapshot.get("summary") or {}),
         "degradation": dict(snapshot.get("degradation") or {}),
         "feed_snapshot": snapshot,

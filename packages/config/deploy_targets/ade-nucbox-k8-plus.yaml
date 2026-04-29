@@ -1,0 +1,20 @@
+name: ade-nucbox-k8-plus
+mode: ssh
+description: Private single-host deployment on the ade-NucBox-K8-Plus tailnet box.
+ssh_host: ade-nucbox-k8-plus
+deploy_root: /home/ade/spreads/app
+compose_file: docker-compose.prod.yml
+env_file: .env.deploy.ade-nucbox-k8-plus
+compose_project_name: spreads-nucbox
+bind_host: 100.111.132.114
+api_port: 58080
+postgres_port: 55432
+redis_port: 56379
+web_port: 53000
+worker_runtime_replicas: 1
+worker_discovery_replicas: 4
+web_enabled: true
+postgres_volume_name: spreads_nucbox_postgres_data
+docker_log_driver: local
+docker_log_max_size: 10m
+docker_log_max_file: 5

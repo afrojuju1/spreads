@@ -550,6 +550,7 @@ def _summarize_alert(alert: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "alert_id": _as_text(alert.get("alert_id")),
         "created_at": _as_text(alert.get("created_at")),
+        "deploy_env": _as_text(alert.get("deploy_env")),
         "label": _as_text(alert.get("label")),
         "symbol": _as_text(alert.get("symbol")),
         "alert_type": _as_text(alert.get("alert_type")),

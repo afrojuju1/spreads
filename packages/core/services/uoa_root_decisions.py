@@ -596,6 +596,8 @@ def build_uoa_root_decisions(
                     "scoreable_size": int(root.get("scoreable_size") or 0),
                     "call_scoreable_premium": float(root.get("call_scoreable_premium") or 0.0),
                     "put_scoreable_premium": float(root.get("put_scoreable_premium") or 0.0),
+                    "call_signed_premium": float(root.get("call_signed_premium") or 0.0),
+                    "put_signed_premium": float(root.get("put_signed_premium") or 0.0),
                     "call_scoreable_trade_count": int(root.get("call_scoreable_trade_count") or 0),
                     "put_scoreable_trade_count": int(root.get("put_scoreable_trade_count") or 0),
                     "call_scoreable_contract_count": int(root.get("call_scoreable_contract_count") or 0),

@@ -546,6 +546,8 @@ def build_uoa_trade_summary(
                 "gross_gamma_dollar_exposure": 0.0,
                 "call_scoreable_premium": 0.0,
                 "put_scoreable_premium": 0.0,
+                "call_signed_premium": 0.0,
+                "put_signed_premium": 0.0,
                 "call_scoreable_trade_count": 0,
                 "put_scoreable_trade_count": 0,
                 "call_scoreable_contract_count": 0,
@@ -589,11 +591,13 @@ def build_uoa_trade_summary(
         )
         if contract.get("option_type") == "call":
             root["call_scoreable_premium"] += float(contract["scoreable_premium"])
+            root["call_signed_premium"] += float(contract.get("signed_premium") or 0.0)
             root["call_scoreable_trade_count"] += int(contract["scoreable_trade_count"])
             if int(contract["scoreable_trade_count"]) > 0:
                 root["call_scoreable_contract_count"] += 1
         elif contract.get("option_type") == "put":
             root["put_scoreable_premium"] += float(contract["scoreable_premium"])
+            root["put_signed_premium"] += float(contract.get("signed_premium") or 0.0)
             root["put_scoreable_trade_count"] += int(contract["scoreable_trade_count"])
             if int(contract["scoreable_trade_count"]) > 0:
                 root["put_scoreable_contract_count"] += 1
@@ -603,6 +607,8 @@ def build_uoa_trade_summary(
     for root in roots.values():
         call_premium = round(float(root["call_scoreable_premium"]), 4)
         put_premium = round(float(root["put_scoreable_premium"]), 4)
+        call_signed_premium = round(float(root["call_signed_premium"]), 4)
+        put_signed_premium = round(float(root["put_signed_premium"]), 4)
         dominant_flow = "mixed"
         if call_premium > put_premium:
             dominant_flow = "call"
@@ -735,6 +741,8 @@ def build_uoa_trade_summary(
             ),
             "call_scoreable_premium": call_premium,
             "put_scoreable_premium": put_premium,
+            "call_signed_premium": call_signed_premium,
+            "put_signed_premium": put_signed_premium,
             "call_scoreable_trade_count": int(root["call_scoreable_trade_count"]),
             "put_scoreable_trade_count": int(root["put_scoreable_trade_count"]),
             "call_scoreable_contract_count": int(root["call_scoreable_contract_count"]),

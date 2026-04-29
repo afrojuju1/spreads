@@ -36,6 +36,70 @@ from .market_data import (
 )
 
 
+def _optional_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_stock_context_by_symbol(
+    capture_candidates: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    context_by_symbol: dict[str, dict[str, Any]] = {}
+    for candidate in capture_candidates:
+        symbol = str(candidate.get("underlying_symbol") or "").strip()
+        if not symbol:
+            continue
+        feed_rank = _optional_int(candidate.get("feed_rank"))
+        current = context_by_symbol.get(symbol)
+        current_rank = None if current is None else _optional_int(current.get("feed_rank"))
+        current_score = None if current is None else _optional_float(current.get("feed_score"))
+        candidate_score = _optional_float(candidate.get("feed_score"))
+        if current is not None:
+            if feed_rank is None and current_rank is not None:
+                continue
+            if (
+                feed_rank is not None
+                and current_rank is not None
+                and feed_rank > current_rank
+            ):
+                continue
+            if (
+                feed_rank == current_rank
+                and candidate_score is not None
+                and current_score is not None
+                and candidate_score < current_score
+            ):
+                continue
+        context_by_symbol[symbol] = {
+            "feed_rank": feed_rank,
+            "feed_score": candidate_score,
+            "daily_volume": _optional_int(candidate.get("underlying_daily_volume")),
+            "move_percent": _optional_float(candidate.get("underlying_move_percent")),
+            "news_count": _optional_int(candidate.get("underlying_news_count")) or 0,
+            "most_active_rank": _optional_int(candidate.get("underlying_most_active_rank")),
+            "gainer_rank": _optional_int(candidate.get("underlying_gainer_rank")),
+            "loser_rank": _optional_int(candidate.get("underlying_loser_rank")),
+            "trade_count": _optional_int(candidate.get("underlying_trade_count")),
+            "price": _optional_float(candidate.get("underlying_price_snapshot")),
+            "reason_codes": list(candidate.get("feed_reason_codes") or []),
+            "source_tags": list(candidate.get("feed_source_tags") or []),
+        }
+    return context_by_symbol
+
+
 def capture_live_option_market_state(
     *,
     args: argparse.Namespace,
@@ -318,11 +382,13 @@ def capture_live_option_market_state(
         as_of=generated_at,
         underlyings=expected_uoa_roots,
     )
+    stock_context_by_symbol = _build_stock_context_by_symbol(capture_candidates)
     uoa_decisions = build_uoa_root_decisions(
         uoa_summary=uoa_summary,
         baselines_by_symbol=uoa_baselines,
         quote_summary=uoa_quote_summary,
         capture_window_seconds=float(max(args.trade_capture_seconds, 1)),
+        stock_context_by_symbol=stock_context_by_symbol,
     )
     if expected_trade_symbols or stream_trade_records:
         try:

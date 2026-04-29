@@ -35,7 +35,26 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def _as_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    rendered = str(value).strip()
+    return rendered or None
+
+
 class AlertRepository(RepositoryBase):
+    def _alert_row(self, model: Any) -> AlertEventRecord:
+        payload = getattr(model, "payload_json", None)
+        deploy_env = (
+            _as_text(payload.get("deploy_env"))
+            if isinstance(payload, dict)
+            else None
+        )
+        return self.row(model, extra={"deploy_env": deploy_env})
+
+    def _alert_rows(self, models: list[Any]) -> list[AlertEventRecord]:
+        return [self._alert_row(model) for model in models]
+
     def schema_ready(self) -> bool:
         return self.schema_has_tables("alert_events")
 
@@ -57,7 +76,7 @@ class AlertRepository(RepositoryBase):
             row = session.get(AlertEventModel, alert_id)
         if row is None:
             return None
-        return self.row(row)
+        return self._alert_row(row)
 
     def get_delivery_event(self, alert_id: int) -> AlertEventRecord | None:
         statement = (
@@ -70,7 +89,7 @@ class AlertRepository(RepositoryBase):
             row = session.scalar(statement)
         if row is None:
             return None
-        return self.row(row)
+        return self._alert_row(row)
 
     def plan_delivery_event(
         self,
@@ -134,7 +153,7 @@ class AlertRepository(RepositoryBase):
             session.add(row)
             session.flush()
             session.refresh(row)
-            return self.row(row), True
+            return self._alert_row(row), True
 
     def upsert_score_anchor(
         self,
@@ -193,7 +212,7 @@ class AlertRepository(RepositoryBase):
                 row.state_json = dict(state)
             session.flush()
             session.refresh(row)
-            return self.row(row)
+            return self._alert_row(row)
 
     def mark_delivery_job_queued(
         self,
@@ -211,7 +230,7 @@ class AlertRepository(RepositoryBase):
             row.updated_at = queued_at_dt
             session.flush()
             session.refresh(row)
-            return self.row(row)
+            return self._alert_row(row)
 
     def claim_delivery_event(
         self,
@@ -248,7 +267,7 @@ class AlertRepository(RepositoryBase):
             row.error_text = None
             session.flush()
             session.refresh(row)
-            return self.row(row)
+            return self._alert_row(row)
 
     def finish_delivery_event(
         self,
@@ -285,7 +304,7 @@ class AlertRepository(RepositoryBase):
                 row.worker_name = worker_name
             session.flush()
             session.refresh(row)
-            return self.row(row)
+            return self._alert_row(row)
 
     def reset_stale_dispatching_event(
         self,
@@ -340,7 +359,7 @@ class AlertRepository(RepositoryBase):
         )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return self.rows(rows)
+        return self._alert_rows(rows)
 
     def list_alert_events(
         self,
@@ -363,7 +382,7 @@ class AlertRepository(RepositoryBase):
         statement = statement.order_by(AlertEventModel.created_at.desc(), AlertEventModel.alert_id.desc()).limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return self.rows(rows)
+        return self._alert_rows(rows)
 
     def count_alert_events(
         self,

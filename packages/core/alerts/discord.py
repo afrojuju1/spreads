@@ -178,6 +178,21 @@ def _join_metric_parts(parts: list[str | None], *, fallback: str = "n/a") -> str
     return " | ".join(resolved) if resolved else fallback
 
 
+def _alert_footer_text(alert: dict[str, Any]) -> str:
+    deploy_env = str(alert.get("deploy_env") or "").strip()
+    parts = []
+    if deploy_env:
+        parts.append(f"env {deploy_env}")
+    parts.extend(
+        [
+            str(alert.get("label") or "n/a"),
+            str(alert.get("profile") or "n/a"),
+            str(alert.get("strategy_mode") or "n/a"),
+        ]
+    )
+    return " | ".join(parts)
+
+
 def _leg_token(leg: dict[str, Any]) -> str:
     strike_text = compact_strike(leg.get("strike"))
     option_type = str(leg.get("option_type") or "").strip().lower()
@@ -674,7 +689,7 @@ def _build_spread_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
         "description": description,
         "color": strategy_color(strategy, alert_type=alert["alert_type"]),
         "fields": fields,
-        "footer": {"text": f"{alert['label']} | {alert['profile']} | {alert['strategy_mode']}"},
+        "footer": {"text": _alert_footer_text(alert)},
         "timestamp": alert["created_at"],
     }
     return {"embeds": [embed]}
@@ -780,22 +795,35 @@ def _uoa_contract_line(contract: dict[str, Any]) -> str:
     trade_count = int(contract.get("scoreable_trade_count") or 0)
     total_size = int(contract.get("scoreable_size") or 0)
     premium = compact_money(contract.get("scoreable_premium"))
+    net_premium = _uoa_signed_money(contract.get("signed_premium"))
     return (
         f"{option_type} {strike_text} | {expiry_text} | "
-        f"{trade_count} prints | size {compact_count(total_size)} | {premium}"
+        f"{trade_count} prints | size {compact_count(total_size)} | {premium} | net {net_premium}"
     )
+
+
+def _uoa_signed_money(value: Any, *, fallback: str = "n/a") -> str:
+    if value is None:
+        return fallback
+    rendered = float(value)
+    if rendered == 0:
+        return "$0"
+    sign = "+" if rendered > 0 else "-"
+    return f"{sign}{compact_money(abs(rendered), fallback=fallback)}"
 
 
 def _uoa_side_breakdown(current: dict[str, Any], *, side: str) -> str | None:
     premium = current.get(f"{side}_scoreable_premium")
+    signed_premium = current.get(f"{side}_signed_premium")
     trades = current.get(f"{side}_scoreable_trade_count")
     contracts = current.get(f"{side}_scoreable_contract_count")
-    if all(value is None for value in (premium, trades, contracts)):
+    if all(value is None for value in (premium, signed_premium, trades, contracts)):
         return None
     contracts_text = "n/a" if contracts is None else str(int(contracts or 0))
     return (
         f"prints {int(trades or 0)}\n"
-        f"premium {compact_money(premium or 0.0)}\n"
+        f"gross {compact_money(premium or 0.0)}\n"
+        f"net {_uoa_signed_money(signed_premium)}\n"
         f"active ctrs {contracts_text}"
     )
 
@@ -839,6 +867,8 @@ def _build_uoa_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
         f"{compact_count(current.get('supporting_volume'))} vol | "
         f"{compact_count(current.get('supporting_open_interest'))} oi | "
         f"{compact_ratio(current.get('supporting_volume_oi_ratio'))} vol/oi\n"
+        f"net prem {_uoa_signed_money(current.get('signed_premium'))} | "
+        f"net delta {_uoa_signed_money(current.get('signed_delta_notional'))}\n"
         f"quotes {' | '.join(quote_parts)}"
     )
     trigger_parts: list[str] = []
@@ -852,15 +882,25 @@ def _build_uoa_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
         trigger_parts.append(directional_bias)
     trigger_parts.extend(baseline_parts)
     fields = [
-        {"name": "CALL SIDE", "value": call_side or "prints 0\npremium $0\nactive ctrs 0", "inline": True},
-        {"name": "PUT SIDE", "value": put_side or "prints 0\npremium $0\nactive ctrs 0", "inline": True},
+        {"name": "CALL SIDE", "value": call_side or "prints 0\ngross $0\nnet n/a\nactive ctrs 0", "inline": True},
+        {"name": "PUT SIDE", "value": put_side or "prints 0\ngross $0\nnet n/a\nactive ctrs 0", "inline": True},
         {"name": "Root Stats", "value": root_stats, "inline": False},
     ]
     if contracts:
+        contract_lines = [_uoa_contract_line(contract) for contract in contracts[:3]]
+        additional_contract_count = max(
+            int(current.get("scoreable_contract_count") or 0) - len(contracts),
+            0,
+        )
+        if additional_contract_count > 0:
+            contract_lines.append(
+                f"+{additional_contract_count} more active contract"
+                f"{'' if additional_contract_count == 1 else 's'} not shown"
+            )
         fields.append(
             {
                 "name": "Contract Ladder",
-                "value": "\n".join(_uoa_contract_line(contract) for contract in contracts[:3]),
+                "value": "\n".join(contract_lines),
                 "inline": False,
             }
         )
@@ -876,7 +916,7 @@ def _build_uoa_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
             decision_state=decision_state,
         ),
         "fields": fields,
-        "footer": {"text": f"{alert['label']} | {alert['profile']} | {alert['strategy_mode']}"},
+        "footer": {"text": _alert_footer_text(alert)},
         "timestamp": alert["created_at"],
     }
     return {"embeds": [embed]}
@@ -938,7 +978,7 @@ def _build_ops_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
         "description": alert["description"],
         "color": NEUTRAL_YELLOW,
         "fields": fields,
-        "footer": {"text": f"{alert['label']} | {alert['profile']} | {alert['strategy_mode']}"},
+        "footer": {"text": _alert_footer_text(alert)},
         "timestamp": alert["created_at"],
     }
     return {"embeds": [embed]}

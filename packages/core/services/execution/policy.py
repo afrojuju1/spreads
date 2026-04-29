@@ -183,6 +183,8 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
             "max_credit_concession": max_credit_concession,
         }
     mode = _as_text(raw_policy.get("mode")) if isinstance(raw_policy, dict) else None
+    if mode == "disabled":
+        mode = None
     mode = mode or "top_promotable"
     if mode != "top_promotable":
         raise ValueError(f"Unsupported execution policy mode: {mode}")

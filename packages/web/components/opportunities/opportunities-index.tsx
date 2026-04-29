@@ -643,7 +643,7 @@ function formatAge(value: string | null | undefined): string {
   return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
 }
 
-function isMarketDateValue(value: string | null | undefined): boolean {
+function isMarketDateValue(value: string | null | undefined): value is string {
   return /^\d{4}-\d{2}-\d{2}$/.test(value ?? "");
 }
 
@@ -1541,7 +1541,7 @@ export function OpportunitiesIndexPageContent({
     : label
       ? `Diagnostics · ${label}`
       : "All runtimes";
-  const selectedMarketDate = isMarketDateValue(marketDate)
+  const selectedMarketDate: string = isMarketDateValue(marketDate)
     ? marketDate
     : defaultMarketDate;
   const selectedOpportunityId =

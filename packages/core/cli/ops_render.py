@@ -114,6 +114,36 @@ def _render_blocker_list(value: Any, *, length: int = 56) -> str:
     return _truncate(rendered or "-", length=length)
 
 
+def _render_runtime_candidate_previews(
+    value: Any,
+    *,
+    limit: int = 3,
+    length: int = 96,
+) -> str:
+    if not isinstance(value, list) or not value:
+        return "-"
+    parts: list[str] = []
+    for row in value[:limit]:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("underlying_symbol") or "?")
+        strategy = str(row.get("strategy") or "?")
+        score = row.get("selection_score")
+        delta = row.get("min_opportunity_score_delta")
+        reasons = list(row.get("reason_codes") or [])
+        reason = str(reasons[0]) if reasons else "n/a"
+        delta_text = ""
+        if delta not in (None, ""):
+            try:
+                delta_text = f" vs min {float(delta):+.1f}"
+            except (TypeError, ValueError):
+                delta_text = f" vs min {_render_value(delta)}"
+        parts.append(
+            f"{symbol} {strategy} score {_render_value(score)}{delta_text} ({reason})"
+        )
+    return _truncate(", ".join(parts) or "-", length=length)
+
+
 def _render_session_schedule(value: Any, *, length: int = 72) -> str:
     payload = value if isinstance(value, dict) else {}
     if not payload:
@@ -467,6 +497,14 @@ def _render_automation_sync_value(value: Any) -> str:
         if isinstance(payload.get("runtime_selection_summary"), dict)
         else {}
     )
+    has_runtime_selection_detail = (
+        int(runtime_selection.get("candidate_count") or 0) > 0
+        or int(runtime_selection.get("candidate_symbol_count") or 0) > 0
+        or bool(runtime_selection.get("status"))
+        or bool(runtime_selection.get("message"))
+        or bool(runtime_selection.get("rejection_reason_counts"))
+        or bool(runtime_selection.get("runtime_filter_reason_counts"))
+    )
     if (
         not payload
         or (
@@ -474,6 +512,7 @@ def _render_automation_sync_value(value: Any) -> str:
             and int(payload.get("runtime_opportunities_upserted") or 0) <= 0
             and int(payload.get("runtime_opportunities_expired") or 0) <= 0
             and int(runtime_selection.get("opportunity_count") or 0) <= 0
+            and not has_runtime_selection_detail
         )
     ):
         return "-"
@@ -511,6 +550,14 @@ def _render_automation_sync_summary(
         _render_value(runtime_selection.get("opportunity_count")),
     )
     table.add_row(
+        "Runtime Candidates",
+        _render_value(runtime_selection.get("candidate_count")),
+    )
+    table.add_row(
+        "Candidate Symbols",
+        _render_value(runtime_selection.get("candidate_symbol_count")),
+    )
+    table.add_row(
         "Runtime Upserted",
         _render_value(payload.get("runtime_opportunities_upserted")),
     )
@@ -522,7 +569,155 @@ def _render_automation_sync_summary(
         "Runtime States",
         _render_count_map(runtime_selection.get("selection_state_counts")),
     )
+    table.add_row(
+        "Scoring States",
+        _render_count_map(runtime_selection.get("scoring_state_counts")),
+    )
+    table.add_row(
+        "Selection Source",
+        _render_value(runtime_selection.get("selection_source")),
+    )
+    table.add_row(
+        "Discovery Matches",
+        _render_value(runtime_selection.get("matched_discovery_opportunity_count")),
+    )
+    table.add_row(
+        "Selection Status",
+        _render_value(runtime_selection.get("status")),
+    )
+    table.add_row(
+        "Selection Note",
+        _truncate(runtime_selection.get("message"), length=88),
+    )
+    table.add_row(
+        "Reject Reasons",
+        _render_count_map(runtime_selection.get("rejection_reason_counts"), item_length=88),
+    )
+    table.add_row(
+        "Filter Reasons",
+        _render_count_map(
+            runtime_selection.get("runtime_filter_reason_counts"),
+            item_length=88,
+        ),
+    )
+    table.add_row(
+        "Top Candidates",
+        _render_runtime_candidate_previews(runtime_selection.get("top_candidates")),
+    )
     console.print(table)
+
+
+def _render_automations_list(console: Console, payload: dict[str, Any]) -> None:
+    rows = list(payload.get("automations") or [])
+    table = Table(title="Automation Runtimes", header_style="bold")
+    table.add_column("Bot")
+    table.add_column("Automation")
+    table.add_column("Mode")
+    table.add_column("Opps", justify="right")
+    table.add_column("Live", justify="right")
+    table.add_column("Decisions", justify="right")
+    table.add_column("Intents", justify="right")
+    table.add_column("Positions", justify="right")
+    table.add_column("Latest Selection", overflow="fold")
+    for row in rows:
+        latest_selection = (
+            row.get("latest_runtime_selection_summary")
+            if isinstance(row.get("latest_runtime_selection_summary"), dict)
+            else {}
+        )
+        selection_preview = _render_automation_sync_value(
+            {
+                "runtime_selection_summary": latest_selection,
+                "automation_runs_upserted": 0,
+                "runtime_opportunities_upserted": 0,
+                "runtime_opportunities_expired": 0,
+            }
+        )
+        table.add_row(
+            str(row.get("bot_name") or row.get("bot_id") or "-"),
+            str(row.get("automation_id") or "-"),
+            f"{_render_value(row.get('approval_mode'))}/{_render_value(row.get('execution_mode'))}",
+            _render_value(row.get("opportunity_count")),
+            _render_value(row.get("live_opportunity_count")),
+            _render_value(row.get("decision_count")),
+            _render_value(row.get("intent_count")),
+            _render_value(row.get("open_position_count")),
+            selection_preview,
+        )
+    console.print(table)
+
+
+def _render_automation_detail(console: Console, payload: dict[str, Any]) -> None:
+    summary = dict(payload.get("summary") or {})
+    latest_run = (
+        payload.get("latest_automation_run")
+        if isinstance(payload.get("latest_automation_run"), dict)
+        else {}
+    )
+    latest_selection = (
+        payload.get("latest_runtime_selection_summary")
+        if isinstance(payload.get("latest_runtime_selection_summary"), dict)
+        else {}
+    )
+    latest_discovery = (
+        payload.get("latest_discovery")
+        if isinstance(payload.get("latest_discovery"), dict)
+        else {}
+    )
+
+    overview = Table.grid(padding=(0, 2))
+    overview.add_row(
+        "Automation",
+        f"{_render_value(payload.get('bot_name') or payload.get('bot_id'))} / "
+        f"{_render_value(payload.get('automation_id'))}",
+    )
+    overview.add_row("Market Date", _render_value(payload.get("market_date")))
+    overview.add_row(
+        "Mode",
+        f"{_render_value(payload.get('approval_mode'))} / "
+        f"{_render_value(payload.get('execution_mode'))}",
+    )
+    overview.add_row(
+        "Trigger Policy",
+        f"min score {_render_value((payload.get('trigger_policy') or {}).get('min_opportunity_score'))}",
+    )
+    overview.add_row("Opportunities", _render_value(summary.get("opportunity_count")))
+    overview.add_row(
+        "Live Opportunities", _render_value(summary.get("live_opportunity_count"))
+    )
+    overview.add_row("Decisions", _render_value(summary.get("decision_count")))
+    overview.add_row("Intents", _render_value(summary.get("intent_count")))
+    overview.add_row(
+        "Open Positions", _render_value(summary.get("open_position_count"))
+    )
+    overview.add_row(
+        "Latest Run", _render_value(latest_run.get("started_at") or latest_run.get("completed_at"))
+    )
+    overview.add_row(
+        "Latest Discovery",
+        _render_value(latest_discovery.get("label"))
+        + " @ "
+        + _render_value(latest_discovery.get("cycle_id")),
+    )
+    console.print(Panel(overview, title="Automation Runtime"))
+
+    _render_automation_sync_summary(
+        console,
+        title="Latest Runtime Selection",
+        value={
+            "automation_runs_upserted": 1 if latest_run else 0,
+            "runtime_opportunities_upserted": 0,
+            "runtime_opportunities_expired": 0,
+            "runtime_selection_summary": latest_selection,
+        },
+    )
+
+
+def render_automations_view(console: Console, payload: dict[str, Any]) -> None:
+    if isinstance(payload.get("automations"), list):
+        _render_automations_list(console, payload)
+        return
+    _render_automation_detail(console, payload)
 
 
 def _render_discovery_run_raw_candidates(
@@ -2218,6 +2413,7 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
     if alerts:
         table = Table(title="Alerts", header_style="bold")
         table.add_column("Created")
+        table.add_column("Env")
         table.add_column("Symbol")
         table.add_column("Type")
         table.add_column("Target")
@@ -2225,6 +2421,7 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
         for row in alerts:
             table.add_row(
                 str(row.get("created_at") or "-"),
+                str(row.get("deploy_env") or "-"),
                 str(row.get("symbol") or "-"),
                 str(row.get("alert_type") or "-"),
                 str(row.get("delivery_target") or "-"),

@@ -1,4 +1,5 @@
 .env
+.env.deploy*
 outputs/
 __pycache__/
 .venv/

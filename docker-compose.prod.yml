@@ -1,0 +1,147 @@
+name: ${SPREADS_COMPOSE_PROJECT_NAME}
+
+x-default-logging: &default-logging
+  driver: ${SPREADS_DOCKER_LOG_DRIVER}
+  options:
+    max-size: ${SPREADS_DOCKER_LOG_MAX_SIZE}
+    max-file: "${SPREADS_DOCKER_LOG_MAX_FILE}"
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    volumes:
+      - spreads_postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${SPREADS_BIND_HOST}:${SPREADS_POSTGRES_PORT}:5432"
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "${SPREADS_BIND_HOST}:${SPREADS_REDIS_PORT}:6379"
+    logging: *default-logging
+
+  api:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - ${SPREADS_CONTAINER_ENV_FILE}
+    command:
+      [
+        "uv",
+        "run",
+        "uvicorn",
+        "api.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--timeout-graceful-shutdown",
+        "10",
+      ]
+    ports:
+      - "${SPREADS_BIND_HOST}:${SPREADS_API_PORT}:8000"
+    logging: *default-logging
+
+  worker-runtime:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    env_file:
+      - ${SPREADS_CONTAINER_ENV_FILE}
+    command: ["uv", "run", "arq", "core.jobs.worker.RuntimeWorkerSettings"]
+    logging: *default-logging
+
+  worker-discovery:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    env_file:
+      - ${SPREADS_CONTAINER_ENV_FILE}
+    command: ["uv", "run", "arq", "core.jobs.worker.DiscoveryWorkerSettings"]
+    logging: *default-logging
+
+  scheduler:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - ${SPREADS_CONTAINER_ENV_FILE}
+    command: ["uv", "run", "spreads", "scheduler"]
+    logging: *default-logging
+
+  market-recorder:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ${SPREADS_CONTAINER_ENV_FILE}
+    command: ["uv", "run", "spreads", "market-recorder"]
+    logging: *default-logging
+
+  web:
+    build:
+      context: ./packages/web
+      target: runner
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    profiles: ["web"]
+    environment:
+      NODE_ENV: production
+      SPREADS_API_BASE_URL: ${SPREADS_WEB_INTERNAL_API_BASE_URL}
+      NEXT_PUBLIC_SPREADS_API_WS_PORT: "${SPREADS_API_PORT}"
+      NEXT_TELEMETRY_DISABLED: "1"
+    ports:
+      - "${SPREADS_BIND_HOST}:${SPREADS_WEB_PORT}:3000"
+    logging: *default-logging
+
+volumes:
+  spreads_postgres_data:
+    name: ${SPREADS_POSTGRES_VOLUME_NAME}

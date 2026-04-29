@@ -40,6 +40,16 @@ def _utc_now_text() -> str:
     return _utc_now().isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def resolve_deploy_env() -> str:
+    return _as_text(os.environ.get("SPREADS_DEPLOY_ENV")) or "unknown"
+
+
+def _payload_with_deploy_env(payload: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    normalized["deploy_env"] = _as_text(normalized.get("deploy_env")) or resolve_deploy_env()
+    return normalized
+
+
 def resolve_delivery_webhook_url(webhook_url: str | None = None) -> str | None:
     if webhook_url is not None:
         return _as_text(webhook_url)
@@ -185,7 +195,8 @@ def plan_alert_delivery(
     correlation_id: str | None,
     webhook_url: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
-    resolved_session_id = _resolve_session_id(payload, session_id=session_id)
+    normalized_payload = _payload_with_deploy_env(payload)
+    resolved_session_id = _resolve_session_id(normalized_payload, session_id=session_id)
     resolved_webhook_url = resolve_delivery_webhook_url(webhook_url)
     status = "pending" if resolved_webhook_url else "suppressed"
     response = (
@@ -194,17 +205,17 @@ def plan_alert_delivery(
         else {"reason": "missing_SPREADS_DISCORD_WEBHOOK_URL"}
     )
     row, created = alert_store.plan_delivery_event(
-        created_at=payload["created_at"],
-        session_date=payload["session_date"],
-        label=str(payload["label"]),
+        created_at=normalized_payload["created_at"],
+        session_date=normalized_payload["session_date"],
+        label=str(normalized_payload["label"]),
         session_id=resolved_session_id,
-        cycle_id=str(payload["cycle_id"]),
-        symbol=str(payload["symbol"]),
-        alert_type=str(payload["alert_type"]),
+        cycle_id=str(normalized_payload["cycle_id"]),
+        symbol=str(normalized_payload["symbol"]),
+        alert_type=str(normalized_payload["alert_type"]),
         dedupe_key=dedupe_key,
         delivery_target=DISCORD_DELIVERY_TARGET,
         status=status,
-        payload=payload,
+        payload=normalized_payload,
         state=dedupe_state,
         planner_job_run_id=planner_job_run_id,
         response=response,
