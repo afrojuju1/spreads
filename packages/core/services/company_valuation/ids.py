@@ -83,6 +83,35 @@ def build_institutional_filing_id(accession_no: str) -> str:
     return f"institutional_filing:{_as_text(accession_no)}"
 
 
+def build_institutional_position_source_row_hash(
+    *,
+    filing_id: str,
+    institutional_holder_id: str,
+    issuer_name_reported: str | None,
+    title_of_class: str | None,
+    cusip: str | None,
+    figi: str | None,
+    put_call: str | None,
+    share_count: float | None,
+    market_value_reported: float | None,
+    discretion_type: str | None,
+) -> str:
+    issuer_name_token = re.sub(r"[^a-z0-9 ]", "", re.sub(r"\s+", " ", str(issuer_name_reported or "").lower()).strip())
+    title_token = re.sub(r"[^a-z0-9 ]", "", re.sub(r"\s+", " ", str(title_of_class or "").lower()).strip())
+    return f"13frow:{_hash_parts(
+        _as_text(filing_id),
+        _as_text(institutional_holder_id),
+        issuer_name_token,
+        title_token,
+        re.sub(r'[^A-Z0-9]', '', str(cusip or '').upper()),
+        re.sub(r'[^A-Z0-9]', '', str(figi or '').upper()),
+        str(put_call or '').upper().strip(),
+        '' if share_count is None else f'{float(share_count):.12g}',
+        '' if market_value_reported is None else f'{float(market_value_reported):.12g}',
+        str(discretion_type or '').upper().strip(),
+    )}"
+
+
 def build_group_id(issuer_cik: str, seed: str) -> str:
     return f"group:{_normalize_cik(issuer_cik)}:{_hash_parts(seed)}"
 

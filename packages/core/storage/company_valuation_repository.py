@@ -25,6 +25,7 @@ from core.storage.company_valuation_models import (
     SecurityModel,
     StatementPeriodSnapshotModel,
     TreasuryCurveSnapshotModel,
+    UnresolvedInstitutionalPositionModel,
     InsiderTransactionModel,
     XbrlFactModel,
 )
@@ -38,6 +39,7 @@ class CompanyValuationRepository(RepositoryBase):
             "filings",
             "security_identifier_history",
             "institutional_filings",
+            "unresolved_institutional_positions",
             "company_valuation_snapshots",
             "screening_rows",
         )
@@ -67,6 +69,22 @@ class CompanyValuationRepository(RepositoryBase):
                 session.add(row)
             self._assign_model(row, self._preserve_created_at(row, payload))
         return self.get_issuer(issuer_id=issuer_id) or {}
+
+    def upsert_issuers(
+        self,
+        payloads: list[dict[str, Any]],
+    ) -> int:
+        if not payloads:
+            return 0
+        with self.session_scope() as session:
+            for payload in payloads:
+                issuer_id = str(payload["issuer_id"])
+                row = session.get(IssuerModel, issuer_id)
+                if row is None:
+                    row = IssuerModel(issuer_id=issuer_id)
+                    session.add(row)
+                self._assign_model(row, self._preserve_created_at(row, payload))
+        return len(payloads)
 
     def upsert_securities(
         self,
@@ -295,6 +313,79 @@ class CompanyValuationRepository(RepositoryBase):
             )
         return len(position_payloads)
 
+    def delete_institutional_positions_for_filings(
+        self,
+        *,
+        filing_ids: list[str],
+    ) -> int:
+        normalized_ids = [str(value) for value in filing_ids if str(value).strip()]
+        if not normalized_ids:
+            return 0
+        with self.session_scope() as session:
+            session.execute(
+                delete(InstitutionalPositionModel).where(
+                    InstitutionalPositionModel.filing_id.in_(normalized_ids)
+                )
+            )
+        return len(normalized_ids)
+
+    def upsert_institutional_positions(
+        self,
+        payloads: list[dict[str, Any]],
+    ) -> int:
+        if not payloads:
+            return 0
+        with self.session_scope() as session:
+            for payload in payloads:
+                source_row_hash = str(payload["source_row_hash"])
+                row = session.scalar(
+                    select(InstitutionalPositionModel).where(
+                        InstitutionalPositionModel.source_row_hash == source_row_hash
+                    )
+                )
+                if row is None:
+                    row = InstitutionalPositionModel()
+                    session.add(row)
+                self._assign_model(row, payload)
+        return len(payloads)
+
+    def upsert_unresolved_institutional_positions(
+        self,
+        payloads: list[dict[str, Any]],
+    ) -> int:
+        if not payloads:
+            return 0
+        with self.session_scope() as session:
+            for payload in payloads:
+                source_row_hash = str(payload["source_row_hash"])
+                row = session.get(
+                    UnresolvedInstitutionalPositionModel,
+                    source_row_hash,
+                )
+                if row is None:
+                    row = UnresolvedInstitutionalPositionModel(
+                        source_row_hash=source_row_hash
+                    )
+                    session.add(row)
+                self._assign_model(row, self._preserve_created_at(row, payload))
+        return len(payloads)
+
+    def delete_unresolved_institutional_positions_for_filings(
+        self,
+        *,
+        filing_ids: list[str],
+    ) -> int:
+        normalized_ids = [str(value) for value in filing_ids if str(value).strip()]
+        if not normalized_ids:
+            return 0
+        with self.session_scope() as session:
+            session.execute(
+                delete(UnresolvedInstitutionalPositionModel).where(
+                    UnresolvedInstitutionalPositionModel.filing_id.in_(normalized_ids)
+                )
+            )
+        return len(normalized_ids)
+
     def replace_filing_facts_and_snapshots(
         self,
         *,
@@ -361,6 +452,50 @@ class CompanyValuationRepository(RepositoryBase):
                 SecurityModel.created_at.desc(),
             )
         )
+        with self.session_factory() as session:
+            rows = session.execute(statement).all()
+        return [
+            self.row(issuer_model, extra={"ticker": resolved_ticker})
+            for issuer_model, resolved_ticker in rows
+        ]
+
+    def list_issuers_for_screening(
+        self,
+        *,
+        as_of: str | datetime,
+        template_id: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        as_of_dt = parse_datetime(as_of)
+        if as_of_dt is None:
+            raise ValueError("as_of is required")
+        statement = (
+            select(IssuerModel, SecurityModel.ticker.label("ticker"))
+            .join(
+                StatementPeriodSnapshotModel,
+                StatementPeriodSnapshotModel.issuer_id == IssuerModel.issuer_id,
+            )
+            .join(
+                MarketSnapshotModel,
+                MarketSnapshotModel.issuer_id == IssuerModel.issuer_id,
+            )
+            .join(
+                SecurityModel,
+                and_(
+                    SecurityModel.issuer_id == IssuerModel.issuer_id,
+                    SecurityModel.is_primary.is_(True),
+                ),
+                isouter=True,
+            )
+            .where(StatementPeriodSnapshotModel.available_at <= as_of_dt)
+            .where(MarketSnapshotModel.available_at <= as_of_dt)
+        )
+        if template_id:
+            statement = statement.where(IssuerModel.template_id == template_id)
+        statement = statement.distinct(IssuerModel.issuer_id, SecurityModel.ticker)
+        statement = statement.order_by(IssuerModel.issuer_id.asc())
+        if limit is not None:
+            statement = statement.limit(limit)
         with self.session_factory() as session:
             rows = session.execute(statement).all()
         return [
@@ -699,6 +834,59 @@ class CompanyValuationRepository(RepositoryBase):
             rows = session.scalars(statement).all()
         return self.rows(rows)
 
+    def list_unresolved_institutional_positions(
+        self,
+        *,
+        report_period: Any | None = None,
+        statuses: tuple[str, ...] | None = None,
+        due_before: str | datetime | None = None,
+        limit: int = 10000,
+    ) -> list[dict[str, Any]]:
+        statement = select(UnresolvedInstitutionalPositionModel)
+        if report_period is not None:
+            statement = statement.where(
+                UnresolvedInstitutionalPositionModel.report_period == parse_date(report_period)
+            )
+        if statuses:
+            statement = statement.where(
+                UnresolvedInstitutionalPositionModel.resolution_status.in_(statuses)
+            )
+        due_before_dt = parse_datetime(due_before) if due_before is not None else None
+        if due_before_dt is not None:
+            statement = statement.where(
+                or_(
+                    UnresolvedInstitutionalPositionModel.next_retry_at.is_(None),
+                    UnresolvedInstitutionalPositionModel.next_retry_at <= due_before_dt,
+                )
+            )
+        statement = statement.order_by(
+            UnresolvedInstitutionalPositionModel.report_period.desc(),
+            UnresolvedInstitutionalPositionModel.market_value_reported.desc().nullslast(),
+            UnresolvedInstitutionalPositionModel.source_row_hash.asc(),
+        ).limit(limit)
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return self.rows(rows)
+
+    def update_unresolved_institutional_positions(
+        self,
+        *,
+        source_row_hashes: list[str],
+        updates: dict[str, Any],
+    ) -> int:
+        normalized = [str(value) for value in source_row_hashes if str(value).strip()]
+        if not normalized:
+            return 0
+        with self.session_scope() as session:
+            rows = session.scalars(
+                select(UnresolvedInstitutionalPositionModel).where(
+                    UnresolvedInstitutionalPositionModel.source_row_hash.in_(normalized)
+                )
+            ).all()
+            for row in rows:
+                self._assign_model(row, updates)
+        return len(normalized)
+
     def get_primary_security(self, *, issuer_id: str) -> dict[str, Any] | None:
         statement = (
             select(SecurityModel)
@@ -797,6 +985,8 @@ class CompanyValuationRepository(RepositoryBase):
         if template_id:
             statement = statement.where(ScreeningRowModel.template_id == template_id)
         statement = statement.order_by(
+            ScreeningRowModel.overall_rank.asc().nullslast(),
+            ScreeningRowModel.screen_rank_score.desc().nullslast(),
             ScreeningRowModel.quality_score.desc().nullslast(),
             ScreeningRowModel.valuation_gap.desc().nullslast(),
             ScreeningRowModel.ticker.asc(),
@@ -804,3 +994,9 @@ class CompanyValuationRepository(RepositoryBase):
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
         return self.rows(rows)
+
+    def latest_screening_as_of(self) -> str | None:
+        statement = select(func.max(ScreeningRowModel.as_of))
+        with self.session_factory() as session:
+            value = session.scalar(statement)
+        return None if value is None else str(value)

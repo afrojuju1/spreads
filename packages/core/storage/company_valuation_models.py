@@ -487,6 +487,7 @@ class InstitutionalFilingModel(Base):
 class InstitutionalPositionModel(Base):
     __tablename__ = "institutional_positions"
     __table_args__ = (
+        UniqueConstraint("source_row_hash", name="ux_institutional_positions_source_row_hash"),
         Index("idx_institutional_positions_issuer_report_period", "issuer_id", "report_period"),
         Index(
             "idx_institutional_positions_holder_report_period",
@@ -531,6 +532,65 @@ class InstitutionalPositionModel(Base):
     voting_authority_none: Mapped[float | None] = mapped_column(Float, nullable=True)
     resolution_source: Mapped[str | None] = mapped_column(Text, nullable=True)
     resolution_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source_row_hash: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class UnresolvedInstitutionalPositionModel(Base):
+    __tablename__ = "unresolved_institutional_positions"
+    __table_args__ = (
+        Index(
+            "idx_unresolved_institutional_positions_status_retry",
+            "resolution_status",
+            "next_retry_at",
+        ),
+        Index(
+            "idx_unresolved_institutional_positions_cusip_status",
+            "cusip",
+            "resolution_status",
+        ),
+        Index(
+            "idx_unresolved_institutional_positions_report_period",
+            "report_period",
+            "resolution_status",
+        ),
+    )
+
+    source_row_hash: Mapped[str] = mapped_column(Text, primary_key=True)
+    institutional_holder_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("institutional_holders.institutional_holder_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    filing_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("institutional_filings.filing_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    report_period: Mapped[date] = mapped_column(Date, nullable=False)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    issuer_name_reported: Mapped[str | None] = mapped_column(Text, nullable=True)
+    title_of_class: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cusip: Mapped[str | None] = mapped_column(Text, nullable=True)
+    figi: Mapped[str | None] = mapped_column(Text, nullable=True)
+    share_count: Mapped[float | None] = mapped_column(Float, nullable=True)
+    market_value_reported: Mapped[float | None] = mapped_column(Float, nullable=True)
+    put_call: Mapped[str | None] = mapped_column(Text, nullable=True)
+    discretion_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    other_manager_refs_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    voting_authority_sole: Mapped[float | None] = mapped_column(Float, nullable=True)
+    voting_authority_shared: Mapped[float | None] = mapped_column(Float, nullable=True)
+    voting_authority_none: Mapped[float | None] = mapped_column(Float, nullable=True)
+    official_list_issuer_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    official_list_title_of_class: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolution_status: Mapped[str] = mapped_column(Text, nullable=False)
+    resolution_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolution_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    resolution_attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class FeatureSnapshotModel(Base):
@@ -627,5 +687,8 @@ class ScreeningRowModel(Base):
     ownership_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     ownership_special_situation_flag: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     limited_coverage_flag: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    screen_rank_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    template_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    overall_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
     top_reason_codes_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

@@ -138,6 +138,9 @@ class SecEdgarClient:
     def get_submissions(self, cik: str) -> dict[str, Any]:
         return self.get_json_path(f"/submissions/CIK{str(cik).zfill(10)}.json")
 
+    def get_company_tickers_exchange(self) -> dict[str, Any]:
+        return self.get_json_url(f"{self.www_base_url}/files/company_tickers_exchange.json")
+
     def get_submissions_file(self, filename: str) -> dict[str, Any]:
         safe_name = urllib.parse.quote(str(filename or "").strip(), safe="/")
         if not safe_name:

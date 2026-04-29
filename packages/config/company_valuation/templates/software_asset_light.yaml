@@ -46,6 +46,14 @@ valuation_model_mix:
     - ev_fcf
     - pe
     - ps
+  forecast_years: 6
+  initial_growth_floor: -0.02
+  initial_growth_cap: 0.22
+  terminal_growth_multiplier: 0.55
+  growth_adjustment_factor: 1.0
+  growth_adjustment_min: 0.8
+  growth_adjustment_max: 1.5
+  normalized_fcf_from_ebit_ratio: 0.55
   terminal_growth_floor: 0.02
   terminal_growth_cap: 0.04
   discount_rate_spread_bps: 500
@@ -55,6 +63,11 @@ confidence_rules:
     - persistent_negative_fcf
     - sbc_not_offset_by_growth
     - missing_core_facts
+  negative_fcf_penalty: 0.2
+  high_leverage_threshold: 2.5
+  high_leverage_penalty: 0.12
+  declining_revenue_penalty: 0.07
+  unprofitable_penalty: 0.07
 
 risk_rules:
   add_flags_if:

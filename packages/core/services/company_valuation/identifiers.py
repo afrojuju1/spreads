@@ -1,19 +1,27 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Iterable
 
 from core.services.company_valuation.ids import (
+    build_issuer_id,
+    build_security_id,
     build_security_identifier_id,
     normalize_cusip,
     normalize_name,
+    normalize_ticker,
 )
 from core.services.company_valuation.openfigi_client import (
     OpenFigiClient,
+    OpenFigiMapping,
     select_best_openfigi_mapping,
 )
 from core.services.company_valuation.sec_client import SecEdgarClient
+from core.services.company_valuation.templates import (
+    resolve_company_valuation_template_assignment,
+)
 from core.storage.company_valuation_repository import CompanyValuationRepository
 
 
@@ -33,6 +41,7 @@ class SecurityResolution:
     security_id: str
     resolution_source: str
     resolution_confidence: float
+    issuer_payload: dict[str, object] | None = None
     identifier_history_payloads: tuple[dict[str, object], ...] = ()
     security_payload: dict[str, object] | None = None
 
@@ -202,6 +211,115 @@ def _issuer_name_candidates(
     return matches
 
 
+def _synthetic_openfigi_cik(
+    *,
+    ticker: str,
+    issuer_name: str | None,
+    cusip: str,
+) -> str:
+    token = "|".join(
+        [
+            normalize_ticker(ticker),
+            normalize_name(issuer_name or ticker),
+            normalize_cusip(cusip),
+        ]
+    )
+    digits = str(int(hashlib.sha1(token.encode("utf-8")).hexdigest()[:12], 16))[-9:]
+    return f"9{digits.zfill(9)}"
+
+
+def _seed_openfigi_issuer_resolution(
+    *,
+    repository: CompanyValuationRepository,
+    best_mapping: OpenFigiMapping,
+    cusip: str,
+    figi: str | None,
+    issuer_name_reported: str | None,
+    title_of_class: str | None,
+    report_period: date,
+) -> SecurityResolution:
+    created_at = _utc_now()
+    synthetic_cik = _synthetic_openfigi_cik(
+        ticker=str(best_mapping.ticker),
+        issuer_name=best_mapping.name or issuer_name_reported,
+        cusip=cusip,
+    )
+    issuer_id = build_issuer_id(synthetic_cik)
+    security_id = build_security_id(synthetic_cik, str(best_mapping.ticker))
+    assignment = resolve_company_valuation_template_assignment(
+        cik=synthetic_cik,
+        company_name=best_mapping.name or issuer_name_reported or str(best_mapping.ticker),
+    )
+    issuer_payload = {
+        "issuer_id": issuer_id,
+        "cik": synthetic_cik,
+        "company_name": best_mapping.name or issuer_name_reported or str(best_mapping.ticker),
+        "sic": None,
+        "sic_description": None,
+        "naics": None,
+        "template_id": assignment.template.template_id,
+        "template_version": assignment.template.template_version,
+        "template_assignment_source": "openfigi_seed",
+        "template_assignment_reason": f"openfigi_seed:{best_mapping.ticker}",
+        "limited_coverage_flag": assignment.limited_coverage_flag,
+        "created_at": created_at,
+        "updated_at": created_at,
+    }
+    security_payload = {
+        "security_id": security_id,
+        "issuer_id": issuer_id,
+        "ticker": normalize_ticker(best_mapping.ticker),
+        "share_class": best_mapping.security_description,
+        "exchange": best_mapping.exch_code,
+        "cusip": cusip,
+        "is_primary": True,
+        "active_from": None,
+        "active_to": None,
+        "created_at": created_at,
+    }
+    payloads = [
+        _identifier_history_payload(
+            issuer_id=issuer_id,
+            security_id=security_id,
+            identifier_type="cusip",
+            identifier_value=cusip,
+            issuer_name_reported=best_mapping.name or issuer_name_reported,
+            title_of_class=title_of_class,
+            effective_from=report_period,
+            source="openfigi_cusip_ticker_seed",
+            source_ref="openfigi",
+            match_confidence=0.84,
+            created_at=created_at,
+        )
+    ]
+    resolved_figi = best_mapping.share_class_figi or best_mapping.composite_figi or figi
+    if resolved_figi:
+        payloads.append(
+            _identifier_history_payload(
+                issuer_id=issuer_id,
+                security_id=security_id,
+                identifier_type="figi",
+                identifier_value=str(resolved_figi).strip().upper(),
+                issuer_name_reported=best_mapping.name or issuer_name_reported,
+                title_of_class=title_of_class,
+                effective_from=report_period,
+                source="openfigi_cusip_ticker_seed",
+                source_ref="openfigi",
+                match_confidence=0.84,
+                created_at=created_at,
+            )
+        )
+    return SecurityResolution(
+        issuer_id=issuer_id,
+        security_id=security_id,
+        resolution_source="openfigi_cusip_ticker_seed",
+        resolution_confidence=0.84,
+        issuer_payload=issuer_payload,
+        identifier_history_payloads=tuple(payloads),
+        security_payload=security_payload,
+    )
+
+
 def _resolution_from_known_issuer(
     *,
     repository: CompanyValuationRepository,
@@ -321,6 +439,7 @@ def resolve_cusip_to_security(
     official_entries: dict[str, Official13FListEntry],
     openfigi_client: OpenFigiClient | None = None,
     allow_openfigi_fallback: bool = True,
+    preloaded_openfigi_mappings: dict[str, list[OpenFigiMapping]] | None = None,
 ) -> SecurityResolution | None:
     normalized_cusip = normalize_cusip(cusip)
     existing = _existing_cusip_resolution(
@@ -373,14 +492,25 @@ def resolve_cusip_to_security(
 
     if not allow_openfigi_fallback:
         return None
-    figi_client = openfigi_client or OpenFigiClient()
-    mappings = figi_client.map_cusips([normalized_cusip]).get(normalized_cusip, [])
+    if preloaded_openfigi_mappings is not None:
+        mappings = preloaded_openfigi_mappings.get(normalized_cusip, [])
+    else:
+        figi_client = openfigi_client or OpenFigiClient()
+        mappings = figi_client.map_cusips([normalized_cusip]).get(normalized_cusip, [])
     best_mapping = select_best_openfigi_mapping(mappings)
     if best_mapping is None or not best_mapping.ticker:
         return None
     issuer_row = repository.get_issuer(ticker=best_mapping.ticker)
     if issuer_row is None:
-        return None
+        return _seed_openfigi_issuer_resolution(
+            repository=repository,
+            best_mapping=best_mapping,
+            cusip=normalized_cusip,
+            figi=figi,
+            issuer_name_reported=issuer_name_reported,
+            title_of_class=title_of_class,
+            report_period=report_period,
+        )
     return _resolution_from_known_issuer(
         repository=repository,
         issuer_row=issuer_row,

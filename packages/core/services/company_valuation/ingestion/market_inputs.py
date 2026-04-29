@@ -20,23 +20,33 @@ def _nested(mapping: dict[str, Any], *keys: str) -> Any:
     return current
 
 
+def _first_bar_price(snapshot: dict[str, Any]) -> tuple[float | None, datetime | None]:
+    for path in (("minuteBar", "c"), ("dailyBar", "c"), ("prevDailyBar", "c")):
+        value = parse_float(_nested(snapshot, *path))
+        timestamp = parse_datetime(_nested(snapshot, path[0], "t"))
+        if value is not None and value > 0:
+            return (value, timestamp)
+    return (None, None)
+
+
 def _resolve_price(snapshot: dict[str, Any]) -> tuple[float | None, datetime | None]:
     bid = parse_float(_nested(snapshot, "latestQuote", "bp"))
     ask = parse_float(_nested(snapshot, "latestQuote", "ap"))
     quote_timestamp = parse_datetime(_nested(snapshot, "latestQuote", "t"))
+    midpoint = None
     if bid is not None and ask is not None and bid > 0 and ask > 0 and ask >= bid:
-        return ((bid + ask) / 2.0, quote_timestamp)
+        midpoint = (bid + ask) / 2.0
 
     trade_price = parse_float(_nested(snapshot, "latestTrade", "p"))
     trade_timestamp = parse_datetime(_nested(snapshot, "latestTrade", "t"))
     if trade_price is not None and trade_price > 0:
         return (trade_price, trade_timestamp)
 
-    for path in (("minuteBar", "c"), ("dailyBar", "c"), ("prevDailyBar", "c")):
-        value = parse_float(_nested(snapshot, *path))
-        timestamp = parse_datetime(_nested(snapshot, path[0], "t"))
-        if value is not None and value > 0:
-            return (value, timestamp)
+    bar_price, bar_timestamp = _first_bar_price(snapshot)
+    if bar_price is not None:
+        return (bar_price, bar_timestamp)
+    if midpoint is not None:
+        return (midpoint, quote_timestamp)
     return (None, None)
 
 
@@ -109,7 +119,7 @@ def ingest_market_inputs(
             notes=tuple(notes or ["No stock snapshot was returned by Alpaca."]),
         )
 
-    price, captured_at = _resolve_price(snapshot)
+    price, _source_price_at = _resolve_price(snapshot)
     if price is None:
         completed_at = datetime.now(UTC)
         return MarketInputsIngestionResult(
@@ -139,13 +149,16 @@ def ingest_market_inputs(
     if market_cap is not None:
         enterprise_value = market_cap + (long_term_debt or 0.0) - (cash_and_equivalents or 0.0)
 
-    captured_at = (captured_at or datetime.now(UTC)).astimezone(UTC)
+    observed_at = datetime.now(UTC)
     payload = {
-        "market_snapshot_id": build_market_snapshot_id(str(issuer_row.get("cik") or issuer_id), captured_at),
+        "market_snapshot_id": build_market_snapshot_id(
+            str(issuer_row.get("cik") or issuer_id),
+            observed_at,
+        ),
         "security_id": str(primary_security["security_id"]),
         "issuer_id": issuer_id,
-        "captured_at": captured_at,
-        "available_at": captured_at,
+        "captured_at": observed_at,
+        "available_at": observed_at,
         "price": price,
         "shares_outstanding_market": shares_outstanding,
         "market_cap": market_cap,

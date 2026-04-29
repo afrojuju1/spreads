@@ -3,10 +3,16 @@ template_version: v1
 status: active
 
 assignment_rules:
-  sic_prefixes: []
+  sic_prefixes:
+    - "13"
+    - "29"
   naics_prefixes: []
   keyword_rules:
     - energy
+    - oil
+    - gas
+    - petroleum
+    - refining
     - upstream
     - midstream
     - exploration
@@ -45,15 +51,30 @@ valuation_model_mix:
     - ev_ebit
     - ev_fcf
     - ev_ebitda
+  forecast_years: 5
+  initial_growth_floor: -0.12
+  initial_growth_cap: 0.12
+  terminal_growth_multiplier: 0.35
+  growth_adjustment_factor: 0.45
+  growth_adjustment_min: 0.68
+  growth_adjustment_max: 1.15
+  normalized_fcf_from_ebit_ratio: 0.8
   terminal_growth_floor: 0.005
   terminal_growth_cap: 0.02
   discount_rate_spread_bps: 550
+  cyclical_discount_rate_spread_bps: 125
 
 confidence_rules:
   low_confidence_if:
     - high_cycle_exposure
     - persistent_negative_fcf
     - missing_core_facts
+  negative_fcf_penalty: 0.22
+  high_leverage_threshold: 3.5
+  high_leverage_penalty: 0.12
+  declining_revenue_penalty: 0.1
+  unprofitable_penalty: 0.1
+  cyclical_penalty: 0.08
 
 risk_rules:
   add_flags_if:

@@ -207,17 +207,104 @@ def _risk_free_rate(curve_snapshot: dict[str, Any] | None) -> tuple[float, bool]
     return (0.045, False)
 
 
-def _starting_fcf(features: dict[str, Any]) -> tuple[float | None, bool]:
+def _template_float(template: Any, section: str, key: str, default: float) -> float:
+    payload = getattr(template, section, {}) or {}
+    try:
+        return float(payload.get(key) or default)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _starting_fcf(features: dict[str, Any], template: Any) -> tuple[float | None, bool]:
     free_cash_flow_ttm = _safe_float(features.get("free_cash_flow_ttm"))
     if free_cash_flow_ttm is not None and free_cash_flow_ttm > 0.0:
         return (free_cash_flow_ttm, False)
     revenue_ttm = _safe_float(features.get("revenue_ttm"))
     operating_margin_ttm = _safe_float(features.get("operating_margin_ttm")) or 0.0
     free_cash_flow_margin_ttm = _safe_float(features.get("free_cash_flow_margin_ttm"))
-    normalized_margin = max(free_cash_flow_margin_ttm or (operating_margin_ttm * 0.65), 0.0)
+    normalized_from_ebit_ratio = _template_float(
+        template,
+        "valuation_model_mix",
+        "normalized_fcf_from_ebit_ratio",
+        0.65,
+    )
+    normalized_margin = max(
+        free_cash_flow_margin_ttm or (operating_margin_ttm * normalized_from_ebit_ratio),
+        0.0,
+    )
     if revenue_ttm is None or normalized_margin <= 0.0:
         return (None, True)
     return (revenue_ttm * normalized_margin, True)
+
+
+def _valuation_context(
+    *,
+    features: dict[str, Any],
+    template: Any,
+    required_feature_coverage: float,
+    quality_score: float,
+    limited_coverage_flag: bool,
+) -> tuple[list[str], float]:
+    reason_codes: list[str] = []
+    confidence_penalty = 0.0
+    free_cash_flow_ttm = _safe_float(features.get("free_cash_flow_ttm"))
+    net_leverage = _safe_float(features.get("net_leverage")) or 0.0
+    revenue_growth = _safe_float(features.get("revenue_ttm_growth")) or 0.0
+    operating_margin = _safe_float(features.get("operating_margin_ttm")) or 0.0
+    if free_cash_flow_ttm is not None and free_cash_flow_ttm <= 0.0:
+        reason_codes.append("valuation_negative_fcf_low_confidence")
+        confidence_penalty += _template_float(
+            template,
+            "confidence_rules",
+            "negative_fcf_penalty",
+            0.18,
+        )
+    if net_leverage >= _template_float(
+        template,
+        "confidence_rules",
+        "high_leverage_threshold",
+        3.0,
+    ):
+        reason_codes.append("valuation_high_leverage_low_confidence")
+        confidence_penalty += _template_float(
+            template,
+            "confidence_rules",
+            "high_leverage_penalty",
+            0.1,
+        )
+    if revenue_growth <= -0.08:
+        reason_codes.append("valuation_declining_revenue_caution")
+        confidence_penalty += _template_float(
+            template,
+            "confidence_rules",
+            "declining_revenue_penalty",
+            0.08,
+        )
+    if operating_margin <= 0.0:
+        reason_codes.append("valuation_unprofitable_caution")
+        confidence_penalty += _template_float(
+            template,
+            "confidence_rules",
+            "unprofitable_penalty",
+            0.08,
+        )
+    if required_feature_coverage < 0.8:
+        reason_codes.append("valuation_missing_core_facts_caution")
+        confidence_penalty += 0.08
+    if quality_score < 55.0:
+        reason_codes.append("valuation_low_quality_caution")
+        confidence_penalty += 0.08
+    if str(template.template_id) == "energy_asset_heavy":
+        reason_codes.append("valuation_cyclical_template_caution")
+        confidence_penalty += _template_float(
+            template,
+            "confidence_rules",
+            "cyclical_penalty",
+            0.08,
+        )
+    if limited_coverage_flag:
+        confidence_penalty += 0.12
+    return (reason_codes, confidence_penalty)
 
 
 def _dcf_value_per_share(
@@ -225,32 +312,61 @@ def _dcf_value_per_share(
     features: dict[str, Any],
     template: Any,
     treasury_curve_snapshot: dict[str, Any] | None,
+    required_feature_coverage: float,
 ) -> tuple[float | None, dict[str, Any], list[str], float]:
     shares = _safe_float(features.get("diluted_shares_latest")) or _safe_float(
         features.get("shares_outstanding_latest")
     )
     revenue_growth = _safe_float(features.get("revenue_ttm_growth"))
-    starting_fcf, normalized_fcf = _starting_fcf(features)
+    operating_income_ttm = _safe_float(features.get("operating_income_ttm"))
+    starting_fcf, normalized_fcf = _starting_fcf(features, template)
     if shares in (None, 0.0) or starting_fcf is None or starting_fcf <= 0.0:
         return (None, {}, ["valuation_negative_fcf_low_confidence"], 0.2)
+    if (operating_income_ttm or 0.0) <= 0.0 and (revenue_growth or 0.0) <= -0.08:
+        return (None, {}, ["valuation_unprofitable_caution"], 0.18)
 
     risk_free_rate, curve_available = _risk_free_rate(treasury_curve_snapshot)
     spread_bps = int(template.valuation_model_mix.get("discount_rate_spread_bps") or 450)
+    spread_bps += int(
+        template.valuation_model_mix.get("cyclical_discount_rate_spread_bps") or 0
+    )
     discount_rate = risk_free_rate + (spread_bps / 10_000.0)
     terminal_growth_floor = float(template.valuation_model_mix.get("terminal_growth_floor") or 0.015)
     terminal_growth_cap = float(template.valuation_model_mix.get("terminal_growth_cap") or 0.03)
-    terminal_growth = clamp((revenue_growth if revenue_growth is not None else 0.03) / 2.0, terminal_growth_floor, terminal_growth_cap)
+    terminal_growth_multiplier = _template_float(
+        template,
+        "valuation_model_mix",
+        "terminal_growth_multiplier",
+        0.5,
+    )
+    terminal_growth = clamp(
+        (revenue_growth if revenue_growth is not None else 0.03)
+        * terminal_growth_multiplier,
+        terminal_growth_floor,
+        terminal_growth_cap,
+    )
     discount_rate = max(discount_rate, terminal_growth + 0.02)
-    initial_growth = clamp(revenue_growth if revenue_growth is not None else 0.04, -0.05, 0.18)
+    initial_growth = clamp(
+        revenue_growth if revenue_growth is not None else 0.04,
+        _template_float(template, "valuation_model_mix", "initial_growth_floor", -0.05),
+        _template_float(template, "valuation_model_mix", "initial_growth_cap", 0.18),
+    )
+    forecast_years = int(template.valuation_model_mix.get("forecast_years") or 5)
+    forecast_years = max(forecast_years, 3)
 
     projected_fcf = starting_fcf
     present_value = 0.0
-    for year in range(1, 6):
-        growth_rate = initial_growth + ((terminal_growth - initial_growth) * ((year - 1) / 4.0))
+    for year in range(1, forecast_years + 1):
+        blend_divisor = max(forecast_years - 1, 1)
+        growth_rate = initial_growth + (
+            (terminal_growth - initial_growth) * ((year - 1) / blend_divisor)
+        )
         projected_fcf *= 1.0 + growth_rate
         present_value += projected_fcf / ((1.0 + discount_rate) ** year)
     terminal_value = (projected_fcf * (1.0 + terminal_growth)) / (discount_rate - terminal_growth)
-    enterprise_value = present_value + (terminal_value / ((1.0 + discount_rate) ** 5))
+    enterprise_value = present_value + (
+        terminal_value / ((1.0 + discount_rate) ** forecast_years)
+    )
     net_cash = (_safe_float(features.get("cash_and_equivalents_latest")) or 0.0) - (
         _safe_float(features.get("long_term_debt_latest")) or 0.0
     )
@@ -265,13 +381,15 @@ def _dcf_value_per_share(
         "starting_fcf": round(starting_fcf, 2),
         "normalized_fcf": normalized_fcf,
         "curve_available": curve_available,
+        "forecast_years": forecast_years,
     }
     reason_codes = ["valuation_from_dcf"]
     if not curve_available:
         reason_codes.append("treasury_curve_missing_fallback")
-    confidence = 0.6 if not normalized_fcf else 0.45
+    confidence = 0.62 if not normalized_fcf else 0.48
     if not curve_available:
         confidence -= 0.1
+    confidence -= max(0.0, 0.8 - required_feature_coverage) * 0.15
     return (round(per_share, 4), assumptions, reason_codes, clamp(confidence, 0.2, 0.75))
 
 
@@ -309,7 +427,15 @@ def _multiples_anchor_value_per_share(
     template: Any,
 ) -> tuple[float | None, dict[str, Any], list[str], float]:
     template_multiples = TEMPLATE_MULTIPLES.get(str(template.template_id), TEMPLATE_MULTIPLES["general_operating"])
-    growth_adjustment = clamp(1.0 + ((_safe_float(features.get("revenue_ttm_growth")) or 0.0) * 0.8), 0.75, 1.35)
+    growth_adjustment = clamp(
+        1.0
+        + (
+            (_safe_float(features.get("revenue_ttm_growth")) or 0.0)
+            * _template_float(template, "valuation_model_mix", "growth_adjustment_factor", 0.8)
+        ),
+        _template_float(template, "valuation_model_mix", "growth_adjustment_min", 0.75),
+        _template_float(template, "valuation_model_mix", "growth_adjustment_max", 1.35),
+    )
     values: list[float] = []
     applied_metrics: dict[str, float] = {}
     for metric in list(template.valuation_model_mix.get("primary_multiple_metrics") or []):
@@ -336,6 +462,7 @@ def _build_valuation_summary(
     *,
     feature_result: CompanyValuationFeatureResult,
     issuer_row: dict[str, Any],
+    quality: QualityBreakdown,
     template: Any,
     market_snapshot: dict[str, Any] | None,
     treasury_curve_snapshot: dict[str, Any] | None,
@@ -344,6 +471,7 @@ def _build_valuation_summary(
         features=feature_result.financial_features,
         template=template,
         treasury_curve_snapshot=treasury_curve_snapshot,
+        required_feature_coverage=feature_result.required_feature_coverage,
     )
     anchor_value, anchor_assumptions, anchor_reason_codes, anchor_confidence = _multiples_anchor_value_per_share(
         features=feature_result.financial_features,
@@ -374,7 +502,16 @@ def _build_valuation_summary(
     if intrinsic_mid not in (None, 0.0) and current_price not in (None, 0.0):
         valuation_gap = (intrinsic_mid / current_price) - 1.0
 
-    reason_codes = list(dict.fromkeys([*dcf_reason_codes, *anchor_reason_codes]))
+    context_reason_codes, confidence_penalty = _valuation_context(
+        features=feature_result.financial_features,
+        template=template,
+        required_feature_coverage=feature_result.required_feature_coverage,
+        quality_score=quality.total_score,
+        limited_coverage_flag=bool(issuer_row.get("limited_coverage_flag")),
+    )
+    reason_codes = list(
+        dict.fromkeys([*dcf_reason_codes, *anchor_reason_codes, *context_reason_codes])
+    )
     if intrinsic_mid is None:
         reason_codes.append("valuation_unavailable")
     confidence = (
@@ -382,9 +519,12 @@ def _build_valuation_summary(
         + (anchor_confidence if anchor_value is not None else 0.0)
         + (feature_result.required_feature_coverage * 0.25)
     )
-    confidence = clamp(confidence, 0.15, 0.9)
+    confidence -= confidence_penalty
+    confidence = clamp(confidence, 0.12, 0.9)
     if bool(issuer_row.get("limited_coverage_flag")):
         confidence = clamp(confidence - 0.15, 0.1, 0.9)
+    if confidence < 0.3:
+        reason_codes.append("valuation_low_confidence")
     return ValuationSummary(
         intrinsic_value_bear=None if intrinsic_bear is None else round(intrinsic_bear, 4),
         intrinsic_value_base=None if intrinsic_mid is None else round(intrinsic_mid, 4),
@@ -397,6 +537,7 @@ def _build_valuation_summary(
         assumption_summary={
             "dcf": dcf_assumptions,
             "multiples_anchor": anchor_assumptions,
+            "valuation_flags": context_reason_codes,
         },
     )
 
@@ -439,6 +580,7 @@ def recompute_company_valuation(
     valuation = _build_valuation_summary(
         feature_result=feature_result,
         issuer_row=issuer_row,
+        quality=quality,
         template=template,
         market_snapshot=point_in_time.latest_market_snapshot,
         treasury_curve_snapshot=point_in_time.latest_treasury_curve_snapshot,

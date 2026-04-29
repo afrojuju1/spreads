@@ -16,11 +16,11 @@ from core.services.company_valuation.identifiers import (
 from core.services.company_valuation.ids import (
     build_institutional_filing_id,
     build_institutional_holder_id,
+    build_institutional_position_source_row_hash,
     normalize_cik,
     normalize_cusip,
     normalize_name,
 )
-from core.services.company_valuation.openfigi_client import OpenFigiClient
 from core.services.company_valuation.sec_client import SecEdgarClient
 from core.storage.company_valuation_repository import CompanyValuationRepository
 
@@ -29,6 +29,7 @@ from core.storage.company_valuation_repository import CompanyValuationRepository
 class Sec13FIngestionRequest:
     report_period: date | None = None
     manager_cik: str | None = None
+    allow_openfigi_fallback: bool = False
 
 
 @dataclass(frozen=True)
@@ -266,12 +267,10 @@ def ingest_sec_13f(
     *,
     client: SecEdgarClient | None = None,
     repository: CompanyValuationRepository | None = None,
-    openfigi_client: OpenFigiClient | None = None,
 ) -> Sec13FIngestionResult:
     started_at = datetime.now(UTC)
     sec_client = client or SecEdgarClient()
     repo = repository or CompanyValuationRepository()
-    figi_client = openfigi_client or OpenFigiClient()
 
     report_period = request.report_period or _latest_available_report_period()
     manager_cik = normalize_cik(request.manager_cik) if request.manager_cik else None
@@ -350,16 +349,32 @@ def ingest_sec_13f(
             target_hr_accessions.add(accession_no)
 
     identifier_payloads: dict[str, dict[str, object]] = {}
+    issuer_seed_payloads: dict[str, dict[str, object]] = {}
     security_patch_payloads: dict[str, dict[str, object]] = {}
     position_payloads: list[dict[str, object]] = []
+    unresolved_payloads: list[dict[str, object]] = []
     resolution_cache: dict[str, Any] = {}
     unresolved_positions = 0
+    positions_persisted = 0
+
+    def flush_position_batches() -> None:
+        nonlocal positions_persisted
+        if position_payloads:
+            positions_persisted += repo.upsert_institutional_positions(position_payloads.copy())
+            position_payloads.clear()
+        if unresolved_payloads:
+            repo.upsert_unresolved_institutional_positions(unresolved_payloads.copy())
+            unresolved_payloads.clear()
+
+    repo.delete_institutional_positions_for_filings(filing_ids=hr_filing_ids)
+    repo.delete_unresolved_institutional_positions_for_filings(filing_ids=hr_filing_ids)
 
     reader = _zip_tsv_rows(archive, "INFOTABLE.tsv")
     for row in reader:
         accession_no = str(row.get("ACCESSION_NUMBER") or "").strip()
         if accession_no not in target_hr_accessions:
             continue
+        institutional_filing_id = build_institutional_filing_id(accession_no)
         cusip_raw = str(row.get("CUSIP") or "").strip()
         if not cusip_raw:
             unresolved_positions += 1
@@ -373,7 +388,7 @@ def ingest_sec_13f(
         if cusip not in resolution_cache:
             issuer_name_reported = str(row.get("NAMEOFISSUER") or "").strip() or None
             official_entry = official_entries.get(cusip)
-            allow_openfigi_fallback = any(
+            allow_openfigi_fallback = request.allow_openfigi_fallback and any(
                 candidate in known_issuer_names
                 for candidate in (
                     normalize_name(issuer_name_reported) if issuer_name_reported else "",
@@ -389,18 +404,71 @@ def ingest_sec_13f(
                 report_period=report_period,
                 repository=repo,
                 official_entries=official_entries,
-                openfigi_client=figi_client,
                 allow_openfigi_fallback=allow_openfigi_fallback,
             )
             resolution_cache[cusip] = resolution
+        source_row_hash = build_institutional_position_source_row_hash(
+            filing_id=institutional_filing_id,
+            institutional_holder_id=str(filing_payloads[institutional_filing_id]["institutional_holder_id"]),
+            issuer_name_reported=str(row.get("NAMEOFISSUER") or "").strip() or None,
+            title_of_class=str(row.get("TITLEOFCLASS") or "").strip() or None,
+            cusip=cusip,
+            figi=str(row.get("FIGI") or "").strip() or None,
+            put_call=str(row.get("PUTCALL") or "").strip() or None,
+            share_count=_parse_float(row.get("SSHPRNAMT")),
+            market_value_reported=_parse_float(row.get("VALUE")),
+            discretion_type=str(row.get("INVESTMENTDISCRETION") or "").strip() or None,
+        )
         if resolution is None:
             unresolved_positions += 1
+            official_entry = official_entries.get(cusip)
+            unresolved_payloads.append(
+                {
+                    "source_row_hash": source_row_hash,
+                    "institutional_holder_id": str(
+                        filing_payloads[institutional_filing_id]["institutional_holder_id"]
+                    ),
+                    "filing_id": institutional_filing_id,
+                    "report_period": report_period,
+                    "available_at": filing_payloads[institutional_filing_id]["available_at"],
+                    "issuer_name_reported": str(row.get("NAMEOFISSUER") or "").strip() or None,
+                    "title_of_class": str(row.get("TITLEOFCLASS") or "").strip() or None,
+                    "cusip": cusip,
+                    "figi": str(row.get("FIGI") or "").strip() or None,
+                    "share_count": _parse_float(row.get("SSHPRNAMT")),
+                    "market_value_reported": _parse_float(row.get("VALUE")),
+                    "put_call": str(row.get("PUTCALL") or "").strip() or None,
+                    "discretion_type": str(row.get("INVESTMENTDISCRETION") or "").strip() or None,
+                    "other_manager_refs_json": _parse_other_manager_refs(row.get("OTHERMANAGER")),
+                    "voting_authority_sole": _parse_float(row.get("VOTING_AUTH_SOLE")),
+                    "voting_authority_shared": _parse_float(row.get("VOTING_AUTH_SHARED")),
+                    "voting_authority_none": _parse_float(row.get("VOTING_AUTH_NONE")),
+                    "official_list_issuer_name": None
+                    if official_entry is None
+                    else official_entry.issuer_name,
+                    "official_list_title_of_class": None
+                    if official_entry is None
+                    else official_entry.title_of_class,
+                    "resolution_status": "pending",
+                    "resolution_source": None,
+                    "resolution_confidence": None,
+                    "resolution_attempt_count": 0,
+                    "last_attempted_at": None,
+                    "next_retry_at": None,
+                    "last_error": None,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
+            if len(unresolved_payloads) >= 5000:
+                flush_position_batches()
             continue
         for payload in resolution.identifier_history_payloads:
             identifier_payloads[str(payload["security_identifier_id"])] = payload
+        if resolution.issuer_payload:
+            issuer_seed_payloads[str(resolution.issuer_payload["issuer_id"])] = resolution.issuer_payload
         if resolution.security_payload:
             security_patch_payloads[str(resolution.security_payload["security_id"])] = resolution.security_payload
-        institutional_filing_id = build_institutional_filing_id(accession_no)
         filing_payload = filing_payloads[institutional_filing_id]
         position_payloads.append(
             {
@@ -423,9 +491,14 @@ def ingest_sec_13f(
                 "voting_authority_none": _parse_float(row.get("VOTING_AUTH_NONE")),
                 "resolution_source": resolution.resolution_source,
                 "resolution_confidence": resolution.resolution_confidence,
+                "source_row_hash": source_row_hash,
             }
         )
+        if len(position_payloads) >= 5000:
+            flush_position_batches()
 
+    if issuer_seed_payloads:
+        repo.upsert_issuers(list(issuer_seed_payloads.values()))
     if security_patch_payloads:
         repo.upsert_securities(list(security_patch_payloads.values()))
     identifier_count = seeded_identifier_count
@@ -435,10 +508,7 @@ def ingest_sec_13f(
         )
     holders_persisted = repo.upsert_institutional_holders(list(holder_payloads.values()))
     filings_persisted = repo.upsert_institutional_filings(list(filing_payloads.values()))
-    positions_persisted = repo.replace_institutional_positions_for_filings(
-        filing_ids=hr_filing_ids,
-        position_payloads=position_payloads,
-    )
+    flush_position_batches()
 
     completed_at = datetime.now(UTC)
     return Sec13FIngestionResult(

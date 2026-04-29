@@ -16,6 +16,7 @@ from api.errors import ApiError, api_error_handler
 from api.lifespan import api_lifespan
 from api.routes.account import router as account_router
 from api.routes.automations import router as automations_router
+from api.routes.company_valuation import router as company_valuation_router
 from api.routes.control import router as control_router
 from api.routes.events_ws import router as events_ws_router
 from api.routes.executions import router as executions_router
@@ -39,6 +40,7 @@ def create_app() -> FastAPI:
     app.include_router(positions_router)
     app.include_router(executions_router)
     app.include_router(internal_ops_router)
+    app.include_router(company_valuation_router)
     app.include_router(uoa_router)
     app.include_router(events_ws_router)
     return app
