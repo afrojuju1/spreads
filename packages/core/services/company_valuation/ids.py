@@ -24,6 +24,14 @@ def _normalize_ticker(ticker: str | None) -> str:
     return re.sub(r"[^A-Z0-9.\-]", "", rendered)
 
 
+def _normalize_cusip(value: str | None) -> str:
+    rendered = _as_text(value).upper()
+    normalized = re.sub(r"[^A-Z0-9]", "", rendered)
+    if len(normalized) < 6:
+        raise ValueError("cusip must include at least 6 alphanumeric characters")
+    return normalized
+
+
 def _normalize_name(value: str | None) -> str:
     rendered = re.sub(r"\s+", " ", _as_text(value).lower()).strip()
     return re.sub(r"[^a-z0-9 ]", "", rendered)
@@ -62,8 +70,37 @@ def build_holder_id(canonical_name: str, holder_cik: str | None = None) -> str:
     return f"holder:{_hash_parts(_normalize_name(canonical_name), _normalize_cik(holder_cik) if holder_cik else '')}"
 
 
+def build_institutional_holder_id(
+    manager_name: str,
+    manager_cik: str | None = None,
+) -> str:
+    return (
+        f"institutional_holder:{_hash_parts(_normalize_name(manager_name), _normalize_cik(manager_cik) if manager_cik else '')}"
+    )
+
+
+def build_institutional_filing_id(accession_no: str) -> str:
+    return f"institutional_filing:{_as_text(accession_no)}"
+
+
 def build_group_id(issuer_cik: str, seed: str) -> str:
     return f"group:{_normalize_cik(issuer_cik)}:{_hash_parts(seed)}"
+
+
+def build_security_identifier_id(
+    security_id: str,
+    identifier_type: str,
+    identifier_value: str,
+    effective_from: date | datetime | str | None = None,
+) -> str:
+    effective_token = ""
+    if effective_from is not None:
+        effective_token = (
+            effective_from.isoformat()
+            if isinstance(effective_from, date)
+            else str(effective_from)
+        )
+    return f"security_identifier:{_hash_parts(_as_text(security_id), _as_text(identifier_type), _as_text(identifier_value), effective_token)}"
 
 
 def build_feature_snapshot_id(
@@ -82,6 +119,23 @@ def build_company_valuation_snapshot_id(
     return f"company_valuation:{_normalize_cik(issuer_cik)}:{_format_timestamp(as_of)}:{_as_text(valuation_version)}"
 
 
+def build_market_snapshot_id(
+    issuer_cik: str,
+    captured_at: date | datetime | str,
+) -> str:
+    return f"market_snapshot:{_normalize_cik(issuer_cik)}:{_format_timestamp(captured_at)}"
+
+
+def build_treasury_curve_snapshot_id(curve_date: date | datetime | str) -> str:
+    if isinstance(curve_date, datetime):
+        rendered = curve_date.date().isoformat()
+    elif isinstance(curve_date, date):
+        rendered = curve_date.isoformat()
+    else:
+        rendered = str(curve_date)
+    return f"treasury_curve:{rendered}"
+
+
 def build_screening_row_id(issuer_cik: str, as_of: date | datetime | str) -> str:
     if isinstance(as_of, datetime):
         rendered = as_of.astimezone(timezone.utc).date().isoformat()
@@ -90,3 +144,19 @@ def build_screening_row_id(issuer_cik: str, as_of: date | datetime | str) -> str
     else:
         rendered = str(as_of)
     return f"screen:{_normalize_cik(issuer_cik)}:{rendered}"
+
+
+def normalize_cik(value: str | None) -> str:
+    return _normalize_cik(value)
+
+
+def normalize_cusip(value: str | None) -> str:
+    return _normalize_cusip(value)
+
+
+def normalize_name(value: str | None) -> str:
+    return _normalize_name(value)
+
+
+def normalize_ticker(value: str | None) -> str:
+    return _normalize_ticker(value)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -63,6 +64,18 @@ def _as_status(value: Any) -> str:
     if rendered not in {"active", "inactive"}:
         raise ValueError("status must be active or inactive")
     return rendered
+
+
+def _normalized_text(value: str | None) -> str:
+    return " ".join(str(value or "").lower().split())
+
+
+@dataclass(frozen=True)
+class CompanyValuationTemplateAssignment:
+    template: CompanyValuationTemplate
+    source: str
+    reason: str
+    limited_coverage_flag: bool = False
 
 
 def default_company_valuation_config_root(
@@ -206,3 +219,79 @@ def load_company_valuation_issuer_overrides(
             _yaml_file_signature(path),
         )
     }
+
+
+def resolve_company_valuation_template_assignment(
+    *,
+    cik: str,
+    company_name: str,
+    sic: str | None = None,
+    sic_description: str | None = None,
+    naics: str | None = None,
+    config_root: str | Path | None = None,
+) -> CompanyValuationTemplateAssignment:
+    templates = load_company_valuation_templates(config_root)
+    overrides = load_company_valuation_issuer_overrides(config_root)
+    override = overrides.get(str(cik).zfill(10))
+    if override is not None and override.active:
+        template = resolve_company_valuation_template(override.template_id, config_root)
+        return CompanyValuationTemplateAssignment(
+            template=template,
+            source="issuer_override",
+            reason=override.reason,
+        )
+
+    name_text = _normalized_text(company_name)
+    sic_text = _normalized_text(sic_description)
+    naics_text = str(naics or "").strip()
+    sic_code = str(sic or "").strip()
+    best_match: CompanyValuationTemplate | None = None
+    best_score = 0
+    best_reason = ""
+    for template in templates.values():
+        if template.status != "active":
+            continue
+        rules = template.assignment_rules
+        score = 0
+        reasons: list[str] = []
+        keyword_rules = rules.get("keyword_rules")
+        if isinstance(keyword_rules, list):
+            for keyword in keyword_rules:
+                normalized_keyword = _normalized_text(str(keyword))
+                if normalized_keyword and (
+                    normalized_keyword in name_text or normalized_keyword in sic_text
+                ):
+                    score += 1
+                    reasons.append(f"keyword:{normalized_keyword}")
+        sic_prefixes = rules.get("sic_prefixes")
+        if isinstance(sic_prefixes, list):
+            for prefix in sic_prefixes:
+                if sic_code and sic_code.startswith(str(prefix).strip()):
+                    score += 2
+                    reasons.append(f"sic_prefix:{prefix}")
+        naics_prefixes = rules.get("naics_prefixes")
+        if isinstance(naics_prefixes, list):
+            for prefix in naics_prefixes:
+                if naics_text and naics_text.startswith(str(prefix).strip()):
+                    score += 2
+                    reasons.append(f"naics_prefix:{prefix}")
+        if score > best_score:
+            best_match = template
+            best_score = score
+            best_reason = ",".join(reasons)
+
+    template = best_match or resolve_company_valuation_template("general_operating", config_root)
+    source = "rule_match" if best_score > 0 else "default"
+    reason = best_reason or "default:general_operating"
+    limited_coverage_keywords = ("bank", "insurance", "reit", "real estate investment trust")
+    limited_coverage_flag = any(
+        keyword in name_text or keyword in sic_text for keyword in limited_coverage_keywords
+    )
+    if limited_coverage_flag:
+        reason = f"{reason};limited_coverage"
+    return CompanyValuationTemplateAssignment(
+        template=template,
+        source=source,
+        reason=reason,
+        limited_coverage_flag=limited_coverage_flag,
+    )

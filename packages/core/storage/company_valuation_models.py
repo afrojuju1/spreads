@@ -56,6 +56,53 @@ class SecurityModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class SecurityIdentifierHistoryModel(Base):
+    __tablename__ = "security_identifier_history"
+    __table_args__ = (
+        UniqueConstraint(
+            "identifier_type",
+            "identifier_value",
+            "effective_from",
+            "security_id",
+            name="ux_security_identifier_history",
+        ),
+        Index(
+            "idx_security_identifier_history_lookup",
+            "identifier_type",
+            "identifier_value",
+            "effective_to",
+        ),
+        Index(
+            "idx_security_identifier_history_security",
+            "security_id",
+            "effective_from",
+        ),
+    )
+
+    security_identifier_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    security_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("securities.security_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    issuer_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("issuers.issuer_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    identifier_type: Mapped[str] = mapped_column(Text, nullable=False)
+    identifier_value: Mapped[str] = mapped_column(Text, nullable=False)
+    issuer_name_reported: Mapped[str | None] = mapped_column(Text, nullable=True)
+    title_of_class: Mapped[str | None] = mapped_column(Text, nullable=True)
+    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    source_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    match_confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class FilingModel(Base):
     __tablename__ = "filings"
     __table_args__ = (
@@ -390,6 +437,53 @@ class InstitutionalHolderModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class InstitutionalFilingModel(Base):
+    __tablename__ = "institutional_filings"
+    __table_args__ = (
+        Index(
+            "idx_institutional_filings_holder_period",
+            "institutional_holder_id",
+            "report_period",
+        ),
+        Index(
+            "idx_institutional_filings_manager_period",
+            "manager_cik",
+            "report_period",
+        ),
+    )
+
+    filing_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    institutional_holder_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("institutional_holders.institutional_holder_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    accession_no: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    manager_cik: Mapped[str | None] = mapped_column(Text, nullable=True)
+    manager_name: Mapped[str] = mapped_column(Text, nullable=False)
+    submission_type: Mapped[str] = mapped_column(Text, nullable=False)
+    report_period: Mapped[date] = mapped_column(Date, nullable=False)
+    filed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    amendment_flag: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    amendment_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    report_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    form13f_file_number: Mapped[str | None] = mapped_column(Text, nullable=True)
+    crd_number: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sec_file_number: Mapped[str | None] = mapped_column(Text, nullable=True)
+    other_included_managers_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    table_entry_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    table_value_total: Mapped[float | None] = mapped_column(Float, nullable=True)
+    is_confidential_omitted: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    additional_information: Mapped[str | None] = mapped_column(Text, nullable=True)
+    primary_document_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    information_table_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_dataset_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parse_status: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class InstitutionalPositionModel(Base):
     __tablename__ = "institutional_positions"
     __table_args__ = (
@@ -418,19 +512,25 @@ class InstitutionalPositionModel(Base):
     )
     filing_id: Mapped[str] = mapped_column(
         Text,
-        ForeignKey("filings.filing_id", ondelete="CASCADE"),
+        ForeignKey("institutional_filings.filing_id", ondelete="CASCADE"),
         nullable=False,
     )
     report_period: Mapped[date] = mapped_column(Date, nullable=False)
     available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    issuer_name_reported: Mapped[str | None] = mapped_column(Text, nullable=True)
+    title_of_class: Mapped[str | None] = mapped_column(Text, nullable=True)
     cusip: Mapped[str | None] = mapped_column(Text, nullable=True)
+    figi: Mapped[str | None] = mapped_column(Text, nullable=True)
     share_count: Mapped[float | None] = mapped_column(Float, nullable=True)
     market_value_reported: Mapped[float | None] = mapped_column(Float, nullable=True)
+    put_call: Mapped[str | None] = mapped_column(Text, nullable=True)
     discretion_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     other_manager_refs_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     voting_authority_sole: Mapped[float | None] = mapped_column(Float, nullable=True)
     voting_authority_shared: Mapped[float | None] = mapped_column(Float, nullable=True)
     voting_authority_none: Mapped[float | None] = mapped_column(Float, nullable=True)
+    resolution_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolution_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class FeatureSnapshotModel(Base):

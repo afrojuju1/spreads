@@ -43,6 +43,10 @@ def resolve_company_valuation_point_in_time(
         raise ValueError(f"Unknown issuer for company valuation point-in-time lookup: {target}")
     resolved_issuer_id = str(issuer_row.get("issuer_id"))
     latest_filing = repo.get_latest_filing_before(issuer_id=resolved_issuer_id, as_of=resolved_as_of)
+    latest_statement_snapshot = repo.get_latest_statement_snapshot_before(
+        issuer_id=resolved_issuer_id,
+        as_of=resolved_as_of,
+    )
     latest_market_snapshot = repo.get_latest_market_snapshot_before(
         issuer_id=resolved_issuer_id,
         as_of=resolved_as_of,
@@ -64,6 +68,7 @@ def resolve_company_valuation_point_in_time(
         as_of=resolved_as_of,
         template_id=str(issuer_row.get("template_id") or "") or None,
         latest_filing=latest_filing,
+        latest_statement_snapshot=latest_statement_snapshot,
         latest_market_snapshot=latest_market_snapshot,
         latest_treasury_curve_snapshot=latest_treasury_curve_snapshot,
         latest_ownership_available_at=latest_ownership_available_at,

@@ -135,6 +135,7 @@ class PointInTimeSnapshot:
     as_of: datetime
     template_id: str | None = None
     latest_filing: dict[str, Any] | None = None
+    latest_statement_snapshot: dict[str, Any] | None = None
     latest_market_snapshot: dict[str, Any] | None = None
     latest_treasury_curve_snapshot: dict[str, Any] | None = None
     latest_ownership_available_at: datetime | None = None

@@ -27,3 +27,25 @@ def default_redis_url() -> str:
 
 def default_alpha_vantage_api_key() -> str | None:
     return os.environ.get("ALPHAVANTAGE_API_KEY") or os.environ.get("ALPHA_VANTAGE_API_KEY")
+
+
+def default_sec_user_agent() -> str:
+    return (
+        os.environ.get("SEC_USER_AGENT")
+        or os.environ.get("SEC_EDGAR_USER_AGENT")
+        or "Spreads Company Valuation Engine/1.0 company-valuation@spreads.local"
+    )
+
+
+def default_sec_request_interval_seconds() -> float:
+    raw = os.environ.get("SEC_REQUEST_INTERVAL_SECONDS")
+    if raw in (None, ""):
+        return 1.0
+    try:
+        return max(float(raw), 0.1)
+    except ValueError:
+        return 1.0
+
+
+def default_openfigi_api_key() -> str | None:
+    return os.environ.get("OPENFIGI_API_KEY")
