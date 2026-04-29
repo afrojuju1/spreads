@@ -112,6 +112,19 @@ PREFERRED_UNITS_BY_METRIC = {
     "deferred_revenue": {MONETARY_UNIT},
 }
 
+INSTANT_PREFERRED_METRICS = {
+    "cash_and_equivalents",
+    "current_assets",
+    "inventory",
+    "total_assets",
+    "current_liabilities",
+    "total_liabilities",
+    "long_term_debt",
+    "stockholders_equity",
+    "shares_outstanding",
+    "deferred_revenue",
+}
+
 
 @dataclass(frozen=True)
 class SubmissionIssuerProfile:
@@ -369,7 +382,10 @@ def _period_type(period_start: date | None, period_end: date) -> str:
 def _metric_sort_key(metric_name: str, fact_row: dict[str, Any]) -> tuple[int, int]:
     preferred_units = PREFERRED_UNITS_BY_METRIC.get(metric_name, set())
     unit_score = 0 if fact_row.get("unit") in preferred_units else 1
-    instant_score = 0 if not fact_row.get("instant_flag") else 1
+    if metric_name in INSTANT_PREFERRED_METRICS:
+        instant_score = 0 if fact_row.get("instant_flag") else 1
+    else:
+        instant_score = 0 if not fact_row.get("instant_flag") else 1
     return (unit_score, instant_score)
 
 

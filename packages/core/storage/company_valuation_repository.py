@@ -464,6 +464,7 @@ class CompanyValuationRepository(RepositoryBase):
         *,
         as_of: str | datetime,
         template_id: str | None = None,
+        tickers: tuple[str, ...] | None = None,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
         as_of_dt = parse_datetime(as_of)
@@ -492,6 +493,15 @@ class CompanyValuationRepository(RepositoryBase):
         )
         if template_id:
             statement = statement.where(IssuerModel.template_id == template_id)
+        normalized_tickers = tuple(str(value).upper().strip() for value in (tickers or ()) if str(value or "").strip())
+        if normalized_tickers:
+            statement = statement.where(SecurityModel.ticker.in_(normalized_tickers))
+        statement = statement.where(
+            or_(
+                IssuerModel.template_assignment_source != "openfigi_seed",
+                IssuerModel.limited_coverage_flag.is_(False),
+            )
+        )
         statement = statement.distinct(IssuerModel.issuer_id, SecurityModel.ticker)
         statement = statement.order_by(IssuerModel.issuer_id.asc())
         if limit is not None:
@@ -675,14 +685,16 @@ class CompanyValuationRepository(RepositoryBase):
             .where(StatementPeriodSnapshotModel.issuer_id == issuer_id)
             .where(StatementPeriodSnapshotModel.available_at <= as_of_dt)
             .order_by(
-                StatementPeriodSnapshotModel.available_at.desc(),
-                (StatementPeriodSnapshotModel.period_type == "instant").asc(),
                 StatementPeriodSnapshotModel.period_end.desc(),
+                StatementPeriodSnapshotModel.available_at.desc(),
             )
-            .limit(1)
+            .limit(24)
         )
         with self.session_factory() as session:
-            row = session.scalar(statement)
+            rows = session.scalars(statement).all()
+        if not rows:
+            return None
+        row = sorted(rows, key=self._statement_snapshot_sort_key, reverse=True)[0]
         return None if row is None else self.row(row)
 
     def list_statement_snapshots_before(
@@ -695,20 +707,21 @@ class CompanyValuationRepository(RepositoryBase):
         as_of_dt = parse_datetime(as_of)
         if as_of_dt is None:
             raise ValueError("as_of is required")
+        fetch_limit = max(limit * 4, limit)
         statement = (
             select(StatementPeriodSnapshotModel)
             .where(StatementPeriodSnapshotModel.issuer_id == issuer_id)
             .where(StatementPeriodSnapshotModel.available_at <= as_of_dt)
             .order_by(
                 StatementPeriodSnapshotModel.period_end.desc(),
-                (StatementPeriodSnapshotModel.period_type == "instant").asc(),
                 StatementPeriodSnapshotModel.available_at.desc(),
             )
-            .limit(limit)
+            .limit(fetch_limit)
         )
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
-        return self.rows(rows)
+        ordered = sorted(rows, key=self._statement_snapshot_sort_key, reverse=True)[:limit]
+        return self.rows(ordered)
 
     def get_latest_treasury_curve_before(
         self,
@@ -979,11 +992,25 @@ class CompanyValuationRepository(RepositoryBase):
         *,
         as_of: str,
         template_id: str | None = None,
+        tickers: tuple[str, ...] | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        statement = select(ScreeningRowModel).where(ScreeningRowModel.as_of == parse_date(as_of))
+        statement = (
+            select(ScreeningRowModel)
+            .join(IssuerModel, IssuerModel.issuer_id == ScreeningRowModel.issuer_id)
+            .where(ScreeningRowModel.as_of == parse_date(as_of))
+            .where(
+                or_(
+                    IssuerModel.template_assignment_source != "openfigi_seed",
+                    IssuerModel.limited_coverage_flag.is_(False),
+                )
+            )
+        )
         if template_id:
             statement = statement.where(ScreeningRowModel.template_id == template_id)
+        normalized_tickers = tuple(str(value).upper().strip() for value in (tickers or ()) if str(value or "").strip())
+        if normalized_tickers:
+            statement = statement.where(ScreeningRowModel.ticker.in_(normalized_tickers))
         statement = statement.order_by(
             ScreeningRowModel.overall_rank.asc().nullslast(),
             ScreeningRowModel.screen_rank_score.desc().nullslast(),
@@ -1000,3 +1027,14 @@ class CompanyValuationRepository(RepositoryBase):
         with self.session_factory() as session:
             value = session.scalar(statement)
         return None if value is None else str(value)
+    @staticmethod
+    def _statement_snapshot_sort_key(row: Any) -> tuple[Any, ...]:
+        metrics = getattr(row, "metrics_json", None)
+        metric_count = len(metrics) if isinstance(metrics, dict) else 0
+        return (
+            1 if metric_count >= 4 else 0,
+            metric_count,
+            row.period_end,
+            0 if str(row.period_type or "") != "instant" else -1,
+            row.available_at,
+        )

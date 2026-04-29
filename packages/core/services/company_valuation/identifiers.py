@@ -228,6 +228,23 @@ def _synthetic_openfigi_cik(
     return f"9{digits.zfill(9)}"
 
 
+def _is_limited_coverage_openfigi_mapping(mapping: OpenFigiMapping) -> bool:
+    security_type = str(mapping.security_type or "").strip().lower()
+    description = normalize_name(mapping.security_description or "")
+    name = normalize_name(mapping.name or "")
+    if security_type in {"etp", "etf", "fund", "mutual fund", "closed end fund"}:
+        return True
+    limited_tokens = (
+        "etf",
+        "fund",
+        "trust",
+        "shares",
+        "index",
+        "income act",
+    )
+    return any(token in description or token in name for token in limited_tokens)
+
+
 def _seed_openfigi_issuer_resolution(
     *,
     repository: CompanyValuationRepository,
@@ -250,6 +267,12 @@ def _seed_openfigi_issuer_resolution(
         cik=synthetic_cik,
         company_name=best_mapping.name or issuer_name_reported or str(best_mapping.ticker),
     )
+    limited_coverage_flag = bool(assignment.limited_coverage_flag) or _is_limited_coverage_openfigi_mapping(
+        best_mapping
+    )
+    assignment_reason = f"openfigi_seed:{best_mapping.ticker}"
+    if limited_coverage_flag:
+        assignment_reason = f"{assignment_reason}:limited_coverage"
     issuer_payload = {
         "issuer_id": issuer_id,
         "cik": synthetic_cik,
@@ -260,8 +283,8 @@ def _seed_openfigi_issuer_resolution(
         "template_id": assignment.template.template_id,
         "template_version": assignment.template.template_version,
         "template_assignment_source": "openfigi_seed",
-        "template_assignment_reason": f"openfigi_seed:{best_mapping.ticker}",
-        "limited_coverage_flag": assignment.limited_coverage_flag,
+        "template_assignment_reason": assignment_reason,
+        "limited_coverage_flag": limited_coverage_flag,
         "created_at": created_at,
         "updated_at": created_at,
     }

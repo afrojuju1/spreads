@@ -65,10 +65,11 @@ def _latest_metric_snapshot(rows: list[dict[str, Any]]) -> dict[str, Any] | None
     ordered = sorted(
         rows,
         key=lambda row: (
-            _available_at(row),
-            0 if str(row.get("period_type")) != "instant" else -1,
             len(_metrics(row)),
             _period_end(row),
+            1 if len(_metrics(row)) >= 4 else 0,
+            0 if str(row.get("period_type")) != "instant" else -1,
+            _available_at(row),
         ),
         reverse=True,
     )
@@ -76,9 +77,20 @@ def _latest_metric_snapshot(rows: list[dict[str, Any]]) -> dict[str, Any] | None
 
 
 def _dedupe_statement_snapshots(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ordered_rows = sorted(
+        rows,
+        key=lambda row: (
+            len(_metrics(row)),
+            1 if len(_metrics(row)) >= 4 else 0,
+            _period_end(row),
+            _available_at(row),
+            0 if str(row.get("period_type")) != "instant" else -1,
+        ),
+        reverse=True,
+    )
     deduped: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
-    for row in rows:
+    for row in ordered_rows:
         key = (str(row.get("period_end")), str(row.get("period_type")))
         if key in seen:
             continue

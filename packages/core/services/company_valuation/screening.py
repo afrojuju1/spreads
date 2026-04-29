@@ -47,6 +47,7 @@ def materialize_company_valuation_screen(
     *,
     as_of: str | datetime | None = None,
     template_id: str | None = None,
+    tickers: tuple[str, ...] | None = None,
     issuer_limit: int | None = None,
     repository: CompanyValuationRepository | None = None,
     config_root: str | None = None,
@@ -56,6 +57,7 @@ def materialize_company_valuation_screen(
     issuer_rows = repo.list_issuers_for_screening(
         as_of=as_of_dt,
         template_id=template_id,
+        tickers=tickers,
         limit=issuer_limit,
     )
     recomputed = 0
@@ -71,6 +73,7 @@ def materialize_company_valuation_screen(
     rows = repo.list_screening_rows(
         as_of=as_of_dt.date().isoformat(),
         template_id=None,
+        tickers=tickers,
         limit=50000,
     )
     ranked_rows = sorted(
@@ -111,6 +114,7 @@ def list_company_valuation_screen(
     *,
     as_of: str | None = None,
     template_id: str | None = None,
+    tickers: tuple[str, ...] | None = None,
     limit: int = 100,
     repository: CompanyValuationRepository | None = None,
 ) -> dict[str, Any]:
@@ -121,11 +125,13 @@ def list_company_valuation_screen(
     rows = repo.list_screening_rows(
         as_of=resolved_as_of,
         template_id=template_id,
+        tickers=tickers,
         limit=limit,
     )
     return {
         "as_of": resolved_as_of,
         "template_id": template_id,
+        "tickers": list(tickers or ()),
         "count": len(rows),
         "rows": rows,
     }

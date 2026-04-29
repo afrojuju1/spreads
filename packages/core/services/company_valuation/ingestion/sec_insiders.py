@@ -13,7 +13,7 @@ from core.services.company_valuation.normalization import (
     normalize_cik,
 )
 from core.services.company_valuation.ownership_xml import parse_form345_xml
-from core.services.company_valuation.sec_client import SecEdgarClient
+from core.services.company_valuation.sec_client import SecEdgarClient, SecRequestError
 from core.storage.company_valuation_repository import CompanyValuationRepository
 
 
@@ -103,7 +103,13 @@ def ingest_sec_insiders(
         if not xml_url:
             notes.append(f"No XML document found for insider filing {accession_no}.")
             continue
-        xml_text = sec_client.get_text_url(xml_url)
+        try:
+            xml_text = sec_client.get_text_url(xml_url)
+        except SecRequestError as exc:
+            notes.append(
+                f"Skipping insider filing {accession_no}: unable to fetch XML ({exc.status_code or 'request_error'})."
+            )
+            continue
         parsed = parse_form345_xml(
             xml_text=xml_text,
             issuer_id=issuer_id,

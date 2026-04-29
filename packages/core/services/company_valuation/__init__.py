@@ -17,6 +17,12 @@ from .evaluation import (
     EVALUATION_VERSION,
     recompute_company_valuation,
 )
+from .bootstrap import (
+    CompanyValuationBootstrapRequest,
+    CompanyValuationBootstrapResult,
+    CompanyValuationBootstrapTickerResult,
+    bootstrap_company_valuation,
+)
 from .screening import (
     CompanyValuationScreenMaterializationResult,
     get_company_valuation_document,
@@ -48,6 +54,9 @@ from .templates import (
 
 __all__ = [
     "CompanyValuationDocument",
+    "CompanyValuationBootstrapRequest",
+    "CompanyValuationBootstrapResult",
+    "CompanyValuationBootstrapTickerResult",
     "CompanyValuationDocumentPayload",
     "CompanyValuationIdentity",
     "CompanyValuationRecomputeResult",
@@ -75,6 +84,7 @@ __all__ = [
     "build_security_id",
     "build_treasury_curve_snapshot_id",
     "default_company_valuation_config_root",
+    "bootstrap_company_valuation",
     "load_company_valuation_issuer_overrides",
     "load_company_valuation_templates",
     "get_company_valuation_document",
