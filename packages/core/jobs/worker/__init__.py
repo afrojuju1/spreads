@@ -16,6 +16,7 @@ from .tasks import (
     run_options_automation_entry_job,
     run_options_automation_execute_job,
     run_position_exit_manager_job,
+    run_symbol_feed_job,
 )
 
 
@@ -42,6 +43,7 @@ class RuntimeWorkerSettings:
 class DiscoveryWorkerSettings:
     functions = [
         run_discovery_run_job,
+        run_symbol_feed_job,
     ]
     queue_name = DISCOVERY_QUEUE_NAME
     redis_settings = build_redis_settings(default_redis_url())
@@ -70,4 +72,5 @@ __all__ = [
     "run_options_automation_entry_job",
     "run_options_automation_execute_job",
     "run_position_exit_manager_job",
+    "run_symbol_feed_job",
 ]

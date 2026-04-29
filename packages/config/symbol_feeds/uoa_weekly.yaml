@@ -1,0 +1,18 @@
+symbol_feed_id: uoa_weekly
+job_key: symbol_feed:uoa_weekly
+enabled: true
+schedule:
+  type: interval_minutes
+  minutes: 5
+allow_off_hours: true
+recipe: stock_prefilter
+recipe_args:
+  top: 15
+  most_actives_top: 25
+  movers_top: 25
+  min_price: 10
+  min_daily_volume: 1000000
+  exclude_leveraged_and_inverse_etfs: true
+  stock_feed: sip
+  news_limit: 50
+singleton_scope: uoa_weekly

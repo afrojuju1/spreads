@@ -10,6 +10,7 @@ EXECUTION_SUBMIT_JOB_TYPE = "execution_submit"
 ALERT_DELIVERY_JOB_TYPE = "alert_delivery"
 ALERT_RECONCILE_JOB_TYPE = "alert_reconcile"
 DISCOVERY_RUN_JOB_TYPE = "discovery_run"
+SYMBOL_FEED_JOB_TYPE = "symbol_feed"
 POSITION_EXIT_MANAGER_JOB_TYPE = "position_exit_manager"
 DISCOVERY_RECOVERY_JOB_TYPE = "discovery_recovery"
 OPTIONS_AUTOMATION_ENTRY_JOB_TYPE = "options_automation_entry"
@@ -72,6 +73,11 @@ JOB_SPECS = {
             queue_name=DISCOVERY_QUEUE_NAME,
         ),
         JobSpec(
+            job_type=SYMBOL_FEED_JOB_TYPE,
+            task_name="run_symbol_feed_job",
+            queue_name=DISCOVERY_QUEUE_NAME,
+        ),
+        JobSpec(
             job_type=DISCOVERY_RECOVERY_JOB_TYPE,
             task_name="run_discovery_recovery_job",
             queue_name=RUNTIME_QUEUE_NAME,
@@ -108,7 +114,10 @@ WORKER_LANES = (
     WorkerLaneSpec(
         settings_name="DiscoveryWorkerSettings",
         queue_name=DISCOVERY_QUEUE_NAME,
-        task_names=(JOB_SPECS[DISCOVERY_RUN_JOB_TYPE].task_name,),
+        task_names=(
+            JOB_SPECS[DISCOVERY_RUN_JOB_TYPE].task_name,
+            JOB_SPECS[SYMBOL_FEED_JOB_TYPE].task_name,
+        ),
     ),
 )
 

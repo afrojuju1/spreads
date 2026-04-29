@@ -251,6 +251,118 @@ class AlpacaClient:
             assets.append(item)
         return assets
 
+    def get_stock_most_actives(
+        self,
+        *,
+        top: int = 20,
+        by: str = "volume",
+    ) -> list[dict[str, Any]]:
+        payload = self.get_json(
+            self.data_base_url,
+            "/v1beta1/screener/stocks/most-actives",
+            {
+                "top": max(int(top), 1),
+                "by": str(by or "volume").strip().lower() or "volume",
+            },
+        )
+        if not isinstance(payload, dict):
+            raise RuntimeError("Unexpected Alpaca most-actives response shape")
+        items = payload.get("most_actives")
+        if not isinstance(items, list):
+            return []
+        return [
+            dict(item)
+            for item in items
+            if isinstance(item, dict) and str(item.get("symbol") or "").strip()
+        ]
+
+    def get_stock_movers(
+        self,
+        *,
+        top: int = 20,
+        market_type: str = "stocks",
+    ) -> dict[str, list[dict[str, Any]]]:
+        payload = self.get_json(
+            self.data_base_url,
+            f"/v1beta1/screener/{str(market_type or 'stocks').strip().lower()}/movers",
+            {"top": max(int(top), 1)},
+        )
+        if not isinstance(payload, dict):
+            raise RuntimeError("Unexpected Alpaca movers response shape")
+
+        def _items(key: str) -> list[dict[str, Any]]:
+            value = payload.get(key)
+            if not isinstance(value, list):
+                return []
+            return [
+                dict(item)
+                for item in value
+                if isinstance(item, dict) and str(item.get("symbol") or "").strip()
+            ]
+
+        return {
+            "gainers": _items("gainers"),
+            "losers": _items("losers"),
+        }
+
+    def get_stock_snapshots(
+        self,
+        symbols: list[str],
+        *,
+        feed: str,
+    ) -> dict[str, dict[str, Any]]:
+        if not symbols:
+            return {}
+        snapshots: dict[str, dict[str, Any]] = {}
+        for symbol_batch in self._symbol_batches(symbols):
+            payload = self.get_json(
+                self.data_base_url,
+                "/v2/stocks/snapshots",
+                {
+                    "symbols": ",".join(symbol_batch),
+                    "feed": feed,
+                },
+            )
+            if not isinstance(payload, dict):
+                continue
+            raw_snapshots = (
+                payload.get("snapshots")
+                if isinstance(payload.get("snapshots"), dict)
+                else payload
+            )
+            if not isinstance(raw_snapshots, dict):
+                continue
+            for symbol, snapshot in raw_snapshots.items():
+                if isinstance(snapshot, dict):
+                    snapshots[str(symbol).upper()] = dict(snapshot)
+        return snapshots
+
+    def get_news(
+        self,
+        *,
+        symbols: list[str] | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {}
+        normalized_symbols = [
+            str(symbol).upper() for symbol in list(symbols or []) if str(symbol).strip()
+        ]
+        if normalized_symbols:
+            params["symbols"] = ",".join(normalized_symbols)
+        if limit is not None:
+            params["limit"] = max(int(limit), 1)
+        payload = self.get_json(
+            self.data_base_url,
+            "/v1beta1/news",
+            params,
+        )
+        if not isinstance(payload, dict):
+            raise RuntimeError("Unexpected Alpaca news response shape")
+        items = payload.get("news")
+        if not isinstance(items, list):
+            return []
+        return [dict(item) for item in items if isinstance(item, dict)]
+
     def get_underlying_price(self, symbol: str, stock_feed: str) -> float:
         quote_payload = self.get_json(
             self.data_base_url,

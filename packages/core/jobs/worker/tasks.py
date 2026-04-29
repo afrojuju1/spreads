@@ -15,6 +15,7 @@ from core.jobs.registry import (
     OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE,
     OPTIONS_AUTOMATION_ENTRY_JOB_TYPE,
     POSITION_EXIT_MANAGER_JOB_TYPE,
+    SYMBOL_FEED_JOB_TYPE,
 )
 from core.jobs.specs import get_declared_discovery_run_spec
 from core.services.alert_delivery import (
@@ -37,6 +38,7 @@ from core.services.discovery_recovery import (
     build_slot_details_from_cycle_result,
     run_discovery_recovery,
 )
+from core.services.symbol_feeds import run_symbol_feed
 
 from .managed import _execute_managed_job
 
@@ -444,4 +446,32 @@ async def run_discovery_run_job(
         on_running=on_running,
         on_completed=on_completed,
         on_failed=on_failed,
+    )
+
+
+async def run_symbol_feed_job(
+    ctx: dict[str, Any],
+    job_key: str,
+    job_run_id: str,
+    payload: dict[str, Any],
+    arq_job_id: str,
+) -> dict[str, Any]:
+    def runner(heartbeat: Any) -> dict[str, Any]:
+        heartbeat()
+        return run_symbol_feed(
+            feed_id=str(payload["feed_id"]),
+            recipe=str(payload["recipe"]),
+            recipe_args=dict(payload.get("recipe_args") or {}),
+        )
+
+    enriched_payload = dict(payload)
+    enriched_payload["job_type"] = SYMBOL_FEED_JOB_TYPE
+    return await _execute_managed_job(
+        ctx,
+        job_key=job_key,
+        job_run_id=job_run_id,
+        arq_job_id=arq_job_id,
+        payload=enriched_payload,
+        runner=runner,
+        compact_result=lambda result: result,
     )

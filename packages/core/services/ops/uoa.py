@@ -380,6 +380,11 @@ def _build_uoa_payload(
         if isinstance(uoa_overview, Mapping)
         else None
     )
+    symbol_source = (
+        dict(state.get("symbol_source") or {})
+        if isinstance(state.get("symbol_source"), Mapping)
+        else {}
+    )
     selection_counts, live_selection_counts = _uoa_selected_opportunity_counts(
         state,
         promotable_candidates=promotable_candidates,
@@ -475,6 +480,9 @@ def _build_uoa_payload(
             "selected_monitor_count": int(
                 selection_counts.get(MONITOR_SELECTION_STATE) or 0
             ),
+            "symbol_source_kind": symbol_source.get("kind"),
+            "symbol_source_status": symbol_source.get("status"),
+            "symbol_feed_ref": symbol_source.get("feed_id"),
             "live_selected_promotable_count": int(
                 live_selection_counts.get(PROMOTABLE_SELECTION_STATE) or 0
             ),
@@ -495,6 +503,7 @@ def _build_uoa_payload(
             "uoa_overview": dict(uoa_overview),
             "uoa_quote_overview": dict(uoa_quote_overview),
             "uoa_decision_overview": dict(uoa_decision_overview),
+            "symbol_source": symbol_source,
             "top_roots": top_roots,
             "top_contracts": top_contracts,
             "top_monitor_roots": top_monitor_roots,

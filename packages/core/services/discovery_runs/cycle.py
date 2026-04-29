@@ -9,7 +9,6 @@ from core.alerts.dispatcher import dispatch_cycle_alerts
 from core.domain.models import UniverseScanFailure
 from core.integrations.alpaca.client import AlpacaClient
 from core.services.automation_runtime import build_entry_runtime
-from core.services.bots import build_uoa_symbols
 from core.services.candidate_history_recovery import (
     recover_session_candidates_from_history,
 )
@@ -51,6 +50,7 @@ from core.services.live_selection import read_previous_selection, select_live_op
 from core.services.option_structures import payload_display_fields
 from core.services.opportunity_generation import sync_entry_runtime_opportunities
 from core.services.signal_state import sync_discovery_run_signal_layer
+from core.services.symbol_feeds import resolve_symbol_feed_symbols
 from core.services.strategy_builders import build_entry_runtime_candidates
 from core.services.target_planner import refresh_options_automation_capture_targets
 from core.storage.alert_repository import AlertRepository
@@ -64,19 +64,55 @@ WATCHLIST_TOP = 12
 WATCHLIST_QUOTE_CAPTURE_TOP = 6
 
 
-def _configured_uoa_symbols(args: argparse.Namespace) -> list[str]:
-    configured_symbols = list(
-        build_uoa_symbols(
-            scanner_profile=str(getattr(args, "profile", "") or "").strip() or None
-        )
-    )
-    if configured_symbols:
-        return configured_symbols
+def _direct_uoa_symbols(args: argparse.Namespace) -> list[str]:
     return [
         token.strip().upper()
         for token in str(getattr(args, "symbols", "") or "").split(",")
         if token.strip()
     ]
+
+
+def _configured_uoa_symbol_source(
+    args: argparse.Namespace,
+    *,
+    job_store: Any,
+) -> dict[str, Any]:
+    direct_symbols = _direct_uoa_symbols(args)
+    if direct_symbols:
+        return {
+            "kind": "symbols_override",
+            "status": "ready",
+            "symbols": direct_symbols,
+            "summary": {
+                "symbol_count": len(direct_symbols),
+            },
+            "degradation": {
+                "status": "ok",
+                "reason": None,
+            },
+        }
+    symbol_feed_ref = str(getattr(args, "symbol_feed_ref", "") or "").strip()
+    symbol_feed_job_key = str(getattr(args, "symbol_feed_job_key", "") or "").strip()
+    if symbol_feed_ref and symbol_feed_job_key:
+        return resolve_symbol_feed_symbols(
+            job_store,
+            feed_id=symbol_feed_ref,
+            job_key=symbol_feed_job_key,
+            max_age_seconds=getattr(args, "max_feed_age_seconds", None),
+            fallback_universe_ref=(
+                str(getattr(args, "fallback_universe_ref", "") or "").strip() or None
+            ),
+        )
+    return {
+        "kind": "symbol_feed",
+        "status": "missing",
+        "symbols": [],
+        "summary": {},
+        "degradation": {
+            "status": "missing",
+            "reason": "no_symbol_source",
+        },
+    }
 
 
 def build_cycle_id(label: str) -> str:
@@ -206,10 +242,23 @@ def run_collection_cycle(
     runtime_candidate_rows_by_owner: dict[
         tuple[str, str], dict[str, list[dict[str, Any]]]
     ] = {}
+    symbol_source = {
+        "kind": "resolved_scope",
+        "status": "ready",
+        "symbols": list(symbols),
+        "summary": {
+            "symbol_count": len(symbols),
+        },
+        "degradation": {
+            "status": "ok",
+            "reason": None,
+        },
+    }
     if heartbeat is not None:
         heartbeat()
     if uoa_only:
-        symbols = _configured_uoa_symbols(args)
+        symbol_source = _configured_uoa_symbol_source(args, job_store=job_store)
+        symbols = [str(symbol).upper() for symbol in list(symbol_source.get("symbols") or [])]
         args.symbols = ",".join(symbols) if symbols else None
         args.universe = None
         scanner_args.symbols = args.symbols
@@ -239,7 +288,14 @@ def run_collection_cycle(
                 max_per_strategy=WATCHLIST_PER_STRATEGY,
             )
         else:
-            universe_label = "uoa_only"
+            if str(symbol_source.get("kind") or "") == "fallback_universe":
+                universe_label = str(
+                    symbol_source.get("fallback_universe_ref") or "fallback_universe"
+                )
+            elif str(symbol_source.get("feed_id") or "").strip():
+                universe_label = f"symbol_feed:{symbol_source['feed_id']}"
+            else:
+                universe_label = "uoa_only"
     elif bool(options_scope.get("enabled")) and entry_runtimes:
         try:
             runtime_candidate_rows_by_owner = build_entry_runtime_candidates(
@@ -791,6 +847,7 @@ def run_collection_cycle(
         "selection_summary": selection_summary,
         "automation_summary": automation_summary,
         "auto_execution": auto_execution,
+        "symbol_source": symbol_source,
     }
 
 __all__ = ["run_collection_cycle"]

@@ -22,6 +22,7 @@ Related:
 |---|---|---|
 | Operator interfaces | `packages/web`, `packages/api`, `packages/core/cli` | Web and CLI are interface layers. They should not own business logic. |
 | Scheduling and control | `packages/core/jobs`, `services/control_plane.py`, `services/runtime_policy.py` | Owns schedules, worker routing, control state, and runtime-policy gates. |
+| Dynamic symbol feeds | `services/symbol_feeds.py`, `packages/core/jobs` | Owns materialized shared underlying lists for feed-driven consumers such as UOA. |
 | Market-data capture and recovery | `services/market_recorder.py`, `services/discovery_recovery/`, `services/discovery_runs/capture/` | `market_recorder.py` remains the sole Alpaca option websocket owner in normal runtime. |
 | Discovery and collection | `services/scanners/`, `services/discovery_runs/`, `services/live_selection.py`, `services/opportunity_scoring.py`, `services/candidate_policy.py` | Owns symbol scanning, cycle orchestration, live ranking, and promotable/monitor state assignment. |
 | Canonical opportunity state | `services/signal_state.py`, `services/opportunity_generation.py`, `services/opportunities.py`, `storage/signal_repository.py` | Owns signal state, canonical opportunity rows, and runtime-owned projections derived from discovery run cycles. |
@@ -40,6 +41,7 @@ Related:
 - Config-backed symbol ownership is `bot -> automation -> universe -> symbols[]`. Bots own limits, runtime flags, and automation references; they do not directly own persisted symbol lists.
 - `EntryRuntime.symbols` and `ManagementRuntime.symbols` are derived from the resolved automation universe. Discovery-run scope may union symbols across active entry automations when building a scanner scope.
 - Scanner and collection CLI flags such as `--symbols` and `--symbols-file` are ad hoc operator and research overrides, not the persisted bot or automation ownership model.
+- Shared dynamic symbol lists are owned separately by declared `symbol_feed` jobs and `services/symbol_feeds.py`. They materialize bounded underlying lists for consumers such as UOA, but they do not own bots, opportunities, or execution. The live `uoa_weekly` feed currently applies a minimum daily-volume floor and excludes leveraged or inverse ETFs before handing symbols to UOA.
 - `execution` is the immutable broker-facing ledger. `session_positions` is the mutable owner of day-local position attribution.
 - `broker_sync` reconciles broker reality and health, but it does not take ownership of session attribution away from `session_positions`.
 
@@ -423,6 +425,8 @@ For config-backed options automation, discovery symbol scope is resolved through
 4. runtime scope assembly that unions symbols across active entry automations when a shared discovery-run scope is built
 
 This means persisted bots do not currently carry direct symbol lists. Direct symbol lists exist today only as scanner and collection CLI overrides such as `--symbols` and `--symbols-file`.
+
+Shared dynamic symbol feeds are a separate, account-agnostic input plane. They materialize reusable underlying lists from feed recipes and are consumed by feed-driven lanes such as the dedicated UOA discovery run, but they do not replace automation universes as the primary static ownership model.
 
 At a high level it:
 

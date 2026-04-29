@@ -17,6 +17,7 @@ from core.services.config_inheritance import (
     load_yaml_mapping as _load_yaml_mapping,
     resolve_policy_mapping as _resolve_policy_mapping,
 )
+from core.services.symbol_feeds import VALID_SYMBOL_FEED_RECIPES
 from core.services.strategy_configs import default_config_root
 
 
@@ -74,11 +75,67 @@ class DeclaredJobSpec:
 
 
 @dataclass(frozen=True)
+class SymbolFeedConfig:
+    symbol_feed_id: str
+    job_key: str
+    recipe: str
+    enabled: bool
+    schedule_type: str
+    schedule: dict[str, Any]
+    market_calendar: str
+    allow_off_hours: bool
+    recipe_args: dict[str, Any]
+    singleton_scope: str | None
+    config_path: Path
+    config_hash: str
+
+
+@dataclass(frozen=True)
+class SymbolFeedSpec:
+    config: SymbolFeedConfig
+
+    @property
+    def job_key(self) -> str:
+        return self.config.job_key
+
+    @property
+    def job_type(self) -> str:
+        return "symbol_feed"
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "feed_id": self.config.symbol_feed_id,
+            "recipe": self.config.recipe,
+            "recipe_args": dict(self.config.recipe_args),
+            "allow_off_hours": self.config.allow_off_hours,
+            "declared_config_hash": self.config.config_hash,
+        }
+
+    def as_job_spec(self) -> DeclaredJobSpec:
+        return DeclaredJobSpec(
+            job_key=self.config.job_key,
+            job_type="symbol_feed",
+            enabled=self.config.enabled,
+            schedule_type=self.config.schedule_type,
+            schedule=dict(self.config.schedule),
+            payload=self.payload(),
+            market_calendar=self.config.market_calendar,
+            singleton_scope=self.config.singleton_scope,
+            config_path=self.config.config_path,
+            config_hash=self.config.config_hash,
+        )
+
+
+@dataclass(frozen=True)
 class DiscoveryRunConfig:
     discovery_run_id: str
     job_key: str
     label: str
     uoa_only: bool
+    symbol_feed_ref: str | None
+    symbol_feed_job_key: str | None
+    max_feed_age_seconds: int | None
+    fallback_universe_ref: str | None
     scanner_strategy: str
     scanner_profile: str
     enabled: bool
@@ -113,6 +170,8 @@ class DiscoveryRunSpec:
     @property
     def enabled(self) -> bool:
         if self.config.uoa_only:
+            if self.config.symbol_feed_ref:
+                return self.config.enabled
             return self.config.enabled and bool(self.scope.get("symbols"))
         return self.config.enabled and bool(self.scope.get("enabled"))
 
@@ -145,6 +204,10 @@ class DiscoveryRunSpec:
             "job_key": self.config.job_key,
             "label": self.config.label,
             "uoa_only": self.config.uoa_only,
+            "symbol_feed_ref": self.config.symbol_feed_ref,
+            "symbol_feed_job_key": self.config.symbol_feed_job_key,
+            "max_feed_age_seconds": self.config.max_feed_age_seconds,
+            "fallback_universe_ref": self.config.fallback_universe_ref,
             "symbols": ",".join(symbols),
             "strategy": self.config.scanner_strategy,
             "profile": self.config.scanner_profile,
@@ -169,6 +232,8 @@ class DiscoveryRunSpec:
         }
         if universe_ref:
             payload["universe"] = universe_ref
+        elif self.config.symbol_feed_ref:
+            payload["universe"] = None
         elif symbols:
             payload["universe"] = None
         elif not symbols:
@@ -237,6 +302,10 @@ def _load_discovery_run_configs(
     root = config_root_path / "discovery_runs"
     if not root.exists():
         return []
+    symbol_feed_specs = {
+        spec.config.symbol_feed_id: spec
+        for spec in load_declared_symbol_feed_specs(config_root)
+    }
     configs: list[DiscoveryRunConfig] = []
     for path in sorted(root.glob("*.yaml")):
         raw = _resolve_policy_mapping(
@@ -273,11 +342,42 @@ def _load_discovery_run_configs(
             if raw.get("scanner_args") is None
             else _as_mapping(raw.get("scanner_args"), field_name="scanner_args")
         )
+        symbol_feed_ref = (
+            None
+            if raw.get("symbol_feed_ref") in (None, "")
+            else str(raw.get("symbol_feed_ref")).strip()
+        )
+        if symbol_feed_ref and not bool(raw.get("uoa_only", False)):
+            raise ValueError(
+                "symbol_feed_ref is currently supported only for uoa_only discovery runs"
+            )
+        if raw.get("fallback_universe_ref") not in (None, "") and not symbol_feed_ref:
+            raise ValueError("fallback_universe_ref requires symbol_feed_ref")
+        symbol_feed_job_key = None
+        if symbol_feed_ref is not None:
+            symbol_feed_spec = symbol_feed_specs.get(symbol_feed_ref)
+            if symbol_feed_spec is None:
+                raise ValueError(
+                    f"Unknown symbol_feed_ref {symbol_feed_ref!r} in {path}"
+                )
+            symbol_feed_job_key = symbol_feed_spec.job_key
         config = DiscoveryRunConfig(
             discovery_run_id=_as_text(raw.get("discovery_run_id"), field_name="discovery_run_id"),
             job_key=_as_text(raw.get("job_key"), field_name="job_key"),
             label=_as_text(raw.get("label"), field_name="label"),
             uoa_only=bool(raw.get("uoa_only", False)),
+            symbol_feed_ref=symbol_feed_ref,
+            symbol_feed_job_key=symbol_feed_job_key,
+            max_feed_age_seconds=(
+                None
+                if raw.get("max_feed_age_seconds") in (None, "")
+                else max(int(raw.get("max_feed_age_seconds")), 0)
+            ),
+            fallback_universe_ref=(
+                None
+                if raw.get("fallback_universe_ref") in (None, "")
+                else str(raw.get("fallback_universe_ref")).strip()
+            ),
             scanner_strategy=_as_text(
                 raw.get("scanner_strategy"), field_name="scanner_strategy"
             ),
@@ -317,6 +417,18 @@ def _load_discovery_run_configs(
                     "job_key": raw.get("job_key"),
                     "label": raw.get("label"),
                     "uoa_only": bool(raw.get("uoa_only", False)),
+                    "symbol_feed_ref": symbol_feed_ref,
+                    "symbol_feed_job_key": symbol_feed_job_key,
+                    "max_feed_age_seconds": (
+                        None
+                        if raw.get("max_feed_age_seconds") in (None, "")
+                        else max(int(raw.get("max_feed_age_seconds")), 0)
+                    ),
+                    "fallback_universe_ref": (
+                        None
+                        if raw.get("fallback_universe_ref") in (None, "")
+                        else str(raw.get("fallback_universe_ref")).strip()
+                    ),
                     "scanner_strategy": raw.get("scanner_strategy"),
                     "scanner_profile": raw.get("scanner_profile"),
                     "enabled": bool(raw.get("enabled", True)),
@@ -367,6 +479,14 @@ def _build_discovery_run_scope(
             scanner_strategy=config.scanner_strategy,
             scanner_profile=config.scanner_profile,
         )
+    if config.symbol_feed_ref:
+        return {
+            "enabled": True,
+            "symbols": (),
+            "scanner_strategy": None,
+            "scanner_profile": config.scanner_profile,
+            "entry_runtimes": [],
+        }
     symbols = build_uoa_symbols(
         config_root=config_root,
         scanner_profile=config.scanner_profile,
@@ -388,6 +508,91 @@ def load_declared_discovery_run_specs(
         scope = _build_discovery_run_scope(config, config_root=config_root)
         specs.append(DiscoveryRunSpec(config=config, scope=scope))
     return specs
+
+
+def _load_symbol_feed_configs(
+    config_root: str | Path | None = None,
+) -> list[SymbolFeedConfig]:
+    config_root_path = default_config_root(config_root)
+    root = config_root_path / "symbol_feeds"
+    if not root.exists():
+        return []
+    configs: list[SymbolFeedConfig] = []
+    for path in sorted(root.glob("*.yaml")):
+        raw = _load_yaml_mapping(path)
+        schedule_type, schedule = _schedule_payload(raw.get("schedule"), field_name="schedule")
+        recipe = _as_text(raw.get("recipe"), field_name="recipe").strip().lower()
+        if recipe not in VALID_SYMBOL_FEED_RECIPES:
+            raise ValueError(f"Unsupported symbol feed recipe {recipe!r} in {path}")
+        recipe_args = (
+            {}
+            if raw.get("recipe_args") is None
+            else _as_mapping(raw.get("recipe_args"), field_name="recipe_args")
+        )
+        configs.append(
+            SymbolFeedConfig(
+                symbol_feed_id=_as_text(
+                    raw.get("symbol_feed_id"),
+                    field_name="symbol_feed_id",
+                ),
+                job_key=_as_text(raw.get("job_key"), field_name="job_key"),
+                recipe=recipe,
+                enabled=bool(raw.get("enabled", True)),
+                schedule_type=schedule_type,
+                schedule=schedule,
+                market_calendar=str(raw.get("market_calendar") or "NYSE"),
+                allow_off_hours=bool(raw.get("allow_off_hours", False)),
+                recipe_args=recipe_args,
+                singleton_scope=(
+                    None
+                    if raw.get("singleton_scope") in (None, "")
+                    else str(raw.get("singleton_scope")).strip()
+                ),
+                config_path=path,
+                config_hash=_canonical_hash(
+                    {
+                        "symbol_feed_id": raw.get("symbol_feed_id"),
+                        "job_key": raw.get("job_key"),
+                        "recipe": recipe,
+                        "enabled": bool(raw.get("enabled", True)),
+                        "schedule_type": schedule_type,
+                        "schedule": schedule,
+                        "market_calendar": str(raw.get("market_calendar") or "NYSE"),
+                        "allow_off_hours": bool(raw.get("allow_off_hours", False)),
+                        "recipe_args": recipe_args,
+                        "singleton_scope": raw.get("singleton_scope"),
+                    }
+                ),
+            )
+        )
+    return configs
+
+
+def load_declared_symbol_feed_specs(
+    config_root: str | Path | None = None,
+) -> list[SymbolFeedSpec]:
+    return [
+        SymbolFeedSpec(config=config)
+        for config in _load_symbol_feed_configs(config_root)
+    ]
+
+
+def get_declared_symbol_feed_spec(
+    feed_id: str,
+    *,
+    config_root: str | Path | None = None,
+) -> SymbolFeedSpec | None:
+    normalized = str(feed_id or "").strip()
+    if not normalized:
+        return None
+    return next(
+        (
+            spec
+            for spec in load_declared_symbol_feed_specs(config_root)
+            if spec.config.symbol_feed_id == normalized
+        ),
+        None,
+    )
 
 
 def _automation_job_specs(
@@ -434,8 +639,9 @@ def load_declared_job_specs(
     config_root: str | Path | None = None,
 ) -> list[DeclaredJobSpec]:
     # The declared job surface is assembled from static job YAML plus
-    # config-compiled discovery and automation definitions.
+    # config-compiled feed, discovery, and automation definitions.
     specs = list(_load_job_specs(config_root))
+    specs.extend(spec.as_job_spec() for spec in load_declared_symbol_feed_specs(config_root))
     specs.extend(spec.as_job_spec() for spec in load_declared_discovery_run_specs(config_root))
     specs.extend(_automation_job_specs(config_root))
     specs.sort(key=lambda item: item.job_key)
@@ -498,9 +704,13 @@ __all__ = [
     "DiscoveryRunConfig",
     "DiscoveryRunSpec",
     "DeclaredJobSpec",
+    "SymbolFeedConfig",
+    "SymbolFeedSpec",
     "get_declared_discovery_run_spec",
     "get_declared_job_row",
+    "get_declared_symbol_feed_spec",
     "list_declared_job_rows",
     "load_declared_discovery_run_specs",
     "load_declared_job_specs",
+    "load_declared_symbol_feed_specs",
 ]

@@ -25,10 +25,30 @@ def _cycle_id_from_run_payload(run_payload: Mapping[str, Any]) -> str | None:
     return rendered or None
 
 
+def _hydrate_full_job_run(
+    *,
+    storage: Any,
+    state: Mapping[str, Any],
+) -> dict[str, Any]:
+    hydrated = dict(state)
+    job_run = state.get("job_run") if isinstance(state.get("job_run"), Mapping) else {}
+    cycle = state.get("cycle") if isinstance(state.get("cycle"), Mapping) else {}
+    job_run_id = str(
+        job_run.get("job_run_id") or cycle.get("job_run_id") or ""
+    ).strip()
+    if not job_run_id:
+        return hydrated
+    full_job_run = storage.jobs.get_job_run(job_run_id)
+    if full_job_run is not None:
+        hydrated["job_run"] = full_job_run
+    return hydrated
+
+
 def _build_uoa_state_payload(state: Mapping[str, Any]) -> dict[str, Any]:
     job_run = state.get("job_run")
     if not isinstance(job_run, Mapping):
         raise ValueError("No completed discovery-run execution was found")
+    job_result = job_run.get("result") if isinstance(job_run.get("result"), Mapping) else {}
     return {
         "job_run": {
             "job_run_id": job_run.get("job_run_id"),
@@ -52,6 +72,7 @@ def _build_uoa_state_payload(state: Mapping[str, Any]) -> dict[str, Any]:
         "uoa_summary": dict(state.get("uoa_summary") or {}),
         "uoa_quote_summary": dict(state.get("uoa_quote_summary") or {}),
         "uoa_decisions": dict(state.get("uoa_decisions") or {}),
+        "symbol_source": dict(job_result.get("symbol_source") or {}),
         "selection_summary": dict(state.get("selection_summary") or {}),
         "opportunities": [
             dict(item) for item in list(state.get("opportunities") or [])
@@ -215,6 +236,7 @@ def get_latest_uoa_state(
                     cycle_id=cycle_id,
                     label=resolved_label,
                 )
+                state = _hydrate_full_job_run(storage=storage, state=state)
                 return _build_uoa_state_payload(state)
         run_record = None
         for candidate_labels in label_sets:
@@ -237,6 +259,7 @@ def get_latest_uoa_state(
             cycle_id=cycle_id,
             label=resolved_label or None,
         )
+        state = _hydrate_full_job_run(storage=storage, state=state)
         return _build_uoa_state_payload(state)
     run_record = storage.jobs.get_latest_discovery_run(label=label, status="succeeded")
     if run_record is None:
@@ -249,6 +272,7 @@ def get_latest_uoa_state(
         cycle_id=cycle_id,
         label=label,
     )
+    state = _hydrate_full_job_run(storage=storage, state=state)
     return _build_uoa_state_payload(state)
 
 
@@ -265,6 +289,7 @@ def get_uoa_state_for_cycle(
         cycle_id=cycle_id,
         label=label,
     )
+    state = _hydrate_full_job_run(storage=storage, state=state)
     if state.get("job_run") is None:
         raise ValueError(
             f"No completed discovery-run execution was found for cycle_id={cycle_id}"

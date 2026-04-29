@@ -187,6 +187,7 @@ def run_collection_tick(
         "raw_candidate_summary": dict(cycle_result["raw_candidate_summary"]),
         "selection_summary": dict(cycle_result["selection_summary"]),
         "auto_execution": cycle_result["auto_execution"],
+        "symbol_source": dict(cycle_result.get("symbol_source") or {}),
         "label": cycle_result["label"],
         "session_id": tick_context.session_id,
         "slot_at": tick_context.slot_at,
