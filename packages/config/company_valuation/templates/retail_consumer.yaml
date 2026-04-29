@@ -1,0 +1,64 @@
+template_id: retail_consumer
+template_version: v1
+status: active
+
+assignment_rules:
+  sic_prefixes: []
+  naics_prefixes: []
+  keyword_rules:
+    - retail
+    - consumer
+    - apparel
+    - restaurant
+
+required_features:
+  - revenue_ttm_growth
+  - gross_margin_ttm
+  - operating_margin_ttm
+  - free_cash_flow_ttm
+  - inventory_turns
+
+optional_features:
+  - working_capital_intensity
+  - store_margin_trend
+  - diluted_share_growth_ttm
+
+quality_weight_map:
+  growth_score: 14
+  profitability_score: 18
+  cash_flow_score: 16
+  capital_efficiency_score: 12
+  balance_sheet_score: 14
+  shareholder_score: 10
+  ownership_score: 6
+  reporting_quality_score: 10
+
+ownership_weight_map:
+  insider_signal: 3
+  beneficial_owner_signal: 2
+  institutional_holder_signal: 1
+
+valuation_model_mix:
+  dcf_weight: 0.65
+  historical_multiples_weight: 0.35
+  primary_multiple_metrics:
+    - ev_ebit
+    - ev_fcf
+    - pe
+  terminal_growth_floor: 0.01
+  terminal_growth_cap: 0.025
+  discount_rate_spread_bps: 475
+
+confidence_rules:
+  low_confidence_if:
+    - inventory_metrics_missing
+    - repeated_margin_shock
+    - missing_core_facts
+
+risk_rules:
+  add_flags_if:
+    - inventory_risk
+    - demand_volatility
+    - ownership_concentration_high
+
+unsupported_conditions: []

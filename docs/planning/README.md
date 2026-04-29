@@ -12,6 +12,8 @@ Use these entrypoints:
 - [Multi-Paper Alpaca Account Plan](./2026-04-27_multi_paper_alpaca_account_plan.md) for the deferred design to route bots across several Alpaca paper accounts without duplicating discovery
 - [UOA V2 System Design](./2026-04-28_uoa_v2_system_design.md) for the implementation-ready Phase 1 design of the bounded Alpaca-only unusual-options-activity scanner, including payload contracts, scoring, states, compatibility, and rollout
 - [UOA Dedicated Pipeline Design](./2026-04-28_uoa_dedicated_pipeline_design.md) for the simple target-state design: one dedicated discovery run for UOA, with bots used only as the symbol source
+- [Company Valuation Engine V1 Spec](./2026-04-29_company_valuation_engine_v1_spec.md) for the research-backed design of the future fundamentals-and-ownership company-valuation engine, separate from the repo's existing historical backtest and outcome-evaluation surfaces
+- [Company Valuation Engine V1 Implementation Contract](./2026-04-29_company_valuation_engine_v1_implementation_contract.md) for the implementation-ready payload, config, storage, and API contract for the future company-valuation engine
 - [Non-Web Large File Cleanup Audit](./2026-04-16_non_web_large_file_cleanup_audit.md) for the backend cleanup audit and cutover notes around the large-file and thin-wrapper split work
 - [Workspace Packages Restructure Plan](./2026-04-16_workspace_packages_restructure_plan.md) for the completed workspace move into `packages/core`, `packages/api`, `packages/web`, and `packages/config`
 - [Fresh Spread Opportunity System Design](./2026-04-11_fresh_spread_system_design.md) for the target opportunity-selection architecture inside the broader system

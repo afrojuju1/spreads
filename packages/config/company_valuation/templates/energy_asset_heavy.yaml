@@ -1,0 +1,64 @@
+template_id: energy_asset_heavy
+template_version: v1
+status: active
+
+assignment_rules:
+  sic_prefixes: []
+  naics_prefixes: []
+  keyword_rules:
+    - energy
+    - upstream
+    - midstream
+    - exploration
+
+required_features:
+  - revenue_ttm_growth
+  - operating_margin_ttm
+  - free_cash_flow_ttm
+  - capex_intensity
+  - net_leverage
+
+optional_features:
+  - reserve_proxy_trend
+  - diluted_share_growth_ttm
+  - hedge_exposure_proxy
+
+quality_weight_map:
+  growth_score: 10
+  profitability_score: 14
+  cash_flow_score: 18
+  capital_efficiency_score: 14
+  balance_sheet_score: 18
+  shareholder_score: 8
+  ownership_score: 6
+  reporting_quality_score: 12
+
+ownership_weight_map:
+  insider_signal: 3
+  beneficial_owner_signal: 2
+  institutional_holder_signal: 1
+
+valuation_model_mix:
+  dcf_weight: 0.6
+  historical_multiples_weight: 0.4
+  primary_multiple_metrics:
+    - ev_ebit
+    - ev_fcf
+    - ev_ebitda
+  terminal_growth_floor: 0.005
+  terminal_growth_cap: 0.02
+  discount_rate_spread_bps: 550
+
+confidence_rules:
+  low_confidence_if:
+    - high_cycle_exposure
+    - persistent_negative_fcf
+    - missing_core_facts
+
+risk_rules:
+  add_flags_if:
+    - commodity_cycle_risk
+    - leverage_above_threshold
+    - ownership_concentration_high
+
+unsupported_conditions: []

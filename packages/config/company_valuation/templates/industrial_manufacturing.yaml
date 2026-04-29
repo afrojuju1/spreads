@@ -1,0 +1,64 @@
+template_id: industrial_manufacturing
+template_version: v1
+status: active
+
+assignment_rules:
+  sic_prefixes: []
+  naics_prefixes: []
+  keyword_rules:
+    - industrial
+    - manufacturing
+    - machinery
+    - aerospace
+
+required_features:
+  - revenue_ttm_growth
+  - operating_margin_ttm
+  - free_cash_flow_ttm
+  - capex_intensity
+  - roic_ttm
+
+optional_features:
+  - backlog_proxy_growth
+  - diluted_share_growth_ttm
+  - net_leverage
+
+quality_weight_map:
+  growth_score: 12
+  profitability_score: 16
+  cash_flow_score: 16
+  capital_efficiency_score: 18
+  balance_sheet_score: 16
+  shareholder_score: 8
+  ownership_score: 6
+  reporting_quality_score: 8
+
+ownership_weight_map:
+  insider_signal: 3
+  beneficial_owner_signal: 2
+  institutional_holder_signal: 1
+
+valuation_model_mix:
+  dcf_weight: 0.65
+  historical_multiples_weight: 0.35
+  primary_multiple_metrics:
+    - ev_ebit
+    - ev_fcf
+    - pb
+  terminal_growth_floor: 0.01
+  terminal_growth_cap: 0.025
+  discount_rate_spread_bps: 475
+
+confidence_rules:
+  low_confidence_if:
+    - capex_cycle_unresolved
+    - repeated_restatements
+    - missing_core_facts
+
+risk_rules:
+  add_flags_if:
+    - leverage_above_threshold
+    - cash_conversion_weak
+    - ownership_concentration_high
+
+unsupported_conditions: []

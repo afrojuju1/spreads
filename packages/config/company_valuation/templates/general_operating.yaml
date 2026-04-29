@@ -1,0 +1,60 @@
+template_id: general_operating
+template_version: v1
+status: active
+
+assignment_rules:
+  sic_prefixes: []
+  naics_prefixes: []
+  keyword_rules: []
+
+required_features:
+  - revenue_ttm_growth
+  - gross_margin_ttm
+  - operating_margin_ttm
+  - free_cash_flow_ttm
+  - diluted_share_growth_ttm
+
+optional_features:
+  - sbc_as_pct_revenue
+  - inventory_turns
+  - capex_intensity
+
+quality_weight_map:
+  growth_score: 18
+  profitability_score: 18
+  cash_flow_score: 16
+  capital_efficiency_score: 14
+  balance_sheet_score: 14
+  shareholder_score: 10
+  ownership_score: 6
+  reporting_quality_score: 4
+
+ownership_weight_map:
+  insider_signal: 3
+  beneficial_owner_signal: 2
+  institutional_holder_signal: 1
+
+valuation_model_mix:
+  dcf_weight: 0.7
+  historical_multiples_weight: 0.3
+  primary_multiple_metrics:
+    - ev_ebit
+    - ev_fcf
+    - pe
+  terminal_growth_floor: 0.015
+  terminal_growth_cap: 0.03
+  discount_rate_spread_bps: 450
+
+confidence_rules:
+  low_confidence_if:
+    - persistent_negative_fcf
+    - repeated_restatements
+    - missing_core_facts
+
+risk_rules:
+  add_flags_if:
+    - dilution_accelerating
+    - leverage_above_threshold
+    - ownership_concentration_high
+
+unsupported_conditions: []

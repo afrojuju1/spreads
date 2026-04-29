@@ -1,0 +1,92 @@
+from __future__ import annotations
+
+import hashlib
+import re
+from datetime import date, datetime, timezone
+
+
+def _as_text(value: str | None) -> str:
+    rendered = str(value or "").strip()
+    if not rendered:
+        raise ValueError("value is required")
+    return rendered
+
+
+def _normalize_cik(cik: str | None) -> str:
+    digits = re.sub(r"\D+", "", _as_text(cik))
+    if not digits:
+        raise ValueError("cik must include digits")
+    return digits.zfill(10)
+
+
+def _normalize_ticker(ticker: str | None) -> str:
+    rendered = _as_text(ticker).upper()
+    return re.sub(r"[^A-Z0-9.\-]", "", rendered)
+
+
+def _normalize_name(value: str | None) -> str:
+    rendered = re.sub(r"\s+", " ", _as_text(value).lower()).strip()
+    return re.sub(r"[^a-z0-9 ]", "", rendered)
+
+
+def _hash_parts(*parts: str) -> str:
+    joined = "|".join(part.strip().lower() for part in parts if part.strip())
+    return hashlib.sha1(joined.encode("utf-8")).hexdigest()[:16]
+
+
+def _format_timestamp(value: date | datetime | str) -> str:
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, datetime):
+        normalized = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    else:
+        normalized = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if normalized.tzinfo is None:
+            normalized = normalized.replace(tzinfo=timezone.utc)
+    return normalized.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def build_issuer_id(cik: str) -> str:
+    return f"issuer:{_normalize_cik(cik)}"
+
+
+def build_security_id(cik: str, ticker: str) -> str:
+    return f"security:{_normalize_cik(cik)}:{_normalize_ticker(ticker)}"
+
+
+def build_filing_id(accession_no: str) -> str:
+    return f"filing:{_as_text(accession_no)}"
+
+
+def build_holder_id(canonical_name: str, holder_cik: str | None = None) -> str:
+    return f"holder:{_hash_parts(_normalize_name(canonical_name), _normalize_cik(holder_cik) if holder_cik else '')}"
+
+
+def build_group_id(issuer_cik: str, seed: str) -> str:
+    return f"group:{_normalize_cik(issuer_cik)}:{_hash_parts(seed)}"
+
+
+def build_feature_snapshot_id(
+    issuer_cik: str,
+    as_of: date | datetime | str,
+    feature_version: str,
+) -> str:
+    return f"feature_snapshot:{_normalize_cik(issuer_cik)}:{_format_timestamp(as_of)}:{_as_text(feature_version)}"
+
+
+def build_company_valuation_snapshot_id(
+    issuer_cik: str,
+    as_of: date | datetime | str,
+    valuation_version: str,
+) -> str:
+    return f"company_valuation:{_normalize_cik(issuer_cik)}:{_format_timestamp(as_of)}:{_as_text(valuation_version)}"
+
+
+def build_screening_row_id(issuer_cik: str, as_of: date | datetime | str) -> str:
+    if isinstance(as_of, datetime):
+        rendered = as_of.astimezone(timezone.utc).date().isoformat()
+    elif isinstance(as_of, date):
+        rendered = as_of.isoformat()
+    else:
+        rendered = str(as_of)
+    return f"screen:{_normalize_cik(issuer_cik)}:{rendered}"

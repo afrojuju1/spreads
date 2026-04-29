@@ -1,0 +1,65 @@
+template_id: software_asset_light
+template_version: v1
+status: active
+
+assignment_rules:
+  sic_prefixes: []
+  naics_prefixes: []
+  keyword_rules:
+    - saas
+    - software
+    - cloud
+    - platform
+
+required_features:
+  - revenue_ttm_growth
+  - gross_margin_ttm
+  - operating_margin_ttm
+  - free_cash_flow_ttm
+  - diluted_share_growth_ttm
+  - sbc_as_pct_revenue
+
+optional_features:
+  - deferred_revenue_growth
+  - capex_intensity
+  - net_cash_position
+
+quality_weight_map:
+  growth_score: 20
+  profitability_score: 16
+  cash_flow_score: 18
+  capital_efficiency_score: 10
+  balance_sheet_score: 12
+  shareholder_score: 10
+  ownership_score: 6
+  reporting_quality_score: 8
+
+ownership_weight_map:
+  insider_signal: 3
+  beneficial_owner_signal: 2
+  institutional_holder_signal: 1
+
+valuation_model_mix:
+  dcf_weight: 0.8
+  historical_multiples_weight: 0.2
+  primary_multiple_metrics:
+    - ev_fcf
+    - pe
+    - ps
+  terminal_growth_floor: 0.02
+  terminal_growth_cap: 0.04
+  discount_rate_spread_bps: 500
+
+confidence_rules:
+  low_confidence_if:
+    - persistent_negative_fcf
+    - sbc_not_offset_by_growth
+    - missing_core_facts
+
+risk_rules:
+  add_flags_if:
+    - sbc_dilution_heavy
+    - ownership_concentration_high
+    - margin_reversal
+
+unsupported_conditions: []
