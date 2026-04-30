@@ -41,6 +41,11 @@ from .jobs import (
     enqueue_company_valuation_resolve_unresolved_job,
     enqueue_company_valuation_screen_materialize_job,
 )
+from .clustering import (
+    CompanyValuationClusteringRequest,
+    CompanyValuationClusteringResult,
+    analyze_company_valuation_research_dataset,
+)
 from .research import (
     CompanyValuationResearchExportRequest,
     CompanyValuationResearchExportResult,
@@ -75,6 +80,8 @@ __all__ = [
     "CompanyValuationBootstrapRequest",
     "CompanyValuationBootstrapResult",
     "CompanyValuationBootstrapTickerResult",
+    "CompanyValuationClusteringRequest",
+    "CompanyValuationClusteringResult",
     "CompanyValuationDocumentPayload",
     "CompanyValuationIdentity",
     "CompanyValuationRecomputeResult",
@@ -110,6 +117,7 @@ __all__ = [
     "build_treasury_curve_snapshot_id",
     "default_company_valuation_config_root",
     "bootstrap_company_valuation",
+    "analyze_company_valuation_research_dataset",
     "enqueue_company_valuation_bootstrap_job",
     "enqueue_company_valuation_resolve_unresolved_job",
     "enqueue_company_valuation_screen_materialize_job",

@@ -7,11 +7,13 @@ import typer
 
 from core.runtime.config import default_database_url, default_redis_url
 from core.services.company_valuation import (
+    CompanyValuationClusteringRequest,
     CompanyValuationBootstrapRequest,
     CompanyValuationResearchExportRequest,
     DEFAULT_RESEARCH_TEMPLATE_IDS,
     CompanyValuationScreenRefreshRequest,
     ResolveUnresolvedInstitutionalPositionsRequest,
+    analyze_company_valuation_research_dataset,
     enqueue_company_valuation_bootstrap_job,
     enqueue_company_valuation_resolve_unresolved_job,
     enqueue_company_valuation_screen_materialize_job,
@@ -302,6 +304,71 @@ def company_valuation_export_research_dataset_command(
     typer.echo(f"issuers_exported={payload['issuers_exported']}")
     typer.echo(f"output_root={payload['output_root']}")
     typer.echo(f"manifest_path={payload['manifest_path']}")
+
+
+@company_valuation_app.command(
+    "cluster-research-dataset",
+    help="Run offline clustering and template-discovery analysis on a valuation research dataset.",
+)
+def company_valuation_cluster_research_dataset_command(
+    dataset_root: str = typer.Option(
+        ...,
+        "--dataset-root",
+        help="Root path for the parquet or jsonl research dataset.",
+    ),
+    output_root: str | None = typer.Option(
+        None,
+        "--output-root",
+        help="Optional output directory for clustering artifacts.",
+    ),
+    template_id: list[str] = typer.Option(
+        [],
+        "--template-id",
+        help="Optional template filter. Repeat for multiple cohorts.",
+    ),
+    min_k: int = typer.Option(
+        2,
+        "--min-k",
+        min=2,
+        help="Minimum k to consider for MiniBatchKMeans.",
+    ),
+    max_k: int = typer.Option(
+        6,
+        "--max-k",
+        min=2,
+        help="Maximum k to consider for MiniBatchKMeans.",
+    ),
+    min_rows_per_cluster: int = typer.Option(
+        12,
+        "--min-rows-per-cluster",
+        min=4,
+        help="Minimum target cluster size for HDBSCAN and research summaries.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    try:
+        result = analyze_company_valuation_research_dataset(
+            CompanyValuationClusteringRequest(
+                dataset_root=dataset_root,
+                output_root=output_root,
+                template_ids=tuple(template_id) or None,
+                min_k=min_k,
+                max_k=max_k,
+                min_rows_per_cluster=min_rows_per_cluster,
+            )
+        )
+    except Exception as exc:
+        typer.secho(f"Command failed: {exc}", err=True, fg=typer.colors.RED)
+        raise typer.Exit(2) from None
+    payload = result.to_payload()
+    if json_output:
+        typer.echo(json.dumps(payload, sort_keys=True, default=str))
+        return
+    typer.echo(f"status={payload['status']}")
+    typer.echo(f"assignment_count={payload['assignment_count']}")
+    typer.echo(f"output_root={payload['output_root']}")
+    typer.echo(f"summary_path={payload['summary_path']}")
+    typer.echo(f"markdown_path={payload['markdown_path']}")
 
 
 __all__ = ["company_valuation_app"]

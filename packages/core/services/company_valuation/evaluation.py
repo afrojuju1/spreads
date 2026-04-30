@@ -215,6 +215,23 @@ def _template_float(template: Any, section: str, key: str, default: float) -> fl
         return float(default)
 
 
+def _template_multiple_anchors(template: Any) -> dict[str, float]:
+    configured = (template.valuation_model_mix or {}).get("default_multiple_anchors")
+    if isinstance(configured, dict):
+        anchors: dict[str, float] = {}
+        for key, value in configured.items():
+            numeric = _safe_float(value)
+            if numeric is None or numeric <= 0.0:
+                continue
+            anchors[str(key)] = float(numeric)
+        if anchors:
+            return anchors
+    return TEMPLATE_MULTIPLES.get(
+        str(template.template_id),
+        TEMPLATE_MULTIPLES["general_operating"],
+    )
+
+
 def _quality_premium_factor(
     *,
     quality_score: float,
@@ -480,7 +497,7 @@ def _multiples_anchor_value_per_share(
     template: Any,
     quality_score: float,
 ) -> tuple[float | None, dict[str, Any], list[str], float]:
-    template_multiples = TEMPLATE_MULTIPLES.get(str(template.template_id), TEMPLATE_MULTIPLES["general_operating"])
+    template_multiples = _template_multiple_anchors(template)
     quality_factor = _quality_premium_factor(
         quality_score=quality_score,
         template=template,

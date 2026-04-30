@@ -1,0 +1,90 @@
+template_id: cyclical_capital_goods
+template_version: v1
+status: active
+
+assignment_rules:
+  sic_prefixes: []
+  naics_prefixes: []
+  keyword_rules:
+    - machinery
+    - equipment
+    - truck
+    - rental
+    - aerospace
+
+required_features:
+  - revenue_ttm_growth
+  - operating_margin_ttm
+  - free_cash_flow_ttm
+  - capex_intensity
+  - net_leverage
+
+optional_features:
+  - roic_ttm
+  - backlog_proxy_growth
+  - diluted_share_growth_ttm
+
+quality_weight_map:
+  growth_score: 10
+  profitability_score: 14
+  cash_flow_score: 18
+  capital_efficiency_score: 16
+  balance_sheet_score: 18
+  shareholder_score: 8
+  ownership_score: 6
+  reporting_quality_score: 10
+
+ownership_weight_map:
+  insider_signal: 3
+  beneficial_owner_signal: 2
+  institutional_holder_signal: 1
+
+valuation_model_mix:
+  dcf_weight: 0.45
+  historical_multiples_weight: 0.55
+  primary_multiple_metrics:
+    - ev_fcf
+    - pb
+    - ev_ebitda
+    - ev_ebit
+  default_multiple_anchors:
+    ev_ebit: 11.0
+    ev_fcf: 15.0
+    pb: 2.0
+    ev_ebitda: 9.0
+  forecast_years: 5
+  initial_growth_floor: -0.08
+  initial_growth_cap: 0.12
+  terminal_growth_multiplier: 0.35
+  growth_adjustment_factor: 0.45
+  growth_adjustment_min: 0.68
+  growth_adjustment_max: 1.22
+  normalized_fcf_from_ebit_ratio: 0.72
+  terminal_growth_floor: 0.01
+  terminal_growth_cap: 0.024
+  discount_rate_spread_bps: 525
+  cyclical_discount_rate_spread_bps: 75
+  quality_premium_floor_score: 52
+  quality_premium_full_score: 78
+  quality_multiple_premium_max: 0.1
+  quality_discount_rate_reduction_bps_max: 35
+
+confidence_rules:
+  low_confidence_if:
+    - capex_cycle_unresolved
+    - repeated_restatements
+    - missing_core_facts
+  negative_fcf_penalty: 0.2
+  high_leverage_threshold: 3.0
+  high_leverage_penalty: 0.12
+  declining_revenue_penalty: 0.1
+  unprofitable_penalty: 0.1
+  cyclical_penalty: 0.1
+
+risk_rules:
+  add_flags_if:
+    - leverage_above_threshold
+    - cash_conversion_weak
+    - ownership_concentration_high
+
+unsupported_conditions: []

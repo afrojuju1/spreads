@@ -1,0 +1,87 @@
+template_id: industrial_core_compounder
+template_version: v1
+status: active
+
+assignment_rules:
+  sic_prefixes: []
+  naics_prefixes: []
+  keyword_rules:
+    - industrial
+    - automation
+    - controls
+    - engineered
+    - motion
+
+required_features:
+  - revenue_ttm_growth
+  - operating_margin_ttm
+  - free_cash_flow_ttm
+  - capex_intensity
+  - roic_ttm
+
+optional_features:
+  - gross_margin_ttm
+  - diluted_share_growth_ttm
+  - net_leverage
+
+quality_weight_map:
+  growth_score: 12
+  profitability_score: 18
+  cash_flow_score: 16
+  capital_efficiency_score: 20
+  balance_sheet_score: 14
+  shareholder_score: 8
+  ownership_score: 4
+  reporting_quality_score: 8
+
+ownership_weight_map:
+  insider_signal: 2
+  beneficial_owner_signal: 2
+  institutional_holder_signal: 1
+
+valuation_model_mix:
+  dcf_weight: 0.5
+  historical_multiples_weight: 0.5
+  primary_multiple_metrics:
+    - ev_ebit
+    - ev_fcf
+    - pb
+  default_multiple_anchors:
+    ev_ebit: 18.0
+    ev_fcf: 24.0
+    pb: 4.0
+    ev_ebitda: 14.0
+  forecast_years: 5
+  initial_growth_floor: -0.03
+  initial_growth_cap: 0.16
+  terminal_growth_multiplier: 0.5
+  growth_adjustment_factor: 0.65
+  growth_adjustment_min: 0.78
+  growth_adjustment_max: 1.38
+  normalized_fcf_from_ebit_ratio: 0.8
+  terminal_growth_floor: 0.015
+  terminal_growth_cap: 0.03
+  discount_rate_spread_bps: 400
+  quality_premium_floor_score: 55
+  quality_premium_full_score: 84
+  quality_multiple_premium_max: 0.22
+  quality_discount_rate_reduction_bps_max: 80
+
+confidence_rules:
+  low_confidence_if:
+    - repeated_restatements
+    - missing_core_facts
+    - cash_conversion_weak
+  negative_fcf_penalty: 0.16
+  high_leverage_threshold: 3.0
+  high_leverage_penalty: 0.1
+  declining_revenue_penalty: 0.08
+  unprofitable_penalty: 0.08
+
+risk_rules:
+  add_flags_if:
+    - leverage_above_threshold
+    - cash_conversion_weak
+    - ownership_concentration_high
+
+unsupported_conditions: []

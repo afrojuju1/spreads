@@ -1,0 +1,241 @@
+overrides:
+  - issuer_cik: "0000018230"
+    template_id: cyclical_capital_goods
+    reason: "Candidate cyclical capital-goods override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0000315189"
+    template_id: cyclical_capital_goods
+    reason: "Candidate cyclical capital-goods override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0000040545"
+    template_id: industrial_manufacturing
+    reason: "30-name industrial calibration basket baseline broad industrial assignment."
+    active: true
+  - issuer_cik: "0000101829"
+    template_id: industrial_manufacturing
+    reason: "30-name industrial calibration basket baseline broad industrial assignment."
+    active: true
+  - issuer_cik: "0000012927"
+    template_id: industrial_manufacturing
+    reason: "30-name industrial calibration basket baseline broad industrial assignment."
+    active: true
+  - issuer_cik: "0000773840"
+    template_id: industrial_core_compounder
+    reason: "Candidate industrial core compounder override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0000076334"
+    template_id: industrial_core_compounder
+    reason: "Candidate industrial core compounder override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0001050915"
+    template_id: industrial_core_compounder
+    reason: "Candidate industrial core compounder override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0000026172"
+    template_id: cyclical_capital_goods
+    reason: "Candidate cyclical capital-goods override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0000040533"
+    template_id: industrial_manufacturing
+    reason: "30-name industrial calibration basket baseline broad industrial assignment."
+    active: true
+  - issuer_cik: "0000032604"
+    template_id: industrial_core_compounder
+    reason: "Candidate industrial core compounder override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0000066740"
+    template_id: industrial_manufacturing
+    reason: "30-name industrial calibration basket baseline broad industrial assignment."
+    active: true
+  - issuer_cik: "0000049826"
+    template_id: industrial_core_compounder
+    reason: "Candidate industrial core compounder override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0000075362"
+    template_id: cyclical_capital_goods
+    reason: "Candidate cyclical capital-goods override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0000029905"
+    template_id: industrial_core_compounder
+    reason: "Candidate industrial core compounder override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0001024478"
+    template_id: industrial_core_compounder
+    reason: "Candidate industrial core compounder override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0001524472"
+    template_id: industrial_core_compounder
+    reason: "Candidate industrial core compounder override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0001037868"
+    template_id: industrial_core_compounder
+    reason: "Candidate industrial core compounder override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0000048898"
+    template_id: industrial_core_compounder
+    reason: "Candidate industrial core compounder override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0000072331"
+    template_id: industrial_core_compounder
+    reason: "Candidate industrial core compounder override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0001659166"
+    template_id: industrial_core_compounder
+    reason: "Candidate industrial core compounder override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0000815556"
+    template_id: industrial_core_compounder
+    reason: "Candidate industrial core compounder override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0000277135"
+    template_id: industrial_core_compounder
+    reason: "Candidate industrial core compounder override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0000943452"
+    template_id: industrial_core_compounder
+    reason: "Candidate industrial core compounder override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0001067701"
+    template_id: cyclical_capital_goods
+    reason: "Candidate cyclical capital-goods override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0001699150"
+    template_id: industrial_core_compounder
+    reason: "Candidate industrial core compounder override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0000832101"
+    template_id: industrial_core_compounder
+    reason: "Candidate industrial core compounder override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0000091440"
+    template_id: cyclical_capital_goods
+    reason: "Candidate cyclical capital-goods override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0000091142"
+    template_id: industrial_core_compounder
+    reason: "Candidate industrial core compounder override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0000217346"
+    template_id: cyclical_capital_goods
+    reason: "Candidate cyclical capital-goods override for 30-name industrial calibration."
+    active: true
+  - issuer_cik: "0000034088"
+    template_id: energy_asset_heavy
+    reason: "30-name energy calibration basket baseline broad energy assignment."
+    active: true
+  - issuer_cik: "0000093410"
+    template_id: energy_asset_heavy
+    reason: "30-name energy calibration basket baseline broad energy assignment."
+    active: true
+  - issuer_cik: "0001163165"
+    template_id: energy_asset_heavy
+    reason: "30-name energy calibration basket baseline broad energy assignment."
+    active: true
+  - issuer_cik: "0000821189"
+    template_id: energy_asset_heavy
+    reason: "30-name energy calibration basket baseline broad energy assignment."
+    active: true
+  - issuer_cik: "0000797468"
+    template_id: stressed_operator
+    reason: "Candidate stressed-operator override for 30-name energy calibration."
+    active: true
+  - issuer_cik: "0001035002"
+    template_id: energy_asset_heavy
+    reason: "30-name energy calibration basket baseline broad energy assignment."
+    active: true
+  - issuer_cik: "0001510295"
+    template_id: energy_asset_heavy
+    reason: "30-name energy calibration basket baseline broad energy assignment."
+    active: true
+  - issuer_cik: "0001534701"
+    template_id: energy_asset_heavy
+    reason: "30-name energy calibration basket baseline broad energy assignment."
+    active: true
+  - issuer_cik: "0000107263"
+    template_id: energy_asset_heavy
+    reason: "30-name energy calibration basket baseline broad energy assignment."
+    active: true
+  - issuer_cik: "0001506307"
+    template_id: energy_asset_heavy
+    reason: "30-name energy calibration basket baseline broad energy assignment."
+    active: true
+  - issuer_cik: "0001039684"
+    template_id: energy_asset_heavy
+    reason: "30-name energy calibration basket baseline broad energy assignment."
+    active: true
+  - issuer_cik: "0001389170"
+    template_id: energy_asset_heavy
+    reason: "30-name energy calibration basket baseline broad energy assignment."
+    active: true
+  - issuer_cik: "0001090012"
+    template_id: energy_asset_heavy
+    reason: "30-name energy calibration basket baseline broad energy assignment."
+    active: true
+  - issuer_cik: "0001841666"
+    template_id: stressed_operator
+    reason: "Candidate stressed-operator override for 30-name energy calibration."
+    active: true
+  - issuer_cik: "0000033213"
+    template_id: stressed_operator
+    reason: "Candidate stressed-operator override for 30-name energy calibration."
+    active: true
+  - issuer_cik: "0001539838"
+    template_id: energy_asset_heavy
+    reason: "30-name energy calibration basket baseline broad energy assignment."
+    active: true
+  - issuer_cik: "0000045012"
+    template_id: stressed_operator
+    reason: "Candidate stressed-operator override for 30-name energy calibration."
+    active: true
+  - issuer_cik: "0001701605"
+    template_id: energy_asset_heavy
+    reason: "30-name energy calibration basket baseline broad energy assignment."
+    active: true
+  - issuer_cik: "0000003570"
+    template_id: energy_asset_heavy
+    reason: "30-name energy calibration basket baseline broad energy assignment."
+    active: true
+  - issuer_cik: "0000717423"
+    template_id: stressed_operator
+    reason: "Candidate stressed-operator override for 30-name energy calibration."
+    active: true
+  - issuer_cik: "0001520006"
+    template_id: stressed_operator
+    reason: "Candidate stressed-operator override for 30-name energy calibration."
+    active: true
+  - issuer_cik: "0000893538"
+    template_id: energy_asset_heavy
+    reason: "30-name energy calibration basket baseline broad energy assignment."
+    active: true
+  - issuer_cik: "0001433270"
+    template_id: energy_asset_heavy
+    reason: "30-name energy calibration basket baseline broad energy assignment."
+    active: true
+  - issuer_cik: "0001070412"
+    template_id: energy_asset_heavy
+    reason: "30-name energy calibration basket baseline broad energy assignment."
+    active: true
+  - issuer_cik: "0001534504"
+    template_id: stressed_operator
+    reason: "Candidate stressed-operator override for 30-name energy calibration."
+    active: true
+  - issuer_cik: "0000889900"
+    template_id: stressed_operator
+    reason: "Candidate stressed-operator override for 30-name energy calibration."
+    active: true
+  - issuer_cik: "0001021860"
+    template_id: stressed_operator
+    reason: "Candidate stressed-operator override for 30-name energy calibration."
+    active: true
+  - issuer_cik: "0000315852"
+    template_id: energy_asset_heavy
+    reason: "30-name energy calibration basket baseline broad energy assignment."
+    active: true
+  - issuer_cik: "0000046765"
+    template_id: stressed_operator
+    reason: "Candidate stressed-operator override for 30-name energy calibration."
+    active: true
+  - issuer_cik: "0001694426"
+    template_id: stressed_operator
+    reason: "Candidate stressed-operator override for 30-name energy calibration."
+    active: true

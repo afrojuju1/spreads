@@ -1,19 +1,69 @@
 calibration_baskets:
   industrial_manufacturing:
-    as_of: "2026-04-29"
-    rationale: "Large U.S. industrial machinery, motion-control, and electrical equipment names used for template calibration."
+    as_of: "2026-04-30"
+    rationale: "Thirty U.S.-domiciled, long-history industrial and capital-goods names used for 10-year template calibration across compounder, cyclical, and holdout industrial regimes."
     symbols:
       - CAT
       - DE
+      - GE
+      - RTX
+      - BA
+      - HON
       - PH
+      - PWR
+      - CMI
+      - GD
       - EMR
-      - ETN
+      - MMM
+      - ITW
+      - PCAR
+      - DOV
+      - ROK
+      - XYL
+      - AME
+      - HUBB
+      - NDSN
+      - FTV
+      - FAST
+      - GWW
+      - WAB
+      - URI
+      - IR
+      - IEX
+      - SNA
+      - AOS
+      - TXT
   energy_asset_heavy:
-    as_of: "2026-04-29"
-    rationale: "Large U.S. integrated and upstream oil-and-gas names used for asset-heavy energy calibration."
+    as_of: "2026-04-30"
+    rationale: "Thirty U.S.-domiciled, long-history operating energy names used for 10-year calibration across integrated, downstream, midstream, upstream, and oilfield-service regimes."
     symbols:
       - XOM
       - CVX
       - COP
       - EOG
       - OXY
+      - VLO
+      - MPC
+      - PSX
+      - WMB
+      - KMI
+      - OKE
+      - TRGP
+      - DVN
+      - APA
+      - EQT
+      - FANG
+      - HAL
+      - BKR
+      - LNG
+      - MUR
+      - MTDR
+      - SM
+      - AR
+      - CNX
+      - PBF
+      - PTEN
+      - NOV
+      - RRC
+      - HP
+      - DK
