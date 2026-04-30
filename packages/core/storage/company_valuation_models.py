@@ -32,6 +32,172 @@ class IssuerModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class TaxonomyNodeModel(Base):
+    __tablename__ = "taxonomy_nodes"
+    __table_args__ = (
+        UniqueConstraint(
+            "taxonomy_version",
+            "taxonomy_level",
+            "taxonomy_code",
+            name="ux_taxonomy_nodes_version_level_code",
+        ),
+        Index("idx_taxonomy_nodes_level", "taxonomy_level"),
+        Index("idx_taxonomy_nodes_parent", "parent_taxonomy_node_id"),
+    )
+
+    taxonomy_node_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    taxonomy_version: Mapped[str] = mapped_column(Text, nullable=False)
+    taxonomy_level: Mapped[str] = mapped_column(Text, nullable=False)
+    taxonomy_code: Mapped[str] = mapped_column(Text, nullable=False)
+    taxonomy_name: Mapped[str] = mapped_column(Text, nullable=False)
+    parent_taxonomy_node_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("taxonomy_nodes.taxonomy_node_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class TaxonomyMappingModel(Base):
+    __tablename__ = "taxonomy_mappings"
+    __table_args__ = (
+        Index(
+            "idx_taxonomy_mappings_standard_code",
+            "source_standard",
+            "source_code",
+        ),
+        Index("idx_taxonomy_mappings_subindustry", "canonical_subindustry_id"),
+    )
+
+    mapping_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    mapping_version: Mapped[str] = mapped_column(Text, nullable=False)
+    source_standard: Mapped[str] = mapped_column(Text, nullable=False)
+    source_code: Mapped[str] = mapped_column(Text, nullable=False)
+    source_title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    match_mode: Mapped[str] = mapped_column(Text, nullable=False)
+    canonical_sector_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("taxonomy_nodes.taxonomy_node_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    canonical_industry_group_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("taxonomy_nodes.taxonomy_node_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    canonical_industry_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("taxonomy_nodes.taxonomy_node_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    canonical_subindustry_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("taxonomy_nodes.taxonomy_node_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ValuationTemplateMappingModel(Base):
+    __tablename__ = "valuation_template_mappings"
+    __table_args__ = (
+        UniqueConstraint(
+            "mapping_version",
+            "taxonomy_node_id",
+            name="ux_valuation_template_mappings_version_node",
+        ),
+        Index("idx_valuation_template_mappings_template", "template_id"),
+    )
+
+    mapping_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    mapping_version: Mapped[str] = mapped_column(Text, nullable=False)
+    taxonomy_node_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("taxonomy_nodes.taxonomy_node_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    taxonomy_level: Mapped[str] = mapped_column(Text, nullable=False)
+    template_id: Mapped[str] = mapped_column(Text, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class IssuerClassificationModel(Base):
+    __tablename__ = "issuer_classifications"
+    __table_args__ = (
+        Index("idx_issuer_classifications_source", "classification_source"),
+        Index(
+            "idx_issuer_classifications_subindustry",
+            "canonical_subindustry_id",
+        ),
+    )
+
+    issuer_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("issuers.issuer_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    taxonomy_version: Mapped[str] = mapped_column(Text, nullable=False)
+    canonical_sector_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("taxonomy_nodes.taxonomy_node_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    canonical_industry_group_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("taxonomy_nodes.taxonomy_node_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    canonical_industry_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("taxonomy_nodes.taxonomy_node_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    canonical_subindustry_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("taxonomy_nodes.taxonomy_node_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    classification_source: Mapped[str] = mapped_column(Text, nullable=False)
+    classification_confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    taxonomy_mapping_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("taxonomy_mappings.mapping_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    valuation_template_mapping_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("valuation_template_mappings.mapping_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class IssuerOverlayFlagModel(Base):
+    __tablename__ = "issuer_overlay_flags"
+    __table_args__ = (
+        UniqueConstraint("issuer_id", "flag_key", name="ux_issuer_overlay_flags_issuer_flag"),
+        Index("idx_issuer_overlay_flags_flag_key", "flag_key"),
+    )
+
+    issuer_overlay_flag_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    issuer_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("issuers.issuer_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    flag_key: Mapped[str] = mapped_column(Text, nullable=False)
+    flag_value: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class SecurityModel(Base):
     __tablename__ = "securities"
     __table_args__ = (

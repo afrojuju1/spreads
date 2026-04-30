@@ -1,0 +1,56 @@
+mapping_version: v1
+
+mappings:
+  - mapping_id: valuation_template_mapping:enterprise_application_software
+    taxonomy_node_id: taxonomy:subindustry:enterprise_application_software
+    taxonomy_level: subindustry
+    template_id: software_asset_light
+    notes: Seed default template for enterprise application software.
+
+  - mapping_id: valuation_template_mapping:integrated_device_platforms
+    taxonomy_node_id: taxonomy:subindustry:integrated_device_platforms
+    taxonomy_level: subindustry
+    template_id: platform_hardware
+    notes: Seed default template for integrated device platforms.
+
+  - mapping_id: valuation_template_mapping:integrated_refining_and_marketing_assets
+    taxonomy_node_id: taxonomy:subindustry:integrated_refining_and_marketing_assets
+    taxonomy_level: subindustry
+    template_id: energy_asset_heavy
+    notes: Seed default template for integrated refining and marketing assets.
+
+  - mapping_id: valuation_template_mapping:upstream_exploration_and_production_assets
+    taxonomy_node_id: taxonomy:subindustry:upstream_exploration_and_production_assets
+    taxonomy_level: subindustry
+    template_id: energy_asset_heavy
+    notes: Default template for upstream exploration and production assets.
+
+  - mapping_id: valuation_template_mapping:midstream_natural_gas_and_lng_infrastructure
+    taxonomy_node_id: taxonomy:subindustry:midstream_natural_gas_and_lng_infrastructure
+    taxonomy_level: subindustry
+    template_id: energy_asset_heavy
+    notes: Default template for midstream natural gas and LNG infrastructure.
+
+  - mapping_id: valuation_template_mapping:industrial_machinery_and_components
+    taxonomy_node_id: taxonomy:subindustry:industrial_machinery_and_components
+    taxonomy_level: subindustry
+    template_id: industrial_manufacturing
+    notes: Default template for industrial machinery and components.
+
+  - mapping_id: valuation_template_mapping:diversified_instrumentation_and_specialty_equipment
+    taxonomy_node_id: taxonomy:subindustry:diversified_instrumentation_and_specialty_equipment
+    taxonomy_level: subindustry
+    template_id: diversified_industrial_core
+    notes: Default template for diversified instrumentation and specialty equipment.
+
+  - mapping_id: valuation_template_mapping:aerospace_and_defense_primes_and_systems
+    taxonomy_node_id: taxonomy:subindustry:aerospace_and_defense_primes_and_systems
+    taxonomy_level: subindustry
+    template_id: aerospace_defense_prime
+    notes: Default template for aerospace and defense primes and systems.
+
+  - mapping_id: valuation_template_mapping:multi_format_and_specialty_retail
+    taxonomy_node_id: taxonomy:subindustry:multi_format_and_specialty_retail
+    taxonomy_level: subindustry
+    template_id: retail_consumer
+    notes: Default template for multi-format and specialty retail issuers.

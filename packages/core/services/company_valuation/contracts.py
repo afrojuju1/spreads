@@ -7,6 +7,9 @@ from typing import Any, Literal, TypeAlias
 
 OwnershipSourceType: TypeAlias = Literal["form3", "form4", "form5", "13d", "13g", "13f"]
 TemplateStatus: TypeAlias = Literal["active", "inactive"]
+TaxonomyLevel: TypeAlias = Literal["sector", "industry_group", "industry", "subindustry"]
+TaxonomySourceStandard: TypeAlias = Literal["sic", "naics", "issuer_override"]
+TaxonomyMatchMode: TypeAlias = Literal["exact", "prefix"]
 CompanyValuationDocumentPayload: TypeAlias = dict[str, Any]
 
 
@@ -38,6 +41,163 @@ class CompanyValuationTemplateOverride:
 
     def to_payload(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class CompanyValuationRawClassification:
+    sic_code: str | None = None
+    sic_title: str | None = None
+    naics_code: str | None = None
+    naics_title: str | None = None
+
+    def to_payload(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class CompanyValuationTaxonomyNode:
+    taxonomy_node_id: str
+    taxonomy_version: str
+    taxonomy_level: TaxonomyLevel
+    taxonomy_code: str
+    taxonomy_name: str
+    parent_taxonomy_node_id: str | None = None
+    active: bool = True
+
+    def to_payload(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class CompanyValuationTaxonomyMapping:
+    mapping_id: str
+    mapping_version: str
+    source_standard: TaxonomySourceStandard
+    source_code: str
+    source_title: str | None = None
+    match_mode: TaxonomyMatchMode = "exact"
+    canonical_sector_id: str | None = None
+    canonical_industry_group_id: str | None = None
+    canonical_industry_id: str | None = None
+    canonical_subindustry_id: str | None = None
+    priority: int = 100
+    active: bool = True
+    notes: str | None = None
+
+    def to_payload(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class CompanyValuationTemplateMapping:
+    mapping_id: str
+    mapping_version: str
+    taxonomy_node_id: str
+    taxonomy_level: TaxonomyLevel
+    template_id: str
+    active: bool = True
+    notes: str | None = None
+
+    def to_payload(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class CompanyValuationTaxonomyOverride:
+    issuer_cik: str
+    canonical_sector_id: str
+    canonical_industry_group_id: str | None = None
+    canonical_industry_id: str | None = None
+    canonical_subindustry_id: str | None = None
+    reason: str = ""
+    active: bool = True
+
+    def to_payload(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class CompanyValuationOverlayRule:
+    rule_id: str
+    rule_version: str
+    flag_key: str
+    reason: str
+    company_name_keywords: tuple[str, ...] = ()
+    sic_title_keywords: tuple[str, ...] = ()
+    sic_prefixes: tuple[str, ...] = ()
+    naics_prefixes: tuple[str, ...] = ()
+    issuer_ciks: tuple[str, ...] = ()
+    active: bool = True
+
+    def to_payload(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["company_name_keywords"] = list(self.company_name_keywords)
+        payload["sic_title_keywords"] = list(self.sic_title_keywords)
+        payload["sic_prefixes"] = list(self.sic_prefixes)
+        payload["naics_prefixes"] = list(self.naics_prefixes)
+        payload["issuer_ciks"] = list(self.issuer_ciks)
+        return payload
+
+
+@dataclass(frozen=True)
+class CompanyValuationCanonicalTaxonomy:
+    taxonomy_version: str
+    canonical_sector_id: str | None = None
+    canonical_industry_group_id: str | None = None
+    canonical_industry_id: str | None = None
+    canonical_subindustry_id: str | None = None
+    classification_source: str = "unclassified"
+    classification_confidence: float = 0.0
+    source_standard: TaxonomySourceStandard | None = None
+    mapping_id: str | None = None
+    mapping_version: str | None = None
+    reason: str = ""
+
+    def to_payload(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class CompanyValuationDefaultTemplateResolution:
+    template_id: str
+    template_version: str
+    source: str
+    reason: str
+    mapping_id: str | None = None
+    mapping_version: str | None = None
+
+    def to_payload(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class CompanyValuationOverlayResolution:
+    flags: dict[str, bool] = field(default_factory=dict)
+    reasons: dict[str, str] = field(default_factory=dict)
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "flags": dict(self.flags),
+            "reasons": dict(self.reasons),
+        }
+
+
+@dataclass(frozen=True)
+class CompanyValuationTaxonomyResolution:
+    raw_classification: CompanyValuationRawClassification
+    canonical_taxonomy: CompanyValuationCanonicalTaxonomy
+    default_template: CompanyValuationDefaultTemplateResolution
+    overlays: CompanyValuationOverlayResolution = field(
+        default_factory=CompanyValuationOverlayResolution
+    )
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "raw_classification": self.raw_classification.to_payload(),
+            "canonical_taxonomy": self.canonical_taxonomy.to_payload(),
+            "default_template": self.default_template.to_payload(),
+            "overlays": self.overlays.to_payload(),
+        }
 
 
 @dataclass(frozen=True)

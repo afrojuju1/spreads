@@ -1,0 +1,290 @@
+mapping_version: v1
+
+mappings:
+  - mapping_id: taxonomy_mapping:sic:7372:enterprise_application_software
+    source_standard: sic
+    source_code: "7372"
+    source_title: Services-Prepackaged Software
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:technology
+    canonical_industry_group_id: taxonomy:industry_group:software_and_services
+    canonical_industry_id: taxonomy:industry:application_software
+    canonical_subindustry_id: taxonomy:subindustry:enterprise_application_software
+    priority: 200
+    notes: Seed mapping for software issuers.
+
+  - mapping_id: taxonomy_mapping:naics:513210:enterprise_application_software
+    source_standard: naics
+    source_code: "513210"
+    source_title: Software Publishers
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:technology
+    canonical_industry_group_id: taxonomy:industry_group:software_and_services
+    canonical_industry_id: taxonomy:industry:application_software
+    canonical_subindustry_id: taxonomy:subindustry:enterprise_application_software
+    priority: 300
+    notes: Seed mapping for software issuers.
+
+  - mapping_id: taxonomy_mapping:sic:3571:integrated_device_platforms
+    source_standard: sic
+    source_code: "3571"
+    source_title: Electronic Computers
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:technology
+    canonical_industry_group_id: taxonomy:industry_group:technology_hardware_and_equipment
+    canonical_industry_id: taxonomy:industry:device_and_computing_platforms
+    canonical_subindustry_id: taxonomy:subindustry:integrated_device_platforms
+    priority: 200
+    notes: Seed mapping for hardware platform issuers.
+
+  - mapping_id: taxonomy_mapping:naics:334111:integrated_device_platforms
+    source_standard: naics
+    source_code: "334111"
+    source_title: Electronic Computer Manufacturing
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:technology
+    canonical_industry_group_id: taxonomy:industry_group:technology_hardware_and_equipment
+    canonical_industry_id: taxonomy:industry:device_and_computing_platforms
+    canonical_subindustry_id: taxonomy:subindustry:integrated_device_platforms
+    priority: 300
+    notes: Seed mapping for hardware platform issuers.
+
+  - mapping_id: taxonomy_mapping:sic:2911:integrated_refining_and_marketing_assets
+    source_standard: sic
+    source_code: "2911"
+    source_title: Petroleum Refining
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:energy
+    canonical_industry_group_id: taxonomy:industry_group:hydrocarbon_value_chain
+    canonical_industry_id: taxonomy:industry:integrated_refining_and_marketing
+    canonical_subindustry_id: taxonomy:subindustry:integrated_refining_and_marketing_assets
+    priority: 200
+    notes: Seed mapping for integrated refiners.
+
+  - mapping_id: taxonomy_mapping:naics:324110:integrated_refining_and_marketing_assets
+    source_standard: naics
+    source_code: "324110"
+    source_title: Petroleum Refineries
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:energy
+    canonical_industry_group_id: taxonomy:industry_group:hydrocarbon_value_chain
+    canonical_industry_id: taxonomy:industry:integrated_refining_and_marketing
+    canonical_subindustry_id: taxonomy:subindustry:integrated_refining_and_marketing_assets
+    priority: 300
+    notes: Seed mapping for integrated refiners.
+
+  - mapping_id: taxonomy_mapping:sic:1311:upstream_exploration_and_production_assets
+    source_standard: sic
+    source_code: "1311"
+    source_title: Crude Petroleum and Natural Gas
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:energy
+    canonical_industry_group_id: taxonomy:industry_group:hydrocarbon_value_chain
+    canonical_industry_id: taxonomy:industry:upstream_exploration_and_production
+    canonical_subindustry_id: taxonomy:subindustry:upstream_exploration_and_production_assets
+    priority: 220
+    notes: Exploration and production issuers; current stressed names stay overlays later.
+
+  - mapping_id: taxonomy_mapping:sic:4922:midstream_natural_gas_and_lng_infrastructure
+    source_standard: sic
+    source_code: "4922"
+    source_title: Natural Gas Transmission
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:energy
+    canonical_industry_group_id: taxonomy:industry_group:hydrocarbon_value_chain
+    canonical_industry_id: taxonomy:industry:midstream_transport_and_storage
+    canonical_subindustry_id: taxonomy:subindustry:midstream_natural_gas_and_lng_infrastructure
+    priority: 220
+    notes: Midstream natural gas transmission infrastructure.
+
+  - mapping_id: taxonomy_mapping:sic:4923:midstream_natural_gas_and_lng_infrastructure
+    source_standard: sic
+    source_code: "4923"
+    source_title: Natural Gas Transmission and Distribution
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:energy
+    canonical_industry_group_id: taxonomy:industry_group:hydrocarbon_value_chain
+    canonical_industry_id: taxonomy:industry:midstream_transport_and_storage
+    canonical_subindustry_id: taxonomy:subindustry:midstream_natural_gas_and_lng_infrastructure
+    priority: 220
+    notes: Midstream natural gas transmission and distribution infrastructure.
+
+  - mapping_id: taxonomy_mapping:sic:4924:midstream_natural_gas_and_lng_infrastructure
+    source_standard: sic
+    source_code: "4924"
+    source_title: Natural Gas Distribution
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:energy
+    canonical_industry_group_id: taxonomy:industry_group:hydrocarbon_value_chain
+    canonical_industry_id: taxonomy:industry:midstream_transport_and_storage
+    canonical_subindustry_id: taxonomy:subindustry:midstream_natural_gas_and_lng_infrastructure
+    priority: 220
+    notes: Asset-heavy natural gas and LNG infrastructure.
+
+  - mapping_id: taxonomy_mapping:sic:3561:industrial_machinery_and_components
+    source_standard: sic
+    source_code: "3561"
+    source_title: Pumps and Pumping Equipment
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:capital_goods
+    canonical_industry_id: taxonomy:industry:industrial_machinery_and_components
+    canonical_subindustry_id: taxonomy:subindustry:industrial_machinery_and_components
+    priority: 220
+    notes: Industrial machinery issuers aligned to the industrial manufacturing template.
+
+  - mapping_id: taxonomy_mapping:sic:3531:industrial_machinery_and_components
+    source_standard: sic
+    source_code: "3531"
+    source_title: Construction Machinery and Equipment
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:capital_goods
+    canonical_industry_id: taxonomy:industry:industrial_machinery_and_components
+    canonical_subindustry_id: taxonomy:subindustry:industrial_machinery_and_components
+    priority: 220
+    notes: Industrial machinery issuers aligned to the industrial manufacturing template.
+
+  - mapping_id: taxonomy_mapping:sic:3510:industrial_machinery_and_components
+    source_standard: sic
+    source_code: "3510"
+    source_title: Engines and Turbines
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:capital_goods
+    canonical_industry_id: taxonomy:industry:industrial_machinery_and_components
+    canonical_subindustry_id: taxonomy:subindustry:industrial_machinery_and_components
+    priority: 220
+    notes: Industrial machinery issuers aligned to the industrial manufacturing template.
+
+  - mapping_id: taxonomy_mapping:sic:3523:industrial_machinery_and_components
+    source_standard: sic
+    source_code: "3523"
+    source_title: Farm Machinery and Equipment
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:capital_goods
+    canonical_industry_id: taxonomy:industry:industrial_machinery_and_components
+    canonical_subindustry_id: taxonomy:subindustry:industrial_machinery_and_components
+    priority: 220
+    notes: Industrial machinery issuers aligned to the industrial manufacturing template.
+
+  - mapping_id: taxonomy_mapping:sic:3823:diversified_instrumentation_and_specialty_equipment
+    source_standard: sic
+    source_code: "3823"
+    source_title: Industrial Instruments for Measurement, Display, and Control
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:capital_goods
+    canonical_industry_id: taxonomy:industry:diversified_industrial_technology
+    canonical_subindustry_id: taxonomy:subindustry:diversified_instrumentation_and_specialty_equipment
+    priority: 220
+    notes: Diversified industrial instrumentation and control platforms.
+
+  - mapping_id: taxonomy_mapping:sic:3560:diversified_instrumentation_and_specialty_equipment
+    source_standard: sic
+    source_code: "3560"
+    source_title: General Industrial Machinery and Equipment
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:capital_goods
+    canonical_industry_id: taxonomy:industry:diversified_industrial_technology
+    canonical_subindustry_id: taxonomy:subindustry:diversified_instrumentation_and_specialty_equipment
+    priority: 220
+    notes: Diversified industrial machinery and specialty process equipment.
+
+  - mapping_id: taxonomy_mapping:sic:3812:aerospace_and_defense_primes_and_systems
+    source_standard: sic
+    source_code: "3812"
+    source_title: Search, Detection, Navigation, Guidance, Aeronautical, and Nautical Systems
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:aerospace_and_defense
+    canonical_industry_id: taxonomy:industry:aerospace_and_defense
+    canonical_subindustry_id: taxonomy:subindustry:aerospace_and_defense_primes_and_systems
+    priority: 220
+    notes: Aerospace and defense systems issuers.
+
+  - mapping_id: taxonomy_mapping:sic:3721:aerospace_and_defense_primes_and_systems
+    source_standard: sic
+    source_code: "3721"
+    source_title: Aircraft
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:aerospace_and_defense
+    canonical_industry_id: taxonomy:industry:aerospace_and_defense
+    canonical_subindustry_id: taxonomy:subindustry:aerospace_and_defense_primes_and_systems
+    priority: 220
+    notes: Aerospace primes and aircraft systems.
+
+  - mapping_id: taxonomy_mapping:sic:3760:aerospace_and_defense_primes_and_systems
+    source_standard: sic
+    source_code: "3760"
+    source_title: Guided Missiles and Space Vehicles and Parts
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:aerospace_and_defense
+    canonical_industry_id: taxonomy:industry:aerospace_and_defense
+    canonical_subindustry_id: taxonomy:subindustry:aerospace_and_defense_primes_and_systems
+    priority: 220
+    notes: Aerospace and defense primes and systems.
+
+  - mapping_id: taxonomy_mapping:sic:5331:multi_format_and_specialty_retail
+    source_standard: sic
+    source_code: "5331"
+    source_title: Variety Stores
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:consumer
+    canonical_industry_group_id: taxonomy:industry_group:consumer_retailing
+    canonical_industry_id: taxonomy:industry:multi_format_and_specialty_retail
+    canonical_subindustry_id: taxonomy:subindustry:multi_format_and_specialty_retail
+    priority: 220
+    notes: Large-format consumer retail issuers.
+
+  - mapping_id: taxonomy_mapping:sic:5500:multi_format_and_specialty_retail
+    source_standard: sic
+    source_code: "5500"
+    source_title: Automotive Dealers and Gasoline Service Stations
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:consumer
+    canonical_industry_group_id: taxonomy:industry_group:consumer_retailing
+    canonical_industry_id: taxonomy:industry:multi_format_and_specialty_retail
+    canonical_subindustry_id: taxonomy:subindustry:multi_format_and_specialty_retail
+    priority: 220
+    notes: Consumer dealer and service retail issuers.
+
+  - mapping_id: taxonomy_mapping:sic:5531:multi_format_and_specialty_retail
+    source_standard: sic
+    source_code: "5531"
+    source_title: Auto and Home Supply Stores
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:consumer
+    canonical_industry_group_id: taxonomy:industry_group:consumer_retailing
+    canonical_industry_id: taxonomy:industry:multi_format_and_specialty_retail
+    canonical_subindustry_id: taxonomy:subindustry:multi_format_and_specialty_retail
+    priority: 220
+    notes: Specialty consumer retail issuers.
+
+  - mapping_id: taxonomy_mapping:sic:5211:multi_format_and_specialty_retail
+    source_standard: sic
+    source_code: "5211"
+    source_title: Lumber and Other Building Materials Dealers
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:consumer
+    canonical_industry_group_id: taxonomy:industry_group:consumer_retailing
+    canonical_industry_id: taxonomy:industry:multi_format_and_specialty_retail
+    canonical_subindustry_id: taxonomy:subindustry:multi_format_and_specialty_retail
+    priority: 220
+    notes: Home-improvement and building-materials retail issuers.
+
+  - mapping_id: taxonomy_mapping:sic:5651:multi_format_and_specialty_retail
+    source_standard: sic
+    source_code: "5651"
+    source_title: Family Clothing Stores
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:consumer
+    canonical_industry_group_id: taxonomy:industry_group:consumer_retailing
+    canonical_industry_id: taxonomy:industry:multi_format_and_specialty_retail
+    canonical_subindustry_id: taxonomy:subindustry:multi_format_and_specialty_retail
+    priority: 220
+    notes: Apparel and off-price retail issuers.

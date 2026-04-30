@@ -1,0 +1,166 @@
+taxonomy_version: v1
+
+nodes:
+  - taxonomy_node_id: taxonomy:sector:technology
+    taxonomy_level: sector
+    taxonomy_code: technology
+    taxonomy_name: Technology
+
+  - taxonomy_node_id: taxonomy:industry_group:software_and_services
+    taxonomy_level: industry_group
+    taxonomy_code: software_and_services
+    taxonomy_name: Software and Services
+    parent_taxonomy_node_id: taxonomy:sector:technology
+
+  - taxonomy_node_id: taxonomy:industry:application_software
+    taxonomy_level: industry
+    taxonomy_code: application_software
+    taxonomy_name: Application Software
+    parent_taxonomy_node_id: taxonomy:industry_group:software_and_services
+
+  - taxonomy_node_id: taxonomy:subindustry:enterprise_application_software
+    taxonomy_level: subindustry
+    taxonomy_code: enterprise_application_software
+    taxonomy_name: Enterprise Application Software
+    parent_taxonomy_node_id: taxonomy:industry:application_software
+
+  - taxonomy_node_id: taxonomy:industry_group:technology_hardware_and_equipment
+    taxonomy_level: industry_group
+    taxonomy_code: technology_hardware_and_equipment
+    taxonomy_name: Technology Hardware and Equipment
+    parent_taxonomy_node_id: taxonomy:sector:technology
+
+  - taxonomy_node_id: taxonomy:industry:device_and_computing_platforms
+    taxonomy_level: industry
+    taxonomy_code: device_and_computing_platforms
+    taxonomy_name: Device and Computing Platforms
+    parent_taxonomy_node_id: taxonomy:industry_group:technology_hardware_and_equipment
+
+  - taxonomy_node_id: taxonomy:subindustry:integrated_device_platforms
+    taxonomy_level: subindustry
+    taxonomy_code: integrated_device_platforms
+    taxonomy_name: Integrated Device Platforms
+    parent_taxonomy_node_id: taxonomy:industry:device_and_computing_platforms
+
+  - taxonomy_node_id: taxonomy:sector:energy
+    taxonomy_level: sector
+    taxonomy_code: energy
+    taxonomy_name: Energy
+
+  - taxonomy_node_id: taxonomy:industry_group:hydrocarbon_value_chain
+    taxonomy_level: industry_group
+    taxonomy_code: hydrocarbon_value_chain
+    taxonomy_name: Hydrocarbon Value Chain
+    parent_taxonomy_node_id: taxonomy:sector:energy
+
+  - taxonomy_node_id: taxonomy:industry:integrated_refining_and_marketing
+    taxonomy_level: industry
+    taxonomy_code: integrated_refining_and_marketing
+    taxonomy_name: Integrated Refining and Marketing
+    parent_taxonomy_node_id: taxonomy:industry_group:hydrocarbon_value_chain
+
+  - taxonomy_node_id: taxonomy:subindustry:integrated_refining_and_marketing_assets
+    taxonomy_level: subindustry
+    taxonomy_code: integrated_refining_and_marketing_assets
+    taxonomy_name: Integrated Refining and Marketing Assets
+    parent_taxonomy_node_id: taxonomy:industry:integrated_refining_and_marketing
+
+  - taxonomy_node_id: taxonomy:industry:upstream_exploration_and_production
+    taxonomy_level: industry
+    taxonomy_code: upstream_exploration_and_production
+    taxonomy_name: Upstream Exploration and Production
+    parent_taxonomy_node_id: taxonomy:industry_group:hydrocarbon_value_chain
+
+  - taxonomy_node_id: taxonomy:subindustry:upstream_exploration_and_production_assets
+    taxonomy_level: subindustry
+    taxonomy_code: upstream_exploration_and_production_assets
+    taxonomy_name: Upstream Exploration and Production Assets
+    parent_taxonomy_node_id: taxonomy:industry:upstream_exploration_and_production
+
+  - taxonomy_node_id: taxonomy:industry:midstream_transport_and_storage
+    taxonomy_level: industry
+    taxonomy_code: midstream_transport_and_storage
+    taxonomy_name: Midstream Transport and Storage
+    parent_taxonomy_node_id: taxonomy:industry_group:hydrocarbon_value_chain
+
+  - taxonomy_node_id: taxonomy:subindustry:midstream_natural_gas_and_lng_infrastructure
+    taxonomy_level: subindustry
+    taxonomy_code: midstream_natural_gas_and_lng_infrastructure
+    taxonomy_name: Midstream Natural Gas and LNG Infrastructure
+    parent_taxonomy_node_id: taxonomy:industry:midstream_transport_and_storage
+
+  - taxonomy_node_id: taxonomy:sector:industrials
+    taxonomy_level: sector
+    taxonomy_code: industrials
+    taxonomy_name: Industrials
+
+  - taxonomy_node_id: taxonomy:industry_group:capital_goods
+    taxonomy_level: industry_group
+    taxonomy_code: capital_goods
+    taxonomy_name: Capital Goods
+    parent_taxonomy_node_id: taxonomy:sector:industrials
+
+  - taxonomy_node_id: taxonomy:industry:industrial_machinery_and_components
+    taxonomy_level: industry
+    taxonomy_code: industrial_machinery_and_components
+    taxonomy_name: Industrial Machinery and Components
+    parent_taxonomy_node_id: taxonomy:industry_group:capital_goods
+
+  - taxonomy_node_id: taxonomy:subindustry:industrial_machinery_and_components
+    taxonomy_level: subindustry
+    taxonomy_code: industrial_machinery_and_components
+    taxonomy_name: Industrial Machinery and Components
+    parent_taxonomy_node_id: taxonomy:industry:industrial_machinery_and_components
+
+  - taxonomy_node_id: taxonomy:industry:diversified_industrial_technology
+    taxonomy_level: industry
+    taxonomy_code: diversified_industrial_technology
+    taxonomy_name: Diversified Industrial Technology
+    parent_taxonomy_node_id: taxonomy:industry_group:capital_goods
+
+  - taxonomy_node_id: taxonomy:subindustry:diversified_instrumentation_and_specialty_equipment
+    taxonomy_level: subindustry
+    taxonomy_code: diversified_instrumentation_and_specialty_equipment
+    taxonomy_name: Diversified Instrumentation and Specialty Equipment
+    parent_taxonomy_node_id: taxonomy:industry:diversified_industrial_technology
+
+  - taxonomy_node_id: taxonomy:industry_group:aerospace_and_defense
+    taxonomy_level: industry_group
+    taxonomy_code: aerospace_and_defense
+    taxonomy_name: Aerospace and Defense
+    parent_taxonomy_node_id: taxonomy:sector:industrials
+
+  - taxonomy_node_id: taxonomy:industry:aerospace_and_defense
+    taxonomy_level: industry
+    taxonomy_code: aerospace_and_defense
+    taxonomy_name: Aerospace and Defense
+    parent_taxonomy_node_id: taxonomy:industry_group:aerospace_and_defense
+
+  - taxonomy_node_id: taxonomy:subindustry:aerospace_and_defense_primes_and_systems
+    taxonomy_level: subindustry
+    taxonomy_code: aerospace_and_defense_primes_and_systems
+    taxonomy_name: Aerospace and Defense Primes and Systems
+    parent_taxonomy_node_id: taxonomy:industry:aerospace_and_defense
+
+  - taxonomy_node_id: taxonomy:sector:consumer
+    taxonomy_level: sector
+    taxonomy_code: consumer
+    taxonomy_name: Consumer
+
+  - taxonomy_node_id: taxonomy:industry_group:consumer_retailing
+    taxonomy_level: industry_group
+    taxonomy_code: consumer_retailing
+    taxonomy_name: Consumer Retailing
+    parent_taxonomy_node_id: taxonomy:sector:consumer
+
+  - taxonomy_node_id: taxonomy:industry:multi_format_and_specialty_retail
+    taxonomy_level: industry
+    taxonomy_code: multi_format_and_specialty_retail
+    taxonomy_name: Multi-Format and Specialty Retail
+    parent_taxonomy_node_id: taxonomy:industry_group:consumer_retailing
+
+  - taxonomy_node_id: taxonomy:subindustry:multi_format_and_specialty_retail
+    taxonomy_level: subindustry
+    taxonomy_code: multi_format_and_specialty_retail
+    taxonomy_name: Multi-Format and Specialty Retail
+    parent_taxonomy_node_id: taxonomy:industry:multi_format_and_specialty_retail

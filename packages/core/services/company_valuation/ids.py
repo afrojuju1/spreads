@@ -175,6 +175,10 @@ def build_screening_row_id(issuer_cik: str, as_of: date | datetime | str) -> str
     return f"screen:{_normalize_cik(issuer_cik)}:{rendered}"
 
 
+def build_issuer_overlay_flag_id(issuer_cik: str, flag_key: str) -> str:
+    return f"issuer_overlay_flag:{_normalize_cik(issuer_cik)}:{_as_text(flag_key).strip().lower()}"
+
+
 def normalize_cik(value: str | None) -> str:
     return _normalize_cik(value)
 

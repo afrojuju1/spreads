@@ -1,0 +1,32 @@
+rule_version: v1
+
+rules:
+  - rule_id: overlay_rule:limited_coverage
+    flag_key: limited_coverage
+    active: true
+    reason: Limited coverage sectors remain outside the current valuation template set.
+    company_name_keywords:
+      - bank
+      - insurance
+      - reit
+      - real estate investment trust
+    sic_title_keywords:
+      - bank
+      - insurance
+      - reit
+      - real estate investment trust
+
+  - rule_id: overlay_rule:stressed_operator
+    flag_key: stressed_operator
+    active: false
+    reason: Placeholder overlay; no live stressed-operator assignments yet.
+
+  - rule_id: overlay_rule:execution_recovery
+    flag_key: execution_recovery
+    active: false
+    reason: Placeholder overlay; no live execution-recovery assignments yet.
+
+  - rule_id: overlay_rule:special_situation
+    flag_key: special_situation
+    active: false
+    reason: Placeholder overlay; no live special-situation assignments yet.

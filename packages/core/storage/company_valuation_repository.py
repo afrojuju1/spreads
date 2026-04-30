@@ -15,17 +15,22 @@ from core.storage.company_valuation_models import (
     CompanyValuationSnapshotModel,
     FeatureSnapshotModel,
     FilingModel,
+    IssuerClassificationModel,
     InstitutionalFilingModel,
     InstitutionalHolderModel,
     InstitutionalPositionModel,
     IssuerModel,
+    IssuerOverlayFlagModel,
     MarketSnapshotModel,
     ScreeningRowModel,
     SecurityIdentifierHistoryModel,
     SecurityModel,
     StatementPeriodSnapshotModel,
+    TaxonomyMappingModel,
+    TaxonomyNodeModel,
     TreasuryCurveSnapshotModel,
     UnresolvedInstitutionalPositionModel,
+    ValuationTemplateMappingModel,
     InsiderTransactionModel,
     XbrlFactModel,
 )
@@ -42,6 +47,15 @@ class CompanyValuationRepository(RepositoryBase):
             "unresolved_institutional_positions",
             "company_valuation_snapshots",
             "screening_rows",
+        )
+
+    def taxonomy_schema_ready(self) -> bool:
+        return self.schema_has_tables(
+            "taxonomy_nodes",
+            "taxonomy_mappings",
+            "valuation_template_mappings",
+            "issuer_classifications",
+            "issuer_overlay_flags",
         )
 
     @staticmethod
@@ -84,6 +98,99 @@ class CompanyValuationRepository(RepositoryBase):
                     row = IssuerModel(issuer_id=issuer_id)
                     session.add(row)
                 self._assign_model(row, self._preserve_created_at(row, payload))
+        return len(payloads)
+
+    def upsert_taxonomy_nodes(
+        self,
+        payloads: list[dict[str, Any]],
+    ) -> int:
+        if not payloads:
+            return 0
+        with self.session_scope() as session:
+            for payload in payloads:
+                taxonomy_node_id = str(payload["taxonomy_node_id"])
+                row = session.get(TaxonomyNodeModel, taxonomy_node_id)
+                if row is None:
+                    row = TaxonomyNodeModel(taxonomy_node_id=taxonomy_node_id)
+                    session.add(row)
+                self._assign_model(row, payload)
+        return len(payloads)
+
+    def upsert_taxonomy_mappings(
+        self,
+        payloads: list[dict[str, Any]],
+    ) -> int:
+        if not payloads:
+            return 0
+        with self.session_scope() as session:
+            for payload in payloads:
+                mapping_id = str(payload["mapping_id"])
+                row = session.get(TaxonomyMappingModel, mapping_id)
+                if row is None:
+                    row = TaxonomyMappingModel(mapping_id=mapping_id)
+                    session.add(row)
+                self._assign_model(row, payload)
+        return len(payloads)
+
+    def upsert_valuation_template_mappings(
+        self,
+        payloads: list[dict[str, Any]],
+    ) -> int:
+        if not payloads:
+            return 0
+        with self.session_scope() as session:
+            for payload in payloads:
+                mapping_id = str(payload["mapping_id"])
+                row = session.get(ValuationTemplateMappingModel, mapping_id)
+                if row is None:
+                    row = ValuationTemplateMappingModel(mapping_id=mapping_id)
+                    session.add(row)
+                self._assign_model(row, payload)
+        return len(payloads)
+
+    def upsert_issuer_classification(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        issuer_id = str(payload["issuer_id"])
+        with self.session_scope() as session:
+            row = session.get(IssuerClassificationModel, issuer_id)
+            if row is None:
+                row = IssuerClassificationModel(issuer_id=issuer_id)
+                session.add(row)
+            self._assign_model(row, self._preserve_created_at(row, payload))
+        return self.get_issuer_classification(issuer_id=issuer_id) or {}
+
+    def upsert_issuer_overlay_flags(
+        self,
+        payloads: list[dict[str, Any]],
+    ) -> int:
+        if not payloads:
+            return 0
+        with self.session_scope() as session:
+            for payload in payloads:
+                flag_id = str(payload["issuer_overlay_flag_id"])
+                row = session.get(IssuerOverlayFlagModel, flag_id)
+                if row is None:
+                    row = IssuerOverlayFlagModel(issuer_overlay_flag_id=flag_id)
+                    session.add(row)
+                self._assign_model(row, self._preserve_created_at(row, payload))
+        return len(payloads)
+
+    def replace_issuer_overlay_flags(
+        self,
+        *,
+        issuer_id: str,
+        payloads: list[dict[str, Any]],
+    ) -> int:
+        normalized_issuer_id = str(issuer_id)
+        with self.session_scope() as session:
+            session.execute(
+                delete(IssuerOverlayFlagModel).where(
+                    IssuerOverlayFlagModel.issuer_id == normalized_issuer_id
+                )
+            )
+            session.add_all(IssuerOverlayFlagModel(**payload) for payload in payloads)
         return len(payloads)
 
     def upsert_securities(
@@ -436,7 +543,14 @@ class CompanyValuationRepository(RepositoryBase):
         issuer_model, resolved_ticker = row
         return self.row(issuer_model, extra={"ticker": resolved_ticker})
 
-    def list_issuers(self) -> list[dict[str, Any]]:
+    def list_issuers(
+        self,
+        *,
+        issuer_ids: tuple[str, ...] | None = None,
+        ciks: tuple[str, ...] | None = None,
+        tickers: tuple[str, ...] | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
         statement = (
             select(IssuerModel, SecurityModel.ticker.label("ticker"))
             .join(
@@ -452,12 +566,81 @@ class CompanyValuationRepository(RepositoryBase):
                 SecurityModel.created_at.desc(),
             )
         )
+        normalized_issuer_ids = tuple(
+            str(value).strip()
+            for value in (issuer_ids or ())
+            if str(value or "").strip()
+        )
+        if normalized_issuer_ids:
+            statement = statement.where(IssuerModel.issuer_id.in_(normalized_issuer_ids))
+        normalized_ciks = tuple(
+            str(value).strip()
+            for value in (ciks or ())
+            if str(value or "").strip()
+        )
+        if normalized_ciks:
+            statement = statement.where(IssuerModel.cik.in_(normalized_ciks))
+        normalized_tickers = tuple(
+            str(value).upper().strip()
+            for value in (tickers or ())
+            if str(value or "").strip()
+        )
+        if normalized_tickers:
+            statement = statement.where(SecurityModel.ticker.in_(normalized_tickers))
+        if limit is not None:
+            statement = statement.limit(limit)
         with self.session_factory() as session:
             rows = session.execute(statement).all()
         return [
             self.row(issuer_model, extra={"ticker": resolved_ticker})
             for issuer_model, resolved_ticker in rows
         ]
+
+    def get_issuer_classification(
+        self,
+        *,
+        issuer_id: str,
+    ) -> dict[str, Any] | None:
+        statement = (
+            select(
+                IssuerClassificationModel,
+                IssuerModel.sic.label("raw_sic_code"),
+                IssuerModel.sic_description.label("raw_sic_title"),
+                IssuerModel.naics.label("raw_naics_code"),
+            )
+            .join(IssuerModel, IssuerModel.issuer_id == IssuerClassificationModel.issuer_id)
+            .where(IssuerClassificationModel.issuer_id == str(issuer_id))
+        )
+        with self.session_factory() as session:
+            row = session.execute(statement).first()
+        if row is None:
+            return None
+        classification_model, raw_sic_code, raw_sic_title, raw_naics_code = row
+        return self.row(
+            classification_model,
+            extra={
+                "raw_sic_code": raw_sic_code,
+                "raw_sic_title": raw_sic_title,
+                "raw_naics_code": raw_naics_code,
+                "raw_naics_title": None,
+            },
+        )
+
+    def list_issuer_overlay_flags(
+        self,
+        *,
+        issuer_id: str,
+        active_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        statement = select(IssuerOverlayFlagModel).where(
+            IssuerOverlayFlagModel.issuer_id == str(issuer_id)
+        )
+        if active_only:
+            statement = statement.where(IssuerOverlayFlagModel.active.is_(True))
+        statement = statement.order_by(IssuerOverlayFlagModel.flag_key.asc())
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return self.rows(rows)
 
     def list_issuers_for_screening(
         self,
