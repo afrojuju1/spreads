@@ -549,6 +549,7 @@ class CompanyValuationRepository(RepositoryBase):
         issuer_ids: tuple[str, ...] | None = None,
         ciks: tuple[str, ...] | None = None,
         tickers: tuple[str, ...] | None = None,
+        has_raw_classification: bool | None = None,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
         statement = (
@@ -587,6 +588,22 @@ class CompanyValuationRepository(RepositoryBase):
         )
         if normalized_tickers:
             statement = statement.where(SecurityModel.ticker.in_(normalized_tickers))
+        if has_raw_classification is True:
+            statement = statement.where(
+                IssuerModel.sic.is_not(None),
+                IssuerModel.sic != "",
+                IssuerModel.sic_description.is_not(None),
+                IssuerModel.sic_description != "",
+            )
+        elif has_raw_classification is False:
+            statement = statement.where(
+                or_(
+                    IssuerModel.sic.is_(None),
+                    IssuerModel.sic == "",
+                    IssuerModel.sic_description.is_(None),
+                    IssuerModel.sic_description == "",
+                )
+            )
         if limit is not None:
             statement = statement.limit(limit)
         with self.session_factory() as session:
@@ -648,6 +665,7 @@ class CompanyValuationRepository(RepositoryBase):
         as_of: str | datetime,
         template_id: str | None = None,
         tickers: tuple[str, ...] | None = None,
+        stressed_operator_only: bool = False,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
         as_of_dt = parse_datetime(as_of)
@@ -676,6 +694,8 @@ class CompanyValuationRepository(RepositoryBase):
         )
         if template_id:
             statement = statement.where(IssuerModel.template_id == template_id)
+        if stressed_operator_only:
+            statement = statement.where(IssuerModel.stressed_operator_flag.is_(True))
         normalized_tickers = tuple(str(value).upper().strip() for value in (tickers or ()) if str(value or "").strip())
         if normalized_tickers:
             statement = statement.where(SecurityModel.ticker.in_(normalized_tickers))
@@ -1176,6 +1196,7 @@ class CompanyValuationRepository(RepositoryBase):
         as_of: str,
         template_id: str | None = None,
         tickers: tuple[str, ...] | None = None,
+        stressed_operator_only: bool = False,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         statement = (
@@ -1191,6 +1212,8 @@ class CompanyValuationRepository(RepositoryBase):
         )
         if template_id:
             statement = statement.where(ScreeningRowModel.template_id == template_id)
+        if stressed_operator_only:
+            statement = statement.where(ScreeningRowModel.stressed_operator_flag.is_(True))
         normalized_tickers = tuple(str(value).upper().strip() for value in (tickers or ()) if str(value or "").strip())
         if normalized_tickers:
             statement = statement.where(ScreeningRowModel.ticker.in_(normalized_tickers))

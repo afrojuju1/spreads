@@ -31,6 +31,8 @@ class CompanyValuationScreenRefreshRequest:
     template_id: str | None = None
     tickers: tuple[str, ...] | None = None
     issuer_limit: int | None = None
+    supported_only: bool = True
+    stressed_operator_only: bool = False
     config_root: str | None = None
 
 
@@ -223,6 +225,8 @@ def enqueue_company_valuation_screen_materialize_job(
         "tickers": list(tickers),
         "template_id": request.template_id,
         "issuer_limit": request.issuer_limit,
+        "supported_only": bool(request.supported_only),
+        "stressed_operator_only": bool(request.stressed_operator_only),
         "config_root": request.config_root,
     }
     scope_hash = _scope_hash(scope)
@@ -232,6 +236,8 @@ def enqueue_company_valuation_screen_materialize_job(
         "template_id": request.template_id,
         "tickers": list(tickers),
         "issuer_limit": request.issuer_limit,
+        "supported_only": bool(request.supported_only),
+        "stressed_operator_only": bool(request.stressed_operator_only),
         "config_root": request.config_root,
         "singleton_scope": f"screen:{scope_hash}",
     }

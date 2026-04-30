@@ -76,6 +76,20 @@ class CompanyValuationTemplateAssignment:
     source: str
     reason: str
     limited_coverage_flag: bool = False
+    stressed_operator_flag: bool = False
+
+
+def resolve_company_valuation_effective_template(
+    *,
+    issuer_row: dict[str, Any],
+    config_root: str | Path | None = None,
+) -> CompanyValuationTemplate:
+    template_id = str(issuer_row["template_id"])
+    if template_id == "energy_asset_heavy" and bool(
+        issuer_row.get("stressed_operator_flag")
+    ):
+        return resolve_company_valuation_template("stressed_operator", config_root)
+    return resolve_company_valuation_template(template_id, config_root)
 
 
 def default_company_valuation_config_root(
@@ -203,6 +217,9 @@ def _load_company_valuation_issuer_overrides_cached(
                 template_id=_as_text(item.get("template_id"), field_name="template_id"),
                 reason=_as_text(item.get("reason"), field_name="reason"),
                 active=bool(item.get("active", True)),
+                stressed_operator_flag=bool(
+                    item.get("stressed_operator_flag", False)
+                ),
             )
         )
     return tuple(overrides)
@@ -234,11 +251,31 @@ def resolve_company_valuation_template_assignment(
     overrides = load_company_valuation_issuer_overrides(config_root)
     override = overrides.get(str(cik).zfill(10))
     if override is not None and override.active:
-        template = resolve_company_valuation_template(override.template_id, config_root)
+        stressed_operator_flag = bool(
+            override.stressed_operator_flag
+            or override.template_id == "stressed_operator"
+        )
+        if stressed_operator_flag and override.template_id not in {
+            "energy_asset_heavy",
+            "stressed_operator",
+        }:
+            raise ValueError(
+                "stressed_operator_flag requires energy_asset_heavy as the base template"
+            )
+        resolved_template_id = (
+            "energy_asset_heavy"
+            if override.template_id == "stressed_operator"
+            else override.template_id
+        )
+        template = resolve_company_valuation_template(resolved_template_id, config_root)
+        reason = override.reason
+        if stressed_operator_flag:
+            reason = f"{reason};stressed_operator_overlay"
         return CompanyValuationTemplateAssignment(
             template=template,
             source="issuer_override",
-            reason=override.reason,
+            reason=reason,
+            stressed_operator_flag=stressed_operator_flag,
         )
 
     name_text = _normalized_text(company_name)
@@ -294,4 +331,5 @@ def resolve_company_valuation_template_assignment(
         source=source,
         reason=reason,
         limited_coverage_flag=limited_coverage_flag,
+        stressed_operator_flag=False,
     )

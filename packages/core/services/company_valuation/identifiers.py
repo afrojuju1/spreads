@@ -285,6 +285,7 @@ def _seed_openfigi_issuer_resolution(
         "template_assignment_source": "openfigi_seed",
         "template_assignment_reason": assignment_reason,
         "limited_coverage_flag": limited_coverage_flag,
+        "stressed_operator_flag": assignment.stressed_operator_flag,
         "created_at": created_at,
         "updated_at": created_at,
     }

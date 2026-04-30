@@ -31,6 +31,12 @@ mappings:
     template_id: energy_asset_heavy
     notes: Default template for midstream natural gas and LNG infrastructure.
 
+  - mapping_id: valuation_template_mapping:oilfield_services_and_equipment
+    taxonomy_node_id: taxonomy:subindustry:oilfield_services_and_equipment
+    taxonomy_level: subindustry
+    template_id: energy_asset_heavy
+    notes: Default template for oilfield services and equipment issuers.
+
   - mapping_id: valuation_template_mapping:industrial_machinery_and_components
     taxonomy_node_id: taxonomy:subindustry:industrial_machinery_and_components
     taxonomy_level: subindustry

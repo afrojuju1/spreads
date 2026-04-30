@@ -92,6 +92,7 @@ def _issuer_payload_from_profile(
         "template_assignment_source": assignment.source,
         "template_assignment_reason": assignment.reason,
         "limited_coverage_flag": assignment.limited_coverage_flag,
+        "stressed_operator_flag": assignment.stressed_operator_flag,
         "created_at": now,
         "updated_at": now,
     }

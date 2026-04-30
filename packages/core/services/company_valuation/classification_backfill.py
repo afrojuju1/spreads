@@ -7,11 +7,15 @@ from typing import Any
 
 from core.services.company_valuation.normalization import extract_submission_issuer_profile
 from core.services.company_valuation.sec_client import SecEdgarClient
+from core.services.company_valuation.taxonomy import (
+    supported_company_valuation_tickers,
+)
 from core.services.company_valuation.taxonomy_sync import (
     CompanyValuationTaxonomySyncRequest,
     sync_company_valuation_taxonomy_state,
 )
 from core.storage.company_valuation_repository import CompanyValuationRepository
+from core.services.company_valuation.ids import normalize_ticker
 
 
 @dataclass(frozen=True)
@@ -20,6 +24,7 @@ class CompanyValuationClassificationBackfillRequest:
     ciks: tuple[str, ...] | None = None
     issuer_ids: tuple[str, ...] | None = None
     issuer_limit: int | None = None
+    supported_only: bool = False
     missing_only: bool = True
     sync_taxonomy_shadow: bool = True
     taxonomy_output_root: str | None = None
@@ -83,6 +88,27 @@ def _normalize_optional_text(value: Any) -> str | None:
     return rendered or None
 
 
+def _resolved_ticker_scope(
+    *,
+    request_tickers: tuple[str, ...] | None,
+    supported_only: bool,
+) -> tuple[str, ...] | None:
+    normalized_request = tuple(
+        dict.fromkeys(
+            normalize_ticker(value)
+            for value in (request_tickers or ())
+            if str(value or "").strip()
+        )
+    )
+    if not supported_only:
+        return normalized_request or None
+    supported_tickers = supported_company_valuation_tickers()
+    if not normalized_request:
+        return supported_tickers
+    supported_set = set(supported_tickers)
+    return tuple(ticker for ticker in normalized_request if ticker in supported_set)
+
+
 def _sample_from_change(
     *,
     issuer_row: dict[str, Any],
@@ -118,12 +144,20 @@ def backfill_company_valuation_raw_classification(
     repo = repository or CompanyValuationRepository()
     sec_client = client or SecEdgarClient()
 
-    issuer_rows = repo.list_issuers(
-        issuer_ids=request.issuer_ids,
-        ciks=request.ciks,
-        tickers=request.tickers,
-        limit=request.issuer_limit,
+    resolved_tickers = _resolved_ticker_scope(
+        request_tickers=request.tickers,
+        supported_only=request.supported_only,
     )
+    if request.supported_only and not resolved_tickers:
+        issuer_rows = []
+    else:
+        issuer_rows = repo.list_issuers(
+            issuer_ids=request.issuer_ids,
+            ciks=request.ciks,
+            tickers=resolved_tickers,
+            has_raw_classification=False if request.missing_only else None,
+            limit=request.issuer_limit,
+        )
     issuers_requested = len(issuer_rows)
     samples: list[CompanyValuationClassificationBackfillSample] = []
     errors: list[str] = []
@@ -215,6 +249,8 @@ def backfill_company_valuation_raw_classification(
     notes: list[str] = []
     if request.missing_only:
         notes.append("Missing-only mode skips issuers that already have SIC and SIC description.")
+    if request.supported_only:
+        notes.append("Supported-only mode restricts the backfill to the curated supported issuer universe.")
     if not issuer_rows:
         notes.append("No issuers matched the requested classification backfill scope.")
     return CompanyValuationClassificationBackfillResult(

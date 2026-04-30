@@ -10,6 +10,7 @@ TemplateStatus: TypeAlias = Literal["active", "inactive"]
 TaxonomyLevel: TypeAlias = Literal["sector", "industry_group", "industry", "subindustry"]
 TaxonomySourceStandard: TypeAlias = Literal["sic", "naics", "issuer_override"]
 TaxonomyMatchMode: TypeAlias = Literal["exact", "prefix"]
+SupportStatus: TypeAlias = Literal["supported", "unsupported", "out_of_scope"]
 CompanyValuationDocumentPayload: TypeAlias = dict[str, Any]
 
 
@@ -38,6 +39,7 @@ class CompanyValuationTemplateOverride:
     template_id: str
     reason: str
     active: bool = True
+    stressed_operator_flag: bool = False
 
     def to_payload(self) -> dict[str, Any]:
         return asdict(self)
@@ -171,6 +173,45 @@ class CompanyValuationDefaultTemplateResolution:
 
 
 @dataclass(frozen=True)
+class CompanyValuationSupportedIssuer:
+    ticker: str
+    expected_template_id: str | None = None
+    reason: str = ""
+    active: bool = True
+
+    def to_payload(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class CompanyValuationSupportPolicy:
+    policy_version: str
+    allowlist_required: bool = True
+    supported_template_ids: tuple[str, ...] = ()
+    supported_issuers: tuple[CompanyValuationSupportedIssuer, ...] = ()
+
+    def to_payload(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["supported_template_ids"] = list(self.supported_template_ids)
+        payload["supported_issuers"] = [
+            row.to_payload() for row in self.supported_issuers
+        ]
+        return payload
+
+
+@dataclass(frozen=True)
+class CompanyValuationSupportResolution:
+    status: SupportStatus
+    reason: str
+    in_curated_universe: bool = False
+    expected_template_id: str | None = None
+    expected_template_match: bool | None = None
+
+    def to_payload(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class CompanyValuationOverlayResolution:
     flags: dict[str, bool] = field(default_factory=dict)
     reasons: dict[str, str] = field(default_factory=dict)
@@ -187,6 +228,12 @@ class CompanyValuationTaxonomyResolution:
     raw_classification: CompanyValuationRawClassification
     canonical_taxonomy: CompanyValuationCanonicalTaxonomy
     default_template: CompanyValuationDefaultTemplateResolution
+    support: CompanyValuationSupportResolution = field(
+        default_factory=lambda: CompanyValuationSupportResolution(
+            status="out_of_scope",
+            reason="support status not resolved",
+        )
+    )
     overlays: CompanyValuationOverlayResolution = field(
         default_factory=CompanyValuationOverlayResolution
     )
@@ -196,6 +243,7 @@ class CompanyValuationTaxonomyResolution:
             "raw_classification": self.raw_classification.to_payload(),
             "canonical_taxonomy": self.canonical_taxonomy.to_payload(),
             "default_template": self.default_template.to_payload(),
+            "support": self.support.to_payload(),
             "overlays": self.overlays.to_payload(),
         }
 
@@ -343,6 +391,7 @@ class CompanyValuationScreenRow:
     ownership_score: float | None = None
     ownership_special_situation_flag: bool = False
     limited_coverage_flag: bool = False
+    stressed_operator_flag: bool = False
     top_reason_codes: tuple[str, ...] = ()
 
     def to_payload(self) -> dict[str, Any]:

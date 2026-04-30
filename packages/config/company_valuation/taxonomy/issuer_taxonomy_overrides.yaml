@@ -1,1 +1,42 @@
-overrides: []
+overrides:
+  - issuer_cik: "0000029905"
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:capital_goods
+    canonical_industry_id: taxonomy:industry:diversified_industrial_technology
+    canonical_subindustry_id: taxonomy:subindustry:diversified_instrumentation_and_specialty_equipment
+    reason: Dover is a diversified industrial platform; SIC 3530 overstates heavy machinery concentration for valuation routing.
+
+  - issuer_cik: "0000032604"
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:capital_goods
+    canonical_industry_id: taxonomy:industry:industrial_machinery_and_components
+    canonical_subindustry_id: taxonomy:subindustry:industrial_machinery_and_components
+    reason: Emerson should route to industrial manufacturing; SIC 3600 is too broad and is shared with aerospace-heavy GE.
+
+  - issuer_cik: "0000814547"
+    canonical_sector_id: taxonomy:sector:technology
+    canonical_industry_group_id: taxonomy:industry_group:software_and_services
+    canonical_industry_id: taxonomy:industry:application_software
+    canonical_subindustry_id: taxonomy:subindustry:enterprise_application_software
+    reason: FICO is software-led despite broad SIC 7389 business-services labeling.
+
+  - issuer_cik: "0001718512"
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:capital_goods
+    canonical_industry_id: taxonomy:industry:industrial_machinery_and_components
+    canonical_subindustry_id: taxonomy:subindustry:industrial_machinery_and_components
+    reason: Gates aligns better to industrial manufacturing than to the diversified instrumentation fallback implied by SIC 3560.
+
+  - issuer_cik: "0000773840"
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:capital_goods
+    canonical_industry_id: taxonomy:industry:diversified_industrial_technology
+    canonical_subindustry_id: taxonomy:subindustry:diversified_instrumentation_and_specialty_equipment
+    reason: Honeywell is a diversified industrial platform; SIC 3724 overstates aerospace concentration for valuation routing.
+
+  - issuer_cik: "0000004281"
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:aerospace_and_defense
+    canonical_industry_id: taxonomy:industry:aerospace_and_defense
+    canonical_subindustry_id: taxonomy:subindustry:aerospace_and_defense_primes_and_systems
+    reason: Howmet is curated with aerospace and defense even though its SEC SIC is a broad metals code.

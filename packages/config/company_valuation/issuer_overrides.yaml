@@ -87,3 +87,86 @@ overrides:
     template_id: diversified_industrial_core
     reason: "Focused industrial holdout promotion for diversified industrial core cohort."
     active: true
+  - issuer_cik: "0001327811"
+    template_id: software_asset_light
+    reason: "Software override for cloud and enterprise-application issuer misclassified by generic industrial keyword rules."
+    active: true
+  - issuer_cik: "0001327567"
+    template_id: software_asset_light
+    reason: "Software override for cybersecurity platform issuer misclassified by generic industrial keyword rules."
+    active: true
+  - issuer_cik: "0001262039"
+    template_id: software_asset_light
+    reason: "Software override for cybersecurity platform issuer misclassified by generic industrial keyword rules."
+    active: true
+  - issuer_cik: "0000814547"
+    template_id: software_asset_light
+    reason: "Software override for analytics and decisioning software issuer that otherwise falls to the general bucket."
+    active: true
+  - issuer_cik: "0000797468"
+    template_id: energy_asset_heavy
+    reason: "Energy calibration promotion for stressed-operator cohort."
+    active: true
+    stressed_operator_flag: true
+  - issuer_cik: "0001841666"
+    template_id: energy_asset_heavy
+    reason: "Energy calibration promotion for stressed-operator cohort."
+    active: true
+    stressed_operator_flag: true
+  - issuer_cik: "0000033213"
+    template_id: energy_asset_heavy
+    reason: "Energy calibration promotion for stressed-operator cohort."
+    active: true
+    stressed_operator_flag: true
+  - issuer_cik: "0000045012"
+    template_id: energy_asset_heavy
+    reason: "Energy calibration promotion for stressed-operator cohort."
+    active: true
+    stressed_operator_flag: true
+  - issuer_cik: "0000717423"
+    template_id: energy_asset_heavy
+    reason: "Energy calibration promotion for stressed-operator cohort."
+    active: true
+    stressed_operator_flag: true
+  - issuer_cik: "0001520006"
+    template_id: energy_asset_heavy
+    reason: "Energy calibration promotion for stressed-operator cohort."
+    active: true
+    stressed_operator_flag: true
+  - issuer_cik: "0001534504"
+    template_id: energy_asset_heavy
+    reason: "Energy calibration promotion for stressed-operator cohort."
+    active: true
+    stressed_operator_flag: true
+  - issuer_cik: "0000889900"
+    template_id: energy_asset_heavy
+    reason: "Energy calibration promotion for stressed-operator cohort."
+    active: true
+    stressed_operator_flag: true
+  - issuer_cik: "0001021860"
+    template_id: energy_asset_heavy
+    reason: "Energy calibration promotion for stressed-operator cohort."
+    active: true
+    stressed_operator_flag: true
+  - issuer_cik: "0000046765"
+    template_id: energy_asset_heavy
+    reason: "Energy calibration promotion for stressed-operator cohort."
+    active: true
+    stressed_operator_flag: true
+  - issuer_cik: "0001694426"
+    template_id: energy_asset_heavy
+    reason: "Energy calibration promotion for stressed-operator cohort."
+    active: true
+    stressed_operator_flag: true
+  - issuer_cik: "0000726958"
+    template_id: retail_consumer
+    reason: "Retail override for convenience-store operator misclassified by generic energy keyword rules."
+    active: true
+  - issuer_cik: "0000350698"
+    template_id: retail_consumer
+    reason: "Retail override for automotive retailer misclassified by generic energy keyword rules."
+    active: true
+  - issuer_cik: "0001170010"
+    template_id: retail_consumer
+    reason: "Retail override for used-auto retailer misclassified by generic energy keyword rules."
+    active: true

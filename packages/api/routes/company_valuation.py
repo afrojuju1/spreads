@@ -22,6 +22,8 @@ def list_company_valuation_screen_route(
     as_of: str | None = None,
     template_id: str | None = None,
     limit: int = Query(default=100, ge=1, le=1000),
+    supported_only: bool = True,
+    stressed_operator_only: bool = False,
     db: str | None = None,
 ) -> dict[str, object]:
     try:
@@ -29,6 +31,8 @@ def list_company_valuation_screen_route(
             as_of=as_of,
             template_id=template_id,
             limit=limit,
+            supported_only=supported_only,
+            stressed_operator_only=stressed_operator_only,
             repository=CompanyValuationRepository(_db_target(db)),
         )
     except ValueError as exc:

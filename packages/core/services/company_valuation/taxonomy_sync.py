@@ -23,6 +23,7 @@ from core.services.company_valuation.taxonomy import (
     load_company_valuation_taxonomy_nodes,
     load_company_valuation_template_mappings,
     resolve_company_valuation_taxonomy_context,
+    supported_company_valuation_tickers,
 )
 from core.storage.company_valuation_repository import CompanyValuationRepository
 from core.storage.serializers import render_value
@@ -42,6 +43,7 @@ class CompanyValuationTaxonomySyncRequest:
     ciks: tuple[str, ...] | None = None
     issuer_ids: tuple[str, ...] | None = None
     issuer_limit: int | None = None
+    supported_only: bool = False
     config_root: str | None = None
     sample_limit: int = 20
     output_root: str | None = None
@@ -59,6 +61,11 @@ class CompanyValuationTaxonomySyncSample:
     classification_source: str
     canonical_sector_id: str | None
     canonical_subindustry_id: str | None
+    support_status: str
+    support_reason: str
+    in_curated_universe: bool
+    expected_template_id: str | None = None
+    expected_template_match: bool | None = None
     overlay_flags: dict[str, bool] = field(default_factory=dict)
 
     def to_payload(self) -> dict[str, Any]:
@@ -78,9 +85,13 @@ class CompanyValuationTaxonomySyncResult:
     issuer_overlay_flags_replaced: int
     unclassified_count: int
     template_mismatch_count: int
+    supported_unclassified_count: int
+    supported_template_mismatch_count: int
+    expected_template_mismatch_count: int
     taxonomy_override_count: int
     current_template_override_count: int
     classification_source_counts: dict[str, int] = field(default_factory=dict)
+    support_status_counts: dict[str, int] = field(default_factory=dict)
     template_mismatch_pair_counts: dict[str, int] = field(default_factory=dict)
     overlay_true_counts: dict[str, int] = field(default_factory=dict)
     mismatch_samples: tuple[CompanyValuationTaxonomySyncSample, ...] = ()
@@ -145,6 +156,28 @@ def _normalized_tickers(values: tuple[str, ...] | None) -> tuple[str, ...] | Non
         )
     )
     return normalized or None
+
+
+def _supported_scope_tickers(config_root: str | None) -> tuple[str, ...]:
+    return supported_company_valuation_tickers(config_root)
+
+
+def _resolved_ticker_scope(
+    *,
+    request_tickers: tuple[str, ...] | None,
+    supported_only: bool,
+    config_root: str | None,
+) -> tuple[str, ...] | None:
+    normalized_request = _normalized_tickers(request_tickers)
+    if not supported_only:
+        return normalized_request
+    supported_tickers = _normalized_tickers(_supported_scope_tickers(config_root))
+    if not supported_tickers:
+        return ()
+    if not normalized_request:
+        return supported_tickers
+    supported_set = set(supported_tickers)
+    return tuple(ticker for ticker in normalized_request if ticker in supported_set)
 
 
 def _taxonomy_node_payloads(
@@ -245,6 +278,11 @@ def _sample_from_resolution(
         classification_source=resolution.canonical_taxonomy.classification_source,
         canonical_sector_id=resolution.canonical_taxonomy.canonical_sector_id,
         canonical_subindustry_id=resolution.canonical_taxonomy.canonical_subindustry_id,
+        support_status=resolution.support.status,
+        support_reason=resolution.support.reason,
+        in_curated_universe=resolution.support.in_curated_universe,
+        expected_template_id=resolution.support.expected_template_id,
+        expected_template_match=resolution.support.expected_template_match,
         overlay_flags=dict(resolution.overlays.flags),
     )
 
@@ -270,7 +308,10 @@ def _write_markdown_summary(
         f"- issuer_classifications_upserted: `{result.issuer_classifications_upserted}`",
         f"- issuer_overlay_flags_replaced: `{result.issuer_overlay_flags_replaced}`",
         f"- unclassified_count: `{result.unclassified_count}`",
+        f"- supported_unclassified_count: `{result.supported_unclassified_count}`",
         f"- template_mismatch_count: `{result.template_mismatch_count}`",
+        f"- supported_template_mismatch_count: `{result.supported_template_mismatch_count}`",
+        f"- expected_template_mismatch_count: `{result.expected_template_mismatch_count}`",
         f"- taxonomy_override_count: `{result.taxonomy_override_count}`",
         f"- current_template_override_count: `{result.current_template_override_count}`",
         "",
@@ -280,6 +321,7 @@ def _write_markdown_summary(
         f"- ciks: `{', '.join(request.ciks or ()) or 'all'}`",
         f"- issuer_ids: `{', '.join(request.issuer_ids or ()) or 'all'}`",
         f"- issuer_limit: `{request.issuer_limit if request.issuer_limit is not None else 'none'}`",
+        f"- supported_only: `{request.supported_only}`",
         "",
         "## Classification Sources",
         "",
@@ -287,6 +329,15 @@ def _write_markdown_summary(
     if result.classification_source_counts:
         for key, count in sorted(
             result.classification_source_counts.items(),
+            key=lambda item: (-item[1], item[0]),
+        ):
+            lines.append(f"- `{key}`: `{count}`")
+    else:
+        lines.append("- none")
+    lines.extend(["", "## Support Status", ""])
+    if result.support_status_counts:
+        for key, count in sorted(
+            result.support_status_counts.items(),
             key=lambda item: (-item[1], item[0]),
         ):
             lines.append(f"- `{key}`: `{count}`")
@@ -314,7 +365,7 @@ def _write_markdown_summary(
     if result.mismatch_samples:
         for row in result.mismatch_samples:
             lines.append(
-                f"- `{row.ticker or row.cik}` `{row.current_template_id}` -> `{row.taxonomy_default_template_id}` via `{row.classification_source}`"
+                f"- `{row.ticker or row.cik}` `{row.current_template_id}` -> `{row.taxonomy_default_template_id}` via `{row.classification_source}` support=`{row.support_status}`"
             )
     else:
         lines.append("- none")
@@ -322,7 +373,7 @@ def _write_markdown_summary(
     if result.unclassified_samples:
         for row in result.unclassified_samples:
             lines.append(
-                f"- `{row.ticker or row.cik}` current template `{row.current_template_id}` with no canonical taxonomy match"
+                f"- `{row.ticker or row.cik}` current template `{row.current_template_id}` with no canonical taxonomy match support=`{row.support_status}`"
             )
     else:
         lines.append("- none")
@@ -398,22 +449,34 @@ def sync_company_valuation_taxonomy_state(
     _heartbeat(heartbeat)
     repo.upsert_valuation_template_mappings(template_mapping_payloads)
 
-    issuer_rows = repo.list_issuers(
-        issuer_ids=_normalized_issuer_ids(request.issuer_ids),
-        ciks=_normalized_ciks(request.ciks),
-        tickers=_normalized_tickers(request.tickers),
-        limit=request.issuer_limit,
+    resolved_tickers = _resolved_ticker_scope(
+        request_tickers=request.tickers,
+        supported_only=request.supported_only,
+        config_root=request.config_root,
     )
+    if request.supported_only and not resolved_tickers:
+        issuer_rows = []
+    else:
+        issuer_rows = repo.list_issuers(
+            issuer_ids=_normalized_issuer_ids(request.issuer_ids),
+            ciks=_normalized_ciks(request.ciks),
+            tickers=resolved_tickers,
+            limit=request.issuer_limit,
+        )
 
     overlay_true_counts: dict[str, int] = defaultdict(int)
     classification_source_counts: dict[str, int] = defaultdict(int)
+    support_status_counts: dict[str, int] = defaultdict(int)
     template_mismatch_pair_counts: dict[str, int] = defaultdict(int)
     mismatch_samples: list[CompanyValuationTaxonomySyncSample] = []
     unclassified_samples: list[CompanyValuationTaxonomySyncSample] = []
     mismatch_rows: list[dict[str, Any]] = []
     unclassified_rows: list[dict[str, Any]] = []
     unclassified_count = 0
+    supported_unclassified_count = 0
     template_mismatch_count = 0
+    supported_template_mismatch_count = 0
+    expected_template_mismatch_count = 0
     taxonomy_override_count = 0
     current_template_override_count = 0
     issuer_classifications_upserted = 0
@@ -423,6 +486,7 @@ def sync_company_valuation_taxonomy_state(
         _heartbeat(heartbeat)
         resolution = resolve_company_valuation_taxonomy_context(
             cik=str(issuer_row["cik"]),
+            ticker=issuer_row.get("ticker"),
             company_name=str(issuer_row["company_name"]),
             sic=issuer_row.get("sic"),
             sic_title=issuer_row.get("sic_description"),
@@ -456,13 +520,20 @@ def sync_company_valuation_taxonomy_state(
 
         sample = _sample_from_resolution(issuer_row=issuer_row, resolution=resolution)
         classification_source_counts[resolution.canonical_taxonomy.classification_source] += 1
+        support_status_counts[resolution.support.status] += 1
+        if resolution.support.expected_template_match is False:
+            expected_template_mismatch_count += 1
         if resolution.canonical_taxonomy.canonical_sector_id is None:
             unclassified_count += 1
+            if resolution.support.in_curated_universe:
+                supported_unclassified_count += 1
             unclassified_rows.append(sample.to_payload())
             if len(unclassified_samples) < request.sample_limit:
                 unclassified_samples.append(sample)
         if str(issuer_row.get("template_id") or "") != resolution.default_template.template_id:
             template_mismatch_count += 1
+            if resolution.support.status == "supported":
+                supported_template_mismatch_count += 1
             pair_key = (
                 f"{str(issuer_row.get('template_id') or '')}"
                 f" -> {resolution.default_template.template_id}"
@@ -480,6 +551,10 @@ def sync_company_valuation_taxonomy_state(
     notes: list[str] = []
     if not issuer_rows:
         notes.append("No issuers matched the requested taxonomy sync scope.")
+    if request.supported_only:
+        notes.append(
+            "Supported-only scope restricts the shadow sync to the curated supported issuer universe."
+        )
     result = CompanyValuationTaxonomySyncResult(
         status="ok",
         started_at=started_at,
@@ -492,10 +567,16 @@ def sync_company_valuation_taxonomy_state(
         issuer_overlay_flags_replaced=issuer_overlay_flags_replaced,
         unclassified_count=unclassified_count,
         template_mismatch_count=template_mismatch_count,
+        supported_unclassified_count=supported_unclassified_count,
+        supported_template_mismatch_count=supported_template_mismatch_count,
+        expected_template_mismatch_count=expected_template_mismatch_count,
         taxonomy_override_count=taxonomy_override_count,
         current_template_override_count=current_template_override_count,
         classification_source_counts=dict(
             sorted(classification_source_counts.items(), key=lambda item: item[0])
+        ),
+        support_status_counts=dict(
+            sorted(support_status_counts.items(), key=lambda item: item[0])
         ),
         template_mismatch_pair_counts=dict(
             sorted(

@@ -10,6 +10,9 @@ from core.services.company_valuation.contracts import (
     CompanyValuationOverlayResolution,
     CompanyValuationOverlayRule,
     CompanyValuationRawClassification,
+    CompanyValuationSupportPolicy,
+    CompanyValuationSupportResolution,
+    CompanyValuationSupportedIssuer,
     CompanyValuationTaxonomyMapping,
     CompanyValuationTaxonomyNode,
     CompanyValuationTaxonomyOverride,
@@ -19,7 +22,7 @@ from core.services.company_valuation.contracts import (
     TaxonomyMatchMode,
     TaxonomySourceStandard,
 )
-from core.services.company_valuation.ids import normalize_cik
+from core.services.company_valuation.ids import normalize_cik, normalize_ticker
 from core.services.company_valuation.templates import (
     default_company_valuation_config_root,
     resolve_company_valuation_template,
@@ -119,6 +122,10 @@ def _taxonomy_overrides_path(config_root: str | Path | None = None) -> Path:
         default_company_valuation_taxonomy_root(config_root)
         / "issuer_taxonomy_overrides.yaml"
     )
+
+
+def _support_policy_path(config_root: str | Path | None = None) -> Path:
+    return default_company_valuation_taxonomy_root(config_root) / "support_policy.yaml"
 
 
 @lru_cache(maxsize=8)
@@ -472,6 +479,82 @@ def load_company_valuation_taxonomy_overrides(
     }
 
 
+@lru_cache(maxsize=8)
+def _load_company_valuation_support_policy_cached(
+    path_key: str,
+    signature: tuple[str, int, int] | None,
+) -> CompanyValuationSupportPolicy:
+    path = Path(path_key)
+    if not path.exists():
+        return CompanyValuationSupportPolicy(policy_version="v1")
+    payload = _load_yaml_file(path)
+    policy_version = _as_text(
+        payload.get("policy_version"),
+        field_name="policy_version",
+    )
+    raw_supported_template_ids = payload.get("supported_template_ids")
+    supported_template_ids = _as_text_tuple(
+        raw_supported_template_ids,
+        field_name="supported_template_ids",
+    )
+    raw_supported_issuers = payload.get("supported_issuers")
+    if raw_supported_issuers is None:
+        supported_issuers: list[CompanyValuationSupportedIssuer] = []
+    else:
+        if not isinstance(raw_supported_issuers, list):
+            raise ValueError("supported_issuers must be a list")
+        supported_issuers = []
+        for item in raw_supported_issuers:
+            if not isinstance(item, dict):
+                raise ValueError("supported_issuer entries must be mappings")
+            supported_issuers.append(
+                CompanyValuationSupportedIssuer(
+                    ticker=normalize_ticker(
+                        _as_text(item.get("ticker"), field_name="ticker")
+                    ),
+                    expected_template_id=_as_optional_text(
+                        item.get("expected_template_id")
+                    ),
+                    reason=_as_text(item.get("reason"), field_name="reason"),
+                    active=bool(item.get("active", True)),
+                )
+            )
+    by_ticker = {
+        issuer.ticker: issuer
+        for issuer in supported_issuers
+        if issuer.active
+    }
+    if len(by_ticker) != len([issuer for issuer in supported_issuers if issuer.active]):
+        raise ValueError(f"Duplicate active supported issuer ticker in {path}")
+    return CompanyValuationSupportPolicy(
+        policy_version=policy_version,
+        allowlist_required=bool(payload.get("allowlist_required", True)),
+        supported_template_ids=supported_template_ids,
+        supported_issuers=tuple(supported_issuers),
+    )
+
+
+def load_company_valuation_support_policy(
+    config_root: str | Path | None = None,
+) -> CompanyValuationSupportPolicy:
+    path = _support_policy_path(config_root)
+    return _load_company_valuation_support_policy_cached(
+        str(path),
+        _yaml_file_signature(path),
+    )
+
+
+def supported_company_valuation_tickers(
+    config_root: str | Path | None = None,
+) -> tuple[str, ...]:
+    policy = load_company_valuation_support_policy(config_root)
+    return tuple(
+        issuer.ticker
+        for issuer in policy.supported_issuers
+        if issuer.active
+    )
+
+
 def resolve_company_valuation_raw_classification(
     *,
     sic: str | None = None,
@@ -615,6 +698,84 @@ def resolve_company_valuation_default_template(
     )
 
 
+def resolve_company_valuation_support(
+    *,
+    ticker: str | None,
+    canonical_taxonomy: CompanyValuationCanonicalTaxonomy,
+    default_template: CompanyValuationDefaultTemplateResolution,
+    config_root: str | Path | None = None,
+) -> CompanyValuationSupportResolution:
+    policy = load_company_valuation_support_policy(config_root)
+    supported_template_ids = set(policy.supported_template_ids)
+    normalized_ticker = normalize_ticker(ticker) if str(ticker or "").strip() else None
+    supported_issuer_by_ticker = {
+        issuer.ticker: issuer
+        for issuer in policy.supported_issuers
+        if issuer.active
+    }
+    supported_issuer = (
+        supported_issuer_by_ticker.get(normalized_ticker)
+        if normalized_ticker is not None
+        else None
+    )
+    in_curated_universe = supported_issuer is not None
+    expected_template_id = (
+        supported_issuer.expected_template_id if supported_issuer is not None else None
+    )
+
+    if policy.allowlist_required and supported_issuer is None:
+        return CompanyValuationSupportResolution(
+            status="out_of_scope",
+            reason="ticker is not in the curated supported issuer universe",
+            in_curated_universe=False,
+        )
+
+    if canonical_taxonomy.canonical_sector_id is None:
+        return CompanyValuationSupportResolution(
+            status="unsupported",
+            reason="issuer is in scope but has no canonical taxonomy match yet",
+            in_curated_universe=in_curated_universe,
+            expected_template_id=expected_template_id,
+        )
+
+    if default_template.template_id not in supported_template_ids:
+        return CompanyValuationSupportResolution(
+            status="unsupported",
+            reason=(
+                "issuer is in scope but taxonomy resolved to an unsupported valuation "
+                f"template `{default_template.template_id}`"
+            ),
+            in_curated_universe=in_curated_universe,
+            expected_template_id=expected_template_id,
+            expected_template_match=(
+                None
+                if expected_template_id is None
+                else expected_template_id == default_template.template_id
+            ),
+        )
+
+    expected_template_match = (
+        None
+        if expected_template_id is None
+        else expected_template_id == default_template.template_id
+    )
+    if expected_template_match is False:
+        reason = (
+            "issuer is in the curated universe and resolved to a supported template, "
+            f"but the expected template is `{expected_template_id}` instead of "
+            f"`{default_template.template_id}`"
+        )
+    else:
+        reason = "issuer is in the curated universe and resolved to a supported template"
+    return CompanyValuationSupportResolution(
+        status="supported",
+        reason=reason,
+        in_curated_universe=in_curated_universe,
+        expected_template_id=expected_template_id,
+        expected_template_match=expected_template_match,
+    )
+
+
 def _overlay_rule_matches(
     rule: CompanyValuationOverlayRule,
     *,
@@ -679,6 +840,7 @@ def resolve_company_valuation_overlays(
 def resolve_company_valuation_taxonomy_context(
     *,
     cik: str,
+    ticker: str | None = None,
     company_name: str,
     sic: str | None = None,
     sic_title: str | None = None,
@@ -701,6 +863,12 @@ def resolve_company_valuation_taxonomy_context(
         canonical_taxonomy,
         config_root=config_root,
     )
+    support = resolve_company_valuation_support(
+        ticker=ticker,
+        canonical_taxonomy=canonical_taxonomy,
+        default_template=default_template,
+        config_root=config_root,
+    )
     overlays = resolve_company_valuation_overlays(
         cik=cik,
         company_name=company_name,
@@ -711,6 +879,7 @@ def resolve_company_valuation_taxonomy_context(
         raw_classification=raw_classification,
         canonical_taxonomy=canonical_taxonomy,
         default_template=default_template,
+        support=support,
         overlays=overlays,
     )
 
@@ -718,6 +887,8 @@ def resolve_company_valuation_taxonomy_context(
 __all__ = [
     "default_company_valuation_taxonomy_root",
     "load_company_valuation_overlay_rules",
+    "load_company_valuation_support_policy",
+    "supported_company_valuation_tickers",
     "load_company_valuation_taxonomy_mappings",
     "load_company_valuation_taxonomy_nodes",
     "load_company_valuation_taxonomy_overrides",
@@ -726,5 +897,6 @@ __all__ = [
     "resolve_company_valuation_default_template",
     "resolve_company_valuation_overlays",
     "resolve_company_valuation_raw_classification",
+    "resolve_company_valuation_support",
     "resolve_company_valuation_taxonomy_context",
 ]

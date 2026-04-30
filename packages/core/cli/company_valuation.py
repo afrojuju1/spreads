@@ -21,6 +21,7 @@ from core.services.company_valuation import (
     enqueue_company_valuation_resolve_unresolved_job,
     enqueue_company_valuation_screen_materialize_job,
     export_company_valuation_research_dataset,
+    list_company_valuation_screen,
     sync_company_valuation_taxonomy_state,
 )
 from core.storage.company_valuation_repository import CompanyValuationRepository
@@ -125,6 +126,16 @@ def company_valuation_screen_refresh_command(
         "--issuer-limit",
         help="Optional issuer cap for the recompute batch.",
     ),
+    supported_only: bool = typer.Option(
+        True,
+        "--supported-only/--all-issuers",
+        help="Default to the curated supported issuer universe instead of the full issuer table.",
+    ),
+    stressed_operator_only: bool = typer.Option(
+        False,
+        "--stressed-operator-only",
+        help="Restrict the recompute/materialization scope to stressed-operator overlay issuers.",
+    ),
     as_of: str | None = typer.Option(
         None,
         "--as-of",
@@ -154,6 +165,8 @@ def company_valuation_screen_refresh_command(
                 template_id=template_id,
                 tickers=tuple(ticker) or None,
                 issuer_limit=issuer_limit,
+                supported_only=supported_only,
+                stressed_operator_only=stressed_operator_only,
                 config_root=config_root,
             ),
             db_target=db,
@@ -163,6 +176,103 @@ def company_valuation_screen_refresh_command(
         typer.secho(f"Command failed: {exc}", err=True, fg=typer.colors.RED)
         raise typer.Exit(2) from None
     _render_payload(job.to_payload(), json_output=json_output)
+    if not json_output:
+        typer.echo(f"supported_only={supported_only}")
+        typer.echo(f"stressed_operator_only={stressed_operator_only}")
+
+
+@company_valuation_app.command(
+    "screen-show",
+    help="Show the latest company valuation screen with support-aware filters.",
+)
+def company_valuation_screen_show_command(
+    ticker: list[str] = typer.Option(
+        [],
+        "--ticker",
+        help="Optional ticker filter. Repeat the option for multiple tickers.",
+    ),
+    template_id: str | None = typer.Option(
+        None,
+        "--template-id",
+        help="Optional base template filter. Use stressed_operator with --stressed-operator-only semantics.",
+    ),
+    limit: int = typer.Option(
+        25,
+        "--limit",
+        min=1,
+        max=1000,
+        help="Maximum screening rows to return.",
+    ),
+    as_of: str | None = typer.Option(
+        None,
+        "--as-of",
+        help="Optional as-of date override.",
+    ),
+    supported_only: bool = typer.Option(
+        True,
+        "--supported-only/--all-issuers",
+        help="Default to the curated supported issuer universe instead of the full issuer table.",
+    ),
+    stressed_operator_only: bool = typer.Option(
+        False,
+        "--stressed-operator-only",
+        help="Restrict the screen to stressed-operator overlay issuers.",
+    ),
+    config_root: str | None = typer.Option(
+        None,
+        "--config-root",
+        help="Override the config root passed into company valuation services.",
+    ),
+    db: str = typer.Option(
+        default_database_url(),
+        "--db",
+        help="Database URL override.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    default_db = default_database_url()
+    try:
+        payload = list_company_valuation_screen(
+            as_of=as_of,
+            template_id=template_id,
+            tickers=tuple(ticker) or None,
+            limit=limit,
+            supported_only=supported_only,
+            stressed_operator_only=stressed_operator_only,
+            repository=None if db == default_db else CompanyValuationRepository(db),
+            config_root=config_root,
+        )
+    except Exception as exc:
+        typer.secho(f"Command failed: {exc}", err=True, fg=typer.colors.RED)
+        raise typer.Exit(2) from None
+    if json_output:
+        typer.echo(json.dumps(payload, sort_keys=True, default=str))
+        return
+    typer.echo(f"as_of={payload['as_of']}")
+    typer.echo(f"count={payload['count']}")
+    typer.echo(f"supported_only={payload['supported_only']}")
+    typer.echo(f"stressed_operator_only={payload['stressed_operator_only']}")
+    typer.echo(
+        "support_status_counts="
+        + json.dumps(payload["support_status_counts"], sort_keys=True)
+    )
+    for row in payload["rows"]:
+        typer.echo(
+            "row="
+            + json.dumps(
+                {
+                    "ticker": row.get("ticker"),
+                    "template_id": row.get("template_id"),
+                    "effective_template_id": row.get("effective_template_id"),
+                    "support_status": row.get("support_status"),
+                    "valuation_gap": row.get("valuation_gap"),
+                    "quality_score": row.get("quality_score"),
+                    "stressed_operator_flag": row.get("stressed_operator_flag"),
+                },
+                sort_keys=True,
+                default=str,
+            )
+        )
 
 
 @company_valuation_app.command(
@@ -401,6 +511,11 @@ def company_valuation_taxonomy_sync_command(
         min=1,
         help="Optional issuer cap for the taxonomy shadow sync.",
     ),
+    supported_only: bool = typer.Option(
+        False,
+        "--supported-only",
+        help="Restrict the taxonomy shadow sync to the curated supported issuer universe.",
+    ),
     sample_limit: int = typer.Option(
         20,
         "--sample-limit",
@@ -432,6 +547,7 @@ def company_valuation_taxonomy_sync_command(
                 ciks=tuple(cik) or None,
                 issuer_ids=tuple(issuer_id) or None,
                 issuer_limit=issuer_limit,
+                supported_only=supported_only,
                 config_root=config_root,
                 sample_limit=sample_limit,
                 output_root=output_root,
@@ -459,7 +575,14 @@ def company_valuation_taxonomy_sync_command(
         f"issuer_overlay_flags_replaced={payload['issuer_overlay_flags_replaced']}"
     )
     typer.echo(f"unclassified_count={payload['unclassified_count']}")
+    typer.echo(f"supported_unclassified_count={payload['supported_unclassified_count']}")
     typer.echo(f"template_mismatch_count={payload['template_mismatch_count']}")
+    typer.echo(
+        f"supported_template_mismatch_count={payload['supported_template_mismatch_count']}"
+    )
+    typer.echo(
+        f"expected_template_mismatch_count={payload['expected_template_mismatch_count']}"
+    )
     typer.echo(f"taxonomy_override_count={payload['taxonomy_override_count']}")
     typer.echo(
         f"current_template_override_count={payload['current_template_override_count']}"
@@ -471,6 +594,10 @@ def company_valuation_taxonomy_sync_command(
     typer.echo(
         "classification_source_counts="
         + json.dumps(payload["classification_source_counts"], sort_keys=True)
+    )
+    typer.echo(
+        "support_status_counts="
+        + json.dumps(payload["support_status_counts"], sort_keys=True)
     )
     typer.echo(
         "template_mismatch_pair_counts="
@@ -512,6 +639,11 @@ def company_valuation_classification_backfill_command(
         min=1,
         help="Optional issuer cap for the SEC classification refresh.",
     ),
+    supported_only: bool = typer.Option(
+        False,
+        "--supported-only",
+        help="Restrict the backfill to the curated supported issuer universe.",
+    ),
     missing_only: bool = typer.Option(
         True,
         "--missing-only/--all",
@@ -548,6 +680,7 @@ def company_valuation_classification_backfill_command(
                 ciks=tuple(cik) or None,
                 issuer_ids=tuple(issuer_id) or None,
                 issuer_limit=issuer_limit,
+                supported_only=supported_only,
                 missing_only=missing_only,
                 sync_taxonomy_shadow=sync_taxonomy_shadow,
                 taxonomy_output_root=taxonomy_output_root,

@@ -18,8 +18,20 @@ rules:
 
   - rule_id: overlay_rule:stressed_operator
     flag_key: stressed_operator
-    active: false
-    reason: Placeholder overlay; no live stressed-operator assignments yet.
+    active: true
+    reason: Issuer-level stressed operator overlay aligned to the current stressed-operator cohort.
+    issuer_ciks:
+      - "0001841666"
+      - "0001694426"
+      - "0000033213"
+      - "0000045012"
+      - "0000046765"
+      - "0001520006"
+      - "0000717423"
+      - "0001021860"
+      - "0000797468"
+      - "0001534504"
+      - "0000889900"
 
   - rule_id: overlay_rule:execution_recovery
     flag_key: execution_recovery

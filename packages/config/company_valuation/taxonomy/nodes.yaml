@@ -89,6 +89,18 @@ nodes:
     taxonomy_name: Midstream Natural Gas and LNG Infrastructure
     parent_taxonomy_node_id: taxonomy:industry:midstream_transport_and_storage
 
+  - taxonomy_node_id: taxonomy:industry:oilfield_services_and_equipment
+    taxonomy_level: industry
+    taxonomy_code: oilfield_services_and_equipment
+    taxonomy_name: Oilfield Services and Equipment
+    parent_taxonomy_node_id: taxonomy:industry_group:hydrocarbon_value_chain
+
+  - taxonomy_node_id: taxonomy:subindustry:oilfield_services_and_equipment
+    taxonomy_level: subindustry
+    taxonomy_code: oilfield_services_and_equipment
+    taxonomy_name: Oilfield Services and Equipment
+    parent_taxonomy_node_id: taxonomy:industry:oilfield_services_and_equipment
+
   - taxonomy_node_id: taxonomy:sector:industrials
     taxonomy_level: sector
     taxonomy_code: industrials

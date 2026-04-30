@@ -7,7 +7,9 @@ from typing import Any
 from core.common import clamp
 from core.services.company_valuation.contracts import OwnershipEvidence, OwnershipSignal
 from core.services.company_valuation.ids import build_feature_snapshot_id
-from core.services.company_valuation.templates import resolve_company_valuation_template
+from core.services.company_valuation.templates import (
+    resolve_company_valuation_effective_template,
+)
 from core.storage.company_valuation_repository import CompanyValuationRepository
 from core.storage.serializers import parse_date, parse_datetime
 
@@ -770,12 +772,12 @@ def compute_company_valuation_features(
     filings_used = list(
         dict.fromkeys(str(row.get("filing_id")) for row in deduped_snapshots if row.get("filing_id"))
     )
-    template_id = str(issuer_row.get("template_id") or "")
-    template_version = str(issuer_row.get("template_version") or "")
-    template = resolve_company_valuation_template(
-        template_id or "general_operating",
-        config_root,
+    template = resolve_company_valuation_effective_template(
+        issuer_row=issuer_row,
+        config_root=config_root,
     )
+    template_id = str(template.template_id)
+    template_version = str(template.template_version)
     required_features = template.required_features
     required_hits = sum(1 for key in required_features if financial_features.get(key) is not None)
     required_feature_coverage = 1.0 if not required_features else required_hits / len(required_features)

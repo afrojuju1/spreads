@@ -121,6 +121,42 @@ mappings:
     priority: 220
     notes: Asset-heavy natural gas and LNG infrastructure.
 
+  - mapping_id: taxonomy_mapping:sic:1381:oilfield_services_and_equipment
+    source_standard: sic
+    source_code: "1381"
+    source_title: Drilling Oil and Gas Wells
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:energy
+    canonical_industry_group_id: taxonomy:industry_group:hydrocarbon_value_chain
+    canonical_industry_id: taxonomy:industry:oilfield_services_and_equipment
+    canonical_subindustry_id: taxonomy:subindustry:oilfield_services_and_equipment
+    priority: 225
+    notes: Oilfield drilling and completion operators align to the energy asset-heavy cohort.
+
+  - mapping_id: taxonomy_mapping:sic:1389:oilfield_services_and_equipment
+    source_standard: sic
+    source_code: "1389"
+    source_title: Oil and Gas Field Services, NEC
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:energy
+    canonical_industry_group_id: taxonomy:industry_group:hydrocarbon_value_chain
+    canonical_industry_id: taxonomy:industry:oilfield_services_and_equipment
+    canonical_subindustry_id: taxonomy:subindustry:oilfield_services_and_equipment
+    priority: 225
+    notes: Oilfield services issuers stay in the hydrocarbon value chain even when current templates are stressed overlays.
+
+  - mapping_id: taxonomy_mapping:sic:3533:oilfield_services_and_equipment
+    source_standard: sic
+    source_code: "3533"
+    source_title: Oil and Gas Field Machinery and Equipment
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:energy
+    canonical_industry_group_id: taxonomy:industry_group:hydrocarbon_value_chain
+    canonical_industry_id: taxonomy:industry:oilfield_services_and_equipment
+    canonical_subindustry_id: taxonomy:subindustry:oilfield_services_and_equipment
+    priority: 225
+    notes: Oilfield machinery and equipment is closer to energy services than generic industrial machinery.
+
   - mapping_id: taxonomy_mapping:sic:3561:industrial_machinery_and_components
     source_standard: sic
     source_code: "3561"
@@ -181,6 +217,18 @@ mappings:
     priority: 220
     notes: Diversified industrial instrumentation and control platforms.
 
+  - mapping_id: taxonomy_mapping:sic:3829:diversified_instrumentation_and_specialty_equipment
+    source_standard: sic
+    source_code: "3829"
+    source_title: Measuring and Controlling Devices, NEC
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:capital_goods
+    canonical_industry_id: taxonomy:industry:diversified_industrial_technology
+    canonical_subindustry_id: taxonomy:subindustry:diversified_instrumentation_and_specialty_equipment
+    priority: 215
+    notes: Measuring and control platforms fit diversified industrial instrumentation.
+
   - mapping_id: taxonomy_mapping:sic:3560:diversified_instrumentation_and_specialty_equipment
     source_standard: sic
     source_code: "3560"
@@ -192,6 +240,66 @@ mappings:
     canonical_subindustry_id: taxonomy:subindustry:diversified_instrumentation_and_specialty_equipment
     priority: 220
     notes: Diversified industrial machinery and specialty process equipment.
+
+  - mapping_id: taxonomy_mapping:sic:3420:industrial_machinery_and_components
+    source_standard: sic
+    source_code: "3420"
+    source_title: Cutlery, Handtools and General Hardware
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:capital_goods
+    canonical_industry_id: taxonomy:industry:industrial_machinery_and_components
+    canonical_subindustry_id: taxonomy:subindustry:industrial_machinery_and_components
+    priority: 210
+    notes: Industrial tool and hardware manufacturers align to the industrial manufacturing cohort.
+
+  - mapping_id: taxonomy_mapping:sic:3490:industrial_machinery_and_components
+    source_standard: sic
+    source_code: "3490"
+    source_title: Miscellaneous Fabricated Metal Products
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:capital_goods
+    canonical_industry_id: taxonomy:industry:industrial_machinery_and_components
+    canonical_subindustry_id: taxonomy:subindustry:industrial_machinery_and_components
+    priority: 210
+    notes: Fabricated industrial components map better to industrial manufacturing than to general operating.
+
+  - mapping_id: taxonomy_mapping:sic:3530:industrial_machinery_and_components
+    source_standard: sic
+    source_code: "3530"
+    source_title: Construction, Mining and Materials Handling Machinery and Equipment
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:capital_goods
+    canonical_industry_id: taxonomy:industry:industrial_machinery_and_components
+    canonical_subindustry_id: taxonomy:subindustry:industrial_machinery_and_components
+    priority: 210
+    notes: Heavy machinery and materials-handling equipment issuers fit the industrial manufacturing template.
+
+  - mapping_id: taxonomy_mapping:sic:3569:industrial_machinery_and_components
+    source_standard: sic
+    source_code: "3569"
+    source_title: General Industrial Machinery and Equipment, NEC
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:capital_goods
+    canonical_industry_id: taxonomy:industry:industrial_machinery_and_components
+    canonical_subindustry_id: taxonomy:subindustry:industrial_machinery_and_components
+    priority: 210
+    notes: Broad industrial machinery issuers fit the industrial manufacturing cohort.
+
+  - mapping_id: taxonomy_mapping:sic:3590:industrial_machinery_and_components
+    source_standard: sic
+    source_code: "3590"
+    source_title: Miscellaneous Industrial and Commercial Machinery and Equipment
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:capital_goods
+    canonical_industry_id: taxonomy:industry:industrial_machinery_and_components
+    canonical_subindustry_id: taxonomy:subindustry:industrial_machinery_and_components
+    priority: 210
+    notes: Miscellaneous industrial machinery issuers fit the industrial manufacturing cohort.
 
   - mapping_id: taxonomy_mapping:sic:3812:aerospace_and_defense_primes_and_systems
     source_standard: sic
@@ -228,6 +336,54 @@ mappings:
     canonical_subindustry_id: taxonomy:subindustry:aerospace_and_defense_primes_and_systems
     priority: 220
     notes: Aerospace and defense primes and systems.
+
+  - mapping_id: taxonomy_mapping:sic:3720:aerospace_and_defense_primes_and_systems
+    source_standard: sic
+    source_code: "3720"
+    source_title: Aircraft and Parts
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:aerospace_and_defense
+    canonical_industry_id: taxonomy:industry:aerospace_and_defense
+    canonical_subindustry_id: taxonomy:subindustry:aerospace_and_defense_primes_and_systems
+    priority: 215
+    notes: Broad aircraft and parts issuers fit the aerospace and defense primes cohort.
+
+  - mapping_id: taxonomy_mapping:sic:3724:aerospace_and_defense_primes_and_systems
+    source_standard: sic
+    source_code: "3724"
+    source_title: Aircraft Engines and Engine Parts
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:aerospace_and_defense
+    canonical_industry_id: taxonomy:industry:aerospace_and_defense
+    canonical_subindustry_id: taxonomy:subindustry:aerospace_and_defense_primes_and_systems
+    priority: 215
+    notes: Aircraft engine and propulsion issuers are closer to aerospace primes than diversified industrial fallbacks.
+
+  - mapping_id: taxonomy_mapping:sic:3728:aerospace_and_defense_primes_and_systems
+    source_standard: sic
+    source_code: "3728"
+    source_title: Aircraft Parts and Auxiliary Equipment, NEC
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:aerospace_and_defense
+    canonical_industry_id: taxonomy:industry:aerospace_and_defense
+    canonical_subindustry_id: taxonomy:subindustry:aerospace_and_defense_primes_and_systems
+    priority: 215
+    notes: Aircraft parts and support-system issuers map into the aerospace and defense primes cohort.
+
+  - mapping_id: taxonomy_mapping:sic:3730:aerospace_and_defense_primes_and_systems
+    source_standard: sic
+    source_code: "3730"
+    source_title: Ship and Boat Building and Repairing
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:aerospace_and_defense
+    canonical_industry_id: taxonomy:industry:aerospace_and_defense
+    canonical_subindustry_id: taxonomy:subindustry:aerospace_and_defense_primes_and_systems
+    priority: 210
+    notes: Defense shipbuilders belong with defense prime system integrators for current valuation purposes.
 
   - mapping_id: taxonomy_mapping:sic:5331:multi_format_and_specialty_retail
     source_standard: sic
@@ -288,3 +444,15 @@ mappings:
     canonical_subindustry_id: taxonomy:subindustry:multi_format_and_specialty_retail
     priority: 220
     notes: Apparel and off-price retail issuers.
+
+  - mapping_id: taxonomy_mapping:sic:5731:multi_format_and_specialty_retail
+    source_standard: sic
+    source_code: "5731"
+    source_title: Retail-Radio, TV, and Consumer Electronics Stores
+    match_mode: exact
+    canonical_sector_id: taxonomy:sector:consumer
+    canonical_industry_group_id: taxonomy:industry_group:consumer_retailing
+    canonical_industry_id: taxonomy:industry:multi_format_and_specialty_retail
+    canonical_subindustry_id: taxonomy:subindustry:multi_format_and_specialty_retail
+    priority: 215
+    notes: Consumer electronics retail fits the specialty retail valuation cohort.

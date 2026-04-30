@@ -28,6 +28,7 @@ class IssuerModel(Base):
     template_assignment_source: Mapped[str] = mapped_column(Text, nullable=False)
     template_assignment_reason: Mapped[str] = mapped_column(Text, nullable=False)
     limited_coverage_flag: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    stressed_operator_flag: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -816,6 +817,7 @@ class CompanyValuationSnapshotModel(Base):
     quality_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     valuation_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     limited_coverage_flag: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    stressed_operator_flag: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     top_reason_codes_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     valuation_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -853,6 +855,7 @@ class ScreeningRowModel(Base):
     ownership_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     ownership_special_situation_flag: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     limited_coverage_flag: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    stressed_operator_flag: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     screen_rank_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     template_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
     overall_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)

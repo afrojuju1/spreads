@@ -7,6 +7,14 @@ from typing import Any
 
 from core.common import clamp
 from core.services.company_valuation.evaluation import recompute_company_valuation
+from core.services.company_valuation.ids import normalize_ticker
+from core.services.company_valuation.taxonomy import (
+    resolve_company_valuation_taxonomy_context,
+    supported_company_valuation_tickers,
+)
+from core.services.company_valuation.templates import (
+    resolve_company_valuation_effective_template,
+)
 from core.storage.company_valuation_repository import CompanyValuationRepository
 from core.storage.serializers import parse_datetime
 
@@ -34,6 +42,81 @@ def _heartbeat(heartbeat: Callable[[], None] | None) -> None:
         heartbeat()
 
 
+def _normalized_tickers(values: tuple[str, ...] | None) -> tuple[str, ...] | None:
+    normalized = tuple(
+        dict.fromkeys(
+            normalize_ticker(value)
+            for value in (values or ())
+            if str(value or "").strip()
+        )
+    )
+    return normalized or None
+
+
+def _resolved_screen_scope_tickers(
+    *,
+    tickers: tuple[str, ...] | None,
+    supported_only: bool,
+    config_root: str | None,
+) -> tuple[str, ...] | None:
+    normalized_tickers = _normalized_tickers(tickers)
+    if not supported_only:
+        return normalized_tickers
+    supported_tickers = _normalized_tickers(
+        supported_company_valuation_tickers(config_root)
+    )
+    if not supported_tickers:
+        return ()
+    if not normalized_tickers:
+        return supported_tickers
+    supported_set = set(supported_tickers)
+    return tuple(
+        ticker for ticker in normalized_tickers if ticker in supported_set
+    )
+
+
+def _normalized_screen_filters(
+    *,
+    template_id: str | None,
+    stressed_operator_only: bool,
+) -> tuple[str | None, bool]:
+    normalized_template_id = str(template_id or "").strip() or None
+    normalized_stressed_only = bool(stressed_operator_only)
+    if normalized_template_id == "stressed_operator":
+        return ("energy_asset_heavy", True)
+    return (normalized_template_id, normalized_stressed_only)
+
+
+def _enrich_screen_row(
+    *,
+    row: dict[str, Any],
+    issuer_row: dict[str, Any],
+    config_root: str | None,
+) -> dict[str, Any]:
+    resolution = resolve_company_valuation_taxonomy_context(
+        cik=str(issuer_row["cik"]),
+        ticker=str(issuer_row.get("ticker") or "") or None,
+        company_name=str(issuer_row["company_name"]),
+        sic=issuer_row.get("sic"),
+        sic_title=issuer_row.get("sic_description"),
+        naics=issuer_row.get("naics"),
+        config_root=config_root,
+    )
+    effective_template = resolve_company_valuation_effective_template(
+        issuer_row=issuer_row,
+        config_root=config_root,
+    )
+    enriched = dict(row)
+    enriched["effective_template_id"] = effective_template.template_id
+    enriched["effective_template_version"] = effective_template.template_version
+    enriched["support_status"] = resolution.support.status
+    enriched["support_reason"] = resolution.support.reason
+    enriched["in_curated_universe"] = resolution.support.in_curated_universe
+    enriched["expected_template_id"] = resolution.support.expected_template_id
+    enriched["expected_template_match"] = resolution.support.expected_template_match
+    return enriched
+
+
 def _screen_rank_score(row: dict[str, Any]) -> float:
     quality_score = float(row.get("quality_score") or 0.0)
     valuation_gap = float(row.get("valuation_gap") or 0.0)
@@ -55,18 +138,33 @@ def materialize_company_valuation_screen(
     template_id: str | None = None,
     tickers: tuple[str, ...] | None = None,
     issuer_limit: int | None = None,
+    supported_only: bool = True,
+    stressed_operator_only: bool = False,
     repository: CompanyValuationRepository | None = None,
     config_root: str | None = None,
     heartbeat: Callable[[], None] | None = None,
 ) -> CompanyValuationScreenMaterializationResult:
     repo = repository or CompanyValuationRepository()
     as_of_dt = _normalized_as_of(as_of)
-    issuer_rows = repo.list_issuers_for_screening(
-        as_of=as_of_dt,
+    resolved_template_id, normalized_stressed_only = _normalized_screen_filters(
         template_id=template_id,
-        tickers=tickers,
-        limit=issuer_limit,
+        stressed_operator_only=stressed_operator_only,
     )
+    resolved_tickers = _resolved_screen_scope_tickers(
+        tickers=tickers,
+        supported_only=supported_only,
+        config_root=config_root,
+    )
+    if supported_only and resolved_tickers == ():
+        issuer_rows = []
+    else:
+        issuer_rows = repo.list_issuers_for_screening(
+            as_of=as_of_dt,
+            template_id=resolved_template_id,
+            tickers=resolved_tickers,
+            stressed_operator_only=normalized_stressed_only,
+            limit=issuer_limit,
+        )
     recomputed = 0
     for issuer_row in issuer_rows:
         _heartbeat(heartbeat)
@@ -78,12 +176,16 @@ def materialize_company_valuation_screen(
         )
         recomputed += 1
 
-    rows = repo.list_screening_rows(
-        as_of=as_of_dt.date().isoformat(),
-        template_id=None,
-        tickers=tickers,
-        limit=50000,
-    )
+    if supported_only and resolved_tickers == ():
+        rows = []
+    else:
+        rows = repo.list_screening_rows(
+            as_of=as_of_dt.date().isoformat(),
+            template_id=resolved_template_id,
+            tickers=resolved_tickers,
+            stressed_operator_only=normalized_stressed_only,
+            limit=50000,
+        )
     ranked_rows = sorted(
         rows,
         key=lambda row: (
@@ -125,24 +227,71 @@ def list_company_valuation_screen(
     template_id: str | None = None,
     tickers: tuple[str, ...] | None = None,
     limit: int = 100,
+    supported_only: bool = True,
+    stressed_operator_only: bool = False,
     repository: CompanyValuationRepository | None = None,
+    config_root: str | None = None,
 ) -> dict[str, Any]:
     repo = repository or CompanyValuationRepository()
     resolved_as_of = as_of or repo.latest_screening_as_of()
     if not resolved_as_of:
-        return {"as_of": None, "count": 0, "rows": []}
-    rows = repo.list_screening_rows(
-        as_of=resolved_as_of,
+        return {
+            "as_of": None,
+            "count": 0,
+            "rows": [],
+            "supported_only": supported_only,
+            "stressed_operator_only": stressed_operator_only,
+            "support_status_counts": {},
+        }
+    resolved_template_id, normalized_stressed_only = _normalized_screen_filters(
         template_id=template_id,
-        tickers=tickers,
-        limit=limit,
+        stressed_operator_only=stressed_operator_only,
     )
+    resolved_tickers = _resolved_screen_scope_tickers(
+        tickers=tickers,
+        supported_only=supported_only,
+        config_root=config_root,
+    )
+    if supported_only and resolved_tickers == ():
+        rows = []
+    else:
+        rows = repo.list_screening_rows(
+            as_of=resolved_as_of,
+            template_id=resolved_template_id,
+            tickers=resolved_tickers,
+            stressed_operator_only=normalized_stressed_only,
+            limit=limit,
+        )
+    issuer_rows = repo.list_issuers(
+        issuer_ids=tuple(
+            dict.fromkeys(str(row["issuer_id"]) for row in rows if row.get("issuer_id"))
+        ),
+    )
+    issuer_map = {
+        str(issuer_row["issuer_id"]): issuer_row for issuer_row in issuer_rows
+    }
+    enriched_rows = [
+        _enrich_screen_row(
+            row=row,
+            issuer_row=issuer_map[str(row["issuer_id"])],
+            config_root=config_root,
+        )
+        for row in rows
+        if str(row["issuer_id"]) in issuer_map
+    ]
+    support_status_counts: dict[str, int] = {}
+    for row in enriched_rows:
+        status = str(row.get("support_status") or "unknown")
+        support_status_counts[status] = support_status_counts.get(status, 0) + 1
     return {
         "as_of": resolved_as_of,
         "template_id": template_id,
-        "tickers": list(tickers or ()),
-        "count": len(rows),
-        "rows": rows,
+        "tickers": list(_normalized_tickers(tickers) or ()),
+        "supported_only": supported_only,
+        "stressed_operator_only": normalized_stressed_only,
+        "count": len(enriched_rows),
+        "support_status_counts": dict(sorted(support_status_counts.items())),
+        "rows": enriched_rows,
     }
 
 
@@ -173,7 +322,33 @@ def get_company_valuation_document(
         raise ValueError(f"No company valuation snapshot available for ticker {ticker}")
     payload = snapshot.get("valuation")
     if isinstance(payload, dict):
-        return payload
+        resolution = resolve_company_valuation_taxonomy_context(
+            cik=str(issuer_row["cik"]),
+            ticker=str(issuer_row.get("ticker") or ticker or "") or None,
+            company_name=str(issuer_row["company_name"]),
+            sic=issuer_row.get("sic"),
+            sic_title=issuer_row.get("sic_description"),
+            naics=issuer_row.get("naics"),
+            config_root=config_root,
+        )
+        effective_template = resolve_company_valuation_effective_template(
+            issuer_row=issuer_row,
+            config_root=config_root,
+        )
+        enriched_payload = dict(payload)
+        source_summary = dict(enriched_payload.get("source_summary") or {})
+        source_summary["template_id"] = str(issuer_row.get("template_id") or "")
+        source_summary["effective_template_id"] = effective_template.template_id
+        source_summary["effective_template_version"] = effective_template.template_version
+        source_summary["limited_coverage_flag"] = bool(
+            issuer_row.get("limited_coverage_flag")
+        )
+        source_summary["stressed_operator_flag"] = bool(
+            issuer_row.get("stressed_operator_flag")
+        )
+        enriched_payload["source_summary"] = source_summary
+        enriched_payload["support"] = resolution.support.to_payload()
+        return enriched_payload
     raise ValueError(f"Company valuation snapshot payload is unavailable for ticker {ticker}")
 
 

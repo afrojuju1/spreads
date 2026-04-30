@@ -22,7 +22,9 @@ from core.services.company_valuation.ids import (
     build_screening_row_id,
 )
 from core.services.company_valuation.point_in_time import resolve_company_valuation_point_in_time
-from core.services.company_valuation.templates import resolve_company_valuation_template
+from core.services.company_valuation.templates import (
+    resolve_company_valuation_effective_template,
+)
 from core.storage.company_valuation_repository import CompanyValuationRepository
 from core.storage.serializers import parse_datetime, render_value
 
@@ -148,7 +150,10 @@ def _build_quality_breakdown(
     issuer_row: dict[str, Any],
     config_root: str | None,
 ) -> QualityBreakdown:
-    template = resolve_company_valuation_template(str(issuer_row["template_id"]), config_root)
+    template = resolve_company_valuation_effective_template(
+        issuer_row=issuer_row,
+        config_root=config_root,
+    )
     sub_scores = _quality_scores(
         features=feature_result.financial_features,
         ownership_score=feature_result.ownership_signal.score,
@@ -181,6 +186,8 @@ def _build_quality_breakdown(
         reason_codes.append("missing_core_facts")
     if bool(issuer_row.get("limited_coverage_flag")):
         reason_codes.append("limited_coverage_template")
+    if bool(issuer_row.get("stressed_operator_flag")):
+        reason_codes.append("stressed_operator_overlay")
 
     confidence = 0.45 + (feature_result.required_feature_coverage * 0.35) + (
         feature_result.ownership_signal.confidence * 0.20
@@ -294,6 +301,7 @@ def _valuation_context(
     required_feature_coverage: float,
     quality_score: float,
     limited_coverage_flag: bool,
+    stressed_operator_flag: bool,
 ) -> tuple[list[str], float]:
     reason_codes: list[str] = []
     confidence_penalty = 0.0
@@ -354,6 +362,8 @@ def _valuation_context(
         )
     if limited_coverage_flag:
         confidence_penalty += 0.12
+    if stressed_operator_flag:
+        reason_codes.append("valuation_stressed_operator_overlay")
     return (reason_codes, confidence_penalty)
 
 
@@ -601,6 +611,7 @@ def _build_valuation_summary(
         required_feature_coverage=feature_result.required_feature_coverage,
         quality_score=quality.total_score,
         limited_coverage_flag=bool(issuer_row.get("limited_coverage_flag")),
+        stressed_operator_flag=bool(issuer_row.get("stressed_operator_flag")),
     )
     reason_codes = list(
         dict.fromkeys([*dcf_reason_codes, *anchor_reason_codes, *context_reason_codes])
@@ -687,7 +698,10 @@ def recompute_company_valuation(
         as_of=as_of_dt,
         repository=repo,
     )
-    template = resolve_company_valuation_template(str(issuer_row["template_id"]), config_root)
+    template = resolve_company_valuation_effective_template(
+        issuer_row=issuer_row,
+        config_root=config_root,
+    )
     quality = _build_quality_breakdown(
         feature_result=feature_result,
         issuer_row=issuer_row,
@@ -725,6 +739,8 @@ def recompute_company_valuation(
         },
         source_summary={
             "template_id": issuer_identity.template_id,
+            "effective_template_id": str(template.template_id),
+            "effective_template_version": str(template.template_version),
             "latest_filing_id": None if point_in_time.latest_filing is None else point_in_time.latest_filing.get("filing_id"),
             "latest_statement_snapshot_id": None
             if point_in_time.latest_statement_snapshot is None
@@ -735,6 +751,8 @@ def recompute_company_valuation(
             "latest_treasury_curve_snapshot_id": None
             if point_in_time.latest_treasury_curve_snapshot is None
             else point_in_time.latest_treasury_curve_snapshot.get("curve_snapshot_id"),
+            "limited_coverage_flag": bool(issuer_row.get("limited_coverage_flag")),
+            "stressed_operator_flag": bool(issuer_row.get("stressed_operator_flag")),
         },
         quality=quality,
         valuation=valuation,
@@ -745,6 +763,7 @@ def recompute_company_valuation(
         risks={
             "top_reason_codes": list(dict.fromkeys([*quality.reason_codes, *valuation.reason_codes]))[:8],
             "limited_coverage_flag": bool(issuer_row.get("limited_coverage_flag")),
+            "stressed_operator_flag": bool(issuer_row.get("stressed_operator_flag")),
         },
         provenance={
             "filings_used": feature_result.filings_used,
@@ -785,6 +804,7 @@ def recompute_company_valuation(
         "quality_confidence": quality.confidence,
         "valuation_confidence": valuation.confidence,
         "limited_coverage_flag": bool(issuer_row.get("limited_coverage_flag")),
+        "stressed_operator_flag": bool(issuer_row.get("stressed_operator_flag")),
         "top_reason_codes_json": top_reason_codes,
         "valuation_json": document_payload,
         "computed_at": datetime.now(UTC),
@@ -812,6 +832,7 @@ def recompute_company_valuation(
             feature_result.ownership_features.get("ownership_special_situation_flag")
         ),
         limited_coverage_flag=bool(issuer_row.get("limited_coverage_flag")),
+        stressed_operator_flag=bool(issuer_row.get("stressed_operator_flag")),
         top_reason_codes=tuple(top_reason_codes),
     )
     screening_row_payload = screening_row.to_payload()

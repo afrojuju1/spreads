@@ -90,3 +90,74 @@ calibration_baskets:
       - IR
       - FTV
       - AME
+  stressed_operator:
+    as_of: "2026-04-30"
+    rationale: "Eleven stressed or higher-leverage U.S. energy operators selected from the 30-name energy calibration pass for focused validation of the stressed-operator branch."
+    symbols:
+      - OXY
+      - APA
+      - EQT
+      - HAL
+      - MUR
+      - MTDR
+      - PBF
+      - PTEN
+      - NOV
+      - HP
+      - DK
+  software_asset_light:
+    as_of: "2026-04-30"
+    rationale: "Eighteen U.S.-listed software and software-platform names with public-history depth suitable for a 10-year asset-light software calibration pass."
+    symbols:
+      - MSFT
+      - ORCL
+      - CRM
+      - ADBE
+      - INTU
+      - NOW
+      - ADSK
+      - SNPS
+      - CDNS
+      - WDAY
+      - PANW
+      - FTNT
+      - HUBS
+      - VEEV
+      - TYL
+      - PAYC
+      - SSNC
+      - FICO
+  retail_consumer:
+    as_of: "2026-04-30"
+    rationale: "Eighteen U.S.-listed retail and consumer-distribution names spanning staples, discretionary, off-price, home improvement, auto retail, and specialty retail for a 10-year retail-consumer calibration pass."
+    symbols:
+      - WMT
+      - COST
+      - TGT
+      - KR
+      - TJX
+      - ROST
+      - DG
+      - DLTR
+      - HD
+      - LOW
+      - BBY
+      - ORLY
+      - AZO
+      - CASY
+      - AN
+      - KMX
+      - BURL
+      - WSM
+  software_compounder_followup:
+    as_of: "2026-04-30"
+    rationale: "Focused eight-name software compounder follow-up used to test whether the unresolved software compounder bucket splits more cleanly into platform-suite and premium-application branches."
+    symbols:
+      - MSFT
+      - ORCL
+      - PAYC
+      - ADBE
+      - INTU
+      - CDNS
+      - SNPS
+      - VEEV

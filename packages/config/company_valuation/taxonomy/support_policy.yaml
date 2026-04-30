@@ -1,0 +1,169 @@
+policy_version: v1
+allowlist_required: true
+
+supported_template_ids:
+  - software_asset_light
+  - platform_hardware
+  - retail_consumer
+  - energy_asset_heavy
+  - industrial_manufacturing
+  - diversified_industrial_core
+  - aerospace_defense_prime
+
+supported_issuers:
+  - ticker: ADBE
+    expected_template_id: software_asset_light
+    reason: Initial curated software valuation universe.
+  - ticker: ADSK
+    expected_template_id: software_asset_light
+    reason: Initial curated software valuation universe.
+  - ticker: CDNS
+    expected_template_id: software_asset_light
+    reason: Initial curated software valuation universe.
+  - ticker: CHKP
+    expected_template_id: software_asset_light
+    reason: Initial curated software valuation universe.
+  - ticker: CRM
+    expected_template_id: software_asset_light
+    reason: Initial curated software valuation universe.
+  - ticker: FICO
+    expected_template_id: software_asset_light
+    reason: Initial curated software valuation universe.
+  - ticker: GWRE
+    expected_template_id: software_asset_light
+    reason: Initial curated software valuation universe.
+  - ticker: HUBS
+    expected_template_id: software_asset_light
+    reason: Initial curated software valuation universe.
+  - ticker: INTU
+    expected_template_id: software_asset_light
+    reason: Initial curated software valuation universe.
+  - ticker: MSFT
+    expected_template_id: software_asset_light
+    reason: Initial curated software valuation universe.
+
+  - ticker: AAPL
+    expected_template_id: platform_hardware
+    reason: Initial curated platform hardware valuation universe.
+
+  - ticker: AZO
+    expected_template_id: retail_consumer
+    reason: Initial curated retail valuation universe.
+  - ticker: BBY
+    expected_template_id: retail_consumer
+    reason: Initial curated retail valuation universe.
+  - ticker: COST
+    expected_template_id: retail_consumer
+    reason: Initial curated retail valuation universe.
+  - ticker: DG
+    expected_template_id: retail_consumer
+    reason: Initial curated retail valuation universe.
+  - ticker: DLTR
+    expected_template_id: retail_consumer
+    reason: Initial curated retail valuation universe.
+  - ticker: HD
+    expected_template_id: retail_consumer
+    reason: Initial curated retail valuation universe.
+  - ticker: LOW
+    expected_template_id: retail_consumer
+    reason: Initial curated retail valuation universe.
+  - ticker: ORLY
+    expected_template_id: retail_consumer
+    reason: Initial curated retail valuation universe.
+
+  - ticker: AM
+    expected_template_id: energy_asset_heavy
+    reason: Initial curated energy valuation universe.
+  - ticker: ATO
+    expected_template_id: energy_asset_heavy
+    reason: Initial curated energy valuation universe.
+  - ticker: AR
+    expected_template_id: energy_asset_heavy
+    reason: Initial curated energy valuation universe.
+  - ticker: CHRD
+    expected_template_id: energy_asset_heavy
+    reason: Initial curated energy valuation universe.
+  - ticker: HAL
+    expected_template_id: energy_asset_heavy
+    reason: Initial curated energy valuation universe with overlay-driven stress handled separately.
+  - ticker: NOV
+    expected_template_id: energy_asset_heavy
+    reason: Initial curated energy valuation universe with overlay-driven stress handled separately.
+  - ticker: OXY
+    expected_template_id: energy_asset_heavy
+    reason: Initial curated energy valuation universe with overlay-driven stress handled separately.
+  - ticker: PBF
+    expected_template_id: energy_asset_heavy
+    reason: Initial curated energy valuation universe.
+
+  - ticker: CAT
+    expected_template_id: industrial_manufacturing
+    reason: Initial curated industrial manufacturing valuation universe.
+  - ticker: CMI
+    expected_template_id: industrial_manufacturing
+    reason: Initial curated industrial manufacturing valuation universe.
+  - ticker: CNH
+    expected_template_id: industrial_manufacturing
+    reason: Initial curated industrial manufacturing valuation universe.
+  - ticker: DE
+    expected_template_id: industrial_manufacturing
+    reason: Initial curated industrial manufacturing valuation universe.
+  - ticker: EMR
+    expected_template_id: industrial_manufacturing
+    reason: Initial curated industrial manufacturing valuation universe.
+  - ticker: ETN
+    expected_template_id: industrial_manufacturing
+    reason: Initial curated industrial manufacturing valuation universe.
+  - ticker: GTES
+    expected_template_id: industrial_manufacturing
+    reason: Initial curated industrial manufacturing valuation universe.
+  - ticker: IEX
+    expected_template_id: industrial_manufacturing
+    reason: Initial curated industrial manufacturing valuation universe.
+
+  - ticker: AME
+    expected_template_id: diversified_industrial_core
+    reason: Initial curated diversified industrial valuation universe.
+  - ticker: DOV
+    expected_template_id: diversified_industrial_core
+    reason: Initial curated diversified industrial valuation universe.
+  - ticker: FTV
+    expected_template_id: diversified_industrial_core
+    reason: Initial curated diversified industrial valuation universe.
+  - ticker: HON
+    expected_template_id: diversified_industrial_core
+    reason: Initial curated diversified industrial valuation universe.
+  - ticker: ITW
+    expected_template_id: diversified_industrial_core
+    reason: Initial curated diversified industrial valuation universe.
+  - ticker: ROK
+    expected_template_id: diversified_industrial_core
+    reason: Initial curated diversified industrial valuation universe.
+
+  - ticker: GD
+    expected_template_id: aerospace_defense_prime
+    reason: Initial curated aerospace and defense valuation universe.
+  - ticker: HEI
+    expected_template_id: aerospace_defense_prime
+    reason: Initial curated aerospace and defense valuation universe.
+  - ticker: HWM
+    expected_template_id: aerospace_defense_prime
+    reason: Initial curated aerospace and defense valuation universe.
+  - ticker: LHX
+    expected_template_id: aerospace_defense_prime
+    reason: Initial curated aerospace and defense valuation universe.
+  - ticker: LMT
+    expected_template_id: aerospace_defense_prime
+    reason: Initial curated aerospace and defense valuation universe.
+  - ticker: NOC
+    expected_template_id: aerospace_defense_prime
+    reason: Initial curated aerospace and defense valuation universe.
+  - ticker: RTX
+    expected_template_id: aerospace_defense_prime
+    reason: Initial curated aerospace and defense valuation universe.
+  - ticker: TDG
+    expected_template_id: aerospace_defense_prime
+    reason: Initial curated aerospace and defense valuation universe.
+  - ticker: TXT
+    expected_template_id: aerospace_defense_prime
+    reason: Initial curated aerospace and defense valuation universe.

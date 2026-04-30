@@ -638,6 +638,10 @@ async def run_company_valuation_screen_materialize_job(
             ),
             tickers=_normalized_tickers(payload) or None,
             issuer_limit=_optional_int(payload.get("issuer_limit")),
+            supported_only=bool(payload.get("supported_only", True)),
+            stressed_operator_only=bool(
+                payload.get("stressed_operator_only", False)
+            ),
             repository=CompanyValuationRepository(database_url),
             config_root=(
                 None
