@@ -11,3 +11,79 @@ overrides:
     template_id: industrial_manufacturing
     reason: "Industrial manufacturing override for diversified electrical and automation equipment issuer."
     active: true
+  - issuer_cik: "0000040545"
+    template_id: aerospace_defense_prime
+    reason: "Focused industrial holdout promotion for aerospace and defense cohort."
+    active: true
+  - issuer_cik: "0000101829"
+    template_id: aerospace_defense_prime
+    reason: "Focused industrial holdout promotion for aerospace and defense cohort."
+    active: true
+  - issuer_cik: "0000012927"
+    template_id: aerospace_defense_prime
+    reason: "Focused industrial holdout promotion for aerospace and defense cohort."
+    active: true
+  - issuer_cik: "0000040533"
+    template_id: aerospace_defense_prime
+    reason: "Focused industrial holdout promotion for aerospace and defense cohort."
+    active: true
+  - issuer_cik: "0000936468"
+    template_id: aerospace_defense_prime
+    reason: "Focused industrial holdout promotion for aerospace and defense cohort."
+    active: true
+  - issuer_cik: "0001133421"
+    template_id: aerospace_defense_prime
+    reason: "Focused industrial holdout promotion for aerospace and defense cohort."
+    active: true
+  - issuer_cik: "0000202058"
+    template_id: aerospace_defense_prime
+    reason: "Focused industrial holdout promotion for aerospace and defense cohort."
+    active: true
+  - issuer_cik: "0001260221"
+    template_id: aerospace_defense_prime
+    reason: "Focused industrial holdout promotion for aerospace and defense cohort."
+    active: true
+  - issuer_cik: "0000046619"
+    template_id: aerospace_defense_prime
+    reason: "Focused industrial holdout promotion for aerospace and defense cohort."
+    active: true
+  - issuer_cik: "0000004281"
+    template_id: aerospace_defense_prime
+    reason: "Focused industrial holdout promotion for aerospace and defense cohort."
+    active: true
+  - issuer_cik: "0000217346"
+    template_id: aerospace_defense_prime
+    reason: "Focused industrial holdout promotion for aerospace and defense cohort."
+    active: true
+  - issuer_cik: "0000066740"
+    template_id: diversified_industrial_core
+    reason: "Focused industrial holdout promotion for diversified industrial core cohort."
+    active: true
+  - issuer_cik: "0000773840"
+    template_id: diversified_industrial_core
+    reason: "Focused industrial holdout promotion for diversified industrial core cohort."
+    active: true
+  - issuer_cik: "0000049826"
+    template_id: diversified_industrial_core
+    reason: "Focused industrial holdout promotion for diversified industrial core cohort."
+    active: true
+  - issuer_cik: "0000029905"
+    template_id: diversified_industrial_core
+    reason: "Focused industrial holdout promotion for diversified industrial core cohort."
+    active: true
+  - issuer_cik: "0001024478"
+    template_id: diversified_industrial_core
+    reason: "Focused industrial holdout promotion for diversified industrial core cohort."
+    active: true
+  - issuer_cik: "0001699150"
+    template_id: diversified_industrial_core
+    reason: "Focused industrial holdout promotion for diversified industrial core cohort."
+    active: true
+  - issuer_cik: "0001659166"
+    template_id: diversified_industrial_core
+    reason: "Focused industrial holdout promotion for diversified industrial core cohort."
+    active: true
+  - issuer_cik: "0001037868"
+    template_id: diversified_industrial_core
+    reason: "Focused industrial holdout promotion for diversified industrial core cohort."
+    active: true
