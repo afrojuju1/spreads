@@ -45,6 +45,7 @@ def plan_position_management(
             "limit_price": limit_price,
             "limit_price_source": limit_price_source,
             "recipe_ref": None,
+            "decision_details": None,
         }
 
     decision = evaluate_management_recipes(
@@ -59,6 +60,9 @@ def plan_position_management(
         "limit_price": decision.limit_price,
         "limit_price_source": decision.limit_price_source,
         "recipe_ref": decision.recipe_ref,
+        "decision_details": (
+            None if decision.details is None else dict(decision.details)
+        ),
     }
 
 

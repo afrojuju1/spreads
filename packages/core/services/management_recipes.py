@@ -26,6 +26,7 @@ class ManagementRecipeDecision:
     reason: str
     limit_price: float | None = None
     limit_price_source: str | None = None
+    details: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -167,6 +168,7 @@ def _evaluate_compiled_recipe(
             if decision.get("limit_price_source") in (None, "")
             else str(decision["limit_price_source"])
         ),
+        details=dict(decision),
     )
 
 

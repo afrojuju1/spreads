@@ -10,6 +10,7 @@ from core.jobs.specs import get_declared_job_row
 from core.services.bot_analytics import build_automation_performance_summary
 from core.services.broker_sync import BROKER_SYNC_KEY
 from core.services.execution import OPEN_STATUSES
+from core.services.exit_manager import describe_position_exit_state
 from core.services.execution_lifecycle import (
     classify_open_execution_attempt,
     is_open_execution_attempt_status,
@@ -505,6 +506,10 @@ def build_trading_health(
                     if mark_age_seconds is None
                     else round(mark_age_seconds, 2),
                     "net_pnl": round(realized_pnl + unrealized_pnl, 2),
+                    "exit_status": describe_position_exit_state(
+                        position=position,
+                        now=now,
+                    ),
                 }
             )
         top_positions = _top_positions(open_positions)

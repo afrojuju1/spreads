@@ -155,6 +155,75 @@ def resolve_exit_policy_snapshot(
     return policy
 
 
+def _round_money(value: Any) -> float | None:
+    parsed = _coerce_float(value)
+    if parsed is None:
+        return None
+    return round(parsed, 4)
+
+
+def _profit_target_mark(
+    *,
+    entry_value: float | None,
+    premium_kind: str | None,
+    policy: dict[str, Any],
+) -> float | None:
+    if entry_value is None or premium_kind is None:
+        return None
+    profit_target_pct = _coerce_float(policy.get("profit_target_pct"))
+    if profit_target_pct is None:
+        return None
+    if premium_kind == "debit":
+        return round(entry_value * (1.0 + profit_target_pct), 4)
+    return round(entry_value * max(1.0 - profit_target_pct, 0.0), 4)
+
+
+def _stop_mark(
+    *,
+    entry_value: float | None,
+    premium_kind: str | None,
+    policy: dict[str, Any],
+) -> float | None:
+    if entry_value is None or premium_kind is None:
+        return None
+    stop_multiple = _coerce_float(policy.get("stop_multiple"))
+    if stop_multiple is None:
+        return None
+    if premium_kind == "debit":
+        return round(max(entry_value / max(stop_multiple, 1.0), 0.0), 4)
+    return round(entry_value * stop_multiple, 4)
+
+
+def _exit_policy_details(
+    *,
+    policy: dict[str, Any],
+    mark: float | None,
+    effective_mark: float | None,
+    mark_state: str,
+    entry_value: float | None,
+    premium_kind: str | None,
+) -> dict[str, Any]:
+    return {
+        "policy": dict(policy),
+        "mark": _round_money(mark),
+        "effective_mark": _round_money(effective_mark),
+        "mark_state": mark_state,
+        "entry_value": _round_money(entry_value),
+        "premium_kind": premium_kind,
+        "profit_target_mark": _profit_target_mark(
+            entry_value=entry_value,
+            premium_kind=premium_kind,
+            policy=policy,
+        ),
+        "stop_mark": _stop_mark(
+            entry_value=entry_value,
+            premium_kind=premium_kind,
+            policy=policy,
+        ),
+        "force_close_at": _as_text(policy.get("force_close_at")),
+    }
+
+
 def _resolve_effective_exit_mark(
     *,
     position: dict[str, Any],
@@ -209,22 +278,39 @@ def evaluate_exit_policy(
     force_close_at = parse_datetime(_as_text(policy.get("force_close_at")))
     current_time = now or datetime.now(UTC)
     remaining_quantity = _coerce_float(position.get("remaining_quantity")) or 0.0
-    if remaining_quantity <= 0:
-        return {"should_close": False, "reason": "no_remaining_quantity"}
-    if not policy["enabled"]:
-        return {"should_close": False, "reason": "policy_disabled"}
-
-    effective_mark, mark_state = _resolve_effective_exit_mark(
-        position=position,
-        mark=mark,
-        now=current_time,
-    )
     entry_value = _coerce_float(position.get("entry_credit")) or _coerce_float(
         position.get("entry_value")
     )
     premium_kind = _as_text(position.get("entry_value_kind")) or net_premium_kind(
         position.get("strategy") or position.get("strategy_family")
     )
+    effective_mark, mark_state = _resolve_effective_exit_mark(
+        position=position,
+        mark=mark,
+        now=current_time,
+    )
+    details = _exit_policy_details(
+        policy=policy,
+        mark=mark,
+        effective_mark=effective_mark,
+        mark_state=mark_state,
+        entry_value=entry_value,
+        premium_kind=premium_kind,
+    )
+    if remaining_quantity <= 0:
+        return {
+            "should_close": False,
+            "reason": "no_remaining_quantity",
+            "recipe_ref": None,
+            **details,
+        }
+    if not policy["enabled"]:
+        return {
+            "should_close": False,
+            "reason": "policy_disabled",
+            "recipe_ref": None,
+            **details,
+        }
     if (
         entry_value is not None
         and effective_mark is not None
@@ -238,8 +324,10 @@ def evaluate_exit_policy(
         return {
             "should_close": True,
             "reason": "profit_target",
+            "recipe_ref": None,
             "limit_price": round(max(effective_mark, 0.01), 2),
             "limit_price_source": "mark",
+            **details,
         }
     if (
         entry_value is not None
@@ -254,8 +342,10 @@ def evaluate_exit_policy(
         return {
             "should_close": True,
             "reason": "stop_multiple",
+            "recipe_ref": None,
             "limit_price": round(max(effective_mark, 0.01), 2),
             "limit_price_source": "mark",
+            **details,
         }
     if force_close_at is not None and current_time >= force_close_at:
         limit_price, limit_price_source = _resolve_force_close_limit_price(
@@ -264,16 +354,67 @@ def evaluate_exit_policy(
             fallback_mark=mark,
         )
         if limit_price is None:
-            return {"should_close": False, "reason": "awaiting_force_close_price"}
+            return {
+                "should_close": False,
+                "reason": "awaiting_force_close_price",
+                "recipe_ref": None,
+                **details,
+            }
         return {
             "should_close": True,
             "reason": "force_close",
+            "recipe_ref": None,
             "limit_price": limit_price,
             "limit_price_source": limit_price_source,
+            **details,
         }
     if effective_mark is None:
-        return {"should_close": False, "reason": mark_state}
-    return {"should_close": False, "reason": "hold"}
+        return {
+            "should_close": False,
+            "reason": mark_state,
+            "recipe_ref": None,
+            **details,
+        }
+    return {
+        "should_close": False,
+        "reason": "hold",
+        "recipe_ref": None,
+        **details,
+    }
+
+
+def _close_source_payload(*, kind: str, decision: dict[str, Any]) -> dict[str, Any]:
+    details = (
+        dict(decision.get("decision_details") or {})
+        if isinstance(decision.get("decision_details"), dict)
+        else {}
+    )
+    exit_context: dict[str, Any] = {}
+    for key in (
+        "mark",
+        "effective_mark",
+        "entry_value",
+        "profit_target_mark",
+        "stop_mark",
+    ):
+        rounded = _round_money(details.get(key))
+        if rounded is not None:
+            exit_context[key] = rounded
+    for key in ("mark_state", "force_close_at"):
+        text = _as_text(details.get(key))
+        if text is not None:
+            exit_context[key] = text
+
+    payload: dict[str, Any] = {
+        "kind": kind,
+        "reason": _as_text(decision.get("reason")),
+        "decision_source": _as_text(decision.get("decision_source")),
+        "recipe_ref": _as_text(decision.get("recipe_ref")),
+        "limit_price_source": _as_text(decision.get("limit_price_source")),
+    }
+    if exit_context:
+        payload["exit_context"] = exit_context
+    return payload
 
 
 def _has_open_close_attempt(execution_store: Any, position_id: str) -> bool:
@@ -323,16 +464,41 @@ def _evaluate_position_close_decision(
                 {
                     "should_close": False,
                     "reason": "ambiguous_management_runtime",
+                    "recipe_ref": None,
+                    "limit_price": None,
+                    "limit_price_source": None,
+                    "decision_source": "management_runtime",
+                    "management_recipe_refs": [],
+                    "decision_details": None,
                 },
                 "management_runtime",
                 None,
             )
+        policy_decision = evaluate_exit_policy(
+            position=position,
+            mark=_coerce_float(position.get("close_mark")),
+            now=now,
+        )
+        policy_decision["decision_source"] = "position_exit_policy"
+        policy_decision["management_recipe_refs"] = []
+        policy_decision["decision_details"] = {
+            key: value
+            for key, value in policy_decision.items()
+            if key
+            in {
+                "policy",
+                "mark",
+                "effective_mark",
+                "mark_state",
+                "entry_value",
+                "premium_kind",
+                "profit_target_mark",
+                "stop_mark",
+                "force_close_at",
+            }
+        }
         return (
-            evaluate_exit_policy(
-                position=position,
-                mark=_coerce_float(position.get("close_mark")),
-                now=now,
-            ),
+            policy_decision,
             "position_exit_policy",
             None,
         )
@@ -341,6 +507,12 @@ def _evaluate_position_close_decision(
             {
                 "should_close": False,
                 "reason": "outside_management_schedule_window",
+                "recipe_ref": None,
+                "limit_price": None,
+                "limit_price_source": None,
+                "decision_source": "management_runtime",
+                "management_recipe_refs": list(runtime.management_recipe_refs),
+                "decision_details": None,
             },
             "management_runtime",
             runtime,
@@ -348,20 +520,86 @@ def _evaluate_position_close_decision(
 
     from core.services.management_planner import plan_position_management
 
-    return (
-        plan_position_management(
-            runtime=runtime,
-            position=position,
-            flatten_due=bot_time_reached(
-                runtime.bot.bot,
-                time_value=runtime.bot.bot.flatten_positions_at_et,
-                now=now,
-            ),
+    decision = plan_position_management(
+        runtime=runtime,
+        position=position,
+        flatten_due=bot_time_reached(
+            runtime.bot.bot,
+            time_value=runtime.bot.bot.flatten_positions_at_et,
             now=now,
         ),
-        "management_runtime",
-        runtime,
+        now=now,
     )
+    decision["decision_source"] = "management_runtime"
+    decision["management_recipe_refs"] = list(runtime.management_recipe_refs)
+    return (decision, "management_runtime", runtime)
+
+
+def describe_position_exit_state(
+    *,
+    position: dict[str, Any],
+    now: datetime | None = None,
+    management_runtimes: tuple[Any, ...] | None = None,
+) -> dict[str, Any]:
+    current_time = now or datetime.now(UTC)
+    runtimes = (
+        tuple(resolve_management_runtimes())
+        if management_runtimes is None
+        else tuple(management_runtimes)
+    )
+    decision, _decision_source, _runtime = _evaluate_position_close_decision(
+        position=position,
+        now=current_time,
+        management_runtimes=runtimes,
+    )
+    details = (
+        dict(decision.get("decision_details") or {})
+        if isinstance(decision.get("decision_details"), dict)
+        else {}
+    )
+    if not details:
+        fallback = evaluate_exit_policy(
+            position=position,
+            mark=_coerce_float(position.get("close_mark")),
+            now=current_time,
+        )
+        details = {
+            key: value
+            for key, value in fallback.items()
+            if key
+            in {
+                "policy",
+                "mark",
+                "effective_mark",
+                "mark_state",
+                "entry_value",
+                "premium_kind",
+                "profit_target_mark",
+                "stop_mark",
+                "force_close_at",
+            }
+        }
+    return {
+        "decision_source": _as_text(decision.get("decision_source")),
+        "management_recipe_refs": [
+            str(value)
+            for value in list(decision.get("management_recipe_refs") or [])
+            if str(value or "").strip()
+        ],
+        "should_close": bool(decision.get("should_close")),
+        "reason": str(decision.get("reason") or "unknown"),
+        "recipe_ref": _as_text(decision.get("recipe_ref")),
+        "limit_price": _coerce_float(decision.get("limit_price")),
+        "limit_price_source": _as_text(decision.get("limit_price_source")),
+        "current_mark": _round_money(details.get("mark")),
+        "effective_mark": _round_money(details.get("effective_mark")),
+        "mark_state": _as_text(details.get("mark_state")),
+        "entry_value": _round_money(details.get("entry_value")),
+        "premium_kind": _as_text(details.get("premium_kind")),
+        "profit_target_mark": _round_money(details.get("profit_target_mark")),
+        "stop_mark": _round_money(details.get("stop_mark")),
+        "force_close_at": _as_text(details.get("force_close_at")),
+    }
 
 
 def _create_managed_close_intent(
@@ -400,12 +638,20 @@ def _create_managed_close_intent(
             "limit_price": decision.get("limit_price"),
             "limit_price_source": decision.get("limit_price_source"),
             "reason": decision.get("reason"),
+            "recipe_ref": decision.get("recipe_ref"),
+            "decision_source": decision.get("decision_source"),
+            "decision_details": dict(decision.get("decision_details") or {}),
+            "source": _close_source_payload(
+                kind="management_runtime_exit",
+                decision=decision,
+            ),
             "execution_mode": runtime.automation.automation.execution_mode,
             "approval_mode": runtime.automation.automation.approval_mode,
         },
         created_event_payload={
             "position_id": position_id,
             "reason": decision.get("reason"),
+            "recipe_ref": decision.get("recipe_ref"),
             "limit_price": decision.get("limit_price"),
         },
     )
@@ -591,13 +837,10 @@ def run_position_exit_manager(
                 position_id=position_id,
                 limit_price=float(decision["limit_price"]),
                 request_metadata={
-                    "source": {
-                        "kind": "exit_manager",
-                        "reason": decision["reason"],
-                        "limit_price_source": _as_text(
-                            decision.get("limit_price_source")
-                        ),
-                    }
+                    "source": _close_source_payload(
+                        kind="exit_manager",
+                        decision=decision,
+                    ),
                 },
             )
             submitted += 1

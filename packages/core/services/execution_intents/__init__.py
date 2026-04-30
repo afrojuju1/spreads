@@ -269,6 +269,16 @@ def submit_execution_intent(
                 storage=storage,
             )
         elif source_intent.get("strategy_position_id"):
+            close_request_metadata = {
+                "execution_intent_id": execution_intent_id,
+                "bot_id": source_intent.get("bot_id"),
+                "automation_id": source_intent.get("automation_id"),
+                "strategy_config_id": policy_ref.get("strategy_config_id"),
+                "strategy_id": policy_ref.get("strategy_id"),
+                "config_hash": source_intent.get("config_hash"),
+            }
+            if isinstance(payload.get("source"), dict):
+                close_request_metadata["source"] = dict(payload["source"])
             result = submit_position_close_by_id(
                 db_target=db_target,
                 position_id=str(source_intent["strategy_position_id"]),
@@ -277,14 +287,7 @@ def submit_execution_intent(
                     if payload.get("limit_price") in (None, "")
                     else float(payload["limit_price"])
                 ),
-                request_metadata={
-                    "execution_intent_id": execution_intent_id,
-                    "bot_id": source_intent.get("bot_id"),
-                    "automation_id": source_intent.get("automation_id"),
-                    "strategy_config_id": policy_ref.get("strategy_config_id"),
-                    "strategy_id": policy_ref.get("strategy_id"),
-                    "config_hash": source_intent.get("config_hash"),
-                },
+                request_metadata=close_request_metadata,
                 storage=storage,
             )
         else:
