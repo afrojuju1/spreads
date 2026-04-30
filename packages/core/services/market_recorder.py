@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
+import socket
 from collections import defaultdict
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -11,6 +13,7 @@ from uuid import uuid4
 
 from core.common import load_local_env
 from core.integrations.alpaca.client import DEFAULT_DATA_BASE_URL
+from core.jobs.orchestration import market_recorder_runtime_lease_key
 from core.runtime.config import default_database_url
 from core.services.discovery_recovery import refresh_execution_capture_targets
 from core.services.option_quote_records import build_quote_records
@@ -26,6 +29,7 @@ DEFAULT_QUOTE_DURATION_SECONDS = 20.0
 DEFAULT_TRADE_DURATION_SECONDS = 20.0
 DEFAULT_TARGET_LIMIT = 1000
 MARKET_RECORDER_SOURCE = "market_recorder"
+MARKET_RECORDER_LEASE_SCOPE = "alpaca_options"
 
 
 def _as_text(value: Any) -> str | None:
@@ -33,6 +37,51 @@ def _as_text(value: Any) -> str | None:
         return None
     rendered = str(value).strip()
     return rendered or None
+
+
+def _current_deploy_env() -> str | None:
+    return _as_text(os.environ.get("SPREADS_DEPLOY_ENV"))
+
+
+def _configured_recorder_owner_env() -> str | None:
+    return _as_text(os.environ.get("SPREADS_MARKET_RECORDER_OWNER_ENV"))
+
+
+def _market_recorder_owner_id() -> str:
+    deploy_env = _current_deploy_env() or "unknown"
+    return f"{deploy_env}:{socket.gethostname()}:{os.getpid()}"
+
+
+def _market_recorder_lease_seconds(
+    *,
+    poll_seconds: float,
+    quote_duration_seconds: float,
+    trade_duration_seconds: float,
+) -> int:
+    base_window = max(
+        float(poll_seconds or 0.0),
+        float(quote_duration_seconds or 0.0),
+        float(trade_duration_seconds or 0.0),
+        1.0,
+    )
+    return max(int(base_window * 2) + 15, 60)
+
+
+def _owner_mismatch_payload() -> dict[str, Any] | None:
+    configured_owner_env = _configured_recorder_owner_env()
+    current_env = _current_deploy_env()
+    if configured_owner_env is None or current_env == configured_owner_env:
+        return None
+    return {
+        "status": "skipped",
+        "reason": "owner_env_mismatch",
+        "deploy_env": current_env,
+        "configured_owner_env": configured_owner_env,
+        "message": (
+            f"Market recorder ownership is assigned to {configured_owner_env}; "
+            f"{current_env or 'unknown'} is read-only."
+        ),
+    }
 
 
 def _build_route(row: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -321,11 +370,48 @@ async def run_market_recorder_iteration(
     broker: AlpacaOptionStreamBroker,
     quote_duration_seconds: float,
     trade_duration_seconds: float,
+    poll_seconds: float,
     target_limit: int,
+    lease_key: str,
+    lease_owner: str,
 ) -> dict[str, Any]:
+    owner_mismatch = _owner_mismatch_payload()
+    if owner_mismatch is not None:
+        return owner_mismatch
+
     with build_storage_context(db_target) as storage:
+        jobs_store = storage.jobs
         recovery_store = storage.recovery
         history_store = storage.history
+        if jobs_store.schema_ready():
+            lease_seconds = _market_recorder_lease_seconds(
+                poll_seconds=poll_seconds,
+                quote_duration_seconds=quote_duration_seconds,
+                trade_duration_seconds=trade_duration_seconds,
+            )
+            lease_state = {
+                "deploy_env": _current_deploy_env(),
+                "configured_owner_env": _configured_recorder_owner_env(),
+                "hostname": socket.gethostname(),
+                "pid": os.getpid(),
+            }
+            acquired = jobs_store.acquire_lease(
+                lease_key=lease_key,
+                owner=lease_owner,
+                expires_in_seconds=lease_seconds,
+                state=lease_state,
+            )
+            if not acquired:
+                existing_lease = jobs_store.get_lease(lease_key)
+                return {
+                    "status": "skipped",
+                    "reason": "lease_unavailable",
+                    "lease_key": lease_key,
+                    "lease_owner": existing_lease.get("owner")
+                    if isinstance(existing_lease, Mapping)
+                    else None,
+                    "message": "Another market recorder already owns the live options stream lease.",
+                }
         if not recovery_store.schema_ready():
             return {
                 "status": "skipped",
@@ -408,6 +494,8 @@ async def run_market_recorder_iteration(
 
 async def run_market_recorder_loop(args: argparse.Namespace) -> int:
     broker = AlpacaOptionStreamBroker()
+    lease_key = market_recorder_runtime_lease_key(MARKET_RECORDER_LEASE_SCOPE)
+    lease_owner = _market_recorder_owner_id()
     try:
         while True:
             iteration_started_at = asyncio.get_running_loop().time()
@@ -416,7 +504,10 @@ async def run_market_recorder_loop(args: argparse.Namespace) -> int:
                 broker=broker,
                 quote_duration_seconds=args.quote_duration_seconds,
                 trade_duration_seconds=args.trade_duration_seconds,
+                poll_seconds=args.poll_seconds,
                 target_limit=args.target_limit,
+                lease_key=lease_key,
+                lease_owner=lease_owner,
             )
             print(
                 json.dumps(
@@ -435,6 +526,13 @@ async def run_market_recorder_loop(args: argparse.Namespace) -> int:
             elapsed = asyncio.get_running_loop().time() - iteration_started_at
             await asyncio.sleep(max(float(args.poll_seconds) - elapsed, 0.0))
     finally:
+        try:
+            with build_storage_context(args.db) as storage:
+                jobs_store = storage.jobs
+                if jobs_store.schema_ready():
+                    jobs_store.release_lease(lease_key, owner=lease_owner)
+        except Exception:
+            pass
         await broker.aclose()
 
 

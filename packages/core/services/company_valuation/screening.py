@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from collections.abc import Callable
 from typing import Any
 
 from core.common import clamp
@@ -28,6 +29,11 @@ def _normalized_as_of(value: str | datetime | None) -> datetime:
     return parsed.astimezone(UTC)
 
 
+def _heartbeat(heartbeat: Callable[[], None] | None) -> None:
+    if heartbeat is not None:
+        heartbeat()
+
+
 def _screen_rank_score(row: dict[str, Any]) -> float:
     quality_score = float(row.get("quality_score") or 0.0)
     valuation_gap = float(row.get("valuation_gap") or 0.0)
@@ -51,6 +57,7 @@ def materialize_company_valuation_screen(
     issuer_limit: int | None = None,
     repository: CompanyValuationRepository | None = None,
     config_root: str | None = None,
+    heartbeat: Callable[[], None] | None = None,
 ) -> CompanyValuationScreenMaterializationResult:
     repo = repository or CompanyValuationRepository()
     as_of_dt = _normalized_as_of(as_of)
@@ -62,6 +69,7 @@ def materialize_company_valuation_screen(
     )
     recomputed = 0
     for issuer_row in issuer_rows:
+        _heartbeat(heartbeat)
         recompute_company_valuation(
             issuer_id=str(issuer_row["issuer_id"]),
             as_of=as_of_dt,
@@ -89,6 +97,7 @@ def materialize_company_valuation_screen(
     template_counters: dict[str, int] = {}
     overall_rank = 0
     for row in ranked_rows:
+        _heartbeat(heartbeat)
         overall_rank += 1
         template_key = str(row.get("template_id") or "")
         template_counters[template_key] = template_counters.get(template_key, 0) + 1

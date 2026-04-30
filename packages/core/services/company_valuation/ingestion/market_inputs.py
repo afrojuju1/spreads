@@ -29,6 +29,26 @@ def _first_bar_price(snapshot: dict[str, Any]) -> tuple[float | None, datetime |
     return (None, None)
 
 
+def _statement_metrics(snapshot: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(snapshot, dict):
+        return {}
+    value = snapshot.get("metrics_json")
+    if not isinstance(value, dict):
+        value = snapshot.get("metrics")
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _latest_statement_metric(
+    rows: list[dict[str, Any]],
+    metric_name: str,
+) -> float | None:
+    for row in rows:
+        value = parse_float(_statement_metrics(row).get(metric_name))
+        if value is not None:
+            return value
+    return None
+
+
 def _resolve_price(snapshot: dict[str, Any]) -> tuple[float | None, datetime | None]:
     bid = parse_float(_nested(snapshot, "latestQuote", "bp"))
     ask = parse_float(_nested(snapshot, "latestQuote", "ap"))
@@ -136,13 +156,27 @@ def ingest_market_inputs(
         issuer_id=issuer_id,
         as_of=datetime.now(UTC),
     )
-    metrics = dict((latest_statement or {}).get("metrics_json") or {})
+    metrics = _statement_metrics(latest_statement)
+    statement_rows = repo.list_statement_snapshots_before(
+        issuer_id=issuer_id,
+        as_of=datetime.now(UTC),
+        limit=16,
+    )
     shares_outstanding = parse_float(metrics.get("shares_outstanding")) or parse_float(
         metrics.get("diluted_weighted_average_shares")
+    ) or _latest_statement_metric(statement_rows, "shares_outstanding") or _latest_statement_metric(
+        statement_rows,
+        "diluted_weighted_average_shares",
     )
-    cash_and_equivalents = parse_float(metrics.get("cash_and_equivalents"))
+    cash_and_equivalents = parse_float(metrics.get("cash_and_equivalents")) or _latest_statement_metric(
+        statement_rows,
+        "cash_and_equivalents",
+    )
     long_term_debt = parse_float(metrics.get("long_term_debt")) or parse_float(
         metrics.get("total_liabilities")
+    ) or _latest_statement_metric(statement_rows, "long_term_debt") or _latest_statement_metric(
+        statement_rows,
+        "total_liabilities",
     )
     market_cap = None if shares_outstanding is None else price * shares_outstanding
     enterprise_value = None

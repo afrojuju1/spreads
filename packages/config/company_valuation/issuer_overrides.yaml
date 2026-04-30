@@ -1,1 +1,13 @@
-overrides: []
+overrides:
+  - issuer_cik: "0000320193"
+    template_id: platform_hardware
+    reason: "Platform hardware override for large ecosystem-driven device issuer."
+    active: true
+  - issuer_cik: "0000076334"
+    template_id: industrial_manufacturing
+    reason: "Industrial manufacturing override for motion-control and engineered components issuer."
+    active: true
+  - issuer_cik: "0000032604"
+    template_id: industrial_manufacturing
+    reason: "Industrial manufacturing override for diversified electrical and automation equipment issuer."
+    active: true

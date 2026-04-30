@@ -14,6 +14,13 @@ web_port: 53000
 worker_runtime_replicas: 1
 worker_discovery_replicas: 4
 web_enabled: true
+backup_retention_days: 7
+health_check_minutes: 5
+market_recorder_owner_env: ade-nucbox-k8-plus
+excluded_job_types:
+  - company_valuation_bootstrap
+  - company_valuation_screen_materialize
+  - company_valuation_resolve_unresolved
 postgres_volume_name: spreads_nucbox_postgres_data
 docker_log_driver: local
 docker_log_max_size: 10m

@@ -51,6 +51,7 @@ valuation_model_mix:
     - ev_ebit
     - ev_fcf
     - ev_ebitda
+    - pb
   forecast_years: 5
   initial_growth_floor: -0.12
   initial_growth_cap: 0.12
@@ -63,6 +64,10 @@ valuation_model_mix:
   terminal_growth_cap: 0.02
   discount_rate_spread_bps: 550
   cyclical_discount_rate_spread_bps: 125
+  quality_premium_floor_score: 45
+  quality_premium_full_score: 72
+  quality_multiple_premium_max: 0.08
+  quality_discount_rate_reduction_bps_max: 20
 
 confidence_rules:
   low_confidence_if:

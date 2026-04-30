@@ -10,6 +10,11 @@ from core.storage.serializers import parse_datetime
 DISCOVERY_RUN_SLOT_GRACE_SECONDS = 120
 
 
+def _overdue_grace_seconds(payload: Mapping[str, Any]) -> int:
+    interval_seconds = max(int(payload.get("interval_seconds") or 0), 1)
+    return max(DISCOVERY_RUN_SLOT_GRACE_SECONDS, interval_seconds)
+
+
 def evaluate_discovery_run_schedule_health(
     *,
     schedule_summary: Mapping[str, Any] | None,
@@ -30,7 +35,8 @@ def evaluate_discovery_run_schedule_health(
             "message": None,
         }
 
-    if now < expected_slot_at + timedelta(seconds=DISCOVERY_RUN_SLOT_GRACE_SECONDS):
+    grace_seconds = _overdue_grace_seconds(payload)
+    if now < expected_slot_at + timedelta(seconds=grace_seconds):
         return {
             "overdue": False,
             "state": state,

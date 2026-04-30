@@ -101,6 +101,26 @@ services:
     command: ["uv", "run", "arq", "core.jobs.worker.DiscoveryWorkerSettings"]
     volumes:
       - .:/app
+  worker-valuation:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
+      REDIS_URL: redis://redis:6379/0
+      SPREADS_INTERNAL_API_BASE_URL: http://api:8000
+    command: ["uv", "run", "arq", "core.jobs.worker.ValuationWorkerSettings"]
+    volumes:
+      - .:/app
   scheduler:
     build:
       context: .

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from core.common import clamp
@@ -12,6 +12,19 @@ from core.storage.company_valuation_repository import CompanyValuationRepository
 from core.storage.serializers import parse_date, parse_datetime
 
 FEATURE_VERSION = "v1"
+LATEST_SNAPSHOT_METRIC_KEYS = {
+    "current_assets",
+    "current_liabilities",
+    "inventory",
+    "total_assets",
+    "cash_and_equivalents",
+    "long_term_debt",
+    "total_liabilities",
+    "stockholders_equity",
+    "shares_outstanding",
+    "diluted_weighted_average_shares",
+    "deferred_revenue",
+}
 
 
 @dataclass(frozen=True)
@@ -59,16 +72,28 @@ def _metrics(snapshot: dict[str, Any]) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _metric_count(snapshot: dict[str, Any]) -> int:
+    return len(_metrics(snapshot))
+
+
+def _latest_snapshot_coverage(snapshot: dict[str, Any]) -> int:
+    metrics = _metrics(snapshot)
+    return sum(1 for key in LATEST_SNAPSHOT_METRIC_KEYS if metrics.get(key) is not None)
+
+
 def _latest_metric_snapshot(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     if not rows:
         return None
+    covered_rows = [row for row in rows if _latest_snapshot_coverage(row) >= 4]
+    candidate_rows = covered_rows or rows
     ordered = sorted(
-        rows,
+        candidate_rows,
         key=lambda row: (
-            len(_metrics(row)),
             _period_end(row),
-            1 if len(_metrics(row)) >= 4 else 0,
-            0 if str(row.get("period_type")) != "instant" else -1,
+            _latest_snapshot_coverage(row),
+            1 if str(row.get("period_type")) != "instant" else 0,
+            _metric_count(row),
+            1 if _metric_count(row) >= 4 else 0,
             _available_at(row),
         ),
         reverse=True,
@@ -80,18 +105,24 @@ def _dedupe_statement_snapshots(rows: list[dict[str, Any]]) -> list[dict[str, An
     ordered_rows = sorted(
         rows,
         key=lambda row: (
-            len(_metrics(row)),
-            1 if len(_metrics(row)) >= 4 else 0,
             _period_end(row),
+            _latest_snapshot_coverage(row),
+            1 if str(row.get("period_type")) != "instant" else 0,
+            _metric_count(row),
+            1 if _metric_count(row) >= 4 else 0,
             _available_at(row),
-            0 if str(row.get("period_type")) != "instant" else -1,
         ),
         reverse=True,
     )
     deduped: list[dict[str, Any]] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str | None]] = set()
     for row in ordered_rows:
-        key = (str(row.get("period_end")), str(row.get("period_type")))
+        period_start = row.get("period_start")
+        key = (
+            str(row.get("period_end")),
+            str(row.get("period_type")),
+            None if period_start is None else str(period_start),
+        )
         if key in seen:
             continue
         seen.add(key)
@@ -107,6 +138,11 @@ def _quarterly_snapshots(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _annual_snapshots(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     annual = [row for row in rows if str(row.get("period_type")) == "annual"]
     return sorted(annual, key=_period_end, reverse=True)
+
+
+def _duration_snapshots(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    duration = [row for row in rows if str(row.get("period_type")) == "duration"]
+    return sorted(duration, key=_period_end, reverse=True)
 
 
 def _sum_metric(rows: list[dict[str, Any]], metric_name: str) -> float | None:
@@ -127,66 +163,234 @@ def _latest_metric(rows: list[dict[str, Any]], metric_name: str) -> float | None
     return None
 
 
+def _period_span_days(snapshot: dict[str, Any]) -> int | None:
+    period_start = parse_date(snapshot.get("period_start")) if snapshot.get("period_start") else None
+    period_end = parse_date(snapshot.get("period_end")) if snapshot.get("period_end") else None
+    if period_start is None or period_end is None:
+        return None
+    return max((period_end - period_start).days, 0)
+
+
+def _duration_match(
+    rows: list[dict[str, Any]],
+    *,
+    target_end: date,
+    target_span_days: int | None,
+    metric_name: str,
+) -> dict[str, Any] | None:
+    target_date = target_end - timedelta(days=365)
+    best_row: dict[str, Any] | None = None
+    best_key: tuple[int, int, date] | None = None
+    for row in rows:
+        value = _safe_float(_metrics(row).get(metric_name))
+        if value is None:
+            continue
+        row_end = _period_end(row)
+        end_delta = abs((row_end - target_date).days)
+        if end_delta > 45:
+            continue
+        row_span = _period_span_days(row)
+        span_delta = abs((row_span or 0) - (target_span_days or 0))
+        key = (-end_delta, -span_delta, row_end)
+        if best_key is None or key > best_key:
+            best_row = row
+            best_key = key
+    return best_row
+
+
+def _annual_before(
+    rows: list[dict[str, Any]],
+    *,
+    before_period_end: date,
+    metric_name: str,
+) -> dict[str, Any] | None:
+    for row in rows:
+        if _period_end(row) >= before_period_end:
+            continue
+        value = _safe_float(_metrics(row).get(metric_name))
+        if value is not None:
+            return row
+    return None
+
+
+def _trailing_metric_from_duration(
+    *,
+    duration_rows: list[dict[str, Any]],
+    annual_rows: list[dict[str, Any]],
+    metric_name: str,
+) -> tuple[float | None, dict[str, Any] | None]:
+    for current_row in duration_rows:
+        current_value = _safe_float(_metrics(current_row).get(metric_name))
+        if current_value is None:
+            continue
+        annual_base = _annual_before(
+            annual_rows,
+            before_period_end=_period_end(current_row),
+            metric_name=metric_name,
+        )
+        if annual_base is None:
+            continue
+        prior_duration = _duration_match(
+            duration_rows,
+            target_end=_period_end(current_row),
+            target_span_days=_period_span_days(current_row),
+            metric_name=metric_name,
+        )
+        if prior_duration is None:
+            continue
+        annual_value = _safe_float(_metrics(annual_base).get(metric_name))
+        prior_duration_value = _safe_float(_metrics(prior_duration).get(metric_name))
+        if annual_value is None or prior_duration_value is None:
+            continue
+        return (
+            current_value + annual_value - prior_duration_value,
+            {
+                "current_duration": current_row,
+                "annual_base": annual_base,
+                "prior_duration": prior_duration,
+            },
+        )
+    return (None, None)
+
+
+def _trailing_flow_metric(
+    *,
+    annual_rows: list[dict[str, Any]],
+    quarterly_rows: list[dict[str, Any]],
+    duration_rows: list[dict[str, Any]],
+    metric_name: str,
+) -> tuple[float | None, float | None]:
+    current_ttm = _sum_metric(quarterly_rows[:4], metric_name) if len(quarterly_rows) >= 4 else None
+    prior_ttm = _sum_metric(quarterly_rows[4:8], metric_name) if len(quarterly_rows) >= 8 else None
+    if current_ttm is not None:
+        if prior_ttm is None and len(annual_rows) >= 2:
+            prior_ttm = _safe_float(_metrics(annual_rows[1]).get(metric_name))
+        return (current_ttm, prior_ttm)
+
+    current_ttm, _current_refs = _trailing_metric_from_duration(
+        duration_rows=duration_rows,
+        annual_rows=annual_rows,
+        metric_name=metric_name,
+    )
+    if current_ttm is not None:
+        prior_ttm = None
+        if prior_ttm is None and len(annual_rows) >= 2:
+            prior_ttm = _safe_float(_metrics(annual_rows[1]).get(metric_name))
+        return (current_ttm, prior_ttm)
+
+    current_ttm = _safe_float(_metrics(annual_rows[0]).get(metric_name)) if annual_rows else None
+    prior_ttm = _safe_float(_metrics(annual_rows[1]).get(metric_name)) if len(annual_rows) >= 2 else None
+    return (current_ttm, prior_ttm)
+
+
 def _compute_ttm_features(statement_snapshots: list[dict[str, Any]]) -> dict[str, Any]:
     quarterly = _quarterly_snapshots(statement_snapshots)
     annual = _annual_snapshots(statement_snapshots)
+    duration = _duration_snapshots(statement_snapshots)
     latest = _latest_metric_snapshot(statement_snapshots)
     latest_metrics = _metrics(latest) if latest else {}
-    revenue_ttm = _sum_metric(quarterly[:4], "revenue") if len(quarterly) >= 4 else None
-    if revenue_ttm is None and annual:
-        revenue_ttm = _safe_float(_metrics(annual[0]).get("revenue"))
-    gross_profit_ttm = (
-        _sum_metric(quarterly[:4], "gross_profit") if len(quarterly) >= 4 else None
+    revenue_ttm, prior_revenue_ttm = _trailing_flow_metric(
+        annual_rows=annual,
+        quarterly_rows=quarterly,
+        duration_rows=duration,
+        metric_name="revenue",
     )
-    if gross_profit_ttm is None and annual:
-        gross_profit_ttm = _safe_float(_metrics(annual[0]).get("gross_profit"))
-    operating_income_ttm = (
-        _sum_metric(quarterly[:4], "operating_income") if len(quarterly) >= 4 else None
+    cost_of_revenue_ttm, _ = _trailing_flow_metric(
+        annual_rows=annual,
+        quarterly_rows=quarterly,
+        duration_rows=duration,
+        metric_name="cost_of_revenue",
     )
-    if operating_income_ttm is None and annual:
-        operating_income_ttm = _safe_float(_metrics(annual[0]).get("operating_income"))
-    net_income_ttm = (
-        _sum_metric(quarterly[:4], "net_income") if len(quarterly) >= 4 else None
+    gross_profit_ttm, _ = _trailing_flow_metric(
+        annual_rows=annual,
+        quarterly_rows=quarterly,
+        duration_rows=duration,
+        metric_name="gross_profit",
     )
-    if net_income_ttm is None and annual:
-        net_income_ttm = _safe_float(_metrics(annual[0]).get("net_income"))
-    operating_cash_flow_ttm = (
-        _sum_metric(quarterly[:4], "operating_cash_flow") if len(quarterly) >= 4 else None
+    if gross_profit_ttm is None and revenue_ttm is not None and cost_of_revenue_ttm is not None:
+        gross_profit_ttm = revenue_ttm - cost_of_revenue_ttm
+    operating_income_ttm, _ = _trailing_flow_metric(
+        annual_rows=annual,
+        quarterly_rows=quarterly,
+        duration_rows=duration,
+        metric_name="operating_income",
     )
-    if operating_cash_flow_ttm is None and annual:
-        operating_cash_flow_ttm = _safe_float(
-            _metrics(annual[0]).get("operating_cash_flow")
-        )
-    capex_ttm_raw = _sum_metric(quarterly[:4], "capex") if len(quarterly) >= 4 else None
-    if capex_ttm_raw is None and annual:
-        capex_ttm_raw = _safe_float(_metrics(annual[0]).get("capex"))
+    pretax_income_ttm, _ = _trailing_flow_metric(
+        annual_rows=annual,
+        quarterly_rows=quarterly,
+        duration_rows=duration,
+        metric_name="pretax_income",
+    )
+    if operating_income_ttm is None:
+        operating_income_ttm = pretax_income_ttm
+    net_income_ttm, _ = _trailing_flow_metric(
+        annual_rows=annual,
+        quarterly_rows=quarterly,
+        duration_rows=duration,
+        metric_name="net_income",
+    )
+    operating_cash_flow_ttm, _ = _trailing_flow_metric(
+        annual_rows=annual,
+        quarterly_rows=quarterly,
+        duration_rows=duration,
+        metric_name="operating_cash_flow",
+    )
+    capex_ttm_raw, _ = _trailing_flow_metric(
+        annual_rows=annual,
+        quarterly_rows=quarterly,
+        duration_rows=duration,
+        metric_name="capex",
+    )
     capex_ttm = None if capex_ttm_raw is None else abs(capex_ttm_raw)
     free_cash_flow_ttm = None
     if operating_cash_flow_ttm is not None:
         free_cash_flow_ttm = operating_cash_flow_ttm - (capex_ttm or 0.0)
 
-    prior_revenue_ttm = _sum_metric(quarterly[4:8], "revenue") if len(quarterly) >= 8 else None
-    if prior_revenue_ttm is None and len(annual) >= 2:
-        prior_revenue_ttm = _safe_float(_metrics(annual[1]).get("revenue"))
-
     revenue_ttm_growth = None
     if revenue_ttm is not None and prior_revenue_ttm not in (None, 0):
         revenue_ttm_growth = (revenue_ttm / prior_revenue_ttm) - 1.0
 
-    current_assets = _safe_float(latest_metrics.get("current_assets"))
-    current_liabilities = _safe_float(latest_metrics.get("current_liabilities"))
-    inventory = _safe_float(latest_metrics.get("inventory"))
-    total_assets = _safe_float(latest_metrics.get("total_assets"))
-    cash_and_equivalents = _safe_float(latest_metrics.get("cash_and_equivalents"))
-    long_term_debt = _safe_float(latest_metrics.get("long_term_debt"))
-    total_liabilities = _safe_float(latest_metrics.get("total_liabilities"))
-    stockholders_equity = _safe_float(latest_metrics.get("stockholders_equity"))
+    current_assets = _safe_float(latest_metrics.get("current_assets")) or _latest_metric(
+        statement_snapshots,
+        "current_assets",
+    )
+    current_liabilities = _safe_float(latest_metrics.get("current_liabilities")) or _latest_metric(
+        statement_snapshots,
+        "current_liabilities",
+    )
+    inventory = _safe_float(latest_metrics.get("inventory")) or _latest_metric(
+        statement_snapshots,
+        "inventory",
+    )
+    total_assets = _safe_float(latest_metrics.get("total_assets")) or _latest_metric(
+        statement_snapshots,
+        "total_assets",
+    )
+    cash_and_equivalents = _safe_float(latest_metrics.get("cash_and_equivalents")) or _latest_metric(
+        statement_snapshots,
+        "cash_and_equivalents",
+    )
+    long_term_debt = _safe_float(latest_metrics.get("long_term_debt")) or _latest_metric(
+        statement_snapshots,
+        "long_term_debt",
+    )
+    total_liabilities = _safe_float(latest_metrics.get("total_liabilities")) or _latest_metric(
+        statement_snapshots,
+        "total_liabilities",
+    )
+    stockholders_equity = _safe_float(latest_metrics.get("stockholders_equity")) or _latest_metric(
+        statement_snapshots,
+        "stockholders_equity",
+    )
     shares_outstanding = _safe_float(latest_metrics.get("shares_outstanding")) or _safe_float(
         latest_metrics.get("diluted_weighted_average_shares")
+    ) or _latest_metric(statement_snapshots, "shares_outstanding") or _latest_metric(
+        statement_snapshots,
+        "diluted_weighted_average_shares",
     )
     diluted_shares_latest = _safe_float(
         latest_metrics.get("diluted_weighted_average_shares")
-    ) or shares_outstanding
+    ) or _latest_metric(statement_snapshots, "diluted_weighted_average_shares") or shares_outstanding
     diluted_shares_prior = None
     if len(quarterly) >= 5:
         diluted_shares_prior = _safe_float(
@@ -200,14 +404,16 @@ def _compute_ttm_features(statement_snapshots: list[dict[str, Any]]) -> dict[str
     if diluted_shares_latest is not None and diluted_shares_prior not in (None, 0):
         diluted_share_growth_ttm = (diluted_shares_latest / diluted_shares_prior) - 1.0
 
-    sbc_ttm = _sum_metric(quarterly[:4], "stock_based_compensation") if len(quarterly) >= 4 else None
-    if sbc_ttm is None and annual:
-        sbc_ttm = _safe_float(_metrics(annual[0]).get("stock_based_compensation"))
-
-    cost_of_revenue_ttm = _sum_metric(quarterly[:4], "cost_of_revenue") if len(quarterly) >= 4 else None
-    if cost_of_revenue_ttm is None and annual:
-        cost_of_revenue_ttm = _safe_float(_metrics(annual[0]).get("cost_of_revenue"))
-    deferred_revenue_latest = _safe_float(latest_metrics.get("deferred_revenue"))
+    sbc_ttm, _ = _trailing_flow_metric(
+        annual_rows=annual,
+        quarterly_rows=quarterly,
+        duration_rows=duration,
+        metric_name="stock_based_compensation",
+    )
+    deferred_revenue_latest = _safe_float(latest_metrics.get("deferred_revenue")) or _latest_metric(
+        statement_snapshots,
+        "deferred_revenue",
+    )
     deferred_revenue_prior = None
     if len(quarterly) >= 5:
         deferred_revenue_prior = _safe_float(_metrics(quarterly[4]).get("deferred_revenue"))
@@ -251,6 +457,7 @@ def _compute_ttm_features(statement_snapshots: list[dict[str, Any]]) -> dict[str
         "gross_profit_ttm": gross_profit_ttm,
         "gross_margin_ttm": gross_margin_ttm,
         "operating_income_ttm": operating_income_ttm,
+        "pretax_income_ttm": pretax_income_ttm,
         "operating_margin_ttm": operating_margin_ttm,
         "net_income_ttm": net_income_ttm,
         "net_margin_ttm": net_margin_ttm,
@@ -549,7 +756,7 @@ def compute_company_valuation_features(
     statement_snapshots = repository.list_statement_snapshots_before(
         issuer_id=issuer_id,
         as_of=as_of_dt,
-        limit=32,
+        limit=96,
     )
     deduped_snapshots = _dedupe_statement_snapshots(statement_snapshots)
     if not deduped_snapshots:

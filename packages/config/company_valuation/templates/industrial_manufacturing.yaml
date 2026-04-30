@@ -3,7 +3,9 @@ template_version: v1
 status: active
 
 assignment_rules:
-  sic_prefixes: []
+  sic_prefixes:
+    - "34"
+    - "35"
   naics_prefixes: []
   keyword_rules:
     - industrial
@@ -39,23 +41,27 @@ ownership_weight_map:
   institutional_holder_signal: 1
 
 valuation_model_mix:
-  dcf_weight: 0.65
-  historical_multiples_weight: 0.35
+  dcf_weight: 0.55
+  historical_multiples_weight: 0.45
   primary_multiple_metrics:
     - ev_ebit
     - ev_fcf
     - pb
   forecast_years: 5
-  initial_growth_floor: -0.08
+  initial_growth_floor: -0.04
   initial_growth_cap: 0.14
   terminal_growth_multiplier: 0.45
-  growth_adjustment_factor: 0.65
+  growth_adjustment_factor: 0.6
   growth_adjustment_min: 0.72
-  growth_adjustment_max: 1.22
+  growth_adjustment_max: 1.32
   normalized_fcf_from_ebit_ratio: 0.75
-  terminal_growth_floor: 0.01
-  terminal_growth_cap: 0.025
-  discount_rate_spread_bps: 475
+  terminal_growth_floor: 0.012
+  terminal_growth_cap: 0.028
+  discount_rate_spread_bps: 440
+  quality_premium_floor_score: 48
+  quality_premium_full_score: 80
+  quality_multiple_premium_max: 0.18
+  quality_discount_rate_reduction_bps_max: 60
 
 confidence_rules:
   low_confidence_if:

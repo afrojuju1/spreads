@@ -1,15 +1,22 @@
 from __future__ import annotations
 
-from core.jobs.registry import DISCOVERY_QUEUE_NAME, RUNTIME_QUEUE_NAME
+from core.jobs.registry import (
+    DISCOVERY_QUEUE_NAME,
+    RUNTIME_QUEUE_NAME,
+    VALUATION_QUEUE_NAME,
+)
 from core.runtime.config import default_redis_url
 from core.runtime.redis import build_redis_settings
 
-from .lifecycle import discovery_startup, runtime_startup, shutdown
+from .lifecycle import discovery_startup, runtime_startup, shutdown, valuation_startup
 from .managed import ManagedJobFailure, SupersededJobRun
 from .tasks import (
     run_alert_delivery_job,
     run_alert_reconcile_job,
     run_broker_sync_job,
+    run_company_valuation_bootstrap_job,
+    run_company_valuation_resolve_unresolved_job,
+    run_company_valuation_screen_materialize_job,
     run_discovery_recovery_job,
     run_execution_submit_job,
     run_discovery_run_job,
@@ -54,6 +61,21 @@ class DiscoveryWorkerSettings:
     max_jobs = 1
 
 
+class ValuationWorkerSettings:
+    functions = [
+        run_company_valuation_bootstrap_job,
+        run_company_valuation_screen_materialize_job,
+        run_company_valuation_resolve_unresolved_job,
+    ]
+    queue_name = VALUATION_QUEUE_NAME
+    redis_settings = build_redis_settings(default_redis_url())
+    on_startup = valuation_startup
+    on_shutdown = shutdown
+    keep_result = 0
+    job_timeout = 8 * 60 * 60
+    max_jobs = 1
+
+
 WorkerSettings = RuntimeWorkerSettings
 
 
@@ -62,10 +84,14 @@ __all__ = [
     "ManagedJobFailure",
     "RuntimeWorkerSettings",
     "SupersededJobRun",
+    "ValuationWorkerSettings",
     "WorkerSettings",
     "run_alert_delivery_job",
     "run_alert_reconcile_job",
     "run_broker_sync_job",
+    "run_company_valuation_bootstrap_job",
+    "run_company_valuation_resolve_unresolved_job",
+    "run_company_valuation_screen_materialize_job",
     "run_discovery_recovery_job",
     "run_execution_submit_job",
     "run_discovery_run_job",

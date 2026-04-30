@@ -35,6 +35,11 @@ def _print_payload(payload: dict[str, Any], *, json_output: bool) -> None:
 
 def pipelines_command(
     pipeline_id: str | None = typer.Argument(None, help="Pipeline id to inspect."),
+    environment: str | None = typer.Option(
+        None,
+        "--env",
+        help="Run this command against a named deploy target.",
+    ),
     date: str | None = typer.Option(None, "--date", help="Optional market date."),
     limit: int = typer.Option(25, "--limit", help="Maximum pipelines to list."),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
@@ -58,6 +63,11 @@ def pipelines_command(
 
 
 def automations_command(
+    environment: str | None = typer.Option(
+        None,
+        "--env",
+        help="Run this command against a named deploy target.",
+    ),
     bot_id: str | None = typer.Option(None, "--bot-id", help="Target bot id."),
     automation_id: str | None = typer.Option(
         None,
@@ -94,6 +104,11 @@ def automations_command(
 
 def opportunities_command(
     opportunity_id: str | None = typer.Argument(None, help="Opportunity id to inspect."),
+    environment: str | None = typer.Option(
+        None,
+        "--env",
+        help="Run this command against a named deploy target.",
+    ),
     pipeline_id: str | None = typer.Option(None, "--pipeline-id", help="Optional pipeline filter."),
     label: str | None = typer.Option(None, "--label", help="Optional discovery label filter."),
     bot_id: str | None = typer.Option(None, "--bot-id", help="Optional bot owner filter."),
@@ -137,6 +152,11 @@ def opportunities_command(
 
 def positions_command(
     position_id: str | None = typer.Argument(None, help="Position id to inspect."),
+    environment: str | None = typer.Option(
+        None,
+        "--env",
+        help="Run this command against a named deploy target.",
+    ),
     pipeline_id: str | None = typer.Option(None, "--pipeline-id", help="Optional pipeline filter."),
     label: str | None = typer.Option(None, "--label", help="Optional discovery label filter."),
     bot_id: str | None = typer.Option(None, "--bot-id", help="Optional bot owner filter."),

@@ -308,25 +308,26 @@ Rule:
    | Redis                               |
    | arq:queue:runtime                   |
    | arq:queue:discovery                 |
+   | arq:queue:valuation                 |
    | spreads:events                      |
    +-------+------------------------------+
            |                      ^
            |                      |
            v                      | publish global events
-   +-------+--------+    +--------+---------+
-   | main workers   |    | discovery workers|
-   +-------+--------+    +--------+---------+
-           |                      |
-           +----------+-----------+
-                      |
-                      v
-               Postgres writes
-                      |
-                      v
-                 API WebSocket
-                      |
-                      v
-                    Web UI
+   +-------+--------+    +--------+---------+    +--------+---------+
+   | main workers   |    | discovery workers|    | valuation workers|
+   +-------+--------+    +--------+---------+    +--------+---------+
+           |                      |                       |
+           +----------+-----------+-----------+-----------+
+                                              |
+                                              v
+                                       Postgres writes
+                                              |
+                                              v
+                                         API WebSocket
+                                              |
+                                              v
+                                            Web UI
 ```
 
 ## Core Constraint
@@ -376,6 +377,7 @@ The scheduler:
 - creates `job_runs`
 - enqueues work into Redis
 - uses leases to avoid duplicate singleton scheduling
+- supports queue-domain-scoped mode for future service-specific deployments, but valuation currently runs without its own scheduler by default
 
 Workers:
 
@@ -388,6 +390,7 @@ Current worker topology is:
 
 - `RuntimeWorkerSettings`
 - `DiscoveryWorkerSettings`
+- `ValuationWorkerSettings`
 
 Current main job types are:
 
@@ -400,6 +403,9 @@ Current main job types are:
 - `options_automation_entry`
 - `options_automation_execute`
 - `position_exit_manager`
+- `company_valuation_bootstrap`
+- `company_valuation_screen_materialize`
+- `company_valuation_resolve_unresolved`
 
 Management automations are still config-owned runtime concepts, but they are evaluated inside `position_exit_manager` rather than through a separate `options_automation_management` job type.
 Recurring maintenance jobs now run only through declared job definitions; `discovery_recovery` no longer inlines `broker_sync` or `position_exit_manager`.
@@ -650,7 +656,7 @@ The current application is best understood as one narrow runtime console sitting
 - a shared risk and exit layer for both manual and automated actions
 - runtime, pipeline, and ops read models assembled by `live_runtime`, `discovery_run_health`, `pipelines`, and `ops`
 - an API and WebSocket layer that exposes those read models and fans realtime events to the UI
-- a scheduler plus two worker lanes over Redis ARQ
+- a scheduler plus three worker lanes over Redis ARQ
 - supporting alerts and analysis subsystems around that core
 
 If you want to drill further, the next useful cuts are:

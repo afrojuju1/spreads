@@ -57,6 +57,10 @@ valuation_model_mix:
   terminal_growth_floor: 0.02
   terminal_growth_cap: 0.04
   discount_rate_spread_bps: 500
+  quality_premium_floor_score: 58
+  quality_premium_full_score: 84
+  quality_multiple_premium_max: 0.22
+  quality_discount_rate_reduction_bps_max: 90
 
 confidence_rules:
   low_confidence_if:

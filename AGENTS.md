@@ -45,6 +45,15 @@
   - `uv run spreads jobs`
   - `uv run spreads uoa`
   - `uv run spreads audit <pipeline-id> --date <YYYY-MM-DD>`
+- The deploy target `ade-nucbox-k8-plus` is the canonical live paper environment. Treat it as live operator infrastructure, not a scratch box.
+- For target-aware operator reads, prefer `--env <target>` over raw connection overrides. Do not use bare `--db postgresql://...` when a named deploy target exists.
+- Canonical live-ops examples:
+  - `uv run spreads status --env ade-nucbox-k8-plus --json`
+  - `uv run spreads trading --env ade-nucbox-k8-plus --json`
+  - `uv run spreads jobs --env ade-nucbox-k8-plus --json`
+  - `uv run spreads uoa --env ade-nucbox-k8-plus --json`
+- Use `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ...` only when you explicitly need to run on the deployed checkout at `/home/ade/spreads/app`.
+- Use `uv run spreads deploy logs --env ade-nucbox-k8-plus ...` and `uv run spreads deploy restart --env ade-nucbox-k8-plus ...` for live box operations before falling back to ad hoc SSH commands.
 - For offline selection research or policy tuning, prefer the canonical backtest CLI before ad hoc scripts or raw SQL:
   - `uv run spreads backtest run --bot-id <bot-id> --automation-id <automation-id>`
   - `uv run spreads backtest replay --run-id <run-id> --config-root <config-root>`
@@ -64,6 +73,7 @@
 - Prefer live validation through the running stack and shipped ops CLI before unit/integration test work unless the user explicitly asks for tests.
 - In Docker, the `api` service hot-reloads source changes, but the `worker-runtime`, `worker-discovery`, and `scheduler` processes do not. After changing job, worker, or shared backend runtime code that those services import, restart the affected containers before trusting runtime behavior.
 - When multiple deployments share one Alpaca account, run only one live `market-recorder` against the option websocket at a time. Stop secondary/local recorders before validating capture on another host.
+- Unless the user explicitly asks for local live automation, keep the laptop out of the live plane once the NUC is deployed. Do not restart or run local `scheduler`, `worker-runtime`, `worker-discovery`, or `market-recorder` just to inspect the live environment.
 - Do not run production build commands such as `npm run build` or `next build` unless the user explicitly asks for a production check or release validation.
 - Do not run repo-wide Python compile checks such as `python -m compileall` unless the user explicitly asks for them.
 - Prefer dev-safe verification during normal work, such as linting, targeted type checks, and narrow runtime checks.

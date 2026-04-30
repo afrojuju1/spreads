@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -47,14 +48,21 @@ def _retry_delay(attempt_count: int) -> timedelta:
     return timedelta(hours=hours)
 
 
+def _heartbeat(heartbeat: Callable[[], None] | None) -> None:
+    if heartbeat is not None:
+        heartbeat()
+
+
 def _batch_openfigi_map(
     *,
     client: OpenFigiClient,
     cusips: list[str],
     batch_size: int,
+    heartbeat: Callable[[], None] | None = None,
 ) -> dict[str, list[Any]]:
     mappings: dict[str, list[Any]] = {}
     for index in range(0, len(cusips), batch_size):
+        _heartbeat(heartbeat)
         batch = cusips[index : index + batch_size]
         delay_seconds = 1.0
         for attempt in range(5):
@@ -74,6 +82,7 @@ def resolve_unresolved_institutional_positions(
     *,
     repository: CompanyValuationRepository | None = None,
     openfigi_client: OpenFigiClient | None = None,
+    heartbeat: Callable[[], None] | None = None,
 ) -> ResolveUnresolvedInstitutionalPositionsResult:
     started_at = datetime.now(UTC)
     repo = repository or CompanyValuationRepository()
@@ -98,6 +107,7 @@ def resolve_unresolved_institutional_positions(
     rows_by_cusip: dict[str, list[dict[str, Any]]] = {}
     official_lists: dict[str, dict[str, Any]] = {}
     for row in rows:
+        _heartbeat(heartbeat)
         cusip = str(row.get("cusip") or "").strip().upper()
         if not cusip:
             continue
@@ -111,6 +121,7 @@ def resolve_unresolved_institutional_positions(
     sec_native_resolutions: dict[str, Any] = {}
     openfigi_candidates: list[str] = []
     for cusip, cusip_rows in rows_by_cusip.items():
+        _heartbeat(heartbeat)
         sample = cusip_rows[0]
         report_period_value = parse_date(sample["report_period"])
         resolution = resolve_cusip_to_security(
@@ -132,6 +143,7 @@ def resolve_unresolved_institutional_positions(
         client=figi_client,
         cusips=openfigi_candidates,
         batch_size=max(request.batch_cusips, 1),
+        heartbeat=heartbeat,
     ) if openfigi_candidates else {}
 
     issuer_payloads: dict[str, dict[str, object]] = {}
@@ -143,6 +155,7 @@ def resolve_unresolved_institutional_positions(
     failed_rows = 0
 
     for cusip, cusip_rows in rows_by_cusip.items():
+        _heartbeat(heartbeat)
         resolution = sec_native_resolutions.get(cusip)
         if resolution is None:
             sample = cusip_rows[0]
@@ -218,20 +231,25 @@ def resolve_unresolved_institutional_positions(
             unresolved_updates.append(updated)
 
     if issuer_payloads:
+        _heartbeat(heartbeat)
         repo.upsert_issuers(list(issuer_payloads.values()))
     if security_payloads:
+        _heartbeat(heartbeat)
         repo.upsert_securities(list(security_payloads.values()))
+    _heartbeat(heartbeat)
     identifier_count = (
         repo.upsert_security_identifier_history(list(identifier_payloads.values()))
         if identifier_payloads
         else 0
     )
+    _heartbeat(heartbeat)
     positions_materialized = (
         repo.upsert_institutional_positions(position_payloads)
         if position_payloads
         else 0
     )
     if unresolved_updates:
+        _heartbeat(heartbeat)
         repo.upsert_unresolved_institutional_positions(unresolved_updates)
 
     completed_at = datetime.now(UTC)

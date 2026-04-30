@@ -8,7 +8,11 @@ from typing import Any
 import redis.asyncio as redis_async
 
 from core.jobs.orchestration import worker_runtime_lease_key
-from core.jobs.registry import DISCOVERY_QUEUE_NAME, RUNTIME_QUEUE_NAME
+from core.jobs.registry import (
+    DISCOVERY_QUEUE_NAME,
+    RUNTIME_QUEUE_NAME,
+    VALUATION_QUEUE_NAME,
+)
 from core.runtime.config import default_database_url, default_redis_url
 from core.storage.factory import build_job_repository, build_storage_context
 
@@ -74,6 +78,13 @@ async def discovery_startup(ctx: dict[str, Any]) -> None:
     ctx["worker_lane"] = "discovery"
     ctx["worker_settings_name"] = "DiscoveryWorkerSettings"
     ctx["worker_queue_name"] = DISCOVERY_QUEUE_NAME
+    await startup(ctx)
+
+
+async def valuation_startup(ctx: dict[str, Any]) -> None:
+    ctx["worker_lane"] = "valuation"
+    ctx["worker_settings_name"] = "ValuationWorkerSettings"
+    ctx["worker_queue_name"] = VALUATION_QUEUE_NAME
     await startup(ctx)
 
 

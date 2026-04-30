@@ -29,11 +29,11 @@ from core.storage.serializers import parse_datetime, render_value
 EVALUATION_VERSION = "v1"
 
 TEMPLATE_MULTIPLES: dict[str, dict[str, float]] = {
-    "general_operating": {"ev_ebit": 14.0, "ev_fcf": 18.0, "pe": 18.0, "ps": 2.5, "pb": 2.2},
-    "software_asset_light": {"ev_ebit": 18.0, "ev_fcf": 24.0, "pe": 28.0, "ps": 6.0},
-    "retail_consumer": {"ev_ebit": 12.0, "ev_fcf": 15.0, "pe": 16.0, "ps": 1.2},
-    "industrial_manufacturing": {"ev_ebit": 13.0, "ev_fcf": 16.0, "pb": 2.0, "ev_ebitda": 11.0},
-    "energy_asset_heavy": {"ev_ebit": 8.0, "ev_fcf": 10.0, "pb": 1.5, "ev_ebitda": 6.5},
+    "general_operating": {"ev_ebit": 15.0, "ev_fcf": 20.0, "pe": 20.0, "ps": 2.8, "pb": 2.4},
+    "software_asset_light": {"ev_ebit": 20.0, "ev_fcf": 26.0, "pe": 30.0, "ps": 6.5},
+    "retail_consumer": {"ev_ebit": 13.0, "ev_fcf": 17.0, "pe": 18.0, "ps": 1.4},
+    "industrial_manufacturing": {"ev_ebit": 14.0, "ev_fcf": 18.0, "pb": 2.2, "ev_ebitda": 12.0},
+    "energy_asset_heavy": {"ev_ebit": 8.5, "ev_fcf": 11.0, "pb": 1.7, "ev_ebitda": 7.0},
 }
 
 
@@ -215,6 +215,39 @@ def _template_float(template: Any, section: str, key: str, default: float) -> fl
         return float(default)
 
 
+def _quality_premium_factor(
+    *,
+    quality_score: float,
+    template: Any,
+    features: dict[str, Any],
+) -> float:
+    floor_score = _template_float(
+        template,
+        "valuation_model_mix",
+        "quality_premium_floor_score",
+        60.0,
+    )
+    full_score = _template_float(
+        template,
+        "valuation_model_mix",
+        "quality_premium_full_score",
+        80.0,
+    )
+    if full_score <= floor_score:
+        return 0.0
+    factor = clamp((quality_score - floor_score) / (full_score - floor_score), 0.0, 1.0)
+    free_cash_flow_ttm = _safe_float(features.get("free_cash_flow_ttm"))
+    revenue_growth = _safe_float(features.get("revenue_ttm_growth")) or 0.0
+    net_leverage = _safe_float(features.get("net_leverage"))
+    if free_cash_flow_ttm in (None, 0.0) or free_cash_flow_ttm < 0.0:
+        factor *= 0.35
+    if revenue_growth < 0.0:
+        factor *= 0.75
+    if net_leverage is not None and net_leverage >= 3.0:
+        factor *= 0.65
+    return round(clamp(factor, 0.0, 1.0), 4)
+
+
 def _starting_fcf(features: dict[str, Any], template: Any) -> tuple[float | None, bool]:
     free_cash_flow_ttm = _safe_float(features.get("free_cash_flow_ttm"))
     if free_cash_flow_ttm is not None and free_cash_flow_ttm > 0.0:
@@ -250,7 +283,7 @@ def _valuation_context(
     free_cash_flow_ttm = _safe_float(features.get("free_cash_flow_ttm"))
     net_leverage = _safe_float(features.get("net_leverage")) or 0.0
     revenue_growth = _safe_float(features.get("revenue_ttm_growth")) or 0.0
-    operating_margin = _safe_float(features.get("operating_margin_ttm")) or 0.0
+    operating_margin = _safe_float(features.get("operating_margin_ttm"))
     if free_cash_flow_ttm is not None and free_cash_flow_ttm <= 0.0:
         reason_codes.append("valuation_negative_fcf_low_confidence")
         confidence_penalty += _template_float(
@@ -280,7 +313,7 @@ def _valuation_context(
             "declining_revenue_penalty",
             0.08,
         )
-    if operating_margin <= 0.0:
+    if operating_margin is not None and operating_margin <= 0.0:
         reason_codes.append("valuation_unprofitable_caution")
         confidence_penalty += _template_float(
             template,
@@ -313,6 +346,7 @@ def _dcf_value_per_share(
     template: Any,
     treasury_curve_snapshot: dict[str, Any] | None,
     required_feature_coverage: float,
+    quality_score: float,
 ) -> tuple[float | None, dict[str, Any], list[str], float]:
     shares = _safe_float(features.get("diluted_shares_latest")) or _safe_float(
         features.get("shares_outstanding_latest")
@@ -330,6 +364,23 @@ def _dcf_value_per_share(
     spread_bps += int(
         template.valuation_model_mix.get("cyclical_discount_rate_spread_bps") or 0
     )
+    quality_factor = _quality_premium_factor(
+        quality_score=quality_score,
+        template=template,
+        features=features,
+    )
+    spread_bps -= int(
+        round(
+            quality_factor
+            * _template_float(
+                template,
+                "valuation_model_mix",
+                "quality_discount_rate_reduction_bps_max",
+                0.0,
+            )
+        )
+    )
+    spread_bps = max(spread_bps, 250)
     discount_rate = risk_free_rate + (spread_bps / 10_000.0)
     terminal_growth_floor = float(template.valuation_model_mix.get("terminal_growth_floor") or 0.015)
     terminal_growth_cap = float(template.valuation_model_mix.get("terminal_growth_cap") or 0.03)
@@ -382,6 +433,8 @@ def _dcf_value_per_share(
         "normalized_fcf": normalized_fcf,
         "curve_available": curve_available,
         "forecast_years": forecast_years,
+        "quality_premium_factor": quality_factor,
+        "discount_spread_bps": spread_bps,
     }
     reason_codes = ["valuation_from_dcf"]
     if not curve_available:
@@ -425,8 +478,14 @@ def _multiples_anchor_value_per_share(
     *,
     features: dict[str, Any],
     template: Any,
+    quality_score: float,
 ) -> tuple[float | None, dict[str, Any], list[str], float]:
     template_multiples = TEMPLATE_MULTIPLES.get(str(template.template_id), TEMPLATE_MULTIPLES["general_operating"])
+    quality_factor = _quality_premium_factor(
+        quality_score=quality_score,
+        template=template,
+        features=features,
+    )
     growth_adjustment = clamp(
         1.0
         + (
@@ -436,13 +495,22 @@ def _multiples_anchor_value_per_share(
         _template_float(template, "valuation_model_mix", "growth_adjustment_min", 0.75),
         _template_float(template, "valuation_model_mix", "growth_adjustment_max", 1.35),
     )
+    quality_multiple_premium = 1.0 + (
+        quality_factor
+        * _template_float(
+            template,
+            "valuation_model_mix",
+            "quality_multiple_premium_max",
+            0.0,
+        )
+    )
     values: list[float] = []
     applied_metrics: dict[str, float] = {}
     for metric in list(template.valuation_model_mix.get("primary_multiple_metrics") or []):
         base_multiple = template_multiples.get(str(metric))
         if base_multiple is None:
             continue
-        adjusted_multiple = round(base_multiple * growth_adjustment, 4)
+        adjusted_multiple = round(base_multiple * growth_adjustment * quality_multiple_premium, 4)
         value = _multiple_value_per_share(metric=str(metric), features=features, multiple=adjusted_multiple)
         if value is None or value <= 0.0:
             continue
@@ -452,7 +520,13 @@ def _multiples_anchor_value_per_share(
         return (None, {}, ["valuation_multiples_anchor_unavailable"], 0.2)
     return (
         round(sum(values) / len(values), 4),
-        {"method": "multiples_anchor", "multiples": applied_metrics, "growth_adjustment": round(growth_adjustment, 4)},
+        {
+            "method": "multiples_anchor",
+            "multiples": applied_metrics,
+            "growth_adjustment": round(growth_adjustment, 4),
+            "quality_premium_factor": quality_factor,
+            "quality_multiple_premium": round(quality_multiple_premium, 4),
+        },
         ["valuation_from_multiples_anchor"],
         0.45,
     )
@@ -472,10 +546,12 @@ def _build_valuation_summary(
         template=template,
         treasury_curve_snapshot=treasury_curve_snapshot,
         required_feature_coverage=feature_result.required_feature_coverage,
+        quality_score=quality.total_score,
     )
     anchor_value, anchor_assumptions, anchor_reason_codes, anchor_confidence = _multiples_anchor_value_per_share(
         features=feature_result.financial_features,
         template=template,
+        quality_score=quality.total_score,
     )
 
     dcf_weight = float(template.valuation_model_mix.get("dcf_weight") or 0.7)
@@ -514,11 +590,23 @@ def _build_valuation_summary(
     )
     if intrinsic_mid is None:
         reason_codes.append("valuation_unavailable")
-    confidence = (
-        (dcf_confidence if dcf_value is not None else 0.0)
-        + (anchor_confidence if anchor_value is not None else 0.0)
-        + (feature_result.required_feature_coverage * 0.25)
+    active_confidences: list[tuple[float, float]] = []
+    if dcf_value is not None:
+        active_confidences.append((dcf_confidence, dcf_weight))
+    if anchor_value is not None:
+        active_confidences.append((anchor_confidence, anchor_weight))
+    if active_confidences:
+        total_weight = sum(weight for _, weight in active_confidences) or 1.0
+        confidence = sum(value * weight for value, weight in active_confidences) / total_weight
+    else:
+        confidence = 0.12
+    quality_factor = _quality_premium_factor(
+        quality_score=quality.total_score,
+        template=template,
+        features=feature_result.financial_features,
     )
+    confidence += min(feature_result.required_feature_coverage, 1.0) * 0.1
+    confidence += quality_factor * 0.08
     confidence -= confidence_penalty
     confidence = clamp(confidence, 0.12, 0.9)
     if bool(issuer_row.get("limited_coverage_flag")):
@@ -535,6 +623,12 @@ def _build_valuation_summary(
         confidence=round(confidence, 4),
         reason_codes=tuple(reason_codes),
         assumption_summary={
+            "component_values": {
+                "dcf_value_per_share": dcf_value,
+                "multiples_anchor_value_per_share": anchor_value,
+                "dcf_weight": round(dcf_weight, 4),
+                "historical_multiples_weight": round(anchor_weight, 4),
+            },
             "dcf": dcf_assumptions,
             "multiples_anchor": anchor_assumptions,
             "valuation_flags": context_reason_codes,
@@ -551,6 +645,7 @@ def recompute_company_valuation(
     config_root: str | None = None,
     feature_version: str = COMPANY_VALUATION_FEATURE_VERSION,
     evaluation_version: str = EVALUATION_VERSION,
+    persist: bool = True,
 ) -> CompanyValuationRecomputeResult:
     repo = repository or CompanyValuationRepository()
     issuer_row = repo.get_issuer(issuer_id=issuer_id, ticker=ticker)
@@ -564,7 +659,11 @@ def recompute_company_valuation(
         feature_version=feature_version,
         config_root=config_root,
     )
-    feature_snapshot = repo.upsert_feature_snapshot(feature_result.feature_snapshot_payload)
+    feature_snapshot = (
+        repo.upsert_feature_snapshot(feature_result.feature_snapshot_payload)
+        if persist
+        else dict(feature_result.feature_snapshot_payload)
+    )
 
     point_in_time = resolve_company_valuation_point_in_time(
         issuer_id=str(issuer_row["issuer_id"]),
@@ -673,7 +772,11 @@ def recompute_company_valuation(
         "valuation_json": document_payload,
         "computed_at": datetime.now(UTC),
     }
-    company_valuation_snapshot = repo.upsert_company_valuation_snapshot(valuation_snapshot_payload)
+    company_valuation_snapshot = (
+        repo.upsert_company_valuation_snapshot(valuation_snapshot_payload)
+        if persist
+        else dict(valuation_snapshot_payload)
+    )
 
     screening_row = CompanyValuationScreenRow(
         screening_row_id=build_screening_row_id(str(issuer_row["cik"]), as_of_dt),
@@ -698,7 +801,11 @@ def recompute_company_valuation(
     screening_row_payload["security_id"] = None if primary_security is None else str(primary_security["security_id"])
     screening_row_payload["top_reason_codes_json"] = screening_row_payload.pop("top_reason_codes")
     screening_row_payload["updated_at"] = datetime.now(UTC)
-    persisted_screening_row = repo.upsert_screening_row(screening_row_payload)
+    persisted_screening_row = (
+        repo.upsert_screening_row(screening_row_payload)
+        if persist
+        else dict(screening_row_payload)
+    )
 
     return CompanyValuationRecomputeResult(
         feature_snapshot=feature_snapshot,

@@ -13,6 +13,7 @@ dependencies = [
   "fastapi>=0.118.0",
   "msgpack>=1.1.0",
   "pandas-market-calendars>=4.4.1",
+  "pyarrow>=20.0.0",
   "python-dotenv>=1.1.1",
   "psycopg[binary]>=3.2.10",
   "py-vollib>=1.0.1",

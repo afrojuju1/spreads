@@ -2072,6 +2072,26 @@ def _render_uoa_detail(console: Console, payload: dict[str, Any]) -> None:
 
     _render_attention(console, payload)
 
+    promotion_context_rows = list(details.get("promotion_context") or [])
+    if promotion_context_rows:
+        table = Table(title="Promotion Context", header_style="bold")
+        table.add_column("State")
+        table.add_column("Decision Roots", justify="right")
+        table.add_column("Selected", justify="right")
+        table.add_column("Live-Eligible", justify="right")
+        table.add_column("Selection")
+        table.add_column("Notes")
+        for row in promotion_context_rows:
+            table.add_row(
+                str(row.get("state") or "-"),
+                _render_value(row.get("decision_count")),
+                _render_value(row.get("selected_count")),
+                _render_value(row.get("live_count")),
+                _render_value(row.get("selection_status")),
+                _truncate(" | ".join(row.get("notes") or []), length=104),
+            )
+        console.print(table)
+
     capture = Table(title="Capture Summary", header_style="bold")
     capture.add_column("Type")
     capture.add_column("Status")
@@ -2202,6 +2222,9 @@ def _render_uoa_detail(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Quality", justify="right")
         table.add_column("Max Loss", justify="right")
         table.add_column("Setup")
+        table.add_column("Eligibility")
+        table.add_column("Reason")
+        table.add_column("Blockers")
         for row in rows:
             table.add_row(
                 _render_value(row.get("selection_rank")),
@@ -2212,6 +2235,17 @@ def _render_uoa_detail(console: Console, payload: dict[str, Any]) -> None:
                 _render_value(row.get("quality_score")),
                 _render_money(row.get("max_loss")),
                 str(row.get("setup_status") or "-"),
+                _render_value(row.get("eligibility")),
+                _truncate(
+                    str(
+                        row.get("state_reason")
+                        or row.get("scoring_state_reason")
+                        or ", ".join(row.get("reason_codes") or [])
+                        or "-"
+                    ),
+                    length=40,
+                ),
+                _render_blocker_list(row.get("execution_blockers")),
             )
         console.print(table)
 

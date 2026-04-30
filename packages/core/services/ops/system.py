@@ -12,6 +12,7 @@ from core.jobs.orchestration import (
 )
 from core.jobs.registry import get_job_spec
 from core.jobs.specs import get_declared_job_row
+from core.jobs.specs import excluded_declared_job_types
 from core.services.bot_analytics import build_automation_performance_summary
 from core.services.broker_sync import BROKER_SYNC_KEY
 from core.services.selection_summary import aggregate_selection_summaries as _aggregate_selection_summaries
@@ -46,6 +47,34 @@ from .shared import (
 from .trading import _alert_delivery_payload
 
 RECENT_ALERT_LIMIT = 200
+
+
+def _scheduler_payload(job_store: Any, *, now: datetime) -> dict[str, Any]:
+    active_leases = [
+        dict(row)
+        for row in job_store.list_active_leases(prefix=SCHEDULER_RUNTIME_LEASE_KEY)
+    ]
+    primary = next(
+        (
+            row
+            for row in active_leases
+            if str(row.get("lease_key") or "") == SCHEDULER_RUNTIME_LEASE_KEY
+        ),
+        None,
+    )
+    if primary is None and active_leases:
+        primary = active_leases[0]
+    fallback = None if primary is not None else job_store.get_lease(SCHEDULER_RUNTIME_LEASE_KEY)
+    source = primary or fallback
+    status = "healthy" if active_leases else _lease_status(fallback, now=now)
+    return {
+        "status": status,
+        "expires_at": None if source is None else source.get("expires_at"),
+        "owner": None if source is None else source.get("owner"),
+        "job_run_id": None if source is None else source.get("job_run_id"),
+        "lease_key": None if source is None else source.get("lease_key"),
+        "active_scheduler_count": len(active_leases),
+    }
 
 
 def _actionable_recent_failures(
@@ -163,14 +192,9 @@ def build_system_status(
             )
         )
     else:
-        scheduler_lease = job_store.get_lease(SCHEDULER_RUNTIME_LEASE_KEY)
-        scheduler_status = _lease_status(scheduler_lease, now=now)
-        scheduler_payload = {
-            "status": scheduler_status,
-            "expires_at": None if scheduler_lease is None else scheduler_lease.get("expires_at"),
-            "owner": None if scheduler_lease is None else scheduler_lease.get("owner"),
-            "job_run_id": None if scheduler_lease is None else scheduler_lease.get("job_run_id"),
-        }
+        excluded_job_types = excluded_declared_job_types()
+        scheduler_payload = _scheduler_payload(job_store, now=now)
+        scheduler_status = str(scheduler_payload.get("status") or "unknown")
         if scheduler_status != "healthy":
             attention.append(
                 _attention(
@@ -195,10 +219,14 @@ def build_system_status(
             )
 
         running_jobs = [
-            dict(row) for row in job_store.list_job_runs(status="running", limit=100)
+            dict(row)
+            for row in job_store.list_job_runs(status="running", limit=100)
+            if str(row.get("job_type") or "").strip() not in excluded_job_types
         ]
         queued_jobs = [
-            dict(row) for row in job_store.list_job_runs(status="queued", limit=100)
+            dict(row)
+            for row in job_store.list_job_runs(status="queued", limit=100)
+            if str(row.get("job_type") or "").strip() not in excluded_job_types
         ]
         queued_jobs, _ = _split_active_queued_jobs(
             queued_jobs,
@@ -210,6 +238,7 @@ def build_system_status(
                 status="failed",
                 limit=RECENT_FAILURE_LIMIT,
             )
+            if str(row.get("job_type") or "").strip() not in excluded_job_types
         ]
         skipped_jobs = [
             dict(row)
@@ -217,6 +246,7 @@ def build_system_status(
                 status="skipped",
                 limit=RECENT_FAILURE_LIMIT,
             )
+            if str(row.get("job_type") or "").strip() not in excluded_job_types
         ]
         recent_failures = _sorted_by_activity(failed_jobs + skipped_jobs)[:RECENT_FAILURE_LIMIT]
         actionable_recent_failures = _actionable_recent_failures(

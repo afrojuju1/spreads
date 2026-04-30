@@ -1,0 +1,12 @@
+job_key: company_valuation_resolve_unresolved:global
+job_type: company_valuation_resolve_unresolved
+enabled: true
+schedule:
+  type: interval_minutes
+  minutes: 60
+payload:
+  allow_off_hours: true
+  limit_rows: 20000
+  batch_cusips: 50
+  max_attempts: 5
+singleton_scope: resolve_unresolved:global

@@ -137,7 +137,82 @@ def _summarize_uoa_candidate(candidate: Mapping[str, Any]) -> dict[str, Any]:
         "return_on_risk": _coerce_float(payload.get("return_on_risk")),
         "underlying_price": _coerce_float(payload.get("underlying_price")),
         "setup_status": payload.get("setup_status"),
+        "eligibility": candidate.get("eligibility"),
+        "state_reason": candidate.get("state_reason"),
+        "scoring_state_reason": candidate.get("scoring_state_reason")
+        or payload.get("scoring_state_reason"),
+        "reason_codes": [
+            str(code)
+            for code in list(candidate.get("reason_codes") or payload.get("reason_codes") or [])
+            if _as_text(code) is not None
+        ],
+        "execution_blockers": [
+            str(code)
+            for code in list(candidate.get("execution_blockers") or payload.get("execution_blockers") or [])
+            if _as_text(code) is not None
+        ],
     }
+
+
+def _build_uoa_promotion_context(
+    *,
+    selection_summary: Mapping[str, Any],
+    decision_overview: Mapping[str, Any],
+    selection_counts: Mapping[str, int],
+    live_selection_counts: Mapping[str, int],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    selection_status = _as_text(selection_summary.get("status"))
+    selection_message = _as_text(selection_summary.get("message"))
+    emerging_count = _coerce_int(decision_overview.get("emerging_count")) or 0
+    notable_count = _coerce_int(decision_overview.get("notable_count")) or 0
+    high_count = _coerce_int(decision_overview.get("high_count")) or 0
+    critical_count = _coerce_int(decision_overview.get("critical_count")) or 0
+    threshold_counts = {
+        PROMOTABLE_SELECTION_STATE: notable_count + high_count + critical_count,
+        MONITOR_SELECTION_STATE: emerging_count + notable_count + high_count + critical_count,
+    }
+    for state in (PROMOTABLE_SELECTION_STATE, MONITOR_SELECTION_STATE):
+        decision_count = int(threshold_counts.get(state) or 0)
+        selected_count = int(selection_counts.get(state) or 0)
+        live_count = int(live_selection_counts.get(state) or 0)
+        notes: list[str] = []
+        if decision_count <= 0:
+            notes.append("No decision roots reached this state.")
+        else:
+            if selected_count <= 0:
+                notes.append(
+                    f"{decision_count} {state}-or-higher root"
+                    f"{'' if decision_count == 1 else 's'} did not produce retained opportunities."
+                )
+            elif decision_count > selected_count:
+                gap = decision_count - selected_count
+                notes.append(
+                    f"{gap} {state}-or-higher root"
+                    f"{'' if gap == 1 else 's'} did not map to retained opportunities."
+                )
+            if selected_count > live_count:
+                gap = selected_count - live_count
+                notes.append(
+                    f"{gap} selected opportunit"
+                    f"{'y' if gap == 1 else 'ies'} remained analysis-only or not live-eligible."
+                )
+        if selection_status:
+            notes.append(f"selection {selection_status}")
+        if selection_message:
+            notes.append(selection_message)
+        rows.append(
+            {
+                "state": state,
+                "decision_count": decision_count,
+                "selected_count": selected_count,
+                "live_count": live_count,
+                "selection_status": selection_status,
+                "message": selection_message,
+                "notes": notes,
+            }
+        )
+    return rows
 
 
 def _summarize_uoa_event(event: Mapping[str, Any]) -> dict[str, Any]:
@@ -385,10 +460,21 @@ def _build_uoa_payload(
         if isinstance(state.get("symbol_source"), Mapping)
         else {}
     )
+    selection_summary = (
+        dict(state.get("selection_summary") or {})
+        if isinstance(state.get("selection_summary"), Mapping)
+        else {}
+    )
     selection_counts, live_selection_counts = _uoa_selected_opportunity_counts(
         state,
         promotable_candidates=promotable_candidates,
         monitor_candidates=monitor_candidates,
+    )
+    promotion_context = _build_uoa_promotion_context(
+        selection_summary=selection_summary,
+        decision_overview=uoa_decision_overview,
+        selection_counts=selection_counts,
+        live_selection_counts=live_selection_counts,
     )
 
     attention: list[dict[str, str]] = []
@@ -504,6 +590,7 @@ def _build_uoa_payload(
             "uoa_quote_overview": dict(uoa_quote_overview),
             "uoa_decision_overview": dict(uoa_decision_overview),
             "symbol_source": symbol_source,
+            "selection_summary": selection_summary,
             "top_roots": top_roots,
             "top_contracts": top_contracts,
             "top_monitor_roots": top_monitor_roots,
@@ -515,6 +602,7 @@ def _build_uoa_payload(
             "selection_memory": dict(cycle.get("selection_memory") or {}),
             "selection_counts": selection_counts,
             "live_selection_counts": live_selection_counts,
+            "promotion_context": promotion_context,
             "top_exclusion_reasons": top_exclusion_reasons,
             "top_conditions": top_conditions,
         },

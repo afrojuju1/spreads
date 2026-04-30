@@ -10,11 +10,16 @@ from core.services.deployments import (
     DeploymentConfigError,
     bootstrap_remote_target,
     deploy_target_payload,
+    exec_spreads_command,
     get_deploy_target,
     install_systemd_service,
+    install_target_ops_automation,
     list_deploy_targets,
+    logs_deploy_target,
     render_deploy_env_file,
     render_prod_compose,
+    restart_deploy_target_services,
+    run_target_spreads_command,
     start_deploy_target,
     status_deploy_target,
     stop_deploy_target,
@@ -25,6 +30,11 @@ deploy_app = typer.Typer(
     add_completion=False,
     help="Manage private single-host spreads deployment targets.",
 )
+
+PASSTHROUGH_CONTEXT_SETTINGS = {
+    "allow_extra_args": True,
+    "ignore_unknown_options": True,
+}
 
 
 def _resolve_target(environment: str) -> Any:
@@ -43,6 +53,16 @@ def _write_text_output(text: str, output: str | None) -> None:
 def _handle_deploy_error(exc: Exception) -> None:
     typer.secho(str(exc), err=True, fg=typer.colors.RED)
     raise typer.Exit(3) from None
+
+
+def _normalized_passthrough_args(args: list[str]) -> list[str]:
+    if args and args[0] == "--":
+        return list(args[1:])
+    return list(args)
+
+
+def _has_option(argv: list[str], option_name: str) -> bool:
+    return any(raw == option_name or raw.startswith(f"{option_name}=") for raw in argv)
 
 
 @deploy_app.command("targets", help="List configured deployment targets.")
@@ -242,6 +262,139 @@ def status_command(
 
 
 @deploy_app.command(
+    "exec",
+    help="Run a spreads CLI command on the deployed target checkout.",
+    context_settings=PASSTHROUGH_CONTEXT_SETTINGS,
+)
+def exec_command(
+    ctx: typer.Context,
+    environment: str = typer.Option(
+        ...,
+        "--env",
+        "--target",
+        help="Deployment target name.",
+    ),
+) -> None:
+    args = _normalized_passthrough_args(list(ctx.args))
+    if not args:
+        typer.secho(
+            "Provide a spreads CLI command after `spreads deploy exec --env <target> --`.",
+            err=True,
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(3)
+    if _has_option(args, "--db"):
+        typer.secho(
+            "Do not use --db with deploy targets. Use the target's --env wiring instead.",
+            err=True,
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(3)
+    try:
+        code = exec_spreads_command(_resolve_target(environment), args)
+    except (DeploymentConfigError, OSError, RuntimeError) as exc:
+        _handle_deploy_error(exc)
+    raise typer.Exit(code)
+
+
+@deploy_app.command("logs", help="Stream docker compose logs for one deployment target.")
+def logs_command(
+    environment: str = typer.Option(
+        ...,
+        "--env",
+        "--target",
+        help="Deployment target name.",
+    ),
+    services: list[str] = typer.Argument(
+        [],
+        help="Optional compose service names. Defaults to all services.",
+    ),
+    since: str | None = typer.Option(
+        "5m",
+        "--since",
+        help="Show logs since this duration or timestamp.",
+    ),
+    tail: int | None = typer.Option(
+        200,
+        "--tail",
+        help="Maximum recent log lines per service.",
+    ),
+    follow: bool = typer.Option(
+        False,
+        "--follow",
+        "-f",
+        help="Follow logs until interrupted.",
+    ),
+) -> None:
+    try:
+        code = logs_deploy_target(
+            _resolve_target(environment),
+            services=list(services),
+            since=since,
+            tail=tail,
+            follow=follow,
+        )
+    except (DeploymentConfigError, OSError, RuntimeError) as exc:
+        _handle_deploy_error(exc)
+    raise typer.Exit(code)
+
+
+@deploy_app.command("restart", help="Restart one or more compose services on a target.")
+def restart_command(
+    environment: str = typer.Option(
+        ...,
+        "--env",
+        "--target",
+        help="Deployment target name.",
+    ),
+    services: list[str] = typer.Argument(
+        ...,
+        help="Compose service names to restart.",
+    ),
+) -> None:
+    try:
+        code = restart_deploy_target_services(
+            _resolve_target(environment),
+            services=list(services),
+        )
+    except (DeploymentConfigError, OSError, RuntimeError) as exc:
+        _handle_deploy_error(exc)
+    raise typer.Exit(code)
+
+
+@deploy_app.command("health", help="Run the standard operator health checks on a target.")
+def health_command(
+    environment: str = typer.Option(
+        ...,
+        "--env",
+        "--target",
+        help="Deployment target name.",
+    ),
+) -> None:
+    try:
+        target = _resolve_target(environment)
+        commands: list[tuple[str, list[str]]] = [
+            ("Compose Status", ["deploy", "status", "--env", target.name]),
+            ("Jobs", ["jobs", "--json"]),
+            ("Trading", ["trading", "--json"]),
+            ("UOA", ["uoa", "--json"]),
+        ]
+        exit_code = 0
+        for title, args in commands:
+            typer.echo(f"\n=== {title} ({target.name}) ===")
+            if args[:2] == ["deploy", "status"]:
+                status_deploy_target(target)
+                continue
+            code = run_target_spreads_command(target, args)
+            exit_code = max(exit_code, code)
+        raise typer.Exit(exit_code)
+    except typer.Exit:
+        raise
+    except (DeploymentConfigError, OSError, RuntimeError) as exc:
+        _handle_deploy_error(exc)
+
+
+@deploy_app.command(
     "install-service",
     help="Install and enable a reboot-safe systemd unit on one SSH target.",
 )
@@ -267,6 +420,36 @@ def install_service_command(
         raise typer.Exit(3)
     try:
         install_systemd_service(_resolve_target(environment))
+    except (DeploymentConfigError, OSError, RuntimeError) as exc:
+        _handle_deploy_error(exc)
+
+
+@deploy_app.command(
+    "install-ops",
+    help="Install user-level reboot, backup, and health automation on one SSH target.",
+)
+def install_ops_command(
+    environment: str = typer.Option(
+        ...,
+        "--env",
+        "--target",
+        help="Deployment target name.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        help="Install the remote ops scripts and cron entries.",
+    ),
+) -> None:
+    if not yes:
+        typer.secho(
+            "Refusing to install ops automation without --yes.",
+            err=True,
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(3)
+    try:
+        install_target_ops_automation(_resolve_target(environment))
     except (DeploymentConfigError, OSError, RuntimeError) as exc:
         _handle_deploy_error(exc)
 

@@ -23,6 +23,7 @@ CANONICAL_METRIC_CONCEPTS: dict[str, tuple[tuple[str, str], ...]] = {
     ),
     "cost_of_revenue": (
         ("us-gaap", "CostOfGoodsSold"),
+        ("us-gaap", "CostOfGoodsAndServicesSold"),
         ("us-gaap", "CostOfSales"),
         ("us-gaap", "CostOfRevenue"),
     ),
@@ -36,12 +37,23 @@ CANONICAL_METRIC_CONCEPTS: dict[str, tuple[tuple[str, str], ...]] = {
         ("us-gaap", "NetIncomeLoss"),
         ("us-gaap", "ProfitLoss"),
     ),
+    "pretax_income": (
+        (
+            "us-gaap",
+            "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+        ),
+        (
+            "us-gaap",
+            "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+        ),
+    ),
     "operating_cash_flow": (
         ("us-gaap", "NetCashProvidedByUsedInOperatingActivities"),
         ("us-gaap", "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"),
     ),
     "capex": (
         ("us-gaap", "PaymentsToAcquirePropertyPlantAndEquipment"),
+        ("us-gaap", "PaymentsToAcquireProductiveAssets"),
         ("us-gaap", "CapitalExpendituresIncurredButNotYetPaid"),
     ),
     "cash_and_equivalents": (
@@ -96,6 +108,7 @@ PREFERRED_UNITS_BY_METRIC = {
     "gross_profit": {MONETARY_UNIT},
     "operating_income": {MONETARY_UNIT},
     "net_income": {MONETARY_UNIT},
+    "pretax_income": {MONETARY_UNIT},
     "operating_cash_flow": {MONETARY_UNIT},
     "capex": {MONETARY_UNIT},
     "cash_and_equivalents": {MONETARY_UNIT},
@@ -407,64 +420,105 @@ def build_statement_period_snapshot_payloads(
     snapshots: list[dict[str, Any]] = []
     for (filing_id, period_end, _form_type), rows in grouped.items():
         filing_row = filings_by_filing_id[filing_id]
-        period_start_candidates = [
-            row["period_start"]
-            for row in rows
-            if isinstance(row.get("period_start"), date)
-        ]
-        period_start = min(period_start_candidates) if period_start_candidates else None
-        metrics: dict[str, Any] = {}
-        source_fact_refs: dict[str, Any] = {}
-        concepts = defaultdict(list)
-        for row in rows:
-            concepts[(str(row["taxonomy"]), str(row["concept_name"]))].append(row)
-        for metric_name, aliases in CANONICAL_METRIC_CONCEPTS.items():
-            selected_row: dict[str, Any] | None = None
-            for alias in aliases:
-                candidates = concepts.get(alias, [])
-                if not candidates:
-                    continue
-                ordered = sorted(candidates, key=lambda item: _metric_sort_key(metric_name, item))
-                selected_row = ordered[0]
-                break
-            if selected_row is None:
-                continue
-            value = selected_row.get("value_numeric")
-            if value is None:
-                continue
-            metrics[metric_name] = value
-            source_fact_refs[metric_name] = {
-                "taxonomy": selected_row["taxonomy"],
-                "concept_name": selected_row["concept_name"],
-                "unit": selected_row["unit"],
-                "fact_hash": selected_row["fact_hash"],
-            }
         filing_period_end = filing_row.get("period_end")
         fiscal_period_end = period_end if isinstance(period_end, date) else filing_period_end
         if fiscal_period_end is None:
             continue
-        available_at = filing_row["available_at"]
-        fiscal_year = fiscal_period_end.year
-        fiscal_period = str(filing_row.get("form_type") or "")
-        snapshots.append(
-            {
-                "snapshot_id": (
-                    f"statement_snapshot:{issuer_id}:{filing_id}:{fiscal_period_end.isoformat()}:"
-                    f"{normalization_version}"
-                ),
-                "issuer_id": issuer_id,
-                "filing_id": filing_id,
-                "period_type": _period_type(period_start, fiscal_period_end),
-                "fiscal_year": fiscal_year,
-                "fiscal_period": fiscal_period,
-                "period_start": period_start,
-                "period_end": fiscal_period_end,
-                "available_at": available_at,
-                "normalization_version": normalization_version,
-                "metrics_json": metrics,
-                "source_fact_refs_json": source_fact_refs,
-            }
-        )
+        instant_rows = [row for row in rows if bool(row.get("instant_flag"))]
+        duration_groups: dict[date, list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            if bool(row.get("instant_flag")):
+                continue
+            period_start = row.get("period_start")
+            if isinstance(period_start, date):
+                duration_groups[period_start].append(row)
+
+        snapshot_groups: list[tuple[date | None, str, list[dict[str, Any]]]] = []
+        if duration_groups:
+            typed_duration_groups: dict[str, list[tuple[date, list[dict[str, Any]]]]] = defaultdict(list)
+            for period_start, duration_rows in duration_groups.items():
+                typed_duration_groups[_period_type(period_start, fiscal_period_end)].append(
+                    (period_start, duration_rows)
+                )
+            for period_type, typed_rows in typed_duration_groups.items():
+                if period_type == "annual":
+                    chosen_period_start, chosen_rows = max(
+                        typed_rows,
+                        key=lambda item: (
+                            len(item[1]),
+                            _period_days(item[0], fiscal_period_end) or 0,
+                        ),
+                    )
+                else:
+                    chosen_period_start, chosen_rows = max(
+                        typed_rows,
+                        key=lambda item: (
+                            len(item[1]),
+                            -(_period_days(item[0], fiscal_period_end) or 0),
+                        ),
+                    )
+                snapshot_groups.append(
+                    (
+                        chosen_period_start,
+                        chosen_period_start.isoformat(),
+                        [*instant_rows, *chosen_rows],
+                    )
+                )
+        elif instant_rows:
+            snapshot_groups.append((None, "instant", list(instant_rows)))
+
+        for period_start, period_start_label, snapshot_rows in snapshot_groups:
+            metrics: dict[str, Any] = {}
+            source_fact_refs: dict[str, Any] = {}
+            concepts = defaultdict(list)
+            for row in snapshot_rows:
+                concepts[(str(row["taxonomy"]), str(row["concept_name"]))].append(row)
+            for metric_name, aliases in CANONICAL_METRIC_CONCEPTS.items():
+                selected_row: dict[str, Any] | None = None
+                for alias in aliases:
+                    candidates = concepts.get(alias, [])
+                    if not candidates:
+                        continue
+                    ordered = sorted(
+                        candidates,
+                        key=lambda item: _metric_sort_key(metric_name, item),
+                    )
+                    selected_row = ordered[0]
+                    break
+                if selected_row is None:
+                    continue
+                value = selected_row.get("value_numeric")
+                if value is None:
+                    continue
+                metrics[metric_name] = value
+                source_fact_refs[metric_name] = {
+                    "taxonomy": selected_row["taxonomy"],
+                    "concept_name": selected_row["concept_name"],
+                    "unit": selected_row["unit"],
+                    "fact_hash": selected_row["fact_hash"],
+                }
+            available_at = filing_row["available_at"]
+            fiscal_year = fiscal_period_end.year
+            fiscal_period = str(filing_row.get("form_type") or "")
+            snapshots.append(
+                {
+                    "snapshot_id": (
+                        f"statement_snapshot:{issuer_id}:{filing_id}:{fiscal_period_end.isoformat()}:"
+                        f"{period_start_label}:{normalization_version}"
+                    ),
+                    "issuer_id": issuer_id,
+                    "filing_id": filing_id,
+                    "period_type": _period_type(period_start, fiscal_period_end),
+                    "fiscal_year": fiscal_year,
+                    "fiscal_period": fiscal_period,
+                    "period_start": period_start,
+                    "period_end": fiscal_period_end,
+                    "available_at": available_at,
+                    "normalization_version": normalization_version,
+                    "metrics_json": metrics,
+                    "source_fact_refs_json": source_fact_refs,
+                }
+            )
     return snapshots
 
 

@@ -13,8 +13,12 @@ from core.jobs.orchestration import (
     resolve_scheduled_for,
     singleton_lease_key,
 )
-from core.jobs.registry import WORKER_LANES, get_queue_name_for_job_type
-from core.jobs.specs import get_declared_job_row, list_declared_job_rows
+from core.jobs.registry import JOB_SPECS, WORKER_LANES, get_queue_name_for_job_type
+from core.jobs.specs import (
+    excluded_declared_job_types,
+    get_declared_job_row,
+    list_declared_job_rows,
+)
 from core.services.broker_sync import BROKER_SYNC_KEY
 from core.services.discovery_run_health.enrichment import (
     enrich_discovery_run_job_run_payload,
@@ -51,6 +55,38 @@ from .shared import (
     _stream_quote_events_saved,
     _stream_trade_events_saved,
 )
+
+_JOB_TYPE_BY_TASK_NAME = {
+    spec.task_name: job_type for job_type, spec in JOB_SPECS.items()
+}
+
+
+def _scheduler_payload(job_store: Any, *, now: datetime) -> dict[str, Any]:
+    active_leases = [
+        dict(row)
+        for row in job_store.list_active_leases(prefix=SCHEDULER_RUNTIME_LEASE_KEY)
+    ]
+    primary = next(
+        (
+            row
+            for row in active_leases
+            if str(row.get("lease_key") or "") == SCHEDULER_RUNTIME_LEASE_KEY
+        ),
+        None,
+    )
+    if primary is None and active_leases:
+        primary = active_leases[0]
+    fallback = None if primary is not None else job_store.get_lease(SCHEDULER_RUNTIME_LEASE_KEY)
+    source = primary or fallback
+    status = "healthy" if active_leases else _lease_status(fallback, now=now)
+    return {
+        "status": status,
+        "expires_at": None if source is None else source.get("expires_at"),
+        "owner": None if source is None else source.get("owner"),
+        "job_run_id": None if source is None else source.get("job_run_id"),
+        "lease_key": None if source is None else source.get("lease_key"),
+        "active_scheduler_count": len(active_leases),
+    }
 
 
 def _broker_sync_state_supersedes_run(
@@ -191,6 +227,20 @@ def _definition_requires_attention(
     if latest_run_at is None:
         return True
     return _is_recent(latest_run_at, now=now)
+
+
+def _filter_excluded_job_runs(
+    rows: list[dict[str, Any]],
+    *,
+    excluded_job_types: set[str],
+) -> list[dict[str, Any]]:
+    if not excluded_job_types:
+        return rows
+    return [
+        dict(row)
+        for row in rows
+        if str(row.get("job_type") or "").strip() not in excluded_job_types
+    ]
 
 
 def _job_run_operator_status(
@@ -464,7 +514,11 @@ def _worker_lane_rows(
     workers: list[dict[str, Any]],
     queued_jobs: list[dict[str, Any]],
     running_jobs: list[dict[str, Any]],
+    excluded_job_types: set[str] | None = None,
 ) -> list[dict[str, Any]]:
+    excluded = {
+        str(value).strip() for value in (excluded_job_types or set()) if str(value).strip()
+    }
     workers_by_settings: dict[str, list[dict[str, Any]]] = {}
     for worker in workers:
         lease_state = (
@@ -488,6 +542,13 @@ def _worker_lane_rows(
 
     rows: list[dict[str, Any]] = []
     for lane in WORKER_LANES:
+        task_names = [
+            task_name
+            for task_name in lane.task_names
+            if _JOB_TYPE_BY_TASK_NAME.get(task_name, "") not in excluded
+        ]
+        if not task_names:
+            continue
         lane_workers = workers_by_settings.get(str(lane.settings_name), [])
         active_worker_count = len(lane_workers)
         queued_job_count = int(queued_by_queue.get(str(lane.queue_name), 0))
@@ -498,8 +559,8 @@ def _worker_lane_rows(
                 "settings_name": lane.settings_name,
                 "lane": str(lane.settings_name).removesuffix("WorkerSettings").lower(),
                 "queue_name": lane.queue_name,
-                "task_names": list(lane.task_names),
-                "task_count": len(lane.task_names),
+                "task_names": task_names,
+                "task_count": len(task_names),
                 "max_jobs": lane.max_jobs,
                 "active_worker_count": active_worker_count,
                 "active_workers": [
@@ -540,6 +601,7 @@ def build_jobs_overview(
 ) -> dict[str, Any]:
     generated_at = _utc_now()
     now = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+    excluded_job_types = excluded_declared_job_types()
     attention: list[dict[str, str]] = []
     definitions = [
         dict(row) for row in list_declared_job_rows(enabled_only=None, job_type=job_type)
@@ -626,6 +688,10 @@ def build_jobs_overview(
             limit=limit,
         )
     ]
+    run_rows = _filter_excluded_job_runs(
+        run_rows,
+        excluded_job_types=excluded_job_types,
+    )
     run_rows = _sorted_by_activity(run_rows)
     run_rows = _apply_broker_sync_run_overrides(
         run_rows,
@@ -634,18 +700,16 @@ def build_jobs_overview(
     queued_run_rows = [
         dict(row) for row in job_store.list_job_runs(status="queued", limit=200)
     ]
+    queued_run_rows = _filter_excluded_job_runs(
+        queued_run_rows,
+        excluded_job_types=excluded_job_types,
+    )
     active_queued_run_rows, stale_queued_run_rows = _split_active_queued_jobs(
         queued_run_rows,
         now=now,
     )
 
-    scheduler_lease = job_store.get_lease(SCHEDULER_RUNTIME_LEASE_KEY)
-    scheduler_payload = {
-        "status": _lease_status(scheduler_lease, now=now),
-        "expires_at": None if scheduler_lease is None else scheduler_lease.get("expires_at"),
-        "owner": None if scheduler_lease is None else scheduler_lease.get("owner"),
-        "job_run_id": None if scheduler_lease is None else scheduler_lease.get("job_run_id"),
-    }
+    scheduler_payload = _scheduler_payload(job_store, now=now)
     workers = [
         dict(row)
         for row in job_store.list_active_leases(prefix=WORKER_RUNTIME_LEASE_PREFIX)
@@ -767,9 +831,14 @@ def build_jobs_overview(
     lane_rows = _worker_lane_rows(
         workers=workers,
         queued_jobs=active_queued_run_rows,
-        running_jobs=[
-            dict(row) for row in job_store.list_job_runs(status="running", limit=200)
-        ],
+        running_jobs=_filter_excluded_job_runs(
+            [
+                dict(row)
+                for row in job_store.list_job_runs(status="running", limit=200)
+            ],
+            excluded_job_types=excluded_job_types,
+        ),
+        excluded_job_types=excluded_job_types,
     )
     blocked_lane_count = sum(
         1 for row in lane_rows if str(row.get("status") or "") == "blocked"

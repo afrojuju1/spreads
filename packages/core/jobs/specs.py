@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,15 @@ VALID_SCHEDULE_TYPES = {
     "market_close_plus_minutes",
     "manual",
 }
+
+
+def excluded_declared_job_types() -> set[str]:
+    raw = os.environ.get("SPREADS_EXCLUDED_JOB_TYPES", "")
+    return {
+        part.strip()
+        for part in raw.split(",")
+        if part is not None and str(part).strip()
+    }
 
 
 def _canonical_hash(payload: dict[str, Any]) -> str:
@@ -644,6 +654,11 @@ def load_declared_job_specs(
     specs.extend(spec.as_job_spec() for spec in load_declared_symbol_feed_specs(config_root))
     specs.extend(spec.as_job_spec() for spec in load_declared_discovery_run_specs(config_root))
     specs.extend(_automation_job_specs(config_root))
+    excluded_job_types = excluded_declared_job_types()
+    if excluded_job_types:
+        specs = [
+            spec for spec in specs if str(spec.job_type or "").strip() not in excluded_job_types
+        ]
     specs.sort(key=lambda item: item.job_key)
     return specs
 
@@ -706,6 +721,7 @@ __all__ = [
     "DeclaredJobSpec",
     "SymbolFeedConfig",
     "SymbolFeedSpec",
+    "excluded_declared_job_types",
     "get_declared_discovery_run_spec",
     "get_declared_job_row",
     "get_declared_symbol_feed_spec",

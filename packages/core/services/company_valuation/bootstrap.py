@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime
+from collections.abc import Callable
 from typing import Any
 
 from core.services.company_valuation.evaluation import recompute_company_valuation
@@ -91,10 +92,16 @@ def _normalized_tickers(values: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(str(value).upper().strip() for value in values if str(value or "").strip()))
 
 
+def _heartbeat(heartbeat: Callable[[], None] | None) -> None:
+    if heartbeat is not None:
+        heartbeat()
+
+
 def bootstrap_company_valuation(
     request: CompanyValuationBootstrapRequest,
     *,
     repository: CompanyValuationRepository | None = None,
+    heartbeat: Callable[[], None] | None = None,
 ) -> CompanyValuationBootstrapResult:
     started_at = datetime.now(UTC)
     repo = repository or CompanyValuationRepository()
@@ -104,6 +111,7 @@ def bootstrap_company_valuation(
 
     universe_payload = None
     if request.bootstrap_universe:
+        _heartbeat(heartbeat)
         universe_payload = bootstrap_sec_universe(
             SecUniverseBootstrapRequest(
                 limit=request.universe_limit,
@@ -114,6 +122,7 @@ def bootstrap_company_valuation(
 
     treasury_payload = None
     if request.refresh_treasury:
+        _heartbeat(heartbeat)
         treasury_payload = ingest_treasury_curve(
             TreasuryCurveIngestionRequest(curve_date=request.treasury_curve_date),
             repository=repo,
@@ -123,6 +132,7 @@ def bootstrap_company_valuation(
     errors: list[str] = []
     for ticker in normalized_tickers:
         try:
+            _heartbeat(heartbeat)
             filings_payload = None
             insiders_payload = None
             beneficial_payload = None
@@ -189,6 +199,7 @@ def bootstrap_company_valuation(
                 )
             )
         except Exception as exc:
+            _heartbeat(heartbeat)
             errors.append(f"{ticker}: {exc}")
             ticker_results.append(
                 CompanyValuationBootstrapTickerResult(
@@ -201,11 +212,13 @@ def bootstrap_company_valuation(
 
     screening_payload = None
     if request.materialize_screen:
+        _heartbeat(heartbeat)
         screening_payload = materialize_company_valuation_screen(
             as_of=request.as_of,
             tickers=normalized_tickers,
             repository=repo,
             config_root=request.config_root,
+            heartbeat=heartbeat,
         ).to_payload()
 
     completed_at = datetime.now(UTC)

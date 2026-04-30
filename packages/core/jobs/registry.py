@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 RUNTIME_QUEUE_NAME = "arq:queue:runtime"
 DISCOVERY_QUEUE_NAME = "arq:queue:discovery"
+VALUATION_QUEUE_NAME = "arq:queue:valuation"
 
 BROKER_SYNC_JOB_TYPE = "broker_sync"
 EXECUTION_SUBMIT_JOB_TYPE = "execution_submit"
@@ -15,6 +16,13 @@ POSITION_EXIT_MANAGER_JOB_TYPE = "position_exit_manager"
 DISCOVERY_RECOVERY_JOB_TYPE = "discovery_recovery"
 OPTIONS_AUTOMATION_ENTRY_JOB_TYPE = "options_automation_entry"
 OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE = "options_automation_execute"
+COMPANY_VALUATION_BOOTSTRAP_JOB_TYPE = "company_valuation_bootstrap"
+COMPANY_VALUATION_SCREEN_MATERIALIZE_JOB_TYPE = (
+    "company_valuation_screen_materialize"
+)
+COMPANY_VALUATION_RESOLVE_UNRESOLVED_JOB_TYPE = (
+    "company_valuation_resolve_unresolved"
+)
 
 EXECUTION_SUBMIT_ADHOC_JOB_KEY = "execution_submit:adhoc"
 ALERT_DELIVERY_ADHOC_JOB_KEY = "alert_delivery:adhoc"
@@ -22,6 +30,13 @@ ALERT_RECONCILE_JOB_KEY = "alert_reconcile:scheduled"
 DISCOVERY_RECOVERY_JOB_KEY = "discovery_recovery:global"
 OPTIONS_AUTOMATION_ENTRY_ADHOC_JOB_KEY = "options_automation_entry:adhoc"
 OPTIONS_AUTOMATION_EXECUTE_ADHOC_JOB_KEY = "options_automation_execute:adhoc"
+COMPANY_VALUATION_BOOTSTRAP_ADHOC_JOB_KEY = "company_valuation_bootstrap:adhoc"
+COMPANY_VALUATION_SCREEN_MATERIALIZE_ADHOC_JOB_KEY = (
+    "company_valuation_screen_materialize:adhoc"
+)
+COMPANY_VALUATION_RESOLVE_UNRESOLVED_JOB_KEY = (
+    "company_valuation_resolve_unresolved:global"
+)
 
 
 @dataclass(frozen=True)
@@ -92,6 +107,21 @@ JOB_SPECS = {
             task_name="run_options_automation_execute_job",
             queue_name=RUNTIME_QUEUE_NAME,
         ),
+        JobSpec(
+            job_type=COMPANY_VALUATION_BOOTSTRAP_JOB_TYPE,
+            task_name="run_company_valuation_bootstrap_job",
+            queue_name=VALUATION_QUEUE_NAME,
+        ),
+        JobSpec(
+            job_type=COMPANY_VALUATION_SCREEN_MATERIALIZE_JOB_TYPE,
+            task_name="run_company_valuation_screen_materialize_job",
+            queue_name=VALUATION_QUEUE_NAME,
+        ),
+        JobSpec(
+            job_type=COMPANY_VALUATION_RESOLVE_UNRESOLVED_JOB_TYPE,
+            task_name="run_company_valuation_resolve_unresolved_job",
+            queue_name=VALUATION_QUEUE_NAME,
+        ),
     )
 }
 
@@ -117,6 +147,15 @@ WORKER_LANES = (
         task_names=(
             JOB_SPECS[DISCOVERY_RUN_JOB_TYPE].task_name,
             JOB_SPECS[SYMBOL_FEED_JOB_TYPE].task_name,
+        ),
+    ),
+    WorkerLaneSpec(
+        settings_name="ValuationWorkerSettings",
+        queue_name=VALUATION_QUEUE_NAME,
+        task_names=(
+            JOB_SPECS[COMPANY_VALUATION_BOOTSTRAP_JOB_TYPE].task_name,
+            JOB_SPECS[COMPANY_VALUATION_SCREEN_MATERIALIZE_JOB_TYPE].task_name,
+            JOB_SPECS[COMPANY_VALUATION_RESOLVE_UNRESOLVED_JOB_TYPE].task_name,
         ),
     ),
 )

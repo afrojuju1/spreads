@@ -118,6 +118,11 @@ def _run_visibility_command(
 
 
 def status_command(
+    environment: str | None = typer.Option(
+        None,
+        "--env",
+        help="Run this command against a named deploy target.",
+    ),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
     watch: float | None = typer.Option(
@@ -135,6 +140,11 @@ def status_command(
 
 
 def trading_command(
+    environment: str | None = typer.Option(
+        None,
+        "--env",
+        help="Run this command against a named deploy target.",
+    ),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
     watch: float | None = typer.Option(
@@ -153,6 +163,11 @@ def trading_command(
 
 def audit_command(
     pipeline_id: str = typer.Argument(..., help="Pipeline id to audit."),
+    environment: str | None = typer.Option(
+        None,
+        "--env",
+        help="Run this command against a named deploy target.",
+    ),
     date: str = typer.Option(..., "--date", help="Market date to audit."),
     timeline_limit: int = typer.Option(
         120,
@@ -209,6 +224,11 @@ jobs_app = typer.Typer(
 @jobs_app.callback(invoke_without_command=True)
 def jobs_command(
     ctx: typer.Context,
+    environment: str | None = typer.Option(
+        None,
+        "--env",
+        help="Run this command against a named deploy target.",
+    ),
     job_type: str | None = typer.Option(
         None, "--job-type", help="Filter runs and definitions by job type."
     ),
@@ -245,6 +265,11 @@ def jobs_command(
 @jobs_app.command("run", help="Inspect one job run.")
 def jobs_run_command(
     job_run_id: str = typer.Argument(..., help="Job run id to inspect."),
+    environment: str | None = typer.Option(
+        None,
+        "--env",
+        help="Run this command against a named deploy target.",
+    ),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
     watch: float | None = typer.Option(
@@ -266,6 +291,11 @@ def jobs_run_command(
 
 @jobs_app.command("lanes", help="Inspect runtime and discovery worker lanes.")
 def jobs_lanes_command(
+    environment: str | None = typer.Option(
+        None,
+        "--env",
+        help="Run this command against a named deploy target.",
+    ),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
     watch: float | None = typer.Option(
@@ -293,6 +323,11 @@ uoa_app = typer.Typer(
 @uoa_app.callback(invoke_without_command=True)
 def uoa_command(
     ctx: typer.Context,
+    environment: str | None = typer.Option(
+        None,
+        "--env",
+        help="Run this command against a named deploy target.",
+    ),
     label: str | None = typer.Option(
         None, "--label", help="Filter to one discovery-run label."
     ),
@@ -320,6 +355,11 @@ def uoa_command(
 @uoa_app.command("cycle", help="Inspect one UOA cycle.")
 def uoa_cycle_command(
     cycle_id: str = typer.Argument(..., help="Discovery-run cycle id to inspect."),
+    environment: str | None = typer.Option(
+        None,
+        "--env",
+        help="Run this command against a named deploy target.",
+    ),
     label: str | None = typer.Option(
         None, "--label", help="Filter to one discovery-run label."
     ),

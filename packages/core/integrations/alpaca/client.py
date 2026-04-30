@@ -337,6 +337,47 @@ class AlpacaClient:
                     snapshots[str(symbol).upper()] = dict(snapshot)
         return snapshots
 
+    def get_stock_bars(
+        self,
+        symbol: str,
+        *,
+        timeframe: str,
+        start: str,
+        end: str,
+        adjustment: str = "raw",
+        asof: str | None = None,
+        limit: int = 10000,
+    ) -> list[dict[str, Any]]:
+        normalized_symbol = str(symbol or "").upper().strip()
+        if not normalized_symbol:
+            return []
+        bars: list[dict[str, Any]] = []
+        next_page_token: str | None = None
+        encoded_symbol = urllib.parse.quote(normalized_symbol, safe="")
+        while True:
+            payload = self.get_json(
+                self.data_base_url,
+                f"/v2/stocks/{encoded_symbol}/bars",
+                {
+                    "timeframe": timeframe,
+                    "start": start,
+                    "end": end,
+                    "limit": max(int(limit), 1),
+                    "adjustment": adjustment,
+                    "asof": asof,
+                    "page_token": next_page_token,
+                },
+            )
+            if not isinstance(payload, dict):
+                break
+            raw_bars = payload.get("bars")
+            if isinstance(raw_bars, list):
+                bars.extend(dict(item) for item in raw_bars if isinstance(item, dict))
+            next_page_token = str(payload.get("next_page_token") or "").strip() or None
+            if not next_page_token:
+                break
+        return bars
+
     def get_news(
         self,
         *,

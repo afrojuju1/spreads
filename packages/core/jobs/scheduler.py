@@ -13,16 +13,17 @@ from core.events.bus import publish_global_event_async
 from core.jobs.registry import (
     DISCOVERY_QUEUE_NAME,
     RUNTIME_QUEUE_NAME,
+    VALUATION_QUEUE_NAME,
     get_job_spec,
 )
 from core.jobs.specs import list_declared_job_rows
 from core.jobs.orchestration import (
-    SCHEDULER_RUNTIME_LEASE_KEY,
     build_job_attempt_id,
     build_job_run_id,
     due_job_payload,
     isoformat_utc,
     resolve_live_tick_plan,
+    scheduler_runtime_lease_key,
     singleton_lease_key,
     utc_now,
 )
@@ -45,6 +46,12 @@ DEFINITION_QUEUE_CLEANUP_LIMIT = 500
 STALE_JOB_RECONCILE_LIMIT = 500
 JOB_RUN_QUEUE_STALE_AFTER_SECONDS = 15 * 60
 JOB_RUN_HEARTBEAT_STALE_AFTER_SECONDS = 10 * 60
+VALID_QUEUE_DOMAINS = ("all", "runtime", "discovery", "valuation")
+QUEUE_DOMAIN_TO_QUEUE_NAME = {
+    "runtime": RUNTIME_QUEUE_NAME,
+    "discovery": DISCOVERY_QUEUE_NAME,
+    "valuation": VALUATION_QUEUE_NAME,
+}
 
 
 def _log_scheduler_event(event: str, **payload: Any) -> None:
@@ -82,7 +89,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--redis-url", default=default_redis_url(), help="Redis connection URL.")
     parser.add_argument("--poll-seconds", type=int, default=DEFAULT_POLL_SECONDS, help="Scheduler poll interval.")
     parser.add_argument("--once", action="store_true", help="Evaluate schedules once and exit.")
+    parser.add_argument(
+        "--queue-domain",
+        "--queue",
+        dest="queue_domain",
+        choices=VALID_QUEUE_DOMAINS,
+        default="all",
+        help="Restrict scheduling and stale-run reconciliation to one queue domain.",
+    )
     return parser.parse_args(argv)
+
+
+def _matches_queue_domain(job_type: str, queue_domain: str) -> bool:
+    normalized = str(queue_domain or "all").strip().lower()
+    if normalized == "all":
+        return True
+    spec = get_job_spec(str(job_type or "").strip())
+    if spec is None:
+        return False
+    return spec.queue_name == QUEUE_DOMAIN_TO_QUEUE_NAME[normalized]
 
 
 def _lease_is_active(lease: Any) -> bool:
@@ -127,6 +152,7 @@ async def _purge_arq_job_artifacts(redis: Any, *, arq_job_id: str) -> None:
         return
     await redis.zrem(RUNTIME_QUEUE_NAME, arq_job_id)
     await redis.zrem(DISCOVERY_QUEUE_NAME, arq_job_id)
+    await redis.zrem(VALUATION_QUEUE_NAME, arq_job_id)
     await redis.delete(
         f"arq:job:{arq_job_id}",
         f"arq:in-progress:{arq_job_id}",
@@ -207,6 +233,11 @@ async def _reconcile_stale_job_runs(job_store: Any, redis: Any, *, now: datetime
             limit=STALE_JOB_RECONCILE_LIMIT,
         )
         for run_record in run_rows:
+            if not _matches_queue_domain(
+                str(run_record.get("job_type") or ""),
+                "all",
+            ):
+                continue
             if not _job_run_is_stale(run_record, now=now):
                 continue
             reconciled_job_run_id = await _reconcile_stale_job_run(
@@ -359,7 +390,14 @@ async def _reconcile_discovery_run_jobs(
     redis: Any,
     *,
     now: datetime,
+    queue_domain: str,
 ) -> dict[str, Any]:
+    if str(queue_domain).strip().lower() not in {"all", "discovery"}:
+        return {
+            "enqueued": [],
+            "skipped": [],
+            "recovery_enqueued": [],
+        }
     definitions = await asyncio.to_thread(
         list_declared_job_rows,
         enabled_only=True,
@@ -617,12 +655,20 @@ async def _reconcile_discovery_run_jobs(
     }
 
 
-async def _enqueue_definition_jobs(job_store: Any, redis: Any, *, now: datetime) -> dict[str, Any]:
+async def _enqueue_definition_jobs(
+    job_store: Any,
+    redis: Any,
+    *,
+    now: datetime,
+    queue_domain: str,
+) -> dict[str, Any]:
     definitions = await asyncio.to_thread(list_declared_job_rows, enabled_only=True)
     enqueued: list[str] = []
     skipped: list[dict[str, str]] = []
 
     for definition in definitions:
+        if not _matches_queue_domain(str(definition["job_type"]), queue_domain):
+            continue
         if definition["job_type"] == "discovery_run":
             continue
         due = due_job_payload(definition, now=now)
@@ -721,12 +767,29 @@ async def _enqueue_definition_jobs(job_store: Any, redis: Any, *, now: datetime)
     return {"enqueued": enqueued, "skipped": skipped}
 
 
-async def enqueue_due_jobs(job_store: Any, recovery_store: Any, redis: Any) -> dict[str, Any]:
+async def enqueue_due_jobs(
+    job_store: Any,
+    recovery_store: Any,
+    redis: Any,
+    *,
+    queue_domain: str,
+) -> dict[str, Any]:
     now = datetime.now(UTC)
     stale_reconciled, live_result, definition_result = await asyncio.gather(
-        _reconcile_stale_job_runs(job_store, redis, now=now),
-        _reconcile_discovery_run_jobs(job_store, recovery_store, redis, now=now),
-        _enqueue_definition_jobs(job_store, redis, now=now),
+        _reconcile_stale_job_runs_filtered(
+            job_store,
+            redis,
+            now=now,
+            queue_domain=queue_domain,
+        ),
+        _reconcile_discovery_run_jobs(
+            job_store,
+            recovery_store,
+            redis,
+            now=now,
+            queue_domain=queue_domain,
+        ),
+        _enqueue_definition_jobs(job_store, redis, now=now, queue_domain=queue_domain),
     )
     return {
         "enqueued": [*live_result["enqueued"], *definition_result["enqueued"]],
@@ -734,6 +797,41 @@ async def enqueue_due_jobs(job_store: Any, recovery_store: Any, redis: Any) -> d
         "recovery_enqueued": list(live_result.get("recovery_enqueued") or []),
         "reconciled": stale_reconciled,
     }
+
+
+async def _reconcile_stale_job_runs_filtered(
+    job_store: Any,
+    redis: Any,
+    *,
+    now: datetime,
+    queue_domain: str,
+) -> list[str]:
+    if str(queue_domain).strip().lower() == "all":
+        return await _reconcile_stale_job_runs(job_store, redis, now=now)
+    reconciled: list[str] = []
+    for status in ("running", "queued"):
+        run_rows = await asyncio.to_thread(
+            job_store.list_job_runs,
+            status=status,
+            limit=STALE_JOB_RECONCILE_LIMIT,
+        )
+        for run_record in run_rows:
+            if not _matches_queue_domain(
+                str(run_record.get("job_type") or ""),
+                queue_domain,
+            ):
+                continue
+            if not _job_run_is_stale(run_record, now=now):
+                continue
+            reconciled_job_run_id = await _reconcile_stale_job_run(
+                job_store=job_store,
+                redis=redis,
+                run_record=run_record,
+                now=now,
+            )
+            if reconciled_job_run_id is not None:
+                reconciled.append(reconciled_job_run_id)
+    return reconciled
 
 
 async def scheduler_loop(args: argparse.Namespace) -> int:
@@ -745,24 +843,37 @@ async def scheduler_loop(args: argparse.Namespace) -> int:
         "scheduler_started",
         poll_seconds=max(args.poll_seconds, 1),
         once=bool(args.once),
+        queue_domain=str(args.queue_domain),
     )
     try:
         while True:
             owner = "scheduler"
             tick_started = perf_counter()
             lease_seconds = max(args.poll_seconds * 3, SCHEDULER_LEASE_TTL_SECONDS)
+            lease_key = scheduler_runtime_lease_key(str(args.queue_domain))
             await asyncio.to_thread(
                 job_store.acquire_lease,
-                lease_key=SCHEDULER_RUNTIME_LEASE_KEY,
+                lease_key=lease_key,
                 owner=owner,
                 expires_in_seconds=lease_seconds,
-                state={"kind": "scheduler", "last_tick_at": datetime.now(UTC).isoformat()},
+                state={
+                    "kind": "scheduler",
+                    "last_tick_at": datetime.now(UTC).isoformat(),
+                    "queue_domain": str(args.queue_domain),
+                },
             )
-            result = await enqueue_due_jobs(job_store, recovery_store, redis)
+            result = await enqueue_due_jobs(
+                job_store,
+                recovery_store,
+                redis,
+                queue_domain=str(args.queue_domain),
+            )
             _log_scheduler_event(
                 "scheduler_tick",
                 poll_seconds=max(args.poll_seconds, 1),
                 lease_seconds=lease_seconds,
+                queue_domain=str(args.queue_domain),
+                lease_key=lease_key,
                 elapsed_ms=round((perf_counter() - tick_started) * 1000, 1),
                 enqueued_count=len(result["enqueued"]),
                 skipped_count=len(result["skipped"]),
@@ -777,10 +888,14 @@ async def scheduler_loop(args: argparse.Namespace) -> int:
                 break
             await asyncio.sleep(max(args.poll_seconds, 1))
     finally:
-        await asyncio.to_thread(job_store.release_lease, SCHEDULER_RUNTIME_LEASE_KEY, owner="scheduler")
+        await asyncio.to_thread(
+            job_store.release_lease,
+            scheduler_runtime_lease_key(str(args.queue_domain)),
+            owner="scheduler",
+        )
         await redis.close()
         storage.close()
-        _log_scheduler_event("scheduler_stopped")
+        _log_scheduler_event("scheduler_stopped", queue_domain=str(args.queue_domain))
     return 0
 
 
