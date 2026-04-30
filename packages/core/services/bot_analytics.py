@@ -73,6 +73,8 @@ POLICY_OR_RISK_BUDGET_ADMISSION_REASONS = {
     "max_session_notional_exceeded",
     "max_session_max_loss_exceeded",
     "strategy_risk_budget_exceeded",
+    "position_size_budget_exceeded",
+    "position_size_budget_exhausted",
     "max_risk_per_trade_exhausted",
 }
 

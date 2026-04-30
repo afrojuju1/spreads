@@ -35,5 +35,5 @@ liquidity:
   max_quote_age_seconds: 30
 risk:
   min_return_on_risk: 0.13
-  max_risk_per_trade: 500
+  position_size_pct_of_available_balance: 0.0025
   max_credit_slippage_pct: 0.25

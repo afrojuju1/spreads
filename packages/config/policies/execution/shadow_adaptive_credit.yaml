@@ -1,6 +1,5 @@
 deployment_mode: shadow
 mode: top_promotable
-quantity: 1
 pricing_mode: adaptive_credit
 min_credit_retention_pct: 0.95
 max_credit_concession: 0.02

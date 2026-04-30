@@ -14,7 +14,10 @@ from core.services.execution_intents import request_options_automation_dispatch
 from core.services.execution_intents.shared import issue_pending_execution_intent
 from core.services.management_recipes import build_exit_policy_from_recipe_refs
 from core.services.option_structures import normalize_strategy_family
-from core.services.risk_manager import build_execution_admission_snapshot
+from core.services.risk_manager import (
+    build_execution_admission_snapshot,
+    resolve_position_size_policy,
+)
 from core.services.runtime_policy import build_runtime_policy_ref
 from core.services.automation_runtime import resolve_entry_runtime
 
@@ -62,30 +65,24 @@ def _normalized_blockers(value: Any) -> list[str]:
     return blockers
 
 
-def _as_float(value: Any) -> float | None:
-    try:
-        if value not in (None, ""):
-            return float(value)
-    except (TypeError, ValueError):
-        return None
-    return None
-
-
 def _selected_execution_admission(
     *,
     execution_store: Any,
     runtime: Any,
     opportunity: dict[str, Any],
 ) -> dict[str, Any]:
-    strategy_risk_budget = _as_float(
-        getattr(runtime.build_settings, "risk_defaults", {}).get("max_risk_per_trade")
+    position_size_policy = resolve_position_size_policy(
+        getattr(runtime.build_settings, "risk_defaults", {})
     )
     try:
         return build_execution_admission_snapshot(
             execution_store=execution_store,
             candidate=opportunity,
             limit_price=None,
-            strategy_risk_budget=strategy_risk_budget,
+            strategy_risk_budget=position_size_policy["max_risk_per_trade"],
+            position_size_pct_of_available_balance=position_size_policy[
+                "position_size_pct_of_available_balance"
+            ],
         )
     except Exception as exc:
         return {
@@ -102,7 +99,11 @@ def _selected_execution_admission(
             "buying_power_source_field": None,
             "broker_buying_power_status": None,
             "limiting_constraint": None,
-            "strategy_risk_budget": strategy_risk_budget,
+            "strategy_risk_budget": position_size_policy["max_risk_per_trade"],
+            "position_size_pct_of_available_balance": position_size_policy[
+                "position_size_pct_of_available_balance"
+            ],
+            "position_size_budget": None,
         }
 
 

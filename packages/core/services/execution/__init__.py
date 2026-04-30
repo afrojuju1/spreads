@@ -61,6 +61,7 @@ from core.services.risk_manager import (
     build_open_candidate_position_sizing,
     evaluate_open_execution,
     normalize_risk_policy,
+    resolve_position_size_policy,
     validate_close_execution,
 )
 from core.services.signal_state import publish_opportunity_event
@@ -180,6 +181,12 @@ def _execution_admission_payload_from_risk_evaluation(
         ),
         "limiting_constraint": _as_text(position_sizing.get("limiting_constraint")),
         "strategy_risk_budget": _coerce_float(metrics.get("strategy_risk_budget")),
+        "position_size_pct_of_available_balance": _coerce_float(
+            position_sizing.get("position_size_pct_of_available_balance")
+        ),
+        "position_size_budget": _coerce_float(
+            position_sizing.get("position_size_budget")
+        ),
         "requested_quantity": None if requested_quantity <= 0 else int(requested_quantity),
     }
 
@@ -1157,12 +1164,12 @@ def _resolve_session_candidate(
     return dict(candidate), dict(cycle)
 
 
-def _strategy_risk_budget(
+def _strategy_position_size_policy(
     *,
     bot_id: str | None,
     automation_id: str | None,
     strategy_config_id: str | None,
-) -> float | None:
+) -> dict[str, float | None]:
     if bot_id is not None and automation_id is not None:
         try:
             runtime = resolve_entry_runtime(
@@ -1172,15 +1179,19 @@ def _strategy_risk_budget(
         except ValueError:
             runtime = None
         if runtime is not None:
-            return _coerce_float(
-                runtime.build_settings.risk_defaults.get("max_risk_per_trade")
-            )
+            return resolve_position_size_policy(runtime.build_settings.risk_defaults)
     if strategy_config_id is None:
-        return None
+        return {
+            "max_risk_per_trade": None,
+            "position_size_pct_of_available_balance": None,
+        }
     strategy_config = load_strategy_configs().get(strategy_config_id)
     if strategy_config is None:
-        return None
-    return _coerce_float(strategy_config.risk_defaults.get("max_risk_per_trade"))
+        return {
+            "max_risk_per_trade": None,
+            "position_size_pct_of_available_balance": None,
+        }
+    return resolve_position_size_policy(strategy_config.risk_defaults)
 
 
 def _request_recommended_quantity(
@@ -1195,6 +1206,11 @@ def _request_recommended_quantity(
             quantity = _coerce_int(evidence.get("recommended_quantity"))
             if quantity is not None and quantity > 0:
                 return quantity
+    execution_admission = request_metadata.get("execution_admission")
+    if isinstance(execution_admission, Mapping):
+        quantity = _coerce_int(execution_admission.get("admissible_quantity"))
+        if quantity is not None and quantity > 0:
+            return quantity
     allocation_decision = request_metadata.get("allocation_decision")
     if not isinstance(allocation_decision, Mapping):
         return None
@@ -1228,14 +1244,14 @@ def _resolve_open_submission_quantity(
     bot_id: str | None,
     automation_id: str | None,
     strategy_config_id: str | None,
-) -> tuple[int, float | None]:
-    strategy_risk_budget = _strategy_risk_budget(
+) -> tuple[int, dict[str, float | None]]:
+    position_size_policy = _strategy_position_size_policy(
         bot_id=bot_id,
         automation_id=automation_id,
         strategy_config_id=strategy_config_id,
     )
     if explicit_quantity is not None:
-        return explicit_quantity, strategy_risk_budget
+        return explicit_quantity, position_size_policy
 
     quantity_hints: list[int] = []
     request_quantity = _request_recommended_quantity(request_metadata)
@@ -1247,7 +1263,10 @@ def _resolve_open_submission_quantity(
         candidate=candidate,
         limit_price=limit_price,
         risk_policy=risk_policy,
-        strategy_risk_budget=strategy_risk_budget,
+        strategy_risk_budget=position_size_policy["max_risk_per_trade"],
+        position_size_pct_of_available_balance=position_size_policy[
+            "position_size_pct_of_available_balance"
+        ],
     )
     risk_quantity = _coerce_int(risk_sizing.get("recommended_quantity"))
     if (
@@ -1261,12 +1280,12 @@ def _resolve_open_submission_quantity(
         if policy_cap is not None and policy_cap > 0:
             quantity_hints.append(policy_cap)
     if quantity_hints:
-        return max(min(quantity_hints), 1), strategy_risk_budget
+        return max(min(quantity_hints), 1), position_size_policy
 
     candidate_payload = _candidate_with_payload(candidate)
     order_payload = dict(candidate_payload.get("order_payload") or {})
     fallback_quantity = _coerce_int(order_payload.get("qty")) or 1
-    return fallback_quantity, strategy_risk_budget
+    return fallback_quantity, position_size_policy
 
 
 def _build_order_request(
@@ -1570,7 +1589,7 @@ def submit_live_session_execution(
                 "risk_policy": requested_risk_policy,
             }
         )
-        resolved_requested_quantity, strategy_risk_budget = (
+        resolved_requested_quantity, position_size_policy = (
             _resolve_open_submission_quantity(
                 execution_store=execution_store,
                 session_id=session_id,
@@ -1625,7 +1644,10 @@ def submit_live_session_execution(
             limit_price=resolved_limit_price,
             risk_policy=requested_risk_policy,
             execution_policy=resolved_execution_policy,
-            strategy_risk_budget=strategy_risk_budget,
+            strategy_risk_budget=position_size_policy["max_risk_per_trade"],
+            position_size_pct_of_available_balance=position_size_policy[
+                "position_size_pct_of_available_balance"
+            ],
         )
         resolved_risk_policy = dict(risk_evaluation["policy"])
         policy_refs = _build_policy_refs(

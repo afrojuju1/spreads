@@ -28,6 +28,7 @@ from core.services.execution_lifecycle import (
 from core.services.option_structures import (
     candidate_legs,
     net_premium_kind,
+    normalize_strategy_family,
     position_legs,
 )
 from core.services.positions import enrich_position_row
@@ -41,7 +42,19 @@ from core.services.value_coercion import (
 from core.storage.serializers import parse_datetime
 
 OPEN_POSITION_STATUSES = ["open", "partial_close"]
-SIZED_SINGLE_LEG_STRATEGIES = {"short_call", "short_put"}
+POSITION_SIZING_STRATEGIES = {
+    "short_call",
+    "short_put",
+    "call_credit_spread",
+    "put_credit_spread",
+    "call_debit_spread",
+    "put_debit_spread",
+    "iron_condor",
+    "long_call",
+    "long_put",
+    "long_straddle",
+    "long_strangle",
+}
 BASELINE_RISK_POLICY_NAME = "baseline"
 RISK_POLICY_DERIVED_FLAGS = {
     "max_contracts_per_position_configured": False,
@@ -242,9 +255,40 @@ def _max_contracts_for_budget(
     return max(int(budget // unit_exposure), 0)
 
 
+def resolve_position_size_policy(
+    risk_defaults: Mapping[str, Any] | None,
+) -> dict[str, float | None]:
+    defaults = risk_defaults if isinstance(risk_defaults, Mapping) else {}
+    return {
+        "max_risk_per_trade": _coerce_float(defaults.get("max_risk_per_trade")),
+        "position_size_pct_of_available_balance": _coerce_float(
+            defaults.get("position_size_pct_of_available_balance")
+        ),
+    }
+
+
+def _position_size_budget(
+    *,
+    available_broker_buying_power: float | None,
+    position_size_pct_of_available_balance: float | None,
+) -> float | None:
+    if (
+        available_broker_buying_power is None
+        or available_broker_buying_power < 0
+        or position_size_pct_of_available_balance is None
+        or position_size_pct_of_available_balance <= 0
+    ):
+        return None
+    return round(
+        max(available_broker_buying_power, 0.0)
+        * float(position_size_pct_of_available_balance),
+        2,
+    )
+
+
 def strategy_supports_position_sizing(strategy_family: Any) -> bool:
-    normalized = str(strategy_family or "").strip().lower()
-    return normalized in SIZED_SINGLE_LEG_STRATEGIES
+    normalized = normalize_strategy_family(strategy_family)
+    return normalized in POSITION_SIZING_STRATEGIES
 
 
 def build_candidate_position_sizing(
@@ -258,15 +302,15 @@ def build_candidate_position_sizing(
     max_position_max_loss: float | None = None,
     remaining_session_max_loss: float | None = None,
     strategy_risk_budget: float | None = None,
+    position_size_pct_of_available_balance: float | None = None,
     available_broker_buying_power: float | None = None,
 ) -> dict[str, Any]:
     candidate_payload = _candidate_payload(candidate)
-    strategy_family = str(
+    strategy_family = normalize_strategy_family(
         candidate_payload.get("strategy")
         or candidate.get("strategy")
         or candidate.get("strategy_family")
-        or ""
-    ).strip()
+    )
     applies = strategy_supports_position_sizing(strategy_family)
     per_contract_entry_notional = _candidate_entry_notional(candidate, 1.0, limit_price)
     per_contract_max_loss = _candidate_max_loss(candidate, 1.0)
@@ -278,6 +322,16 @@ def build_candidate_position_sizing(
     per_contract_required_buying_power = _coerce_float(
         buying_power_requirement.get("required_buying_power")
     )
+    position_size_budget = _position_size_budget(
+        available_broker_buying_power=available_broker_buying_power,
+        position_size_pct_of_available_balance=position_size_pct_of_available_balance,
+    )
+    effective_strategy_risk_budget = strategy_risk_budget
+    if (
+        position_size_pct_of_available_balance is not None
+        and available_broker_buying_power is not None
+    ):
+        effective_strategy_risk_budget = None
     constraints: list[tuple[str, int]] = []
 
     def _append_constraint(name: str, value: int | None) -> None:
@@ -310,8 +364,18 @@ def build_candidate_position_sizing(
         ),
     )
     _append_constraint(
+        "position_size_pct_of_available_balance",
+        _max_contracts_for_budget(
+            per_contract_required_buying_power,
+            position_size_budget,
+        ),
+    )
+    _append_constraint(
         "max_risk_per_trade",
-        _max_contracts_for_budget(per_contract_max_loss, strategy_risk_budget),
+        _max_contracts_for_budget(
+            per_contract_max_loss,
+            effective_strategy_risk_budget,
+        ),
     )
     _append_constraint(
         "available_broker_buying_power",
@@ -351,6 +415,12 @@ def build_candidate_position_sizing(
         "per_contract_max_loss": per_contract_max_loss,
         "per_contract_required_buying_power": per_contract_required_buying_power,
         "buying_power_basis": _as_text(buying_power_requirement.get("basis")),
+        "position_size_pct_of_available_balance": (
+            None
+            if position_size_pct_of_available_balance is None
+            else float(position_size_pct_of_available_balance)
+        ),
+        "position_size_budget": position_size_budget,
         "available_broker_buying_power": available_broker_buying_power,
         "constraints": {name: value for name, value in constraints},
         "effective_constraints": {
@@ -393,6 +463,7 @@ def build_open_candidate_position_sizing(
     limit_price: float | None,
     risk_policy: dict[str, Any] | None,
     strategy_risk_budget: float | None = None,
+    position_size_pct_of_available_balance: float | None = None,
 ) -> dict[str, Any]:
     normalized_policy = normalize_risk_policy(risk_policy)
     open_positions = _open_positions(execution_store, session_id=session_id)
@@ -439,6 +510,7 @@ def build_open_candidate_position_sizing(
             )
         ),
         strategy_risk_budget=strategy_risk_budget,
+        position_size_pct_of_available_balance=position_size_pct_of_available_balance,
         available_broker_buying_power=_coerce_float(
             broker_buying_power.get("remaining_buying_power")
         ),
@@ -645,6 +717,7 @@ def build_execution_admission_snapshot(
     candidate: dict[str, Any],
     limit_price: float | None,
     strategy_risk_budget: float | None = None,
+    position_size_pct_of_available_balance: float | None = None,
 ) -> dict[str, Any]:
     broker_buying_power = live_broker_buying_power_snapshot(execution_store)
     buying_power_requirement = estimate_buying_power_requirement(
@@ -662,6 +735,7 @@ def build_execution_admission_snapshot(
         candidate=candidate,
         limit_price=limit_price,
         strategy_risk_budget=strategy_risk_budget,
+        position_size_pct_of_available_balance=position_size_pct_of_available_balance,
         available_broker_buying_power=available_buying_power,
     )
     limiting_constraint = _as_text(sizing.get("limiting_constraint"))
@@ -685,6 +759,10 @@ def build_execution_admission_snapshot(
         "broker_buying_power_status": _as_text(broker_buying_power.get("status")),
         "limiting_constraint": limiting_constraint,
         "strategy_risk_budget": strategy_risk_budget,
+        "position_size_pct_of_available_balance": _coerce_float(
+            sizing.get("position_size_pct_of_available_balance")
+        ),
+        "position_size_budget": _coerce_float(sizing.get("position_size_budget")),
     }
     if str(broker_buying_power.get("status") or "") != "ok":
         return {
@@ -704,7 +782,10 @@ def build_execution_admission_snapshot(
     if resolved_quantity <= 0:
         reason = "insufficient_broker_buying_power"
         message = "Current account buying power cannot carry one contract."
-        if limiting_constraint == "max_risk_per_trade":
+        if limiting_constraint == "position_size_pct_of_available_balance":
+            reason = "position_size_budget_exhausted"
+            message = "Configured position size budget does not allow one contract."
+        elif limiting_constraint == "max_risk_per_trade":
             reason = "max_risk_per_trade_exhausted"
             message = "Configured strategy risk budget does not allow one contract."
         elif limiting_constraint not in {None, "", "available_broker_buying_power"}:
@@ -1077,6 +1158,7 @@ def evaluate_open_execution(
     risk_policy: dict[str, Any] | None,
     execution_policy: dict[str, Any] | None = None,
     strategy_risk_budget: float | None = None,
+    position_size_pct_of_available_balance: float | None = None,
 ) -> dict[str, Any]:
     normalized_policy = normalize_risk_policy(risk_policy)
     open_positions = _open_positions(execution_store, session_id=session_id)
@@ -1151,6 +1233,7 @@ def evaluate_open_execution(
             len(matching_strategy) + len(matching_pending_strategy)
         ),
         "strategy_risk_budget": strategy_risk_budget,
+        "position_size_pct_of_available_balance": position_size_pct_of_available_balance,
         "required_buying_power": required_buying_power,
         "buying_power_basis": _as_text(buying_power_requirement.get("basis")),
     }
@@ -1161,6 +1244,7 @@ def evaluate_open_execution(
         limit_price=limit_price,
         risk_policy=risk_policy,
         strategy_risk_budget=strategy_risk_budget,
+        position_size_pct_of_available_balance=position_size_pct_of_available_balance,
     )
     metrics["position_sizing"] = sizing
     metrics["recommended_quantity"] = int(sizing["recommended_quantity"])
@@ -1384,6 +1468,7 @@ def evaluate_open_execution(
 
     if (
         strategy_risk_budget is not None
+        and position_size_pct_of_available_balance is None
         and strategy_supports_position_sizing(strategy)
         and position_max_loss is not None
         and position_max_loss > strategy_risk_budget
@@ -1396,6 +1481,35 @@ def evaluate_open_execution(
             "policy": normalized_policy,
             "metrics": metrics,
         }
+
+    recommended_quantity = _coerce_int(sizing.get("recommended_quantity"))
+    limiting_constraint = _as_text(sizing.get("limiting_constraint"))
+    if (
+        recommended_quantity is not None
+        and recommended_quantity >= 0
+        and quantity > recommended_quantity
+    ):
+        if limiting_constraint == "position_size_pct_of_available_balance":
+            return {
+                "status": "blocked",
+                "note": (
+                    "Open execution exceeds the configured position-size budget "
+                    "derived from available broker buying power."
+                ),
+                "reason_codes": ["position_size_budget_exceeded"],
+                "blockers": ["position_size_budget_exceeded"],
+                "policy": normalized_policy,
+                "metrics": metrics,
+            }
+        if limiting_constraint == "max_risk_per_trade":
+            return {
+                "status": "blocked",
+                "note": "Open execution exceeds strategy max_risk_per_trade.",
+                "reason_codes": ["strategy_risk_budget_exceeded"],
+                "blockers": ["strategy_risk_budget_exceeded"],
+                "policy": normalized_policy,
+                "metrics": metrics,
+            }
 
     available_broker_buying_power = _coerce_float(
         sizing.get("available_broker_buying_power")
@@ -1456,6 +1570,7 @@ def validate_open_execution(
     risk_policy: dict[str, Any] | None,
     execution_policy: dict[str, Any] | None = None,
     strategy_risk_budget: float | None = None,
+    position_size_pct_of_available_balance: float | None = None,
 ) -> dict[str, Any]:
     decision = evaluate_open_execution(
         execution_store=execution_store,
@@ -1467,6 +1582,7 @@ def validate_open_execution(
         risk_policy=risk_policy,
         execution_policy=execution_policy,
         strategy_risk_budget=strategy_risk_budget,
+        position_size_pct_of_available_balance=position_size_pct_of_available_balance,
     )
     if decision["status"] in {"blocked", "unknown"}:
         raise ValueError(str(decision["note"]))

@@ -35,7 +35,10 @@ from core.services.option_structures import (
     structure_quote_snapshot,
     unique_leg_symbols,
 )
-from core.services.risk_manager import build_candidate_position_sizing
+from core.services.risk_manager import (
+    build_candidate_position_sizing,
+    resolve_position_size_policy,
+)
 from core.storage.run_history_repository import session_bounds
 from core.storage.serializers import parse_datetime
 
@@ -252,15 +255,17 @@ def _simulate_entry_execution(
             "position": None,
         }
     max_loss = _coerce_float(economics.get("max_loss"))
+    position_size_policy = resolve_position_size_policy(runtime.build_settings.risk_defaults)
     sizing = build_candidate_position_sizing(
         candidate={
             **dict(opportunity),
             **economics,
         },
         limit_price=fill_price,
-        strategy_risk_budget=_coerce_float(
-            runtime.build_settings.risk_defaults.get("max_risk_per_trade")
-        ),
+        strategy_risk_budget=position_size_policy["max_risk_per_trade"],
+        position_size_pct_of_available_balance=position_size_policy[
+            "position_size_pct_of_available_balance"
+        ],
     )
     quantity = int(sizing.get("recommended_quantity") or 1)
     if bool(sizing.get("applies")) and quantity <= 0:

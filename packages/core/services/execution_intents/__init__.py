@@ -257,6 +257,10 @@ def submit_execution_intent(
                 request_metadata["execution_policy"] = execution_policy
             if exit_policy is not None:
                 request_metadata["exit_policy"] = exit_policy
+            if isinstance(payload.get("execution_admission"), dict):
+                request_metadata["execution_admission"] = dict(
+                    payload["execution_admission"]
+                )
             result = submit_opportunity_execution(
                 db_target=db_target,
                 opportunity_id=str(decision["opportunity_id"]),

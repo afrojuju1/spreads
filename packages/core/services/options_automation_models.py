@@ -410,12 +410,23 @@ class StrategyLiquidityRules:
 @dataclass(frozen=True)
 class StrategyRiskDefaults:
     min_return_on_risk: float | None = None
+    position_size_pct_of_available_balance: float | None = None
     max_risk_per_trade: float | None = None
     max_credit_slippage_pct: float | None = None
 
     def __post_init__(self) -> None:
         if self.min_return_on_risk is not None and self.min_return_on_risk <= 0:
             raise ValueError("risk.min_return_on_risk must be > 0")
+        if (
+            self.position_size_pct_of_available_balance is not None
+            and (
+                self.position_size_pct_of_available_balance <= 0
+                or self.position_size_pct_of_available_balance > 1
+            )
+        ):
+            raise ValueError(
+                "risk.position_size_pct_of_available_balance must be > 0 and <= 1"
+            )
         if self.max_risk_per_trade is not None and self.max_risk_per_trade <= 0:
             raise ValueError("risk.max_risk_per_trade must be > 0")
         if self.max_credit_slippage_pct is not None and self.max_credit_slippage_pct < 0:
@@ -429,6 +440,9 @@ class StrategyRiskDefaults:
         mapping = _require_mapping(payload, field_name="risk")
         return cls(
             min_return_on_risk=_optional_float(mapping.get("min_return_on_risk")),
+            position_size_pct_of_available_balance=_optional_float(
+                mapping.get("position_size_pct_of_available_balance")
+            ),
             max_risk_per_trade=_optional_float(mapping.get("max_risk_per_trade")),
             max_credit_slippage_pct=_optional_float(
                 mapping.get("max_credit_slippage_pct")
@@ -439,6 +453,10 @@ class StrategyRiskDefaults:
         payload: dict[str, Any] = {}
         if self.min_return_on_risk is not None:
             payload["min_return_on_risk"] = self.min_return_on_risk
+        if self.position_size_pct_of_available_balance is not None:
+            payload["position_size_pct_of_available_balance"] = (
+                self.position_size_pct_of_available_balance
+            )
         if self.max_risk_per_trade is not None:
             payload["max_risk_per_trade"] = self.max_risk_per_trade
         if self.max_credit_slippage_pct is not None:
