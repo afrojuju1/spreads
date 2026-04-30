@@ -1,0 +1,58 @@
+overrides:
+  - issuer_cik: "0000040545"
+    template_id: industrial_manufacturing
+    reason: Focused industrial holdout baseline basket.
+  - issuer_cik: "0000101829"
+    template_id: industrial_manufacturing
+    reason: Focused industrial holdout baseline basket.
+  - issuer_cik: "0000012927"
+    template_id: industrial_manufacturing
+    reason: Focused industrial holdout baseline basket.
+  - issuer_cik: "0000040533"
+    template_id: industrial_manufacturing
+    reason: Focused industrial holdout baseline basket.
+  - issuer_cik: "0000066740"
+    template_id: industrial_manufacturing
+    reason: Focused industrial holdout baseline basket.
+  - issuer_cik: "0000773840"
+    template_id: industrial_manufacturing
+    reason: Focused industrial holdout baseline basket.
+  - issuer_cik: "0000936468"
+    template_id: industrial_manufacturing
+    reason: Focused industrial holdout baseline basket.
+  - issuer_cik: "0001133421"
+    template_id: industrial_manufacturing
+    reason: Focused industrial holdout baseline basket.
+  - issuer_cik: "0000202058"
+    template_id: industrial_manufacturing
+    reason: Focused industrial holdout baseline basket.
+  - issuer_cik: "0001260221"
+    template_id: industrial_manufacturing
+    reason: Focused industrial holdout baseline basket.
+  - issuer_cik: "0000046619"
+    template_id: industrial_manufacturing
+    reason: Focused industrial holdout baseline basket.
+  - issuer_cik: "0000004281"
+    template_id: industrial_manufacturing
+    reason: Focused industrial holdout baseline basket.
+  - issuer_cik: "0000217346"
+    template_id: industrial_manufacturing
+    reason: Focused industrial holdout baseline basket.
+  - issuer_cik: "0000049826"
+    template_id: industrial_manufacturing
+    reason: Focused industrial holdout baseline basket.
+  - issuer_cik: "0000029905"
+    template_id: industrial_manufacturing
+    reason: Focused industrial holdout baseline basket.
+  - issuer_cik: "0001024478"
+    template_id: industrial_manufacturing
+    reason: Focused industrial holdout baseline basket.
+  - issuer_cik: "0001699150"
+    template_id: industrial_manufacturing
+    reason: Focused industrial holdout baseline basket.
+  - issuer_cik: "0001659166"
+    template_id: industrial_manufacturing
+    reason: Focused industrial holdout baseline basket.
+  - issuer_cik: "0001037868"
+    template_id: industrial_manufacturing
+    reason: Focused industrial holdout baseline basket.

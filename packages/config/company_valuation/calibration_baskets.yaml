@@ -67,3 +67,26 @@ calibration_baskets:
       - RRC
       - HP
       - DK
+  industrial_holdout_aerospace_diversified:
+    as_of: "2026-04-30"
+    rationale: "Focused 19-name follow-up on the industrial holdout bucket plus adjacent aerospace-defense and diversified-industrial names to test whether the unresolved industrial remainder splits more cleanly there than in the full 30-name cohort."
+    symbols:
+      - GE
+      - RTX
+      - BA
+      - GD
+      - MMM
+      - HON
+      - LMT
+      - NOC
+      - LHX
+      - TDG
+      - HEI
+      - HWM
+      - TXT
+      - ITW
+      - DOV
+      - ROK
+      - IR
+      - FTV
+      - AME
