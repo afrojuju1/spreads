@@ -1,6 +1,6 @@
 # Company Valuation Standards-Based Taxonomy Plan
 
-Status: implemented checkpoint with curated-universe boundary; hold unless support scope expands
+Status: implemented checkpoint with curated-universe boundary; validated universe frozen at 68
 
 As of: Friday, May 1, 2026
 
@@ -377,9 +377,9 @@ What landed:
 
 As of May 1, 2026:
 
-- curated supported universe: `75/75`
-- support-tier split: `core=50`, `expanded=25`
-- supported names with documents, prices, and valuation gaps: `75/75`
+- curated supported universe: `68/68`
+- support-tier split: `core=50`, `expanded=18`
+- supported names with documents, prices, and valuation gaps: `68/68`
 - shadow expected-template mismatches inside the curated universe: `0`
 - remaining effective-template mismatches are intentional stressed-overlay names, not taxonomy failures
 
@@ -389,6 +389,7 @@ Useful checkpoint artifacts:
 - stressed benchmark/prior pre-calibration: [stressed_operator_supported_pre_v1](../../outputs/company_valuation/benchmark_priors/stressed_operator_supported_pre_v1/summary.md)
 - stressed benchmark/prior post-calibration: [stressed_operator_supported_post_v1](../../outputs/company_valuation/benchmark_priors/stressed_operator_supported_post_v1/summary.md)
 - stressed benchmark/prior after curated-universe expansion to `75`: [stressed_operator_supported_post_v2_75](../../outputs/company_valuation/benchmark_priors/stressed_operator_supported_post_v2_75/summary.md)
+- stressed benchmark/prior after pruning the weak expanded names and freezing the validated `68`: [stressed_operator_supported_post_v3_68](../../outputs/company_valuation/benchmark_priors/stressed_operator_supported_post_v3_68/summary.md)
 
 ## What We Learned
 
@@ -409,12 +410,24 @@ The right KPI is:
 
 The current curated universe is no longer just the initial `50`.
 
-It has now been expanded to `75` by adding:
+It was first expanded to `75` by adding:
 
 - software names that already routed cleanly into `software_asset_light`
 - retail names that already routed cleanly into `retail_consumer`
 - energy names that already routed cleanly into `energy_asset_heavy`
 - one additional industrial name and one additional aerospace name
+
+That expansion was useful diagnostically, but the support-tier review showed that several of those additions were not actually validated enough to keep.
+
+The current validated universe was then pruned to `68` by removing:
+
+- `BA`
+- `AN`
+- `APA`
+- `MTDR`
+- `HP`
+- `PTEN`
+- `MUR`
 
 The important boundary is unchanged:
 
@@ -422,6 +435,7 @@ The important boundary is unchanged:
 - it did **not** justify broadening unsupported sectors
 - a few known noisy names still remain excluded even though they can technically classify
 - the `75` expansion materially widened the supported stressed-energy cohort, which improved coverage but worsened stressed benchmark coherence
+- pruning the seven weak expanded names restored the supported universe to a cleaner validated state without changing the architecture
 
 The live interpretation should now be:
 
@@ -429,7 +443,7 @@ The live interpretation should now be:
   - the original `50`
   - trusted as the primary supported valuation universe
 - `expanded`
-  - the `25` clean-routing additions
+  - the remaining `18` clean-routing additions
   - technically supported, but noisier and not yet as validated as the core set
 
 ## Benchmark-Gated Calibration Rule
@@ -446,7 +460,9 @@ That pass improved the supported stressed cohort without changing the deeper con
 
 - the stressed template was too bearish before the benchmark-gated pass
 - it is still intentionally harsher than base energy after the pass
-- the remaining noise is concentrated in names that are mostly `out_of_scope`, not proof that the supported stressed cohort needs more structural splitting today
+- the `75` expansion widened the stressed cohort faster than validation quality allowed
+- after pruning the weak expanded stressed names, the supported stressed cohort is back to a smaller and cleaner validated set
+- the remaining noise is not proof that the supported stressed cohort needs more structural splitting today
 
 ## Stop Condition
 

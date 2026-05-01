@@ -1,4 +1,4 @@
-policy_version: v3
+policy_version: v4
 allowlist_required: true
 
 supported_template_ids:
@@ -101,10 +101,6 @@ supported_issuers:
   - ticker: ORLY
     expected_template_id: retail_consumer_compounder
     reason: Initial curated retail valuation universe.
-  - ticker: AN
-    expected_template_id: retail_consumer
-    support_tier: expanded
-    reason: Expanded curated retail valuation universe after the clean-routing expansion pass.
   - ticker: CASY
     expected_template_id: retail_consumer
     support_tier: expanded
@@ -154,10 +150,6 @@ supported_issuers:
   - ticker: EQT
     expected_template_id: energy_asset_heavy
     reason: Initial curated energy valuation universe.
-  - ticker: APA
-    expected_template_id: energy_asset_heavy
-    support_tier: expanded
-    reason: Expanded curated energy valuation universe after the clean-routing expansion pass.
   - ticker: COP
     expected_template_id: energy_asset_heavy
     support_tier: expanded
@@ -167,22 +159,6 @@ supported_issuers:
     support_tier: expanded
     reason: Expanded curated energy valuation universe after the clean-routing expansion pass.
   - ticker: EOG
-    expected_template_id: energy_asset_heavy
-    support_tier: expanded
-    reason: Expanded curated energy valuation universe after the clean-routing expansion pass.
-  - ticker: HP
-    expected_template_id: energy_asset_heavy
-    support_tier: expanded
-    reason: Expanded curated energy valuation universe after the clean-routing expansion pass.
-  - ticker: MTDR
-    expected_template_id: energy_asset_heavy
-    support_tier: expanded
-    reason: Expanded curated energy valuation universe after the clean-routing expansion pass.
-  - ticker: MUR
-    expected_template_id: energy_asset_heavy
-    support_tier: expanded
-    reason: Expanded curated energy valuation universe after the clean-routing expansion pass.
-  - ticker: PTEN
     expected_template_id: energy_asset_heavy
     support_tier: expanded
     reason: Expanded curated energy valuation universe after the clean-routing expansion pass.
@@ -266,7 +242,3 @@ supported_issuers:
   - ticker: TXT
     expected_template_id: aerospace_defense_prime
     reason: Initial curated aerospace and defense valuation universe.
-  - ticker: BA
-    expected_template_id: aerospace_defense_prime
-    support_tier: expanded
-    reason: Expanded curated aerospace and defense valuation universe after the clean-routing expansion pass.

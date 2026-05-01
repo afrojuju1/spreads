@@ -1,6 +1,6 @@
 # Company Valuation Expanded Support Review
 
-Status: checkpoint findings
+Status: decision applied; weak expanded names pruned
 
 As of: Friday, May 1, 2026
 
@@ -9,6 +9,7 @@ Related:
 - [Company Valuation Standards-Based Taxonomy Plan](./2026-04-30_company_valuation_standards_based_taxonomy_plan.md)
 - [Curated 50 Checkpoint Freeze](../../outputs/company_valuation/supported_report_pack/curated50_2026-05-01_checkpoint_freeze/summary.md)
 - [Stressed Benchmark Prior After 75 Expansion](../../outputs/company_valuation/benchmark_priors/stressed_operator_supported_post_v2_75/summary.md)
+- [Stressed Benchmark Prior After Pruning To 68](../../outputs/company_valuation/benchmark_priors/stressed_operator_supported_post_v3_68/summary.md)
 
 ## Role Of This Doc
 
@@ -21,7 +22,7 @@ The point is to make the trust boundary explicit:
 - `core` is the trusted valuation universe
 - `expanded` is technically supported but more weakly validated
 
-## Current State
+## Review Snapshot
 
 After the `75` expansion:
 
@@ -48,13 +49,43 @@ Do **not** expand beyond `75` from the current routing base.
 
 The right interpretation is:
 
-- keep `75` as the current hard cap
+- keep `75` as the current hard cap until the weak additions are reviewed
 - keep `core` as the trusted production-quality set
 - treat parts of `expanded` as a watchlist, not as equally validated names
 
+## Applied Decision
+
+That review has now been acted on.
+
+The following names were removed from the supported universe:
+
+- `BA`
+- `AN`
+- `APA`
+- `MTDR`
+- `HP`
+- `PTEN`
+- `MUR`
+
+Current validated state after the prune:
+
+- supported universe: `68`
+- `support_tier` split:
+  - `core`: `50`
+  - `expanded`: `18`
+- expanded low-confidence names: `0`
+- expanded low-quality names: `4`
+- supported stressed benchmark:
+  - `mean_abs_gap_delta`: `0.349`
+  - `sign_mismatch_count`: `1`
+
+This is the right outcome.
+
+The point of the `expanded` tier was to discover exactly this kind of weakness without polluting the trusted supported set.
+
 ## Highest-Priority Expanded Review Names
 
-These are the names that should be reviewed first if we later prune the `expanded` tier.
+These were the names that needed review first before deciding whether to prune the `expanded` tier.
 
 ### Likely Demotion Candidates
 
@@ -127,7 +158,7 @@ Reason:
 - still substantially below the stressed benchmark prior
 - borderline support quality
 
-### Provisional Keep, But Still Watch
+### Borderline At Review Time
 
 #### `APA`
 
@@ -139,9 +170,9 @@ Reason:
 
 Reason:
 
-- this is the single loudest stressed outlier
-- the issue is not just low confidence; it is directional disagreement with the benchmark
-- keep only as a provisional stressed name unless a future stressed-upstream split justifies it
+- this was the single loudest stressed outlier
+- the issue was not just low confidence; it was directional disagreement with the benchmark
+- it did not deserve to stay supported in the validated set
 
 #### `MUR`
 
@@ -155,7 +186,8 @@ Reason:
 
 - better quality than the weaker stressed additions
 - still materially off benchmark
-- defensible as `expanded`, but not trustworthy enough for `core`
+- if any stressed expanded add was going to survive, this was the best candidate
+- it still did not justify staying in the validated supported set
 
 ## Broader Read On Expanded Names
 
@@ -178,23 +210,14 @@ The issue is:
 
 ## Operational Recommendation
 
-For now:
+Now:
 
-1. keep `75` as the maximum supported universe
+1. keep `68` as the current validated supported universe
 2. keep `core=50` as the trusted set
-3. treat `expanded=25` as provisional
-4. if pruning becomes necessary, review these names first:
-   - `BA`
-   - `AN`
-   - `MTDR`
-   - `HP`
-   - `PTEN`
-   - `APA`
-   - `MUR`
+3. treat `expanded=18` as the provisional extension layer
+4. do **not** broaden to `100` or `125` from the current routing base
 
-Do **not** broaden to `100` or `125` from the current routing base.
-
-The next legitimate expansion step would require one of:
+The next legitimate expansion step still requires one of:
 
 - better taxonomy coverage inside currently supported families
 - a new supported cohort with its own benchmark/prior pack
