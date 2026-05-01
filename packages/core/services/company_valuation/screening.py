@@ -112,6 +112,7 @@ def _enrich_screen_row(
     enriched["support_status"] = resolution.support.status
     enriched["support_reason"] = resolution.support.reason
     enriched["in_curated_universe"] = resolution.support.in_curated_universe
+    enriched["support_tier"] = resolution.support.support_tier
     enriched["expected_template_id"] = resolution.support.expected_template_id
     enriched["expected_template_match"] = resolution.support.expected_template_match
     return enriched
@@ -242,6 +243,7 @@ def list_company_valuation_screen(
             "supported_only": supported_only,
             "stressed_operator_only": stressed_operator_only,
             "support_status_counts": {},
+            "support_tier_counts": {},
         }
     resolved_template_id, normalized_stressed_only = _normalized_screen_filters(
         template_id=template_id,
@@ -280,9 +282,12 @@ def list_company_valuation_screen(
         if str(row["issuer_id"]) in issuer_map
     ]
     support_status_counts: dict[str, int] = {}
+    support_tier_counts: dict[str, int] = {}
     for row in enriched_rows:
         status = str(row.get("support_status") or "unknown")
         support_status_counts[status] = support_status_counts.get(status, 0) + 1
+        tier = str(row.get("support_tier") or "unassigned")
+        support_tier_counts[tier] = support_tier_counts.get(tier, 0) + 1
     return {
         "as_of": resolved_as_of,
         "template_id": template_id,
@@ -291,6 +296,7 @@ def list_company_valuation_screen(
         "stressed_operator_only": normalized_stressed_only,
         "count": len(enriched_rows),
         "support_status_counts": dict(sorted(support_status_counts.items())),
+        "support_tier_counts": dict(sorted(support_tier_counts.items())),
         "rows": enriched_rows,
     }
 

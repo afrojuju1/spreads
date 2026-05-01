@@ -1,4 +1,4 @@
-policy_version: v1
+policy_version: v3
 allowlist_required: true
 
 supported_template_ids:
@@ -44,6 +44,34 @@ supported_issuers:
   - ticker: MSFT
     expected_template_id: software_asset_light
     reason: Initial curated software valuation universe.
+  - ticker: NOW
+    expected_template_id: software_asset_light
+    support_tier: expanded
+    reason: Expanded curated software valuation universe after the clean-routing expansion pass.
+  - ticker: ORCL
+    expected_template_id: software_asset_light
+    support_tier: expanded
+    reason: Expanded curated software valuation universe after the clean-routing expansion pass.
+  - ticker: PAYC
+    expected_template_id: software_asset_light
+    support_tier: expanded
+    reason: Expanded curated software valuation universe after the clean-routing expansion pass.
+  - ticker: SNPS
+    expected_template_id: software_asset_light
+    support_tier: expanded
+    reason: Expanded curated software valuation universe after the clean-routing expansion pass.
+  - ticker: SSNC
+    expected_template_id: software_asset_light
+    support_tier: expanded
+    reason: Expanded curated software valuation universe after the clean-routing expansion pass.
+  - ticker: TYL
+    expected_template_id: software_asset_light
+    support_tier: expanded
+    reason: Expanded curated software valuation universe after the clean-routing expansion pass.
+  - ticker: VEEV
+    expected_template_id: software_asset_light
+    support_tier: expanded
+    reason: Expanded curated software valuation universe after the clean-routing expansion pass.
 
   - ticker: AAPL
     expected_template_id: platform_hardware
@@ -73,6 +101,34 @@ supported_issuers:
   - ticker: ORLY
     expected_template_id: retail_consumer_compounder
     reason: Initial curated retail valuation universe.
+  - ticker: AN
+    expected_template_id: retail_consumer
+    support_tier: expanded
+    reason: Expanded curated retail valuation universe after the clean-routing expansion pass.
+  - ticker: CASY
+    expected_template_id: retail_consumer
+    support_tier: expanded
+    reason: Expanded curated retail valuation universe after the clean-routing expansion pass.
+  - ticker: KMX
+    expected_template_id: retail_consumer
+    support_tier: expanded
+    reason: Expanded curated retail valuation universe after the clean-routing expansion pass.
+  - ticker: ROST
+    expected_template_id: retail_consumer
+    support_tier: expanded
+    reason: Expanded curated retail valuation universe after the clean-routing expansion pass.
+  - ticker: TGT
+    expected_template_id: retail_consumer
+    support_tier: expanded
+    reason: Expanded curated retail valuation universe after the clean-routing expansion pass.
+  - ticker: TJX
+    expected_template_id: retail_consumer
+    support_tier: expanded
+    reason: Expanded curated retail valuation universe after the clean-routing expansion pass.
+  - ticker: WMT
+    expected_template_id: retail_consumer
+    support_tier: expanded
+    reason: Expanded curated retail valuation universe after the clean-routing expansion pass.
 
   - ticker: AM
     expected_template_id: energy_asset_heavy
@@ -98,6 +154,42 @@ supported_issuers:
   - ticker: EQT
     expected_template_id: energy_asset_heavy
     reason: Initial curated energy valuation universe.
+  - ticker: APA
+    expected_template_id: energy_asset_heavy
+    support_tier: expanded
+    reason: Expanded curated energy valuation universe after the clean-routing expansion pass.
+  - ticker: COP
+    expected_template_id: energy_asset_heavy
+    support_tier: expanded
+    reason: Expanded curated energy valuation universe after the clean-routing expansion pass.
+  - ticker: CVX
+    expected_template_id: energy_asset_heavy
+    support_tier: expanded
+    reason: Expanded curated energy valuation universe after the clean-routing expansion pass.
+  - ticker: EOG
+    expected_template_id: energy_asset_heavy
+    support_tier: expanded
+    reason: Expanded curated energy valuation universe after the clean-routing expansion pass.
+  - ticker: HP
+    expected_template_id: energy_asset_heavy
+    support_tier: expanded
+    reason: Expanded curated energy valuation universe after the clean-routing expansion pass.
+  - ticker: MTDR
+    expected_template_id: energy_asset_heavy
+    support_tier: expanded
+    reason: Expanded curated energy valuation universe after the clean-routing expansion pass.
+  - ticker: MUR
+    expected_template_id: energy_asset_heavy
+    support_tier: expanded
+    reason: Expanded curated energy valuation universe after the clean-routing expansion pass.
+  - ticker: PTEN
+    expected_template_id: energy_asset_heavy
+    support_tier: expanded
+    reason: Expanded curated energy valuation universe after the clean-routing expansion pass.
+  - ticker: XOM
+    expected_template_id: energy_asset_heavy
+    support_tier: expanded
+    reason: Expanded curated energy valuation universe after the clean-routing expansion pass.
 
   - ticker: CAT
     expected_template_id: industrial_compounder
@@ -120,6 +212,10 @@ supported_issuers:
   - ticker: IEX
     expected_template_id: industrial_compounder
     reason: Initial curated industrial manufacturing valuation universe.
+  - ticker: PH
+    expected_template_id: industrial_manufacturing
+    support_tier: expanded
+    reason: Expanded curated industrial valuation universe after the clean-routing expansion pass.
   - ticker: IR
     expected_template_id: diversified_industrial_core
     reason: Initial curated diversified industrial valuation universe.
@@ -170,3 +266,7 @@ supported_issuers:
   - ticker: TXT
     expected_template_id: aerospace_defense_prime
     reason: Initial curated aerospace and defense valuation universe.
+  - ticker: BA
+    expected_template_id: aerospace_defense_prime
+    support_tier: expanded
+    reason: Expanded curated aerospace and defense valuation universe after the clean-routing expansion pass.

@@ -260,6 +260,10 @@ def company_valuation_screen_show_command(
         "support_status_counts="
         + json.dumps(payload["support_status_counts"], sort_keys=True)
     )
+    typer.echo(
+        "support_tier_counts="
+        + json.dumps(payload["support_tier_counts"], sort_keys=True)
+    )
     for row in payload["rows"]:
         typer.echo(
             "row="
@@ -269,6 +273,7 @@ def company_valuation_screen_show_command(
                     "template_id": row.get("template_id"),
                     "effective_template_id": row.get("effective_template_id"),
                     "support_status": row.get("support_status"),
+                    "support_tier": row.get("support_tier"),
                     "valuation_gap": row.get("valuation_gap"),
                     "quality_score": row.get("quality_score"),
                     "stressed_operator_flag": row.get("stressed_operator_flag"),

@@ -377,8 +377,9 @@ What landed:
 
 As of May 1, 2026:
 
-- curated supported universe: `50/50`
-- supported names with documents, prices, and valuation gaps: `50/50`
+- curated supported universe: `75/75`
+- support-tier split: `core=50`, `expanded=25`
+- supported names with documents, prices, and valuation gaps: `75/75`
 - shadow expected-template mismatches inside the curated universe: `0`
 - remaining effective-template mismatches are intentional stressed-overlay names, not taxonomy failures
 
@@ -387,6 +388,7 @@ Useful checkpoint artifacts:
 - supported-universe freeze pack: [curated50_2026-05-01_checkpoint_freeze](../../outputs/company_valuation/supported_report_pack/curated50_2026-05-01_checkpoint_freeze/summary.md)
 - stressed benchmark/prior pre-calibration: [stressed_operator_supported_pre_v1](../../outputs/company_valuation/benchmark_priors/stressed_operator_supported_pre_v1/summary.md)
 - stressed benchmark/prior post-calibration: [stressed_operator_supported_post_v1](../../outputs/company_valuation/benchmark_priors/stressed_operator_supported_post_v1/summary.md)
+- stressed benchmark/prior after curated-universe expansion to `75`: [stressed_operator_supported_post_v2_75](../../outputs/company_valuation/benchmark_priors/stressed_operator_supported_post_v2_75/summary.md)
 
 ## What We Learned
 
@@ -404,6 +406,31 @@ The wrong KPI was:
 The right KPI is:
 
 - “within supported cohorts, do names classify cleanly, route to the right default template, and produce coherent valuation output”
+
+The current curated universe is no longer just the initial `50`.
+
+It has now been expanded to `75` by adding:
+
+- software names that already routed cleanly into `software_asset_light`
+- retail names that already routed cleanly into `retail_consumer`
+- energy names that already routed cleanly into `energy_asset_heavy`
+- one additional industrial name and one additional aerospace name
+
+The important boundary is unchanged:
+
+- the expansion used names that already fit the supported template families
+- it did **not** justify broadening unsupported sectors
+- a few known noisy names still remain excluded even though they can technically classify
+- the `75` expansion materially widened the supported stressed-energy cohort, which improved coverage but worsened stressed benchmark coherence
+
+The live interpretation should now be:
+
+- `core`
+  - the original `50`
+  - trusted as the primary supported valuation universe
+- `expanded`
+  - the `25` clean-routing additions
+  - technically supported, but noisier and not yet as validated as the core set
 
 ## Benchmark-Gated Calibration Rule
 

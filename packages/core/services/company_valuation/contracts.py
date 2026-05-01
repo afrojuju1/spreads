@@ -11,6 +11,7 @@ TaxonomyLevel: TypeAlias = Literal["sector", "industry_group", "industry", "subi
 TaxonomySourceStandard: TypeAlias = Literal["sic", "naics", "issuer_override"]
 TaxonomyMatchMode: TypeAlias = Literal["exact", "prefix"]
 SupportStatus: TypeAlias = Literal["supported", "unsupported", "out_of_scope"]
+SupportTier: TypeAlias = Literal["core", "expanded"]
 CompanyValuationDocumentPayload: TypeAlias = dict[str, Any]
 
 
@@ -213,6 +214,7 @@ class CompanyValuationDefaultTemplateResolution:
 class CompanyValuationSupportedIssuer:
     ticker: str
     expected_template_id: str | None = None
+    support_tier: SupportTier = "core"
     reason: str = ""
     active: bool = True
 
@@ -241,6 +243,7 @@ class CompanyValuationSupportResolution:
     status: SupportStatus
     reason: str
     in_curated_universe: bool = False
+    support_tier: SupportTier | None = None
     expected_template_id: str | None = None
     expected_template_match: bool | None = None
 

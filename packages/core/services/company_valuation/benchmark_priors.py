@@ -232,6 +232,7 @@ class CompanyValuationBenchmarkPriorReportRow:
     ticker: str
     support_status: str
     support_reason: str
+    support_tier: str | None
     base_template_id: str
     effective_template_id: str
     current_price: float
@@ -407,6 +408,7 @@ def report_company_valuation_benchmark_priors(
                 ticker=entry.ticker,
                 support_status=resolution.support.status,
                 support_reason=resolution.support.reason,
+                support_tier=resolution.support.support_tier,
                 base_template_id=str(issuer_row.get("template_id") or ""),
                 effective_template_id=str(
                     (document.get("source_summary") or {}).get(

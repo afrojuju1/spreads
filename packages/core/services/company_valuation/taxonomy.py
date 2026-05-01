@@ -88,6 +88,13 @@ def _as_match_mode(value: Any, *, field_name: str) -> TaxonomyMatchMode:
     return rendered  # type: ignore[return-value]
 
 
+def _as_support_tier(value: Any, *, field_name: str) -> str:
+    rendered = _as_text(value, field_name=field_name)
+    if rendered not in {"core", "expanded"}:
+        raise ValueError(f"{field_name} must be core or expanded")
+    return rendered
+
+
 def _normalized_text(value: str | None) -> str:
     return " ".join(str(value or "").lower().split())
 
@@ -515,6 +522,10 @@ def _load_company_valuation_support_policy_cached(
                     expected_template_id=_as_optional_text(
                         item.get("expected_template_id")
                     ),
+                    support_tier=_as_support_tier(
+                        item.get("support_tier", "core"),
+                        field_name="support_tier",
+                    ),
                     reason=_as_text(item.get("reason"), field_name="reason"),
                     active=bool(item.get("active", True)),
                 )
@@ -722,12 +733,14 @@ def resolve_company_valuation_support(
     expected_template_id = (
         supported_issuer.expected_template_id if supported_issuer is not None else None
     )
+    support_tier = supported_issuer.support_tier if supported_issuer is not None else None
 
     if policy.allowlist_required and supported_issuer is None:
         return CompanyValuationSupportResolution(
             status="out_of_scope",
             reason="ticker is not in the curated supported issuer universe",
             in_curated_universe=False,
+            support_tier=None,
         )
 
     if canonical_taxonomy.canonical_sector_id is None:
@@ -735,6 +748,7 @@ def resolve_company_valuation_support(
             status="unsupported",
             reason="issuer is in scope but has no canonical taxonomy match yet",
             in_curated_universe=in_curated_universe,
+            support_tier=support_tier,
             expected_template_id=expected_template_id,
         )
 
@@ -746,6 +760,7 @@ def resolve_company_valuation_support(
                 f"template `{default_template.template_id}`"
             ),
             in_curated_universe=in_curated_universe,
+            support_tier=support_tier,
             expected_template_id=expected_template_id,
             expected_template_match=(
                 None
@@ -771,6 +786,7 @@ def resolve_company_valuation_support(
         status="supported",
         reason=reason,
         in_curated_universe=in_curated_universe,
+        support_tier=support_tier,
         expected_template_id=expected_template_id,
         expected_template_match=expected_template_match,
     )

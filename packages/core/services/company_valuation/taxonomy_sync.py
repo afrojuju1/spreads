@@ -64,6 +64,7 @@ class CompanyValuationTaxonomySyncSample:
     support_status: str
     support_reason: str
     in_curated_universe: bool
+    support_tier: str | None = None
     expected_template_id: str | None = None
     expected_template_match: bool | None = None
     overlay_flags: dict[str, bool] = field(default_factory=dict)
@@ -281,6 +282,7 @@ def _sample_from_resolution(
         support_status=resolution.support.status,
         support_reason=resolution.support.reason,
         in_curated_universe=resolution.support.in_curated_universe,
+        support_tier=resolution.support.support_tier,
         expected_template_id=resolution.support.expected_template_id,
         expected_template_match=resolution.support.expected_template_match,
         overlay_flags=dict(resolution.overlays.flags),
