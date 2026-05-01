@@ -13,6 +13,7 @@ from core.services.research_thesis import (
     resolve_output_root,
     run_summary_payload,
 )
+from core.services.research_thesis.config import DEFAULT_OUTPUT_ROOT
 from core.services.research_thesis.contracts import ResearchDepth, SourceType, parse_as_of
 
 
@@ -64,7 +65,7 @@ def research_thesis_command(
         help="As-of date YYYY-MM-DD. Defaults to today's UTC date.",
     ),
     output_root: str = typer.Option(
-        "outputs/research_thesis",
+        str(DEFAULT_OUTPUT_ROOT),
         "--output-root",
         help="Output root for research thesis artifacts.",
     ),
