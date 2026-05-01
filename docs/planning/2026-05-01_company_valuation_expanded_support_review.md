@@ -1,6 +1,6 @@
 # Company Valuation Expanded Support Review
 
-Status: decision applied; weak expanded names pruned
+Status: decision applied; expanded and stressed boundary tightened
 
 As of: Friday, May 1, 2026
 
@@ -10,6 +10,7 @@ Related:
 - [Curated 50 Checkpoint Freeze](../../outputs/company_valuation/supported_report_pack/curated50_2026-05-01_checkpoint_freeze/summary.md)
 - [Stressed Benchmark Prior After 75 Expansion](../../outputs/company_valuation/benchmark_priors/stressed_operator_supported_post_v2_75/summary.md)
 - [Stressed Benchmark Prior After Pruning To 68](../../outputs/company_valuation/benchmark_priors/stressed_operator_supported_post_v3_68/summary.md)
+- [Retail Benchmark Prior After KMX Demotion](../../outputs/company_valuation/benchmark_priors/retail_consumer_supported_v3_67/summary.md)
 
 ## Role Of This Doc
 
@@ -67,7 +68,7 @@ The following names were removed from the supported universe:
 - `PTEN`
 - `MUR`
 
-Current validated state after the prune:
+Current validated state after the initial prune:
 
 - supported universe: `68`
 - `support_tier` split:
@@ -82,6 +83,27 @@ Current validated state after the prune:
 This is the right outcome.
 
 The point of the `expanded` tier was to discover exactly this kind of weakness without polluting the trusted supported set.
+
+## Follow-On Demotion
+
+After the first benchmark-gated retail calibration pass, `KMX` was also removed from the supported universe.
+
+Current validated state now:
+
+- supported universe: `67`
+- `support_tier` split:
+  - `core`: `50`
+  - `expanded`: `17`
+- expanded low-confidence names: `0`
+- expanded low-quality names: `3`
+
+Why `KMX` was cut:
+
+- it remained the worst broad-retail benchmark fit after calibration
+- it was low-quality from the start
+- it distorted the retail cohort enough that keeping it made the retail template look worse than the rest of the supported set justified
+
+This was the correct use of the support boundary: fix the cohort by removing a weak supported name, not by forcing the template to explain a business it does not fit well.
 
 ## Highest-Priority Expanded Review Names
 
@@ -208,13 +230,52 @@ The issue is:
 - `BA` is too noisy
 - `AN` is too low-confidence for a comfortable supported name
 
+## Final Signoff Tightening
+
+The last signoff pass made three additional decisions:
+
+- remove `ORCL` from the supported universe
+- remove the remaining stressed names from the supported universe:
+  - `EQT`
+  - `HAL`
+  - `NOV`
+  - `OXY`
+  - `PBF`
+- keep `defense_platform_systems` supported, but downgrade the whole cohort to `expanded`
+
+Why:
+
+- `ORCL` was still too low-confidence and too far below the franchise benchmark to justify support
+- the stressed overlay path is structurally correct, but the supported stressed cohort was still not signoff-grade
+- `defense_platform_systems` improved materially after the split, but it is still not a `core`-trust cohort
+
+Current validated state now:
+
+- supported universe: `61`
+- `support_tier` split:
+  - `core`: `41`
+  - `expanded`: `20`
+- core low-confidence names: `4`
+  - `HD`, `DE`, `AM`, `GTES`
+- core low-quality names: `4`
+  - `HD`, `TXT`, `DLTR`, `GTES`
+- stressed benchmark on the supported universe:
+  - `rows_compared=0`
+  - the supported universe no longer claims stressed coverage
+
+This is the cleaner end state.
+
+The model still knows how to classify and value stressed names and defense-platform names.
+
+The difference is that the support boundary now reflects current validation truth instead of historical curation inertia.
+
 ## Operational Recommendation
 
 Now:
 
-1. keep `68` as the current validated supported universe
-2. keep `core=50` as the trusted set
-3. treat `expanded=18` as the provisional extension layer
+1. keep `61` as the current validated supported universe
+2. keep `core=41` as the trusted set
+3. treat `expanded=20` as the provisional extension layer
 4. do **not** broaden to `100` or `125` from the current routing base
 
 The next legitimate expansion step still requires one of:

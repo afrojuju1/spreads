@@ -16,8 +16,8 @@ overrides:
     reason: "Focused industrial holdout promotion for aerospace and defense cohort."
     active: true
   - issuer_cik: "0000101829"
-    template_id: aerospace_defense_prime
-    reason: "Focused industrial holdout promotion for aerospace and defense cohort."
+    template_id: defense_platform_systems
+    reason: "Defense-platform override for systems-heavy defense and mission equipment issuer with backlog-backed visibility."
     active: true
   - issuer_cik: "0000012927"
     template_id: aerospace_defense_prime
@@ -28,16 +28,16 @@ overrides:
     reason: "Focused industrial holdout promotion for aerospace and defense cohort."
     active: true
   - issuer_cik: "0000936468"
-    template_id: aerospace_defense_prime
-    reason: "Focused industrial holdout promotion for aerospace and defense cohort."
+    template_id: defense_platform_systems
+    reason: "Defense-platform override for long-cycle defense platform prime with backlog-backed visibility."
     active: true
   - issuer_cik: "0001133421"
-    template_id: aerospace_defense_prime
-    reason: "Focused industrial holdout promotion for aerospace and defense cohort."
+    template_id: defense_platform_systems
+    reason: "Defense-platform override for mission-systems and strategic-platform prime with backlog-backed visibility."
     active: true
   - issuer_cik: "0000202058"
-    template_id: aerospace_defense_prime
-    reason: "Focused industrial holdout promotion for aerospace and defense cohort."
+    template_id: defense_platform_systems
+    reason: "Defense-platform override for mission-systems and defense electronics issuer with backlog-backed visibility."
     active: true
   - issuer_cik: "0001260221"
     template_id: aerospace_defense_supplier
@@ -100,8 +100,72 @@ overrides:
     reason: "Software override for cybersecurity platform issuer misclassified by generic industrial keyword rules."
     active: true
   - issuer_cik: "0000814547"
-    template_id: software_asset_light
-    reason: "Software override for analytics and decisioning software issuer that otherwise falls to the general bucket."
+    template_id: software_mission_critical
+    reason: "Mission-critical software override for analytics and decisioning platform with unusually strong switching costs and pricing power."
+    active: true
+  - issuer_cik: "0000796343"
+    template_id: software_franchise_platform
+    reason: "Franchise software override for mature creative and document software platform."
+    active: true
+  - issuer_cik: "0000769397"
+    template_id: software_workflow_growth
+    reason: "Workflow software override for design and engineering application platform."
+    active: true
+  - issuer_cik: "0000813672"
+    template_id: software_mission_critical
+    reason: "Mission-critical software override for semiconductor design automation platform."
+    active: true
+  - issuer_cik: "0001015922"
+    template_id: software_franchise_platform
+    reason: "Franchise software override for mature cybersecurity platform with strong free-cash-flow conversion."
+    active: true
+  - issuer_cik: "0001108524"
+    template_id: software_workflow_growth
+    reason: "Workflow software override for broad customer-workflow application platform."
+    active: true
+  - issuer_cik: "0001528396"
+    template_id: software_workflow_growth
+    reason: "Workflow software override for vertical insurance software platform."
+    active: true
+  - issuer_cik: "0001404655"
+    template_id: software_workflow_growth
+    reason: "Workflow software override for scaled go-to-market application platform."
+    active: true
+  - issuer_cik: "0000896878"
+    template_id: software_franchise_platform
+    reason: "Franchise software override for mature financial and small-business application platform."
+    active: true
+  - issuer_cik: "0000789019"
+    template_id: software_franchise_platform
+    reason: "Franchise software override for large installed-base productivity and platform software issuer."
+    active: true
+  - issuer_cik: "0001373715"
+    template_id: software_workflow_growth
+    reason: "Workflow software override for high-duration enterprise workflow platform."
+    active: true
+  - issuer_cik: "0001341439"
+    template_id: software_franchise_platform
+    reason: "Franchise software override for mature enterprise applications and database platform."
+    active: true
+  - issuer_cik: "0001590955"
+    template_id: software_workflow_growth
+    reason: "Workflow software override for recurring human-capital-management application platform."
+    active: true
+  - issuer_cik: "0000883241"
+    template_id: software_mission_critical
+    reason: "Mission-critical software override for semiconductor design automation platform."
+    active: true
+  - issuer_cik: "0001402436"
+    template_id: software_franchise_platform
+    reason: "Franchise software override for mature financial and vertical software platform."
+    active: true
+  - issuer_cik: "0000860731"
+    template_id: software_workflow_growth
+    reason: "Workflow software override for vertical public-sector application platform."
+    active: true
+  - issuer_cik: "0001393052"
+    template_id: software_workflow_growth
+    reason: "Workflow software override for vertical life-sciences application platform."
     active: true
   - issuer_cik: "0000797468"
     template_id: energy_asset_heavy

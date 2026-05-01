@@ -1,4 +1,4 @@
-template_id: software_asset_light
+template_id: software_mission_critical
 template_version: v1
 status: active
 
@@ -6,9 +6,9 @@ assignment_rules:
   sic_prefixes: []
   naics_prefixes: []
   keyword_rules:
-    - saas
     - software
-    - cloud
+    - infrastructure
+    - mission critical
     - platform
 
 required_features:
@@ -25,13 +25,13 @@ optional_features:
   - net_cash_position
 
 quality_weight_map:
-  growth_score: 20
-  profitability_score: 16
+  growth_score: 14
+  profitability_score: 18
   cash_flow_score: 18
-  capital_efficiency_score: 10
+  capital_efficiency_score: 12
   balance_sheet_score: 12
   shareholder_score: 10
-  ownership_score: 6
+  ownership_score: 8
   reporting_quality_score: 8
 
 ownership_weight_map:
@@ -40,31 +40,31 @@ ownership_weight_map:
   institutional_holder_signal: 1
 
 valuation_model_mix:
-  dcf_weight: 0.6
-  historical_multiples_weight: 0.4
+  dcf_weight: 0.35
+  historical_multiples_weight: 0.65
   primary_multiple_metrics:
     - ev_fcf
     - pe
     - ps
   default_multiple_anchors:
-    ev_fcf: 24.0
-    pe: 28.0
-    ps: 5.8
+    ev_fcf: 42.0
+    pe: 46.0
+    ps: 10.5
   forecast_years: 6
   initial_growth_floor: -0.02
-  initial_growth_cap: 0.22
-  terminal_growth_multiplier: 0.45
-  growth_adjustment_factor: 0.85
+  initial_growth_cap: 0.24
+  terminal_growth_multiplier: 0.5
+  growth_adjustment_factor: 0.95
   growth_adjustment_min: 0.8
-  growth_adjustment_max: 1.4
-  normalized_fcf_from_ebit_ratio: 0.55
+  growth_adjustment_max: 1.65
+  normalized_fcf_from_ebit_ratio: 0.62
   terminal_growth_floor: 0.02
   terminal_growth_cap: 0.03
-  discount_rate_spread_bps: 550
+  discount_rate_spread_bps: 425
   quality_premium_floor_score: 60
-  quality_premium_full_score: 82
-  quality_multiple_premium_max: 0.16
-  quality_discount_rate_reduction_bps_max: 55
+  quality_premium_full_score: 78
+  quality_multiple_premium_max: 0.32
+  quality_discount_rate_reduction_bps_max: 110
 
 confidence_rules:
   low_confidence_if:

@@ -24,6 +24,24 @@ nodes:
     taxonomy_name: Enterprise Application Software
     parent_taxonomy_node_id: taxonomy:industry:application_software
 
+  - taxonomy_node_id: taxonomy:subindustry:software_franchise_platforms
+    taxonomy_level: subindustry
+    taxonomy_code: software_franchise_platforms
+    taxonomy_name: Software Franchise Platforms
+    parent_taxonomy_node_id: taxonomy:industry:application_software
+
+  - taxonomy_node_id: taxonomy:subindustry:workflow_and_vertical_software
+    taxonomy_level: subindustry
+    taxonomy_code: workflow_and_vertical_software
+    taxonomy_name: Workflow and Vertical Software
+    parent_taxonomy_node_id: taxonomy:industry:application_software
+
+  - taxonomy_node_id: taxonomy:subindustry:mission_critical_software
+    taxonomy_level: subindustry
+    taxonomy_code: mission_critical_software
+    taxonomy_name: Mission-Critical Software
+    parent_taxonomy_node_id: taxonomy:industry:application_software
+
   - taxonomy_node_id: taxonomy:industry_group:technology_hardware_and_equipment
     taxonomy_level: industry_group
     taxonomy_code: technology_hardware_and_equipment
@@ -158,6 +176,12 @@ nodes:
     taxonomy_level: subindustry
     taxonomy_code: aerospace_and_defense_primes_and_systems
     taxonomy_name: Aerospace and Defense Primes and Systems
+    parent_taxonomy_node_id: taxonomy:industry:aerospace_and_defense
+
+  - taxonomy_node_id: taxonomy:subindustry:defense_platform_and_mission_systems
+    taxonomy_level: subindustry
+    taxonomy_code: defense_platform_and_mission_systems
+    taxonomy_name: Defense Platform and Mission Systems
     parent_taxonomy_node_id: taxonomy:industry:aerospace_and_defense
 
   - taxonomy_node_id: taxonomy:subindustry:aerospace_components_and_suppliers

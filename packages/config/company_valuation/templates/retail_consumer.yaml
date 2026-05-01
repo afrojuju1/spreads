@@ -46,24 +46,24 @@ valuation_model_mix:
     - ev_fcf
     - pe
   default_multiple_anchors:
-    ev_ebit: 15.5
-    ev_fcf: 20.5
-    pe: 21.0
+    ev_ebit: 16.5
+    ev_fcf: 22.0
+    pe: 22.5
   forecast_years: 5
   initial_growth_floor: -0.08
   initial_growth_cap: 0.14
   terminal_growth_multiplier: 0.45
-  growth_adjustment_factor: 0.7
+  growth_adjustment_factor: 0.75
   growth_adjustment_min: 0.7
-  growth_adjustment_max: 1.35
+  growth_adjustment_max: 1.4
   normalized_fcf_from_ebit_ratio: 0.7
   terminal_growth_floor: 0.01
   terminal_growth_cap: 0.025
-  discount_rate_spread_bps: 440
+  discount_rate_spread_bps: 420
   quality_premium_floor_score: 52
-  quality_premium_full_score: 78
-  quality_multiple_premium_max: 0.2
-  quality_discount_rate_reduction_bps_max: 60
+  quality_premium_full_score: 74
+  quality_multiple_premium_max: 0.26
+  quality_discount_rate_reduction_bps_max: 70
 
 confidence_rules:
   low_confidence_if:

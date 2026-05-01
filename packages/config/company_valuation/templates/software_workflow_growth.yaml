@@ -1,4 +1,4 @@
-template_id: software_asset_light
+template_id: software_workflow_growth
 template_version: v1
 status: active
 
@@ -8,8 +8,8 @@ assignment_rules:
   keyword_rules:
     - saas
     - software
+    - workflow
     - cloud
-    - platform
 
 required_features:
   - revenue_ttm_growth
@@ -25,14 +25,14 @@ optional_features:
   - net_cash_position
 
 quality_weight_map:
-  growth_score: 20
-  profitability_score: 16
-  cash_flow_score: 18
+  growth_score: 22
+  profitability_score: 14
+  cash_flow_score: 16
   capital_efficiency_score: 10
-  balance_sheet_score: 12
+  balance_sheet_score: 10
   shareholder_score: 10
   ownership_score: 6
-  reporting_quality_score: 8
+  reporting_quality_score: 12
 
 ownership_weight_map:
   insider_signal: 3
@@ -40,31 +40,31 @@ ownership_weight_map:
   institutional_holder_signal: 1
 
 valuation_model_mix:
-  dcf_weight: 0.6
-  historical_multiples_weight: 0.4
+  dcf_weight: 0.55
+  historical_multiples_weight: 0.45
   primary_multiple_metrics:
     - ev_fcf
     - pe
     - ps
   default_multiple_anchors:
-    ev_fcf: 24.0
-    pe: 28.0
-    ps: 5.8
+    ev_fcf: 27.0
+    pe: 30.0
+    ps: 6.8
   forecast_years: 6
   initial_growth_floor: -0.02
-  initial_growth_cap: 0.22
-  terminal_growth_multiplier: 0.45
-  growth_adjustment_factor: 0.85
-  growth_adjustment_min: 0.8
-  growth_adjustment_max: 1.4
+  initial_growth_cap: 0.26
+  terminal_growth_multiplier: 0.5
+  growth_adjustment_factor: 0.9
+  growth_adjustment_min: 0.82
+  growth_adjustment_max: 1.55
   normalized_fcf_from_ebit_ratio: 0.55
   terminal_growth_floor: 0.02
   terminal_growth_cap: 0.03
-  discount_rate_spread_bps: 550
-  quality_premium_floor_score: 60
-  quality_premium_full_score: 82
-  quality_multiple_premium_max: 0.16
-  quality_discount_rate_reduction_bps_max: 55
+  discount_rate_spread_bps: 500
+  quality_premium_floor_score: 58
+  quality_premium_full_score: 80
+  quality_multiple_premium_max: 0.2
+  quality_discount_rate_reduction_bps_max: 70
 
 confidence_rules:
   low_confidence_if:

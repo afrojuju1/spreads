@@ -1,8 +1,10 @@
-policy_version: v4
+policy_version: v6
 allowlist_required: true
 
 supported_template_ids:
-  - software_asset_light
+  - software_franchise_platform
+  - software_workflow_growth
+  - software_mission_critical
   - platform_hardware
   - retail_consumer
   - retail_consumer_compounder
@@ -11,65 +13,62 @@ supported_template_ids:
   - industrial_compounder
   - diversified_industrial_core
   - aerospace_defense_prime
+  - defense_platform_systems
   - aerospace_defense_supplier
 
 supported_issuers:
   - ticker: ADBE
-    expected_template_id: software_asset_light
+    expected_template_id: software_franchise_platform
     reason: Initial curated software valuation universe.
   - ticker: ADSK
-    expected_template_id: software_asset_light
+    expected_template_id: software_workflow_growth
     reason: Initial curated software valuation universe.
   - ticker: CDNS
-    expected_template_id: software_asset_light
+    expected_template_id: software_mission_critical
     reason: Initial curated software valuation universe.
   - ticker: CHKP
-    expected_template_id: software_asset_light
+    expected_template_id: software_franchise_platform
     reason: Initial curated software valuation universe.
   - ticker: CRM
-    expected_template_id: software_asset_light
+    expected_template_id: software_workflow_growth
     reason: Initial curated software valuation universe.
   - ticker: FICO
-    expected_template_id: software_asset_light
+    expected_template_id: software_mission_critical
     reason: Initial curated software valuation universe.
   - ticker: GWRE
-    expected_template_id: software_asset_light
+    expected_template_id: software_workflow_growth
     reason: Initial curated software valuation universe.
   - ticker: HUBS
-    expected_template_id: software_asset_light
+    expected_template_id: software_workflow_growth
     reason: Initial curated software valuation universe.
   - ticker: INTU
-    expected_template_id: software_asset_light
+    expected_template_id: software_franchise_platform
     reason: Initial curated software valuation universe.
   - ticker: MSFT
-    expected_template_id: software_asset_light
+    expected_template_id: software_franchise_platform
     reason: Initial curated software valuation universe.
   - ticker: NOW
-    expected_template_id: software_asset_light
-    support_tier: expanded
-    reason: Expanded curated software valuation universe after the clean-routing expansion pass.
-  - ticker: ORCL
-    expected_template_id: software_asset_light
+    expected_template_id: software_workflow_growth
     support_tier: expanded
     reason: Expanded curated software valuation universe after the clean-routing expansion pass.
   - ticker: PAYC
-    expected_template_id: software_asset_light
+    expected_template_id: software_workflow_growth
     support_tier: expanded
     reason: Expanded curated software valuation universe after the clean-routing expansion pass.
   - ticker: SNPS
-    expected_template_id: software_asset_light
+    expected_template_id: software_mission_critical
     support_tier: expanded
     reason: Expanded curated software valuation universe after the clean-routing expansion pass.
   - ticker: SSNC
-    expected_template_id: software_asset_light
+    expected_template_id: software_franchise_platform
     support_tier: expanded
     reason: Expanded curated software valuation universe after the clean-routing expansion pass.
   - ticker: TYL
-    expected_template_id: software_asset_light
+    expected_template_id: software_workflow_growth
     support_tier: expanded
     reason: Expanded curated software valuation universe after the clean-routing expansion pass.
   - ticker: VEEV
-    expected_template_id: software_asset_light
+    expected_template_id: software_workflow_growth
     support_tier: expanded
     reason: Expanded curated software valuation universe after the clean-routing expansion pass.
 
@@ -105,10 +104,6 @@ supported_issuers:
     expected_template_id: retail_consumer
     support_tier: expanded
     reason: Expanded curated retail valuation universe after the clean-routing expansion pass.
-  - ticker: KMX
-    expected_template_id: retail_consumer
-    support_tier: expanded
-    reason: Expanded curated retail valuation universe after the clean-routing expansion pass.
   - ticker: ROST
     expected_template_id: retail_consumer
     support_tier: expanded
@@ -133,21 +128,6 @@ supported_issuers:
     expected_template_id: energy_asset_heavy
     reason: Initial curated energy valuation universe.
   - ticker: CHRD
-    expected_template_id: energy_asset_heavy
-    reason: Initial curated energy valuation universe.
-  - ticker: HAL
-    expected_template_id: energy_asset_heavy
-    reason: Initial curated energy valuation universe with overlay-driven stress handled separately.
-  - ticker: NOV
-    expected_template_id: energy_asset_heavy
-    reason: Initial curated energy valuation universe with overlay-driven stress handled separately.
-  - ticker: OXY
-    expected_template_id: energy_asset_heavy
-    reason: Initial curated energy valuation universe with overlay-driven stress handled separately.
-  - ticker: PBF
-    expected_template_id: energy_asset_heavy
-    reason: Initial curated energy valuation universe.
-  - ticker: EQT
     expected_template_id: energy_asset_heavy
     reason: Initial curated energy valuation universe.
   - ticker: COP
@@ -225,16 +205,20 @@ supported_issuers:
     expected_template_id: aerospace_defense_supplier
     reason: Initial curated aerospace and defense valuation universe.
   - ticker: LHX
-    expected_template_id: aerospace_defense_prime
+    expected_template_id: defense_platform_systems
+    support_tier: expanded
     reason: Initial curated aerospace and defense valuation universe.
   - ticker: LMT
-    expected_template_id: aerospace_defense_prime
+    expected_template_id: defense_platform_systems
+    support_tier: expanded
     reason: Initial curated aerospace and defense valuation universe.
   - ticker: NOC
-    expected_template_id: aerospace_defense_prime
+    expected_template_id: defense_platform_systems
+    support_tier: expanded
     reason: Initial curated aerospace and defense valuation universe.
   - ticker: RTX
-    expected_template_id: aerospace_defense_prime
+    expected_template_id: defense_platform_systems
+    support_tier: expanded
     reason: Initial curated aerospace and defense valuation universe.
   - ticker: TDG
     expected_template_id: aerospace_defense_supplier

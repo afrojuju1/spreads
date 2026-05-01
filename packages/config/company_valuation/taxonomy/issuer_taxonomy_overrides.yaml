@@ -17,8 +17,120 @@ overrides:
     canonical_sector_id: taxonomy:sector:technology
     canonical_industry_group_id: taxonomy:industry_group:software_and_services
     canonical_industry_id: taxonomy:industry:application_software
-    canonical_subindustry_id: taxonomy:subindustry:enterprise_application_software
-    reason: FICO is software-led despite broad SIC 7389 business-services labeling.
+    canonical_subindustry_id: taxonomy:subindustry:mission_critical_software
+    reason: FICO belongs in the mission-critical software cohort rather than the generic enterprise application bucket.
+
+  - issuer_cik: "0000796343"
+    canonical_sector_id: taxonomy:sector:technology
+    canonical_industry_group_id: taxonomy:industry_group:software_and_services
+    canonical_industry_id: taxonomy:industry:application_software
+    canonical_subindustry_id: taxonomy:subindustry:software_franchise_platforms
+    reason: Adobe is best treated as a mature software franchise platform rather than a generic enterprise application name.
+
+  - issuer_cik: "0000769397"
+    canonical_sector_id: taxonomy:sector:technology
+    canonical_industry_group_id: taxonomy:industry_group:software_and_services
+    canonical_industry_id: taxonomy:industry:application_software
+    canonical_subindustry_id: taxonomy:subindustry:workflow_and_vertical_software
+    reason: Autodesk belongs with workflow-led software platforms rather than the generic enterprise application bucket.
+
+  - issuer_cik: "0000813672"
+    canonical_sector_id: taxonomy:sector:technology
+    canonical_industry_group_id: taxonomy:industry_group:software_and_services
+    canonical_industry_id: taxonomy:industry:application_software
+    canonical_subindustry_id: taxonomy:subindustry:mission_critical_software
+    reason: Cadence is a mission-critical software platform with unusually deep technical entrenchment.
+
+  - issuer_cik: "0001015922"
+    canonical_sector_id: taxonomy:sector:technology
+    canonical_industry_group_id: taxonomy:industry_group:software_and_services
+    canonical_industry_id: taxonomy:industry:application_software
+    canonical_subindustry_id: taxonomy:subindustry:software_franchise_platforms
+    reason: Check Point fits the mature software franchise platform cohort better than the generic enterprise application bucket.
+
+  - issuer_cik: "0001108524"
+    canonical_sector_id: taxonomy:sector:technology
+    canonical_industry_group_id: taxonomy:industry_group:software_and_services
+    canonical_industry_id: taxonomy:industry:application_software
+    canonical_subindustry_id: taxonomy:subindustry:workflow_and_vertical_software
+    reason: Salesforce belongs in the workflow-led software cohort rather than the generic enterprise application bucket.
+
+  - issuer_cik: "0001528396"
+    canonical_sector_id: taxonomy:sector:technology
+    canonical_industry_group_id: taxonomy:industry_group:software_and_services
+    canonical_industry_id: taxonomy:industry:application_software
+    canonical_subindustry_id: taxonomy:subindustry:workflow_and_vertical_software
+    reason: Guidewire belongs in the vertical workflow software cohort rather than the generic enterprise application bucket.
+
+  - issuer_cik: "0001404655"
+    canonical_sector_id: taxonomy:sector:technology
+    canonical_industry_group_id: taxonomy:industry_group:software_and_services
+    canonical_industry_id: taxonomy:industry:application_software
+    canonical_subindustry_id: taxonomy:subindustry:workflow_and_vertical_software
+    reason: HubSpot belongs in the workflow-led software cohort rather than the generic enterprise application bucket.
+
+  - issuer_cik: "0000896878"
+    canonical_sector_id: taxonomy:sector:technology
+    canonical_industry_group_id: taxonomy:industry_group:software_and_services
+    canonical_industry_id: taxonomy:industry:application_software
+    canonical_subindustry_id: taxonomy:subindustry:software_franchise_platforms
+    reason: Intuit is best treated as a mature software franchise platform.
+
+  - issuer_cik: "0000789019"
+    canonical_sector_id: taxonomy:sector:technology
+    canonical_industry_group_id: taxonomy:industry_group:software_and_services
+    canonical_industry_id: taxonomy:industry:application_software
+    canonical_subindustry_id: taxonomy:subindustry:software_franchise_platforms
+    reason: Microsoft is best treated as a mature software franchise platform for valuation routing.
+
+  - issuer_cik: "0001373715"
+    canonical_sector_id: taxonomy:sector:technology
+    canonical_industry_group_id: taxonomy:industry_group:software_and_services
+    canonical_industry_id: taxonomy:industry:application_software
+    canonical_subindustry_id: taxonomy:subindustry:workflow_and_vertical_software
+    reason: ServiceNow belongs in the workflow-led software cohort rather than the generic enterprise application bucket.
+
+  - issuer_cik: "0001341439"
+    canonical_sector_id: taxonomy:sector:technology
+    canonical_industry_group_id: taxonomy:industry_group:software_and_services
+    canonical_industry_id: taxonomy:industry:application_software
+    canonical_subindustry_id: taxonomy:subindustry:software_franchise_platforms
+    reason: Oracle is best treated as a mature software franchise platform for valuation routing.
+
+  - issuer_cik: "0001590955"
+    canonical_sector_id: taxonomy:sector:technology
+    canonical_industry_group_id: taxonomy:industry_group:software_and_services
+    canonical_industry_id: taxonomy:industry:application_software
+    canonical_subindustry_id: taxonomy:subindustry:workflow_and_vertical_software
+    reason: Paycom belongs in the workflow-led software cohort rather than the generic enterprise application bucket.
+
+  - issuer_cik: "0000883241"
+    canonical_sector_id: taxonomy:sector:technology
+    canonical_industry_group_id: taxonomy:industry_group:software_and_services
+    canonical_industry_id: taxonomy:industry:application_software
+    canonical_subindustry_id: taxonomy:subindustry:mission_critical_software
+    reason: Synopsys is a mission-critical software platform with unusually deep technical entrenchment.
+
+  - issuer_cik: "0001402436"
+    canonical_sector_id: taxonomy:sector:technology
+    canonical_industry_group_id: taxonomy:industry_group:software_and_services
+    canonical_industry_id: taxonomy:industry:application_software
+    canonical_subindustry_id: taxonomy:subindustry:software_franchise_platforms
+    reason: SS&C is best treated as a mature software franchise platform for valuation routing.
+
+  - issuer_cik: "0000860731"
+    canonical_sector_id: taxonomy:sector:technology
+    canonical_industry_group_id: taxonomy:industry_group:software_and_services
+    canonical_industry_id: taxonomy:industry:application_software
+    canonical_subindustry_id: taxonomy:subindustry:workflow_and_vertical_software
+    reason: Tyler belongs in the vertical workflow software cohort rather than the generic enterprise application bucket.
+
+  - issuer_cik: "0001393052"
+    canonical_sector_id: taxonomy:sector:technology
+    canonical_industry_group_id: taxonomy:industry_group:software_and_services
+    canonical_industry_id: taxonomy:industry:application_software
+    canonical_subindustry_id: taxonomy:subindustry:workflow_and_vertical_software
+    reason: Veeva belongs in the vertical workflow software cohort rather than the generic enterprise application bucket.
 
   - issuer_cik: "0001718512"
     canonical_sector_id: taxonomy:sector:industrials
@@ -54,6 +166,34 @@ overrides:
     canonical_industry_id: taxonomy:industry:aerospace_and_defense
     canonical_subindustry_id: taxonomy:subindustry:aerospace_components_and_suppliers
     reason: HEICO is a components-led aerospace supplier and screens too harshly in the broad prime bucket.
+
+  - issuer_cik: "0000202058"
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:aerospace_and_defense
+    canonical_industry_id: taxonomy:industry:aerospace_and_defense
+    canonical_subindustry_id: taxonomy:subindustry:defense_platform_and_mission_systems
+    reason: L3Harris aligns better with a defense mission-systems cohort than with a mixed aerospace prime bucket.
+
+  - issuer_cik: "0000936468"
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:aerospace_and_defense
+    canonical_industry_id: taxonomy:industry:aerospace_and_defense
+    canonical_subindustry_id: taxonomy:subindustry:defense_platform_and_mission_systems
+    reason: Lockheed Martin aligns better with a backlog-backed defense platform cohort than with a mixed aerospace prime bucket.
+
+  - issuer_cik: "0001133421"
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:aerospace_and_defense
+    canonical_industry_id: taxonomy:industry:aerospace_and_defense
+    canonical_subindustry_id: taxonomy:subindustry:defense_platform_and_mission_systems
+    reason: Northrop Grumman aligns better with a backlog-backed defense platform cohort than with a mixed aerospace prime bucket.
+
+  - issuer_cik: "0000101829"
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:aerospace_and_defense
+    canonical_industry_id: taxonomy:industry:aerospace_and_defense
+    canonical_subindustry_id: taxonomy:subindustry:defense_platform_and_mission_systems
+    reason: RTX aligns better with a defense platform and mission-systems cohort than with a mixed aerospace prime bucket.
 
   - issuer_cik: "0000018230"
     canonical_sector_id: taxonomy:sector:industrials

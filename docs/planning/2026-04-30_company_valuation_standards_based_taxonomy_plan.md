@@ -1,6 +1,6 @@
 # Company Valuation Standards-Based Taxonomy Plan
 
-Status: implemented checkpoint with curated-universe boundary; validated universe frozen at 68
+Status: implemented checkpoint with curated-universe boundary; validated universe provisionally frozen at 61
 
 As of: Friday, May 1, 2026
 
@@ -10,6 +10,8 @@ Related:
 - [Company Valuation Engine V1 Implementation Contract](./2026-04-29_company_valuation_engine_v1_implementation_contract.md)
 - [Company Valuation Software Sub-Template Findings](./2026-04-30_company_valuation_software_subtemplate_findings.md)
 - [Company Valuation Software Compounder Follow-Up Findings](./2026-04-30_company_valuation_software_compounder_followup_findings.md)
+- [Company Valuation Software And Retail Benchmark Findings](./2026-05-01_company_valuation_software_retail_benchmark_findings.md)
+- [Company Valuation Industrial And Aerospace Benchmark Findings](./2026-05-01_company_valuation_industrial_aerospace_benchmark_findings.md)
 
 ## Role Of This Doc
 
@@ -182,6 +184,11 @@ These still make sense as valuation-policy objects:
 - `aerospace_defense_prime`
 - `diversified_industrial_core`
 - `software_asset_light`
+  - now retained as a generic software fallback outside the curated supported cohorts
+- `software_franchise_platform`
+- `software_workflow_growth`
+- `software_mission_critical`
+- `defense_platform_systems`
 
 But they should no longer be treated as the first classification layer.
 
@@ -377,19 +384,40 @@ What landed:
 
 As of May 1, 2026:
 
-- curated supported universe: `68/68`
-- support-tier split: `core=50`, `expanded=18`
-- supported names with documents, prices, and valuation gaps: `68/68`
+- curated supported universe: `61/61`
+- support-tier split: `core=41`, `expanded=20`
+- supported names with documents, prices, and valuation gaps: `61/61`
 - shadow expected-template mismatches inside the curated universe: `0`
-- remaining effective-template mismatches are intentional stressed-overlay names, not taxonomy failures
+- remaining effective-template mismatches inside the supported universe: `0`
+- software routing split is now live for the supported software cohort:
+  - `software_franchise_platform=5`
+  - `software_workflow_growth=8`
+  - `software_mission_critical=3`
 
 Useful checkpoint artifacts:
 
 - supported-universe freeze pack: [curated50_2026-05-01_checkpoint_freeze](../../outputs/company_valuation/supported_report_pack/curated50_2026-05-01_checkpoint_freeze/summary.md)
+- supported-universe shadow sync after the software split: [supported_software_split_v1](../../outputs/company_valuation/taxonomy_sync/supported_software_split_v1/summary.md)
 - stressed benchmark/prior pre-calibration: [stressed_operator_supported_pre_v1](../../outputs/company_valuation/benchmark_priors/stressed_operator_supported_pre_v1/summary.md)
 - stressed benchmark/prior post-calibration: [stressed_operator_supported_post_v1](../../outputs/company_valuation/benchmark_priors/stressed_operator_supported_post_v1/summary.md)
 - stressed benchmark/prior after curated-universe expansion to `75`: [stressed_operator_supported_post_v2_75](../../outputs/company_valuation/benchmark_priors/stressed_operator_supported_post_v2_75/summary.md)
 - stressed benchmark/prior after pruning the weak expanded names and freezing the validated `68`: [stressed_operator_supported_post_v3_68](../../outputs/company_valuation/benchmark_priors/stressed_operator_supported_post_v3_68/summary.md)
+- software benchmark/prior first pass: [software_asset_light_supported_v1](../../outputs/company_valuation/benchmark_priors/software_asset_light_supported_v1/summary.md)
+- retail benchmark/prior first pass: [retail_consumer_supported_v1](../../outputs/company_valuation/benchmark_priors/retail_consumer_supported_v1/summary.md)
+- retail compounder benchmark/prior first pass: [retail_consumer_compounder_supported_v1](../../outputs/company_valuation/benchmark_priors/retail_consumer_compounder_supported_v1/summary.md)
+- software benchmark/prior calibrated pass: [software_asset_light_supported_v2](../../outputs/company_valuation/benchmark_priors/software_asset_light_supported_v2/summary.md)
+- software franchise benchmark/prior after structural split: [software_franchise_platform_supported_v1b](../../outputs/company_valuation/benchmark_priors/software_franchise_platform_supported_v1b/summary.md)
+- software workflow benchmark/prior after structural split: [software_workflow_growth_supported_v1b](../../outputs/company_valuation/benchmark_priors/software_workflow_growth_supported_v1b/summary.md)
+- software mission-critical benchmark/prior after structural split: [software_mission_critical_supported_v2](../../outputs/company_valuation/benchmark_priors/software_mission_critical_supported_v2/summary.md)
+- retail benchmark/prior calibrated pass after `KMX` demotion: [retail_consumer_supported_v3_67](../../outputs/company_valuation/benchmark_priors/retail_consumer_supported_v3_67/summary.md)
+- retail compounder benchmark/prior calibrated pass: [retail_consumer_compounder_supported_v2](../../outputs/company_valuation/benchmark_priors/retail_consumer_compounder_supported_v2/summary.md)
+- diversified industrial benchmark/prior baseline: [diversified_industrial_core_supported_v1](../../outputs/company_valuation/benchmark_priors/diversified_industrial_core_supported_v1/summary.md)
+- industrial compounder benchmark/prior baseline: [industrial_compounder_supported_v1](../../outputs/company_valuation/benchmark_priors/industrial_compounder_supported_v1/summary.md)
+- aerospace prime benchmark/prior baseline: [aerospace_defense_prime_supported_v1](../../outputs/company_valuation/benchmark_priors/aerospace_defense_prime_supported_v1/summary.md)
+- aerospace prime benchmark/prior after split cleanup: [aerospace_defense_prime_supported_v2](../../outputs/company_valuation/benchmark_priors/aerospace_defense_prime_supported_v2/summary.md)
+- defense-platform benchmark/prior calibrated pass: [defense_platform_systems_supported_v2](../../outputs/company_valuation/benchmark_priors/defense_platform_systems_supported_v2/summary.md)
+- defense-platform benchmark/prior after tier downgrade: [defense_platform_systems_supported_v3_61](../../outputs/company_valuation/benchmark_priors/defense_platform_systems_supported_v3_61/summary.md)
+- stressed benchmark/prior after supported-universe exit: [stressed_operator_supported_post_v4_61](../../outputs/company_valuation/benchmark_priors/stressed_operator_supported_post_v4_61/summary.md)
 
 ## What We Learned
 
@@ -429,6 +457,32 @@ The current validated universe was then pruned to `68` by removing:
 - `PTEN`
 - `MUR`
 
+After the first benchmark-gated retail pass, `KMX` was also removed from support, leaving a validated universe of `67`.
+
+The final signoff tightening then removed:
+
+- `ORCL`
+- `EQT`
+- `HAL`
+- `NOV`
+- `OXY`
+- `PBF`
+
+That reset the supported universe to `61` and made one more trust-boundary correction:
+
+- `defense_platform_systems` stays supported
+- it is now explicitly `expanded`, not `core`
+- `GD` and `TXT` remain the only `core` aerospace prime names
+
+The next useful clarification came from software:
+
+- one broad `software_asset_light` template was too coarse for the supported cohort
+- the supported software universe now routes through three explicit subtemplates:
+  - `software_franchise_platform`
+  - `software_workflow_growth`
+  - `software_mission_critical`
+- `software_asset_light` remains in config only as a generic fallback for unsupported software names outside the curated cohort
+
 The important boundary is unchanged:
 
 - the expansion used names that already fit the supported template families
@@ -440,29 +494,70 @@ The important boundary is unchanged:
 The live interpretation should now be:
 
 - `core`
-  - the original `50`
-  - trusted as the primary supported valuation universe
+  - `41` names
+  - the currently trusted validated valuation universe
 - `expanded`
-  - the remaining `18` clean-routing additions
-  - technically supported, but noisier and not yet as validated as the core set
+  - `20` names
+  - technically supported, but still carrying residual cohort or benchmark risk
 
 ## Benchmark-Gated Calibration Rule
 
 Further template tuning should only happen when there is an explicit benchmark or analyst prior.
 
-That rule is now active for stressed names:
+That rule is now active for the first non-stressed supported cohorts, and it is also the guardrail for any future stressed re-entry:
 
 - a checked-in benchmark/prior snapshot exists for the stressed basket
-- the supported stressed cohort can be compared to external analyst targets
-- one conservative stressed-template softening was applied against that benchmark
+- a checked-in benchmark/prior snapshot now also exists for:
+  - `software_asset_light`
+  - `retail_consumer`
+  - `retail_consumer_compounder`
+- the stressed names were benchmarked and one conservative stressed-template softening was applied
+- the supported universe no longer includes stressed names until an explicit stressed cohort is re-supported
 
-That pass improved the supported stressed cohort without changing the deeper conclusion:
+The non-stressed benchmark pass changed the confidence level of the project more than it changed the code.
+
+Software and retail do **not** currently clear the same usability bar as the architecture:
+
+- `software_asset_light`
+  - rows=`17`
+  - mean_abs_gap_delta=`0.617`
+  - sign_mismatch_count=`9`
+  - under benchmark in `15/17` names
+- `retail_consumer`
+  - rows=`9`
+  - mean_abs_gap_delta=`0.471`
+  - sign_mismatch_count=`4`
+- `retail_consumer_compounder`
+  - rows=`5`
+  - mean_abs_gap_delta=`0.444`
+  - sign_mismatch_count=`5`
+
+That is strong evidence that the engine is useful as a constrained internal research product, but not yet ready to claim “absolutely usable” across the validated supported universe.
+
+One calibration pass was then applied:
+
+- `software_asset_light`
+  - mean_abs_gap_delta improved from `0.617` to `0.535`
+  - sign_mismatch_count improved from `9` to `7`
+- `retail_consumer`
+  - broad template tuning alone did not fix the cohort
+  - the combination of that pass plus demoting `KMX` improved the supported-only retail benchmark to:
+    - rows=`8`
+    - mean_abs_gap_delta=`0.409`
+    - sign_mismatch_count=`3`
+- `retail_consumer_compounder`
+  - mean_abs_gap_delta improved from `0.444` to `0.315`
+  - sign_mismatch_count improved from `5` to `3`
+
+That leaves the project in a better state, but still short of a full “absolutely usable” claim.
+
+The stressed benchmark work improved the model path without changing the deeper conclusion:
 
 - the stressed template was too bearish before the benchmark-gated pass
 - it is still intentionally harsher than base energy after the pass
 - the `75` expansion widened the stressed cohort faster than validation quality allowed
-- after pruning the weak expanded stressed names, the supported stressed cohort is back to a smaller and cleaner validated set
-- the remaining noise is not proof that the supported stressed cohort needs more structural splitting today
+- removing the remaining stressed names from the supported universe was the cleaner signoff decision
+- the overlay remains modeled correctly, but stressed names are now `out_of_scope` until they become an explicitly supported cohort again
 
 ## Stop Condition
 
@@ -478,7 +573,8 @@ Stop here unless one of these is true:
 Specifically for stressed energy:
 
 - do **not** split `stressed_operator` into stressed upstream vs stressed services/refining yet
-- only make that split if those cohorts become explicitly supported with their own curated names and benchmark/prior pack
+- do **not** re-admit stressed names into the supported universe until they have their own curated support decision and benchmark/prior pack
+- only make a stressed split if those cohorts become explicitly supported with their own curated names and benchmark/prior pack
 
 ## What This Means For Current Research
 

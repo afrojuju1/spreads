@@ -1,4 +1,4 @@
-template_id: diversified_industrial_core
+template_id: defense_platform_systems
 template_version: v1
 status: active
 
@@ -6,33 +6,33 @@ assignment_rules:
   sic_prefixes: []
   naics_prefixes: []
   keyword_rules:
-    - industrial
-    - automation
-    - process
-    - controls
-    - engineered
+    - defense
+    - missile
+    - radar
+    - avionics
+    - guidance
 
 required_features:
   - revenue_ttm_growth
   - operating_margin_ttm
   - free_cash_flow_ttm
   - capex_intensity
-  - roic_ttm
-
-optional_features:
-  - gross_margin_ttm
-  - diluted_share_growth_ttm
   - net_leverage
 
+optional_features:
+  - roic_ttm
+  - backlog_proxy_growth
+  - diluted_share_growth_ttm
+
 quality_weight_map:
-  growth_score: 11
+  growth_score: 10
   profitability_score: 18
-  cash_flow_score: 17
-  capital_efficiency_score: 18
+  cash_flow_score: 18
+  capital_efficiency_score: 16
   balance_sheet_score: 15
   shareholder_score: 8
   ownership_score: 5
-  reporting_quality_score: 8
+  reporting_quality_score: 10
 
 ownership_weight_map:
   insider_signal: 2
@@ -40,44 +40,44 @@ ownership_weight_map:
   institutional_holder_signal: 1
 
 valuation_model_mix:
-  dcf_weight: 0.4
-  historical_multiples_weight: 0.6
+  dcf_weight: 0.25
+  historical_multiples_weight: 0.75
   primary_multiple_metrics:
     - ev_ebit
     - ev_fcf
     - pb
     - ev_ebitda
   default_multiple_anchors:
-    ev_ebit: 18.5
-    ev_fcf: 25.0
-    pb: 4.0
-    ev_ebitda: 14.5
+    ev_ebit: 23.5
+    ev_fcf: 31.0
+    pb: 6.0
+    ev_ebitda: 17.0
   forecast_years: 5
   initial_growth_floor: -0.03
   initial_growth_cap: 0.17
-  terminal_growth_multiplier: 0.52
-  growth_adjustment_factor: 0.72
+  terminal_growth_multiplier: 0.5
+  growth_adjustment_factor: 0.68
   growth_adjustment_min: 0.76
-  growth_adjustment_max: 1.48
+  growth_adjustment_max: 1.52
   normalized_fcf_from_ebit_ratio: 0.82
   terminal_growth_floor: 0.015
-  terminal_growth_cap: 0.03
-  discount_rate_spread_bps: 335
-  quality_premium_floor_score: 56
+  terminal_growth_cap: 0.028
+  discount_rate_spread_bps: 315
+  quality_premium_floor_score: 55
   quality_premium_full_score: 78
-  quality_multiple_premium_max: 0.3
-  quality_discount_rate_reduction_bps_max: 110
+  quality_multiple_premium_max: 0.36
+  quality_discount_rate_reduction_bps_max: 120
 
 confidence_rules:
   low_confidence_if:
     - repeated_restatements
     - missing_core_facts
-    - cash_conversion_weak
-  negative_fcf_penalty: 0.16
+    - execution_recovery_unresolved
+  negative_fcf_penalty: 0.18
   high_leverage_threshold: 3.0
-  high_leverage_penalty: 0.1
+  high_leverage_penalty: 0.11
   declining_revenue_penalty: 0.08
-  unprofitable_penalty: 0.08
+  unprofitable_penalty: 0.09
 
 risk_rules:
   add_flags_if:

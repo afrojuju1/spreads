@@ -99,3 +99,517 @@ prior_sets:
         low_target: 15.0
         high_target: 59.0
         source_url: https://stockanalysis.com/stocks/dk/forecast/
+  - prior_set_id: software_franchise_platform_analyst_consensus
+    basket_id: software_franchise_platform
+    template_id: software_franchise_platform
+    as_of: "2026-05-01"
+    source_name: StockAnalysis analyst consensus snapshot
+    source_notes: Calibration-only analyst benchmark captured from StockAnalysis forecast pages on 2026-05-01; the pages cite Benzinga / Wall Street analyst data. Use this to bound template tuning, not as a live valuation input.
+    target_field: average_target
+    supported_only_default: true
+    minimum_coverage: 5
+    trigger_mean_abs_gap_delta: 0.2
+    trigger_sign_mismatch_count: 2
+    entries:
+      - ticker: ADBE
+        analyst_count: 24
+        consensus_rating: Hold
+        average_target: 347.42
+        median_target: 330.0
+        low_target: 220.0
+        high_target: 500.0
+        source_url: https://stockanalysis.com/stocks/adbe/forecast/
+      - ticker: CHKP
+        analyst_count: 21
+        consensus_rating: Buy
+        average_target: 191.9
+        median_target: 193.0
+        low_target: 120.0
+        high_target: 260.0
+        source_url: https://stockanalysis.com/stocks/chkp/forecast/
+      - ticker: INTU
+        analyst_count: 20
+        consensus_rating: Strong Buy
+        average_target: 692.35
+        median_target: 725.0
+        low_target: 425.0
+        high_target: 880.0
+        source_url: https://stockanalysis.com/stocks/intu/forecast/
+      - ticker: MSFT
+        analyst_count: 36
+        consensus_rating: Strong Buy
+        average_target: 565.75
+        median_target: 575.0
+        low_target: 392.0
+        high_target: 675.0
+        source_url: https://stockanalysis.com/stocks/msft/forecast/
+      - ticker: ORCL
+        analyst_count: 36
+        consensus_rating: Buy
+        average_target: 260.11
+        median_target: 240.0
+        low_target: 160.0
+        high_target: 400.0
+        source_url: https://stockanalysis.com/stocks/orcl/forecast/
+      - ticker: SSNC
+        analyst_count: 8
+        consensus_rating: Strong Buy
+        average_target: 96.13
+        median_target: 96.0
+        low_target: 78.0
+        high_target: 115.0
+        source_url: https://stockanalysis.com/stocks/ssnc/forecast/
+
+  - prior_set_id: software_workflow_growth_analyst_consensus
+    basket_id: software_workflow_growth
+    template_id: software_workflow_growth
+    as_of: "2026-05-01"
+    source_name: StockAnalysis analyst consensus snapshot
+    source_notes: Calibration-only analyst benchmark captured from StockAnalysis forecast pages on 2026-05-01; the pages cite Benzinga / Wall Street analyst data. Use this to bound template tuning, not as a live valuation input.
+    target_field: median_target
+    supported_only_default: true
+    minimum_coverage: 6
+    trigger_mean_abs_gap_delta: 0.2
+    trigger_sign_mismatch_count: 2
+    entries:
+      - ticker: ADSK
+        analyst_count: 26
+        consensus_rating: Buy
+        average_target: 335.04
+        median_target: 335.0
+        low_target: 246.0
+        high_target: 388.0
+        source_url: https://stockanalysis.com/stocks/adsk/forecast/
+      - ticker: CRM
+        analyst_count: 35
+        consensus_rating: Buy
+        average_target: 278.74
+        median_target: 265.0
+        low_target: 194.0
+        high_target: 405.0
+        source_url: https://stockanalysis.com/stocks/crm/forecast/
+      - ticker: GWRE
+        analyst_count: 13
+        consensus_rating: Buy
+        average_target: 251.31
+        median_target: 250.0
+        low_target: 160.0
+        high_target: 305.0
+        source_url: https://stockanalysis.com/stocks/gwre/forecast/
+      - ticker: HUBS
+        analyst_count: 32
+        consensus_rating: Strong Buy
+        average_target: 425.22
+        median_target: 350.0
+        low_target: 260.0
+        high_target: 759.0
+        source_url: https://stockanalysis.com/stocks/hubs/forecast/
+      - ticker: NOW
+        analyst_count: 31
+        consensus_rating: Strong Buy
+        average_target: 184.84
+        median_target: 140.0
+        low_target: 85.0
+        high_target: 1160.0
+        source_url: https://stockanalysis.com/stocks/now/forecast/
+      - ticker: PAYC
+        analyst_count: 14
+        consensus_rating: Buy
+        average_target: 168.79
+        median_target: 180.0
+        low_target: 120.0
+        high_target: 246.0
+        source_url: https://stockanalysis.com/stocks/payc/forecast/
+      - ticker: TYL
+        analyst_count: 12
+        consensus_rating: Buy
+        average_target: 478.58
+        median_target: 460.0
+        low_target: 335.0
+        high_target: 750.0
+        source_url: https://stockanalysis.com/stocks/tyl/forecast/
+      - ticker: VEEV
+        analyst_count: 24
+        consensus_rating: Buy
+        average_target: 280.42
+        median_target: 285.0
+        low_target: 176.0
+        high_target: 355.0
+        source_url: https://stockanalysis.com/stocks/veev/forecast/
+
+  - prior_set_id: software_mission_critical_analyst_consensus
+    basket_id: software_mission_critical
+    template_id: software_mission_critical
+    as_of: "2026-05-01"
+    source_name: StockAnalysis analyst consensus snapshot
+    source_notes: Calibration-only analyst benchmark captured from StockAnalysis forecast pages on 2026-05-01; the pages cite Benzinga / Wall Street analyst data. Use this to bound template tuning, not as a live valuation input.
+    target_field: average_target
+    supported_only_default: true
+    minimum_coverage: 3
+    trigger_mean_abs_gap_delta: 0.2
+    trigger_sign_mismatch_count: 1
+    entries:
+      - ticker: CDNS
+        analyst_count: 14
+        consensus_rating: Strong Buy
+        average_target: 375.0
+        median_target: 390.0
+        low_target: 225.0
+        high_target: 425.0
+        source_url: https://stockanalysis.com/stocks/cdns/forecast/
+      - ticker: FICO
+        analyst_count: 13
+        consensus_rating: Buy
+        average_target: 1663.0
+        median_target: 1600.0
+        low_target: 1150.0
+        high_target: 2200.0
+        source_url: https://stockanalysis.com/stocks/fico/forecast/
+      - ticker: SNPS
+        analyst_count: 14
+        consensus_rating: Buy
+        average_target: 540.71
+        median_target: 560.0
+        low_target: 425.0
+        high_target: 650.0
+        source_url: https://stockanalysis.com/stocks/snps/forecast/
+  - prior_set_id: retail_consumer_analyst_consensus
+    basket_id: retail_consumer
+    template_id: retail_consumer
+    as_of: "2026-05-01"
+    source_name: StockAnalysis analyst consensus snapshot
+    source_notes: Calibration-only analyst benchmark captured from StockAnalysis forecast pages on 2026-05-01; the pages cite Benzinga / Wall Street analyst data. Use this to bound template tuning, not as a live valuation input.
+    target_field: average_target
+    supported_only_default: true
+    minimum_coverage: 5
+    trigger_mean_abs_gap_delta: 0.2
+    trigger_sign_mismatch_count: 2
+    entries:
+      - ticker: BBY
+        analyst_count: 18
+        consensus_rating: Buy
+        average_target: 76.28
+        median_target: 75.0
+        low_target: 60.0
+        high_target: 96.0
+        source_url: https://stockanalysis.com/stocks/bby/forecast/
+      - ticker: KMX
+        analyst_count: 11
+        consensus_rating: Hold
+        average_target: 37.18
+        median_target: 36.0
+        low_target: 26.0
+        high_target: 48.0
+        source_url: https://stockanalysis.com/stocks/kmx/forecast/
+      - ticker: DG
+        analyst_count: 20
+        consensus_rating: Buy
+        average_target: 139.6
+        median_target: 140.0
+        low_target: 116.0
+        high_target: 170.0
+        source_url: https://stockanalysis.com/stocks/dg/forecast/
+      - ticker: ROST
+        analyst_count: 16
+        consensus_rating: Buy
+        average_target: 204.25
+        median_target: 226.0
+        low_target: 130.0
+        high_target: 245.0
+        source_url: https://stockanalysis.com/stocks/rost/forecast/
+      - ticker: TGT
+        analyst_count: 25
+        consensus_rating: Buy
+        average_target: 119.2
+        median_target: 120.0
+        low_target: 88.0
+        high_target: 145.0
+        source_url: https://stockanalysis.com/stocks/tgt/forecast/
+      - ticker: WMT
+        analyst_count: 29
+        consensus_rating: Strong Buy
+        average_target: 133.86
+        median_target: 137.0
+        low_target: 112.0
+        high_target: 150.0
+        source_url: https://stockanalysis.com/stocks/wmt/forecast/
+      - ticker: CASY
+        analyst_count: 12
+        consensus_rating: Buy
+        average_target: 696.5
+        median_target: 713.0
+        low_target: 540.0
+        high_target: 860.0
+        source_url: https://stockanalysis.com/stocks/casy/forecast/
+      - ticker: TJX
+        analyst_count: 16
+        consensus_rating: Strong Buy
+        average_target: 169.0
+        median_target: 168.0
+        low_target: 150.0
+        high_target: 193.0
+        source_url: https://stockanalysis.com/stocks/tjx/forecast/
+      - ticker: DLTR
+        analyst_count: 17
+        consensus_rating: Hold
+        average_target: 123.35
+        median_target: 126.0
+        low_target: 80.0
+        high_target: 150.0
+        source_url: https://stockanalysis.com/stocks/dltr/forecast/
+  - prior_set_id: retail_consumer_compounder_analyst_consensus
+    basket_id: retail_consumer_compounder
+    template_id: retail_consumer_compounder
+    as_of: "2026-05-01"
+    source_name: StockAnalysis analyst consensus snapshot
+    source_notes: Calibration-only analyst benchmark captured from StockAnalysis forecast pages on 2026-05-01; the pages cite Benzinga / Wall Street analyst data. Use this to bound template tuning, not as a live valuation input.
+    target_field: average_target
+    supported_only_default: true
+    minimum_coverage: 5
+    trigger_mean_abs_gap_delta: 0.2
+    trigger_sign_mismatch_count: 1
+    entries:
+      - ticker: COST
+        analyst_count: 19
+        consensus_rating: Buy
+        average_target: 1078.0
+        median_target: 1065.0
+        low_target: 769.0
+        high_target: 1315.0
+        source_url: https://stockanalysis.com/stocks/cost/forecast/
+      - ticker: LOW
+        analyst_count: 22
+        consensus_rating: Buy
+        average_target: 290.23
+        median_target: 294.0
+        low_target: 250.0
+        high_target: 325.0
+        source_url: https://stockanalysis.com/stocks/low/forecast/
+      - ticker: HD
+        analyst_count: 23
+        consensus_rating: Buy
+        average_target: 423.0
+        median_target: 425.0
+        low_target: 348.0
+        high_target: 497.0
+        source_url: https://stockanalysis.com/stocks/hd/forecast/
+      - ticker: ORLY
+        analyst_count: 17
+        consensus_rating: Strong Buy
+        average_target: 111.59
+        median_target: 110.0
+        low_target: 91.0
+        high_target: 125.0
+        source_url: https://stockanalysis.com/stocks/orly/forecast/
+      - ticker: AZO
+        analyst_count: 21
+        consensus_rating: Strong Buy
+        average_target: 4306.0
+        median_target: 4300.0
+        low_target: 3600.0
+        high_target: 4800.0
+        source_url: https://stockanalysis.com/stocks/azo/forecast/
+
+  - prior_set_id: diversified_industrial_core_analyst_consensus
+    basket_id: diversified_industrial_core
+    template_id: diversified_industrial_core
+    as_of: "2026-05-01"
+    source_name: StockAnalysis analyst consensus snapshot
+    source_notes: Calibration-only analyst benchmark captured from StockAnalysis forecast pages on 2026-05-01; the pages cite Benzinga / Wall Street analyst data. Use this to bound template tuning, not as a live valuation input.
+    target_field: average_target
+    supported_only_default: true
+    minimum_coverage: 5
+    trigger_mean_abs_gap_delta: 0.2
+    trigger_sign_mismatch_count: 2
+    entries:
+      - ticker: AME
+        analyst_count: 11
+        consensus_rating: Buy
+        average_target: 236.09
+        median_target: 235.0
+        low_target: 180.0
+        high_target: 265.0
+        source_url: https://stockanalysis.com/stocks/ame/forecast/
+      - ticker: DOV
+        analyst_count: 12
+        consensus_rating: Buy
+        average_target: 240.17
+        median_target: 250.0
+        low_target: 195.0
+        high_target: 279.0
+        source_url: https://stockanalysis.com/stocks/dov/forecast/
+      - ticker: FTV
+        analyst_count: 11
+        consensus_rating: Hold
+        average_target: 59.18
+        median_target: 58.0
+        low_target: 50.0
+        high_target: 65.0
+        source_url: https://stockanalysis.com/stocks/ftv/forecast/
+      - ticker: HON
+        analyst_count: 13
+        consensus_rating: Buy
+        average_target: 249.92
+        median_target: 245.0
+        low_target: 205.0
+        high_target: 293.0
+        source_url: https://stockanalysis.com/stocks/hon/forecast/
+      - ticker: IR
+        analyst_count: 7
+        consensus_rating: Buy
+        average_target: 94.43
+        median_target: 94.0
+        low_target: 85.0
+        high_target: 109.0
+        source_url: https://stockanalysis.com/stocks/ir/forecast/
+      - ticker: ITW
+        analyst_count: 11
+        consensus_rating: Hold
+        average_target: 263.45
+        median_target: 255.0
+        low_target: 230.0
+        high_target: 303.0
+        source_url: https://stockanalysis.com/stocks/itw/forecast/
+      - ticker: ROK
+        analyst_count: 15
+        consensus_rating: Buy
+        average_target: 406.2
+        median_target: 404.0
+        low_target: 290.0
+        high_target: 470.0
+        source_url: https://stockanalysis.com/stocks/rok/forecast/
+
+  - prior_set_id: industrial_compounder_analyst_consensus
+    basket_id: industrial_compounder
+    template_id: industrial_compounder
+    as_of: "2026-05-01"
+    source_name: StockAnalysis analyst consensus snapshot
+    source_notes: Calibration-only analyst benchmark captured from StockAnalysis forecast pages on 2026-05-01; the pages cite Benzinga / Wall Street analyst data. Use this to bound template tuning, not as a live valuation input.
+    target_field: average_target
+    supported_only_default: true
+    minimum_coverage: 5
+    trigger_mean_abs_gap_delta: 0.2
+    trigger_sign_mismatch_count: 2
+    entries:
+      - ticker: CAT
+        analyst_count: 19
+        consensus_rating: Buy
+        average_target: 768.89
+        median_target: 785.0
+        low_target: 500.0
+        high_target: 1125.0
+        source_url: https://stockanalysis.com/stocks/cat/forecast/
+      - ticker: CMI
+        analyst_count: 13
+        consensus_rating: Buy
+        average_target: 587.69
+        median_target: 610.0
+        low_target: 350.0
+        high_target: 730.0
+        source_url: https://stockanalysis.com/stocks/cmi/forecast/
+      - ticker: DE
+        analyst_count: 18
+        consensus_rating: Buy
+        average_target: 632.56
+        median_target: 640.0
+        low_target: 460.0
+        high_target: 793.0
+        source_url: https://stockanalysis.com/stocks/de/forecast/
+      - ticker: EMR
+        analyst_count: 15
+        consensus_rating: Buy
+        average_target: 156.47
+        median_target: 155.0
+        low_target: 130.0
+        high_target: 185.0
+        source_url: https://stockanalysis.com/stocks/emr/forecast/
+      - ticker: ETN
+        analyst_count: 22
+        consensus_rating: Buy
+        average_target: 401.95
+        median_target: 407.0
+        low_target: 336.0
+        high_target: 495.0
+        source_url: https://stockanalysis.com/stocks/etn/forecast/
+      - ticker: IEX
+        analyst_count: 9
+        consensus_rating: Strong Buy
+        average_target: 234.89
+        median_target: 241.0
+        low_target: 195.0
+        high_target: 260.0
+        source_url: https://stockanalysis.com/stocks/iex/forecast/
+
+  - prior_set_id: aerospace_defense_prime_analyst_consensus
+    basket_id: aerospace_defense_prime
+    template_id: aerospace_defense_prime
+    as_of: "2026-05-01"
+    source_name: StockAnalysis analyst consensus snapshot
+    source_notes: Calibration-only analyst benchmark captured from StockAnalysis forecast pages on 2026-05-01; the pages cite Benzinga / Wall Street analyst data. Use this to bound template tuning, not as a live valuation input.
+    target_field: average_target
+    supported_only_default: true
+    minimum_coverage: 2
+    trigger_mean_abs_gap_delta: 0.2
+    trigger_sign_mismatch_count: 1
+    entries:
+      - ticker: GD
+        analyst_count: 16
+        consensus_rating: Buy
+        average_target: 375.81
+        median_target: 380.0
+        low_target: 300.0
+        high_target: 408.0
+        source_url: https://stockanalysis.com/stocks/gd/forecast/
+      - ticker: TXT
+        analyst_count: 11
+        consensus_rating: Buy
+        average_target: 95.18
+        median_target: 93.0
+        low_target: 85.0
+        high_target: 110.0
+        source_url: https://stockanalysis.com/stocks/txt/forecast/
+
+  - prior_set_id: defense_platform_systems_analyst_consensus
+    basket_id: defense_platform_systems
+    template_id: defense_platform_systems
+    as_of: "2026-05-01"
+    source_name: StockAnalysis analyst consensus snapshot
+    source_notes: Calibration-only analyst benchmark captured from StockAnalysis forecast pages on 2026-05-01; the pages cite Benzinga / Wall Street analyst data. Use this to bound template tuning, not as a live valuation input.
+    target_field: average_target
+    supported_only_default: true
+    minimum_coverage: 4
+    trigger_mean_abs_gap_delta: 0.2
+    trigger_sign_mismatch_count: 1
+    entries:
+      - ticker: LHX
+        analyst_count: 10
+        consensus_rating: Buy
+        average_target: 353.8
+        median_target: 353.0
+        low_target: 305.0
+        high_target: 418.0
+        source_url: https://stockanalysis.com/stocks/lhx/forecast/
+      - ticker: LMT
+        analyst_count: 14
+        consensus_rating: Hold
+        average_target: 602.71
+        median_target: 640.0
+        low_target: 480.0
+        high_target: 700.0
+        source_url: https://stockanalysis.com/stocks/lmt/forecast/
+      - ticker: NOC
+        analyst_count: 16
+        consensus_rating: Buy
+        average_target: 697.38
+        median_target: 710.0
+        low_target: 525.0
+        high_target: 815.0
+        source_url: https://stockanalysis.com/stocks/noc/forecast/
+      - ticker: RTX
+        analyst_count: 12
+        consensus_rating: Buy
+        average_target: 204.25
+        median_target: 210.0
+        low_target: 168.0
+        high_target: 230.0
+        source_url: https://stockanalysis.com/stocks/rtx/forecast/

@@ -35,31 +35,31 @@ ownership_weight_map:
   institutional_holder_signal: 1
 
 valuation_model_mix:
-  dcf_weight: 0.45
-  historical_multiples_weight: 0.55
+  dcf_weight: 0.4
+  historical_multiples_weight: 0.6
   primary_multiple_metrics:
     - ev_ebit
     - ev_fcf
     - pe
   default_multiple_anchors:
-    ev_ebit: 21.0
-    ev_fcf: 27.0
-    pe: 27.0
+    ev_ebit: 23.0
+    ev_fcf: 31.0
+    pe: 30.0
   forecast_years: 5
   initial_growth_floor: -0.06
   initial_growth_cap: 0.16
   terminal_growth_multiplier: 0.5
-  growth_adjustment_factor: 0.78
+  growth_adjustment_factor: 0.82
   growth_adjustment_min: 0.74
-  growth_adjustment_max: 1.45
+  growth_adjustment_max: 1.55
   normalized_fcf_from_ebit_ratio: 0.72
   terminal_growth_floor: 0.012
   terminal_growth_cap: 0.028
-  discount_rate_spread_bps: 380
+  discount_rate_spread_bps: 350
   quality_premium_floor_score: 52
-  quality_premium_full_score: 80
-  quality_multiple_premium_max: 0.34
-  quality_discount_rate_reduction_bps_max: 95
+  quality_premium_full_score: 76
+  quality_multiple_premium_max: 0.42
+  quality_discount_rate_reduction_bps_max: 105
 
 confidence_rules:
   low_confidence_if:
