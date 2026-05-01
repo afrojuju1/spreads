@@ -7,6 +7,8 @@ import typer
 
 from core.runtime.config import default_database_url, default_redis_url
 from core.services.company_valuation import (
+    CompanyValuationTemplateAssignmentRefreshRequest,
+    CompanyValuationBenchmarkPriorReportRequest,
     CompanyValuationClusteringRequest,
     CompanyValuationBootstrapRequest,
     CompanyValuationClassificationBackfillRequest,
@@ -22,6 +24,8 @@ from core.services.company_valuation import (
     enqueue_company_valuation_screen_materialize_job,
     export_company_valuation_research_dataset,
     list_company_valuation_screen,
+    report_company_valuation_benchmark_priors,
+    refresh_company_valuation_template_assignments,
     sync_company_valuation_taxonomy_state,
 )
 from core.storage.company_valuation_repository import CompanyValuationRepository
@@ -421,6 +425,78 @@ def company_valuation_export_research_dataset_command(
 
 
 @company_valuation_app.command(
+    "benchmark-prior-report",
+    help="Compare current company valuation outputs against config-backed external benchmark / analyst priors.",
+)
+def company_valuation_benchmark_prior_report_command(
+    prior_set_id: str = typer.Option(
+        ...,
+        "--prior-set-id",
+        help="Configured benchmark/prior set id.",
+    ),
+    as_of: str | None = typer.Option(
+        None,
+        "--as-of",
+        help="Optional as-of timestamp override.",
+    ),
+    supported_only: bool = typer.Option(
+        True,
+        "--supported-only/--all-prior-tickers",
+        help="Restrict the comparison to supported names only.",
+    ),
+    output_root: str | None = typer.Option(
+        None,
+        "--output-root",
+        help="Optional directory for manifest, summary, and row exports.",
+    ),
+    config_root: str | None = typer.Option(
+        None,
+        "--config-root",
+        help="Override the config root passed into company valuation services.",
+    ),
+    db: str = typer.Option(
+        default_database_url(),
+        "--db",
+        help="Database URL override.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    default_db = default_database_url()
+    try:
+        result = report_company_valuation_benchmark_priors(
+            CompanyValuationBenchmarkPriorReportRequest(
+                prior_set_id=prior_set_id,
+                as_of=as_of,
+                supported_only=supported_only,
+                output_root=output_root,
+                config_root=config_root,
+            ),
+            repository=None if db == default_db else CompanyValuationRepository(db),
+        )
+    except Exception as exc:
+        typer.secho(f"Command failed: {exc}", err=True, fg=typer.colors.RED)
+        raise typer.Exit(2) from None
+    payload = result.to_payload()
+    if json_output:
+        typer.echo(json.dumps(payload, sort_keys=True, default=str))
+        return
+    typer.echo(f"status={payload['status']}")
+    typer.echo(f"prior_set_id={payload['prior_set_id']}")
+    typer.echo(f"supported_only={payload['supported_only']}")
+    typer.echo(f"rows_compared={payload['rows_compared']}")
+    typer.echo(f"mean_abs_gap_delta={payload['mean_abs_gap_delta']}")
+    typer.echo(f"sign_mismatch_count={payload['sign_mismatch_count']}")
+    typer.echo(f"calibration_gate_triggered={payload['calibration_gate_triggered']}")
+    typer.echo(f"calibration_gate_reason={payload['calibration_gate_reason']}")
+    if payload.get("summary_path"):
+        typer.echo(f"summary_path={payload['summary_path']}")
+    if payload.get("manifest_path"):
+        typer.echo(f"manifest_path={payload['manifest_path']}")
+    if payload.get("rows_path"):
+        typer.echo(f"rows_path={payload['rows_path']}")
+
+
+@company_valuation_app.command(
     "cluster-research-dataset",
     help="Run offline clustering and template-discovery analysis on a valuation research dataset.",
 )
@@ -609,6 +685,86 @@ def company_valuation_taxonomy_sync_command(
         typer.echo(f"markdown_path={payload['markdown_path']}")
         typer.echo(f"mismatch_report_path={payload['mismatch_report_path']}")
         typer.echo(f"unclassified_report_path={payload['unclassified_report_path']}")
+    if payload["notes"]:
+        typer.echo("notes=" + "; ".join(payload["notes"]))
+
+
+@company_valuation_app.command(
+    "template-refresh",
+    help="Refresh stored issuer template assignments from current issuer rows and config overrides.",
+)
+def company_valuation_template_refresh_command(
+    ticker: list[str] = typer.Option(
+        [],
+        "--ticker",
+        help="Optional ticker filter. Repeat the option for multiple issuers.",
+    ),
+    cik: list[str] = typer.Option(
+        [],
+        "--cik",
+        help="Optional CIK filter. Repeat the option for multiple issuers.",
+    ),
+    issuer_id: list[str] = typer.Option(
+        [],
+        "--issuer-id",
+        help="Optional issuer_id filter. Repeat the option for multiple issuers.",
+    ),
+    issuer_limit: int | None = typer.Option(
+        None,
+        "--issuer-limit",
+        min=1,
+        help="Optional issuer cap for the assignment refresh.",
+    ),
+    supported_only: bool = typer.Option(
+        False,
+        "--supported-only",
+        help="Restrict the refresh to the curated supported issuer universe.",
+    ),
+    sample_limit: int = typer.Option(
+        20,
+        "--sample-limit",
+        min=1,
+        help="Maximum sample issuer updates to include in the result payload.",
+    ),
+    config_root: str | None = typer.Option(
+        None,
+        "--config-root",
+        help="Override the config root passed into company valuation services.",
+    ),
+    db: str = typer.Option(
+        default_database_url(),
+        "--db",
+        help="Database URL override.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    default_db = default_database_url()
+    try:
+        result = refresh_company_valuation_template_assignments(
+            CompanyValuationTemplateAssignmentRefreshRequest(
+                tickers=tuple(ticker) or None,
+                ciks=tuple(cik) or None,
+                issuer_ids=tuple(issuer_id) or None,
+                issuer_limit=issuer_limit,
+                supported_only=supported_only,
+                sample_limit=sample_limit,
+                config_root=config_root,
+            ),
+            repository=None if db == default_db else CompanyValuationRepository(db),
+        )
+    except Exception as exc:
+        typer.secho(f"Command failed: {exc}", err=True, fg=typer.colors.RED)
+        raise typer.Exit(2) from None
+    payload = result.to_payload()
+    if json_output:
+        typer.echo(json.dumps(payload, sort_keys=True, default=str))
+        return
+    typer.echo(f"status={payload['status']}")
+    typer.echo(f"issuers_requested={payload['issuers_requested']}")
+    typer.echo(f"issuers_considered={payload['issuers_considered']}")
+    typer.echo(f"issuers_updated={payload['issuers_updated']}")
+    typer.echo(f"unchanged_count={payload['unchanged_count']}")
+    typer.echo(f"error_count={len(payload['errors'])}")
     if payload["notes"]:
         typer.echo("notes=" + "; ".join(payload["notes"]))
 

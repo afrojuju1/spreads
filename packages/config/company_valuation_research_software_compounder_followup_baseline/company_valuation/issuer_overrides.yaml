@@ -1,0 +1,25 @@
+overrides:
+  - issuer_cik: "0000789019"
+    template_id: software_compounder_core
+    reason: "Software compounder follow-up baseline assignment."
+  - issuer_cik: "0001341439"
+    template_id: software_compounder_core
+    reason: "Software compounder follow-up baseline assignment."
+  - issuer_cik: "0001590955"
+    template_id: software_compounder_core
+    reason: "Software compounder follow-up baseline assignment."
+  - issuer_cik: "0000796343"
+    template_id: software_compounder_core
+    reason: "Software compounder follow-up baseline assignment."
+  - issuer_cik: "0000896878"
+    template_id: software_compounder_core
+    reason: "Software compounder follow-up baseline assignment."
+  - issuer_cik: "0000813672"
+    template_id: software_compounder_core
+    reason: "Software compounder follow-up baseline assignment."
+  - issuer_cik: "0000883241"
+    template_id: software_compounder_core
+    reason: "Software compounder follow-up baseline assignment."
+  - issuer_cik: "0001393052"
+    template_id: software_compounder_core
+    reason: "Software compounder follow-up baseline assignment."

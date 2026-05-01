@@ -5,10 +5,13 @@ supported_template_ids:
   - software_asset_light
   - platform_hardware
   - retail_consumer
+  - retail_consumer_compounder
   - energy_asset_heavy
   - industrial_manufacturing
+  - industrial_compounder
   - diversified_industrial_core
   - aerospace_defense_prime
+  - aerospace_defense_supplier
 
 supported_issuers:
   - ticker: ADBE
@@ -47,13 +50,13 @@ supported_issuers:
     reason: Initial curated platform hardware valuation universe.
 
   - ticker: AZO
-    expected_template_id: retail_consumer
+    expected_template_id: retail_consumer_compounder
     reason: Initial curated retail valuation universe.
   - ticker: BBY
     expected_template_id: retail_consumer
     reason: Initial curated retail valuation universe.
   - ticker: COST
-    expected_template_id: retail_consumer
+    expected_template_id: retail_consumer_compounder
     reason: Initial curated retail valuation universe.
   - ticker: DG
     expected_template_id: retail_consumer
@@ -62,19 +65,16 @@ supported_issuers:
     expected_template_id: retail_consumer
     reason: Initial curated retail valuation universe.
   - ticker: HD
-    expected_template_id: retail_consumer
+    expected_template_id: retail_consumer_compounder
     reason: Initial curated retail valuation universe.
   - ticker: LOW
-    expected_template_id: retail_consumer
+    expected_template_id: retail_consumer_compounder
     reason: Initial curated retail valuation universe.
   - ticker: ORLY
-    expected_template_id: retail_consumer
+    expected_template_id: retail_consumer_compounder
     reason: Initial curated retail valuation universe.
 
   - ticker: AM
-    expected_template_id: energy_asset_heavy
-    reason: Initial curated energy valuation universe.
-  - ticker: ATO
     expected_template_id: energy_asset_heavy
     reason: Initial curated energy valuation universe.
   - ticker: AR
@@ -95,31 +95,34 @@ supported_issuers:
   - ticker: PBF
     expected_template_id: energy_asset_heavy
     reason: Initial curated energy valuation universe.
+  - ticker: EQT
+    expected_template_id: energy_asset_heavy
+    reason: Initial curated energy valuation universe.
 
   - ticker: CAT
-    expected_template_id: industrial_manufacturing
+    expected_template_id: industrial_compounder
     reason: Initial curated industrial manufacturing valuation universe.
   - ticker: CMI
-    expected_template_id: industrial_manufacturing
-    reason: Initial curated industrial manufacturing valuation universe.
-  - ticker: CNH
-    expected_template_id: industrial_manufacturing
+    expected_template_id: industrial_compounder
     reason: Initial curated industrial manufacturing valuation universe.
   - ticker: DE
-    expected_template_id: industrial_manufacturing
+    expected_template_id: industrial_compounder
     reason: Initial curated industrial manufacturing valuation universe.
   - ticker: EMR
-    expected_template_id: industrial_manufacturing
+    expected_template_id: industrial_compounder
     reason: Initial curated industrial manufacturing valuation universe.
   - ticker: ETN
-    expected_template_id: industrial_manufacturing
+    expected_template_id: industrial_compounder
     reason: Initial curated industrial manufacturing valuation universe.
   - ticker: GTES
     expected_template_id: industrial_manufacturing
     reason: Initial curated industrial manufacturing valuation universe.
   - ticker: IEX
-    expected_template_id: industrial_manufacturing
+    expected_template_id: industrial_compounder
     reason: Initial curated industrial manufacturing valuation universe.
+  - ticker: IR
+    expected_template_id: diversified_industrial_core
+    reason: Initial curated diversified industrial valuation universe.
 
   - ticker: AME
     expected_template_id: diversified_industrial_core
@@ -144,10 +147,10 @@ supported_issuers:
     expected_template_id: aerospace_defense_prime
     reason: Initial curated aerospace and defense valuation universe.
   - ticker: HEI
-    expected_template_id: aerospace_defense_prime
+    expected_template_id: aerospace_defense_supplier
     reason: Initial curated aerospace and defense valuation universe.
   - ticker: HWM
-    expected_template_id: aerospace_defense_prime
+    expected_template_id: aerospace_defense_supplier
     reason: Initial curated aerospace and defense valuation universe.
   - ticker: LHX
     expected_template_id: aerospace_defense_prime
@@ -162,7 +165,7 @@ supported_issuers:
     expected_template_id: aerospace_defense_prime
     reason: Initial curated aerospace and defense valuation universe.
   - ticker: TDG
-    expected_template_id: aerospace_defense_prime
+    expected_template_id: aerospace_defense_supplier
     reason: Initial curated aerospace and defense valuation universe.
   - ticker: TXT
     expected_template_id: aerospace_defense_prime

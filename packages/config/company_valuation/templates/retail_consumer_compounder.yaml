@@ -1,15 +1,11 @@
-template_id: retail_consumer
+template_id: retail_consumer_compounder
 template_version: v1
 status: active
 
 assignment_rules:
   sic_prefixes: []
   naics_prefixes: []
-  keyword_rules:
-    - retail
-    - consumer
-    - apparel
-    - restaurant
+  keyword_rules: []
 
 required_features:
   - revenue_ttm_growth
@@ -25,45 +21,45 @@ optional_features:
 
 quality_weight_map:
   growth_score: 14
-  profitability_score: 18
-  cash_flow_score: 16
-  capital_efficiency_score: 12
-  balance_sheet_score: 14
-  shareholder_score: 10
-  ownership_score: 6
+  profitability_score: 19
+  cash_flow_score: 17
+  capital_efficiency_score: 13
+  balance_sheet_score: 13
+  shareholder_score: 9
+  ownership_score: 5
   reporting_quality_score: 10
 
 ownership_weight_map:
-  insider_signal: 3
+  insider_signal: 2
   beneficial_owner_signal: 2
   institutional_holder_signal: 1
 
 valuation_model_mix:
-  dcf_weight: 0.55
-  historical_multiples_weight: 0.45
+  dcf_weight: 0.45
+  historical_multiples_weight: 0.55
   primary_multiple_metrics:
     - ev_ebit
     - ev_fcf
     - pe
   default_multiple_anchors:
-    ev_ebit: 15.5
-    ev_fcf: 20.5
-    pe: 21.0
+    ev_ebit: 21.0
+    ev_fcf: 27.0
+    pe: 27.0
   forecast_years: 5
-  initial_growth_floor: -0.08
-  initial_growth_cap: 0.14
-  terminal_growth_multiplier: 0.45
-  growth_adjustment_factor: 0.7
-  growth_adjustment_min: 0.7
-  growth_adjustment_max: 1.35
-  normalized_fcf_from_ebit_ratio: 0.7
-  terminal_growth_floor: 0.01
-  terminal_growth_cap: 0.025
-  discount_rate_spread_bps: 440
+  initial_growth_floor: -0.06
+  initial_growth_cap: 0.16
+  terminal_growth_multiplier: 0.5
+  growth_adjustment_factor: 0.78
+  growth_adjustment_min: 0.74
+  growth_adjustment_max: 1.45
+  normalized_fcf_from_ebit_ratio: 0.72
+  terminal_growth_floor: 0.012
+  terminal_growth_cap: 0.028
+  discount_rate_spread_bps: 380
   quality_premium_floor_score: 52
-  quality_premium_full_score: 78
-  quality_multiple_premium_max: 0.2
-  quality_discount_rate_reduction_bps_max: 60
+  quality_premium_full_score: 80
+  quality_multiple_premium_max: 0.34
+  quality_discount_rate_reduction_bps_max: 95
 
 confidence_rules:
   low_confidence_if:
@@ -72,8 +68,8 @@ confidence_rules:
     - missing_core_facts
   negative_fcf_penalty: 0.18
   high_leverage_threshold: 3.0
-  high_leverage_penalty: 0.11
-  declining_revenue_penalty: 0.1
+  high_leverage_penalty: 0.1
+  declining_revenue_penalty: 0.09
   unprofitable_penalty: 0.08
 
 risk_rules:

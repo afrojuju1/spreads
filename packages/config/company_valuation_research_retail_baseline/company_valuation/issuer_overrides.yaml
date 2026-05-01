@@ -1,0 +1,55 @@
+overrides:
+  - issuer_cik: "0000104169"
+    template_id: retail_consumer
+    reason: Retail calibration basket baseline assignment.
+  - issuer_cik: "0000909832"
+    template_id: retail_consumer
+    reason: Retail calibration basket baseline assignment.
+  - issuer_cik: "0000027419"
+    template_id: retail_consumer
+    reason: Retail calibration basket baseline assignment.
+  - issuer_cik: "0000056873"
+    template_id: retail_consumer
+    reason: Retail calibration basket baseline assignment.
+  - issuer_cik: "0000109198"
+    template_id: retail_consumer
+    reason: Retail calibration basket baseline assignment.
+  - issuer_cik: "0000745732"
+    template_id: retail_consumer
+    reason: Retail calibration basket baseline assignment.
+  - issuer_cik: "0000029534"
+    template_id: retail_consumer
+    reason: Retail calibration basket baseline assignment.
+  - issuer_cik: "0000935703"
+    template_id: retail_consumer
+    reason: Retail calibration basket baseline assignment.
+  - issuer_cik: "0000354950"
+    template_id: retail_consumer
+    reason: Retail calibration basket baseline assignment.
+  - issuer_cik: "0000060667"
+    template_id: retail_consumer
+    reason: Retail calibration basket baseline assignment.
+  - issuer_cik: "0000764478"
+    template_id: retail_consumer
+    reason: Retail calibration basket baseline assignment.
+  - issuer_cik: "0000898173"
+    template_id: retail_consumer
+    reason: Retail calibration basket baseline assignment.
+  - issuer_cik: "0000866787"
+    template_id: retail_consumer
+    reason: Retail calibration basket baseline assignment.
+  - issuer_cik: "0000726958"
+    template_id: retail_consumer
+    reason: Retail calibration basket baseline assignment.
+  - issuer_cik: "0000350698"
+    template_id: retail_consumer
+    reason: Retail calibration basket baseline assignment.
+  - issuer_cik: "0001170010"
+    template_id: retail_consumer
+    reason: Retail calibration basket baseline assignment.
+  - issuer_cik: "0001579298"
+    template_id: retail_consumer
+    reason: Retail calibration basket baseline assignment.
+  - issuer_cik: "0000719955"
+    template_id: retail_consumer
+    reason: Retail calibration basket baseline assignment.

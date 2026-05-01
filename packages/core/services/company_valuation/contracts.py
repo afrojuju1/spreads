@@ -46,6 +46,43 @@ class CompanyValuationTemplateOverride:
 
 
 @dataclass(frozen=True)
+class CompanyValuationBenchmarkPriorEntry:
+    ticker: str
+    analyst_count: int | None = None
+    consensus_rating: str | None = None
+    average_target: float | None = None
+    median_target: float | None = None
+    low_target: float | None = None
+    high_target: float | None = None
+    source_url: str | None = None
+    active: bool = True
+
+    def to_payload(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class CompanyValuationBenchmarkPriorSet:
+    prior_set_id: str
+    basket_id: str
+    template_id: str
+    as_of: str
+    source_name: str
+    target_field: str = "average_target"
+    supported_only_default: bool = True
+    minimum_coverage: int = 5
+    trigger_mean_abs_gap_delta: float = 0.2
+    trigger_sign_mismatch_count: int = 1
+    source_notes: str = ""
+    entries: tuple[CompanyValuationBenchmarkPriorEntry, ...] = ()
+
+    def to_payload(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["entries"] = [entry.to_payload() for entry in self.entries]
+        return payload
+
+
+@dataclass(frozen=True)
 class CompanyValuationRawClassification:
     sic_code: str | None = None
     sic_title: str | None = None

@@ -8,8 +8,8 @@ overrides:
     reason: "Industrial manufacturing override for motion-control and engineered components issuer."
     active: true
   - issuer_cik: "0000032604"
-    template_id: industrial_manufacturing
-    reason: "Industrial manufacturing override for diversified electrical and automation equipment issuer."
+    template_id: industrial_compounder
+    reason: "Industrial compounder override for diversified electrical and automation equipment issuer."
     active: true
   - issuer_cik: "0000040545"
     template_id: aerospace_defense_prime
@@ -40,16 +40,16 @@ overrides:
     reason: "Focused industrial holdout promotion for aerospace and defense cohort."
     active: true
   - issuer_cik: "0001260221"
-    template_id: aerospace_defense_prime
-    reason: "Focused industrial holdout promotion for aerospace and defense cohort."
+    template_id: aerospace_defense_supplier
+    reason: "Aerospace supplier override for aircraft-components issuer that screens too harshly under the broad prime template."
     active: true
   - issuer_cik: "0000046619"
-    template_id: aerospace_defense_prime
-    reason: "Focused industrial holdout promotion for aerospace and defense cohort."
+    template_id: aerospace_defense_supplier
+    reason: "Aerospace supplier override for components-led aerospace issuer that screens too harshly under the broad prime template."
     active: true
   - issuer_cik: "0000004281"
-    template_id: aerospace_defense_prime
-    reason: "Focused industrial holdout promotion for aerospace and defense cohort."
+    template_id: aerospace_defense_supplier
+    reason: "Aerospace supplier override for components-led aerospace issuer that screens too harshly under the broad prime template."
     active: true
   - issuer_cik: "0000217346"
     template_id: aerospace_defense_prime
@@ -163,10 +163,50 @@ overrides:
     reason: "Retail override for convenience-store operator misclassified by generic energy keyword rules."
     active: true
   - issuer_cik: "0000350698"
-    template_id: retail_consumer
-    reason: "Retail override for automotive retailer misclassified by generic energy keyword rules."
+    template_id: retail_consumer_compounder
+    reason: "Premium retail compounder override for automotive retailer that screens too harshly under the generic retail template."
+    active: true
+  - issuer_cik: "0000866787"
+    template_id: retail_consumer_compounder
+    reason: "Premium retail compounder override for automotive retailer that screens too harshly under the generic retail template."
     active: true
   - issuer_cik: "0001170010"
     template_id: retail_consumer
     reason: "Retail override for used-auto retailer misclassified by generic energy keyword rules."
+    active: true
+  - issuer_cik: "0000898173"
+    template_id: retail_consumer_compounder
+    reason: "Premium retail compounder override for specialty automotive retailer."
+    active: true
+  - issuer_cik: "0000909832"
+    template_id: retail_consumer_compounder
+    reason: "Premium retail compounder override for membership retail platform."
+    active: true
+  - issuer_cik: "0000354950"
+    template_id: retail_consumer_compounder
+    reason: "Premium retail compounder override for home-improvement leader."
+    active: true
+  - issuer_cik: "0000060667"
+    template_id: retail_consumer_compounder
+    reason: "Premium retail compounder override for home-improvement leader."
+    active: true
+  - issuer_cik: "0000018230"
+    template_id: industrial_compounder
+    reason: "Industrial compounder override for machinery leader with stronger quality than the base industrial cohort."
+    active: true
+  - issuer_cik: "0000026172"
+    template_id: industrial_compounder
+    reason: "Industrial compounder override for engines and power-systems leader with stronger quality than the base industrial cohort."
+    active: true
+  - issuer_cik: "0001551182"
+    template_id: industrial_compounder
+    reason: "Industrial compounder override for diversified power-management platform."
+    active: true
+  - issuer_cik: "0000315189"
+    template_id: industrial_compounder
+    reason: "Industrial compounder override for premium agricultural and construction equipment platform."
+    active: true
+  - issuer_cik: "0000832101"
+    template_id: industrial_compounder
+    reason: "Industrial compounder override for high-quality fluidics and process platform."
     active: true

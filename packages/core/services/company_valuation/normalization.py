@@ -13,7 +13,7 @@ from core.storage.serializers import parse_date, parse_datetime
 MONETARY_UNIT = "USD"
 SHARES_UNIT = "shares"
 
-SUPPORTED_PERIODIC_FORM_PREFIXES = ("10-K", "10-Q", "8-K")
+SUPPORTED_PERIODIC_FORM_PREFIXES = ("10-K", "10-Q", "20-F", "40-F", "8-K")
 
 CANONICAL_METRIC_CONCEPTS: dict[str, tuple[tuple[str, str], ...]] = {
     "revenue": (

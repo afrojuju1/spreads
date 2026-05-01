@@ -31,7 +31,7 @@ class SecFilingsIngestionRequest:
     ticker: str | None = None
     since: datetime | None = None
     until: datetime | None = None
-    forms: tuple[str, ...] = ("10-K", "10-Q", "8-K")
+    forms: tuple[str, ...] = ("10-K", "10-Q", "20-F", "40-F", "8-K")
     normalization_version: str = DEFAULT_COMPANY_VALUATION_NORMALIZATION_VERSION
     config_root: str | None = None
 

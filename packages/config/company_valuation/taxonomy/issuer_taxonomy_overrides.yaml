@@ -10,8 +10,8 @@ overrides:
     canonical_sector_id: taxonomy:sector:industrials
     canonical_industry_group_id: taxonomy:industry_group:capital_goods
     canonical_industry_id: taxonomy:industry:industrial_machinery_and_components
-    canonical_subindustry_id: taxonomy:subindustry:industrial_machinery_and_components
-    reason: Emerson should route to industrial manufacturing; SIC 3600 is too broad and is shared with aerospace-heavy GE.
+    canonical_subindustry_id: taxonomy:subindustry:industrial_compounder_platforms
+    reason: Emerson should route to the industrial compounder cohort; SIC 3600 is too broad and understates its process and automation quality profile.
 
   - issuer_cik: "0000814547"
     canonical_sector_id: taxonomy:sector:technology
@@ -38,5 +38,89 @@ overrides:
     canonical_sector_id: taxonomy:sector:industrials
     canonical_industry_group_id: taxonomy:industry_group:aerospace_and_defense
     canonical_industry_id: taxonomy:industry:aerospace_and_defense
-    canonical_subindustry_id: taxonomy:subindustry:aerospace_and_defense_primes_and_systems
-    reason: Howmet is curated with aerospace and defense even though its SEC SIC is a broad metals code.
+    canonical_subindustry_id: taxonomy:subindustry:aerospace_components_and_suppliers
+    reason: Howmet is an aerospace components supplier and screens too harshly in the broad prime bucket.
+
+  - issuer_cik: "0001260221"
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:aerospace_and_defense
+    canonical_industry_id: taxonomy:industry:aerospace_and_defense
+    canonical_subindustry_id: taxonomy:subindustry:aerospace_components_and_suppliers
+    reason: TransDigm is an aerospace components supplier rather than a broad prime or system integrator.
+
+  - issuer_cik: "0000046619"
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:aerospace_and_defense
+    canonical_industry_id: taxonomy:industry:aerospace_and_defense
+    canonical_subindustry_id: taxonomy:subindustry:aerospace_components_and_suppliers
+    reason: HEICO is a components-led aerospace supplier and screens too harshly in the broad prime bucket.
+
+  - issuer_cik: "0000018230"
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:capital_goods
+    canonical_industry_id: taxonomy:industry:industrial_machinery_and_components
+    canonical_subindustry_id: taxonomy:subindustry:industrial_compounder_platforms
+    reason: Caterpillar is curated as a quality industrial compounder rather than a generic cyclical machinery issuer.
+
+  - issuer_cik: "0000026172"
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:capital_goods
+    canonical_industry_id: taxonomy:industry:industrial_machinery_and_components
+    canonical_subindustry_id: taxonomy:subindustry:industrial_compounder_platforms
+    reason: Cummins is curated as a quality industrial compounder rather than a generic cyclical machinery issuer.
+
+  - issuer_cik: "0001551182"
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:capital_goods
+    canonical_industry_id: taxonomy:industry:industrial_machinery_and_components
+    canonical_subindustry_id: taxonomy:subindustry:industrial_compounder_platforms
+    reason: Eaton is a higher-quality industrial compounder platform than the generic machinery bucket implies.
+
+  - issuer_cik: "0000315189"
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:capital_goods
+    canonical_industry_id: taxonomy:industry:industrial_machinery_and_components
+    canonical_subindustry_id: taxonomy:subindustry:industrial_compounder_platforms
+    reason: Deere is curated as a premium industrial compounder platform instead of the generic machinery bucket.
+
+  - issuer_cik: "0000832101"
+    canonical_sector_id: taxonomy:sector:industrials
+    canonical_industry_group_id: taxonomy:industry_group:capital_goods
+    canonical_industry_id: taxonomy:industry:industrial_machinery_and_components
+    canonical_subindustry_id: taxonomy:subindustry:industrial_compounder_platforms
+    reason: IDEX is a high-quality industrial compounder platform rather than a generic machinery issuer.
+
+  - issuer_cik: "0000898173"
+    canonical_sector_id: taxonomy:sector:consumer
+    canonical_industry_group_id: taxonomy:industry_group:consumer_retailing
+    canonical_industry_id: taxonomy:industry:multi_format_and_specialty_retail
+    canonical_subindustry_id: taxonomy:subindustry:premium_specialty_retail_compounders
+    reason: O'Reilly is a premium specialty retail compounder rather than a generic retail bucket name.
+
+  - issuer_cik: "0000866787"
+    canonical_sector_id: taxonomy:sector:consumer
+    canonical_industry_group_id: taxonomy:industry_group:consumer_retailing
+    canonical_industry_id: taxonomy:industry:multi_format_and_specialty_retail
+    canonical_subindustry_id: taxonomy:subindustry:premium_specialty_retail_compounders
+    reason: AutoZone is a premium specialty retail compounder rather than a generic retail bucket name.
+
+  - issuer_cik: "0000909832"
+    canonical_sector_id: taxonomy:sector:consumer
+    canonical_industry_group_id: taxonomy:industry_group:consumer_retailing
+    canonical_industry_id: taxonomy:industry:multi_format_and_specialty_retail
+    canonical_subindustry_id: taxonomy:subindustry:premium_specialty_retail_compounders
+    reason: Costco is a premium retail compounder rather than a generic multi-format retailer for valuation routing.
+
+  - issuer_cik: "0000354950"
+    canonical_sector_id: taxonomy:sector:consumer
+    canonical_industry_group_id: taxonomy:industry_group:consumer_retailing
+    canonical_industry_id: taxonomy:industry:multi_format_and_specialty_retail
+    canonical_subindustry_id: taxonomy:subindustry:premium_specialty_retail_compounders
+    reason: Home Depot is a premium retail compounder rather than a generic multi-format retailer for valuation routing.
+
+  - issuer_cik: "0000060667"
+    canonical_sector_id: taxonomy:sector:consumer
+    canonical_industry_group_id: taxonomy:industry_group:consumer_retailing
+    canonical_industry_id: taxonomy:industry:multi_format_and_specialty_retail
+    canonical_subindustry_id: taxonomy:subindustry:premium_specialty_retail_compounders
+    reason: Lowe's is a premium retail compounder rather than a generic multi-format retailer for valuation routing.

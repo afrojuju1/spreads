@@ -1,0 +1,25 @@
+overrides:
+  - issuer_cik: "0000789019"
+    template_id: platform_suite_software
+    reason: "Software compounder follow-up candidate split assigns MSFT to the platform-suite branch."
+  - issuer_cik: "0001341439"
+    template_id: platform_suite_software
+    reason: "Software compounder follow-up candidate split assigns ORCL to the platform-suite branch."
+  - issuer_cik: "0001590955"
+    template_id: platform_suite_software
+    reason: "Software compounder follow-up candidate split assigns PAYC to the platform-suite branch."
+  - issuer_cik: "0000796343"
+    template_id: premium_application_compounder
+    reason: "Software compounder follow-up candidate split assigns ADBE to the premium-application branch."
+  - issuer_cik: "0000896878"
+    template_id: premium_application_compounder
+    reason: "Software compounder follow-up candidate split assigns INTU to the premium-application branch."
+  - issuer_cik: "0000813672"
+    template_id: premium_application_compounder
+    reason: "Software compounder follow-up candidate split assigns CDNS to the premium-application branch."
+  - issuer_cik: "0000883241"
+    template_id: premium_application_compounder
+    reason: "Software compounder follow-up candidate split assigns SNPS to the premium-application branch."
+  - issuer_cik: "0001393052"
+    template_id: premium_application_compounder
+    reason: "Software compounder follow-up candidate split assigns VEEV to the premium-application branch."

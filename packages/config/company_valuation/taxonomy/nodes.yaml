@@ -124,6 +124,12 @@ nodes:
     taxonomy_name: Industrial Machinery and Components
     parent_taxonomy_node_id: taxonomy:industry:industrial_machinery_and_components
 
+  - taxonomy_node_id: taxonomy:subindustry:industrial_compounder_platforms
+    taxonomy_level: subindustry
+    taxonomy_code: industrial_compounder_platforms
+    taxonomy_name: Industrial Compounder Platforms
+    parent_taxonomy_node_id: taxonomy:industry:industrial_machinery_and_components
+
   - taxonomy_node_id: taxonomy:industry:diversified_industrial_technology
     taxonomy_level: industry
     taxonomy_code: diversified_industrial_technology
@@ -154,6 +160,12 @@ nodes:
     taxonomy_name: Aerospace and Defense Primes and Systems
     parent_taxonomy_node_id: taxonomy:industry:aerospace_and_defense
 
+  - taxonomy_node_id: taxonomy:subindustry:aerospace_components_and_suppliers
+    taxonomy_level: subindustry
+    taxonomy_code: aerospace_components_and_suppliers
+    taxonomy_name: Aerospace Components and Suppliers
+    parent_taxonomy_node_id: taxonomy:industry:aerospace_and_defense
+
   - taxonomy_node_id: taxonomy:sector:consumer
     taxonomy_level: sector
     taxonomy_code: consumer
@@ -175,4 +187,10 @@ nodes:
     taxonomy_level: subindustry
     taxonomy_code: multi_format_and_specialty_retail
     taxonomy_name: Multi-Format and Specialty Retail
+    parent_taxonomy_node_id: taxonomy:industry:multi_format_and_specialty_retail
+
+  - taxonomy_node_id: taxonomy:subindustry:premium_specialty_retail_compounders
+    taxonomy_level: subindustry
+    taxonomy_code: premium_specialty_retail_compounders
+    taxonomy_name: Premium Specialty Retail Compounders
     parent_taxonomy_node_id: taxonomy:industry:multi_format_and_specialty_retail

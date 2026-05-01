@@ -1,0 +1,101 @@
+prior_sets:
+  - prior_set_id: stressed_operator_analyst_consensus
+    basket_id: stressed_operator
+    template_id: stressed_operator
+    as_of: "2026-04-30"
+    source_name: StockAnalysis analyst consensus snapshot
+    source_notes: Calibration-only analyst benchmark captured from StockAnalysis forecast pages on 2026-04-30; the pages cite Benzinga / Wall Street analyst data. Use this to bound template tuning, not as a live valuation input.
+    target_field: average_target
+    supported_only_default: true
+    minimum_coverage: 5
+    trigger_mean_abs_gap_delta: 0.2
+    trigger_sign_mismatch_count: 1
+    entries:
+      - ticker: OXY
+        analyst_count: 21
+        consensus_rating: Hold
+        average_target: 57.71
+        median_target: 60.0
+        low_target: 38.0
+        high_target: 72.0
+        source_url: https://stockanalysis.com/stocks/oxy/forecast/
+      - ticker: APA
+        analyst_count: 23
+        consensus_rating: Hold
+        average_target: 31.96
+        median_target: 32.0
+        low_target: 20.0
+        high_target: 45.0
+        source_url: https://stockanalysis.com/stocks/apa/forecast/
+      - ticker: EQT
+        analyst_count: 20
+        consensus_rating: Buy
+        average_target: 69.15
+        median_target: 70.0
+        low_target: 55.0
+        high_target: 80.0
+        source_url: https://stockanalysis.com/stocks/eqt/forecast/
+      - ticker: HAL
+        analyst_count: 18
+        consensus_rating: Buy
+        average_target: 38.61
+        median_target: 40.0
+        low_target: 26.0
+        high_target: 47.0
+        source_url: https://stockanalysis.com/stocks/hal/forecast/
+      - ticker: MUR
+        analyst_count: 14
+        consensus_rating: Hold
+        average_target: 34.36
+        median_target: 33.0
+        low_target: 22.0
+        high_target: 63.0
+        source_url: https://stockanalysis.com/stocks/mur/forecast/
+      - ticker: MTDR
+        analyst_count: 14
+        consensus_rating: Buy
+        average_target: 63.07
+        median_target: 65.0
+        low_target: 50.0
+        high_target: 77.0
+        source_url: https://stockanalysis.com/stocks/mtdr/forecast/
+      - ticker: PBF
+        analyst_count: 12
+        consensus_rating: Hold
+        average_target: 36.25
+        median_target: 36.0
+        low_target: 23.0
+        high_target: 50.0
+        source_url: https://stockanalysis.com/stocks/pbf/forecast/
+      - ticker: PTEN
+        analyst_count: 10
+        consensus_rating: Buy
+        average_target: 10.8
+        median_target: 11.0
+        low_target: 6.0
+        high_target: 14.0
+        source_url: https://stockanalysis.com/stocks/pten/forecast/
+      - ticker: NOV
+        analyst_count: 15
+        consensus_rating: Hold
+        average_target: 19.47
+        median_target: 20.0
+        low_target: 10.0
+        high_target: 24.0
+        source_url: https://stockanalysis.com/stocks/nov/forecast/
+      - ticker: HP
+        analyst_count: 12
+        consensus_rating: Hold
+        average_target: 34.17
+        median_target: 36.0
+        low_target: 17.0
+        high_target: 42.0
+        source_url: https://stockanalysis.com/stocks/hp/forecast/
+      - ticker: DK
+        analyst_count: 17
+        consensus_rating: Hold
+        average_target: 39.94
+        median_target: 40.0
+        low_target: 15.0
+        high_target: 59.0
+        source_url: https://stockanalysis.com/stocks/dk/forecast/

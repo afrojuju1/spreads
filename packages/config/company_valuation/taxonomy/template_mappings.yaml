@@ -43,6 +43,12 @@ mappings:
     template_id: industrial_manufacturing
     notes: Default template for industrial machinery and components.
 
+  - mapping_id: valuation_template_mapping:industrial_compounder_platforms
+    taxonomy_node_id: taxonomy:subindustry:industrial_compounder_platforms
+    taxonomy_level: subindustry
+    template_id: industrial_compounder
+    notes: Default template for curated industrial compounder platforms.
+
   - mapping_id: valuation_template_mapping:diversified_instrumentation_and_specialty_equipment
     taxonomy_node_id: taxonomy:subindustry:diversified_instrumentation_and_specialty_equipment
     taxonomy_level: subindustry
@@ -55,8 +61,20 @@ mappings:
     template_id: aerospace_defense_prime
     notes: Default template for aerospace and defense primes and systems.
 
+  - mapping_id: valuation_template_mapping:aerospace_components_and_suppliers
+    taxonomy_node_id: taxonomy:subindustry:aerospace_components_and_suppliers
+    taxonomy_level: subindustry
+    template_id: aerospace_defense_supplier
+    notes: Default template for aerospace suppliers and components issuers.
+
   - mapping_id: valuation_template_mapping:multi_format_and_specialty_retail
     taxonomy_node_id: taxonomy:subindustry:multi_format_and_specialty_retail
     taxonomy_level: subindustry
     template_id: retail_consumer
     notes: Default template for multi-format and specialty retail issuers.
+
+  - mapping_id: valuation_template_mapping:premium_specialty_retail_compounders
+    taxonomy_node_id: taxonomy:subindustry:premium_specialty_retail_compounders
+    taxonomy_level: subindustry
+    template_id: retail_consumer_compounder
+    notes: Default template for premium retail compounders inside the curated retail universe.

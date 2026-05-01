@@ -1,0 +1,55 @@
+overrides:
+  - issuer_cik: "0000789019"
+    template_id: software_compounder_core
+    reason: "Software candidate split assigns MSFT to the software compounder core branch."
+  - issuer_cik: "0001341439"
+    template_id: software_compounder_core
+    reason: "Software candidate split assigns ORCL to the software compounder core branch."
+  - issuer_cik: "0001108524"
+    template_id: growth_transition_software
+    reason: "Software candidate split assigns CRM to the high-growth transition branch."
+  - issuer_cik: "0000796343"
+    template_id: software_compounder_core
+    reason: "Software candidate split assigns ADBE to the software compounder core branch."
+  - issuer_cik: "0000896878"
+    template_id: software_compounder_core
+    reason: "Software candidate split assigns INTU to the software compounder core branch."
+  - issuer_cik: "0001373715"
+    template_id: growth_transition_software
+    reason: "Software candidate split assigns NOW to the high-growth transition branch."
+  - issuer_cik: "0000769397"
+    template_id: software_compounder_core
+    reason: "Software candidate split assigns ADSK to the software compounder core branch."
+  - issuer_cik: "0000883241"
+    template_id: software_compounder_core
+    reason: "Software candidate split assigns SNPS to the software compounder core branch."
+  - issuer_cik: "0000813672"
+    template_id: software_compounder_core
+    reason: "Software candidate split assigns CDNS to the software compounder core branch."
+  - issuer_cik: "0001327811"
+    template_id: growth_transition_software
+    reason: "Software candidate split assigns WDAY to the high-growth transition branch."
+  - issuer_cik: "0001327567"
+    template_id: growth_transition_software
+    reason: "Software candidate split assigns PANW to the high-growth transition branch."
+  - issuer_cik: "0001262039"
+    template_id: software_compounder_core
+    reason: "Software candidate split assigns FTNT to the software compounder core branch."
+  - issuer_cik: "0001404655"
+    template_id: growth_transition_software
+    reason: "Software candidate split assigns HUBS to the high-growth transition branch."
+  - issuer_cik: "0001393052"
+    template_id: software_compounder_core
+    reason: "Software candidate split assigns VEEV to the software compounder core branch."
+  - issuer_cik: "0000860731"
+    template_id: software_compounder_core
+    reason: "Software candidate split assigns TYL to the software compounder core branch."
+  - issuer_cik: "0001590955"
+    template_id: software_compounder_core
+    reason: "Software candidate split assigns PAYC to the software compounder core branch."
+  - issuer_cik: "0001402436"
+    template_id: software_compounder_core
+    reason: "Software candidate split assigns SSNC to the software compounder core branch."
+  - issuer_cik: "0000814547"
+    template_id: software_compounder_core
+    reason: "Software candidate split assigns FICO to the software compounder core branch."

@@ -1,17 +1,11 @@
-template_id: industrial_manufacturing
+template_id: industrial_compounder
 template_version: v1
 status: active
 
 assignment_rules:
-  sic_prefixes:
-    - "34"
-    - "35"
+  sic_prefixes: []
   naics_prefixes: []
-  keyword_rules:
-    - industrial
-    - manufacturing
-    - machinery
-    - aerospace
+  keyword_rules: []
 
 required_features:
   - revenue_ttm_growth
@@ -27,45 +21,45 @@ optional_features:
 
 quality_weight_map:
   growth_score: 12
-  profitability_score: 16
-  cash_flow_score: 16
+  profitability_score: 17
+  cash_flow_score: 17
   capital_efficiency_score: 18
   balance_sheet_score: 16
-  shareholder_score: 8
-  ownership_score: 6
+  shareholder_score: 7
+  ownership_score: 5
   reporting_quality_score: 8
 
 ownership_weight_map:
-  insider_signal: 3
+  insider_signal: 2
   beneficial_owner_signal: 2
   institutional_holder_signal: 1
 
 valuation_model_mix:
-  dcf_weight: 0.55
-  historical_multiples_weight: 0.45
+  dcf_weight: 0.45
+  historical_multiples_weight: 0.55
   primary_multiple_metrics:
     - ev_ebit
     - ev_fcf
     - pb
   default_multiple_anchors:
-    ev_ebit: 16.0
-    ev_fcf: 20.0
-    pb: 2.6
+    ev_ebit: 20.5
+    ev_fcf: 25.5
+    pb: 3.5
   forecast_years: 5
   initial_growth_floor: -0.04
-  initial_growth_cap: 0.14
-  terminal_growth_multiplier: 0.45
-  growth_adjustment_factor: 0.6
-  growth_adjustment_min: 0.72
-  growth_adjustment_max: 1.4
-  normalized_fcf_from_ebit_ratio: 0.75
+  initial_growth_cap: 0.15
+  terminal_growth_multiplier: 0.5
+  growth_adjustment_factor: 0.68
+  growth_adjustment_min: 0.76
+  growth_adjustment_max: 1.5
+  normalized_fcf_from_ebit_ratio: 0.77
   terminal_growth_floor: 0.012
-  terminal_growth_cap: 0.028
-  discount_rate_spread_bps: 410
-  quality_premium_floor_score: 52
+  terminal_growth_cap: 0.03
+  discount_rate_spread_bps: 360
+  quality_premium_floor_score: 50
   quality_premium_full_score: 80
-  quality_multiple_premium_max: 0.22
-  quality_discount_rate_reduction_bps_max: 70
+  quality_multiple_premium_max: 0.34
+  quality_discount_rate_reduction_bps_max: 100
 
 confidence_rules:
   low_confidence_if:
@@ -73,9 +67,9 @@ confidence_rules:
     - repeated_restatements
     - missing_core_facts
   negative_fcf_penalty: 0.18
-  high_leverage_threshold: 3.2
-  high_leverage_penalty: 0.11
-  declining_revenue_penalty: 0.09
+  high_leverage_threshold: 3.0
+  high_leverage_penalty: 0.1
+  declining_revenue_penalty: 0.08
   unprofitable_penalty: 0.08
 
 risk_rules:
