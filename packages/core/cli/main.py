@@ -16,6 +16,7 @@ from core.cli.ops import (
     trading_command,
     uoa_app,
 )
+from core.cli.research import research_app
 from core.cli.runtime import (
     automations_command,
     opportunities_command,
@@ -28,7 +29,6 @@ from core.services.deployments import (
     run_target_spreads_command,
 )
 from core.jobs.scheduler import main as scheduler_main
-from core.services.alpaca_research import main as research_alpaca_main
 from core.services.discovery_runs.runtime import main as discover_main
 from core.services.market_recorder import main as market_recorder_main
 from core.services.scanners.service import main as scan_main
@@ -168,21 +168,6 @@ def scan_command(ctx: typer.Context) -> None:
 )
 def discover_command(ctx: typer.Context) -> None:
     _run_passthrough(ctx=ctx, entrypoint=discover_main)
-
-
-research_app = typer.Typer(
-    add_completion=False,
-    help="Run research-oriented diagnostics and reports.",
-)
-
-
-@research_app.command(
-    "alpaca",
-    context_settings=PASSTHROUGH_CONTEXT_SETTINGS,
-    help="Inspect Alpaca capability coverage for spreads.",
-)
-def research_alpaca_command(ctx: typer.Context) -> None:
-    _run_passthrough(ctx=ctx, entrypoint=research_alpaca_main)
 
 
 app.add_typer(research_app, name="research")
