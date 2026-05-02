@@ -58,6 +58,7 @@ When documenting the current system, use these owners:
   - `packages/core/services/discovery_run_health/`
   - `packages/core/services/pipelines.py`
 - execution admission and portfolio state:
+  - `packages/core/services/execution_intents/`
   - `packages/core/services/account_capacity.py`
   - `packages/core/services/execution/`
   - `packages/core/services/execution_portfolio.py`

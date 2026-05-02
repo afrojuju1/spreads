@@ -69,6 +69,10 @@ class AutomationConfig:
         return self.execution.mode
 
     @property
+    def execution_runtime(self) -> str:
+        return self.execution.runtime
+
+    @property
     def is_entry(self) -> bool:
         return self.kind == "entry"
 
@@ -85,6 +89,12 @@ class ResolvedAutomation:
 
 
 def _automation_payload(automation: AutomationConfig) -> dict[str, Any]:
+    execution_payload = {
+        "approval_mode": automation.execution.approval_mode,
+        "mode": automation.execution.mode,
+    }
+    if automation.execution.runtime != "alpaca_direct":
+        execution_payload["runtime"] = automation.execution.runtime
     return {
         "automation_id": automation.automation_id,
         "strategy_config": automation.strategy_config_ref,
@@ -99,10 +109,7 @@ def _automation_payload(automation: AutomationConfig) -> dict[str, Any]:
         },
         "universe": automation.universe,
         "triggers": automation.triggers.as_dict(),
-        "execution": {
-            "approval_mode": automation.execution.approval_mode,
-            "mode": automation.execution.mode,
-        },
+        "execution": execution_payload,
         "enabled": automation.enabled,
     }
 

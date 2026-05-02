@@ -19,7 +19,7 @@
   - selection is account-agnostic opportunity truth
   - execution admission is a separate execution/risk concern
   - alerts are downstream job-backed projections, not source-of-truth state
-- Treat `packages/core/services/account_state.py` as a broker/account read model. Put buying-power estimation, execution admission, and deterministic broker-reject handling under `account_capacity.py`, `risk_manager.py`, and `services/execution/`, not back into the account snapshot layer.
+- Treat `packages/core/services/account_state.py` as a broker/account read model. Put buying-power estimation, execution intent handoff, execution admission, and deterministic broker-reject handling under `account_capacity.py`, `risk_manager.py`, `services/execution_intents/`, and `services/execution/`, not back into the account snapshot layer.
 - If the current architecture is weak, call it out explicitly and propose the better approach before proceeding. Weigh:
   - current callers
   - migration cost

@@ -26,7 +26,7 @@
 - runtime and operator read models: `services/live_runtime.py`, `services/discovery_run_health/`, `services/pipelines.py`, and `services/ops/`
 - pipeline/session runtime list/detail: `services/pipelines.py`
 - actual account and trading health: `services/account_state.py`
-- execution, portfolio, and reconciliation: `services/execution/`, `services/execution_portfolio.py`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, and `services/exit_manager.py`
+- execution intents, portfolio, and reconciliation: `services/execution_intents/`, `services/execution/`, `services/execution_portfolio.py`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, and `services/exit_manager.py`
 - historical evaluation and policy research: `backtest/`
 - alert delivery state: `storage/alert_repository.py`
 - job execution and scheduler behavior: `jobs/worker.py`, `jobs/registry.py`, and `storage/job_repository.py`

@@ -543,16 +543,21 @@ class AutomationTriggers:
 class AutomationExecution:
     approval_mode: str
     mode: str
+    runtime: str = "alpaca_direct"
 
     def __post_init__(self) -> None:
         approval_mode = self.approval_mode.lower()
         mode = self.mode.lower()
+        runtime = self.runtime.lower()
         if approval_mode not in {"auto", "manual"}:
             raise ValueError("execution.approval_mode must be auto or manual")
         if mode not in {"paper", "live", "shadow"}:
             raise ValueError("execution.mode must be paper, live, or shadow")
+        if runtime not in {"alpaca_direct", "nautilus"}:
+            raise ValueError("execution.runtime must be alpaca_direct or nautilus")
         object.__setattr__(self, "approval_mode", approval_mode)
         object.__setattr__(self, "mode", mode)
+        object.__setattr__(self, "runtime", runtime)
 
     @classmethod
     def from_payload(
@@ -566,6 +571,7 @@ class AutomationExecution:
                 field_name="execution.approval_mode",
             ),
             mode=_required_text(mapping.get("mode"), field_name="execution.mode"),
+            runtime=str(mapping.get("runtime") or "alpaca_direct"),
         )
 
 

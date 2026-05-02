@@ -252,6 +252,7 @@ def submit_execution_intent(
                 "strategy_config_id": policy_ref.get("strategy_config_id"),
                 "strategy_id": policy_ref.get("strategy_id"),
                 "config_hash": source_intent.get("config_hash"),
+                "execution_runtime": payload.get("execution_runtime"),
             }
             if execution_policy is not None:
                 request_metadata["execution_policy"] = execution_policy
@@ -280,6 +281,7 @@ def submit_execution_intent(
                 "strategy_config_id": policy_ref.get("strategy_config_id"),
                 "strategy_id": policy_ref.get("strategy_id"),
                 "config_hash": source_intent.get("config_hash"),
+                "execution_runtime": payload.get("execution_runtime"),
             }
             if isinstance(payload.get("source"), dict):
                 close_request_metadata["source"] = dict(payload["source"])

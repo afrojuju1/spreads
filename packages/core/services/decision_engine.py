@@ -319,6 +319,7 @@ def run_entry_automation_decision(
                 "underlying_symbol": opportunity.get("underlying_symbol"),
                 "execution_mode": runtime.automation.automation.execution_mode,
                 "approval_mode": runtime.automation.automation.approval_mode,
+                "execution_runtime": runtime.automation.automation.execution_runtime,
                 "execution_admission": selected_execution_admission,
                 "exit_policy": build_exit_policy_from_recipe_refs(
                     tuple(runtime.automation.strategy_config.management_recipe_refs)
@@ -327,6 +328,7 @@ def run_entry_automation_decision(
             created_event_payload={
                 "opportunity_id": opportunity_id,
                 "slot_key": slot_key,
+                "execution_runtime": runtime.automation.automation.execution_runtime,
             },
         )
         selected_decision = decision

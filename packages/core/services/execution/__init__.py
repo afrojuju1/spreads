@@ -100,6 +100,12 @@ from .policy import (
     _validate_open_timing_window,
     normalize_execution_policy,
 )
+from .runtimes import (
+    NAUTILUS_RUNTIME,
+    build_nautilus_submit_order_list_handoff,
+    execution_runtime_from_request,
+    normalize_execution_runtime,
+)
 from .shared import (
     BROKER_NAME,
     DEFAULT_ENTRY_PRICING_MODE,
@@ -1589,6 +1595,11 @@ def submit_live_session_execution(
                 "risk_policy": requested_risk_policy,
             }
         )
+        execution_runtime = normalize_execution_runtime(
+            None
+            if not isinstance(request_metadata, Mapping)
+            else request_metadata.get("execution_runtime")
+        )
         resolved_requested_quantity, position_size_policy = (
             _resolve_open_submission_quantity(
                 execution_store=execution_store,
@@ -1794,6 +1805,7 @@ def submit_live_session_execution(
                     }
                 ),
                 "trade_intent": OPEN_TRADE_INTENT,
+                "execution_runtime": execution_runtime,
                 "execution_policy": resolved_execution_policy,
                 "risk_policy": resolved_risk_policy,
                 "exit_policy": resolved_exit_policy,
@@ -2253,6 +2265,7 @@ def run_execution_submit(
         }
 
     request = dict(payload.get("request") or {})
+    execution_runtime = execution_runtime_from_request(request)
     order_request = request.get("order")
     if not isinstance(order_request, dict) or not order_request:
         execution_store.update_attempt(
@@ -2415,6 +2428,49 @@ def run_execution_submit(
                 "reason": str(account_capacity["reason"]),
                 "execution_attempt_id": execution_attempt_id,
                 "message": str(account_capacity["message"]),
+                "attempt": failed_attempt,
+            }
+        if execution_runtime == NAUTILUS_RUNTIME:
+            runtime_handoff = build_nautilus_submit_order_list_handoff(
+                attempt=payload,
+                order_request=order_request,
+                live_quote=live_deployment_quality.get("live_quote")
+                if isinstance(live_deployment_quality.get("live_quote"), Mapping)
+                else None,
+            )
+            message = (
+                "Nautilus execution runtime selected, but the spreads-to-Nautilus "
+                "dispatch bridge is not configured."
+            )
+            execution_store.update_attempt(
+                execution_attempt_id=execution_attempt_id,
+                status="failed",
+                completed_at=_utc_now(),
+                error_text=message,
+                position_id=_as_text(payload.get("position_id")),
+            )
+            failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
+            _publish_execution_attempt_event(
+                failed_attempt,
+                message=f"Execution failed before submission: {message}",
+            )
+            _sync_linked_execution_intent(
+                execution_store=execution_store,
+                attempt=failed_attempt,
+                state="failed",
+                event_type="failed",
+                message=f"Execution failed before submission: {message}",
+                payload_updates={
+                    "execution_runtime": NAUTILUS_RUNTIME,
+                    "runtime_handoff": runtime_handoff,
+                },
+            )
+            return {
+                "status": "blocked",
+                "reason": "nautilus_dispatch_bridge_unconfigured",
+                "execution_attempt_id": execution_attempt_id,
+                "message": message,
+                "runtime_handoff": runtime_handoff,
                 "attempt": failed_attempt,
             }
     requested_at = _as_text(payload.get("requested_at")) or _utc_now()
