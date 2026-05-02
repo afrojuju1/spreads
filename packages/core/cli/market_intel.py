@@ -7,14 +7,14 @@ from typing import cast
 import typer
 
 from core.services.alpaca_research import main as research_alpaca_main
-from core.services.research_thesis import (
-    ResearchRequest,
-    create_research_thesis_run,
+from core.services.market_intel import (
+    MarketIntelRequest,
+    create_market_intel_run,
     resolve_output_root,
     run_summary_payload,
 )
-from core.services.research_thesis.config import DEFAULT_OUTPUT_ROOT
-from core.services.research_thesis.contracts import ResearchDepth, SourceType, parse_as_of
+from core.services.market_intel.config import DEFAULT_OUTPUT_ROOT
+from core.services.market_intel.contracts import MarketIntelDepth, SourceType, parse_as_of
 
 
 PASSTHROUGH_CONTEXT_SETTINGS = {
@@ -23,9 +23,9 @@ PASSTHROUGH_CONTEXT_SETTINGS = {
     "help_option_names": [],
 }
 
-research_app = typer.Typer(
+market_intel_app = typer.Typer(
     add_completion=False,
-    help="Run research-oriented diagnostics and reports.",
+    help="Run market intelligence diagnostics and thesis workflows.",
 )
 
 
@@ -47,17 +47,17 @@ def _run_passthrough(
     raise typer.Exit(code)
 
 
-@research_app.command(
+@market_intel_app.command(
     "alpaca",
     context_settings=PASSTHROUGH_CONTEXT_SETTINGS,
     help="Inspect Alpaca capability coverage for spreads.",
 )
-def research_alpaca_command(ctx: typer.Context) -> None:
+def market_intel_alpaca_command(ctx: typer.Context) -> None:
     _run_passthrough(ctx=ctx, entrypoint=research_alpaca_main)
 
 
-@research_app.command("thesis", help="Create a file-backed research thesis run.")
-def research_thesis_command(
+@market_intel_app.command("thesis", help="Create a file-backed market intel run.")
+def market_intel_thesis_command(
     ticker: str = typer.Option(..., "--ticker", help="Ticker to research."),
     as_of: str | None = typer.Option(
         None,
@@ -67,14 +67,14 @@ def research_thesis_command(
     output_root: str = typer.Option(
         str(DEFAULT_OUTPUT_ROOT),
         "--output-root",
-        help="Output root for research thesis artifacts.",
+        help="Output root for market intel artifacts.",
     ),
     sources: str = typer.Option(
-        "sec,ir,market,news,calendar",
+        "sec,market",
         "--sources",
         help="Comma-separated source adapter names to enable.",
     ),
-    depth: ResearchDepth = typer.Option(
+    depth: MarketIntelDepth = typer.Option(
         "standard",
         "--depth",
         help="Research depth: quick, standard, or deep.",
@@ -92,7 +92,7 @@ def research_thesis_command(
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     try:
-        request = ResearchRequest(
+        request = MarketIntelRequest(
             ticker=ticker,
             as_of=parse_as_of(as_of),
             output_root=resolve_output_root(output_root),
@@ -101,7 +101,7 @@ def research_thesis_command(
             no_llm=no_llm,
             refresh=refresh,
         )
-        run = create_research_thesis_run(request)
+        run = create_market_intel_run(request)
     except Exception as exc:
         typer.secho(f"Command failed: {exc}", err=True, fg=typer.colors.RED)
         raise typer.Exit(2) from None
@@ -134,7 +134,7 @@ def _parse_sources(value: str) -> tuple[SourceType, ...]:
         if source.strip()
     )
     if not parsed:
-        return ("sec", "ir", "market", "news", "calendar")
+        return ("sec", "market")
     unsupported = sorted(set(parsed) - allowed)
     if unsupported:
         raise ValueError(f"Unsupported source adapter(s): {', '.join(unsupported)}")

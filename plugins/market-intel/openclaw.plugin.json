@@ -1,0 +1,38 @@
+{
+  "id": "market-intel",
+  "name": "Market Intel",
+  "description": "OpenClaw plugin shell for evidence-backed market intelligence workflows.",
+  "version": "0.1.0",
+  "skills": [
+    "skills"
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "spreadsCommand": {
+        "type": "string",
+        "default": "uv run spreads market-intel"
+      },
+      "outputRoot": {
+        "type": "string",
+        "default": "outputs/market_intel"
+      },
+      "alpacaMcpServer": {
+        "type": "string",
+        "default": "alpaca"
+      }
+    }
+  },
+  "uiHints": {
+    "spreadsCommand": {
+      "label": "Spreads command"
+    },
+    "outputRoot": {
+      "label": "Output root"
+    },
+    "alpacaMcpServer": {
+      "label": "Alpaca MCP server"
+    }
+  }
+}

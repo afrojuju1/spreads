@@ -4,35 +4,35 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from core.services.research_thesis.artifact_store import ResearchArtifactStore
-from core.services.research_thesis.config import ResearchModelConfig
-from core.services.research_thesis.contracts import (
-    ResearchRequest,
-    ResearchRun,
+from core.services.market_intel.artifact_store import MarketIntelArtifactStore
+from core.services.market_intel.config import MarketIntelModelConfig
+from core.services.market_intel.contracts import (
+    MarketIntelRequest,
+    MarketIntelRun,
     ThesisArtifact,
     utc_now,
 )
-from core.services.research_thesis.ids import (
+from core.services.market_intel.ids import (
     build_config_hash,
-    build_research_run_id,
+    build_market_intel_run_id,
     normalize_ticker,
 )
 
 
-def create_research_thesis_run(
-    request: ResearchRequest,
+def create_market_intel_run(
+    request: MarketIntelRequest,
     *,
-    model_config: ResearchModelConfig | None = None,
-) -> ResearchRun:
-    model_config = model_config or ResearchModelConfig.from_env()
+    model_config: MarketIntelModelConfig | None = None,
+) -> MarketIntelRun:
+    model_config = model_config or MarketIntelModelConfig.from_env()
     ticker = normalize_ticker(request.ticker)
     started_at = utc_now()
-    run_id = build_research_run_id(
+    run_id = build_market_intel_run_id(
         ticker=ticker,
         as_of=request.as_of,
         started_at=started_at,
     )
-    store = ResearchArtifactStore(request.output_root)
+    store = MarketIntelArtifactStore(request.output_root)
     run_dir = store.run_dir(
         ticker=ticker,
         as_of=request.as_of.isoformat(),
@@ -44,7 +44,7 @@ def create_research_thesis_run(
             "models": model_config.to_payload(),
         }
     )
-    run = ResearchRun(
+    run = MarketIntelRun(
         run_id=run_id,
         ticker=ticker,
         as_of=request.as_of,
@@ -94,10 +94,10 @@ def create_research_thesis_run(
 
 def _write_initial_bundle(
     *,
-    store: ResearchArtifactStore,
-    run: ResearchRun,
-    request: ResearchRequest,
-    model_config: ResearchModelConfig,
+    store: MarketIntelArtifactStore,
+    run: MarketIntelRun,
+    request: MarketIntelRequest,
+    model_config: MarketIntelModelConfig,
 ) -> None:
     store.write_json(
         run.run_dir / "sources.json",
@@ -137,9 +137,9 @@ def _write_initial_bundle(
     )
 
 
-def _render_initial_thesis(run: ResearchRun) -> str:
+def _render_initial_thesis(run: MarketIntelRun) -> str:
     return (
-        f"# Research Thesis: {run.ticker}\n\n"
+        f"# Market Intel: {run.ticker}\n\n"
         f"- run_id: `{run.run_id}`\n"
         f"- as_of: `{run.as_of.isoformat()}`\n"
         f"- status: `{run.status}`\n\n"
@@ -149,7 +149,7 @@ def _render_initial_thesis(run: ResearchRun) -> str:
     )
 
 
-def run_summary_payload(run: ResearchRun) -> dict[str, Any]:
+def run_summary_payload(run: MarketIntelRun) -> dict[str, Any]:
     return {
         "run_id": run.run_id,
         "ticker": run.ticker,

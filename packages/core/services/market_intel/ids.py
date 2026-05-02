@@ -20,19 +20,19 @@ def timestamp_token(value: datetime | None = None) -> str:
     return normalized.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
-def build_research_run_id(
+def build_market_intel_run_id(
     *,
     ticker: str,
     as_of: date,
     started_at: datetime,
 ) -> str:
-    return f"research:{normalize_ticker(ticker)}:{as_of.isoformat()}:{timestamp_token(started_at)}:{uuid4().hex[:8]}"
+    return f"market_intel:{normalize_ticker(ticker)}:{as_of.isoformat()}:{timestamp_token(started_at)}:{uuid4().hex[:8]}"
 
 
 def build_artifact_id(*parts: str) -> str:
     joined = "|".join(str(part).strip().lower() for part in parts if str(part).strip())
     digest = hashlib.sha1(joined.encode("utf-8")).hexdigest()[:16]
-    return f"research_artifact:{digest}"
+    return f"market_intel_artifact:{digest}"
 
 
 def build_config_hash(payload: dict[str, object]) -> str:

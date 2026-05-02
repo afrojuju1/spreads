@@ -16,7 +16,7 @@ from core.cli.ops import (
     trading_command,
     uoa_app,
 )
-from core.cli.research import research_app
+from core.cli.market_intel import market_intel_app
 from core.cli.runtime import (
     automations_command,
     opportunities_command,
@@ -55,6 +55,7 @@ TARGETABLE_ROOT_COMMANDS = {
     "audit",
     "jobs",
     "uoa",
+    "market-intel",
 }
 
 
@@ -170,7 +171,13 @@ def discover_command(ctx: typer.Context) -> None:
     _run_passthrough(ctx=ctx, entrypoint=discover_main)
 
 
-app.add_typer(research_app, name="research")
+app.add_typer(market_intel_app, name="market-intel")
+app.add_typer(
+    market_intel_app,
+    name="research",
+    hidden=True,
+    deprecated=True,
+)
 
 
 @app.command(

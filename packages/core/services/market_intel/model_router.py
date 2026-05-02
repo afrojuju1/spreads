@@ -8,13 +8,13 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
-from core.services.research_thesis.artifact_store import ResearchArtifactStore
-from core.services.research_thesis.config import ResearchModelConfig
-from core.services.research_thesis.contracts import (
+from core.services.market_intel.artifact_store import MarketIntelArtifactStore
+from core.services.market_intel.config import MarketIntelModelConfig
+from core.services.market_intel.contracts import (
     ModelCallRecord,
     ModelProfile,
-    ResearchDepth,
-    ResearchRun,
+    MarketIntelDepth,
+    MarketIntelRun,
     utc_now,
 )
 
@@ -28,7 +28,7 @@ class ModelResponse:
 
 
 class OllamaModelClient:
-    def __init__(self, config: ResearchModelConfig) -> None:
+    def __init__(self, config: MarketIntelModelConfig) -> None:
         self.config = config
         self.base_url = config.ollama_base_url.rstrip("/")
 
@@ -81,15 +81,15 @@ class OllamaModelClient:
         )
 
 
-class ResearchModelRouter:
+class MarketIntelModelRouter:
     def __init__(
         self,
         *,
-        config: ResearchModelConfig | None = None,
-        artifact_store: ResearchArtifactStore | None = None,
-        run: ResearchRun | None = None,
+        config: MarketIntelModelConfig | None = None,
+        artifact_store: MarketIntelArtifactStore | None = None,
+        run: MarketIntelRun | None = None,
     ) -> None:
-        self.config = config or ResearchModelConfig.from_env()
+        self.config = config or MarketIntelModelConfig.from_env()
         self.client = OllamaModelClient(self.config)
         self.artifact_store = artifact_store
         self.run = run
@@ -98,7 +98,7 @@ class ResearchModelRouter:
         self,
         *,
         agent_id: str,
-        depth: ResearchDepth,
+        depth: MarketIntelDepth,
         input_size: int = 0,
         latency_budget: float | None = None,
     ) -> ModelProfile:
@@ -116,7 +116,7 @@ class ResearchModelRouter:
         *,
         agent_id: str,
         messages: list[dict[str, str]],
-        depth: ResearchDepth = "standard",
+        depth: MarketIntelDepth = "standard",
         profile: ModelProfile | None = None,
         options: dict[str, Any] | None = None,
     ) -> ModelResponse:
@@ -139,7 +139,7 @@ class ResearchModelRouter:
         agent_id: str,
         schema: dict[str, Any],
         messages: list[dict[str, str]],
-        depth: ResearchDepth = "standard",
+        depth: MarketIntelDepth = "standard",
         profile: ModelProfile | None = None,
         options: dict[str, Any] | None = None,
     ) -> ModelResponse:

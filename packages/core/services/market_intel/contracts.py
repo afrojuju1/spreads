@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any, Literal, TypeAlias
 
 
-ResearchDepth: TypeAlias = Literal["quick", "standard", "deep"]
-ResearchRunStatus: TypeAlias = Literal[
+MarketIntelDepth: TypeAlias = Literal["quick", "standard", "deep"]
+MarketIntelRunStatus: TypeAlias = Literal[
     "created",
     "fetching_sources",
     "extracting_evidence",
@@ -71,12 +71,12 @@ def _payload_value(value: Any) -> Any:
 
 
 @dataclass(frozen=True)
-class ResearchRequest:
+class MarketIntelRequest:
     ticker: str
     as_of: date
     output_root: Path
-    sources: tuple[SourceType, ...] = ("sec", "ir", "market", "news", "calendar")
-    depth: ResearchDepth = "standard"
+    sources: tuple[SourceType, ...] = ("sec", "market")
+    depth: MarketIntelDepth = "standard"
     no_llm: bool = False
     refresh: bool = False
 
@@ -85,11 +85,11 @@ class ResearchRequest:
 
 
 @dataclass(frozen=True)
-class ResearchRun:
+class MarketIntelRun:
     run_id: str
     ticker: str
     as_of: date
-    status: ResearchRunStatus
+    status: MarketIntelRunStatus
     config_hash: str
     started_at: datetime
     output_root: Path

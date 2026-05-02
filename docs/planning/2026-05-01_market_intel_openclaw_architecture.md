@@ -451,16 +451,15 @@ transport
   stdio
 
 command
-  uvx alpaca-mcp-server
+  /home/ade/.openclaw/bin/alpaca-mcp-server-paper
 
 env
-  ALPACA_API_KEY
-  ALPACA_SECRET_KEY
-  ALPACA_PAPER_TRADE=true
-  ALPACA_TOOLSETS=all
+  wrapper reads APCA_* from /home/ade/spreads/app/.env.deploy.ade-nucbox-k8-plus
+  wrapper exports ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_PAPER_TRADE=true
+  OpenClaw config does not store raw Alpaca keys
 ```
 
-Alpaca MCP V2 supports server-side toolset filtering with `ALPACA_TOOLSETS`, but start with full paper access. Tighten toolsets only if context size, tool confusion, or accidental mutation becomes a real problem.
+Alpaca MCP V2 supports server-side toolset filtering with `ALPACA_TOOLSETS`, but start with full paper access by omitting the filter. Tighten toolsets only if context size, tool confusion, or accidental mutation becomes a real problem.
 
 Live Alpaca keys are a separate decision. `market-intel` may inspect paper account and order state, but it should not become the live execution source of truth without an explicit architecture update.
 
@@ -602,19 +601,20 @@ synthesis-agent
   converts accepted evidence into concise report artifacts
 ```
 
-Default OpenClaw subagent concurrency should stay low on the box:
+Default OpenClaw subagent concurrency should favor speed on the box:
 
 ```text
-maxConcurrent: 2-3
+maxConcurrent: 4
+subagents.maxConcurrent: 8
 maxSpawnDepth: 2
 ```
 
-Ollama should remain conservative:
+Ollama should be pushed, then tuned from observed memory pressure:
 
 ```text
-OLLAMA_NUM_PARALLEL=1
-OLLAMA_MAX_LOADED_MODELS=1
-market-intel LLM concurrency=1
+OLLAMA_NUM_PARALLEL=2-4
+OLLAMA_MAX_LOADED_MODELS=1-2
+market-intel LLM concurrency=2
 ```
 
 ## Runtime Flow
@@ -853,7 +853,7 @@ Light constraints:
 - market-intel artifacts stay under the repo `outputs/`
 - OpenClaw may manage its own config, state, sessions, and channel data
 - no `/tmp` output roots for run artifacts
-- low subagent and LLM concurrency
+- bounded but aggressive subagent and LLM concurrency
 - clear prompt-injection rules for external content
 - all final claims backed by evidence ids
 
@@ -872,13 +872,16 @@ operator surface
   Discord + terminal first
 
 concurrency
-  low subagent fanout, one loaded Ollama model at a time
+  OpenClaw maxConcurrent 4, subagents 8, market-intel LLM concurrency 2
 
 artifacts
   outputs/market_intel/
 
 workspace
   /home/ade/spreads/app
+
+service env
+  SPREADS_WORKSPACE=/home/ade/spreads/app
 ```
 
 Install OpenClaw under the box user that owns the repo checkout and can run `uv run spreads ...`. Point OpenClaw at the box's Ollama service and avoid extra deployment ceremony until the first run works.
@@ -901,16 +904,16 @@ uv run spreads market-intel thesis --ticker SOFI --as-of 2026-05-01 --json
 ## Build Order
 
 ```text
-1. Rename the current scaffold to market_intel with temporary aliases where useful.
-2. Install/configure OpenClaw natively on the box with repo workspace, uv, and Ollama access.
-3. Configure Discord and terminal operation.
+1. Done: rename the current scaffold to market_intel with temporary aliases where useful.
+2. Done: install/configure OpenClaw natively on the box with repo workspace, uv, and Ollama access.
+3. Done: configure Discord and terminal operation.
 4. Upgrade Ollama if needed for qwen3.5/qwen3.6/gemma4 support.
 5. Evaluate current GLM baseline through OpenClaw before new pulls.
 6. Pull and evaluate qwen3.5:27b as the first new primary candidate.
-7. Create local market-intel plugin skeleton.
-8. Add market-intel-thesis and v0 source skills.
-9. Add Alpaca MCP through OpenClaw's MCP client registry.
-10. Wrap the repo CLI with plugin tools.
+7. Done: create local market-intel plugin skeleton.
+8. Partial: add market-intel-thesis skill; v0 source skills still need sector/source detail.
+9. Done: add Alpaca MCP through OpenClaw's MCP client registry.
+10. Done: wrap the repo CLI with initial plugin tool.
 11. Add SEC and market snapshot source paths.
 12. Add hook logging and finalization guardrails.
 13. Run one SOFI end-to-end through OpenClaw.
@@ -920,12 +923,12 @@ uv run spreads market-intel thesis --ticker SOFI --as-of 2026-05-01 --json
 
 ## Naming Migration
 
-The current code uses `research_thesis`. The target product name is `market-intel`.
+The active code path should now use `market_intel` naming. Historical `research_thesis` outputs and docs can remain as historical context.
 
 Migration rule:
 
 ```text
-Rename now, but keep the patch focused:
+Keep the rename focused:
   outputs/research_thesis       -> outputs/market_intel
   research_thesis module/docs    -> market_intel
   RESEARCH_THESIS_* env vars     -> MARKET_INTEL_*
@@ -941,7 +944,7 @@ Before scheduled scans or broader autonomy:
 2. Write the report bundle under outputs/market_intel/.
 3. Run the fixed model/tool eval suite.
 4. Write eval output under outputs/market_intel_eval/.
-5. Review failures before increasing tool freedom or concurrency.
+5. Review failures before increasing tool freedom or pushing concurrency past the aggressive default.
 ```
 
 ## Edge Coverage
@@ -962,7 +965,7 @@ Disk growth
   watch raw artifacts, session JSONL, cron logs, and media
 
 Model pressure
-  one loaded Ollama model at a time until evals prove more is safe
+  allow heavy local fanout, then tune Ollama parallelism from observed memory pressure
 
 Model selection
   qwen3.5:27b is the first new primary candidate; qwen3.6:35b is the edge candidate after eval
@@ -980,7 +983,8 @@ Human override
 - Discord and terminal are the first operator surfaces.
 - Plugin tools shell out through `uv run spreads ...` first.
 - Alpaca MCP is available to OpenClaw in paper mode with full toolsets first.
+- Alpaca MCP is registered as `alpaca`; the wrapper maps existing spreads `APCA_*` env values to Alpaca MCP's `ALPACA_*` inputs without storing raw keys in OpenClaw config.
 - First OpenClaw baseline is `glm-4.7-flash`; first new model candidate is `qwen3.5:27b`.
 - `qwen3.6:35b` is the edge candidate, not the first pull.
-- `market_intel` replaces `research_thesis` immediately.
+- `market_intel` replaces `research_thesis` in the active code path.
 - First engine-native source providers are SEC and market snapshot; Alpaca MCP is also available as an OpenClaw tool surface.
