@@ -6,6 +6,9 @@ x-default-logging: &default-logging
     max-size: ${SPREADS_DOCKER_LOG_MAX_SIZE}
     max-file: "${SPREADS_DOCKER_LOG_MAX_FILE}"
 
+x-nautilus-bridge-volumes: &nautilus-bridge-volumes
+  - ${SPREADS_NAUTILUS_BRIDGE_HOST_BINARY}:${SPREADS_NAUTILUS_BRIDGE_CONTAINER_BINARY}:ro
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -64,6 +67,7 @@ services:
       ]
     ports:
       - "${SPREADS_BIND_HOST}:${SPREADS_API_PORT}:8000"
+    volumes: *nautilus-bridge-volumes
     logging: *default-logging
 
   worker-runtime:
@@ -80,6 +84,7 @@ services:
     env_file:
       - ${SPREADS_CONTAINER_ENV_FILE}
     command: ["uv", "run", "arq", "core.jobs.worker.RuntimeWorkerSettings"]
+    volumes: *nautilus-bridge-volumes
     logging: *default-logging
 
   worker-discovery:

@@ -13,4 +13,5 @@ triggers:
 execution:
   approval_mode: auto
   mode: paper
+  runtime: nautilus
 enabled: true

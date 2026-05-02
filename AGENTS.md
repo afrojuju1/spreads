@@ -9,6 +9,7 @@
 - Prefer `uv run` for Python commands in this repo.
 - Treat [docs/current_system_state.md](docs/current_system_state.md) as the canonical source of truth for the current overall runtime architecture and service boundaries.
 - For Alpaca-related research, scanner design, or alerting work, read the canonical capability statement in [docs/research/alpaca_capabilities_statement.md](docs/research/alpaca_capabilities_statement.md) first. Re-check Alpaca's official docs/OpenAPI only when the task depends on current product changes, limits, or newly added endpoints.
+- Migration direction: Nautilus Trader is the target trading engine. Treat `spreads` as legacy/reference code during migration, not as the future live runtime. Do not invest in new `spreads` orchestration, Docker runtime, execution bridge, or broker-engine ownership unless the user explicitly asks for a temporary migration shim.
 
 ## Code Quality And Architecture
 
