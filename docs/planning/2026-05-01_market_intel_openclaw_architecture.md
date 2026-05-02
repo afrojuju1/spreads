@@ -914,8 +914,8 @@ uv run spreads market-intel thesis --ticker SOFI --as-of 2026-05-01 --json
 8. Partial: add market-intel-thesis skill; v0 source skills still need sector/source detail.
 9. Done: add Alpaca MCP through OpenClaw's MCP client registry.
 10. Done: wrap the repo CLI with initial plugin tool.
-11. Add SEC and market snapshot source paths.
-12. Add hook logging and finalization guardrails.
+11. Done: add SEC and market snapshot source paths.
+12. Partial: add trace files and run finalization; guardrail enforcement still needs the skeptic/finalizer stage.
 13. Run one SOFI end-to-end through OpenClaw.
 14. Add eval harness as a plugin tool.
 15. Evaluate qwen3.6:35b only if qwen3.5:27b or GLM leaves a concrete gap.

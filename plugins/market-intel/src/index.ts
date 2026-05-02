@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { appendFile } from "node:fs/promises";
+import { resolve } from "node:path";
 
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
@@ -65,6 +67,13 @@ export default definePluginEntry({
         }
 
         const result = await runProcess("uv", args, cwd);
+        await appendRunHookTrace(result, cwd, {
+          event: "plugin_tool_completed",
+          tool: "market_intel_run",
+          ticker: params.ticker.toUpperCase(),
+          sources: params.sources || "sec,market",
+          noLlm: params.noLlm ?? true,
+        });
         return {
           content: [
             {
@@ -119,4 +128,25 @@ function runProcess(command: string, args: string[], cwd: string): Promise<strin
       reject(new Error(stderr.trim() || `${command} exited with ${code}`));
     });
   });
+}
+
+async function appendRunHookTrace(
+  result: string,
+  cwd: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const parsed = JSON.parse(result) as { run_dir?: string };
+    if (!parsed.run_dir) {
+      return;
+    }
+    const hooksPath = resolve(cwd, parsed.run_dir, "hooks.jsonl");
+    const record = {
+      logged_at: new Date().toISOString(),
+      ...payload,
+    };
+    await appendFile(hooksPath, `${JSON.stringify(record)}\n`);
+  } catch {
+    return;
+  }
 }

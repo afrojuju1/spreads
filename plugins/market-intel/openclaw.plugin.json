@@ -1,5 +1,8 @@
 {
   "id": "market-intel",
+  "activation": {
+    "onStartup": true
+  },
   "name": "Market Intel",
   "description": "OpenClaw plugin shell for evidence-backed market intelligence workflows.",
   "version": "0.1.0",

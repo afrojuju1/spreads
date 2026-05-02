@@ -214,6 +214,7 @@ class MarketIntelModelRouter:
     def _log_call(self, record: ModelCallRecord) -> None:
         if self.artifact_store is None or self.run is None:
             return
+        self.artifact_store.append_model_call(self.run, record.to_payload())
         self.artifact_store.append_log(
             self.run,
             "model_call",
