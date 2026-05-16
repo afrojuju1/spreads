@@ -7,6 +7,7 @@ Use these entrypoints:
 - [System Architecture](../current_system_state.md) as the canonical source of truth for the current overall runtime architecture and service boundaries
 - [Current-System Options Automation Implementation Approach](./2026-04-15_current_system_options_automation_implementation_approach.md) for the migration path that uses the existing backend instead of starting clean-sheet
 - [Backtest System Recommendation](./2026-04-16_backtest_system_recommendation.md) for the design background behind the cutover to one canonical config-driven backtest engine
+- [Spreads + Nautilus Integration Roadmap](./2026-05-16_spreads_nautilus_integration_roadmap.md) for the staged plan to keep `spreads` as the operator product while migrating reusable execution, replay, and engine responsibilities into Nautilus
 - [Multi-Strategy Builder Replay Validation](./2026-04-19_multi_strategy_builder_replay_validation.md) for the shared framework to confirm builder behavior across strategy families against scan-time artifacts and Alpaca history without adding a parallel replay subsystem
 - [Config-Driven Runtime Prerequisite Plan](./2026-04-16_config_driven_runtime_prerequisite_plan.md) for the implementation architecture needed before the improved backtest is meaningful
 - [Multi-Paper Alpaca Account Plan](./2026-04-27_multi_paper_alpaca_account_plan.md) for the deferred design to route bots across several Alpaca paper accounts without duplicating discovery
