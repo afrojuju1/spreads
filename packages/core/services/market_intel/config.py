@@ -15,11 +15,12 @@ DEFAULT_OUTPUT_ROOT = Path("outputs/market_intel")
 @dataclass(frozen=True)
 class MarketIntelModelConfig:
     ollama_base_url: str = DEFAULT_OLLAMA_BASE_URL
+    ollama_request_timeout_seconds: int = 300
     max_llm_concurrency: int = 2
-    fast_structured_model: str = "qwen3:8b"
-    standard_reasoning_model: str = "glm-4.7-flash:latest"
-    deep_reasoning_model: str = "glm-4.7-flash:latest"
-    long_context_model: str = "glm-4.7-flash:latest"
+    fast_structured_model: str = "qwen2.5:3b"
+    standard_reasoning_model: str = "qwen2.5:3b"
+    deep_reasoning_model: str = "qwen2.5:3b"
+    long_context_model: str = "qwen2.5:3b"
     embedding_model: str | None = None
 
     @classmethod
@@ -35,24 +36,29 @@ class MarketIntelModelConfig:
                 2,
                 fallback_names=("RESEARCH_THESIS_LLM_MAX_CONCURRENCY",),
             ),
+            ollama_request_timeout_seconds=_env_int(
+                "MARKET_INTEL_OLLAMA_REQUEST_TIMEOUT_SECONDS",
+                300,
+                fallback_names=("RESEARCH_THESIS_OLLAMA_REQUEST_TIMEOUT_SECONDS",),
+            ),
             fast_structured_model=_env_text(
                 "MARKET_INTEL_MODEL_FAST_STRUCTURED",
-                "qwen3:8b",
+                "qwen2.5:3b",
                 fallback_names=("RESEARCH_THESIS_MODEL_FAST_STRUCTURED",),
             ),
             standard_reasoning_model=_env_text(
                 "MARKET_INTEL_MODEL_STANDARD_REASONING",
-                "glm-4.7-flash:latest",
+                "qwen2.5:3b",
                 fallback_names=("RESEARCH_THESIS_MODEL_STANDARD_REASONING",),
             ),
             deep_reasoning_model=_env_text(
                 "MARKET_INTEL_MODEL_DEEP_REASONING",
-                "glm-4.7-flash:latest",
+                "qwen2.5:3b",
                 fallback_names=("RESEARCH_THESIS_MODEL_DEEP_REASONING",),
             ),
             long_context_model=_env_text(
                 "MARKET_INTEL_MODEL_LONG_CONTEXT",
-                "glm-4.7-flash:latest",
+                "qwen2.5:3b",
                 fallback_names=("RESEARCH_THESIS_MODEL_LONG_CONTEXT",),
             ),
             embedding_model=_env_optional_text(

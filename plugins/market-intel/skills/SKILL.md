@@ -11,6 +11,8 @@ Use this skill when the operator asks for market-intel research, a ticker thesis
 
 - Keep the workflow single-ticker first unless the operator asks for a batch.
 - Prefer `uv run spreads market-intel thesis --ticker <TICKER> --json`.
+- In OpenClaw Gateway contexts, prefer `marketIntel.run` for deterministic terminal harness calls.
+- Use `marketIntel.eval` when validating source collection, LLM stages, and finalizer guardrails.
 - Write durable artifacts under `outputs/market_intel/`.
 - Treat Alpaca MCP as paper-mode market/account context unless the operator explicitly changes that policy.
 - Use SEC and market snapshot evidence before softer sources.
@@ -20,7 +22,7 @@ Use this skill when the operator asks for market-intel research, a ticker thesis
 ## Default Flow
 
 1. Normalize the ticker and as-of date.
-2. Run the `market_intel_run` tool or the equivalent spreads CLI.
+2. Run `marketIntel.run`, the `market_intel_run` tool, or the equivalent spreads CLI.
 3. Use Alpaca MCP for current market context when needed.
 4. Inspect the produced run bundle before summarizing.
 5. Return a concise operator summary with artifact path, strongest evidence, unresolved gaps, and next action.

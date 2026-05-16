@@ -15,6 +15,10 @@ from core.services.market_intel import (
 )
 from core.services.market_intel.config import DEFAULT_OUTPUT_ROOT
 from core.services.market_intel.contracts import MarketIntelDepth, SourceType, parse_as_of
+from core.services.market_intel.eval_harness import (
+    DEFAULT_EVAL_OUTPUT_ROOT,
+    run_market_intel_eval,
+)
 
 
 PASSTHROUGH_CONTEXT_SETTINGS = {
@@ -117,6 +121,73 @@ def market_intel_thesis_command(
     typer.echo(f"run_dir={payload['run_dir']}")
     for warning in payload["warnings"]:
         typer.echo(f"warning={warning}")
+
+
+@market_intel_app.command("eval", help="Run the market-intel eval harness.")
+def market_intel_eval_command(
+    tickers: str = typer.Option(
+        "SOFI",
+        "--tickers",
+        help="Comma-separated tickers to evaluate.",
+    ),
+    as_of: str | None = typer.Option(
+        "2026-05-01",
+        "--as-of",
+        help="As-of date YYYY-MM-DD.",
+    ),
+    output_root: str = typer.Option(
+        str(DEFAULT_EVAL_OUTPUT_ROOT),
+        "--output-root",
+        help="Output root for eval artifacts.",
+    ),
+    sources: str = typer.Option(
+        "sec,market",
+        "--sources",
+        help="Comma-separated source adapter names to enable.",
+    ),
+    depth: MarketIntelDepth = typer.Option(
+        "quick",
+        "--depth",
+        help="Research depth: quick, standard, or deep.",
+    ),
+    no_llm: bool = typer.Option(
+        False,
+        "--no-llm",
+        help="Skip LLM stages during eval.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    try:
+        payload = run_market_intel_eval(
+            tickers=_parse_tickers(tickers),
+            as_of=parse_as_of(as_of),
+            output_root=resolve_output_root(output_root),
+            sources=_parse_sources(sources),
+            depth=depth,
+            no_llm=no_llm,
+        )
+    except Exception as exc:
+        typer.secho(f"Command failed: {exc}", err=True, fg=typer.colors.RED)
+        raise typer.Exit(2) from None
+
+    if json_output:
+        typer.echo(json.dumps(payload, sort_keys=True))
+        return
+    typer.echo(f"eval_id={payload['eval_id']}")
+    typer.echo(f"passed={payload['passed']}")
+    typer.echo(f"eval_dir={payload['eval_dir']}")
+    typer.echo(f"cases={payload['passed_count']}/{payload['case_count']}")
+
+
+def _parse_tickers(value: str) -> tuple[str, ...]:
+    parsed = tuple(
+        ticker.strip().upper()
+        for ticker in str(value or "").split(",")
+        if ticker.strip()
+    )
+    if not parsed:
+        raise ValueError("At least one ticker is required")
+    return parsed
 
 
 def _parse_sources(value: str) -> tuple[SourceType, ...]:

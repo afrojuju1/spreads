@@ -13,28 +13,28 @@ Related:
 
 ## Decision
 
-Use a small default ensemble first:
+Use a small reliable default first:
 
 ```text
 fast_structured
-  qwen3:8b
+  qwen2.5:3b
 
 standard_reasoning
-  glm-4.7-flash:latest
+  qwen2.5:3b
 
 deep_reasoning
-  glm-4.7-flash:latest
+  qwen2.5:3b
 
 long_context
-  glm-4.7-flash:latest
+  qwen2.5:3b
 
 embedding
   disabled initially; nomic-embed-text once semantic dedupe exists
 ```
 
-Runtime should start with `RESEARCH_THESIS_LLM_MAX_CONCURRENCY=1`.
+Runtime should start with `MARKET_INTEL_LLM_MAX_CONCURRENCY=2` for the small default. If a large model is enabled through env override, drop to `1`.
 
-Do not pull `qwen3:14b`, `qwen3:30b`, `gpt-oss:20b`, `deepseek-r1:32b`, or larger models until the first live eval shows a concrete failure that the current pair cannot solve.
+`qwen3.5:27b-q4_K_M` is installed and available, but it is not selected as a default profile yet. It passed a tiny direct structured-output smoke with `think=false`; it did not pass the OpenClaw primary smoke and was too slow for standard market-intel structured stages.
 
 ## Why This Selection
 
@@ -42,6 +42,8 @@ The remote box is already running other services, so the first model plan should
 
 Current installed useful models:
 
+- `qwen2.5:3b`: small reliable structured default
+- `qwen3.5:27b-q4_K_M`: installed gated candidate; not a default
 - `qwen3:8b`: 8.2B, Q4_K_M, 40K context, tools, thinking, Apache 2.0
 - `glm-4.7-flash:latest`: 29.9B MoE, Q4_K_M, 202K context, tools, thinking, MIT
 - `ministral-3:8b`: 8.9B, Q4_K_M, 256K context, tools, vision, Apache 2.0
@@ -59,8 +61,10 @@ Scores are directional: 5 is strongest, 1 is weakest.
 ```text
 Model                  Size       Context   JSON   Research   Long docs   Box fit   Decision
 ---------------------  ---------  --------  -----  ---------  ---------   -------   -------------------------------
-qwen3:8b               5.2 GB     40K       4      3          3           5         default fast_structured
-glm-4.7-flash          19 GB      202K      4      5          5           3         default standard/deep/long
+qwen2.5:3b             1.9 GB     modest    4      2          2           5         default all profiles for now
+qwen3.5:27b-q4_K_M     17 GB      256K      3      5          5           2         installed, gated; too slow for standard
+qwen3:8b               5.2 GB     40K       4      3          3           5         fallback fast_structured candidate
+glm-4.7-flash          19 GB      202K      4      5          5           3         reevaluate after qwen3.5 findings
 ministral-3:8b         6.0 GB     256K      3      3          4           5         fallback long-context summarizer
 devstral:latest        14 GB      128K      3      2          3           3         do not use for research thesis
 qwen3-coder:30b        18 GB      unknown   3      2          3           2         code-only fallback, not thesis
@@ -74,15 +78,26 @@ qwen3:235b             142 GB     256K      4      5          5           0     
 
 ## Profile Use
 
-`qwen3:8b` should own:
+`qwen2.5:3b` should own the first working defaults:
+
+- analyst/skeptic structured JSON
+- quick-mode compact thesis summaries
+- schema repair once larger models are reintroduced
+
+`qwen3:8b` remains a candidate for:
 
 - sector routing
 - source triage
 - small structured extraction
 - cheap retry after malformed JSON
-- quick-mode compact thesis summaries
 
-`glm-4.7-flash:latest` should own:
+`qwen3.5:27b-q4_K_M` should stay gated until it passes schema-shape validation and latency budget:
+
+- optional freeform deep review
+- long-context filing review experiments
+- OpenClaw primary retry only after tiny agent-loop smoke passes
+
+`glm-4.7-flash:latest` remains a comparison candidate for:
 
 - standard evidence extraction when the artifact is nuanced
 - sector-specialist assessment
@@ -99,19 +114,19 @@ Do not use `devstral` for investment research. It is a coding-agent model, not t
 Start conservative:
 
 ```text
-RESEARCH_THESIS_LLM_MAX_CONCURRENCY=1
-RESEARCH_THESIS_MODEL_FAST_STRUCTURED=qwen3:8b
-RESEARCH_THESIS_MODEL_STANDARD_REASONING=glm-4.7-flash:latest
-RESEARCH_THESIS_MODEL_DEEP_REASONING=glm-4.7-flash:latest
-RESEARCH_THESIS_MODEL_LONG_CONTEXT=glm-4.7-flash:latest
-RESEARCH_THESIS_MODEL_EMBEDDING=
+MARKET_INTEL_LLM_MAX_CONCURRENCY=2
+MARKET_INTEL_MODEL_FAST_STRUCTURED=qwen2.5:3b
+MARKET_INTEL_MODEL_STANDARD_REASONING=qwen2.5:3b
+MARKET_INTEL_MODEL_DEEP_REASONING=qwen2.5:3b
+MARKET_INTEL_MODEL_LONG_CONTEXT=qwen2.5:3b
+MARKET_INTEL_MODEL_EMBEDDING=
 ```
 
 Ollama service posture:
 
 - keep `OLLAMA_NUM_PARALLEL=1`
 - keep `OLLAMA_MAX_LOADED_MODELS=1`
-- cap research-side LLM concurrency at 1 until live evals prove more is safe
+- cap large-model LLM concurrency at 1 until live evals prove more is safe
 - pass `keep_alive: "0s"` for batch/deep runs unless repeated calls are queued
 - use `keep_alive: "2m"` only inside one active run to avoid repeated model loads
 - cap `num_ctx` per stage instead of using advertised maximum context
@@ -138,6 +153,8 @@ Large context should be earned. Ollama notes that larger context increases memor
 
 Already present or now available:
 
+- `qwen2.5:3b`
+- `qwen3.5:27b-q4_K_M`
 - `qwen3:8b`
 - `glm-4.7-flash:latest`
 - `ministral-3:8b`
@@ -149,7 +166,7 @@ Small optional pull:
 
 Do not pull next unless needed:
 
-- `qwen3:14b`: pull only if `qwen3:8b` is too weak and GLM is too expensive for standard calls
+- `qwen3:14b`: pull only if the qwen2.5 default is too weak and GLM/qwen3.5 are too expensive or unstable
 - `gpt-oss:20b`: pull only if GLM fails structured/tool-style tasks or skeptic quality
 - `qwen3:30b`: pull only if GLM quality is weak on long-context financial artifacts
 - `deepseek-r1:32b`: pull only if skeptic review needs more explicit reasoning and JSON cleanup is acceptable
@@ -165,7 +182,7 @@ Do not pull for this box:
 Before changing defaults or pulling deferred models, run the fixed model eval harness:
 
 ```text
-uv run spreads research eval-models --suite thesis_v0 --as-of 2026-05-01
+uv run spreads market-intel eval --tickers SOFI --as-of 2026-05-01 --sources sec,market --depth standard
 ```
 
 The harness should test:
@@ -182,29 +199,27 @@ The harness should test:
 Outputs:
 
 ```text
-outputs/research_thesis_eval/
-  2026-05-01/
-    <run_id>/
-      run.json
-      model_calls.jsonl
-      scores.json
-      report.md
-      failures/
+outputs/market_intel_eval/
+  <eval_id>/
+    eval.json
+    eval.md
+    runs/
 ```
 
 Promotion bar:
 
 ```text
-qwen3:8b
+qwen2.5:3b
   schema_validity >= 90%
   sector_routing >= 90%
   small extraction passes accepted fixture checks
   median latency acceptable for quick mode
 
-glm-4.7-flash:latest
+qwen3.5:27b-q4_K_M or glm-4.7-flash:latest
   schema_validity >= 85%
   citation_discipline >= 4/5
   skeptic_quality >= 4/5
+  OpenClaw tiny agent-loop smoke passes
   no severe prompt-injection failures
   memory pressure acceptable with concurrency 1
 ```
@@ -213,7 +228,7 @@ glm-4.7-flash:latest
 
 Do not fine-tune before the evidence pipeline exists.
 
-The first fine-tune candidate should be `qwen3:8b`, not GLM. It is small enough to iterate on and has finance-specific fine-tuning precedent.
+The first fine-tune candidate should be a small structured model, likely `qwen2.5:3b` or `qwen3:8b`, not GLM or qwen3.5. Keep fine-tuning focused on extraction and classification, not broad thesis writing.
 
 Fine-tune only narrow transformation tasks:
 

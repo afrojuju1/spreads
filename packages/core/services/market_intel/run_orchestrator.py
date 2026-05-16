@@ -11,8 +11,15 @@ from core.services.market_intel.contracts import (
     MarketIntelRequest,
     MarketIntelRun,
     SourceArtifact,
-    ThesisArtifact,
     utc_now,
+)
+from core.services.market_intel.agent_stages import (
+    AgentStageResult,
+    run_llm_agent_stages,
+)
+from core.services.market_intel.finalizer import (
+    FinalizationResult,
+    finalize_market_intel_run,
 )
 from core.services.market_intel.ids import (
     build_config_hash,
@@ -80,17 +87,37 @@ def create_market_intel_run(
         },
     )
     source_result = collect_sources(request, run=run, store=store)
-    warnings = [
-        *source_result.warnings,
-        "agent stages are not implemented yet",
-    ]
+    warnings = [*source_result.warnings]
+    agent_stage_result = AgentStageResult()
     if request.no_llm:
         warnings.append("LLM stages skipped by request")
-    final_run = replace(
+    else:
+        agent_stage_result = run_llm_agent_stages(
+            request=request,
+            run=replace(run, status="drafting_thesis"),
+            store=store,
+            model_config=model_config,
+            artifacts=source_result.artifacts,
+            evidence=source_result.evidence,
+        )
+        warnings.extend(agent_stage_result.warnings)
+    candidate_run = replace(
         run,
         status="completed_with_warnings",
         completed_at=utc_now(),
         warnings=tuple(dict.fromkeys(warnings)),
+    )
+    finalization = finalize_market_intel_run(
+        run=candidate_run,
+        request=request,
+        artifacts=source_result.artifacts,
+        evidence=source_result.evidence,
+        analyst_payload=agent_stage_result.analyst_payload,
+        skeptic_payload=agent_stage_result.skeptic_payload,
+    )
+    final_run = replace(
+        candidate_run,
+        warnings=tuple(dict.fromkeys([*candidate_run.warnings, *finalization.warnings])),
     )
     store.write_run(final_run)
     _write_initial_bundle(
@@ -100,6 +127,8 @@ def create_market_intel_run(
         model_config=model_config,
         artifacts=source_result.artifacts,
         evidence=source_result.evidence,
+        agent_stage_result=agent_stage_result,
+        finalization=finalization,
     )
     store.append_log(
         final_run,
@@ -132,6 +161,7 @@ def create_market_intel_run(
             "artifact_count": len(source_result.artifacts),
             "evidence_count": len(source_result.evidence),
             "warning_count": len(final_run.warnings),
+            "finding_count": len(finalization.findings),
         },
     )
     store.append_hook_trace(
@@ -155,6 +185,8 @@ def _write_initial_bundle(
     model_config: MarketIntelModelConfig,
     artifacts: tuple[SourceArtifact, ...],
     evidence: tuple[EvidenceItem, ...],
+    agent_stage_result: AgentStageResult,
+    finalization: FinalizationResult,
 ) -> None:
     store.write_json(
         run.run_dir / "sources.json",
@@ -173,39 +205,31 @@ def _write_initial_bundle(
             "warnings": list(run.warnings),
         },
     )
-    thesis = ThesisArtifact(
-        run_id=run.run_id,
-        ticker=run.ticker,
-        as_of=run.as_of,
-        skeptic_notes=("skeptic gate is not implemented yet",),
-        core_evidence=tuple(item.evidence_id for item in evidence),
-        evidence_quality=0.0 if not evidence else min(1.0, len(evidence) / 4),
-        source_pack=tuple(artifact.artifact_id for artifact in artifacts),
+    store.write_json(run.run_dir / "thesis.json", finalization.thesis.to_payload())
+    store.write_text(run.run_dir / "thesis.md", finalization.thesis_markdown)
+    store.write_json(
+        run.run_dir / "agent_stages.json",
+        {
+            "run_id": run.run_id,
+            "analyst_ran": agent_stage_result.analyst_payload is not None,
+            "skeptic_ran": agent_stage_result.skeptic_payload is not None,
+            "warnings": list(agent_stage_result.warnings),
+        },
     )
-    store.write_json(run.run_dir / "thesis.json", thesis.to_payload())
-    store.write_text(run.run_dir / "thesis.md", _render_initial_thesis(run))
-    store.write_text(
-        run.run_dir / "review.md",
-        "# Skeptic Review\n\nNo skeptic review generated yet.\n",
+    store.write_json(
+        run.run_dir / "review.json",
+        {
+            "run_id": run.run_id,
+            "findings": [finding.to_payload() for finding in finalization.findings],
+        },
     )
+    store.write_text(run.run_dir / "review.md", finalization.review_markdown)
     store.write_json(
         run.run_dir / "model_config.json",
         {
             "run_id": run.run_id,
             "models": model_config.to_payload(),
         },
-    )
-
-
-def _render_initial_thesis(run: MarketIntelRun) -> str:
-    return (
-        f"# Market Intel: {run.ticker}\n\n"
-        f"- run_id: `{run.run_id}`\n"
-        f"- as_of: `{run.as_of.isoformat()}`\n"
-        f"- status: `{run.status}`\n\n"
-        "No thesis generated yet. The run now collects source artifacts and "
-        "initial evidence, but the agent drafting and skeptic stages are still "
-        "pending.\n"
     )
 
 

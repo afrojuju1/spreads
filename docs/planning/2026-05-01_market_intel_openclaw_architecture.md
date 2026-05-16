@@ -214,6 +214,14 @@ uv run spreads market-intel thesis --ticker SOFI --as-of 2026-05-01 --json
 
 Later it can call a narrower Python service, HTTP route, or local daemon. Do not create a second source-of-truth path.
 
+Verified terminal harness path:
+
+```text
+openclaw gateway call marketIntel.run --json --timeout 120000 --params '{"ticker":"SOFI","asOf":"2026-05-01","sources":"sec,market","noLlm":true}'
+```
+
+The `/market-intel` command is registered for OpenClaw native command surfaces. Do not use `openclaw agent --message "/market-intel ..."` as the smoke path until that CLI path is confirmed to bypass the model loop.
+
 Plugin capabilities to use:
 
 ```text
@@ -224,7 +232,10 @@ registerHook
   observe and shape run behavior without hiding engine contracts
 
 registerCommand
-  optional slash commands such as /market-intel SOFI
+  slash command such as /market-intel SOFI for native command surfaces
+
+registerGatewayMethod
+  deterministic terminal and harness calls such as marketIntel.run
 
 registerHttpRoute
   optional artifact/readiness endpoints for local diagnostics
@@ -480,18 +491,22 @@ disk
   enough headroom for more models
 
 installed useful baselines
+  qwen2.5:3b
+  qwen3:8b
+  qwen3.5:27b-q4_K_M
   glm-4.7-flash:latest
   qwen3-coder:30b
-  qwen3:8b
 ```
 
 Model candidates:
 
 ```text
 qwen3.5:27b
-  first new pull candidate
-  17 GB class, 256K context, vision/tools/thinking
-  likely best practical OpenClaw primary if tool use is stable
+  pulled and evaluated after Ollama upgrade
+  direct tiny JSON-schema call works with think=false
+  OpenClaw main-agent loop reached the model after timeout tuning, but full tool/schema context still could not return a one-word smoke inside 15 minutes on CPU
+  market-intel structured engine run worked only after stricter prompting, but took roughly 6 minutes for two calls
+  keep as the dedicated frontier model for the `market-intel` OpenClaw agent while the main/default agent stays recoverable on qwen2.5
 
 qwen3.6:35b
   edge candidate
@@ -508,7 +523,11 @@ qwen3-coder:30b
 
 qwen3:8b
   installed fast helper
-  use for cheap routing, extraction retries, and small subagent tasks
+  was still too slow for the OpenClaw model-planned tool-call smoke
+
+qwen2.5:3b
+  installed fast structured helper
+  current OpenClaw main/default model and market-intel engine default because it is the reliable tool/eval path so far
 
 gemma4:26b
   later evaluation candidate after Ollama upgrade
@@ -526,19 +545,25 @@ nemotron-3-nano:30b
 Initial OpenClaw model order:
 
 ```text
-baseline before new pulls
-  primary: ollama/glm-4.7-flash:latest
-  fallback: ollama/qwen3-coder:30b
-  helper: ollama/qwen3:8b
+current default before new pulls
+  OpenClaw main/default: ollama/qwen2.5:3b
+  OpenClaw market-intel agent: ollama/qwen3.5:27b-q4_K_M
+  market-intel fast structured: qwen2.5:3b
+  market-intel standard/deep/long: qwen2.5:3b
 
-first eval after new pull
-  primary candidate: ollama/qwen3.5:27b
+known caveat
+  model-planned OpenClaw agent tool calls are not reliable yet
+  deterministic Gateway RPC is the supported harness path
+
+new-pull result
+  evaluated: ollama/qwen3.5:27b
+  decision: keep available as the dedicated frontier agent model; do not make it the default `main` model until it can pass a slim-agent smoke
   compare against: ollama/glm-4.7-flash:latest
   specialist: ollama/qwen3-coder:30b
   helper: ollama/qwen3:8b
 
 edge eval
-  ollama/qwen3.6:35b only after qwen3.5:27b vs GLM results are known
+  ollama/qwen3.6:35b only after qwen3.5:27b contract/latency issues are understood
 ```
 
 Before pulling newer models, upgrade Ollama if needed. Keep the provider native:
@@ -554,10 +579,29 @@ Runtime posture:
 ```text
 OLLAMA_NUM_PARALLEL=1
 OLLAMA_MAX_LOADED_MODELS=1
-OpenClaw primary context: start at 64K
-If RAM or swap pressure is bad: drop to 32K
+OpenClaw primary context: keep small until model-planned tools pass
+market-intel fast structured context: 4096
 Only raise context after evals show the run needs it
 ```
+
+OpenClaw timeout tuning observed on the box:
+
+```text
+agents.defaults.timeoutSeconds
+  1800
+  controls the command/task ceiling
+
+models.providers.ollama.timeoutSeconds
+  900
+  controls slow local Ollama provider calls
+
+qwen3.5:27b-q4_K_M
+  direct Ollama tiny JSON call passes
+  full OpenClaw main-agent prompt/tool schema timed out after the longer Gateway window
+  dedicated market-intel agent exists with minimal tools and qwen3.5, but still needs prompt/tool/context slimming before it can be accepted as reliable
+```
+
+Do not treat a short OpenClaw timeout as model failure. First inspect whether the failure is command timeout, provider idle timeout, or overloaded prompt/tool context.
 
 Cloud-only or too-heavy open-weight models are not first-class local candidates for this box:
 
@@ -907,18 +951,20 @@ uv run spreads market-intel thesis --ticker SOFI --as-of 2026-05-01 --json
 1. Done: rename the current scaffold to market_intel with temporary aliases where useful.
 2. Done: install/configure OpenClaw natively on the box with repo workspace, uv, and Ollama access.
 3. Done: configure Discord and terminal operation.
-4. Upgrade Ollama if needed for qwen3.5/qwen3.6/gemma4 support.
+4. Done: upgrade Ollama for qwen3.5/qwen3.6/gemma4 support.
 5. Evaluate current GLM baseline through OpenClaw before new pulls.
-6. Pull and evaluate qwen3.5:27b as the first new primary candidate.
+6. Done: pull and evaluate qwen3.5:27b; keep it gated, not default.
 7. Done: create local market-intel plugin skeleton.
 8. Partial: add market-intel-thesis skill; v0 source skills still need sector/source detail.
 9. Done: add Alpaca MCP through OpenClaw's MCP client registry.
 10. Done: wrap the repo CLI with initial plugin tool.
 11. Done: add SEC and market snapshot source paths.
-12. Partial: add trace files and run finalization; guardrail enforcement still needs the skeptic/finalizer stage.
-13. Run one SOFI end-to-end through OpenClaw.
-14. Add eval harness as a plugin tool.
-15. Evaluate qwen3.6:35b only if qwen3.5:27b or GLM leaves a concrete gap.
+12. Done: add trace files and v0 finalizer guardrails; rendered thesis claims must map to evidence ids.
+13. Done: run SOFI end-to-end through OpenClaw Gateway via `marketIntel.run`.
+14. Done: add eval harness as CLI, plugin tool, and Gateway RPC.
+15. Done: add LLM analyst and skeptic stages behind the evidence finalizer gate.
+16. Done: evaluate qwen3.5:27b as the next OpenClaw primary candidate; it timed out in the OpenClaw loop.
+17. Evaluate qwen3.6:35b only if we still want a bigger local model after fixing qwen3.5 contract/latency issues.
 ```
 
 ## Naming Migration
@@ -940,10 +986,10 @@ Keep the rename focused:
 Before scheduled scans or broader autonomy:
 
 ```text
-1. Run SOFI end-to-end through OpenClaw.
+1. Done: run SOFI end-to-end through OpenClaw Gateway.
 2. Write the report bundle under outputs/market_intel/.
-3. Run the fixed model/tool eval suite.
-4. Write eval output under outputs/market_intel_eval/.
+3. Done: run the fixed model/tool eval suite.
+4. Done: write eval output under outputs/market_intel_eval/.
 5. Review failures before increasing tool freedom or pushing concurrency past the aggressive default.
 ```
 
@@ -968,13 +1014,16 @@ Model pressure
   allow heavy local fanout, then tune Ollama parallelism from observed memory pressure
 
 Model selection
-  qwen3.5:27b is the first new primary candidate; qwen3.6:35b is the edge candidate after eval
+  qwen2.5:3b remains the main/default model; qwen3.5:27b is installed and assigned to the dedicated market-intel frontier agent; qwen3.6:35b is deferred
 
 Run trace
   keep agent_trace.jsonl, hooks.jsonl, model_calls.jsonl
 
 Human override
   Discord or terminal can stop, inspect, and rerun by run id
+
+Current model-path caveat
+  full main-agent prompt/tool context is too heavy for qwen3.5 on CPU today; use the verified Gateway RPC for deterministic harness tests and keep shrinking the dedicated market-intel agent context/tool surface
 ```
 
 ## Decisions
@@ -984,7 +1033,11 @@ Human override
 - Plugin tools shell out through `uv run spreads ...` first.
 - Alpaca MCP is available to OpenClaw in paper mode with full toolsets first.
 - Alpaca MCP is registered as `alpaca`; the wrapper maps existing spreads `APCA_*` env values to Alpaca MCP's `ALPACA_*` inputs without storing raw keys in OpenClaw config.
-- First OpenClaw baseline is `glm-4.7-flash`; first new model candidate is `qwen3.5:27b`.
-- `qwen3.6:35b` is the edge candidate, not the first pull.
+- Current OpenClaw main/default model is `ollama/qwen2.5:3b`; model-planned tool calls are not accepted as reliable yet.
+- Dedicated OpenClaw `market-intel` agent uses `ollama/qwen3.5:27b-q4_K_M` as the frontier model, with the main agent kept on qwen2.5 for recoverability.
+- `qwen3.5:27b-q4_K_M` is installed and available, but the full main-agent context is still too slow on CPU even after raising command and provider timeouts.
+- `qwen3.6:35b` is deferred.
 - `market_intel` replaces `research_thesis` in the active code path.
 - First engine-native source providers are SEC and market snapshot; Alpaca MCP is also available as an OpenClaw tool surface.
+- The v0 finalizer writes `thesis.json`, `thesis.md`, `review.json`, and `review.md`; a final thesis is only rendered from evidence-backed claims.
+- The eval harness is available as `uv run spreads market-intel eval`, plugin tool `market_intel_eval`, and Gateway RPC `marketIntel.eval`.

@@ -48,11 +48,12 @@ class OllamaModelClient:
             "messages": messages,
             "stream": False,
             "keep_alive": (options or {}).get("keep_alive", "0s"),
+            "think": (options or {}).get("think", False),
         }
         ollama_options = {
             key: value
             for key, value in (options or {}).items()
-            if key not in {"keep_alive"} and value is not None
+            if key not in {"keep_alive", "think"} and value is not None
         }
         if ollama_options:
             payload["options"] = ollama_options
@@ -67,7 +68,10 @@ class OllamaModelClient:
         )
         started = time.monotonic()
         try:
-            with urllib.request.urlopen(request, timeout=120) as response:
+            with urllib.request.urlopen(
+                request,
+                timeout=self.config.ollama_request_timeout_seconds,
+            ) as response:
                 raw = json.loads(response.read().decode("utf-8"))
         except urllib.error.URLError as exc:
             raise RuntimeError(f"Ollama request failed: {exc}") from exc

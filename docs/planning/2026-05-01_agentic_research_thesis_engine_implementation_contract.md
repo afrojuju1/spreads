@@ -526,16 +526,16 @@ ollama
 Environment variables:
 
 ```text
-RESEARCH_THESIS_OLLAMA_BASE_URL
-RESEARCH_THESIS_LLM_MAX_CONCURRENCY
-RESEARCH_THESIS_MODEL_FAST_STRUCTURED
-RESEARCH_THESIS_MODEL_STANDARD_REASONING
-RESEARCH_THESIS_MODEL_DEEP_REASONING
-RESEARCH_THESIS_MODEL_LONG_CONTEXT
-RESEARCH_THESIS_MODEL_EMBEDDING
+MARKET_INTEL_OLLAMA_BASE_URL
+MARKET_INTEL_LLM_MAX_CONCURRENCY
+MARKET_INTEL_MODEL_FAST_STRUCTURED
+MARKET_INTEL_MODEL_STANDARD_REASONING
+MARKET_INTEL_MODEL_DEEP_REASONING
+MARKET_INTEL_MODEL_LONG_CONTEXT
+MARKET_INTEL_MODEL_EMBEDDING
 ```
 
-Defaults should be conservative. Missing model env vars should use bundled profile defaults, not fail startup. If `RESEARCH_THESIS_OLLAMA_BASE_URL` is missing, default to `http://localhost:11434`; remote deployments should set it to the remote-box URL.
+Defaults should be conservative. Missing model env vars should use bundled profile defaults, not fail startup. If `MARKET_INTEL_OLLAMA_BASE_URL` is missing, default to `http://localhost:11434`; remote deployments should set it to the remote-box URL. Temporary `RESEARCH_THESIS_*` aliases may remain only as migration fallback.
 
 Model profiles:
 
@@ -565,20 +565,22 @@ Selected initial models for the remote box:
 
 ```text
 fast_structured
-  qwen3:8b
+  qwen2.5:3b
 
 standard_reasoning
-  glm-4.7-flash:latest
+  qwen2.5:3b
 
 deep_reasoning
-  glm-4.7-flash:latest
+  qwen2.5:3b
 
 long_context
-  glm-4.7-flash:latest
+  qwen2.5:3b
 
 embedding
   disabled initially; nomic-embed-text once semantic dedupe exists
 ```
+
+`qwen3.5:27b-q4_K_M` is installed on the box, but it is not a default profile yet. It passed a tiny direct JSON-schema smoke with `think=false`, but OpenClaw timed out on a tiny agent-loop prompt and the market-intel structured SOFI run was too slow for standard mode. Use it only through explicit env override until it passes the eval contract with schema-shape validation.
 
 Deferred candidates:
 
@@ -623,13 +625,13 @@ remote box role
 Environment example:
 
 ```text
-RESEARCH_THESIS_OLLAMA_BASE_URL=http://ade-nucbox-k8-plus:11434
-RESEARCH_THESIS_LLM_MAX_CONCURRENCY=1
-RESEARCH_THESIS_MODEL_FAST_STRUCTURED=qwen3:8b
-RESEARCH_THESIS_MODEL_STANDARD_REASONING=glm-4.7-flash:latest
-RESEARCH_THESIS_MODEL_DEEP_REASONING=glm-4.7-flash:latest
-RESEARCH_THESIS_MODEL_LONG_CONTEXT=glm-4.7-flash:latest
-RESEARCH_THESIS_MODEL_EMBEDDING=
+MARKET_INTEL_OLLAMA_BASE_URL=http://ade-nucbox-k8-plus:11434
+MARKET_INTEL_LLM_MAX_CONCURRENCY=2
+MARKET_INTEL_MODEL_FAST_STRUCTURED=qwen2.5:3b
+MARKET_INTEL_MODEL_STANDARD_REASONING=qwen2.5:3b
+MARKET_INTEL_MODEL_DEEP_REASONING=qwen2.5:3b
+MARKET_INTEL_MODEL_LONG_CONTEXT=qwen2.5:3b
+MARKET_INTEL_MODEL_EMBEDDING=
 ```
 
 The embedding profile is optional for the first implementation. Do not call it unless the model router verifies a configured embedding model is available.
@@ -638,8 +640,8 @@ Large-model candidates such as `gpt-oss:120b`, `deepseek-r1:70b`, or `qwen3:235b
 
 Runtime tuning:
 
-- use `RESEARCH_THESIS_LLM_MAX_CONCURRENCY=1`
-- keep Ollama at one loaded model and one parallel request for research workloads
+- use `MARKET_INTEL_LLM_MAX_CONCURRENCY=2` for the small default
+- keep Ollama at one loaded large model and one parallel large-model request for research workloads
 - cap `num_ctx` by stage instead of using advertised maximum context
 - use `keep_alive: "0s"` for batch/deep runs unless a queue of calls is already waiting
 - use `keep_alive: "2m"` only inside one active run to avoid repeated model loads
@@ -666,8 +668,8 @@ uv run spreads research eval-models --suite thesis_v0 --as-of 2026-05-01
 Rules:
 
 - no provider or model CLI flags
-- read Ollama settings from the same research-thesis env vars
-- run with `RESEARCH_THESIS_LLM_MAX_CONCURRENCY=1`
+- read Ollama settings from the same market-intel env vars
+- run with `MARKET_INTEL_LLM_MAX_CONCURRENCY=2` for small-model defaults; use `1` when a large model is explicitly enabled
 - use fixed fixtures and expected outputs
 - write inspectable reports under `outputs/research_thesis_eval/`
 - do not fetch live market data or mutate runtime state
@@ -738,16 +740,17 @@ memory_pressure
 Initial promotion bar:
 
 ```text
-qwen3:8b
+qwen2.5:3b
   schema_validity >= 90%
   sector_routing >= 90%
   small extraction passes accepted fixture checks
   median latency acceptable for quick mode
 
-glm-4.7-flash:latest
+qwen3.5:27b-q4_K_M or glm-4.7-flash:latest
   schema_validity >= 85%
   citation_discipline >= 4/5
   skeptic_quality >= 4/5
+  OpenClaw tiny agent-loop smoke passes
   no severe prompt-injection failures
   memory pressure acceptable with concurrency 1
 ```
@@ -1169,7 +1172,7 @@ Failures should preserve all artifacts already fetched.
 3. Add Ollama model router with env-driven profile mapping.
 4. Add local/remote Ollama env defaults and LLM call logging.
 5. Add model eval harness contracts, fixtures, scoring, and `eval-models` CLI.
-6. Run `thesis_v0` against `qwen3:8b` and `glm-4.7-flash:latest`; keep deferred models unpulled unless the eval shows a concrete gap.
+6. Run `market-intel eval` against `qwen2.5:3b`; keep larger models gated unless the eval shows a concrete gap.
 7. Add SEC and market-data adapters.
 8. Add investor-relations and news adapters.
 9. Add sector router and `GeneralOperatingCompanySpecialist`.
