@@ -4,20 +4,24 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { startTransition } from "react";
-import { BriefcaseBusiness, RefreshCw } from "lucide-react";
+import { startTransition, useMemo, useState } from "react";
+import { BriefcaseBusiness, RefreshCw, Send, XCircle } from "lucide-react";
 
 import { DataTable } from "@/components/data-table";
 import {
   buildRuntimeHref,
   buildPositionsHref,
   buildPipelineHref,
+  cancelExecution,
   closePosition,
   getPositions,
+  submitEquityOrder,
+  type EquityOrderRequest,
   type Position,
 } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   formatNullableCurrency,
   formatQuantity,
@@ -86,6 +90,39 @@ function getPositionDiscoveryHref(position: Position): string {
       ? discovery.pipeline_id
       : position.pipeline_id;
   return buildPipelineHref(pipelineId, position.market_date);
+}
+
+const TERMINAL_ATTEMPT_STATUSES = new Set([
+  "canceled",
+  "cancelled",
+  "expired",
+  "failed",
+  "filled",
+  "rejected",
+  "revoked",
+]);
+
+function getOpenExecutionAttempt(position: Position): Record<string, unknown> {
+  return readRecord(positionRecord(position).open_execution_attempt);
+}
+
+function getOpenExecutionAttemptId(position: Position): string {
+  const attempt = getOpenExecutionAttempt(position);
+  return readString(
+    attempt.execution_attempt_id,
+    readString(position.open_execution_attempt_id, ""),
+  );
+}
+
+function getOpenExecutionAttemptStatus(position: Position): string {
+  const attempt = getOpenExecutionAttempt(position);
+  return readString(attempt.status, "");
+}
+
+function canCancelOpenExecutionAttempt(position: Position): boolean {
+  const attemptId = getOpenExecutionAttemptId(position);
+  const status = getOpenExecutionAttemptStatus(position).toLowerCase();
+  return Boolean(attemptId && status && !TERMINAL_ATTEMPT_STATUSES.has(status));
 }
 
 const POSITION_COLUMNS: ColumnDef<Position>[] = [
@@ -165,6 +202,12 @@ export function PositionsIndexPageContent({
 }) {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const [closeRuntime, setCloseRuntime] = useState("alpaca_direct");
+  const [equitySymbol, setEquitySymbol] = useState("AAPL");
+  const [equitySide, setEquitySide] = useState<EquityOrderRequest["side"]>("buy");
+  const [equityQuantity, setEquityQuantity] = useState("1");
+  const [equityLimitPrice, setEquityLimitPrice] = useState("");
+  const [equityMessage, setEquityMessage] = useState<string | null>(null);
   const hasOwnerScope = Boolean(botId && automationId);
   const ownerScopeLabel = hasOwnerScope
     ? `Runtime · ${botId} / ${automationId}`
@@ -191,13 +234,70 @@ export function PositionsIndexPageContent({
       }),
   });
   const closeMutation = useMutation({
-    mutationFn: (positionId: string) => closePosition(positionId, {}),
+    mutationFn: ({
+      positionId,
+      executionRuntime,
+    }: {
+      positionId: string;
+      executionRuntime: string;
+    }) =>
+      closePosition(positionId, {
+        execution_runtime: executionRuntime,
+      }),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["runtimes"] }),
         queryClient.invalidateQueries({ queryKey: ["positions"] }),
         queryClient.invalidateQueries({ queryKey: ["pipelines"] }),
       ]);
+    },
+  });
+  const cancelMutation = useMutation({
+    mutationFn: (executionAttemptId: string) => cancelExecution(executionAttemptId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["runtimes"] }),
+        queryClient.invalidateQueries({ queryKey: ["positions"] }),
+        queryClient.invalidateQueries({ queryKey: ["pipelines"] }),
+      ]);
+    },
+  });
+  const equityOrder = useMemo(() => {
+    const quantity = Number(equityQuantity);
+    const limitPrice = Number(equityLimitPrice);
+    const symbol = equitySymbol.trim().toUpperCase();
+    if (
+      !symbol ||
+      !Number.isInteger(quantity) ||
+      quantity <= 0 ||
+      !Number.isFinite(limitPrice) ||
+      limitPrice <= 0
+    ) {
+      return null;
+    }
+    return {
+      symbol,
+      side: equitySide,
+      quantity,
+      limit_price: limitPrice,
+      time_in_force: "day" as const,
+      label: label ?? "manual_equity",
+      market_date: marketDate,
+      execution_runtime: "alpaca_direct",
+    };
+  }, [equityLimitPrice, equityQuantity, equitySide, equitySymbol, label, marketDate]);
+  const equityMutation = useMutation({
+    mutationFn: (payload: EquityOrderRequest) => submitEquityOrder(payload),
+    onSuccess: async (result) => {
+      setEquityMessage(result.message);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["runtimes"] }),
+        queryClient.invalidateQueries({ queryKey: ["positions"] }),
+        queryClient.invalidateQueries({ queryKey: ["pipelines"] }),
+      ]);
+    },
+    onError: (error) => {
+      setEquityMessage(error instanceof Error ? error.message : "Equity order failed.");
     },
   });
 
@@ -249,6 +349,29 @@ export function PositionsIndexPageContent({
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                Close runtime
+              </span>
+              <div className="flex rounded-lg border border-border/70 p-0.5">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={closeRuntime === "alpaca_direct" ? "default" : "ghost"}
+                  onClick={() => setCloseRuntime("alpaca_direct")}
+                >
+                  Alpaca
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={closeRuntime === "nautilus" ? "default" : "ghost"}
+                  onClick={() => setCloseRuntime("nautilus")}
+                >
+                  Nautilus
+                </Button>
+              </div>
+            </div>
             <Button
               type="button"
               variant="outline"
@@ -265,6 +388,92 @@ export function PositionsIndexPageContent({
           </div>
         </div>
       </div>
+
+      <SectionSurface
+        title="Equity Ticket"
+        description="Submit a small Alpaca-direct equity limit order into the execution ledger."
+      >
+        <div className="grid gap-3 md:grid-cols-[minmax(120px,180px)_minmax(120px,160px)_minmax(100px,140px)_minmax(120px,160px)_auto]">
+          <div className="flex flex-col gap-2">
+            <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+              Symbol
+            </div>
+            <Input
+              value={equitySymbol}
+              onChange={(event) => setEquitySymbol(event.target.value.toUpperCase())}
+              placeholder="AAPL"
+            />
+          </div>
+          <div className="flex flex-col gap-2">
+            <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+              Side
+            </div>
+            <div className="flex h-8 rounded-lg border border-border/70 p-0.5">
+              <Button
+                type="button"
+                size="sm"
+                variant={equitySide === "buy" ? "default" : "ghost"}
+                className="flex-1"
+                onClick={() => setEquitySide("buy")}
+              >
+                Buy
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={equitySide === "sell" ? "default" : "ghost"}
+                className="flex-1"
+                onClick={() => setEquitySide("sell")}
+              >
+                Sell
+              </Button>
+            </div>
+          </div>
+          <div className="flex flex-col gap-2">
+            <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+              Qty
+            </div>
+            <Input
+              type="number"
+              min={1}
+              step={1}
+              value={equityQuantity}
+              onChange={(event) => setEquityQuantity(event.target.value)}
+            />
+          </div>
+          <div className="flex flex-col gap-2">
+            <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+              Limit
+            </div>
+            <Input
+              type="number"
+              min={0.01}
+              step={0.01}
+              value={equityLimitPrice}
+              onChange={(event) => setEquityLimitPrice(event.target.value)}
+              placeholder="0.00"
+            />
+          </div>
+          <div className="flex items-end">
+            <Button
+              type="button"
+              disabled={equityMutation.isPending || equityOrder == null}
+              onClick={() => {
+                if (equityOrder) {
+                  setEquityMessage(null);
+                  equityMutation.mutate(equityOrder);
+                }
+              }}
+            >
+              <Send data-icon="inline-start" />
+              Submit
+            </Button>
+          </div>
+        </div>
+        {equityMessage ? (
+          <div className="mt-3 text-sm text-muted-foreground">{equityMessage}</div>
+        ) : null}
+      </SectionSurface>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricTile
@@ -304,17 +513,45 @@ export function PositionsIndexPageContent({
             {
               id: "actions",
               header: "",
-              cell: ({ row }) => (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={closeMutation.isPending || row.original.position_status === "closed"}
-                  onClick={() => closeMutation.mutate(row.original.position_id)}
-                >
-                  Close
-                </Button>
-              ),
+              cell: ({ row }) => {
+                const attemptId = getOpenExecutionAttemptId(row.original);
+                const canCancel = canCancelOpenExecutionAttempt(row.original);
+                return (
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={
+                        closeMutation.isPending ||
+                        row.original.position_status === "closed"
+                      }
+                      onClick={() =>
+                        closeMutation.mutate({
+                          positionId: row.original.position_id,
+                          executionRuntime: closeRuntime,
+                        })
+                      }
+                    >
+                      Close
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={!canCancel || cancelMutation.isPending}
+                      onClick={() => {
+                        if (attemptId) {
+                          cancelMutation.mutate(attemptId);
+                        }
+                      }}
+                    >
+                      <XCircle data-icon="inline-start" />
+                      Cancel
+                    </Button>
+                  </div>
+                );
+              },
             },
           ]}
           data={positions}
