@@ -7,4 +7,4 @@ singleton_scope: options_automation_short_dated_earnings_call_debit
 execution_policy:
   extends: shadow_midpoint
 scanner_args:
-  calendar_confidence_policy: "off"
+  calendar_confidence_policy: consensus

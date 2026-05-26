@@ -5,7 +5,6 @@ from datetime import datetime
 from typing import Any
 
 from core.services.deployment_policy import (
-    DEPLOYMENT_MODE_PAPER_AUTO,
     deployment_mode_auto_executes,
     resolve_execution_deployment_mode,
 )
@@ -55,8 +54,6 @@ def _validate_open_timing_window(
     minimum_minutes_to_force_close = _coerce_float(
         thresholds.get("min_minutes_to_force_close")
     )
-    if str(deployment_mode or "").strip().lower() == DEPLOYMENT_MODE_PAPER_AUTO:
-        minimum_minutes_to_force_close = None
     minutes_to_force_close = round(
         max((force_close_at - current_time).total_seconds(), 0.0) / 60.0,
         1,

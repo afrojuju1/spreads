@@ -230,6 +230,7 @@ def run_entry_automation_decision(
         controls_reason=controls_reason,
         bot_metrics=bot_metrics,
         min_score=min_score,
+        eligible_selection_states=("promotable",),
     )
     selected = plan["selected"]
 

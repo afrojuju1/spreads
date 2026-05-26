@@ -1,13 +1,73 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 import unittest
 from unittest.mock import patch
 
-from core.services.execution import ExecutionAdmissionError
+from core.services.execution import (
+    ExecutionAdmissionError,
+    _validate_live_deployment_quality,
+)
+from core.services.execution.policy import _validate_open_timing_window
 from core.services.execution_intents import submit_execution_intent
 
 
 class ExecutionIntentAdmissionTests(unittest.TestCase):
+    def test_paper_auto_enforces_weekly_live_return_floor(self) -> None:
+        candidate = {
+            "strategy_family": "call_debit_spread",
+            "profile": "weekly",
+            "width": 5.0,
+            "legs": [
+                {
+                    "symbol": "NVDA260601C00220000",
+                    "side": "buy",
+                    "role": "long",
+                    "position_intent": "buy_to_open",
+                },
+                {
+                    "symbol": "NVDA260601C00225000",
+                    "side": "sell",
+                    "role": "short",
+                    "position_intent": "sell_to_open",
+                },
+            ],
+        }
+
+        with patch(
+            "core.services.execution.build_structure_quote_snapshot",
+            return_value=({"midpoint_value": 4.9}, None),
+        ):
+            result = _validate_live_deployment_quality(
+                candidate_payload=candidate,
+                deployment_mode="paper_auto",
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "live_return_on_risk_below_floor")
+        self.assertEqual(
+            result["live_quote"]["minimum_return_on_risk"],
+            0.13,
+        )
+
+    def test_paper_auto_enforces_weekly_force_close_timing_window(self) -> None:
+        current_time = datetime(2026, 5, 26, 18, 31, tzinfo=UTC)
+        result = _validate_open_timing_window(
+            exit_policy={
+                "enabled": True,
+                "force_close_at": (
+                    current_time + timedelta(minutes=89)
+                ).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            },
+            current_time=current_time,
+            profile="weekly",
+            deployment_mode="paper_auto",
+        )
+
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["reason"], "insufficient_time_to_force_close")
+        self.assertEqual(result["minimum_minutes_to_force_close"], 90.0)
+
     def test_submit_execution_intent_persists_structured_admission_failure(self) -> None:
         class _ExecutionStore:
             def __init__(self) -> None:

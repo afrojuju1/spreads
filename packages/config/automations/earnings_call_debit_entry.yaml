@@ -9,7 +9,7 @@ schedule:
     end_et: "14:30"
 universe: liquid_stocks
 triggers:
-  min_opportunity_score: 60
+  min_opportunity_score: 72
 execution:
   approval_mode: auto
   mode: paper

@@ -28,6 +28,7 @@ from core.services.discovery_runs.config import (
     build_scanner_args,
 )
 from core.services.discovery_runs.schedule import build_collection_schedule_summary
+from core.services.entry_planner import plan_entry_selection
 from core.services.management_planner import plan_position_management
 from core.services.opportunities import list_opportunities
 from core.services.opportunity_generation import build_runtime_opportunity_payload
@@ -71,6 +72,22 @@ class StrategyBuilderServiceTests(unittest.TestCase):
         self.assertEqual(runtime.build_settings.short_delta_target, 0.12)
         self.assertEqual(runtime.build_settings.min_return_on_risk, 0.05)
         self.assertEqual(runtime.symbols, ("SPY", "IWM", "QQQ", "SLV", "SMH"))
+
+    def test_earnings_debit_entry_runtimes_use_tighter_auto_thresholds(self) -> None:
+        call_runtime = resolve_entry_runtime(
+            bot_id="short_dated_earnings_call_debit_bot",
+            automation_id="earnings_call_debit_entry",
+        )
+        put_runtime = resolve_entry_runtime(
+            bot_id="short_dated_earnings_put_debit_bot",
+            automation_id="earnings_put_debit_entry",
+        )
+
+        self.assertEqual(call_runtime.trigger_policy["min_opportunity_score"], 72.0)
+        self.assertEqual(put_runtime.trigger_policy["min_opportunity_score"], 72.0)
+        self.assertEqual(call_runtime.bot.bot.max_open_positions, 1)
+        self.assertEqual(call_runtime.bot.bot.max_new_entries_per_day, 1)
+        self.assertEqual(call_runtime.bot.bot.daily_loss_limit, 125.0)
 
     def test_build_runtime_scan_args_uses_strategy_min_return_on_risk(self) -> None:
         runtime = resolve_entry_runtime(
@@ -225,6 +242,84 @@ class ManagementPlannerTests(unittest.TestCase):
         self.assertTrue(decision["should_close"])
         self.assertEqual(decision["reason"], "profit_target")
         self.assertEqual(decision["recipe_ref"], "take_profit_50pct")
+
+    def test_debit_management_uses_tighter_profit_and_loss_recipes(self) -> None:
+        runtime = resolve_management_runtime(
+            bot_id="short_dated_earnings_call_debit_bot",
+            automation_id="earnings_call_debit_manage",
+        )
+
+        self.assertEqual(
+            runtime.management_recipe_refs,
+            ("take_profit_40pct", "max_loss_40pct_debit", "expiry_day_exit"),
+        )
+
+        profit_decision = plan_position_management(
+            runtime=runtime,
+            position={
+                "position_id": "pos-1",
+                "session_date": "2026-04-16",
+                "entry_value": 1.0,
+                "entry_value_kind": "debit",
+                "close_mark": 1.4,
+                "close_marked_at": "2026-04-16T13:59:00Z",
+                "remaining_quantity": 1,
+                "strategy_family": runtime.strategy_family,
+            },
+            flatten_due=False,
+            now=datetime(2026, 4, 16, 14, 0, tzinfo=UTC),
+        )
+        stop_decision = plan_position_management(
+            runtime=runtime,
+            position={
+                "position_id": "pos-1",
+                "session_date": "2026-04-16",
+                "entry_value": 1.0,
+                "entry_value_kind": "debit",
+                "close_mark": 0.6,
+                "close_marked_at": "2026-04-16T13:59:00Z",
+                "remaining_quantity": 1,
+                "strategy_family": runtime.strategy_family,
+            },
+            flatten_due=False,
+            now=datetime(2026, 4, 16, 14, 0, tzinfo=UTC),
+        )
+
+        self.assertTrue(profit_decision["should_close"])
+        self.assertEqual(profit_decision["reason"], "profit_target")
+        self.assertEqual(profit_decision["recipe_ref"], "take_profit_40pct")
+        self.assertTrue(stop_decision["should_close"])
+        self.assertEqual(stop_decision["reason"], "stop_multiple")
+        self.assertEqual(stop_decision["recipe_ref"], "max_loss_40pct_debit")
+
+
+class EntryPlannerTests(unittest.TestCase):
+    def test_promotable_only_entry_selection_rejects_monitor_candidates(self) -> None:
+        plan = plan_entry_selection(
+            opportunities=[
+                {
+                    "opportunity_id": "opp-monitor",
+                    "selection_state": "monitor",
+                    "execution_score": 95,
+                },
+                {
+                    "opportunity_id": "opp-promotable",
+                    "selection_state": "promotable",
+                    "execution_score": 72,
+                },
+            ],
+            controls_allowed=True,
+            controls_reason=None,
+            bot_metrics={},
+            min_score=70,
+            eligible_selection_states=("promotable",),
+        )
+
+        self.assertEqual(plan["selected"]["opportunity_id"], "opp-promotable")
+        self.assertEqual(
+            plan["decisions"][0]["reason_codes"],
+            ["selection_state_not_entry_eligible"],
+        )
 
 
 class CollectionConfigTests(unittest.TestCase):
@@ -1558,6 +1653,7 @@ class BacktestTests(unittest.TestCase):
                             "long_symbol": "SPY260417P498",
                             "expiration_date": "2026-04-17",
                             "execution_score": 88.0,
+                            "selection_state": "promotable",
                             "selection_rank": 1,
                             "economics": {
                                 "midpoint_credit": 1.0,
@@ -1578,6 +1674,7 @@ class BacktestTests(unittest.TestCase):
                             "long_symbol": "SPY260416P498",
                             "expiration_date": "2026-04-16",
                             "execution_score": 77.0,
+                            "selection_state": "promotable",
                             "selection_rank": 1,
                             "economics": {
                                 "midpoint_credit": 0.8,
@@ -1735,6 +1832,7 @@ class BacktestTests(unittest.TestCase):
                         "long_symbol": "SPY240416P498",
                         "expiration_date": "2026-04-16",
                         "execution_score": 88.0,
+                        "selection_state": "promotable",
                         "selection_rank": 1,
                         "economics": {
                             "midpoint_credit": 1.0,
@@ -1902,6 +2000,7 @@ class BacktestTests(unittest.TestCase):
                         "long_symbol": "SPY240131P498",
                         "expiration_date": "2024-01-31",
                         "execution_score": 88.0,
+                        "selection_state": "promotable",
                         "selection_rank": 1,
                         "economics": {
                             "midpoint_credit": 1.0,
@@ -1990,6 +2089,7 @@ class BacktestTests(unittest.TestCase):
                         "long_symbol": "SPY260416P498",
                         "expiration_date": "2026-04-16",
                         "execution_score": 88.0,
+                        "selection_state": "promotable",
                         "selection_rank": 1,
                         "economics": {
                             "midpoint_credit": 1.0,
@@ -2091,6 +2191,7 @@ class BacktestTests(unittest.TestCase):
                         "long_symbol": "SPY260416P498",
                         "expiration_date": "2026-04-16",
                         "execution_score": 88.0,
+                        "selection_state": "promotable",
                         "selection_rank": 1,
                         "economics": {
                             "midpoint_credit": 1.0,

@@ -1283,6 +1283,7 @@ def build_backtest_run(
             controls_reason=controls_reason,
             bot_metrics=bot_metrics,
             min_score=float(runtime.trigger_policy.get("min_opportunity_score") or 0.0),
+            eligible_selection_states=("promotable",),
         )
         modeled_selected = plan.get("selected")
         modeled_selected_id = (

@@ -2,6 +2,9 @@ bot_id: short_dated_earnings_call_debit_bot
 name: Short-Dated Earnings Call Debit Bot
 limits:
   extends: baseline
+  max_open_positions: 1
+  max_new_entries_per_day: 1
+  daily_loss_limit: 125
 runtime:
   extends: short_dated_default
 automations:

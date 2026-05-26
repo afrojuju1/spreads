@@ -26,8 +26,8 @@ build:
 recipes:
   entry: []
   management:
-    - take_profit_50pct
-    - max_loss_2x_credit
+    - take_profit_40pct
+    - max_loss_40pct_debit
     - expiry_day_exit
 liquidity:
   min_open_interest: 200

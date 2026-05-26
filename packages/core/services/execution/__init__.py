@@ -27,7 +27,6 @@ from core.services.control_plane import (
     publish_control_gate_event,
 )
 from core.services.deployment_policy import (
-    DEPLOYMENT_MODE_PAPER_AUTO,
     deployment_mode_auto_executes,
 )
 from core.services.exit_manager import (
@@ -786,11 +785,7 @@ def _validate_live_deployment_quality(
     minimum_return_on_risk = _coerce_float(
         thresholds.get("min_execution_return_on_risk")
     )
-    enforce_return_floor = (
-        minimum_return_on_risk is not None
-        and str(deployment_mode or "").strip().lower() != DEPLOYMENT_MODE_PAPER_AUTO
-    )
-    if minimum_return_on_risk is None and not enforce_return_floor:
+    if minimum_return_on_risk is None:
         return {
             "ok": True,
             "profile": profile,
@@ -855,7 +850,7 @@ def _validate_live_deployment_quality(
             "live_quote": live_snapshot,
         }
 
-    if enforce_return_floor and live_return_on_risk < minimum_return_on_risk:
+    if live_return_on_risk < minimum_return_on_risk:
         return {
             "ok": False,
             "reason": "live_return_on_risk_below_floor",

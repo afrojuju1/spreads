@@ -16,6 +16,8 @@ DEFAULT_EXIT_POLICY = {
     "stop_multiple": 2.0,
     "force_close_minutes_before_close": 10,
 }
+DEBIT_PROFIT_TARGET_PCT = 0.4
+DEBIT_MAX_LOSS_40PCT_STOP_MULTIPLE = 1.0 / 0.6
 RECIPE_DISABLED_THRESHOLD = 1_000_000.0
 
 
@@ -50,8 +52,12 @@ def build_exit_policy_from_recipe_refs(
         normalized = str(recipe_ref or "").strip().lower()
         if normalized == "take_profit_50pct":
             policy["profit_target_pct"] = 0.5
+        elif normalized == "take_profit_40pct":
+            policy["profit_target_pct"] = DEBIT_PROFIT_TARGET_PCT
         elif normalized == "max_loss_2x_credit":
             policy["stop_multiple"] = 2.0
+        elif normalized == "max_loss_40pct_debit":
+            policy["stop_multiple"] = DEBIT_MAX_LOSS_40PCT_STOP_MULTIPLE
         elif normalized == "expiry_day_exit":
             policy.setdefault("force_close_minutes_before_close", 10)
     return policy
@@ -89,6 +95,16 @@ def _compile_recipe(
                 "force_close_at": None,
             },
         )
+    if normalized == "take_profit_40pct":
+        return CompiledManagementRecipe(
+            recipe_ref=recipe_ref,
+            exit_policy={
+                "enabled": True,
+                "profit_target_pct": DEBIT_PROFIT_TARGET_PCT,
+                "stop_multiple": RECIPE_DISABLED_THRESHOLD,
+                "force_close_at": None,
+            },
+        )
     if normalized == "max_loss_2x_credit":
         return CompiledManagementRecipe(
             recipe_ref=recipe_ref,
@@ -96,6 +112,16 @@ def _compile_recipe(
                 "enabled": True,
                 "profit_target_pct": RECIPE_DISABLED_THRESHOLD,
                 "stop_multiple": 2.0,
+                "force_close_at": None,
+            },
+        )
+    if normalized == "max_loss_40pct_debit":
+        return CompiledManagementRecipe(
+            recipe_ref=recipe_ref,
+            exit_policy={
+                "enabled": True,
+                "profit_target_pct": RECIPE_DISABLED_THRESHOLD,
+                "stop_multiple": DEBIT_MAX_LOSS_40PCT_STOP_MULTIPLE,
                 "force_close_at": None,
             },
         )
