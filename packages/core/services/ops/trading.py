@@ -17,6 +17,10 @@ from core.services.execution_lifecycle import (
     resolve_execution_attempt_source_job,
     resolve_execution_submit_job_run_id,
 )
+from core.services.execution.runtimes import (
+    NAUTILUS_RUNTIME,
+    resolve_execution_runtime_capabilities,
+)
 from core.services.risk_manager import assess_position_risk
 from core.services.selection_summary import aggregate_selection_summaries as _aggregate_selection_summaries
 from core.services.value_coercion import (
@@ -338,6 +342,33 @@ def build_trading_health(
         storage=storage,
         market_date=market_date,
     )
+    execution_runtimes = resolve_execution_runtime_capabilities()
+    details["execution_runtimes"] = execution_runtimes
+    nautilus_runtime = next(
+        (
+            row
+            for row in execution_runtimes.get("runtimes") or []
+            if isinstance(row, Mapping) and row.get("runtime") == NAUTILUS_RUNTIME
+        ),
+        {},
+    )
+    nautilus_entry_count = _coerce_int(
+        nautilus_runtime.get("entry_automation_count")
+        if isinstance(nautilus_runtime, Mapping)
+        else None
+    ) or 0
+    if nautilus_entry_count and not bool(nautilus_runtime.get("ready")):
+        statuses.append("degraded")
+        attention.append(
+            _attention(
+                severity="high",
+                code="nautilus_bridge_unavailable",
+                message=(
+                    f"{nautilus_entry_count} Nautilus-routed entry automation(s) are configured, "
+                    "but the bridge is not ready."
+                ),
+            )
+        )
     automation_execution_admission = (
         (
             (details["automation_performance"].get("entry_decision_audit") or {}).get(
@@ -670,6 +701,15 @@ def build_trading_health(
         )
         or 0,
         "account_error": account_error,
+        "nautilus_ready": bool(nautilus_runtime.get("ready"))
+        if isinstance(nautilus_runtime, Mapping)
+        else False,
+        "nautilus_bridge_status": (
+            nautilus_runtime.get("status")
+            if isinstance(nautilus_runtime, Mapping)
+            else "unknown"
+        ),
+        "nautilus_entry_automation_count": nautilus_entry_count,
     }
 
     details.update(

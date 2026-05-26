@@ -8,7 +8,7 @@ If another planning or design document disagrees about current ownership, topolo
 
 Use planning documents for target-state design, subsystem specifications, migration plans, and historical context.
 
-Last updated: 2026-05-02
+Last updated: 2026-05-25
 
 Related:
 
@@ -42,7 +42,7 @@ Related:
 - `EntryRuntime.symbols` and `ManagementRuntime.symbols` are derived from the resolved automation universe. Discovery-run scope may union symbols across active entry automations when building a scanner scope.
 - Scanner and collection CLI flags such as `--symbols` and `--symbols-file` are ad hoc operator and research overrides, not the persisted bot or automation ownership model.
 - Shared dynamic symbol lists are owned separately by declared `symbol_feed` jobs and `services/symbol_feeds.py`. They materialize bounded underlying lists for consumers such as UOA, but they do not own bots, opportunities, or execution. The live `uoa_weekly` feed currently applies a minimum daily-volume floor and excludes leveraged or inverse ETFs before handing symbols to UOA.
-- `execution_intents` is the strategy/control-plane handoff boundary. It chooses the execution runtime before broker submission. Runtime `alpaca_direct` uses the current in-process Alpaca submit path; runtime `nautilus` builds a Nautilus `SubmitOrderList` handoff, dispatches it through `alpaca-submit-order-list-bridge`, persists the returned Alpaca parent/nested order snapshot into the execution ledger, and must not silently fall back to direct Alpaca.
+- `execution_intents` is the strategy/control-plane handoff boundary. It chooses the execution runtime before broker submission. Runtime `alpaca_direct` uses the current in-process Alpaca submit path; runtime `nautilus` builds a versioned Nautilus `SubmitOrderList` handoff, dispatches it through `alpaca-submit-order-list-bridge`, persists the returned Alpaca parent/nested order snapshot into the execution ledger, and must not silently fall back to direct Alpaca. `services/execution/runtimes.py` owns the runtime capability declaration, and `spreads execution-runtimes`, `GET /executions/runtimes`, `spreads trading`, and the runtime catalog expose the bridge readiness surface.
 - `execution` is the immutable broker-facing ledger. `session_positions` is the mutable owner of day-local position attribution.
 - `broker_sync` reconciles broker reality and health, but it does not take ownership of session attribution away from `session_positions`.
 
@@ -500,7 +500,7 @@ This domain records:
 
 It is the broker-order history, not the mutable session position state.
 
-All opens and closes, manual or automated, flow through the intent/ledger path first. The default runtime remains `alpaca_direct` for unmigrated automations. `index_put_credit_entry`, `index_call_credit_entry`, `earnings_call_debit_entry`, and `earnings_put_debit_entry` now declare `execution.runtime: nautilus`, so their dispatch path builds a Nautilus `SubmitOrderList` handoff and submits through the spreads-to-Nautilus bridge. The bridge path fails closed if pricing is incomplete, the bridge command is unavailable, the bridge emits invalid output, or Nautilus/Alpaca rejects the order list.
+All opens and closes, manual or automated, flow through the intent/ledger path first. The default runtime remains `alpaca_direct` for unmigrated automations. `index_put_credit_entry`, `index_call_credit_entry`, `earnings_call_debit_entry`, and `earnings_put_debit_entry` now declare `execution.runtime: nautilus`, so their dispatch path builds a `spreads.nautilus.submit_order_list.v1` Nautilus `SubmitOrderList` handoff and submits through the spreads-to-Nautilus bridge. The bridge path fails closed if the requested capability is unsupported, pricing is incomplete, the bridge command is unavailable, the bridge emits invalid output, or Nautilus/Alpaca rejects the order list.
 
 On the `ade-nucbox-k8-plus` deployment, `docker-compose.prod.yml` mounts the compiled Nautilus bridge binary into the API and runtime worker containers at `/usr/local/bin/alpaca-submit-order-list-bridge`; the generated container env sets `SPREADS_NAUTILUS_BRIDGE_COMMAND` to that path. The spreads runtime image uses the `python3.12-trixie-slim` uv base so the mounted NUC-built bridge binary is glibc-compatible with the container runtime.
 

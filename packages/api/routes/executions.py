@@ -5,12 +5,18 @@ from fastapi import APIRouter
 from api.errors import bad_request_error, execution_runtime_error
 from core.runtime.config import default_database_url
 from core.services.execution import refresh_execution_attempt
+from core.services.execution.runtimes import resolve_execution_runtime_capabilities
 
 router = APIRouter()
 
 
 def _db_target(db: str | None) -> str:
     return db or default_database_url()
+
+
+@router.get("/executions/runtimes")
+def list_execution_runtimes_route() -> dict[str, object]:
+    return resolve_execution_runtime_capabilities()
 
 
 @router.post("/executions/{execution_attempt_id}/refresh")

@@ -94,6 +94,7 @@ def _runtime_metadata(
         "trigger_policy": dict(runtime.trigger_policy),
         "approval_mode": runtime.automation.automation.approval_mode,
         "execution_mode": runtime.automation.automation.execution_mode,
+        "execution_runtime": runtime.automation.automation.execution_runtime,
         "live_enabled": bool(runtime.bot.bot.live_enabled),
         "max_open_positions": int(runtime.bot.bot.max_open_positions or 0),
         "max_daily_actions": int(runtime.bot.bot.max_daily_actions or 0),

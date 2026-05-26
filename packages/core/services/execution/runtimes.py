@@ -1,19 +1,36 @@
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping
 from typing import Any
 
-from core.services.option_structures import order_payload_legs
+from core.services.bots import load_active_bots
+from core.services.option_structures import normalize_strategy_family, order_payload_legs
 from core.services.value_coercion import (
     as_text as _as_text,
     coerce_float as _coerce_float,
     coerce_int as _coerce_int,
 )
 
+from .nautilus_bridge import describe_nautilus_bridge
+
 ALPACA_DIRECT_RUNTIME = "alpaca_direct"
 NAUTILUS_RUNTIME = "nautilus"
 SUPPORTED_EXECUTION_RUNTIMES = {ALPACA_DIRECT_RUNTIME, NAUTILUS_RUNTIME}
 ALPACA_VENUE = "ALPACA"
+NAUTILUS_HANDOFF_SCHEMA_VERSION = "spreads.nautilus.submit_order_list.v1"
+EXECUTION_RUNTIME_CAPABILITIES_SCHEMA_VERSION = (
+    "spreads.execution_runtime_capabilities.v1"
+)
+NAUTILUS_TWO_LEG_VERTICAL_FAMILIES = frozenset(
+    {
+        "call_credit_spread",
+        "put_credit_spread",
+        "call_debit_spread",
+        "put_debit_spread",
+    }
+)
+NAUTILUS_TWO_LEG_VERTICAL_OPEN_CAPABILITY = "option_two_leg_vertical_open"
 
 
 def normalize_execution_runtime(value: Any) -> str:
@@ -52,6 +69,47 @@ def _side(leg: Mapping[str, Any]) -> str | None:
     if intent in {"buy_to_open", "buy_to_close"}:
         return "buy"
     return None
+
+
+def resolve_nautilus_handoff_capability(
+    *,
+    strategy_family: Any,
+    trade_intent: Any,
+    legs: list[Mapping[str, Any]],
+) -> dict[str, Any]:
+    family = normalize_strategy_family(strategy_family)
+    action = str(trade_intent or "open").strip().lower()
+    sides = sorted(
+        side
+        for side in (_side(leg) for leg in legs)
+        if side in {"buy", "sell"}
+    )
+    ratio_quantities = [
+        max(_coerce_int(leg.get("ratio_qty")) or 1, 1)
+        for leg in legs
+    ]
+    not_ready_reason: str | None = None
+    if action != "open":
+        not_ready_reason = f"nautilus_unsupported_action:{action}"
+    elif family not in NAUTILUS_TWO_LEG_VERTICAL_FAMILIES:
+        not_ready_reason = f"nautilus_unsupported_strategy_family:{family}"
+    elif len(legs) != 2:
+        not_ready_reason = "nautilus_handoff_requires_two_leg_vertical"
+    elif sides != ["buy", "sell"]:
+        not_ready_reason = "nautilus_handoff_requires_one_buy_and_one_sell_leg"
+    elif ratio_quantities != [1, 1]:
+        not_ready_reason = "nautilus_handoff_requires_one_to_one_vertical"
+
+    return {
+        "name": NAUTILUS_TWO_LEG_VERTICAL_OPEN_CAPABILITY,
+        "asset_class": "option",
+        "action": action,
+        "structure": "two_leg_vertical" if len(legs) == 2 else "unsupported",
+        "strategy_family": family,
+        "leg_count": len(legs),
+        "ready": not_ready_reason is None,
+        "not_ready_reason": not_ready_reason,
+    }
 
 
 def _leg_quote_price(
@@ -137,15 +195,35 @@ def build_nautilus_submit_order_list_handoff(
         order_request,
         expiration_date=_as_text(attempt.get("expiration_date")),
     )
-    if len(legs) < 2:
-        raise ValueError("Nautilus handoff requires a multi-leg order payload")
+    if not legs:
+        raise ValueError("Nautilus handoff requires at least one order leg")
 
-    leg_prices, not_ready_reason = _derive_vertical_leg_prices(
-        legs=legs,
-        order_request=order_request,
-        live_quote=live_quote,
+    trade_intent = _as_text(attempt.get("trade_intent"))
+    strategy_family = _as_text(attempt.get("strategy_family")) or _as_text(
+        attempt.get("strategy")
     )
-    quantity = max(_coerce_int(order_request.get("qty")) or _coerce_int(attempt.get("quantity")) or 1, 1)
+    capability = resolve_nautilus_handoff_capability(
+        strategy_family=strategy_family,
+        trade_intent=trade_intent,
+        legs=legs,
+    )
+    capability_not_ready = _as_text(capability.get("not_ready_reason"))
+    pricing_not_ready: str | None = None
+    if capability_not_ready is None:
+        leg_prices, pricing_not_ready = _derive_vertical_leg_prices(
+            legs=legs,
+            order_request=order_request,
+            live_quote=live_quote,
+        )
+    else:
+        leg_prices = {}
+    not_ready_reason = capability_not_ready or pricing_not_ready
+    quantity = max(
+        _coerce_int(order_request.get("qty"))
+        or _coerce_int(attempt.get("quantity"))
+        or 1,
+        1,
+    )
     handoff_legs: list[dict[str, Any]] = []
     for index, leg in enumerate(legs):
         symbol = str(leg["symbol"])
@@ -155,6 +233,7 @@ def build_nautilus_submit_order_list_handoff(
                 "client_order_id": f"{client_order_id}-L{index + 1}",
                 "symbol": symbol,
                 "instrument_id": f"{symbol}.{ALPACA_VENUE}",
+                "asset_class": "option",
                 "side": _side(leg),
                 "position_intent": _as_text(leg.get("position_intent")),
                 "role": _as_text(leg.get("role")),
@@ -167,17 +246,22 @@ def build_nautilus_submit_order_list_handoff(
         )
 
     return {
+        "handoff_schema_version": NAUTILUS_HANDOFF_SCHEMA_VERSION,
         "runtime": NAUTILUS_RUNTIME,
         "command": "SubmitOrderList",
         "ready": not_ready_reason is None,
         "not_ready_reason": not_ready_reason,
+        "capability": {
+            **capability,
+            "ready": not_ready_reason is None,
+            "not_ready_reason": not_ready_reason,
+        },
         "execution_attempt_id": _as_text(attempt.get("execution_attempt_id")),
         "order_list_id": client_order_id,
         "parent_client_order_id": client_order_id,
         "venue": ALPACA_VENUE,
-        "trade_intent": _as_text(attempt.get("trade_intent")),
-        "strategy_family": _as_text(attempt.get("strategy_family"))
-        or _as_text(attempt.get("strategy")),
+        "trade_intent": trade_intent,
+        "strategy_family": strategy_family,
         "underlying_symbol": _as_text(attempt.get("underlying_symbol")),
         "net_limit_price": _as_text(order_request.get("limit_price")),
         "quantity": quantity,
@@ -186,11 +270,113 @@ def build_nautilus_submit_order_list_handoff(
     }
 
 
+def _runtime_usage_summary(config_root: Any = None) -> dict[str, dict[str, Any]]:
+    counts: dict[str, Counter[str]] = {
+        ALPACA_DIRECT_RUNTIME: Counter(),
+        NAUTILUS_RUNTIME: Counter(),
+    }
+    automation_counts: Counter[str] = Counter()
+    for bot in load_active_bots(config_root).values():
+        for runtime in bot.automations:
+            if not runtime.automation.is_entry:
+                continue
+            execution_runtime = normalize_execution_runtime(
+                runtime.automation.execution_runtime
+            )
+            automation_counts[execution_runtime] += 1
+            counts[execution_runtime][runtime.strategy_config.strategy_family] += 1
+
+    return {
+        runtime: {
+            "entry_automation_count": int(automation_counts.get(runtime, 0)),
+            "strategy_families": dict(sorted(counts[runtime].items())),
+        }
+        for runtime in sorted(SUPPORTED_EXECUTION_RUNTIMES)
+    }
+
+
+def resolve_execution_runtime_capabilities(config_root: Any = None) -> dict[str, Any]:
+    usage = _runtime_usage_summary(config_root)
+    bridge = describe_nautilus_bridge()
+    nautilus_ready = bool(bridge.get("ready"))
+    return {
+        "schema_version": EXECUTION_RUNTIME_CAPABILITIES_SCHEMA_VERSION,
+        "default_runtime": ALPACA_DIRECT_RUNTIME,
+        "runtimes": [
+            {
+                "runtime": ALPACA_DIRECT_RUNTIME,
+                "status": "ready",
+                "ready": True,
+                **usage[ALPACA_DIRECT_RUNTIME],
+                "capabilities": [
+                    {
+                        "name": "alpaca_broker_order_submit",
+                        "asset_classes": ["option"],
+                        "actions": ["open", "close"],
+                        "status": "ready",
+                    },
+                    {
+                        "name": "equity_buy_sell",
+                        "asset_classes": ["equity"],
+                        "actions": ["buy", "sell"],
+                        "status": "unsupported",
+                    },
+                ],
+            },
+            {
+                "runtime": NAUTILUS_RUNTIME,
+                "status": "ready" if nautilus_ready else "blocked",
+                "ready": nautilus_ready,
+                "reason": bridge.get("reason"),
+                **usage[NAUTILUS_RUNTIME],
+                "bridge": bridge,
+                "capabilities": [
+                    {
+                        "name": NAUTILUS_TWO_LEG_VERTICAL_OPEN_CAPABILITY,
+                        "asset_classes": ["option"],
+                        "actions": ["open"],
+                        "structure": "two_leg_vertical",
+                        "strategy_families": sorted(
+                            NAUTILUS_TWO_LEG_VERTICAL_FAMILIES
+                        ),
+                        "status": "ready" if nautilus_ready else "blocked",
+                    },
+                    {
+                        "name": "option_four_leg_open",
+                        "asset_classes": ["option"],
+                        "actions": ["open"],
+                        "structure": "four_leg",
+                        "strategy_families": ["iron_condor"],
+                        "status": "unsupported",
+                    },
+                    {
+                        "name": "option_close_cancel_refresh",
+                        "asset_classes": ["option"],
+                        "actions": ["close", "cancel", "refresh"],
+                        "status": "unsupported",
+                    },
+                    {
+                        "name": "equity_buy_sell",
+                        "asset_classes": ["equity"],
+                        "actions": ["buy", "sell"],
+                        "status": "unsupported",
+                    },
+                ],
+            },
+        ],
+    }
+
+
 __all__ = [
     "ALPACA_DIRECT_RUNTIME",
+    "EXECUTION_RUNTIME_CAPABILITIES_SCHEMA_VERSION",
     "NAUTILUS_RUNTIME",
+    "NAUTILUS_HANDOFF_SCHEMA_VERSION",
+    "NAUTILUS_TWO_LEG_VERTICAL_FAMILIES",
     "SUPPORTED_EXECUTION_RUNTIMES",
     "build_nautilus_submit_order_list_handoff",
     "execution_runtime_from_request",
     "normalize_execution_runtime",
+    "resolve_execution_runtime_capabilities",
+    "resolve_nautilus_handoff_capability",
 ]

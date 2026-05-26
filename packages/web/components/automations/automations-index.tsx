@@ -11,6 +11,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import {
   buildRuntimeHref,
   buildPipelineHref,
+  getExecutionRuntimes,
   getRuntimes,
   type AutomationRuntimeListItem,
 } from "@/lib/api";
@@ -31,6 +32,7 @@ type AutomationListRow = {
   strategyFamily: string;
   automationType: string;
   executionMode: string;
+  executionRuntime: string;
   symbols: string[];
   marketDate: string;
   latestDiscoveryLabel: string;
@@ -55,6 +57,7 @@ function buildAutomationRows(
     strategyFamily: readString(automation.strategy_family, "unscoped"),
     automationType: automation.automation_type,
     executionMode: readString(automation.execution_mode, "unknown"),
+    executionRuntime: readString(automation.execution_runtime, "alpaca_direct"),
     symbols: automation.symbols ?? [],
     marketDate: readString(automation.market_date, ""),
     latestDiscoveryLabel: readString(automation.latest_discovery?.label, "—"),
@@ -94,6 +97,9 @@ const AUTOMATION_COLUMNS: ColumnDef<AutomationListRow>[] = [
         <Badge variant="outline">{row.original.automationType}</Badge>
         <div className="text-xs text-muted-foreground">
           {row.original.executionMode.replaceAll("_", " ")}
+        </div>
+        <div className="font-mono text-[11px] text-foreground/75">
+          {row.original.executionRuntime}
         </div>
       </div>
     ),
@@ -184,6 +190,10 @@ export function AutomationsIndexPageContent() {
     queryKey: ["runtimes"],
     queryFn: () => getRuntimes({ limit: 120 }),
   });
+  const executionRuntimesQuery = useQuery({
+    queryKey: ["execution-runtimes"],
+    queryFn: getExecutionRuntimes,
+  });
 
   if (runtimesQuery.isLoading) {
     return <LoadingState />;
@@ -203,6 +213,10 @@ export function AutomationsIndexPageContent() {
     (total, row) => total + (row.daily_total_pnl ?? 0),
     0,
   );
+  const nautilusRuntime = executionRuntimesQuery.data?.runtimes.find(
+    (row) => row.runtime === "nautilus",
+  );
+  const nautilusStatus = readString(nautilusRuntime?.status, "unknown");
 
   return (
     <div className="flex flex-col gap-4">
@@ -244,7 +258,7 @@ export function AutomationsIndexPageContent() {
         </div>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <MetricTile
           label="Runtimes"
           value={String(automations.length)}
@@ -264,6 +278,11 @@ export function AutomationsIndexPageContent() {
           label="Daily PnL"
           value={formatNullableCurrency(dailyPnlTotal)}
           note="Realized plus open estimate"
+        />
+        <MetricTile
+          label="Nautilus"
+          value={nautilusStatus}
+          note={`${nautilusRuntime?.entry_automation_count ?? 0} routed entries`}
         />
       </div>
 

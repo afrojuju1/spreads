@@ -10,11 +10,6 @@ from typing import Any
 
 import typer
 
-from core.backtest import (
-    build_backtest_run,
-    compare_backtest_payloads,
-)
-from core.backtest.replay import build_replay_payload, build_replay_range_payload
 from core.cli.ops_render import build_console, render_json_payload
 from core.domain.backtest_models import (
     BacktestArtifact,
@@ -602,6 +597,8 @@ def run_backtest_command(
     ),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
+    from core.backtest.service import build_backtest_run
+
     run = build_backtest_run(
         db_target=db or "",
         bot_id=bot_id,
@@ -637,6 +634,8 @@ def compare_backtest_command(
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
+    from core.backtest.service import compare_backtest_payloads
+
     run = compare_backtest_payloads(
         left_payload=_read_json_payload(left_json),
         right_payload=_read_json_payload(right_json),
@@ -684,6 +683,8 @@ def replay_backtest_command(
     ),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
+    from core.backtest.replay import build_replay_payload
+
     payload = build_replay_payload(
         db_target=db or "",
         run_id=run_id,
@@ -758,6 +759,8 @@ def replay_range_backtest_command(
     ),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
+    from core.backtest.replay import build_replay_range_payload
+
     payload = build_replay_range_payload(
         db_target=db or "",
         bot_id=bot_id,

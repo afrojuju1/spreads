@@ -1390,6 +1390,13 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row(
         "Execution Health", _render_value(summary.get("execution_health_status"))
     )
+    overview.add_row(
+        "Nautilus",
+        (
+            f"{_render_value(summary.get('nautilus_bridge_status'))} | "
+            f"entries {_render_value(summary.get('nautilus_entry_automation_count'))}"
+        ),
+    )
     overview.add_row("Discovery Runs", _render_value(summary.get("discovery_run_count")))
     overview.add_row(
         "Automation",

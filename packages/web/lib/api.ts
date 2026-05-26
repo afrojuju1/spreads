@@ -653,6 +653,7 @@ const automationRuntimeListItemSchema = z
     trigger_policy: z.record(z.string(), z.unknown()).default({}),
     approval_mode: z.string().nullable().optional(),
     execution_mode: z.string().nullable().optional(),
+    execution_runtime: z.string().nullable().optional(),
     live_enabled: z.boolean().optional(),
     max_open_positions: z.number().nullable().optional(),
     max_daily_actions: z.number().nullable().optional(),
@@ -683,6 +684,33 @@ const automationRuntimeListItemSchema = z
 const automationRuntimeListResponseSchema = z.object({
   automations: z.array(automationRuntimeListItemSchema),
 });
+
+const executionRuntimeCapabilityItemSchema = z
+  .object({
+    name: z.string(),
+    status: z.string(),
+  })
+  .passthrough();
+
+const executionRuntimeItemSchema = z
+  .object({
+    runtime: z.string(),
+    status: z.string(),
+    ready: z.boolean(),
+    reason: z.string().nullable().optional(),
+    entry_automation_count: z.number().default(0),
+    strategy_families: z.record(z.string(), z.number()).default({}),
+    capabilities: z.array(executionRuntimeCapabilityItemSchema).default([]),
+  })
+  .passthrough();
+
+const executionRuntimeCapabilitiesSchema = z
+  .object({
+    schema_version: z.string(),
+    default_runtime: z.string(),
+    runtimes: z.array(executionRuntimeItemSchema),
+  })
+  .passthrough();
 
 const automationRuntimeDetailSchema = automationRuntimeListItemSchema
   .extend({
@@ -733,6 +761,7 @@ export type Opportunity = z.infer<typeof opportunitySchema>;
 export type Position = z.infer<typeof positionSchema>;
 export type AutomationRuntimeListItem = z.infer<typeof automationRuntimeListItemSchema>;
 export type AutomationRuntimeDetail = z.infer<typeof automationRuntimeDetailSchema>;
+export type ExecutionRuntimeCapabilities = z.infer<typeof executionRuntimeCapabilitiesSchema>;
 export type AutoExecutionSummary = z.infer<typeof autoExecutionSummarySchema>;
 export type GlobalRealtimeEvent = z.infer<typeof globalRealtimeEventSchema>;
 export type OpportunityExecutionRequest = {
@@ -885,6 +914,10 @@ export function getRuntimeDetail(
       limit: filters?.limit,
     },
   );
+}
+
+export function getExecutionRuntimes() {
+  return fetchApi("executions/runtimes", executionRuntimeCapabilitiesSchema);
 }
 
 export function getOpportunities(filters?: {

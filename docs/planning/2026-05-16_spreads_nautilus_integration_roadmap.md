@@ -67,6 +67,13 @@ Deliverables:
 - Persist bridge command version/build metadata when available.
 - Surface bridge readiness in `spreads trading`, API health, and the operator dashboard.
 
+Current implementation checkpoint:
+
+- `build_nautilus_submit_order_list_handoff` emits `spreads.nautilus.submit_order_list.v1` and declares the requested runtime capability.
+- `resolve_execution_runtime_capabilities` is the single capability/readiness resolver for CLI, API, trading health, and the runtime catalog.
+- The Nautilus runtime currently declares `option_two_leg_vertical_open` as supported and leaves four-leg structures, close/cancel/refresh, and equity buy/sell as unsupported until their lifecycle paths are implemented.
+- The bridge wrapper validates the response envelope before accepting it as a runtime result.
+
 Exit criteria:
 
 - A developer can change either repo and immediately know if the handoff contract broke.
@@ -227,9 +234,9 @@ Rules:
 
 ## Near-Term Implementation Sequence
 
-1. Add schema and golden tests for `build_nautilus_submit_order_list_handoff`.
-2. Add bridge response schema tests around `submit_nautilus_order_list`.
-3. Add bridge readiness to CLI/API/UI health.
+1. Add golden contract tests for every currently Nautilus-routed strategy family.
+2. Add broader bridge response tests around accepted, rejected, timeout, invalid-output, and command-not-found outcomes.
+3. Add API health placement if `/executions/runtimes` is not visible enough for operators.
 4. Add execution ledger assertions for Nautilus parent and leg order snapshots.
 5. Add operator audit view fields for handoff request/response metadata.
 6. Prove one full paper lifecycle for `index_put_credit_entry`.

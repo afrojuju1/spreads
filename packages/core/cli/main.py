@@ -19,6 +19,7 @@ from core.cli.ops import (
 from core.cli.market_intel import market_intel_app
 from core.cli.runtime import (
     automations_command,
+    execution_runtimes_command,
     opportunities_command,
     pipelines_command,
     positions_command,
@@ -28,15 +29,9 @@ from core.services.deployments import (
     get_deploy_target,
     run_target_spreads_command,
 )
-from core.jobs.scheduler import main as scheduler_main
-from core.services.discovery_runs.runtime import main as discover_main
-from core.services.market_recorder import main as market_recorder_main
-from core.services.scanners.service import main as scan_main
-
 PASSTHROUGH_CONTEXT_SETTINGS = {
     "allow_extra_args": True,
     "ignore_unknown_options": True,
-    "help_option_names": [],
 }
 
 app = typer.Typer(
@@ -52,6 +47,7 @@ TARGETABLE_ROOT_COMMANDS = {
     "automations",
     "opportunities",
     "positions",
+    "execution-runtimes",
     "audit",
     "jobs",
     "uoa",
@@ -142,6 +138,9 @@ app.command("opportunities", help="List opportunities or inspect one opportunity
 app.command("positions", help="List positions or inspect one position.")(
     positions_command
 )
+app.command("execution-runtimes", help="Show execution runtime capabilities.")(
+    execution_runtimes_command
+)
 app.command("audit", help="Audit one pipeline date for operator investigation.")(
     audit_command
 )
@@ -159,6 +158,8 @@ app.add_typer(uoa_app, name="uoa")
     help="Run the spread scanner.",
 )
 def scan_command(ctx: typer.Context) -> None:
+    from core.services.scanners.service import main as scan_main
+
     _run_passthrough(ctx=ctx, entrypoint=scan_main)
 
 
@@ -168,6 +169,8 @@ def scan_command(ctx: typer.Context) -> None:
     help="Run a live discovery run session.",
 )
 def discover_command(ctx: typer.Context) -> None:
+    from core.services.discovery_runs.runtime import main as discover_main
+
     _run_passthrough(ctx=ctx, entrypoint=discover_main)
 
 
@@ -186,6 +189,8 @@ app.add_typer(
     help="Run the ARQ scheduler loop.",
 )
 def scheduler_command(ctx: typer.Context) -> None:
+    from core.jobs.scheduler import main as scheduler_main
+
     _run_passthrough(ctx=ctx, entrypoint=scheduler_main)
 
 
@@ -195,6 +200,8 @@ def scheduler_command(ctx: typer.Context) -> None:
     help="Run the recovery market recorder loop.",
 )
 def market_recorder_command(ctx: typer.Context) -> None:
+    from core.services.market_recorder import main as market_recorder_main
+
     _run_passthrough(ctx=ctx, entrypoint=market_recorder_main)
 
 
