@@ -224,6 +224,7 @@ class ManagementPlannerTests(unittest.TestCase):
             bot_id="short_dated_index_credit_bot",
             automation_id="index_put_credit_manage",
         )
+        self.assertEqual(runtime.automation.automation.execution_runtime, "nautilus")
         decision = plan_position_management(
             runtime=runtime,
             position={
@@ -249,6 +250,7 @@ class ManagementPlannerTests(unittest.TestCase):
             automation_id="earnings_call_debit_manage",
         )
 
+        self.assertEqual(runtime.automation.automation.execution_runtime, "nautilus")
         self.assertEqual(
             runtime.management_recipe_refs,
             ("take_profit_40pct", "max_loss_40pct_debit", "expiry_day_exit"),

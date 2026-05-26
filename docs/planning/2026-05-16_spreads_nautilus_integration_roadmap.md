@@ -73,6 +73,10 @@ Current implementation checkpoint:
 - `resolve_execution_runtime_capabilities` is the single capability/readiness resolver for CLI, API, trading health, and the runtime catalog.
 - The Nautilus runtime declares option `SubmitOrderList` support for open/close two-leg verticals and four-leg iron condors. Refresh/cancel reconcile through Alpaca broker order ids. Equity buy/sell remains Alpaca-direct only.
 - The bridge wrapper validates the response envelope before accepting it as a runtime result.
+- Post-close on 2026-05-26, `spreads trading` reports a `nautilus_lifecycle` audit section that separates execution intent state, Nautilus bridge handoff/result state, Alpaca parent/leg order state, fill counts, and session position state.
+- The 2026-05-26 paper evidence contains two `call_debit_spread` NVDA positions opened through Nautilus, closed, and broker-sync matched, with combined realized PnL of `-101`. Those closes used the legacy direct/unset close runtime, so the proof status is `proved_with_direct_close` rather than full Nautilus open/close proof.
+- The managed close runtime gap is fixed for the currently Nautilus-routed families by carrying `execution_runtime` on management close intents and setting the migrated management automations to `runtime: nautilus`.
+- No same-day paper lifecycle was observed on 2026-05-26 for `call_credit_spread`, `put_credit_spread`, `put_debit_spread`, or `iron_condor`; those families still need opportunity-driven paper evidence.
 
 Exit criteria:
 

@@ -244,6 +244,25 @@ class ExecutionRepository(RepositoryBase):
             rows = session.scalars(statement).all()
         return self._attempt_rows(rows)
 
+    def list_attempts_for_market_date(
+        self,
+        *,
+        market_date: str,
+        limit: int = 500,
+    ) -> list[ExecutionAttemptRecord]:
+        statement = (
+            select(ExecutionAttemptModel)
+            .where(ExecutionAttemptModel.market_date == parse_date(market_date))
+            .order_by(
+                ExecutionAttemptModel.requested_at.desc(),
+                ExecutionAttemptModel.execution_attempt_id.desc(),
+            )
+            .limit(limit)
+        )
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return self._attempt_rows(rows)
+
     def list_session_attempts_by_status(
         self,
         *,

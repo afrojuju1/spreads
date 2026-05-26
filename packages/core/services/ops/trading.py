@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
@@ -17,6 +17,7 @@ from core.services.execution_lifecycle import (
     resolve_execution_attempt_source_job,
     resolve_execution_submit_job_run_id,
 )
+from core.services.option_structures import normalize_strategy_family
 from core.services.execution.runtimes import (
     NAUTILUS_RUNTIME,
     resolve_execution_runtime_capabilities,
@@ -49,6 +50,14 @@ from .shared import (
 OPEN_POSITION_STATUSES = ["open", "partial_close"]
 MARK_STALE_AFTER_SECONDS = 15 * 60
 TOP_POSITION_LIMIT = 5
+NAUTILUS_LIFECYCLE_LIMIT = 12
+NAUTILUS_DEFAULT_STRATEGY_FAMILIES = (
+    "call_credit_spread",
+    "put_credit_spread",
+    "call_debit_spread",
+    "put_debit_spread",
+    "iron_condor",
+)
 
 
 def _alert_delivery_payload(
@@ -194,6 +203,370 @@ def _summarize_execution_attempt(
         "next_action": lifecycle_payload.get("next_action"),
         "blocks_capacity": bool(lifecycle_payload.get("blocks_capacity")),
         "occupies_position_slot": bool(lifecycle_payload.get("occupies_position_slot")),
+    }
+
+
+def _payload_mapping(row: Mapping[str, Any], key: str) -> dict[str, Any]:
+    value = row.get(key)
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _attempt_runtime(attempt: Mapping[str, Any]) -> str | None:
+    request = _payload_mapping(attempt, "request")
+    return _as_text(request.get("execution_runtime"))
+
+
+def _intent_payload(intent: Mapping[str, Any] | None) -> dict[str, Any]:
+    if intent is None:
+        return {}
+    return _payload_mapping(intent, "payload")
+
+
+def _latest_intent(intents: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not intents:
+        return None
+    rows = sorted(
+        intents,
+        key=lambda row: str(row.get("created_at") or ""),
+    )
+    return rows[-1]
+
+
+def _order_status_counts(orders: list[dict[str, Any]]) -> dict[str, int]:
+    return dict(
+        sorted(
+            Counter(str(row.get("order_status") or "unknown") for row in orders).items()
+        )
+    )
+
+
+def _configured_nautilus_strategy_families(
+    nautilus_runtime: Mapping[str, Any],
+) -> tuple[str, ...]:
+    families: set[str] = set()
+    for capability in list(nautilus_runtime.get("capabilities") or []):
+        if not isinstance(capability, Mapping):
+            continue
+        for family in list(capability.get("strategy_families") or []):
+            families.add(normalize_strategy_family(family))
+    return tuple(sorted(families or set(NAUTILUS_DEFAULT_STRATEGY_FAMILIES)))
+
+
+def _nautilus_lifecycle_audit(
+    *,
+    execution_store: Any,
+    market_date: str,
+    strategy_families: tuple[str, ...],
+    limit: int = NAUTILUS_LIFECYCLE_LIMIT,
+) -> dict[str, Any]:
+    if not execution_store.schema_ready():
+        return {
+            "status": "missing",
+            "market_date": market_date,
+            "strategy_families": list(strategy_families),
+            "summary": {},
+            "proof_by_family": {},
+            "recent_attempts": [],
+        }
+    list_attempts = getattr(execution_store, "list_attempts_for_market_date", None)
+    if not callable(list_attempts):
+        return {
+            "status": "unavailable",
+            "reason": "attempt_market_date_listing_unavailable",
+            "market_date": market_date,
+            "strategy_families": list(strategy_families),
+            "summary": {},
+            "proof_by_family": {},
+            "recent_attempts": [],
+        }
+
+    family_set = {normalize_strategy_family(family) for family in strategy_families}
+    attempts = [
+        dict(row)
+        for row in list_attempts(
+            market_date=market_date,
+            limit=500,
+        )
+    ]
+    attempts_by_id = {
+        str(row["execution_attempt_id"]): row
+        for row in attempts
+        if _as_text(row.get("execution_attempt_id")) is not None
+    }
+    positions = (
+        [
+            dict(row)
+            for row in execution_store.list_positions(
+                market_date=market_date,
+                limit=1000,
+            )
+        ]
+        if execution_store.portfolio_schema_ready()
+        else []
+    )
+    positions_by_id = {
+        str(row["position_id"]): row
+        for row in positions
+        if _as_text(row.get("position_id")) is not None
+    }
+    positions_by_open_attempt = {
+        str(row["open_execution_attempt_id"]): row
+        for row in positions
+        if _as_text(row.get("open_execution_attempt_id")) is not None
+    }
+
+    candidate_attempt_ids: set[str] = set()
+    for attempt in attempts:
+        attempt_id = _as_text(attempt.get("execution_attempt_id"))
+        if attempt_id is None:
+            continue
+        family = normalize_strategy_family(attempt.get("strategy_family"))
+        runtime = _attempt_runtime(attempt)
+        if runtime == NAUTILUS_RUNTIME or family in family_set:
+            candidate_attempt_ids.add(attempt_id)
+            continue
+        position_id = _as_text(attempt.get("position_id"))
+        position = None if position_id is None else positions_by_id.get(position_id)
+        if position is None:
+            continue
+        open_attempt_id = _as_text(position.get("open_execution_attempt_id"))
+        open_attempt = (
+            None if open_attempt_id is None else attempts_by_id.get(open_attempt_id)
+        )
+        if open_attempt is not None and _attempt_runtime(open_attempt) == NAUTILUS_RUNTIME:
+            candidate_attempt_ids.add(attempt_id)
+
+    candidate_attempts = [
+        attempts_by_id[attempt_id]
+        for attempt_id in candidate_attempt_ids
+        if attempt_id in attempts_by_id
+    ]
+    candidate_attempts.sort(key=lambda row: str(row.get("requested_at") or ""), reverse=True)
+    candidate_attempt_ids = {
+        str(row["execution_attempt_id"]) for row in candidate_attempts
+    }
+
+    orders = [
+        dict(row)
+        for row in execution_store.list_orders(
+            execution_attempt_ids=sorted(candidate_attempt_ids)
+        )
+    ]
+    fills = [
+        dict(row)
+        for row in execution_store.list_fills(
+            execution_attempt_ids=sorted(candidate_attempt_ids)
+        )
+    ]
+    orders_by_attempt: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    fills_by_attempt: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in orders:
+        attempt_id = _as_text(row.get("execution_attempt_id"))
+        if attempt_id is not None:
+            orders_by_attempt[attempt_id].append(row)
+    for row in fills:
+        attempt_id = _as_text(row.get("execution_attempt_id"))
+        if attempt_id is not None:
+            fills_by_attempt[attempt_id].append(row)
+
+    intents_by_attempt: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for attempt_id in sorted(candidate_attempt_ids):
+        for row in execution_store.list_execution_intents(
+            execution_attempt_id=attempt_id,
+            limit=10,
+        ):
+            intents_by_attempt[attempt_id].append(dict(row))
+
+    close_attempts_by_position: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for attempt in attempts:
+        if str(attempt.get("trade_intent") or "") != "close":
+            continue
+        position_id = _as_text(attempt.get("position_id"))
+        if position_id is not None:
+            close_attempts_by_position[position_id].append(attempt)
+
+    proof_by_family: dict[str, dict[str, Any]] = {
+        family: {
+            "status": "not_observed",
+            "market_date": market_date,
+            "open_count": 0,
+            "closed_matched_count": 0,
+            "nautilus_close_count": 0,
+            "direct_or_unset_close_count": 0,
+            "latest_position_id": None,
+            "latest_realized_pnl": None,
+        }
+        for family in sorted(family_set)
+    }
+    for position in positions:
+        open_attempt_id = _as_text(position.get("open_execution_attempt_id"))
+        open_attempt = (
+            None if open_attempt_id is None else attempts_by_id.get(open_attempt_id)
+        )
+        if open_attempt is None or _attempt_runtime(open_attempt) != NAUTILUS_RUNTIME:
+            continue
+        family = normalize_strategy_family(position.get("strategy_family"))
+        row = proof_by_family.setdefault(
+            family,
+            {
+                "status": "not_observed",
+                "market_date": market_date,
+                "open_count": 0,
+                "closed_matched_count": 0,
+                "nautilus_close_count": 0,
+                "direct_or_unset_close_count": 0,
+                "latest_position_id": None,
+                "latest_realized_pnl": None,
+            },
+        )
+        close_attempts = close_attempts_by_position.get(str(position["position_id"]), [])
+        filled_close_attempts = [
+            attempt for attempt in close_attempts if str(attempt.get("status") or "") == "filled"
+        ]
+        nautilus_close_count = sum(
+            1 for attempt in filled_close_attempts if _attempt_runtime(attempt) == NAUTILUS_RUNTIME
+        )
+        direct_or_unset_close_count = len(filled_close_attempts) - nautilus_close_count
+        closed_matched = (
+            str(position.get("status") or "") == "closed"
+            and str(position.get("reconciliation_status") or "") == "matched"
+            and bool(filled_close_attempts)
+        )
+        row["open_count"] += 1
+        row["closed_matched_count"] += 1 if closed_matched else 0
+        row["nautilus_close_count"] += nautilus_close_count
+        row["direct_or_unset_close_count"] += direct_or_unset_close_count
+        row["latest_position_id"] = position.get("position_id")
+        row["latest_realized_pnl"] = position.get("realized_pnl")
+        if closed_matched and nautilus_close_count:
+            row["status"] = "proved"
+        elif closed_matched:
+            row["status"] = "proved_with_direct_close"
+        elif row["status"] == "not_observed":
+            row["status"] = "open_observed"
+
+    recent_attempts: list[dict[str, Any]] = []
+    missing_close_runtime_count = 0
+    bridge_payload_count = 0
+    for attempt in candidate_attempts[: max(int(limit), 0)]:
+        attempt_id = str(attempt["execution_attempt_id"])
+        runtime = _attempt_runtime(attempt)
+        position_id = _as_text(attempt.get("position_id"))
+        position = (
+            positions_by_open_attempt.get(attempt_id)
+            if str(attempt.get("trade_intent") or "") == "open"
+            else None if position_id is None else positions_by_id.get(position_id)
+        )
+        open_attempt = attempt
+        if position is not None and str(attempt.get("trade_intent") or "") == "close":
+            open_attempt_id = _as_text(position.get("open_execution_attempt_id"))
+            open_attempt = (
+                attempt
+                if open_attempt_id is None
+                else attempts_by_id.get(open_attempt_id, attempt)
+            )
+        expected_runtime = (
+            NAUTILUS_RUNTIME
+            if _attempt_runtime(open_attempt) == NAUTILUS_RUNTIME
+            else runtime
+        )
+        missing_close_runtime = (
+            str(attempt.get("trade_intent") or "") == "close"
+            and expected_runtime == NAUTILUS_RUNTIME
+            and runtime != NAUTILUS_RUNTIME
+        )
+        missing_close_runtime_count += 1 if missing_close_runtime else 0
+        latest_intent = _latest_intent(intents_by_attempt.get(attempt_id, []))
+        intent_payload = _intent_payload(latest_intent)
+        runtime_handoff = (
+            intent_payload.get("runtime_handoff")
+            if isinstance(intent_payload.get("runtime_handoff"), Mapping)
+            else {}
+        )
+        runtime_result = (
+            intent_payload.get("runtime_result")
+            if isinstance(intent_payload.get("runtime_result"), Mapping)
+            else {}
+        )
+        bridge_payload_available = bool(runtime_handoff or runtime_result)
+        bridge_payload_count += 1 if bridge_payload_available else 0
+        attempt_orders = orders_by_attempt.get(attempt_id, [])
+        attempt_fills = fills_by_attempt.get(attempt_id, [])
+        recent_attempts.append(
+            {
+                "execution_attempt_id": attempt_id,
+                "execution_intent_id": None
+                if latest_intent is None
+                else latest_intent.get("execution_intent_id"),
+                "intent_state": None if latest_intent is None else latest_intent.get("state"),
+                "bot_id": attempt.get("bot_id"),
+                "automation_id": attempt.get("automation_id"),
+                "strategy_family": normalize_strategy_family(attempt.get("strategy_family")),
+                "underlying_symbol": attempt.get("underlying_symbol"),
+                "trade_intent": attempt.get("trade_intent"),
+                "attempt_status": attempt.get("status"),
+                "execution_runtime": runtime,
+                "expected_runtime": expected_runtime,
+                "missing_close_runtime": missing_close_runtime,
+                "requested_at": attempt.get("requested_at"),
+                "submitted_at": attempt.get("submitted_at"),
+                "completed_at": attempt.get("completed_at"),
+                "broker_order_id": attempt.get("broker_order_id"),
+                "client_order_id": attempt.get("client_order_id"),
+                "bridge_status": runtime_result.get("status"),
+                "bridge_reason": runtime_result.get("reason"),
+                "bridge_schema_version": runtime_handoff.get("handoff_schema_version"),
+                "order_list_id": runtime_handoff.get("order_list_id"),
+                "bridge_payload_available": bridge_payload_available,
+                "alpaca_order_count": len(attempt_orders),
+                "alpaca_fill_count": len(attempt_fills),
+                "alpaca_order_status_counts": _order_status_counts(attempt_orders),
+                "session_position_id": None if position is None else position.get("position_id"),
+                "session_position_status": None if position is None else position.get("status"),
+                "session_position_reconciliation": None
+                if position is None
+                else position.get("reconciliation_status"),
+                "session_position_realized_pnl": None
+                if position is None
+                else position.get("realized_pnl"),
+                "audit_payload_location": "execution_intents.payload"
+                if bridge_payload_available
+                else None,
+            }
+        )
+
+    return {
+        "status": "ok",
+        "market_date": market_date,
+        "strategy_families": list(strategy_families),
+        "summary": {
+            "attempt_count": len(candidate_attempts),
+            "recent_attempt_count": len(recent_attempts),
+            "nautilus_attempt_count": sum(
+                1 for attempt in candidate_attempts if _attempt_runtime(attempt) == NAUTILUS_RUNTIME
+            ),
+            "filled_attempt_count": sum(
+                1 for attempt in candidate_attempts if str(attempt.get("status") or "") == "filled"
+            ),
+            "canceled_attempt_count": sum(
+                1 for attempt in candidate_attempts if str(attempt.get("status") or "") == "canceled"
+            ),
+            "bridge_payload_count": bridge_payload_count,
+            "alpaca_order_count": len(orders),
+            "alpaca_fill_count": len(fills),
+            "closed_matched_position_count": sum(
+                int(row.get("closed_matched_count") or 0)
+                for row in proof_by_family.values()
+            ),
+            "nautilus_full_lifecycle_count": sum(
+                int(row.get("closed_matched_count") or 0)
+                for row in proof_by_family.values()
+                if str(row.get("status") or "") == "proved"
+            ),
+            "missing_close_runtime_count": missing_close_runtime_count,
+        },
+        "proof_by_family": proof_by_family,
+        "recent_attempts": recent_attempts,
     }
 
 
@@ -400,6 +773,11 @@ def build_trading_health(
                 ),
             )
         )
+    details["nautilus_lifecycle"] = _nautilus_lifecycle_audit(
+        execution_store=execution_store,
+        market_date=market_date,
+        strategy_families=_configured_nautilus_strategy_families(nautilus_runtime),
+    )
     if execution_store.schema_ready():
         open_execution_attempts = [
             dict(row)
@@ -615,6 +993,11 @@ def build_trading_health(
     elif stale_open_execution_count or submit_unknown_execution_count:
         trading_allowed = False
 
+    nautilus_lifecycle_summary = (
+        details.get("nautilus_lifecycle", {}).get("summary")
+        if isinstance(details.get("nautilus_lifecycle"), Mapping)
+        else {}
+    )
     summary = {
         "trading_allowed": trading_allowed,
         "market_session_status": market_session.get("status"),
@@ -710,6 +1093,18 @@ def build_trading_health(
             else "unknown"
         ),
         "nautilus_entry_automation_count": nautilus_entry_count,
+        "nautilus_lifecycle_attempt_count": _coerce_int(
+            nautilus_lifecycle_summary.get("attempt_count")
+        )
+        or 0,
+        "nautilus_full_lifecycle_count": _coerce_int(
+            nautilus_lifecycle_summary.get("nautilus_full_lifecycle_count")
+        )
+        or 0,
+        "nautilus_missing_close_runtime_count": _coerce_int(
+            nautilus_lifecycle_summary.get("missing_close_runtime_count")
+        )
+        or 0,
     }
 
     details.update(

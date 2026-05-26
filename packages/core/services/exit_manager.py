@@ -647,12 +647,14 @@ def _create_managed_close_intent(
             ),
             "execution_mode": runtime.automation.automation.execution_mode,
             "approval_mode": runtime.automation.automation.approval_mode,
+            "execution_runtime": runtime.automation.automation.execution_runtime,
         },
         created_event_payload={
             "position_id": position_id,
             "reason": decision.get("reason"),
             "recipe_ref": decision.get("recipe_ref"),
             "limit_price": decision.get("limit_price"),
+            "execution_runtime": runtime.automation.automation.execution_runtime,
         },
     )
 

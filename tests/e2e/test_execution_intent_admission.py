@@ -166,6 +166,90 @@ class ExecutionIntentAdmissionTests(unittest.TestCase):
             "blocked",
         )
 
+    def test_submit_close_intent_passes_configured_execution_runtime(self) -> None:
+        class _ExecutionStore:
+            def __init__(self) -> None:
+                self.intent = {
+                    "execution_intent_id": "intent-close-1",
+                    "bot_id": "short_dated_earnings_call_debit_bot",
+                    "automation_id": "earnings_call_debit_manage",
+                    "opportunity_decision_id": None,
+                    "strategy_position_id": "position-1",
+                    "execution_attempt_id": None,
+                    "action_type": "close",
+                    "slot_key": "manage:position-1:close",
+                    "claim_token": None,
+                    "policy_ref": {
+                        "strategy_config_id": "short_dated_earnings_call_debit",
+                        "strategy_id": "short_dated_earnings_call_debit",
+                    },
+                    "config_hash": "cfg-1",
+                    "state": "pending",
+                    "expires_at": None,
+                    "superseded_by_id": None,
+                    "payload": {
+                        "execution_runtime": "nautilus",
+                        "limit_price": 2.4,
+                        "source": {"kind": "management_runtime_exit"},
+                    },
+                    "created_at": "2026-05-26T15:00:00Z",
+                    "updated_at": "2026-05-26T15:00:00Z",
+                }
+                self.events: list[dict[str, object]] = []
+
+            def intent_schema_ready(self) -> bool:
+                return True
+
+            def get_execution_intent(
+                self,
+                execution_intent_id: str,
+            ) -> dict[str, object] | None:
+                if execution_intent_id != "intent-close-1":
+                    return None
+                return dict(self.intent)
+
+            def get_position(self, position_id: str) -> dict[str, object] | None:
+                if position_id != "position-1":
+                    return None
+                return {"position_id": position_id, "status": "open"}
+
+            def upsert_execution_intent(self, **payload: object) -> dict[str, object]:
+                self.intent.update(payload)
+                return dict(self.intent)
+
+            def append_execution_intent_event(self, **payload: object) -> None:
+                self.events.append(dict(payload))
+
+        class _Storage:
+            def __init__(self) -> None:
+                self.execution = _ExecutionStore()
+                self.signals = object()
+
+        storage = _Storage()
+        with patch(
+            "core.services.execution_intents.submit_position_close_by_id",
+            return_value={
+                "action": "submit",
+                "changed": True,
+                "attempt": {
+                    "execution_attempt_id": "execution-close-1",
+                    "status": "pending_submission",
+                    "trade_intent": "close",
+                },
+            },
+        ) as submit_mock:
+            result = submit_execution_intent(
+                db_target="postgresql://example",
+                execution_intent_id="intent-close-1",
+                storage=storage,
+            )
+
+        self.assertTrue(result["changed"])
+        submit_mock.assert_called_once()
+        request_metadata = submit_mock.call_args.kwargs["request_metadata"]
+        self.assertEqual(request_metadata["execution_runtime"], "nautilus")
+        self.assertEqual(request_metadata["source"]["kind"], "management_runtime_exit")
+
 
 if __name__ == "__main__":
     unittest.main()
