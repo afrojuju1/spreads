@@ -30,7 +30,13 @@ NAUTILUS_TWO_LEG_VERTICAL_FAMILIES = frozenset(
         "put_debit_spread",
     }
 )
+NAUTILUS_FOUR_LEG_FAMILIES = frozenset({"iron_condor"})
+NAUTILUS_OPTION_SPREAD_FAMILIES = (
+    NAUTILUS_TWO_LEG_VERTICAL_FAMILIES | NAUTILUS_FOUR_LEG_FAMILIES
+)
+NAUTILUS_OPTION_SPREAD_ACTIONS = frozenset({"open", "close"})
 NAUTILUS_TWO_LEG_VERTICAL_OPEN_CAPABILITY = "option_two_leg_vertical_open"
+NAUTILUS_OPTION_SPREAD_ORDER_LIST_CAPABILITY = "option_spread_order_list"
 
 
 def normalize_execution_runtime(value: Any) -> str:
@@ -79,32 +85,46 @@ def resolve_nautilus_handoff_capability(
 ) -> dict[str, Any]:
     family = normalize_strategy_family(strategy_family)
     action = str(trade_intent or "open").strip().lower()
-    sides = sorted(
+    sides = [
         side
         for side in (_side(leg) for leg in legs)
         if side in {"buy", "sell"}
-    )
+    ]
+    side_counts = Counter(sides)
     ratio_quantities = [
         max(_coerce_int(leg.get("ratio_qty")) or 1, 1)
         for leg in legs
     ]
+    structure = "unsupported"
+    if family in NAUTILUS_TWO_LEG_VERTICAL_FAMILIES and len(legs) == 2:
+        structure = "two_leg_vertical"
+    elif family in NAUTILUS_FOUR_LEG_FAMILIES and len(legs) == 4:
+        structure = "four_leg"
     not_ready_reason: str | None = None
-    if action != "open":
+    if action not in NAUTILUS_OPTION_SPREAD_ACTIONS:
         not_ready_reason = f"nautilus_unsupported_action:{action}"
-    elif family not in NAUTILUS_TWO_LEG_VERTICAL_FAMILIES:
+    elif family not in NAUTILUS_OPTION_SPREAD_FAMILIES:
         not_ready_reason = f"nautilus_unsupported_strategy_family:{family}"
-    elif len(legs) != 2:
+    elif family in NAUTILUS_TWO_LEG_VERTICAL_FAMILIES and len(legs) != 2:
         not_ready_reason = "nautilus_handoff_requires_two_leg_vertical"
-    elif sides != ["buy", "sell"]:
+    elif family in NAUTILUS_FOUR_LEG_FAMILIES and len(legs) != 4:
+        not_ready_reason = "nautilus_handoff_requires_four_leg_structure"
+    elif family in NAUTILUS_TWO_LEG_VERTICAL_FAMILIES and side_counts != Counter(
+        {"buy": 1, "sell": 1}
+    ):
         not_ready_reason = "nautilus_handoff_requires_one_buy_and_one_sell_leg"
-    elif ratio_quantities != [1, 1]:
-        not_ready_reason = "nautilus_handoff_requires_one_to_one_vertical"
+    elif family in NAUTILUS_FOUR_LEG_FAMILIES and side_counts != Counter(
+        {"buy": 2, "sell": 2}
+    ):
+        not_ready_reason = "nautilus_handoff_requires_two_buy_and_two_sell_legs"
+    elif any(quantity != 1 for quantity in ratio_quantities):
+        not_ready_reason = "nautilus_handoff_requires_one_to_one_ratios"
 
     return {
-        "name": NAUTILUS_TWO_LEG_VERTICAL_OPEN_CAPABILITY,
+        "name": NAUTILUS_OPTION_SPREAD_ORDER_LIST_CAPABILITY,
         "asset_class": "option",
         "action": action,
-        "structure": "two_leg_vertical" if len(legs) == 2 else "unsupported",
+        "structure": structure,
         "strategy_family": family,
         "leg_count": len(legs),
         "ready": not_ready_reason is None,
@@ -124,21 +144,21 @@ def _leg_quote_price(
     return None
 
 
-def _derive_vertical_leg_prices(
+def _derive_spread_leg_prices(
     *,
     legs: list[dict[str, Any]],
     order_request: Mapping[str, Any],
     live_quote: Mapping[str, Any] | None,
 ) -> tuple[dict[str, float], str | None]:
-    if len(legs) != 2:
-        return {}, "nautilus_handoff_requires_two_leg_vertical_pricing"
+    if len(legs) not in {2, 4}:
+        return {}, "nautilus_handoff_requires_two_or_four_leg_pricing"
     quote_legs = _quote_legs(live_quote)
     if not quote_legs:
         return {}, "nautilus_handoff_requires_live_leg_quotes"
 
     priced: dict[int, float] = {}
-    sell_index: int | None = None
-    buy_index: int | None = None
+    sell_indexes: list[int] = []
+    buy_indexes: list[int] = []
     for index, leg in enumerate(legs):
         symbol = _as_text(leg.get("symbol"))
         side = _side(leg)
@@ -152,19 +172,19 @@ def _derive_vertical_leg_prices(
             return {}, f"nautilus_handoff_unpriced_leg:{symbol}"
         priced[index] = natural_price
         if side == "sell":
-            sell_index = index
+            sell_indexes.append(index)
         else:
-            buy_index = index
+            buy_indexes.append(index)
 
-    if sell_index is None or buy_index is None:
-        return {}, "nautilus_handoff_requires_one_buy_and_one_sell_leg"
+    if not sell_indexes or not buy_indexes:
+        return {}, "nautilus_handoff_requires_buy_and_sell_legs"
 
     target_net = _coerce_float(order_request.get("limit_price"))
     if target_net is None or target_net == 0:
         return {}, "nautilus_handoff_requires_nonzero_net_limit"
 
-    sell_natural = priced[sell_index]
-    buy_natural = priced[buy_index]
+    sell_natural = sum(priced[index] for index in sell_indexes)
+    buy_natural = sum(priced[index] for index in buy_indexes)
     if target_net < 0:
         target_credit = abs(target_net)
         natural_credit = sell_natural - buy_natural
@@ -172,10 +192,21 @@ def _derive_vertical_leg_prices(
             return {}, "nautilus_handoff_live_quotes_not_credit_executable"
         if target_credit > natural_credit + 0.005:
             return {}, "nautilus_handoff_target_credit_above_natural"
-        priced[sell_index] = round(buy_natural + target_credit, 2)
+        adjustment = target_credit - natural_credit
+        adjusted_index = sell_indexes[0]
+        adjusted_price = priced[adjusted_index] + adjustment
+        if adjusted_price <= 0:
+            return {}, "nautilus_handoff_adjusted_leg_price_not_positive"
+        priced[adjusted_index] = round(adjusted_price, 2)
     else:
         target_debit = target_net
-        priced[buy_index] = round(sell_natural + target_debit, 2)
+        natural_debit = buy_natural - sell_natural
+        adjustment = target_debit - natural_debit
+        adjusted_index = buy_indexes[0]
+        adjusted_price = priced[adjusted_index] + adjustment
+        if adjusted_price <= 0:
+            return {}, "nautilus_handoff_adjusted_leg_price_not_positive"
+        priced[adjusted_index] = round(adjusted_price, 2)
 
     return {str(index): round(price, 2) for index, price in priced.items()}, None
 
@@ -210,7 +241,7 @@ def build_nautilus_submit_order_list_handoff(
     capability_not_ready = _as_text(capability.get("not_ready_reason"))
     pricing_not_ready: str | None = None
     if capability_not_ready is None:
-        leg_prices, pricing_not_ready = _derive_vertical_leg_prices(
+        leg_prices, pricing_not_ready = _derive_spread_leg_prices(
             legs=legs,
             order_request=order_request,
             live_quote=live_quote,
@@ -319,7 +350,7 @@ def resolve_execution_runtime_capabilities(config_root: Any = None) -> dict[str,
                         "name": "equity_buy_sell",
                         "asset_classes": ["equity"],
                         "actions": ["buy", "sell"],
-                        "status": "unsupported",
+                        "status": "ready",
                     },
                 ],
             },
@@ -332,28 +363,20 @@ def resolve_execution_runtime_capabilities(config_root: Any = None) -> dict[str,
                 "bridge": bridge,
                 "capabilities": [
                     {
-                        "name": NAUTILUS_TWO_LEG_VERTICAL_OPEN_CAPABILITY,
+                        "name": NAUTILUS_OPTION_SPREAD_ORDER_LIST_CAPABILITY,
                         "asset_classes": ["option"],
-                        "actions": ["open"],
-                        "structure": "two_leg_vertical",
+                        "actions": sorted(NAUTILUS_OPTION_SPREAD_ACTIONS),
+                        "structures": ["two_leg_vertical", "four_leg"],
                         "strategy_families": sorted(
-                            NAUTILUS_TWO_LEG_VERTICAL_FAMILIES
+                            NAUTILUS_OPTION_SPREAD_FAMILIES
                         ),
                         "status": "ready" if nautilus_ready else "blocked",
-                    },
-                    {
-                        "name": "option_four_leg_open",
-                        "asset_classes": ["option"],
-                        "actions": ["open"],
-                        "structure": "four_leg",
-                        "strategy_families": ["iron_condor"],
-                        "status": "unsupported",
                     },
                     {
                         "name": "option_close_cancel_refresh",
                         "asset_classes": ["option"],
                         "actions": ["close", "cancel", "refresh"],
-                        "status": "unsupported",
+                        "status": "ready",
                     },
                     {
                         "name": "equity_buy_sell",
@@ -372,6 +395,9 @@ __all__ = [
     "EXECUTION_RUNTIME_CAPABILITIES_SCHEMA_VERSION",
     "NAUTILUS_RUNTIME",
     "NAUTILUS_HANDOFF_SCHEMA_VERSION",
+    "NAUTILUS_FOUR_LEG_FAMILIES",
+    "NAUTILUS_OPTION_SPREAD_FAMILIES",
+    "NAUTILUS_OPTION_SPREAD_ORDER_LIST_CAPABILITY",
     "NAUTILUS_TWO_LEG_VERTICAL_FAMILIES",
     "SUPPORTED_EXECUTION_RUNTIMES",
     "build_nautilus_submit_order_list_handoff",

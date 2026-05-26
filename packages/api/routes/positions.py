@@ -71,6 +71,11 @@ def close_position_route(
             position_id=position_id,
             quantity=payload.quantity,
             limit_price=payload.limit_price,
+            request_metadata={
+                "execution_runtime": payload.execution_runtime,
+            }
+            if payload.execution_runtime is not None
+            else None,
         )
     except ValueError as exc:
         raise bad_request_error(exc) from exc

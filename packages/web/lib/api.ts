@@ -348,7 +348,7 @@ const executionAttemptSchema = z
     job_run_id: z.string().nullable().optional(),
     underlying_symbol: z.string(),
     strategy: z.string(),
-    expiration_date: z.string(),
+    expiration_date: z.string().nullable().optional(),
     trade_intent: z.string(),
     position_id: z.string().nullable().optional(),
     quantity: z.number(),
@@ -370,7 +370,7 @@ const executionAttemptSchema = z
 
 const operatorActionResponseSchema = z
   .object({
-    action: z.enum(["submit", "refresh"]),
+    action: z.enum(["submit", "refresh", "cancel"]),
     changed: z.boolean(),
     message: z.string(),
     attempt: executionAttemptSchema,
@@ -771,6 +771,17 @@ export type OpportunityExecutionRequest = {
 export type PositionCloseRequest = {
   quantity?: number;
   limit_price?: number;
+  execution_runtime?: string;
+};
+export type EquityOrderRequest = {
+  symbol: string;
+  side: "buy" | "sell";
+  quantity: number;
+  limit_price: number;
+  time_in_force?: "day" | "gtc";
+  label?: string;
+  market_date?: string;
+  execution_runtime?: string;
 };
 
 async function fetchApi<T>(
@@ -920,6 +931,14 @@ export function getExecutionRuntimes() {
   return fetchApi("executions/runtimes", executionRuntimeCapabilitiesSchema);
 }
 
+export function submitEquityOrder(payload: EquityOrderRequest) {
+  return postApi(
+    "executions/equity-orders",
+    operatorActionResponseSchema,
+    payload,
+  );
+}
+
 export function getOpportunities(filters?: {
   pipelineId?: string;
   label?: string;
@@ -1002,6 +1021,14 @@ export function closePosition(
 export function refreshExecution(executionAttemptId: string) {
   return postApi(
     `executions/${encodeURIComponent(executionAttemptId)}/refresh`,
+    operatorActionResponseSchema,
+    {},
+  );
+}
+
+export function cancelExecution(executionAttemptId: string) {
+  return postApi(
+    `executions/${encodeURIComponent(executionAttemptId)}/cancel`,
     operatorActionResponseSchema,
     {},
   );
