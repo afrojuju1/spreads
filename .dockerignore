@@ -7,6 +7,15 @@ node_modules
 apps/web/node_modules
 apps/web/.next
 apps/web/out
+packages/web/node_modules
+packages/web/.next
+packages/web/out
+packages/web/tsconfig.tsbuildinfo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
 output
 outputs
 data/raw

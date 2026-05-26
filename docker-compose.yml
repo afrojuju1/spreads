@@ -26,13 +26,30 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+  runtime-init:
+    build:
+      context: .
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
+      REDIS_URL: redis://redis:6379/0
+    command: ["uv", "run", "python", "-m", "core.services.runtime_init"]
+    volumes:
+      - .:/app
   api:
     build:
       context: .
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
+      runtime-init:
+        condition: service_completed_successfully
     env_file:
       - .env
     environment:
@@ -59,6 +76,7 @@ services:
       ]
     volumes:
       - .:/app
+      - /home/ade/.local/bin/alpaca-submit-order-list-bridge:/usr/local/bin/alpaca-submit-order-list-bridge:ro
     ports:
       - "58080:8000"
   worker-runtime:
@@ -68,8 +86,8 @@ services:
     deploy:
       replicas: 2
     depends_on:
-      postgres:
-        condition: service_healthy
+      runtime-init:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     env_file:
@@ -81,6 +99,7 @@ services:
     command: ["uv", "run", "arq", "core.jobs.worker.RuntimeWorkerSettings"]
     volumes:
       - .:/app
+      - /home/ade/.local/bin/alpaca-submit-order-list-bridge:/usr/local/bin/alpaca-submit-order-list-bridge:ro
   worker-discovery:
     build:
       context: .
@@ -88,8 +107,8 @@ services:
     deploy:
       replicas: 4
     depends_on:
-      postgres:
-        condition: service_healthy
+      runtime-init:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     env_file:
@@ -106,8 +125,8 @@ services:
       context: .
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
+      runtime-init:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       api:
@@ -126,8 +145,8 @@ services:
       context: .
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
+      runtime-init:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     env_file:
@@ -143,8 +162,8 @@ services:
       context: .
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
+      runtime-init:
+        condition: service_completed_successfully
     env_file:
       - .env
     environment:

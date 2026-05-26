@@ -61,12 +61,14 @@ Bring up the full dev stack:
 docker compose up -d
 ```
 
-Apply migrations and seed job definitions:
+Apply migrations:
 
 ```bash
 uv run alembic upgrade head
-uv run spreads jobs seed
 ```
+
+Recurring jobs are declared by the runtime configuration and visible through
+`uv run spreads jobs`; there is no separate seed step.
 
 Main local surfaces:
 

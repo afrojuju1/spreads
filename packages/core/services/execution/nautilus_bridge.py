@@ -14,6 +14,7 @@ DEFAULT_NAUTILUS_BRIDGE_TIMEOUT_SECONDS = 45.0
 DEFAULT_NAUTILUS_BRIDGE_CANDIDATES = (
     DEFAULT_NAUTILUS_BRIDGE_COMMAND,
     "/usr/local/bin/alpaca-submit-order-list-bridge",
+    "/home/ade/.local/bin/alpaca-submit-order-list-bridge",
     "/home/ade/Projects/nautilus_trader/target/release/alpaca-submit-order-list-bridge",
     "/home/ade/Projects/nautilus_trader/target/debug/alpaca-submit-order-list-bridge",
 )
