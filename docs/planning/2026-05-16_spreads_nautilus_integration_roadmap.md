@@ -71,7 +71,7 @@ Current implementation checkpoint:
 
 - `build_nautilus_submit_order_list_handoff` emits `spreads.nautilus.submit_order_list.v1` and declares the requested runtime capability.
 - `resolve_execution_runtime_capabilities` is the single capability/readiness resolver for CLI, API, trading health, and the runtime catalog.
-- The Nautilus runtime currently declares `option_two_leg_vertical_open` as supported and leaves four-leg structures, close/cancel/refresh, and equity buy/sell as unsupported until their lifecycle paths are implemented.
+- The Nautilus runtime declares option `SubmitOrderList` support for open/close two-leg verticals and four-leg iron condors. Refresh/cancel reconcile through Alpaca broker order ids. Equity buy/sell remains Alpaca-direct only.
 - The bridge wrapper validates the response envelope before accepting it as a runtime result.
 
 Exit criteria:
@@ -241,7 +241,7 @@ Rules:
 5. Add operator audit view fields for handoff request/response metadata.
 6. Prove one full paper lifecycle for `index_put_credit_entry`.
 7. Prove one full paper lifecycle for `index_call_credit_entry`.
-8. Decide whether vertical closes should route through Nautilus before adding 4-leg structures.
+8. Prove one full paper lifecycle for `index_iron_condor_entry`.
 
 ## Open Decisions
 
