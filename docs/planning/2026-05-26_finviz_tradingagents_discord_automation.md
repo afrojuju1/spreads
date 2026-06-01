@@ -193,7 +193,7 @@ payload:
   output_root: outputs/tradingagents/finviz_momentum
   timeout_seconds: 1800
   heartbeat_seconds: 30
-  allow_quality_warn: true
+  allow_quality_warn: false
   actionable_signals: [Buy, Overweight, Sell, Underweight]
 singleton_scope: finviz_momentum
 ```
@@ -206,7 +206,7 @@ Actionable per-ticker alert:
 
 - `validated_signal` is `Buy`, `Overweight`, `Sell`, or `Underweight`
 - `quality_status` is `pass`
-- optionally allow `warn`, but label it as data-limited
+- keep `warn` in the batch summary only while validating
 - no timeout/error
 - not already alerted within cooldown unless the signal changed
 
@@ -366,6 +366,8 @@ Latest one-ticker validation:
 - failed: `0`
 - timed out: `0`
 - report: `outputs/tradingagents/finviz_momentum/REPL_20260531_233546/complete_report.md`
+
+Follow-up refinement: one-ticker validation now requires `quality_status=pass` for per-ticker actionable alerts, and duplicated TradingAgents quality warnings should be collapsed before operator-facing summaries.
 
 Implemented files:
 

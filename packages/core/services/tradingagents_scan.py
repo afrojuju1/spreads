@@ -20,6 +20,11 @@ NEW_YORK = ZoneInfo("America/New_York")
 DEFAULT_TRADINGAGENTS_DIR = "/home/ade/Projects/TradingAgents"
 DEFAULT_ACTIONABLE_SIGNALS = ("Buy", "Overweight", "Sell", "Underweight")
 RESEARCH_SOURCE = "research.tradingagents_scan"
+QUALITY_MESSAGE_VALUE_RE = re.compile(
+    r"\b(?:value|level)\s+(?P<value>-?\$-?\d+(?:,\d{3})*(?:\.\d+)?"
+    r"(?:(?:\s*(?:trillion|billion|million|thousand))|(?:[TBMK]\+?))?)",
+    re.I,
+)
 
 
 def _utc_now() -> datetime:
@@ -187,10 +192,53 @@ def _actionable_result(result: Mapping[str, Any], payload: Mapping[str, Any]) ->
     )
 
 
+def _quality_issue_key(issue: Mapping[str, Any]) -> tuple[str, str, str]:
+    code = str(issue.get("code") or "").strip().lower()
+    severity = str(issue.get("severity") or "").strip().lower()
+    message = str(issue.get("message") or "").strip()
+    match = QUALITY_MESSAGE_VALUE_RE.search(message)
+    if match:
+        normalized_value = re.sub(r"\s+", "", match.group("value").lower())
+        return severity, code, normalized_value
+    return severity, code, message.lower()
+
+
+def _dedupe_quality_issues(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        issue = dict(item)
+        key = _quality_issue_key(issue)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(issue)
+    return deduped
+
+
 def _metadata_result_fields(metadata: Mapping[str, Any]) -> dict[str, Any]:
     quality = (
         metadata.get("quality") if isinstance(metadata.get("quality"), Mapping) else {}
     )
+    quality_issues = _dedupe_quality_issues(metadata.get("quality_issues"))
+    if quality_issues:
+        quality_error_count = sum(
+            1
+            for issue in quality_issues
+            if str(issue.get("severity") or "").strip().lower() == "error"
+        )
+        quality_warning_count = sum(
+            1
+            for issue in quality_issues
+            if str(issue.get("severity") or "").strip().lower() == "warning"
+        )
+    else:
+        quality_error_count = quality.get("errors")
+        quality_warning_count = quality.get("warnings")
     return {
         "validated_signal": metadata.get("validated_signal") or metadata.get("signal"),
         "raw_signal": metadata.get("raw_signal"),
@@ -200,8 +248,9 @@ def _metadata_result_fields(metadata: Mapping[str, Any]) -> dict[str, Any]:
         "wall_seconds": metadata.get("wall_seconds"),
         "run_profile": metadata.get("run_profile"),
         "quality_passed": quality.get("passed"),
-        "quality_errors": quality.get("errors"),
-        "quality_warnings": quality.get("warnings"),
+        "quality_errors": quality_error_count,
+        "quality_warnings": quality_warning_count,
+        "quality_issues": quality_issues,
     }
 
 

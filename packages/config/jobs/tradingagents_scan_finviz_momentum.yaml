@@ -14,7 +14,7 @@ payload:
   output_root: outputs/tradingagents/finviz_momentum
   timeout_seconds: 1800
   heartbeat_seconds: 30
-  allow_quality_warn: true
+  allow_quality_warn: false
   actionable_signals:
     - Buy
     - Overweight
