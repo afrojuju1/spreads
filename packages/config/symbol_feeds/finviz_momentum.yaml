@@ -2,8 +2,8 @@ symbol_feed_id: finviz_momentum
 job_key: symbol_feed:finviz_momentum
 enabled: true
 schedule:
-  type: market_open_plus_minutes
-  minutes: 10
+  type: interval_minutes
+  minutes: 2
 allow_off_hours: false
 recipe: finviz_screener
 recipe_args:

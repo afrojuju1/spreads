@@ -14,6 +14,7 @@ ALERT_RECONCILE_JOB_TYPE = "alert_reconcile"
 DISCOVERY_RUN_JOB_TYPE = "discovery_run"
 SYMBOL_FEED_JOB_TYPE = "symbol_feed"
 TRADINGAGENTS_SCAN_JOB_TYPE = "tradingagents_scan"
+FINVIZ_DIRECT_TRADING_JOB_TYPE = "finviz_direct_trading"
 POSITION_EXIT_MANAGER_JOB_TYPE = "position_exit_manager"
 DISCOVERY_RECOVERY_JOB_TYPE = "discovery_recovery"
 OPTIONS_AUTOMATION_ENTRY_JOB_TYPE = "options_automation_entry"
@@ -100,6 +101,11 @@ JOB_SPECS = {
             queue_name=RESEARCH_QUEUE_NAME,
         ),
         JobSpec(
+            job_type=FINVIZ_DIRECT_TRADING_JOB_TYPE,
+            task_name="run_finviz_direct_trading_job",
+            queue_name=RUNTIME_QUEUE_NAME,
+        ),
+        JobSpec(
             job_type=DISCOVERY_RECOVERY_JOB_TYPE,
             task_name="run_discovery_recovery_job",
             queue_name=RUNTIME_QUEUE_NAME,
@@ -145,6 +151,7 @@ WORKER_LANES = (
             JOB_SPECS[DISCOVERY_RECOVERY_JOB_TYPE].task_name,
             JOB_SPECS[OPTIONS_AUTOMATION_ENTRY_JOB_TYPE].task_name,
             JOB_SPECS[OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE].task_name,
+            JOB_SPECS[FINVIZ_DIRECT_TRADING_JOB_TYPE].task_name,
         ),
         max_jobs=4,
     ),

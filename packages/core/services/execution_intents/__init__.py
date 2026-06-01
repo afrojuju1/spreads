@@ -18,6 +18,7 @@ from core.services.alpaca import (
 )
 from core.services.execution import (
     ExecutionAdmissionError,
+    submit_equity_order,
     submit_opportunity_execution,
     submit_position_close_by_id,
 )
@@ -46,6 +47,18 @@ from .shared import (
 )
 
 PRE_DISPATCH_EXPIRE_REASON = "dispatch_window_elapsed"
+
+
+def _equity_intent_payload(intent: dict[str, Any]) -> dict[str, Any] | None:
+    payload = _intent_payload(intent)
+    asset_class = str(payload.get("asset_class") or "").strip().lower()
+    if asset_class != "equity":
+        return None
+    symbol = _as_text(payload.get("symbol"))
+    side = str(payload.get("side") or intent.get("action_type") or "").strip().lower()
+    if symbol is None or side not in {"buy", "sell"}:
+        return None
+    return payload
 
 
 def request_options_automation_dispatch(
@@ -134,6 +147,8 @@ def _intent_target_is_active(
         return _position_is_active_for_intent(execution_store, intent)
     if _as_text(intent.get("opportunity_decision_id")) is not None or action_type == "open":
         return _opportunity_is_active_for_intent(signal_store, intent)
+    if _equity_intent_payload(intent) is not None:
+        return True, None
     return False, "source_reference_missing"
 
 
@@ -294,6 +309,45 @@ def submit_execution_intent(
                     else float(payload["limit_price"])
                 ),
                 request_metadata=close_request_metadata,
+                storage=storage,
+            )
+        elif (equity_payload := _equity_intent_payload(source_intent)) is not None:
+            source_metadata = (
+                equity_payload.get("source")
+                if isinstance(equity_payload.get("source"), dict)
+                else {}
+            )
+            result = submit_equity_order(
+                db_target=db_target,
+                symbol=str(equity_payload["symbol"]),
+                side=str(equity_payload.get("side") or source_intent["action_type"]),
+                quantity=int(equity_payload.get("quantity") or 1),
+                limit_price=float(equity_payload["limit_price"]),
+                time_in_force=str(equity_payload.get("time_in_force") or "day"),
+                label=str(equity_payload.get("label") or "research_equity"),
+                market_date=_as_text(equity_payload.get("market_date")),
+                execution_runtime=equity_payload.get("execution_runtime"),
+                request_metadata={
+                    "execution_intent_id": execution_intent_id,
+                    "bot_id": source_intent.get("bot_id"),
+                    "automation_id": source_intent.get("automation_id"),
+                    "strategy_config_id": policy_ref.get("strategy_config_id"),
+                    "strategy_id": policy_ref.get("strategy_id"),
+                    "config_hash": source_intent.get("config_hash"),
+                    "position_id": _as_text(equity_payload.get("position_id")),
+                    "trade_intent": _as_text(equity_payload.get("trade_intent")),
+                    "exit_policy": (
+                        dict(equity_payload["exit_policy"])
+                        if isinstance(equity_payload.get("exit_policy"), dict)
+                        else None
+                    ),
+                    "risk_policy": (
+                        dict(equity_payload["risk_policy"])
+                        if isinstance(equity_payload.get("risk_policy"), dict)
+                        else None
+                    ),
+                    "source": dict(source_metadata),
+                },
                 storage=storage,
             )
         else:

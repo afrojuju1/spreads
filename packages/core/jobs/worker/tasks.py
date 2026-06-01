@@ -15,6 +15,7 @@ from core.jobs.registry import (
     DISCOVERY_RECOVERY_JOB_TYPE,
     EXECUTION_SUBMIT_JOB_TYPE,
     DISCOVERY_RUN_JOB_TYPE,
+    FINVIZ_DIRECT_TRADING_JOB_TYPE,
     OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE,
     OPTIONS_AUTOMATION_ENTRY_JOB_TYPE,
     POSITION_EXIT_MANAGER_JOB_TYPE,
@@ -46,6 +47,7 @@ from core.services.decision_engine import run_entry_automation_decision
 from core.services.execution import run_execution_submit
 from core.services.execution_intents import dispatch_pending_execution_intents
 from core.services.exit_manager import run_position_exit_manager
+from core.services.finviz_direct_trading import run_finviz_direct_trading
 from core.services.discovery_recovery import (
     LIVE_SLOT_STATUS_MISSED,
     LIVE_SLOT_STATUS_RUNNING,
@@ -579,6 +581,39 @@ async def run_tradingagents_scan_job(
 
     enriched_payload = dict(payload)
     enriched_payload["job_type"] = TRADINGAGENTS_SCAN_JOB_TYPE
+    return await _execute_managed_job(
+        ctx,
+        job_key=job_key,
+        job_run_id=job_run_id,
+        arq_job_id=arq_job_id,
+        payload=enriched_payload,
+        runner=runner,
+        compact_result=render_value,
+    )
+
+
+async def run_finviz_direct_trading_job(
+    ctx: dict[str, Any],
+    job_key: str,
+    job_run_id: str,
+    payload: dict[str, Any],
+    arq_job_id: str,
+) -> dict[str, Any]:
+    database_url = str(payload.get("db") or ctx["database_url"])
+
+    def runner(heartbeat: Any) -> dict[str, Any]:
+        heartbeat()
+        return run_finviz_direct_trading(
+            db_target=database_url,
+            storage=ctx["storage"],
+            job_store=ctx["job_store"],
+            job_run_id=job_run_id,
+            payload=payload,
+            heartbeat=heartbeat,
+        )
+
+    enriched_payload = dict(payload)
+    enriched_payload["job_type"] = FINVIZ_DIRECT_TRADING_JOB_TYPE
     return await _execute_managed_job(
         ctx,
         job_key=job_key,

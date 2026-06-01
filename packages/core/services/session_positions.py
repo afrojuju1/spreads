@@ -82,6 +82,16 @@ def _derive_live_exposure(
         else round(entry_value * 100.0 * normalized_quantity, 2)
     )
     normalized_family = str(strategy_family or "").strip().lower()
+    if normalized_family.startswith("equity_"):
+        return {
+            "entry_notional": None
+            if entry_value is None
+            else round(entry_value * normalized_quantity, 2),
+            "max_profit": None,
+            "max_loss": None
+            if entry_value is None
+            else round(entry_value * normalized_quantity, 2),
+        }
     if normalized_family in {"long_call", "long_put", "long_straddle", "long_strangle"}:
         return {
             "entry_notional": entry_notional,
@@ -470,6 +480,8 @@ def _realized_close_pnl(
 ) -> float:
     if entry_value is None or exit_value is None or quantity <= 0:
         return 0.0
+    if str(strategy_family or "").strip().lower().startswith("equity_"):
+        return round((exit_value - entry_value) * quantity, 2)
     premium_kind = net_premium_kind(strategy_family)
     if premium_kind == "debit":
         return round((exit_value - entry_value) * 100.0 * quantity, 2)

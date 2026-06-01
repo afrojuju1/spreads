@@ -103,8 +103,8 @@ from .policy import (
     normalize_execution_policy,
 )
 from .runtimes import (
-    ALPACA_DIRECT_RUNTIME,
     NAUTILUS_RUNTIME,
+    build_nautilus_equity_order_handoff,
     build_nautilus_submit_order_list_handoff,
     execution_runtime_from_request,
     normalize_execution_runtime,
@@ -2218,13 +2218,13 @@ def submit_equity_order(
     label: str = "manual_equity",
     market_date: str | None = None,
     execution_runtime: str | None = None,
+    request_metadata: dict[str, Any] | None = None,
     storage: Any | None = None,
 ) -> dict[str, Any]:
     execution_store = storage.execution
     _require_execution_schema(execution_store)
     normalized_runtime = normalize_execution_runtime(execution_runtime)
-    if normalized_runtime != ALPACA_DIRECT_RUNTIME:
-        raise ValueError("Equity buy/sell is currently supported by alpaca_direct only")
+    metadata = dict(request_metadata or {})
 
     normalized_symbol = str(symbol or "").strip().upper()
     if not normalized_symbol:
@@ -2242,6 +2242,26 @@ def submit_equity_order(
     if resolved_time_in_force not in {"day", "gtc"}:
         raise ValueError("Equity order time_in_force must be day or gtc")
 
+    resolved_trade_intent = resolve_trade_intent(
+        _as_text(metadata.get("trade_intent"))
+        or (OPEN_TRADE_INTENT if normalized_side == "buy" else CLOSE_TRADE_INTENT)
+    )
+    if normalized_side == "buy":
+        position_intent = (
+            "buy_to_open"
+            if resolved_trade_intent == OPEN_TRADE_INTENT
+            else "buy_to_close"
+        )
+    else:
+        position_intent = (
+            "sell_to_open"
+            if resolved_trade_intent == OPEN_TRADE_INTENT
+            else "sell_to_close"
+        )
+    leg_role = (
+        "short" if position_intent in {"sell_to_open", "buy_to_close"} else "long"
+    )
+    position_id = _as_text(metadata.get("position_id"))
     requested_at = _utc_now()
     resolved_market_date = market_date or datetime.now(UTC).date().isoformat()
     resolved_label = _as_text(label) or "manual_equity"
@@ -2255,20 +2275,18 @@ def submit_equity_order(
         "limit_price": f"{resolved_limit_price:.2f}",
         "time_in_force": resolved_time_in_force,
         "client_order_id": client_order_id,
+        "position_intent": position_intent,
     }
-    position_intent = (
-        "buy_to_open" if normalized_side == "buy" else "sell_to_close"
-    )
     legs = [
         {
             "symbol": normalized_symbol,
             "side": normalized_side,
             "position_intent": position_intent,
             "ratio_qty": "1",
-            "role": "long",
+            "role": leg_role,
         }
     ]
-    strategy = f"equity_{normalized_side}"
+    strategy = "equity_short" if leg_role == "short" else "equity_long"
     pipeline_id = build_pipeline_id(resolved_label)
     attempt_created = False
     submitted_order: dict[str, Any] | None = None
@@ -2279,12 +2297,12 @@ def submit_equity_order(
             session_date=resolved_market_date,
             label=resolved_label,
             pipeline_id=pipeline_id,
-            bot_id=None,
-            automation_id=None,
-            strategy_config_id=None,
+            bot_id=_as_text(metadata.get("bot_id")),
+            automation_id=_as_text(metadata.get("automation_id")),
+            strategy_config_id=_as_text(metadata.get("strategy_config_id")),
             market_date=resolved_market_date,
             cycle_id=None,
-            opportunity_id=None,
+            opportunity_id=_as_text(metadata.get("opportunity_id")),
             risk_decision_id=None,
             candidate_id=None,
             attempt_context="equity_order",
@@ -2298,12 +2316,12 @@ def submit_equity_order(
             legs=legs,
             order_payload=order_request,
             economics={},
-            trade_intent=normalized_side,
-            position_id=None,
+            trade_intent=resolved_trade_intent,
+            position_id=position_id,
             root_symbol=normalized_symbol,
             strategy_family=strategy,
-            style_profile="manual_equity",
-            horizon_intent="manual",
+            style_profile=_as_text(metadata.get("style_profile")) or "manual_equity",
+            horizon_intent=_as_text(metadata.get("horizon_intent")) or "manual",
             product_class="single_name_equity",
             quantity=resolved_quantity,
             limit_price=resolved_limit_price,
@@ -2312,14 +2330,77 @@ def submit_equity_order(
             broker=BROKER_NAME,
             client_order_id=client_order_id,
             request={
-                "trade_intent": normalized_side,
+                "trade_intent": resolved_trade_intent,
                 "execution_runtime": normalized_runtime,
                 "asset_class": "equity",
+                "position_intent": position_intent,
+                **(
+                    {}
+                    if position_id is None
+                    else {"position_id": position_id}
+                ),
+                **(
+                    {}
+                    if _as_text(metadata.get("bot_id")) is None
+                    else {"bot_id": _as_text(metadata.get("bot_id"))}
+                ),
+                **(
+                    {}
+                    if _as_text(metadata.get("automation_id")) is None
+                    else {"automation_id": _as_text(metadata.get("automation_id"))}
+                ),
+                **(
+                    {}
+                    if _as_text(metadata.get("strategy_config_id")) is None
+                    else {"strategy_config_id": _as_text(metadata.get("strategy_config_id"))}
+                ),
+                **(
+                    {}
+                    if _as_text(metadata.get("strategy_id")) is None
+                    else {"strategy_id": _as_text(metadata.get("strategy_id"))}
+                ),
+                **(
+                    {}
+                    if _as_text(metadata.get("config_hash")) is None
+                    else {"config_hash": _as_text(metadata.get("config_hash"))}
+                ),
+                **(
+                    {}
+                    if _as_text(metadata.get("execution_intent_id")) is None
+                    else {"execution_intent_id": _as_text(metadata.get("execution_intent_id"))}
+                ),
+                **(
+                    {}
+                    if not isinstance(metadata.get("exit_policy"), Mapping)
+                    else {"exit_policy": dict(metadata["exit_policy"])}
+                ),
+                **(
+                    {}
+                    if not isinstance(metadata.get("risk_policy"), Mapping)
+                    else {"risk_policy": dict(metadata["risk_policy"])}
+                ),
+                **(
+                    {}
+                    if not isinstance(metadata.get("source"), Mapping)
+                    else {"source": dict(metadata["source"])}
+                ),
                 "order": order_request,
             },
             candidate={},
         )
         attempt_created = True
+        if normalized_runtime == NAUTILUS_RUNTIME:
+            return _submit_nautilus_equity_runtime_order(
+                execution_store=execution_store,
+                attempt=attempt,
+                order_request=order_request,
+                requested_at=requested_at,
+                client_order_id=client_order_id,
+                side=normalized_side,
+                quantity=resolved_quantity,
+                symbol=normalized_symbol,
+            )
+
         client = create_alpaca_client_from_env()
         submitted_order = client.submit_order(order_request)
         try:
@@ -2386,6 +2467,161 @@ def submit_equity_order(
                 message=f"Equity execution failed before submission: {exc}",
             )
         raise
+
+
+def _submit_nautilus_equity_runtime_order(
+    *,
+    execution_store: Any,
+    attempt: Mapping[str, Any],
+    order_request: Mapping[str, Any],
+    requested_at: str,
+    client_order_id: str | None,
+    side: str,
+    quantity: int,
+    symbol: str,
+) -> dict[str, Any]:
+    execution_attempt_id = str(attempt["execution_attempt_id"])
+    runtime_handoff = build_nautilus_equity_order_handoff(
+        attempt=attempt,
+        order_request=order_request,
+    )
+    if not runtime_handoff.get("ready"):
+        reason = (
+            _as_text(runtime_handoff.get("not_ready_reason"))
+            or "nautilus_equity_handoff_not_ready"
+        )
+        message = f"Nautilus equity handoff is not ready: {reason}"
+        execution_store.update_attempt(
+            execution_attempt_id=execution_attempt_id,
+            status="failed",
+            client_order_id=client_order_id,
+            completed_at=requested_at,
+            error_text=message,
+        )
+        failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
+        _publish_execution_attempt_event(
+            failed_attempt,
+            message=f"Equity execution failed before submission: {message}",
+        )
+        return {
+            "action": "submit",
+            "changed": True,
+            "status": "blocked",
+            "reason": reason,
+            "message": message,
+            "runtime_handoff": runtime_handoff,
+            "attempt": failed_attempt,
+        }
+
+    try:
+        runtime_result = submit_nautilus_order_list(runtime_handoff)
+    except NautilusBridgeError as exc:
+        runtime_result = {
+            "status": "failed",
+            "reason": exc.reason,
+            "message": str(exc),
+            **({"details": exc.details} if exc.details else {}),
+        }
+        message = f"Nautilus equity bridge failed: {exc}"
+        execution_store.update_attempt(
+            execution_attempt_id=execution_attempt_id,
+            status="failed",
+            client_order_id=client_order_id,
+            completed_at=requested_at,
+            error_text=message,
+        )
+        failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
+        _publish_execution_attempt_event(
+            failed_attempt,
+            message=f"Equity execution failed before submission: {message}",
+        )
+        return {
+            "action": "submit",
+            "changed": True,
+            "status": "blocked",
+            "reason": exc.reason,
+            "message": message,
+            "runtime_handoff": runtime_handoff,
+            "runtime_result": runtime_result,
+            "attempt": failed_attempt,
+        }
+
+    runtime_status = str(runtime_result.get("status") or "").strip().lower()
+    failed_runtime_statuses = {
+        "canceled",
+        "cancelled",
+        "error",
+        "expired",
+        "failed",
+        "rejected",
+        "timeout",
+    }
+    if runtime_status in failed_runtime_statuses:
+        event_reasons = [
+            str(event.get("reason"))
+            for event in runtime_result.get("events") or []
+            if isinstance(event, Mapping) and event.get("reason")
+        ]
+        message = (
+            f"Nautilus equity bridge returned {runtime_status}"
+            + (f": {'; '.join(event_reasons[:2])}" if event_reasons else "")
+        )
+        execution_store.update_attempt(
+            execution_attempt_id=execution_attempt_id,
+            status="failed",
+            client_order_id=client_order_id,
+            completed_at=requested_at,
+            error_text=message,
+        )
+        failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
+        _publish_execution_attempt_event(
+            failed_attempt,
+            message=f"Equity execution failed during submission: {message}",
+        )
+        return {
+            "action": "submit",
+            "changed": True,
+            "status": "blocked",
+            "reason": f"nautilus_bridge_{runtime_status}",
+            "message": message,
+            "runtime_handoff": runtime_handoff,
+            "runtime_result": runtime_result,
+            "attempt": failed_attempt,
+        }
+
+    order_snapshot = (
+        runtime_result.get("order_snapshot")
+        if isinstance(runtime_result.get("order_snapshot"), dict)
+        else None
+    )
+    if order_snapshot is None:
+        execution_store.update_attempt(
+            execution_attempt_id=execution_attempt_id,
+            status=runtime_status or "submitted",
+            client_order_id=client_order_id,
+            submitted_at=requested_at,
+            error_text=None,
+        )
+        synced_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
+    else:
+        synced_attempt = _sync_equity_attempt_state(
+            execution_store=execution_store,
+            attempt=attempt,
+            client=create_alpaca_client_from_env(),
+            order_snapshot=dict(order_snapshot),
+        )
+
+    message = f"Submitted equity {side} for {quantity} {symbol} through Nautilus."
+    _publish_execution_attempt_event(synced_attempt, message=message)
+    return {
+        "action": "submit",
+        "changed": True,
+        "status": "submitted",
+        "message": message,
+        "runtime_handoff": runtime_handoff,
+        "runtime_result": runtime_result,
+        "attempt": synced_attempt,
+    }
 
 
 @with_storage()
@@ -2752,7 +2988,24 @@ def _sync_equity_attempt_state(
         completed_at=completed_at,
         error_text=None,
     )
-    return _get_attempt_payload(execution_store, str(attempt["execution_attempt_id"]))
+    payload = _get_attempt_payload(execution_store, str(attempt["execution_attempt_id"]))
+    request = dict(payload.get("request") or {})
+    should_sync_position = str(request.get("trade_intent") or "") == OPEN_TRADE_INTENT
+    should_sync_position = should_sync_position or _as_text(request.get("position_id")) is not None
+    if should_sync_position:
+        try:
+            from core.services.session_positions import sync_session_position_from_attempt
+
+            sync_session_position_from_attempt(
+                execution_store=execution_store,
+                attempt=payload,
+            )
+            payload = _get_attempt_payload(
+                execution_store, str(attempt["execution_attempt_id"])
+            )
+        except Exception:
+            pass
+    return payload
 
 
 @with_storage()

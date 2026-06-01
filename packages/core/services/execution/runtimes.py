@@ -19,6 +19,7 @@ NAUTILUS_RUNTIME = "nautilus"
 SUPPORTED_EXECUTION_RUNTIMES = {ALPACA_DIRECT_RUNTIME, NAUTILUS_RUNTIME}
 ALPACA_VENUE = "ALPACA"
 NAUTILUS_HANDOFF_SCHEMA_VERSION = "spreads.nautilus.submit_order_list.v1"
+NAUTILUS_EQUITY_HANDOFF_SCHEMA_VERSION = "spreads.nautilus.submit_order.v1"
 EXECUTION_RUNTIME_CAPABILITIES_SCHEMA_VERSION = (
     "spreads.execution_runtime_capabilities.v1"
 )
@@ -37,6 +38,7 @@ NAUTILUS_OPTION_SPREAD_FAMILIES = (
 NAUTILUS_OPTION_SPREAD_ACTIONS = frozenset({"open", "close"})
 NAUTILUS_TWO_LEG_VERTICAL_OPEN_CAPABILITY = "option_two_leg_vertical_open"
 NAUTILUS_OPTION_SPREAD_ORDER_LIST_CAPABILITY = "option_spread_order_list"
+NAUTILUS_EQUITY_BUY_SELL_CAPABILITY = "equity_buy_sell"
 
 
 def normalize_execution_runtime(value: Any) -> str:
@@ -301,6 +303,74 @@ def build_nautilus_submit_order_list_handoff(
     }
 
 
+def build_nautilus_equity_order_handoff(
+    *,
+    attempt: Mapping[str, Any],
+    order_request: Mapping[str, Any],
+) -> dict[str, Any]:
+    client_order_id = _as_text(order_request.get("client_order_id")) or _as_text(
+        attempt.get("client_order_id")
+    )
+    symbol = _as_text(order_request.get("symbol")) or _as_text(
+        attempt.get("underlying_symbol")
+    )
+    side = (_as_text(order_request.get("side")) or _as_text(attempt.get("trade_intent")))
+    quantity = _coerce_int(order_request.get("qty")) or _coerce_int(
+        attempt.get("quantity")
+    )
+    limit_price = _coerce_float(order_request.get("limit_price")) or _coerce_float(
+        attempt.get("limit_price")
+    )
+    time_in_force = (_as_text(order_request.get("time_in_force")) or "day").lower()
+    order_type = (_as_text(order_request.get("type")) or "limit").lower()
+
+    not_ready_reason: str | None = None
+    if client_order_id is None:
+        not_ready_reason = "nautilus_equity_handoff_requires_client_order_id"
+    elif symbol is None:
+        not_ready_reason = "nautilus_equity_handoff_requires_symbol"
+    elif str(side or "").lower() not in {"buy", "sell"}:
+        not_ready_reason = "nautilus_equity_handoff_requires_buy_or_sell"
+    elif quantity is None or quantity <= 0:
+        not_ready_reason = "nautilus_equity_handoff_requires_positive_quantity"
+    elif limit_price is None or limit_price <= 0:
+        not_ready_reason = "nautilus_equity_handoff_requires_positive_limit_price"
+    elif order_type != "limit":
+        not_ready_reason = "nautilus_equity_handoff_supports_limit_orders_only"
+    elif time_in_force != "day":
+        not_ready_reason = "nautilus_equity_handoff_supports_day_orders_only"
+
+    normalized_symbol = "" if symbol is None else symbol.upper()
+    normalized_side = "" if side is None else str(side).lower()
+    return {
+        "handoff_schema_version": NAUTILUS_EQUITY_HANDOFF_SCHEMA_VERSION,
+        "runtime": NAUTILUS_RUNTIME,
+        "command": "SubmitOrder",
+        "ready": not_ready_reason is None,
+        "not_ready_reason": not_ready_reason,
+        "capability": {
+            "name": NAUTILUS_EQUITY_BUY_SELL_CAPABILITY,
+            "asset_class": "equity",
+            "actions": ["buy", "sell"],
+            "ready": not_ready_reason is None,
+            "not_ready_reason": not_ready_reason,
+        },
+        "execution_attempt_id": _as_text(attempt.get("execution_attempt_id")),
+        "client_order_id": client_order_id,
+        "venue": ALPACA_VENUE,
+        "asset_class": "equity",
+        "symbol": normalized_symbol,
+        "instrument_id": f"{normalized_symbol}.{ALPACA_VENUE}",
+        "side": normalized_side,
+        "quantity": quantity,
+        "order_type": order_type,
+        "time_in_force": time_in_force,
+        "limit_price": None if limit_price is None else round(limit_price, 2),
+        "strategy_family": _as_text(attempt.get("strategy_family"))
+        or _as_text(attempt.get("strategy")),
+    }
+
+
 def _runtime_usage_summary(config_root: Any = None) -> dict[str, dict[str, Any]]:
     counts: dict[str, Counter[str]] = {
         ALPACA_DIRECT_RUNTIME: Counter(),
@@ -347,7 +417,7 @@ def resolve_execution_runtime_capabilities(config_root: Any = None) -> dict[str,
                         "status": "ready",
                     },
                     {
-                        "name": "equity_buy_sell",
+                        "name": NAUTILUS_EQUITY_BUY_SELL_CAPABILITY,
                         "asset_classes": ["equity"],
                         "actions": ["buy", "sell"],
                         "status": "ready",
@@ -379,10 +449,10 @@ def resolve_execution_runtime_capabilities(config_root: Any = None) -> dict[str,
                         "status": "ready",
                     },
                     {
-                        "name": "equity_buy_sell",
+                        "name": NAUTILUS_EQUITY_BUY_SELL_CAPABILITY,
                         "asset_classes": ["equity"],
                         "actions": ["buy", "sell"],
-                        "status": "unsupported",
+                        "status": "ready" if nautilus_ready else "blocked",
                     },
                 ],
             },
@@ -395,11 +465,14 @@ __all__ = [
     "EXECUTION_RUNTIME_CAPABILITIES_SCHEMA_VERSION",
     "NAUTILUS_RUNTIME",
     "NAUTILUS_HANDOFF_SCHEMA_VERSION",
+    "NAUTILUS_EQUITY_BUY_SELL_CAPABILITY",
+    "NAUTILUS_EQUITY_HANDOFF_SCHEMA_VERSION",
     "NAUTILUS_FOUR_LEG_FAMILIES",
     "NAUTILUS_OPTION_SPREAD_FAMILIES",
     "NAUTILUS_OPTION_SPREAD_ORDER_LIST_CAPABILITY",
     "NAUTILUS_TWO_LEG_VERTICAL_FAMILIES",
     "SUPPORTED_EXECUTION_RUNTIMES",
+    "build_nautilus_equity_order_handoff",
     "build_nautilus_submit_order_list_handoff",
     "execution_runtime_from_request",
     "normalize_execution_runtime",

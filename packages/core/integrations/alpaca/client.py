@@ -178,6 +178,12 @@ class AlpacaClient:
             raise RuntimeError("Unexpected Alpaca account response shape")
         return response
 
+    def get_clock(self) -> dict[str, Any]:
+        response = self.get_json(self.trading_base_url, "/v2/clock")
+        if not isinstance(response, dict):
+            raise RuntimeError("Unexpected Alpaca clock response shape")
+        return response
+
     def list_positions(self) -> list[dict[str, Any]]:
         response = self.get_json(self.trading_base_url, "/v2/positions")
         if not isinstance(response, list):

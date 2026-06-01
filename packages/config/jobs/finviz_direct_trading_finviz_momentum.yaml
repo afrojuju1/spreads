@@ -1,0 +1,49 @@
+job_key: finviz_direct_trading:finviz_momentum
+job_type: finviz_direct_trading
+enabled: true
+schedule:
+  type: interval_minutes
+  minutes: 2
+payload:
+  label: finviz_direct_momentum
+  bot_id: finviz
+  automation_id: finviz_direct
+  strategy_id: finviz_direct
+  feed_id: finviz_momentum
+  feed_job_key: symbol_feed:finviz_momentum
+  max_feed_age_seconds: 300
+  max_candidates: 3
+  stock_feed: iex
+  quantity: 1
+  max_notional: 500
+  execution_runtime: nautilus
+  approval_mode: auto
+  execution_mode: paper
+  dispatch_after_trigger: true
+  allow_short_selling: false
+  allow_off_hours: false
+  entry_rules:
+    enabled: true
+    side: buy
+    min_price: 5
+    min_daily_volume: 1000000
+    min_relative_volume: 1.5
+    min_move_percent: 0
+    require_positive_momentum: true
+    max_spread_pct: 1.0
+    max_quote_age_seconds: 180
+    limit_price_offset_bps: 0
+    timing:
+      mode: vwap_reclaim
+      min_intraday_bars: 5
+      recent_lookback_bars: 5
+      breakout_tolerance_bps: 5
+  exit_rules:
+    enabled: true
+    profit_target_pct: 0.03
+    stop_loss_pct: 0.015
+    sell_when_removed_from_feed: false
+    max_spread_pct: 1.0
+    max_quote_age_seconds: 180
+    limit_price_offset_bps: 0
+singleton_scope: finviz_momentum
