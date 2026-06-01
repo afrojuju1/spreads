@@ -1,6 +1,6 @@
 # Finviz To TradingAgents Discord Automation
 
-Status: implemented MVP, validating one-ticker live Finviz flow
+Status: implemented MVP, validating three-ticker live Finviz flow
 
 As of: Sunday, May 31, 2026
 
@@ -188,7 +188,7 @@ payload:
   feed_id: finviz_momentum
   feed_job_key: symbol_feed:finviz_momentum
   max_feed_age_seconds: 1800
-  max_tickers: 1
+  max_tickers: 3
   profile: fast
   output_root: outputs/tradingagents/finviz_momentum
   timeout_seconds: 1800
@@ -342,7 +342,7 @@ Finviz validation metrics:
 - Finviz access method: Elite export URL, manual CSV drop, or another compliant export path
 - First Finviz screen: momentum, earnings, unusual volume, oversold bounce, or analyst action
 - Alert direction: bullish only or bullish plus bearish
-- Max tickers per scan: current initial validation value is `1`
+- Max tickers per scan: current validated value is `3`
 - TradingAgents profile: recommended initial value is `fast`
 - Schedule: recommended first pass is market-open plus 20 minutes and after-close review
 - Storage: reuse job result payloads first, add a dedicated research result table only after the workflow proves useful
@@ -355,7 +355,7 @@ Finviz validation metrics:
 4. Added research alert payload rendering for Discord.
 5. Added `finviz_momentum` feed and `tradingagents_scan:finviz_momentum` job config.
 6. Validated the live one-ticker host flow against the NUC TradingAgents venv.
-7. Next: keep the one-ticker validation loop running and judge alert usefulness before raising the cap.
+7. Raised the validation cap to `3` after a clean three-ticker run.
 
 Latest one-ticker validation:
 
@@ -368,6 +368,17 @@ Latest one-ticker validation:
 - report: `outputs/tradingagents/finviz_momentum/REPL_20260531_233546/complete_report.md`
 
 Follow-up refinement: one-ticker validation now requires `quality_status=pass` for per-ticker actionable alerts, and duplicated TradingAgents quality warnings should be collapsed before operator-facing summaries.
+
+Latest three-ticker validation:
+
+- selected tickers: `REPL`, `SPCE`, `MX`
+- completed: `3`
+- failed: `0`
+- timed out: `0`
+- actionable: `0`
+- result quality: all completed runs were `warn`, so they stayed batch-only
+
+Three-ticker validation exposed that batch summaries also need to dedupe by selected ticker set. Otherwise a later same-date validation with more tickers can reuse the earlier one-ticker batch alert.
 
 Implemented files:
 

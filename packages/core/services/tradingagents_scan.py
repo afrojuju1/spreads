@@ -525,7 +525,13 @@ def _plan_batch_alert(
             ],
         },
     }
-    dedupe_key = f"research_tradingagents_batch_summary|{session_date}|{feed_id}"
+    ticker_scope = "_".join(
+        _safe_component(str(ticker).upper()) for ticker in selected_tickers
+    ) or "none"
+    dedupe_key = (
+        "research_tradingagents_batch_summary|"
+        f"{session_date}|{feed_id}|{ticker_scope}"
+    )
     row, created = plan_alert_delivery(
         alert_store=storage.alerts,
         job_store=job_store,
