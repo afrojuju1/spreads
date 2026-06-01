@@ -141,6 +141,8 @@ services:
     volumes:
       - .:/app
   worker-research:
+    profiles:
+      - container-research
     build:
       context: .
     restart: unless-stopped

@@ -16,6 +16,7 @@ container_env_file="${SPREADS_CONTAINER_ENV_FILE:-.env.deploy.${SPREADS_DEPLOY_E
 compose_file="${SPREADS_COMPOSE_FILE:-docker-compose.prod.yml}"
 runtime_replicas="${SPREADS_WORKER_RUNTIME_REPLICAS:-1}"
 discovery_replicas="${SPREADS_WORKER_DISCOVERY_REPLICAS:-2}"
+research_replicas="${SPREADS_WORKER_RESEARCH_REPLICAS:-0}"
 web_enabled="${SPREADS_WEB_ENABLED:-true}"
 
 args=(
@@ -30,6 +31,7 @@ args+=(
   up -d --remove-orphans
   --scale "worker-runtime=${runtime_replicas}"
   --scale "worker-discovery=${discovery_replicas}"
+  --scale "worker-research=${research_replicas}"
 )
 
 "${args[@]}"

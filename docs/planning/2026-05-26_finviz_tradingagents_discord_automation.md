@@ -1,8 +1,8 @@
 # Finviz To TradingAgents Discord Automation
 
-Status: implemented MVP, pending live Finviz export validation
+Status: implemented MVP, validating one-ticker live Finviz flow
 
-As of: Tuesday, May 26, 2026
+As of: Sunday, May 31, 2026
 
 Related:
 
@@ -80,6 +80,30 @@ TradingAgents already has a non-interactive wrapper with a usable artifact contr
 - `/home/ade/Projects/TradingAgents/scripts/benchmark_run.py`
 - Emits `run_metadata.json`
 - Includes `validated_signal`, `raw_signal`, `quality_status`, `blocked_reason`, report path, timings, model config, and environment snapshots
+
+## NUC Runtime Shape
+
+Run the TradingAgents research lane on the host NUC, not inside Docker. We control the box, and the working TradingAgents environment already lives at `/home/ade/Projects/TradingAgents/.venv`.
+
+Keep Docker responsible for Postgres, Redis, API, scheduler, runtime workers, and discovery workers. Keep `worker_research_replicas: 0` in deploy target config so compose does not start the container research worker.
+
+Host research worker command:
+
+```bash
+cd /home/ade/Projects/spreads
+set -a
+source .env
+set +a
+PYTHONPATH=/home/ade/Projects/spreads/packages uv run arq core.jobs.worker.ResearchWorkerSettings
+```
+
+Expected host env:
+
+```bash
+SPREADS_TRADINGAGENTS_DIR=/home/ade/Projects/TradingAgents
+SPREADS_TRADINGAGENTS_UV_ENVIRONMENT=/home/ade/Projects/TradingAgents/.venv
+OLLAMA_BASE_URL=http://localhost:11434/v1
+```
 
 ## MVP Implementation Shape
 
@@ -330,7 +354,18 @@ Finviz validation metrics:
 3. Added `tradingagents_scan` job type and a dedicated research worker lane.
 4. Added research alert payload rendering for Discord.
 5. Added `finviz_momentum` feed and `tradingagents_scan:finviz_momentum` job config.
-6. Next: run the live Finviz validation loop; screener URLs live in versioned feed config.
+6. Validated the live one-ticker host flow against the NUC TradingAgents venv.
+7. Next: keep the one-ticker validation loop running and judge alert usefulness before raising the cap.
+
+Latest one-ticker validation:
+
+- selected ticker: `REPL`
+- validated signal: `Overweight`
+- quality status: `warn`
+- completed: `1`
+- failed: `0`
+- timed out: `0`
+- report: `outputs/tradingagents/finviz_momentum/REPL_20260531_233546/complete_report.md`
 
 Implemented files:
 

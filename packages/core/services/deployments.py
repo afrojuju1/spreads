@@ -126,6 +126,16 @@ def _coerce_positive_int(value: Any, *, field_name: str) -> int:
     return resolved
 
 
+def _coerce_non_negative_int(value: Any, *, field_name: str) -> int:
+    try:
+        resolved = int(value)
+    except (TypeError, ValueError) as exc:
+        raise DeploymentConfigError(f"{field_name} must be an integer.") from exc
+    if resolved < 0:
+        raise DeploymentConfigError(f"{field_name} must be greater than or equal to 0.")
+    return resolved
+
+
 def _coerce_text_list(value: Any, *, field_name: str) -> tuple[str, ...]:
     if value in (None, "", ()):
         return ()
@@ -183,8 +193,8 @@ def _load_target(path: Path) -> DeployTarget:
             payload.get("worker_discovery_replicas", 2),
             field_name="worker_discovery_replicas",
         ),
-        worker_research_replicas=_coerce_positive_int(
-            payload.get("worker_research_replicas", 1),
+        worker_research_replicas=_coerce_non_negative_int(
+            payload.get("worker_research_replicas", 0),
             field_name="worker_research_replicas",
         ),
         web_enabled=bool(payload.get("web_enabled", True)),
@@ -458,7 +468,7 @@ def build_host_env_values(
         "SPREADS_TRADINGAGENTS_HOST_DIR": values["SPREADS_TRADINGAGENTS_HOST_DIR"],
         "SPREADS_TRADINGAGENTS_DIR": values["SPREADS_TRADINGAGENTS_HOST_DIR"],
         "SPREADS_TRADINGAGENTS_UV_ENVIRONMENT": str(
-            REPO_ROOT / "outputs" / "tradingagents" / ".venv"
+            Path(values["SPREADS_TRADINGAGENTS_HOST_DIR"]) / ".venv"
         ),
         "OLLAMA_BASE_URL": "http://localhost:11434/v1",
         "SPREADS_MARKET_RECORDER_OWNER_ENV": values[

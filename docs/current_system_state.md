@@ -410,6 +410,7 @@ Current worker topology is:
 - `RuntimeWorkerSettings`
 - `DiscoveryWorkerSettings`
 - `ValuationWorkerSettings`
+- `ResearchWorkerSettings` on the NUC host for TradingAgents jobs
 
 Current main job types are:
 
@@ -425,9 +426,11 @@ Current main job types are:
 - `company_valuation_bootstrap`
 - `company_valuation_screen_materialize`
 - `company_valuation_resolve_unresolved`
+- `tradingagents_scan`
 
 Management automations are still config-owned runtime concepts, but they are evaluated inside `position_exit_manager` rather than through a separate `options_automation_management` job type.
 Recurring maintenance jobs now run only through declared job definitions; `discovery_recovery` no longer inlines `broker_sync` or `position_exit_manager`.
+The TradingAgents research lane is intentionally host-run on the NUC so it can use `/home/ade/Projects/TradingAgents/.venv`; the compose deployment scales the container `worker-research` service to `0` by default.
 
 Redis is transport and event fanout. Postgres remains the source of truth for job state.
 
