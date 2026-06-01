@@ -171,6 +171,64 @@ def _apply_broker_sync_definition_overrides(
     return rows
 
 
+def _run_is_superseded_by_later_success(
+    run: Mapping[str, Any],
+    latest_run: Mapping[str, Any] | None,
+) -> bool:
+    if not latest_run:
+        return False
+    if str(run.get("status") or "").strip().lower() != "failed":
+        return False
+    if str(latest_run.get("status") or "").strip().lower() != "succeeded":
+        return False
+    if str(run.get("job_key") or "") != str(latest_run.get("job_key") or ""):
+        return False
+    if str(run.get("job_run_id") or "") == str(latest_run.get("job_run_id") or ""):
+        return False
+    run_activity_at = parse_datetime(run.get("activity_at") or _activity_at(run))
+    latest_activity_at = parse_datetime(
+        latest_run.get("activity_at") or _activity_at(latest_run)
+    )
+    return (
+        run_activity_at is not None
+        and latest_activity_at is not None
+        and latest_activity_at > run_activity_at
+    )
+
+
+def _superseded_run_note(latest_run: Mapping[str, Any]) -> str:
+    latest_at = _as_text(latest_run.get("finished_at") or _activity_at(latest_run))
+    latest_id = _as_text(latest_run.get("job_run_id")) or "a later run"
+    return (
+        f"Later successful run {latest_id} completed at {latest_at or 'a later time'}; "
+        "this failed run is historical."
+    )
+
+
+def _apply_superseded_run_overrides(
+    run_rows: list[dict[str, Any]],
+    *,
+    latest_run_by_key: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in run_rows:
+        latest_run = latest_run_by_key.get(str(row.get("job_key") or ""))
+        if _run_is_superseded_by_later_success(row, latest_run):
+            rows.append(
+                {
+                    **row,
+                    "operator_status": "healthy",
+                    "operator_note": _superseded_run_note(latest_run or {}),
+                    "superseded_by_job_run_id": None
+                    if latest_run is None
+                    else latest_run.get("job_run_id"),
+                }
+            )
+        else:
+            rows.append(row)
+    return rows
+
+
 def _job_run_is_actionable_failure(row: Mapping[str, Any]) -> bool:
     if str(row.get("status") or "") != "failed":
         return False
@@ -514,10 +572,16 @@ def _worker_lane_rows(
     workers: list[dict[str, Any]],
     queued_jobs: list[dict[str, Any]],
     running_jobs: list[dict[str, Any]],
+    definitions: list[dict[str, Any]],
     excluded_job_types: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     excluded = {
         str(value).strip() for value in (excluded_job_types or set()) if str(value).strip()
+    }
+    enabled_job_types = {
+        str(row.get("job_type") or "").strip()
+        for row in definitions
+        if bool(row.get("enabled")) and str(row.get("job_type") or "").strip()
     }
     workers_by_settings: dict[str, list[dict[str, Any]]] = {}
     for worker in workers:
@@ -549,11 +613,23 @@ def _worker_lane_rows(
         ]
         if not task_names:
             continue
+        enabled_task_names = [
+            task_name
+            for task_name in task_names
+            if _JOB_TYPE_BY_TASK_NAME.get(task_name, "") in enabled_job_types
+        ]
         lane_workers = workers_by_settings.get(str(lane.settings_name), [])
         active_worker_count = len(lane_workers)
         queued_job_count = int(queued_by_queue.get(str(lane.queue_name), 0))
         running_job_count = int(running_by_queue.get(str(lane.queue_name), 0))
-        status = "healthy" if active_worker_count > 0 else "blocked"
+        if not enabled_task_names:
+            status = (
+                "degraded"
+                if queued_job_count > 0 or running_job_count > 0
+                else "idle"
+            )
+        else:
+            status = "healthy" if active_worker_count > 0 else "blocked"
         rows.append(
             {
                 "settings_name": lane.settings_name,
@@ -561,6 +637,8 @@ def _worker_lane_rows(
                 "queue_name": lane.queue_name,
                 "task_names": task_names,
                 "task_count": len(task_names),
+                "enabled_task_names": enabled_task_names,
+                "enabled_task_count": len(enabled_task_names),
                 "max_jobs": lane.max_jobs,
                 "active_worker_count": active_worker_count,
                 "active_workers": [
@@ -680,19 +758,37 @@ def build_jobs_overview(
         latest_run_by_key=latest_run_by_key,
         broker_sync=broker_sync,
     )
-    run_rows = [
-        _summarize_job_run(dict(row), now=now)
+    run_records = [
+        dict(row)
         for row in job_store.list_job_runs(
             job_type=job_type,
             status=status,
             limit=limit,
         )
     ]
+    latest_success_run_by_key = {
+        str(row["job_key"]): dict(row)
+        for row in job_store.list_latest_runs_by_job_keys(
+            job_keys=sorted(
+                {
+                    str(row.get("job_key") or "")
+                    for row in [*definitions, *run_records]
+                    if str(row.get("job_key") or "")
+                }
+            ),
+            statuses=["succeeded"],
+        )
+    }
+    run_rows = [_summarize_job_run(row, now=now) for row in run_records]
     run_rows = _filter_excluded_job_runs(
         run_rows,
         excluded_job_types=excluded_job_types,
     )
     run_rows = _sorted_by_activity(run_rows)
+    run_rows = _apply_superseded_run_overrides(
+        run_rows,
+        latest_run_by_key=latest_success_run_by_key,
+    )
     run_rows = _apply_broker_sync_run_overrides(
         run_rows,
         broker_sync=broker_sync,
@@ -758,6 +854,12 @@ def build_jobs_overview(
     )
     actionable_failed_count = sum(
         1 for row in run_rows if _job_run_is_actionable_failure(row)
+    )
+    historical_failed_count = sum(
+        1
+        for row in run_rows
+        if str(row.get("status") or "") == "failed"
+        and str(row.get("operator_status") or "") in {"healthy", "idle"}
     )
     if actionable_failed_count:
         attention.append(
@@ -838,6 +940,7 @@ def build_jobs_overview(
             ],
             excluded_job_types=excluded_job_types,
         ),
+        definitions=definition_rows,
         excluded_job_types=excluded_job_types,
     )
     blocked_lane_count = sum(
@@ -910,6 +1013,7 @@ def build_jobs_overview(
             "stale_queued_job_count": len(stale_queued_run_rows),
             "degraded_capture_count": degraded_capture_count,
             "actionable_failed_count": actionable_failed_count,
+            "historical_failed_count": historical_failed_count,
         },
         "attention": attention,
         "details": {

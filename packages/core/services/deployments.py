@@ -434,6 +434,8 @@ def build_host_env_values(
 ) -> dict[str, str]:
     values = build_deploy_env_values(target, require_secrets=require_secrets)
     postgres_password = values["POSTGRES_PASSWORD"]
+    if target.compose_file == "docker-compose.yml":
+        postgres_password = "spreads"
     host_bind_host = values["SPREADS_BIND_HOST"]
     host_database_url = (
         "postgresql://"
@@ -682,11 +684,12 @@ def _write_remote_text_file(target: DeployTarget, *, remote_path: str, text: str
         temp_path.unlink(missing_ok=True)
 
 
-def _repo_ops_script_paths() -> tuple[Path, Path, Path]:
+def _repo_ops_script_paths() -> tuple[Path, ...]:
     return (
         DEPLOY_OPS_ROOT / "compose_up.sh",
         DEPLOY_OPS_ROOT / "backup_postgres.sh",
         DEPLOY_OPS_ROOT / "health_check.sh",
+        DEPLOY_OPS_ROOT / "market_open_monitor.sh",
     )
 
 
@@ -704,6 +707,11 @@ def sync_deploy_target(
 ) -> None:
     if not target.is_remote:
         raise DeploymentConfigError("sync only applies to ssh deployment targets.")
+    if _can_run_target_locally(target):
+        raise DeploymentConfigError(
+            f"Deploy target {target.name!r} already resolves locally at "
+            f"{target.deploy_root}; sync is not needed."
+        )
     _run_command(_ssh_command(target, f"mkdir -p {shlex.quote(target.deploy_root)}"))
     rsync_command = [
         "rsync",
@@ -799,12 +807,41 @@ def _ops_root(target: DeployTarget) -> Path:
     return Path(target.deploy_root) / "ops"
 
 
+def _ops_state_root(target: DeployTarget) -> Path:
+    deploy_root = Path(target.deploy_root)
+    if deploy_root.name == "app":
+        return deploy_root.parent
+    return deploy_root
+
+
 def _ops_log_dir(target: DeployTarget) -> Path:
-    return target.remote_parent / "logs" / "ops"
+    return _ops_state_root(target) / "logs" / "ops"
 
 
 def _backup_root(target: DeployTarget) -> Path:
-    return target.remote_parent / "backups" / "postgres"
+    return _ops_state_root(target) / "backups" / "postgres"
+
+
+def _ops_script_command(target: DeployTarget, script_path: Path) -> str:
+    env_values = {
+        "SPREADS_DEPLOY_ENV": target.name,
+        "SPREADS_CONTAINER_ENV_FILE": target.env_file,
+        "SPREADS_COMPOSE_FILE": target.compose_file,
+        "SPREADS_WEB_ENABLED": "true" if target.web_enabled else "false",
+        "SPREADS_WORKER_RUNTIME_REPLICAS": str(target.worker_runtime_replicas),
+        "SPREADS_WORKER_DISCOVERY_REPLICAS": str(target.worker_discovery_replicas),
+        "SPREADS_WORKER_RESEARCH_REPLICAS": str(target.worker_research_replicas),
+        "SPREADS_BACKUP_RETENTION_DAYS": str(target.backup_retention_days),
+        "SPREADS_BACKUP_ROOT": str(_backup_root(target)),
+    }
+    return " ".join(
+        [
+            "env",
+            *(shlex.quote(f"{key}={value}") for key, value in env_values.items()),
+            "/bin/bash",
+            shlex.quote(str(script_path)),
+        ]
+    )
 
 
 def _cron_block_text(target: DeployTarget) -> str:
@@ -812,14 +849,16 @@ def _cron_block_text(target: DeployTarget) -> str:
     compose_up = _ops_root(target) / "compose_up.sh"
     backup = _ops_root(target) / "backup_postgres.sh"
     health = _ops_root(target) / "health_check.sh"
+    market_open_monitor = _ops_root(target) / "market_open_monitor.sh"
     log_dir = _ops_log_dir(target)
     health_minutes = max(int(target.health_check_minutes), 1)
     return "\n".join(
         [
             f"# BEGIN {marker}",
-            f"@reboot /bin/bash {shlex.quote(str(compose_up))} >> {shlex.quote(str(log_dir / 'compose-up.log'))} 2>&1",
-            f"*/{health_minutes} * * * * /bin/bash {shlex.quote(str(health))} >> {shlex.quote(str(log_dir / 'health.log'))} 2>&1",
-            f"0 0 * * * /bin/bash {shlex.quote(str(backup))} >> {shlex.quote(str(log_dir / 'backup.log'))} 2>&1",
+            f"@reboot {_ops_script_command(target, compose_up)} >> {shlex.quote(str(log_dir / 'compose-up.log'))} 2>&1",
+            f"*/{health_minutes} * * * * {_ops_script_command(target, health)} >> {shlex.quote(str(log_dir / 'health.log'))} 2>&1",
+            f"*/15 * * * * {_ops_script_command(target, market_open_monitor)} >> {shlex.quote(str(log_dir / 'market-open-monitor.log'))} 2>&1",
+            f"0 0 * * * {_ops_script_command(target, backup)} >> {shlex.quote(str(log_dir / 'backup.log'))} 2>&1",
             f"# END {marker}",
             "",
         ]
@@ -844,54 +883,59 @@ def install_systemd_service(target: DeployTarget) -> None:
 
 
 def install_target_ops_automation(target: DeployTarget) -> None:
-    if not target.is_remote:
-        raise DeploymentConfigError("install-ops only applies to ssh deployment targets.")
     _ensure_repo_ops_scripts_exist()
     ops_root = _ops_root(target)
     log_dir = _ops_log_dir(target)
     backup_root = _backup_root(target)
     marker = f"spreads-ops:{target.name}"
+    local_install = not target.is_remote or _can_run_target_locally(target)
 
-    _run_command(
-        _ssh_command(
-            target,
-            " && ".join(
-                [
-                    "set -euo pipefail",
-                    f"mkdir -p {shlex.quote(str(ops_root))}",
-                    f"mkdir -p {shlex.quote(str(log_dir))}",
-                    f"mkdir -p {shlex.quote(str(backup_root))}",
-                    f"test -f {shlex.quote(str(ops_root / 'compose_up.sh'))}",
-                    f"test -f {shlex.quote(str(ops_root / 'backup_postgres.sh'))}",
-                    f"test -f {shlex.quote(str(ops_root / 'health_check.sh'))}",
-                ]
-            ),
+    def run_shell(command: str) -> None:
+        if local_install:
+            _run_command(["bash", "-lc", command])
+            return
+        _run_command(_ssh_command(target, command))
+
+    run_shell(
+        " && ".join(
+            [
+                "set -euo pipefail",
+                f"mkdir -p {shlex.quote(str(ops_root))}",
+                f"mkdir -p {shlex.quote(str(log_dir))}",
+                f"mkdir -p {shlex.quote(str(backup_root))}",
+                f"test -f {shlex.quote(str(ops_root / 'compose_up.sh'))}",
+                f"test -f {shlex.quote(str(ops_root / 'backup_postgres.sh'))}",
+                f"test -f {shlex.quote(str(ops_root / 'health_check.sh'))}",
+                f"test -f {shlex.quote(str(ops_root / 'market_open_monitor.sh'))}",
+            ]
         )
     )
-    _run_command(
-        _ssh_command(
-            target,
-            " && ".join(
-                [
-                    "set -euo pipefail",
-                    f"chmod +x {shlex.quote(str(ops_root / 'compose_up.sh'))}",
-                    f"chmod +x {shlex.quote(str(ops_root / 'backup_postgres.sh'))}",
-                    f"chmod +x {shlex.quote(str(ops_root / 'health_check.sh'))}",
-                    f"rm -f {shlex.quote(str(Path(target.deploy_root) / '.ops' / 'compose_up.sh'))}",
-                    f"rm -f {shlex.quote(str(Path(target.deploy_root) / '.ops' / 'backup_postgres.sh'))}",
-                    f"rm -f {shlex.quote(str(Path(target.deploy_root) / '.ops' / 'health_check.sh'))}",
-                    f"rm -f {shlex.quote(str(Path(target.deploy_root) / '.ops' / 'spreads.cron'))}",
-                    f"rmdir {shlex.quote(str(Path(target.deploy_root) / '.ops'))} 2>/dev/null || true",
-                ]
-            ),
+    run_shell(
+        " && ".join(
+            [
+                "set -euo pipefail",
+                f"chmod +x {shlex.quote(str(ops_root / 'compose_up.sh'))}",
+                f"chmod +x {shlex.quote(str(ops_root / 'backup_postgres.sh'))}",
+                f"chmod +x {shlex.quote(str(ops_root / 'health_check.sh'))}",
+                f"chmod +x {shlex.quote(str(ops_root / 'market_open_monitor.sh'))}",
+                f"rm -f {shlex.quote(str(Path(target.deploy_root) / '.ops' / 'compose_up.sh'))}",
+                f"rm -f {shlex.quote(str(Path(target.deploy_root) / '.ops' / 'backup_postgres.sh'))}",
+                f"rm -f {shlex.quote(str(Path(target.deploy_root) / '.ops' / 'health_check.sh'))}",
+                f"rm -f {shlex.quote(str(Path(target.deploy_root) / '.ops' / 'market_open_monitor.sh'))}",
+                f"rm -f {shlex.quote(str(Path(target.deploy_root) / '.ops' / 'spreads.cron'))}",
+                f"rmdir {shlex.quote(str(Path(target.deploy_root) / '.ops'))} 2>/dev/null || true",
+            ]
         )
     )
     cron_block_remote = f"/tmp/spreads-{target.name}.cron"
-    _write_remote_text_file(
-        target,
-        remote_path=cron_block_remote,
-        text=_cron_block_text(target),
-    )
+    if local_install:
+        Path(cron_block_remote).write_text(_cron_block_text(target))
+    else:
+        _write_remote_text_file(
+            target,
+            remote_path=cron_block_remote,
+            text=_cron_block_text(target),
+        )
     command = textwrap.dedent(
         f"""
         set -euo pipefail
@@ -904,7 +948,7 @@ def install_target_ops_automation(target: DeployTarget) -> None:
         rm -f "$tmp_file"
         """
     ).strip()
-    _run_command(_ssh_command(target, command))
+    run_shell(command)
 
 
 def start_deploy_target(
@@ -963,7 +1007,7 @@ def run_target_spreads_command(target: DeployTarget, cli_args: list[str]) -> int
 
 def exec_spreads_command(target: DeployTarget, cli_args: list[str]) -> int:
     command = ["uv", "run", "spreads", *cli_args]
-    if target.is_remote:
+    if target.is_remote and not _can_run_target_locally(target):
         return _run_passthrough_command(
             _remote_shell_command(target, _render_shell_command(command))
         )

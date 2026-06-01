@@ -2,16 +2,16 @@ name: ade-nucbox-k8-plus
 mode: ssh
 description: Private single-host deployment on the ade-NucBox-K8-Plus tailnet box.
 ssh_host: ade-nucbox-k8-plus
-deploy_root: /home/ade/spreads/app
-compose_file: docker-compose.prod.yml
-env_file: .env.deploy.ade-nucbox-k8-plus
-compose_project_name: spreads-nucbox
+deploy_root: /home/ade/Projects/spreads
+compose_file: docker-compose.yml
+env_file: .env
+compose_project_name: spreads
 bind_host: 100.111.132.114
 api_port: 58080
 postgres_port: 55432
 redis_port: 56379
 web_port: 53000
-worker_runtime_replicas: 1
+worker_runtime_replicas: 2
 worker_discovery_replicas: 4
 worker_research_replicas: 0
 web_enabled: true
@@ -21,10 +21,11 @@ market_recorder_owner_env: ade-nucbox-k8-plus
 nautilus_bridge_host_binary: /home/ade/Projects/nautilus_trader/target/debug/alpaca-submit-order-list-bridge
 nautilus_bridge_timeout_seconds: 45
 excluded_job_types:
+  - tradingagents_scan
   - company_valuation_bootstrap
   - company_valuation_screen_materialize
   - company_valuation_resolve_unresolved
-postgres_volume_name: spreads_nucbox_postgres_data
+postgres_volume_name: spreads_spreads_postgres_data
 docker_log_driver: local
 docker_log_max_size: 10m
 docker_log_max_file: 5

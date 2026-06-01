@@ -13,8 +13,8 @@ if [[ -f .env ]]; then
   set +a
 fi
 
-container_env_file="${SPREADS_CONTAINER_ENV_FILE:-.env.deploy.${SPREADS_DEPLOY_ENV:-local}}"
-compose_file="${SPREADS_COMPOSE_FILE:-docker-compose.prod.yml}"
+container_env_file="${SPREADS_CONTAINER_ENV_FILE:-.env}"
+compose_file="${SPREADS_COMPOSE_FILE:-docker-compose.yml}"
 backup_retention_days="${SPREADS_BACKUP_RETENTION_DAYS:-7}"
 backup_root="${SPREADS_BACKUP_ROOT:-$HOME/spreads/backups/postgres}"
 web_enabled="${SPREADS_WEB_ENABLED:-true}"

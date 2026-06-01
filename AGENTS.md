@@ -55,7 +55,7 @@
   - `uv run spreads trading --env ade-nucbox-k8-plus --json`
   - `uv run spreads jobs --env ade-nucbox-k8-plus --json`
   - `uv run spreads uoa --env ade-nucbox-k8-plus --json`
-- Use `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ...` only when you explicitly need to run on the deployed checkout at `/home/ade/spreads/app`.
+- Use `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ...` only when you explicitly need to run on the deployed checkout at `/home/ade/Projects/spreads`.
 - Use `uv run spreads deploy logs --env ade-nucbox-k8-plus ...` and `uv run spreads deploy restart --env ade-nucbox-k8-plus ...` for live box operations before falling back to ad hoc SSH commands.
 - For offline selection research or policy tuning, prefer the canonical backtest CLI before ad hoc scripts or raw SQL:
   - `uv run spreads backtest run --bot-id <bot-id> --automation-id <automation-id>`

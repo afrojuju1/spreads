@@ -12,6 +12,7 @@ from core.cli.ops_render import (
     render_finviz_direct_ledger,
     render_job_lanes_view,
     render_jobs_view,
+    render_live_doctor,
     render_json_payload,
     render_system_status,
     render_trading_health,
@@ -24,6 +25,7 @@ from core.services.ops import (
     build_job_lanes_overview,
     build_job_run_view,
     build_jobs_overview,
+    build_live_doctor,
     build_system_status,
     build_trading_health,
     build_uoa_cycle_view,
@@ -202,6 +204,89 @@ def finviz_ledger_command(
         renderer=render_finviz_direct_ledger,
         json_output=json_output,
         watch_seconds=watch,
+        no_color=no_color,
+    )
+
+
+def live_doctor_command(
+    environment: str | None = typer.Option(
+        None,
+        "--env",
+        help="Run this command against a named deploy target.",
+    ),
+    feed_id: str = typer.Option(
+        "finviz_momentum",
+        "--feed-id",
+        help="Finviz symbol feed id.",
+    ),
+    market_date: str | None = typer.Option(
+        None,
+        "--date",
+        help="Market date to inspect. Defaults to today in New York.",
+    ),
+    limit: int = typer.Option(5, "--limit", help="Maximum recent rows per section."),
+    db: str | None = typer.Option(None, "--db", help="Database URL override."),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
+    watch: float | None = typer.Option(
+        None, "--watch", help="Refresh every N seconds."
+    ),
+    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
+) -> None:
+    try:
+        resolved_limit = _validate_limit(limit, option_name="--limit")
+    except ValueError as exc:
+        typer.secho(str(exc), err=True, fg=typer.colors.RED)
+        raise typer.Exit(3) from None
+    _run_visibility_command(
+        builder=lambda: build_live_doctor(
+            db_target=db,
+            feed_id=feed_id,
+            market_date=market_date,
+            limit=resolved_limit,
+        ),
+        renderer=render_live_doctor,
+        json_output=json_output,
+        watch_seconds=watch,
+        no_color=no_color,
+    )
+
+
+def market_open_monitor_command(
+    environment: str | None = typer.Option(
+        None,
+        "--env",
+        help="Run this command against a named deploy target.",
+    ),
+    feed_id: str = typer.Option(
+        "finviz_momentum",
+        "--feed-id",
+        help="Finviz symbol feed id.",
+    ),
+    interval_minutes: int = typer.Option(
+        15,
+        "--interval-minutes",
+        help="Refresh interval for the monitor loop.",
+    ),
+    once: bool = typer.Option(
+        False,
+        "--once",
+        help="Run one check instead of watching.",
+    ),
+    db: str | None = typer.Option(None, "--db", help="Database URL override."),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
+    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
+) -> None:
+    if interval_minutes <= 0:
+        typer.secho("--interval-minutes must be greater than 0.", err=True, fg=typer.colors.RED)
+        raise typer.Exit(3) from None
+    _run_visibility_command(
+        builder=lambda: build_live_doctor(
+            db_target=db,
+            feed_id=feed_id,
+        ),
+        renderer=render_live_doctor,
+        json_output=json_output,
+        watch_seconds=None if once else float(interval_minutes * 60),
         no_color=no_color,
     )
 

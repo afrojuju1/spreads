@@ -13,6 +13,8 @@ from core.cli.ops import (
     audit_command,
     finviz_ledger_command,
     jobs_app,
+    live_doctor_command,
+    market_open_monitor_command,
     status_command,
     trading_command,
     uoa_app,
@@ -44,6 +46,8 @@ app = typer.Typer(
 TARGETABLE_ROOT_COMMANDS = {
     "status",
     "trading",
+    "live-doctor",
+    "market-open-monitor",
     "finviz-ledger",
     "pipelines",
     "automations",
@@ -125,6 +129,12 @@ def _run_passthrough(
 
 app.command("status", help="Show system and runtime health.")(status_command)
 app.command("trading", help="Show live trading safety and readiness.")(trading_command)
+app.command("live-doctor", help="Run the compact live trading health doctor.")(
+    live_doctor_command
+)
+app.command("market-open-monitor", help="Watch the market-open live health doctor.")(
+    market_open_monitor_command
+)
 app.command("finviz-ledger", help="Show Finviz direct trading ledger.")(
     finviz_ledger_command
 )

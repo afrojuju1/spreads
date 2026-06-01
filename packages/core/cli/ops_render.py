@@ -1960,6 +1960,98 @@ def render_job_lanes_view(console: Console, payload: dict[str, Any]) -> None:
         console.print(table)
 
 
+def render_live_doctor(console: Console, payload: dict[str, Any]) -> None:
+    summary = dict(payload.get("summary") or {})
+    details = dict(payload.get("details") or {})
+    checks = list(details.get("checks") or [])
+
+    overview = Table.grid(padding=(0, 2))
+    overview.add_row("Overall", _status_text(payload.get("status")))
+    overview.add_row("Generated", _render_value(payload.get("generated_at")))
+    overview.add_row(
+        "Market",
+        (
+            f"{_render_value(summary.get('market_session_status'))} "
+            f"{_render_value(summary.get('market_open_at'))}"
+            f"..{_render_value(summary.get('market_close_at'))}"
+        ),
+    )
+    overview.add_row("Trading", _render_value(summary.get("trading_allowed")))
+    overview.add_row("Environment", _render_value(summary.get("environment")))
+    overview.add_row(
+        "Broker Sync",
+        (
+            f"{_render_value(summary.get('broker_sync_status'))} "
+            f"age={_render_duration(summary.get('broker_sync_age_seconds'))}"
+        ),
+    )
+    overview.add_row(
+        "Finviz",
+        (
+            f"feed {_render_value(summary.get('finviz_feed_status'))} "
+            f"({_render_value(summary.get('finviz_feed_symbol_count'))} symbols) | "
+            f"direct {_render_value(summary.get('finviz_direct_status'))} "
+            f"({_render_value(summary.get('finviz_direct_candidate_count'))} candidates)"
+        ),
+    )
+    overview.add_row(
+        "Positions",
+        (
+            f"{_render_value(summary.get('open_position_count'))}/"
+            f"{_render_value(summary.get('max_open_positions'))} open | "
+            f"active intents {_render_value(summary.get('active_intent_count'))}"
+        ),
+    )
+    overview.add_row("Net PnL", _render_money(summary.get("net_pnl")))
+    overview.add_row(
+        "Workers",
+        (
+            f"lanes {_render_value(summary.get('worker_lane_count'))} | "
+            f"blocked {_render_value(summary.get('blocked_worker_lane_count'))} | "
+            f"idle {_render_value(summary.get('idle_worker_lane_count'))}"
+        ),
+    )
+    console.print(
+        Panel(
+            overview,
+            title="Live Doctor",
+            border_style=STATUS_STYLES.get(str(payload.get("status")), "white"),
+        )
+    )
+
+    _render_attention(console, payload)
+
+    if checks:
+        table = Table(title="Checks", header_style="bold")
+        table.add_column("Check")
+        table.add_column("Status")
+        table.add_column("Detail")
+        for row in checks:
+            table.add_row(
+                str(row.get("name") or "-"),
+                _status_text(row.get("status")),
+                _truncate(row.get("message"), length=96),
+            )
+        console.print(table)
+
+    latest_direct = dict(details.get("latest_direct_run") or {})
+    if latest_direct:
+        table = Table(title="Latest Finviz Direct Run", header_style="bold")
+        table.add_column("Job Run")
+        table.add_column("Status")
+        table.add_column("Candidates", justify="right")
+        table.add_column("Created", justify="right")
+        table.add_column("Reasons")
+        table.add_row(
+            _render_value(latest_direct.get("job_run_id")),
+            _job_run_status_text(latest_direct.get("job_status")),
+            _render_value(latest_direct.get("entry_candidates")),
+            _render_value(latest_direct.get("created_count")),
+            _render_count_map(latest_direct.get("reason_counts"), limit=5),
+        )
+        console.print(table)
+
+
 def render_uoa_view(console: Console, payload: dict[str, Any]) -> None:
     _render_uoa_detail(console, payload)
 
@@ -1990,6 +2082,15 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
         "Singleton Leases", _render_value(summary.get("singleton_lease_count"))
     )
     overview.add_row("Worker Lanes", _render_value(summary.get("worker_lane_count")))
+    if summary.get("status_filter") == "failed" or summary.get("actionable_failed_count"):
+        overview.add_row(
+            "Actionable Failed",
+            _render_value(summary.get("actionable_failed_count")),
+        )
+        overview.add_row(
+            "Historical Failed",
+            _render_value(summary.get("historical_failed_count")),
+        )
     console.print(
         Panel(
             overview,
@@ -2024,7 +2125,7 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
             )
         console.print(table)
 
-    definition_rows = list(details.get("declared_jobs") or [])
+    definition_rows = [] if summary.get("status_filter") else list(details.get("declared_jobs") or [])
     if definition_rows:
         table = Table(title="Declared Jobs", header_style="bold")
         table.add_column("Job Key")
@@ -2073,16 +2174,20 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Scheduled")
         table.add_column("Worker")
         for row in run_rows:
-            table.add_row(
+            health = _status_text(row.get("operator_status"))
+            if row.get("superseded_by_job_run_id"):
+                health = Text("HISTORICAL", style="cyan")
+            values = [
                 str(row.get("job_run_id") or "-"),
                 str(row.get("job_type") or "-"),
                 _job_run_status_text(row.get("status")),
-                _status_text(row.get("operator_status")),
+                health,
                 str(row.get("session_id") or "-"),
                 _render_value(row.get("capture_status")),
                 str(row.get("scheduled_for") or "-"),
                 str(row.get("worker_name") or "-"),
-            )
+            ]
+            table.add_row(*values)
         console.print(table)
 
     singleton_leases = list(details.get("singleton_leases") or [])

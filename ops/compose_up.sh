@@ -12,10 +12,10 @@ if [[ -f .env ]]; then
   set +a
 fi
 
-container_env_file="${SPREADS_CONTAINER_ENV_FILE:-.env.deploy.${SPREADS_DEPLOY_ENV:-local}}"
-compose_file="${SPREADS_COMPOSE_FILE:-docker-compose.prod.yml}"
-runtime_replicas="${SPREADS_WORKER_RUNTIME_REPLICAS:-1}"
-discovery_replicas="${SPREADS_WORKER_DISCOVERY_REPLICAS:-2}"
+container_env_file="${SPREADS_CONTAINER_ENV_FILE:-.env}"
+compose_file="${SPREADS_COMPOSE_FILE:-docker-compose.yml}"
+runtime_replicas="${SPREADS_WORKER_RUNTIME_REPLICAS:-2}"
+discovery_replicas="${SPREADS_WORKER_DISCOVERY_REPLICAS:-4}"
 research_replicas="${SPREADS_WORKER_RESEARCH_REPLICAS:-0}"
 web_enabled="${SPREADS_WEB_ENABLED:-true}"
 

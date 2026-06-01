@@ -39,7 +39,7 @@
 - For jobs health, read operator-facing status fields first. Raw historical failed runs can remain visible while `operator_status` and `actionable_failed_count` show whether they still require action.
 - For first-pass ops/runtime checks and historical backtest workflows, follow the repo-level CLI guidance in [../../AGENTS.md](../../AGENTS.md). Keep the canonical command list there instead of repeating it in backend-specific instructions.
 - Treat `ade-nucbox-k8-plus` as the canonical live paper backend target. Prefer `uv run spreads ... --env ade-nucbox-k8-plus` for operator reads instead of raw `--db` overrides.
-- Use `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ...` only when you intentionally need the deployed checkout on the box at `/home/ade/spreads/app`.
+- Use `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ...` only when you intentionally need the deployed checkout on the box at `/home/ade/Projects/spreads`.
 - Default verification should be live/runtime validation against the running stack or shipped CLI. Do not add or update backend tests unless the user explicitly asks for test work.
 
 ## End-Of-Day And Ops Queries

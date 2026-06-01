@@ -375,9 +375,10 @@ def health_command(
         target = _resolve_target(environment)
         commands: list[tuple[str, list[str]]] = [
             ("Compose Status", ["deploy", "status", "--env", target.name]),
+            ("Live Doctor", ["live-doctor", "--json"]),
             ("Jobs", ["jobs", "--json"]),
             ("Trading", ["trading", "--json"]),
-            ("UOA", ["uoa", "--json"]),
+            ("Finviz Ledger", ["finviz-ledger", "--json", "--limit", "5"]),
         ]
         exit_code = 0
         for title, args in commands:
@@ -426,7 +427,7 @@ def install_service_command(
 
 @deploy_app.command(
     "install-ops",
-    help="Install user-level reboot, backup, and health automation on one SSH target.",
+    help="Install user-level reboot, backup, and health automation for one target.",
 )
 def install_ops_command(
     environment: str = typer.Option(

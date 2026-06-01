@@ -1,6 +1,6 @@
 job_key: tradingagents_scan:finviz_momentum
 job_type: tradingagents_scan
-enabled: true
+enabled: false
 schedule:
   type: market_open_plus_minutes
   minutes: 20
