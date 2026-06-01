@@ -1,0 +1,16 @@
+symbol_feed_id: finviz_momentum
+job_key: symbol_feed:finviz_momentum
+enabled: true
+schedule:
+  type: market_open_plus_minutes
+  minutes: 10
+allow_off_hours: false
+recipe: finviz_screener
+recipe_args:
+  source: auto
+  scanner_url: https://finviz.com/screener.ashx?v=111&f=sh_avgvol_o1000,sh_price_o5,sh_relvol_o1.5,ta_change_u&o=-relativevolume
+  top: 10
+  min_price: 5
+  min_volume: 1000000
+  timeout_seconds: 20
+singleton_scope: finviz_momentum

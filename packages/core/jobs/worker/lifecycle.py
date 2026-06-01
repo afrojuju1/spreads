@@ -10,6 +10,7 @@ import redis.asyncio as redis_async
 from core.jobs.orchestration import worker_runtime_lease_key
 from core.jobs.registry import (
     DISCOVERY_QUEUE_NAME,
+    RESEARCH_QUEUE_NAME,
     RUNTIME_QUEUE_NAME,
     VALUATION_QUEUE_NAME,
 )
@@ -85,6 +86,13 @@ async def valuation_startup(ctx: dict[str, Any]) -> None:
     ctx["worker_lane"] = "valuation"
     ctx["worker_settings_name"] = "ValuationWorkerSettings"
     ctx["worker_queue_name"] = VALUATION_QUEUE_NAME
+    await startup(ctx)
+
+
+async def research_startup(ctx: dict[str, Any]) -> None:
+    ctx["worker_lane"] = "research"
+    ctx["worker_settings_name"] = "ResearchWorkerSettings"
+    ctx["worker_queue_name"] = RESEARCH_QUEUE_NAME
     await startup(ctx)
 
 

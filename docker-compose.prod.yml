@@ -103,6 +103,31 @@ services:
     command: ["uv", "run", "arq", "core.jobs.worker.DiscoveryWorkerSettings"]
     logging: *default-logging
 
+  worker-research:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    env_file:
+      - ${SPREADS_CONTAINER_ENV_FILE}
+    environment:
+      SPREADS_TRADINGAGENTS_DIR: ${SPREADS_TRADINGAGENTS_DIR}
+      SPREADS_TRADINGAGENTS_UV_ENVIRONMENT: ${SPREADS_TRADINGAGENTS_UV_ENVIRONMENT}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["uv", "run", "arq", "core.jobs.worker.ResearchWorkerSettings"]
+    volumes:
+      - ${SPREADS_TRADINGAGENTS_HOST_DIR}:${SPREADS_TRADINGAGENTS_DIR}:ro
+      - spreads_tradingagents_outputs:/app/outputs/tradingagents
+    logging: *default-logging
+
   scheduler:
     build:
       context: .
@@ -150,3 +175,5 @@ services:
 volumes:
   spreads_postgres_data:
     name: ${SPREADS_POSTGRES_VOLUME_NAME}
+  spreads_tradingagents_outputs:
+    name: ${SPREADS_COMPOSE_PROJECT_NAME}_tradingagents_outputs

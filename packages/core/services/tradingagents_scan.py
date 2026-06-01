@@ -1,0 +1,639 @@
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import time
+from typing import Any
+from zoneinfo import ZoneInfo
+
+from core.services.alert_delivery import plan_alert_delivery
+from core.services.symbol_feeds import get_latest_symbol_feed_snapshot
+from core.storage.serializers import parse_datetime
+
+
+NEW_YORK = ZoneInfo("America/New_York")
+DEFAULT_TRADINGAGENTS_DIR = "/home/ade/Projects/TradingAgents"
+DEFAULT_ACTIONABLE_SIGNALS = ("Buy", "Overweight", "Sell", "Underweight")
+RESEARCH_SOURCE = "research.tradingagents_scan"
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _utc_now_text() -> str:
+    return _utc_now().isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _as_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    rendered = str(value).strip()
+    return rendered or None
+
+
+def _as_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    rendered = str(value).strip().lower()
+    if rendered in {"1", "true", "yes", "y", "on"}:
+        return True
+    if rendered in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
+def _as_optional_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    return max(_as_int(value, 0), 0)
+
+
+def _as_text_tuple(value: Any, default: tuple[str, ...]) -> tuple[str, ...]:
+    if value in (None, ""):
+        return default
+    if isinstance(value, str):
+        raw_items = value.split(",")
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        return default
+    return tuple(str(item).strip() for item in raw_items if str(item).strip())
+
+
+def _safe_component(value: Any) -> str:
+    rendered = str(value or "").strip()
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", rendered) or "unknown"
+
+
+def _unique_symbols(values: Any) -> tuple[str, ...]:
+    if not isinstance(values, list):
+        return ()
+    return tuple(
+        dict.fromkeys(
+            str(value or "").upper().strip()
+            for value in values
+            if str(value or "").strip()
+        )
+    )
+
+
+def _session_date(payload: Mapping[str, Any]) -> str:
+    explicit = _as_text(payload.get("session_date"))
+    if explicit is not None:
+        return explicit
+    scheduled_for = parse_datetime(payload.get("scheduled_for"))
+    if scheduled_for is not None:
+        return scheduled_for.astimezone(NEW_YORK).date().isoformat()
+    return _utc_now().astimezone(NEW_YORK).date().isoformat()
+
+
+def _resolve_path(value: Any, *, base: Path | None = None) -> Path:
+    path = Path(str(value)).expanduser()
+    if path.is_absolute():
+        return path
+    root = base or Path.cwd()
+    return (root / path).resolve()
+
+
+def _tail_text(path: Path, *, max_chars: int = 4000) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return text[-max_chars:]
+
+
+def _load_metadata_from_path(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _load_metadata_from_stdout(path: Path) -> dict[str, Any] | None:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return None
+    if not text:
+        return None
+    start = text.find("{")
+    if start < 0:
+        return None
+    try:
+        payload = json.loads(text[start:])
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _find_latest_metadata_path(
+    *,
+    output_root: Path,
+    ticker: str,
+    started_epoch: float,
+) -> Path | None:
+    safe_ticker = _safe_component(ticker)
+    candidates = list(output_root.glob(f"{safe_ticker}_*/run_metadata.json"))
+    if not candidates:
+        candidates = list(output_root.glob("*/run_metadata.json"))
+    fresh: list[Path] = []
+    for path in candidates:
+        try:
+            if path.stat().st_mtime >= started_epoch - 5:
+                fresh.append(path)
+        except OSError:
+            continue
+    for path in sorted(fresh, key=lambda item: item.stat().st_mtime, reverse=True):
+        metadata = _load_metadata_from_path(path)
+        if str((metadata or {}).get("ticker") or "").upper() == ticker.upper():
+            return path
+    return fresh[0] if fresh else None
+
+
+def _actionable_result(result: Mapping[str, Any], payload: Mapping[str, Any]) -> bool:
+    allowed = {
+        item.lower()
+        for item in _as_text_tuple(
+            payload.get("actionable_signals"),
+            DEFAULT_ACTIONABLE_SIGNALS,
+        )
+    }
+    signal = str(result.get("validated_signal") or "").strip()
+    quality_status = str(result.get("quality_status") or "").strip().lower()
+    if signal.lower() not in allowed:
+        return False
+    if quality_status == "pass":
+        return True
+    return quality_status == "warn" and _as_bool(
+        payload.get("allow_quality_warn"),
+        False,
+    )
+
+
+def _metadata_result_fields(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    quality = (
+        metadata.get("quality") if isinstance(metadata.get("quality"), Mapping) else {}
+    )
+    return {
+        "validated_signal": metadata.get("validated_signal") or metadata.get("signal"),
+        "raw_signal": metadata.get("raw_signal"),
+        "quality_status": metadata.get("quality_status"),
+        "blocked_reason": metadata.get("blocked_reason"),
+        "report_path": metadata.get("report_path"),
+        "wall_seconds": metadata.get("wall_seconds"),
+        "run_profile": metadata.get("run_profile"),
+        "quality_passed": quality.get("passed"),
+        "quality_errors": quality.get("errors"),
+        "quality_warnings": quality.get("warnings"),
+    }
+
+
+def _build_command(
+    *,
+    ticker: str,
+    session_date: str,
+    output_root: Path,
+    payload: Mapping[str, Any],
+) -> list[str]:
+    command = [
+        "uv",
+        "run",
+        "python",
+        "scripts/benchmark_run.py",
+        "--ticker",
+        ticker,
+        "--date",
+        session_date,
+        "--profile",
+        _as_text(payload.get("profile")) or "fast",
+        "--output-root",
+        str(output_root),
+    ]
+    for payload_key, flag in (
+        ("llm_provider", "--llm-provider"),
+        ("quick_model", "--quick-model"),
+        ("deep_model", "--deep-model"),
+        ("backend_url", "--backend-url"),
+    ):
+        value = _as_text(payload.get(payload_key))
+        if value is not None:
+            command.extend([flag, value])
+    if payload.get("prefetch") is not None:
+        command.append(
+            "--prefetch" if _as_bool(payload.get("prefetch")) else "--no-prefetch"
+        )
+    if _as_bool(payload.get("require_sec"), False):
+        command.append("--require-sec")
+    return command
+
+
+def _tradingagents_env(payload: Mapping[str, Any]) -> dict[str, str]:
+    env = dict(os.environ)
+    uv_environment = (
+        _as_text(payload.get("uv_project_environment"))
+        or _as_text(os.environ.get("SPREADS_TRADINGAGENTS_UV_ENVIRONMENT"))
+    )
+    if uv_environment is not None:
+        env["UV_PROJECT_ENVIRONMENT"] = str(Path(uv_environment).expanduser())
+    return env
+
+
+def _run_tradingagents_ticker(
+    *,
+    ticker: str,
+    session_date: str,
+    tradingagents_dir: Path,
+    output_root: Path,
+    log_root: Path,
+    payload: Mapping[str, Any],
+    heartbeat: Callable[[], None],
+) -> dict[str, Any]:
+    started_at = _utc_now_text()
+    started_epoch = time.time()
+    started_monotonic = time.monotonic()
+    timeout_seconds = max(_as_int(payload.get("timeout_seconds"), 1800), 1)
+    heartbeat_seconds = max(_as_int(payload.get("heartbeat_seconds"), 30), 1)
+    safe_ticker = _safe_component(ticker)
+    log_root.mkdir(parents=True, exist_ok=True)
+    stdout_path = log_root / f"{safe_ticker}.stdout.log"
+    stderr_path = log_root / f"{safe_ticker}.stderr.log"
+    command = _build_command(
+        ticker=ticker,
+        session_date=session_date,
+        output_root=output_root,
+        payload=payload,
+    )
+    heartbeat()
+    timed_out = False
+    with stdout_path.open("w", encoding="utf-8") as stdout_file, stderr_path.open(
+        "w",
+        encoding="utf-8",
+    ) as stderr_file:
+        process = subprocess.Popen(
+            command,
+            cwd=tradingagents_dir,
+            env=_tradingagents_env(payload),
+            stdout=stdout_file,
+            stderr=stderr_file,
+            text=True,
+        )
+        try:
+            while process.poll() is None:
+                elapsed = time.monotonic() - started_monotonic
+                if elapsed >= timeout_seconds:
+                    timed_out = True
+                    process.terminate()
+                    try:
+                        process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=10)
+                    break
+                heartbeat()
+                time.sleep(min(float(heartbeat_seconds), timeout_seconds - elapsed))
+        except Exception:
+            if process.poll() is None:
+                process.terminate()
+            raise
+        returncode = process.returncode
+    finished_at = _utc_now_text()
+    elapsed_seconds = round(time.monotonic() - started_monotonic, 2)
+    metadata_path = _find_latest_metadata_path(
+        output_root=output_root,
+        ticker=ticker,
+        started_epoch=started_epoch,
+    )
+    metadata = (
+        _load_metadata_from_path(metadata_path)
+        if metadata_path is not None
+        else _load_metadata_from_stdout(stdout_path)
+    )
+    status = "timed_out" if timed_out else "failed"
+    if metadata is not None and returncode in {0, 1}:
+        status = "completed"
+    result = {
+        "ticker": ticker,
+        "status": status,
+        "returncode": returncode,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "elapsed_seconds": elapsed_seconds,
+        "command": command,
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+        "metadata_path": None if metadata_path is None else str(metadata_path),
+    }
+    if metadata is not None:
+        result.update(_metadata_result_fields(metadata))
+    else:
+        result["error_tail"] = _tail_text(stderr_path)
+    result["actionable"] = _actionable_result(result, payload)
+    return result
+
+
+def _result_summary_line(result: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "ticker": result.get("ticker"),
+        "status": result.get("status"),
+        "validated_signal": result.get("validated_signal"),
+        "quality_status": result.get("quality_status"),
+        "blocked_reason": result.get("blocked_reason"),
+        "actionable": result.get("actionable"),
+        "report_path": result.get("report_path"),
+        "elapsed_seconds": result.get("elapsed_seconds"),
+    }
+
+
+def _plan_actionable_alert(
+    *,
+    storage: Any,
+    job_store: Any,
+    session_date: str,
+    session_id: str,
+    label: str,
+    job_run_id: str,
+    feed_id: str,
+    feed_entry: Mapping[str, Any],
+    result: Mapping[str, Any],
+) -> dict[str, Any]:
+    ticker = str(result["ticker"])
+    signal = str(result.get("validated_signal") or "n/a")
+    quality_status = str(result.get("quality_status") or "n/a")
+    payload = {
+        "created_at": _utc_now_text(),
+        "session_date": session_date,
+        "label": label,
+        "cycle_id": job_run_id,
+        "symbol": ticker,
+        "alert_type": "research_tradingagents_actionable",
+        "strategy_mode": "research",
+        "profile": str(result.get("run_profile") or "fast"),
+        "description": (
+            f"TradingAgents {signal} on {ticker}; "
+            f"quality {quality_status}; source Finviz {feed_id}."
+        ),
+        "details": {
+            "source": "finviz",
+            "feed_id": feed_id,
+            "feed_entry": dict(feed_entry),
+            "tradingagents": dict(result),
+        },
+    }
+    dedupe_key = (
+        "research_tradingagents_actionable|"
+        f"{session_date}|{feed_id}|{ticker}|{signal}"
+    )
+    row, created = plan_alert_delivery(
+        alert_store=storage.alerts,
+        job_store=job_store,
+        payload=payload,
+        dedupe_key=dedupe_key,
+        dedupe_state={
+            "validated_signal": signal,
+            "quality_status": quality_status,
+            "report_path": result.get("report_path"),
+            "metadata_path": result.get("metadata_path"),
+        },
+        session_id=session_id,
+        planner_job_run_id=job_run_id,
+        source=RESEARCH_SOURCE,
+        correlation_id=job_run_id,
+    )
+    return {
+        "alert_id": row.get("alert_id"),
+        "status": row.get("status"),
+        "created": created,
+        "symbol": ticker,
+    }
+
+
+def _plan_batch_alert(
+    *,
+    storage: Any,
+    job_store: Any,
+    session_date: str,
+    session_id: str,
+    label: str,
+    job_run_id: str,
+    feed_id: str,
+    selected_tickers: tuple[str, ...],
+    snapshot: Mapping[str, Any],
+    ticker_results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    actionable_count = sum(1 for result in ticker_results if result.get("actionable"))
+    completed_count = sum(
+        1 for result in ticker_results if result.get("status") == "completed"
+    )
+    failed_count = sum(
+        1 for result in ticker_results if result.get("status") == "failed"
+    )
+    timed_out_count = sum(
+        1 for result in ticker_results if result.get("status") == "timed_out"
+    )
+    payload = {
+        "created_at": _utc_now_text(),
+        "session_date": session_date,
+        "label": label,
+        "cycle_id": job_run_id,
+        "symbol": "FINVIZ",
+        "alert_type": "research_tradingagents_batch_summary",
+        "strategy_mode": "research",
+        "profile": "batch",
+        "description": (
+            f"Finviz TradingAgents scan: {actionable_count} actionable, "
+            f"{completed_count} completed, {failed_count + timed_out_count} incomplete."
+        ),
+        "details": {
+            "source": "finviz",
+            "feed_id": feed_id,
+            "feed_job_run_id": snapshot.get("job_run_id"),
+            "feed_generated_at": snapshot.get("generated_at"),
+            "selected_tickers": list(selected_tickers),
+            "candidate_count": len(selected_tickers),
+            "completed_count": completed_count,
+            "failed_count": failed_count,
+            "timed_out_count": timed_out_count,
+            "actionable_count": actionable_count,
+            "ticker_results": [
+                _result_summary_line(result) for result in ticker_results
+            ],
+        },
+    }
+    dedupe_key = f"research_tradingagents_batch_summary|{session_date}|{feed_id}"
+    row, created = plan_alert_delivery(
+        alert_store=storage.alerts,
+        job_store=job_store,
+        payload=payload,
+        dedupe_key=dedupe_key,
+        dedupe_state={
+            "selected_tickers": list(selected_tickers),
+            "actionable_count": actionable_count,
+            "completed_count": completed_count,
+            "failed_count": failed_count,
+            "timed_out_count": timed_out_count,
+        },
+        session_id=session_id,
+        planner_job_run_id=job_run_id,
+        source=RESEARCH_SOURCE,
+        correlation_id=job_run_id,
+    )
+    return {
+        "alert_id": row.get("alert_id"),
+        "status": row.get("status"),
+        "created": created,
+        "symbol": "FINVIZ",
+    }
+
+
+def run_tradingagents_scan(
+    *,
+    storage: Any,
+    job_store: Any,
+    job_run_id: str,
+    payload: Mapping[str, Any],
+    heartbeat: Callable[[], None],
+) -> dict[str, Any]:
+    feed_id = _as_text(payload.get("feed_id")) or "finviz_momentum"
+    feed_job_key = _as_text(payload.get("feed_job_key")) or f"symbol_feed:{feed_id}"
+    max_feed_age_seconds = _as_optional_int(payload.get("max_feed_age_seconds"))
+    snapshot = get_latest_symbol_feed_snapshot(
+        job_store,
+        feed_id=feed_id,
+        job_key=feed_job_key,
+        max_age_seconds=max_feed_age_seconds,
+    )
+    snapshot_status = str(snapshot.get("status") or "").strip().lower()
+    session_date = _session_date(payload)
+    label = _as_text(payload.get("label")) or "finviz_tradingagents"
+    session_id = (
+        _as_text(payload.get("session_id")) or f"research:{label}:{session_date}"
+    )
+    if snapshot_status not in {"ready", "empty"}:
+        return {
+            "status": "skipped",
+            "reason": f"feed_snapshot_{snapshot_status or 'missing'}",
+            "feed_id": feed_id,
+            "feed_job_key": feed_job_key,
+            "feed_snapshot": snapshot,
+        }
+
+    max_tickers = max(_as_int(payload.get("max_tickers"), 5), 1)
+    selected_tickers = _unique_symbols(snapshot.get("symbols"))[:max_tickers]
+    entry_by_symbol = {
+        str(entry.get("symbol") or "").upper(): dict(entry)
+        for entry in list(snapshot.get("entries") or [])
+        if isinstance(entry, Mapping) and str(entry.get("symbol") or "").strip()
+    }
+    output_root = _resolve_path(
+        _as_text(payload.get("output_root"))
+        or _as_text(os.environ.get("SPREADS_TRADINGAGENTS_OUTPUT_ROOT"))
+        or "outputs/tradingagents/finviz_momentum",
+    )
+    output_root.mkdir(parents=True, exist_ok=True)
+    log_root = (
+        output_root
+        / "_spreads_logs"
+        / session_date
+        / _safe_component(job_run_id)
+    )
+
+    ticker_results: list[dict[str, Any]] = []
+    alert_results: list[dict[str, Any]] = []
+    tradingagents_dir = _resolve_path(
+        _as_text(payload.get("tradingagents_dir"))
+        or _as_text(os.environ.get("SPREADS_TRADINGAGENTS_DIR"))
+        or DEFAULT_TRADINGAGENTS_DIR,
+    )
+    benchmark_script = tradingagents_dir / "scripts" / "benchmark_run.py"
+    if selected_tickers and not benchmark_script.exists():
+        raise RuntimeError(
+            f"TradingAgents benchmark entrypoint not found: {benchmark_script}"
+        )
+    for ticker in selected_tickers:
+        heartbeat()
+        result = _run_tradingagents_ticker(
+            ticker=ticker,
+            session_date=session_date,
+            tradingagents_dir=tradingagents_dir,
+            output_root=output_root,
+            log_root=log_root,
+            payload=payload,
+            heartbeat=heartbeat,
+        )
+        ticker_results.append(result)
+        if result.get("actionable"):
+            alert_results.append(
+                _plan_actionable_alert(
+                    storage=storage,
+                    job_store=job_store,
+                    session_date=session_date,
+                    session_id=session_id,
+                    label=label,
+                    job_run_id=job_run_id,
+                    feed_id=feed_id,
+                    feed_entry=entry_by_symbol.get(ticker, {}),
+                    result=result,
+                )
+            )
+
+    batch_alert = _plan_batch_alert(
+        storage=storage,
+        job_store=job_store,
+        session_date=session_date,
+        session_id=session_id,
+        label=label,
+        job_run_id=job_run_id,
+        feed_id=feed_id,
+        selected_tickers=selected_tickers,
+        snapshot=snapshot,
+        ticker_results=ticker_results,
+    )
+    completed_count = sum(
+        1 for result in ticker_results if result.get("status") == "completed"
+    )
+    failed_count = sum(
+        1 for result in ticker_results if result.get("status") == "failed"
+    )
+    timed_out_count = sum(
+        1 for result in ticker_results if result.get("status") == "timed_out"
+    )
+    actionable_count = sum(1 for result in ticker_results if result.get("actionable"))
+    return {
+        "status": "completed",
+        "feed_id": feed_id,
+        "feed_job_key": feed_job_key,
+        "feed_job_run_id": snapshot.get("job_run_id"),
+        "feed_generated_at": snapshot.get("generated_at"),
+        "session_date": session_date,
+        "label": label,
+        "candidate_count": len(_unique_symbols(snapshot.get("symbols"))),
+        "selected_tickers": list(selected_tickers),
+        "completed_count": completed_count,
+        "failed_count": failed_count,
+        "timed_out_count": timed_out_count,
+        "actionable_count": actionable_count,
+        "suppressed_count": completed_count - actionable_count,
+        "ticker_results": ticker_results,
+        "alerts": [*alert_results, batch_alert],
+        "output_root": str(output_root),
+    }
+
+
+__all__ = ["run_tradingagents_scan"]

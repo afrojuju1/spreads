@@ -984,9 +984,222 @@ def _build_ops_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
     return {"embeds": [embed]}
 
 
+def _discord_value(value: Any, *, fallback: str = "n/a", limit: int = 1000) -> str:
+    rendered = str(value if value not in (None, "") else fallback).strip() or fallback
+    if len(rendered) <= limit:
+        return rendered
+    return rendered[: limit - 3] + "..."
+
+
+def _compact_percent_points(value: Any, *, fallback: str = "n/a") -> str:
+    if value is None:
+        return fallback
+    return f"{float(value):+.2f}%"
+
+
+def _research_color(alert: dict[str, Any], details: dict[str, Any]) -> int:
+    if str(alert.get("alert_type") or "") == "research_tradingagents_batch_summary":
+        incomplete_count = int(details.get("failed_count") or 0) + int(
+            details.get("timed_out_count") or 0
+        )
+        return NEUTRAL_YELLOW if incomplete_count else INFO_BLUE
+    tradingagents = (
+        details.get("tradingagents")
+        if isinstance(details.get("tradingagents"), dict)
+        else {}
+    )
+    signal = str(tradingagents.get("validated_signal") or "").strip().lower()
+    quality_status = str(tradingagents.get("quality_status") or "").strip().lower()
+    if quality_status == "fail":
+        return NEUTRAL_YELLOW
+    if signal in {"buy", "overweight"}:
+        return SUCCESS_GREEN
+    if signal in {"sell", "underweight"}:
+        return BEARISH_RED
+    return INFO_BLUE
+
+
+def _research_finviz_field(feed_entry: dict[str, Any]) -> str:
+    parts = [
+        _metric_part("score", compact_value(feed_entry.get("score"))),
+        _metric_part("price", compact_money(feed_entry.get("price"))),
+        _metric_part("vol", compact_count(feed_entry.get("daily_volume"))),
+        _metric_part(
+            "move",
+            _compact_percent_points(feed_entry.get("move_percent")),
+        ),
+        _metric_part("relvol", compact_ratio(feed_entry.get("relative_volume"))),
+    ]
+    return _join_metric_parts(parts)
+
+
+def _build_research_actionable_payload(
+    alert: dict[str, Any],
+    details: dict[str, Any],
+) -> dict[str, Any]:
+    tradingagents = (
+        details.get("tradingagents")
+        if isinstance(details.get("tradingagents"), dict)
+        else {}
+    )
+    feed_entry = (
+        details.get("feed_entry")
+        if isinstance(details.get("feed_entry"), dict)
+        else {}
+    )
+    symbol = str(alert.get("symbol") or tradingagents.get("ticker") or "n/a")
+    signal = str(tradingagents.get("validated_signal") or "n/a")
+    quality_status = str(tradingagents.get("quality_status") or "n/a")
+    fields = [
+        {
+            "name": "Signal",
+            "value": _discord_value(
+                _join_metric_parts(
+                    [
+                        _metric_part("validated", signal),
+                        _metric_part(
+                            "raw",
+                            compact_value(tradingagents.get("raw_signal")),
+                        ),
+                        _metric_part("quality", quality_status),
+                    ]
+                )
+            ),
+            "inline": False,
+        },
+        {
+            "name": "Finviz",
+            "value": _discord_value(_research_finviz_field(feed_entry)),
+            "inline": False,
+        },
+        {
+            "name": "Runtime",
+            "value": _discord_value(
+                _join_metric_parts(
+                    [
+                        _metric_part(
+                            "profile",
+                            compact_value(tradingagents.get("run_profile")),
+                        ),
+                        _metric_part(
+                            "wall",
+                            compact_value(tradingagents.get("wall_seconds")),
+                        ),
+                        _metric_part(
+                            "elapsed",
+                            compact_value(tradingagents.get("elapsed_seconds")),
+                        ),
+                    ]
+                )
+            ),
+            "inline": False,
+        },
+    ]
+    blocked_reason = str(tradingagents.get("blocked_reason") or "").strip()
+    if blocked_reason:
+        fields.append(
+            {
+                "name": "Quality Note",
+                "value": _discord_value(blocked_reason),
+                "inline": False,
+            }
+        )
+    report_path = str(tradingagents.get("report_path") or "").strip()
+    if report_path:
+        fields.append(
+            {
+                "name": "Report",
+                "value": _discord_value(report_path),
+                "inline": False,
+            }
+        )
+    embed = {
+        "title": f"{symbol} | TradingAgents {signal} | quality {quality_status}",
+        "description": str(alert.get("description") or ""),
+        "color": _research_color(alert, details),
+        "fields": fields,
+        "footer": {"text": _alert_footer_text(alert)},
+        "timestamp": alert["created_at"],
+    }
+    return {"embeds": [embed]}
+
+
+def _build_research_summary_payload(
+    alert: dict[str, Any],
+    details: dict[str, Any],
+) -> dict[str, Any]:
+    ticker_results = [
+        item
+        for item in list(details.get("ticker_results") or [])
+        if isinstance(item, dict)
+    ]
+    result_lines = []
+    for item in ticker_results[:8]:
+        result_lines.append(
+            " | ".join(
+                [
+                    str(item.get("ticker") or "n/a"),
+                    str(item.get("validated_signal") or "no-signal"),
+                    str(item.get("quality_status") or item.get("status") or "n/a"),
+                    "actionable" if item.get("actionable") else "watch",
+                ]
+            )
+        )
+    fields = [
+        {
+            "name": "Candidates",
+            "value": compact_count(details.get("candidate_count")),
+            "inline": True,
+        },
+        {
+            "name": "Completed",
+            "value": compact_count(details.get("completed_count")),
+            "inline": True,
+        },
+        {
+            "name": "Actionable",
+            "value": compact_count(details.get("actionable_count")),
+            "inline": True,
+        },
+        {
+            "name": "Tickers",
+            "value": _discord_value(
+                ", ".join(list(details.get("selected_tickers") or []))
+            ),
+            "inline": False,
+        },
+    ]
+    if result_lines:
+        fields.append(
+            {
+                "name": "Results",
+                "value": _discord_value("\n".join(result_lines)),
+                "inline": False,
+            }
+        )
+    embed = {
+        "title": "Finviz TradingAgents Batch",
+        "description": str(alert.get("description") or ""),
+        "color": _research_color(alert, details),
+        "fields": fields,
+        "footer": {"text": _alert_footer_text(alert)},
+        "timestamp": alert["created_at"],
+    }
+    return {"embeds": [embed]}
+
+
+def _build_research_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
+    details = alert.get("details") if isinstance(alert.get("details"), dict) else {}
+    if str(alert.get("alert_type") or "") == "research_tradingagents_batch_summary":
+        return _build_research_summary_payload(alert, details)
+    return _build_research_actionable_payload(alert, details)
+
+
 def build_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
     if str(alert.get("alert_type") or "").startswith("ops_"):
         return _build_ops_discord_payload(alert)
+    if str(alert.get("alert_type") or "").startswith("research_"):
+        return _build_research_discord_payload(alert)
     if str(alert.get("alert_type") or "").startswith("uoa_"):
         return _build_uoa_discord_payload(alert)
     return _build_spread_discord_payload(alert)

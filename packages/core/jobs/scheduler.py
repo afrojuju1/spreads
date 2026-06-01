@@ -12,6 +12,7 @@ from arq import create_pool
 from core.events.bus import publish_global_event_async
 from core.jobs.registry import (
     DISCOVERY_QUEUE_NAME,
+    RESEARCH_QUEUE_NAME,
     RUNTIME_QUEUE_NAME,
     VALUATION_QUEUE_NAME,
     get_job_spec,
@@ -46,10 +47,11 @@ DEFINITION_QUEUE_CLEANUP_LIMIT = 500
 STALE_JOB_RECONCILE_LIMIT = 500
 JOB_RUN_QUEUE_STALE_AFTER_SECONDS = 15 * 60
 JOB_RUN_HEARTBEAT_STALE_AFTER_SECONDS = 10 * 60
-VALID_QUEUE_DOMAINS = ("all", "runtime", "discovery", "valuation")
+VALID_QUEUE_DOMAINS = ("all", "runtime", "discovery", "research", "valuation")
 QUEUE_DOMAIN_TO_QUEUE_NAME = {
     "runtime": RUNTIME_QUEUE_NAME,
     "discovery": DISCOVERY_QUEUE_NAME,
+    "research": RESEARCH_QUEUE_NAME,
     "valuation": VALUATION_QUEUE_NAME,
 }
 

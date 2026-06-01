@@ -61,6 +61,7 @@ class DeployTarget:
     web_port: int
     worker_runtime_replicas: int
     worker_discovery_replicas: int
+    worker_research_replicas: int
     web_enabled: bool
     postgres_volume_name: str
     docker_log_driver: str
@@ -181,6 +182,10 @@ def _load_target(path: Path) -> DeployTarget:
         worker_discovery_replicas=_coerce_positive_int(
             payload.get("worker_discovery_replicas", 2),
             field_name="worker_discovery_replicas",
+        ),
+        worker_research_replicas=_coerce_positive_int(
+            payload.get("worker_research_replicas", 1),
+            field_name="worker_research_replicas",
         ),
         web_enabled=bool(payload.get("web_enabled", True)),
         postgres_volume_name=_normalize_text(payload.get("postgres_volume_name"))
@@ -303,6 +308,26 @@ def build_deploy_env_values(
         "DISCORD_WEBHOOK_URL",
         default="",
     )
+    tradingagents_host_dir = _secret_value(
+        merged,
+        "SPREADS_TRADINGAGENTS_HOST_DIR",
+        default="/home/ade/Projects/TradingAgents",
+    )
+    tradingagents_container_dir = _secret_value(
+        merged,
+        "SPREADS_TRADINGAGENTS_CONTAINER_DIR",
+        default="/tradingagents",
+    )
+    tradingagents_uv_environment = _secret_value(
+        merged,
+        "SPREADS_TRADINGAGENTS_CONTAINER_UV_ENVIRONMENT",
+        default="/app/outputs/tradingagents/.venv",
+    )
+    ollama_base_url = _secret_value(
+        merged,
+        "SPREADS_CONTAINER_OLLAMA_BASE_URL",
+        default="http://host.docker.internal:11434/v1",
+    )
 
     env_values = {
         "SPREADS_DEPLOY_ENV": target.name,
@@ -322,6 +347,7 @@ def build_deploy_env_values(
         "SPREADS_WEB_ENABLED": "true" if target.web_enabled else "false",
         "SPREADS_WORKER_RUNTIME_REPLICAS": str(target.worker_runtime_replicas),
         "SPREADS_WORKER_DISCOVERY_REPLICAS": str(target.worker_discovery_replicas),
+        "SPREADS_WORKER_RESEARCH_REPLICAS": str(target.worker_research_replicas),
         "SPREADS_BACKUP_RETENTION_DAYS": str(target.backup_retention_days),
         "SPREADS_HEALTH_CHECK_MINUTES": str(target.health_check_minutes),
         "SPREADS_WEB_INTERNAL_API_BASE_URL": "http://api:8000",
@@ -338,6 +364,10 @@ def build_deploy_env_values(
         "APCA_API_KEY_ID": str(api_key),
         "APCA_API_SECRET_KEY": str(api_secret),
         "SPREADS_DISCORD_WEBHOOK_URL": str(webhook),
+        "SPREADS_TRADINGAGENTS_HOST_DIR": str(tradingagents_host_dir),
+        "SPREADS_TRADINGAGENTS_DIR": str(tradingagents_container_dir),
+        "SPREADS_TRADINGAGENTS_UV_ENVIRONMENT": str(tradingagents_uv_environment),
+        "OLLAMA_BASE_URL": str(ollama_base_url),
         "SPREADS_MARKET_RECORDER_OWNER_ENV": str(
             _normalize_text(target.market_recorder_owner_env) or ""
         ),
@@ -412,6 +442,9 @@ def build_host_env_values(
         "SPREADS_WORKER_DISCOVERY_REPLICAS": values[
             "SPREADS_WORKER_DISCOVERY_REPLICAS"
         ],
+        "SPREADS_WORKER_RESEARCH_REPLICAS": values[
+            "SPREADS_WORKER_RESEARCH_REPLICAS"
+        ],
         "SPREADS_BACKUP_RETENTION_DAYS": values["SPREADS_BACKUP_RETENTION_DAYS"],
         "SPREADS_HEALTH_CHECK_MINUTES": values["SPREADS_HEALTH_CHECK_MINUTES"],
         "SPREADS_DATABASE_URL": host_database_url,
@@ -422,6 +455,12 @@ def build_host_env_values(
         "APCA_API_KEY_ID": values["APCA_API_KEY_ID"],
         "APCA_API_SECRET_KEY": values["APCA_API_SECRET_KEY"],
         "SPREADS_DISCORD_WEBHOOK_URL": values["SPREADS_DISCORD_WEBHOOK_URL"],
+        "SPREADS_TRADINGAGENTS_HOST_DIR": values["SPREADS_TRADINGAGENTS_HOST_DIR"],
+        "SPREADS_TRADINGAGENTS_DIR": values["SPREADS_TRADINGAGENTS_HOST_DIR"],
+        "SPREADS_TRADINGAGENTS_UV_ENVIRONMENT": str(
+            REPO_ROOT / "outputs" / "tradingagents" / ".venv"
+        ),
+        "OLLAMA_BASE_URL": "http://localhost:11434/v1",
         "SPREADS_MARKET_RECORDER_OWNER_ENV": values[
             "SPREADS_MARKET_RECORDER_OWNER_ENV"
         ],
@@ -459,6 +498,7 @@ def render_deploy_env_file(
         f"SPREADS_WEB_ENABLED={values['SPREADS_WEB_ENABLED']}",
         f"SPREADS_WORKER_RUNTIME_REPLICAS={values['SPREADS_WORKER_RUNTIME_REPLICAS']}",
         f"SPREADS_WORKER_DISCOVERY_REPLICAS={values['SPREADS_WORKER_DISCOVERY_REPLICAS']}",
+        f"SPREADS_WORKER_RESEARCH_REPLICAS={values['SPREADS_WORKER_RESEARCH_REPLICAS']}",
         f"SPREADS_BACKUP_RETENTION_DAYS={values['SPREADS_BACKUP_RETENTION_DAYS']}",
         f"SPREADS_HEALTH_CHECK_MINUTES={values['SPREADS_HEALTH_CHECK_MINUTES']}",
         f"SPREADS_POSTGRES_VOLUME_NAME={values['SPREADS_POSTGRES_VOLUME_NAME']}",
@@ -484,6 +524,10 @@ def render_deploy_env_file(
         f"SPREADS_API_BASE_URL={values['SPREADS_API_BASE_URL']}",
         f"SPREADS_WEB_INTERNAL_API_BASE_URL={values['SPREADS_WEB_INTERNAL_API_BASE_URL']}",
         f"NEXT_PUBLIC_SPREADS_API_WS_PORT={values['NEXT_PUBLIC_SPREADS_API_WS_PORT']}",
+        f"SPREADS_TRADINGAGENTS_HOST_DIR={values['SPREADS_TRADINGAGENTS_HOST_DIR']}",
+        f"SPREADS_TRADINGAGENTS_DIR={values['SPREADS_TRADINGAGENTS_DIR']}",
+        f"SPREADS_TRADINGAGENTS_UV_ENVIRONMENT={values['SPREADS_TRADINGAGENTS_UV_ENVIRONMENT']}",
+        f"OLLAMA_BASE_URL={values['OLLAMA_BASE_URL']}",
         f"SPREADS_NAUTILUS_BRIDGE_COMMAND={values['SPREADS_NAUTILUS_BRIDGE_COMMAND']}",
         f"SPREADS_NAUTILUS_BRIDGE_TIMEOUT_SECONDS={values['SPREADS_NAUTILUS_BRIDGE_TIMEOUT_SECONDS']}",
         "",
@@ -558,6 +602,7 @@ def _compose_up_args(target: DeployTarget, *, build: bool) -> list[str]:
         args.append("--build")
     args.extend(["--scale", f"worker-runtime={target.worker_runtime_replicas}"])
     args.extend(["--scale", f"worker-discovery={target.worker_discovery_replicas}"])
+    args.extend(["--scale", f"worker-research={target.worker_research_replicas}"])
     return args
 
 
@@ -966,6 +1011,7 @@ def deploy_target_payload(target: DeployTarget) -> dict[str, Any]:
         "web_port": target.web_port,
         "worker_runtime_replicas": target.worker_runtime_replicas,
         "worker_discovery_replicas": target.worker_discovery_replicas,
+        "worker_research_replicas": target.worker_research_replicas,
         "web_enabled": target.web_enabled,
         "postgres_volume_name": target.postgres_volume_name,
         "docker_log_driver": target.docker_log_driver,

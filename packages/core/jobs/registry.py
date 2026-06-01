@@ -5,6 +5,7 @@ from dataclasses import dataclass
 RUNTIME_QUEUE_NAME = "arq:queue:runtime"
 DISCOVERY_QUEUE_NAME = "arq:queue:discovery"
 VALUATION_QUEUE_NAME = "arq:queue:valuation"
+RESEARCH_QUEUE_NAME = "arq:queue:research"
 
 BROKER_SYNC_JOB_TYPE = "broker_sync"
 EXECUTION_SUBMIT_JOB_TYPE = "execution_submit"
@@ -12,6 +13,7 @@ ALERT_DELIVERY_JOB_TYPE = "alert_delivery"
 ALERT_RECONCILE_JOB_TYPE = "alert_reconcile"
 DISCOVERY_RUN_JOB_TYPE = "discovery_run"
 SYMBOL_FEED_JOB_TYPE = "symbol_feed"
+TRADINGAGENTS_SCAN_JOB_TYPE = "tradingagents_scan"
 POSITION_EXIT_MANAGER_JOB_TYPE = "position_exit_manager"
 DISCOVERY_RECOVERY_JOB_TYPE = "discovery_recovery"
 OPTIONS_AUTOMATION_ENTRY_JOB_TYPE = "options_automation_entry"
@@ -93,6 +95,11 @@ JOB_SPECS = {
             queue_name=DISCOVERY_QUEUE_NAME,
         ),
         JobSpec(
+            job_type=TRADINGAGENTS_SCAN_JOB_TYPE,
+            task_name="run_tradingagents_scan_job",
+            queue_name=RESEARCH_QUEUE_NAME,
+        ),
+        JobSpec(
             job_type=DISCOVERY_RECOVERY_JOB_TYPE,
             task_name="run_discovery_recovery_job",
             queue_name=RUNTIME_QUEUE_NAME,
@@ -156,6 +163,13 @@ WORKER_LANES = (
             JOB_SPECS[COMPANY_VALUATION_BOOTSTRAP_JOB_TYPE].task_name,
             JOB_SPECS[COMPANY_VALUATION_SCREEN_MATERIALIZE_JOB_TYPE].task_name,
             JOB_SPECS[COMPANY_VALUATION_RESOLVE_UNRESOLVED_JOB_TYPE].task_name,
+        ),
+    ),
+    WorkerLaneSpec(
+        settings_name="ResearchWorkerSettings",
+        queue_name=RESEARCH_QUEUE_NAME,
+        task_names=(
+            JOB_SPECS[TRADINGAGENTS_SCAN_JOB_TYPE].task_name,
         ),
     ),
 )

@@ -1,0 +1,24 @@
+job_key: tradingagents_scan:finviz_momentum
+job_type: tradingagents_scan
+enabled: true
+schedule:
+  type: market_open_plus_minutes
+  minutes: 20
+payload:
+  label: finviz_tradingagents
+  feed_id: finviz_momentum
+  feed_job_key: symbol_feed:finviz_momentum
+  max_feed_age_seconds: 1800
+  max_tickers: 5
+  profile: fast
+  output_root: outputs/tradingagents/finviz_momentum
+  timeout_seconds: 1800
+  heartbeat_seconds: 30
+  allow_quality_warn: true
+  actionable_signals:
+    - Buy
+    - Overweight
+    - Sell
+    - Underweight
+  allow_off_hours: false
+singleton_scope: finviz_momentum

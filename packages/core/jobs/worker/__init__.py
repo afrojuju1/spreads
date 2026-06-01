@@ -2,13 +2,20 @@ from __future__ import annotations
 
 from core.jobs.registry import (
     DISCOVERY_QUEUE_NAME,
+    RESEARCH_QUEUE_NAME,
     RUNTIME_QUEUE_NAME,
     VALUATION_QUEUE_NAME,
 )
 from core.runtime.config import default_redis_url
 from core.runtime.redis import build_redis_settings
 
-from .lifecycle import discovery_startup, runtime_startup, shutdown, valuation_startup
+from .lifecycle import (
+    discovery_startup,
+    research_startup,
+    runtime_startup,
+    shutdown,
+    valuation_startup,
+)
 from .managed import ManagedJobFailure, SupersededJobRun
 from .tasks import (
     run_alert_delivery_job,
@@ -24,6 +31,7 @@ from .tasks import (
     run_options_automation_execute_job,
     run_position_exit_manager_job,
     run_symbol_feed_job,
+    run_tradingagents_scan_job,
 )
 
 
@@ -76,12 +84,26 @@ class ValuationWorkerSettings:
     max_jobs = 1
 
 
+class ResearchWorkerSettings:
+    functions = [
+        run_tradingagents_scan_job,
+    ]
+    queue_name = RESEARCH_QUEUE_NAME
+    redis_settings = build_redis_settings(default_redis_url())
+    on_startup = research_startup
+    on_shutdown = shutdown
+    keep_result = 0
+    job_timeout = 8 * 60 * 60
+    max_jobs = 1
+
+
 WorkerSettings = RuntimeWorkerSettings
 
 
 __all__ = [
     "DiscoveryWorkerSettings",
     "ManagedJobFailure",
+    "ResearchWorkerSettings",
     "RuntimeWorkerSettings",
     "SupersededJobRun",
     "ValuationWorkerSettings",
@@ -99,4 +121,5 @@ __all__ = [
     "run_options_automation_execute_job",
     "run_position_exit_manager_job",
     "run_symbol_feed_job",
+    "run_tradingagents_scan_job",
 ]

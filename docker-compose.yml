@@ -140,6 +140,32 @@ services:
     command: ["uv", "run", "arq", "core.jobs.worker.ValuationWorkerSettings"]
     volumes:
       - .:/app
+  worker-research:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      runtime-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
+      REDIS_URL: redis://redis:6379/0
+      SPREADS_INTERNAL_API_BASE_URL: http://api:8000
+      SPREADS_TRADINGAGENTS_DIR: /tradingagents
+      SPREADS_TRADINGAGENTS_UV_ENVIRONMENT: /app/outputs/tradingagents/.venv
+      OLLAMA_BASE_URL: http://host.docker.internal:11434/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["uv", "run", "arq", "core.jobs.worker.ResearchWorkerSettings"]
+    volumes:
+      - .:/app
+      - /home/ade/Projects/TradingAgents:/tradingagents:ro
   scheduler:
     build:
       context: .

@@ -19,6 +19,7 @@ from core.jobs.registry import (
     OPTIONS_AUTOMATION_ENTRY_JOB_TYPE,
     POSITION_EXIT_MANAGER_JOB_TYPE,
     SYMBOL_FEED_JOB_TYPE,
+    TRADINGAGENTS_SCAN_JOB_TYPE,
 )
 from core.jobs.specs import get_declared_discovery_run_spec
 from core.services.alert_delivery import (
@@ -53,6 +54,7 @@ from core.services.discovery_recovery import (
     run_discovery_recovery,
 )
 from core.services.symbol_feeds import run_symbol_feed
+from core.services.tradingagents_scan import run_tradingagents_scan
 from core.storage.company_valuation_repository import CompanyValuationRepository
 from core.storage.serializers import parse_date, parse_datetime, render_value
 
@@ -555,6 +557,36 @@ async def run_symbol_feed_job(
         payload=enriched_payload,
         runner=runner,
         compact_result=lambda result: result,
+    )
+
+
+async def run_tradingagents_scan_job(
+    ctx: dict[str, Any],
+    job_key: str,
+    job_run_id: str,
+    payload: dict[str, Any],
+    arq_job_id: str,
+) -> dict[str, Any]:
+    def runner(heartbeat: Any) -> dict[str, Any]:
+        heartbeat()
+        return run_tradingagents_scan(
+            storage=ctx["storage"],
+            job_store=ctx["job_store"],
+            job_run_id=job_run_id,
+            payload=payload,
+            heartbeat=heartbeat,
+        )
+
+    enriched_payload = dict(payload)
+    enriched_payload["job_type"] = TRADINGAGENTS_SCAN_JOB_TYPE
+    return await _execute_managed_job(
+        ctx,
+        job_key=job_key,
+        job_run_id=job_run_id,
+        arq_job_id=arq_job_id,
+        payload=enriched_payload,
+        runner=runner,
+        compact_result=render_value,
     )
 
 

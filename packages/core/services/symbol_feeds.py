@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import csv
 from collections.abc import Mapping
 from datetime import UTC, datetime
+import html
 import math
+import os
+from pathlib import Path
 import re
 from typing import Any
+import urllib.request
 
 from core.common import parse_float, parse_int, pick
 from core.integrations.alpaca.client import AlpacaRequestError
@@ -14,7 +19,9 @@ from core.services.bots import build_entry_automation_symbols
 from core.storage.serializers import parse_datetime
 
 
-VALID_SYMBOL_FEED_RECIPES = frozenset({"automation_union", "stock_prefilter"})
+VALID_SYMBOL_FEED_RECIPES = frozenset(
+    {"automation_union", "finviz_screener", "stock_prefilter"}
+)
 
 
 def _iso_now() -> str:
@@ -53,6 +60,37 @@ def _as_bool(value: Any, default: bool) -> bool:
     if rendered in {"0", "false", "no", "n", "off"}:
         return False
     return default
+
+
+_ENV_TOKEN_REGEX = re.compile(r"\$\{([A-Z0-9_]+)\}")
+
+
+def _expand_env_tokens(value: Any) -> str | None:
+    text = _as_optional_text(value)
+    if text is None:
+        return None
+    expanded = _ENV_TOKEN_REGEX.sub(
+        lambda match: os.environ.get(match.group(1), ""),
+        text,
+    )
+    return _as_optional_text(expanded)
+
+
+def _recipe_text_arg(
+    recipe_args: Mapping[str, Any],
+    field_name: str,
+    *,
+    env_field_name: str | None = None,
+) -> str | None:
+    direct = _expand_env_tokens(recipe_args.get(field_name))
+    if direct is not None:
+        return direct
+    if env_field_name is None:
+        return None
+    env_name = _as_optional_text(recipe_args.get(env_field_name))
+    if env_name is None:
+        return None
+    return _as_optional_text(os.environ.get(env_name))
 
 
 def _normalize_symbol(value: Any) -> str | None:
@@ -450,6 +488,346 @@ def _run_stock_prefilter_feed(
     }
 
 
+_FINVIZ_NUMERIC_SUFFIXES = {
+    "K": 1_000.0,
+    "M": 1_000_000.0,
+    "B": 1_000_000_000.0,
+    "T": 1_000_000_000_000.0,
+}
+
+
+def _normalize_finviz_header(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    text = text.replace("%", "percent")
+    text = re.sub(r"[^a-z0-9]+", "_", text)
+    return text.strip("_")
+
+
+def _parse_finviz_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text in {"-", "N/A", "n/a"}:
+        return None
+    text = text.replace(",", "").replace("$", "").replace("%", "").strip()
+    if not text:
+        return None
+    multiplier = 1.0
+    suffix = text[-1:].upper()
+    if suffix in _FINVIZ_NUMERIC_SUFFIXES:
+        multiplier = _FINVIZ_NUMERIC_SUFFIXES[suffix]
+        text = text[:-1].strip()
+    try:
+        return float(text) * multiplier
+    except ValueError:
+        return None
+
+
+def _parse_finviz_int(value: Any) -> int | None:
+    parsed = _parse_finviz_float(value)
+    if parsed is None:
+        return None
+    return int(round(parsed))
+
+
+def _strip_finviz_html(value: str) -> str:
+    text = re.sub(r"<[^>]+>", "", value)
+    return html.unescape(text).strip()
+
+
+def _parse_finviz_html_rows(source_text: str) -> list[dict[str, Any]]:
+    table_index = source_text.find("screener_table")
+    if table_index < 0:
+        return []
+    table_text = source_text[table_index:]
+    table_end = table_text.find("</table>")
+    if table_end >= 0:
+        table_text = table_text[:table_end]
+    header_chunks = re.findall(r"<th\b[^>]*>(.*?)</th>", table_text, flags=re.S | re.I)
+    headers = [_normalize_finviz_header(_strip_finviz_html(item)) for item in header_chunks]
+    headers = [item for item in headers if item]
+    if not headers:
+        headers = [
+            "no",
+            "ticker",
+            "company",
+            "sector",
+            "industry",
+            "country",
+            "market_cap",
+            "p_e",
+            "price",
+            "change",
+            "volume",
+        ]
+    rows: list[dict[str, Any]] = []
+    row_chunks = re.findall(
+        r"<tr\b[^>]*class=\"[^\"]*styled-row[^\"]*\"[^>]*>(.*?)</tr>",
+        table_text,
+        flags=re.S | re.I,
+    )
+    for row_chunk in row_chunks:
+        cells = [
+            _strip_finviz_html(item)
+            for item in re.findall(r"<td\b[^>]*>(.*?)</td>", row_chunk, flags=re.S | re.I)
+        ]
+        if not cells:
+            continue
+        row = {
+            headers[index] if index < len(headers) else f"column_{index}": value
+            for index, value in enumerate(cells)
+        }
+        rows.append(row)
+    return rows
+
+
+def _parse_finviz_source_rows(source_text: str) -> tuple[list[dict[str, Any]], str]:
+    stripped = source_text.lstrip()
+    if stripped.startswith("<!DOCTYPE") or stripped.startswith("<html"):
+        return _parse_finviz_html_rows(source_text), "html"
+    rows = [
+        {
+            _normalize_finviz_header(key): value
+            for key, value in dict(row).items()
+            if key is not None
+        }
+        for row in csv.DictReader(source_text.splitlines())
+    ]
+    return rows, "csv"
+
+
+def _load_finviz_csv_text(
+    *,
+    source_kind: str,
+    source_value: str,
+    cookie_env: str | None,
+    timeout_seconds: int,
+) -> str:
+    if source_kind == "local_csv":
+        return Path(source_value).expanduser().read_text(encoding="utf-8-sig")
+
+    headers = {
+        "Accept": "text/csv,*/*",
+        "User-Agent": "spreads-finviz-feed/1.0",
+    }
+    cookie_name = cookie_env or "FINVIZ_COOKIE"
+    cookie_value = _as_optional_text(os.environ.get(cookie_name))
+    if cookie_value is not None:
+        headers["Cookie"] = cookie_value
+    request = urllib.request.Request(source_value, headers=headers)
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        return response.read().decode("utf-8-sig", errors="replace")
+
+
+def _finviz_source_config(
+    recipe_args: Mapping[str, Any],
+) -> tuple[str | None, str | None]:
+    source = str(recipe_args.get("source") or "auto").strip().lower()
+    scanner_url = (
+        _recipe_text_arg(recipe_args, "scanner_url", env_field_name="scanner_url_env")
+        or _recipe_text_arg(recipe_args, "csv_url", env_field_name="csv_url_env")
+        or _recipe_text_arg(recipe_args, "url", env_field_name="url_env")
+    )
+    csv_path = (
+        _recipe_text_arg(recipe_args, "csv_path", env_field_name="csv_path_env")
+        or _recipe_text_arg(recipe_args, "path", env_field_name="path_env")
+    )
+
+    if source in {"auto", "csv_export", "csv_url", "url"} and scanner_url:
+        return "csv_url", scanner_url
+    if source in {"auto", "csv_file", "local_csv", "file"} and csv_path:
+        return "local_csv", csv_path
+    if source not in {"auto", "csv_export", "csv_url", "url", "csv_file", "local_csv", "file"}:
+        raise ValueError(f"Unsupported Finviz source: {source}")
+    return None, None
+
+
+def _run_finviz_screener_feed(
+    *,
+    feed_id: str,
+    recipe: str,
+    recipe_args: Mapping[str, Any],
+) -> dict[str, Any]:
+    top = max(_as_int(recipe_args.get("top"), 10), 1)
+    min_price = max(_as_float(recipe_args.get("min_price"), 0.0), 0.0)
+    min_volume = max(
+        _as_int(
+            recipe_args.get("min_volume", recipe_args.get("min_daily_volume")),
+            0,
+        ),
+        0,
+    )
+    timeout_seconds = max(_as_int(recipe_args.get("timeout_seconds"), 20), 1)
+    cookie_env = _as_optional_text(recipe_args.get("cookie_env")) or "FINVIZ_COOKIE"
+    source_kind, source_value = _finviz_source_config(recipe_args)
+    generated_at = _iso_now()
+    if source_kind is None or source_value is None:
+        return {
+            "status": "skipped",
+            "feed_id": str(feed_id),
+            "recipe": str(recipe),
+            "generated_at": generated_at,
+            "symbols": [],
+            "entries": [],
+            "summary": {
+                "symbol_count": 0,
+                "recipe": str(recipe),
+                "source": None,
+                "reason": "finviz_source_unconfigured",
+            },
+            "degradation": {
+                "status": "missing",
+                "reason": "finviz_source_unconfigured",
+            },
+        }
+
+    source_text = _load_finviz_csv_text(
+        source_kind=source_kind,
+        source_value=source_value,
+        cookie_env=cookie_env,
+        timeout_seconds=timeout_seconds,
+    )
+    rows, source_format = _parse_finviz_source_rows(source_text)
+
+    candidates: list[dict[str, Any]] = []
+    missing_symbol_count = 0
+    below_min_price_count = 0
+    below_min_volume_count = 0
+    for index, row in enumerate(rows):
+        symbol = _normalize_symbol(pick(row, "ticker", "symbol"))
+        if symbol is None:
+            missing_symbol_count += 1
+            continue
+        price = _parse_finviz_float(pick(row, "price", "last", "close"))
+        if price is not None and price < min_price:
+            below_min_price_count += 1
+            continue
+        volume = _parse_finviz_int(pick(row, "volume", "vol"))
+        if volume is not None and volume < min_volume:
+            below_min_volume_count += 1
+            continue
+        change_percent = _parse_finviz_float(
+            pick(row, "change", "change_percent", "change_pct")
+        )
+        relative_volume = _parse_finviz_float(
+            pick(row, "rel_volume", "relative_volume", "rel_vol")
+        )
+        raw_rank = parse_int(pick(row, "no", "rank"))
+        rank_index = max(raw_rank - 1, 0) if raw_rank is not None else index
+        reason_codes = ["finviz_screen"]
+        if change_percent is not None:
+            if change_percent > 0:
+                reason_codes.append("positive_momentum")
+            elif change_percent < 0:
+                reason_codes.append("negative_momentum")
+        if relative_volume is not None and relative_volume >= 1.5:
+            reason_codes.append("relative_volume")
+        candidates.append(
+            {
+                "symbol": symbol,
+                "price": None if price is None else round(price, 4),
+                "daily_volume": volume,
+                "move_percent": (
+                    None if change_percent is None else round(change_percent, 4)
+                ),
+                "relative_volume": (
+                    None if relative_volume is None else round(relative_volume, 4)
+                ),
+                "finviz_rank": None if raw_rank is None else int(raw_rank),
+                "finviz_rank_index": rank_index,
+                "reason_codes": reason_codes,
+                "source_tags": [
+                    f"recipe:{str(recipe or '').strip().lower()}",
+                    "source:finviz",
+                ],
+                "raw": row,
+            }
+        )
+
+    max_abs_move = max(
+        [abs(float(item.get("move_percent") or 0.0)) for item in candidates],
+        default=0.0,
+    )
+    max_relative_volume = max(
+        [float(item.get("relative_volume") or 0.0) for item in candidates],
+        default=0.0,
+    )
+    max_log_volume = max(
+        [math.log1p(max(int(item.get("daily_volume") or 0), 0)) for item in candidates],
+        default=0.0,
+    )
+    for item in candidates:
+        rank_score = _rank_score(
+            item.get("finviz_rank_index"),
+            total=max(len(rows), 1),
+            weight=40.0,
+        )
+        move_percent = abs(float(item.get("move_percent") or 0.0))
+        move_score = (
+            25.0 * move_percent / max_abs_move
+            if max_abs_move > 0.0
+            else 0.0
+        )
+        relative_volume = float(item.get("relative_volume") or 0.0)
+        relative_volume_score = (
+            20.0 * relative_volume / max_relative_volume
+            if max_relative_volume > 0.0
+            else 0.0
+        )
+        daily_volume = max(int(item.get("daily_volume") or 0), 0)
+        volume_score = (
+            15.0 * math.log1p(daily_volume) / max_log_volume
+            if max_log_volume > 0.0
+            else 0.0
+        )
+        item["score"] = round(
+            rank_score + move_score + relative_volume_score + volume_score,
+            2,
+        )
+        item.pop("finviz_rank_index", None)
+
+    ranked = sorted(
+        candidates,
+        key=lambda item: (
+            -float(item.get("score") or 0.0),
+            int(item.get("finviz_rank") or 1_000_000),
+            str(item.get("symbol") or ""),
+        ),
+    )
+    selected = ranked[:top]
+    symbols = [
+        str(item.get("symbol"))
+        for item in selected
+        if str(item.get("symbol") or "").strip()
+    ]
+    return {
+        "status": "completed",
+        "feed_id": str(feed_id),
+        "recipe": str(recipe),
+        "generated_at": generated_at,
+        "symbols": symbols,
+        "entries": selected,
+        "summary": {
+            "symbol_count": len(symbols),
+            "candidate_count": len(rows),
+            "retained_count": len(candidates),
+            "recipe": str(recipe),
+            "source": source_kind,
+            "source_format": source_format,
+            "top": top,
+            "min_price": min_price,
+            "min_volume": min_volume,
+            "missing_symbol_count": missing_symbol_count,
+            "below_min_price_count": below_min_price_count,
+            "below_min_volume_count": below_min_volume_count,
+        },
+        "degradation": {
+            "status": "ok" if symbols else "empty",
+            "reason": None if symbols else "no_symbols_after_filters",
+        },
+    }
+
+
 def build_symbol_feed_symbols(
     *,
     recipe: str,
@@ -465,6 +843,15 @@ def build_symbol_feed_symbols(
                 recipe=normalized_recipe,
                 recipe_args=normalized_args,
                 config_root=config_root,
+            ).get("symbols")
+            or []
+        )
+    if normalized_recipe == "finviz_screener":
+        return tuple(
+            _run_finviz_screener_feed(
+                feed_id="symbol_feed",
+                recipe=normalized_recipe,
+                recipe_args=normalized_args,
             ).get("symbols")
             or []
         )
@@ -495,6 +882,12 @@ def run_symbol_feed(
             recipe=normalized_recipe,
             recipe_args=normalized_args,
             config_root=config_root,
+        )
+    if normalized_recipe == "finviz_screener":
+        return _run_finviz_screener_feed(
+            feed_id=feed_id,
+            recipe=normalized_recipe,
+            recipe_args=normalized_args,
         )
     if normalized_recipe == "stock_prefilter":
         return _run_stock_prefilter_feed(
