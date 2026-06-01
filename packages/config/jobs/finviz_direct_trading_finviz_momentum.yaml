@@ -32,7 +32,6 @@ payload:
     side: buy
     min_price: 5
     min_daily_volume: 1000000
-    min_relative_volume: 1.5
     min_move_percent: 0
     require_positive_momentum: true
     max_spread_pct: 1.0

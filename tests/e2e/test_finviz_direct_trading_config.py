@@ -56,6 +56,7 @@ class FinvizDirectTradingConfigTests(unittest.TestCase):
         self.assertEqual(payload["max_candidates"], 10)
         self.assertEqual(payload["max_new_positions_per_run"], 1)
         self.assertEqual(payload["max_open_positions"], 1)
+        self.assertNotIn("min_relative_volume", payload["entry_rules"])
         self.assertEqual(payload["option_entry_rules"]["max_premium"], 500)
         self.assertEqual(payload["option_exit_rules"]["profit_target_pct"], 0.40)
 
