@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 import math
 import re
 from typing import Any
@@ -9,12 +9,14 @@ from zoneinfo import ZoneInfo
 
 from core.common import parse_float, parse_int
 from core.services.alpaca import create_alpaca_client_from_env
-from core.services.execution.runtimes import NAUTILUS_RUNTIME
+from core.services.execution.runtimes import ALPACA_DIRECT_RUNTIME, NAUTILUS_RUNTIME
+from core.services.execution_portfolio import fetch_latest_option_quotes
 from core.services.execution_intents import dispatch_pending_execution_intents
 from core.services.execution_intents.shared import (
     ACTIVE_INTENT_STATES,
     issue_pending_execution_intent,
 )
+from core.services.option_structures import position_legs
 from core.services.symbol_feeds import get_latest_symbol_feed_snapshot
 from core.storage.serializers import parse_datetime
 
@@ -138,6 +140,332 @@ def _quote_metrics(snapshot: Mapping[str, Any], *, now: datetime) -> dict[str, A
         "spread_pct": spread_pct,
         "timestamp": None if timestamp is None else timestamp.isoformat(),
         "age_seconds": age_seconds,
+    }
+
+
+def _live_option_quote_metrics(quote: Any, *, now: datetime) -> dict[str, Any]:
+    bid = _as_float(quote.get("bid") if isinstance(quote, Mapping) else getattr(quote, "bid", None))
+    ask = _as_float(quote.get("ask") if isinstance(quote, Mapping) else getattr(quote, "ask", None))
+    timestamp = parse_datetime(
+        quote.get("timestamp")
+        if isinstance(quote, Mapping)
+        else getattr(quote, "timestamp", None)
+    )
+    age_seconds = None
+    if timestamp is not None:
+        age_seconds = max((now - timestamp.astimezone(UTC)).total_seconds(), 0.0)
+    midpoint = None
+    spread_pct = None
+    if bid is not None and ask is not None and bid > 0 and ask >= bid:
+        midpoint = (bid + ask) / 2.0
+        if midpoint > 0:
+            spread_pct = ((ask - bid) / midpoint) * 100.0
+    return {
+        "bid": bid,
+        "ask": ask,
+        "midpoint": midpoint,
+        "spread_pct": spread_pct,
+        "timestamp": None if timestamp is None else timestamp.isoformat(),
+        "age_seconds": age_seconds,
+    }
+
+
+def _option_snapshot_spread_pct(snapshot: Any) -> float | None:
+    bid = _as_float(getattr(snapshot, "bid", None))
+    ask = _as_float(getattr(snapshot, "ask", None))
+    if bid is None or ask is None or bid <= 0 or ask < bid:
+        return None
+    midpoint = (bid + ask) / 2.0
+    if midpoint <= 0:
+        return None
+    return ((ask - bid) / midpoint) * 100.0
+
+
+def _instrument_mode(payload: Mapping[str, Any]) -> str:
+    mode = (
+        _as_text(payload.get("instrument_mode"))
+        or _as_text(payload.get("instrument"))
+        or "equity"
+    ).lower()
+    if mode in {"call", "calls", "option", "options", "long_call", "optionable_calls"}:
+        return "long_call"
+    return "equity"
+
+
+def _option_quote_feeds(
+    rules: Mapping[str, Any],
+    payload: Mapping[str, Any],
+) -> tuple[str, ...]:
+    raw_feeds = rules.get("quote_feeds") or payload.get("option_quote_feeds")
+    if isinstance(raw_feeds, (list, tuple)):
+        feeds = tuple(
+            str(value).strip().lower()
+            for value in raw_feeds
+            if str(value or "").strip()
+        )
+        if feeds:
+            return feeds
+    feed = (
+        _as_text(_rule_value(rules, payload, "option_feed"))
+        or _as_text(payload.get("option_feed"))
+        or "opra"
+    ).lower()
+    if feed == "indicative":
+        return ("indicative",)
+    return (feed, "indicative")
+
+
+def _optionable_symbol_set(client: Any) -> tuple[set[str] | None, str | None]:
+    try:
+        return {
+            str(item.get("symbol") or "").strip().upper()
+            for item in client.list_optionable_underlyings()
+            if isinstance(item, Mapping) and str(item.get("symbol") or "").strip()
+        }, None
+    except Exception as exc:
+        return None, str(exc)
+
+
+def _date_from_iso(value: Any) -> date | None:
+    text = _as_text(value)
+    if text is None:
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def _days_to_expiration(expiration_date: Any, *, now: datetime) -> int | None:
+    expiration = _date_from_iso(expiration_date)
+    if expiration is None:
+        return None
+    return (expiration - now.astimezone(NEW_YORK).date()).days
+
+
+def _option_contract_candidates(
+    *,
+    client: Any,
+    symbol: str,
+    underlying_price: float,
+    min_expiration: str,
+    max_expiration: str,
+    rules: Mapping[str, Any],
+    payload: Mapping[str, Any],
+    now: datetime,
+    heartbeat: Callable[[], None],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    min_open_interest = max(
+        _as_int(_rule_value(rules, payload, "min_open_interest", 100), 100),
+        0,
+    )
+    max_spread_pct = max(
+        _as_float(_rule_value(rules, payload, "max_spread_pct", 20.0)) or 20.0,
+        0.0,
+    )
+    max_premium = _as_float(
+        _rule_value(
+            rules,
+            payload,
+            "max_premium",
+            payload.get("max_premium", payload.get("max_notional")),
+        )
+    )
+    min_daily_volume = max(
+        _as_int(_rule_value(rules, payload, "min_daily_volume", 0), 0),
+        0,
+    )
+    chain_feed = (
+        _as_text(_rule_value(rules, payload, "option_feed"))
+        or _as_text(payload.get("option_feed"))
+        or "opra"
+    ).lower()
+
+    contracts = client.list_option_contracts(
+        symbol,
+        min_expiration,
+        max_expiration,
+        option_type="call",
+    )
+    by_expiration: dict[str, list[Any]] = {}
+    for contract in contracts:
+        by_expiration.setdefault(str(contract.expiration_date), []).append(contract)
+
+    errors: list[str] = []
+    candidates: list[dict[str, Any]] = []
+    for expiration, expiration_contracts in sorted(by_expiration.items()):
+        heartbeat()
+        try:
+            snapshots = client.get_option_chain_snapshots(
+                symbol,
+                expiration,
+                "call",
+                feed=chain_feed,
+            )
+        except Exception as exc:
+            errors.append(f"{expiration}:{exc}")
+            continue
+        for contract in expiration_contracts:
+            snapshot = snapshots.get(contract.symbol)
+            if snapshot is None:
+                continue
+            open_interest = int(getattr(contract, "open_interest", 0) or 0)
+            if open_interest < min_open_interest:
+                continue
+            if int(getattr(snapshot, "bid_size", 0) or 0) <= 0:
+                continue
+            if int(getattr(snapshot, "ask_size", 0) or 0) <= 0:
+                continue
+            spread_pct = _option_snapshot_spread_pct(snapshot)
+            if spread_pct is None or spread_pct > max_spread_pct:
+                continue
+            ask = _as_float(getattr(snapshot, "ask", None))
+            if ask is None or ask <= 0:
+                continue
+            if max_premium is not None and max_premium > 0 and ask * 100.0 > max_premium:
+                continue
+            daily_volume = _as_int(getattr(snapshot, "daily_volume", None), 0)
+            if min_daily_volume > 0 and daily_volume < min_daily_volume:
+                continue
+            days_to_expiration = _days_to_expiration(expiration, now=now)
+            if days_to_expiration is None:
+                continue
+            candidates.append(
+                {
+                    "symbol": str(contract.symbol).upper(),
+                    "expiration_date": expiration,
+                    "days_to_expiration": days_to_expiration,
+                    "strike": float(contract.strike_price),
+                    "open_interest": open_interest,
+                    "daily_volume": daily_volume,
+                    "snapshot_bid": float(snapshot.bid),
+                    "snapshot_ask": float(snapshot.ask),
+                    "snapshot_midpoint": float(snapshot.midpoint),
+                    "snapshot_spread_pct": round(spread_pct, 4),
+                    "delta": getattr(snapshot, "delta", None),
+                    "implied_volatility": getattr(snapshot, "implied_volatility", None),
+                    "strike_distance": abs(float(contract.strike_price) - underlying_price),
+                }
+            )
+    candidates.sort(
+        key=lambda item: (
+            float(item["strike_distance"]),
+            int(item["days_to_expiration"]),
+            float(item["snapshot_spread_pct"]),
+            -int(item["open_interest"]),
+            str(item["symbol"]),
+        )
+    )
+    return candidates, errors
+
+
+def _select_long_call_contract(
+    *,
+    client: Any,
+    symbol: str,
+    underlying_price: float,
+    rules: Mapping[str, Any],
+    payload: Mapping[str, Any],
+    now: datetime,
+    heartbeat: Callable[[], None],
+) -> dict[str, Any]:
+    if underlying_price <= 0:
+        return {"selected": False, "reason": "underlying_price_unavailable"}
+    min_dte = max(_as_int(_rule_value(rules, payload, "min_dte", 7), 7), 0)
+    max_dte = max(_as_int(_rule_value(rules, payload, "max_dte", 21), 21), min_dte)
+    current_date = now.astimezone(NEW_YORK).date()
+    min_expiration = (current_date + timedelta(days=min_dte)).isoformat()
+    max_expiration = (current_date + timedelta(days=max_dte)).isoformat()
+    try:
+        candidates, chain_errors = _option_contract_candidates(
+            client=client,
+            symbol=symbol,
+            underlying_price=underlying_price,
+            min_expiration=min_expiration,
+            max_expiration=max_expiration,
+            rules=rules,
+            payload=payload,
+            now=now,
+            heartbeat=heartbeat,
+        )
+    except Exception as exc:
+        return {
+            "selected": False,
+            "reason": "option_contracts_unavailable",
+            "error": str(exc),
+        }
+    if not candidates:
+        return {
+            "selected": False,
+            "reason": "no_call_contract_passed_filters",
+            "min_expiration": min_expiration,
+            "max_expiration": max_expiration,
+            "chain_errors": chain_errors[:3],
+        }
+
+    quote_feeds = _option_quote_feeds(rules, payload)
+    quote_symbols = [str(item["symbol"]) for item in candidates[:20]]
+    quotes, sources, quote_error = fetch_latest_option_quotes(
+        quote_symbols,
+        client=client,
+        feeds=quote_feeds,
+    )
+    max_quote_age_seconds = max(
+        _as_int(_rule_value(rules, payload, "max_quote_age_seconds", 180), 180),
+        1,
+    )
+    max_spread_pct = max(
+        _as_float(_rule_value(rules, payload, "max_spread_pct", 20.0)) or 20.0,
+        0.0,
+    )
+    max_premium = _as_float(
+        _rule_value(
+            rules,
+            payload,
+            "max_premium",
+            payload.get("max_premium", payload.get("max_notional")),
+        )
+    )
+    last_reason = "option_quote_unavailable"
+    for candidate in candidates:
+        option_symbol = str(candidate["symbol"])
+        quote = quotes.get(option_symbol)
+        if quote is None:
+            continue
+        metrics = _live_option_quote_metrics(quote, now=now)
+        age_seconds = _as_float(metrics.get("age_seconds"))
+        if age_seconds is None:
+            last_reason = "option_quote_timestamp_missing"
+            continue
+        if age_seconds > max_quote_age_seconds:
+            last_reason = "option_quote_stale"
+            continue
+        spread_pct = _as_float(metrics.get("spread_pct"))
+        if spread_pct is None or spread_pct > max_spread_pct:
+            last_reason = "option_spread_too_wide"
+            continue
+        ask = _as_float(metrics.get("ask"))
+        if ask is None or ask <= 0:
+            last_reason = "option_quote_unavailable"
+            continue
+        if max_premium is not None and max_premium > 0 and ask * 100.0 > max_premium:
+            last_reason = "option_premium_above_max"
+            continue
+        return {
+            "selected": True,
+            "reason": "long_call_selected",
+            **candidate,
+            "quote_metrics": metrics,
+            "quote_source": sources.get(option_symbol),
+            "quote_feeds": quote_feeds,
+            "premium": round(ask * 100.0, 2),
+        }
+    return {
+        "selected": False,
+        "reason": last_reason,
+        "quote_error": quote_error,
+        "quote_feeds": quote_feeds,
+        "candidate_count": len(candidates),
     }
 
 
@@ -365,6 +693,31 @@ def _quantity(
     return max(int(resolved), 0)
 
 
+def _option_quantity(
+    *,
+    price: float,
+    payload: Mapping[str, Any],
+    rules: Mapping[str, Any],
+    max_quantity: int | None = None,
+) -> int:
+    quantity_value = rules.get("contracts", _rule_value(rules, payload, "quantity", 1))
+    fixed = max(_as_int(quantity_value, 1), 1)
+    max_premium = _as_float(
+        _rule_value(
+            rules,
+            payload,
+            "max_premium",
+            payload.get("max_premium", payload.get("max_notional")),
+        )
+    )
+    resolved = fixed
+    if max_premium is not None and max_premium > 0 and price > 0:
+        resolved = min(resolved, math.floor(max_premium / (price * 100.0)))
+    if max_quantity is not None:
+        resolved = min(resolved, max_quantity)
+    return max(int(resolved), 0)
+
+
 def _broker_positions_by_symbol(client: Any) -> dict[str, dict[str, Any]]:
     positions: dict[str, dict[str, Any]] = {}
     for row in client.list_positions():
@@ -372,6 +725,53 @@ def _broker_positions_by_symbol(client: Any) -> dict[str, dict[str, Any]]:
         if symbol is not None:
             positions[symbol.upper()] = dict(row)
     return positions
+
+
+def _position_strategy_family(position: Mapping[str, Any]) -> str:
+    return str(position.get("strategy_family") or position.get("strategy") or "").lower()
+
+
+def _position_option_symbol(position: Mapping[str, Any]) -> str | None:
+    legs = position_legs(position)
+    if not legs:
+        return None
+    for leg in legs:
+        if str(leg.get("role") or "").lower() == "long":
+            symbol = _as_text(leg.get("symbol"))
+            if symbol is not None:
+                return symbol.upper()
+    symbol = _as_text(legs[0].get("symbol"))
+    return None if symbol is None else symbol.upper()
+
+
+def _active_entry_intent_count(
+    execution_store: Any,
+    *,
+    bot_id: str,
+    automation_id: str,
+    feed_id: str,
+) -> int:
+    rows = execution_store.list_execution_intents(
+        bot_id=bot_id,
+        automation_id=automation_id,
+        states=sorted(ACTIVE_INTENT_STATES),
+        limit=200,
+    )
+    count = 0
+    for row in rows:
+        intent_payload = row.get("payload")
+        if not isinstance(intent_payload, Mapping):
+            intent_payload = row.get("payload_json")
+        if not isinstance(intent_payload, Mapping):
+            continue
+        if str(intent_payload.get("trade_intent") or "open").lower() != "open":
+            continue
+        source = intent_payload.get("source")
+        if not isinstance(source, Mapping):
+            continue
+        if source.get("flow") == "finviz_direct" and source.get("feed_id") == feed_id:
+            count += 1
+    return count
 
 
 def _broker_qty(position: Mapping[str, Any] | None) -> float:
@@ -509,6 +909,125 @@ def _issue_equity_intent(
             "source": dict(source),
             "timing": None if timing is None else dict(timing),
             "position_id": position_id,
+        },
+    )
+    return {
+        "created": True,
+        "execution_intent_id": str(intent["execution_intent_id"]),
+        "intent": intent,
+    }
+
+
+def _issue_option_intent(
+    *,
+    execution_store: Any,
+    intent_id: str,
+    slot_key: str,
+    bot_id: str,
+    automation_id: str,
+    feed_id: str,
+    side: str,
+    underlying_symbol: str,
+    option_symbol: str,
+    quantity: int,
+    limit_price: float,
+    session_date: str,
+    payload: Mapping[str, Any],
+    source: Mapping[str, Any],
+    option_selection: Mapping[str, Any],
+    timing: Mapping[str, Any] | None = None,
+    trade_intent: str = "open",
+    position_id: str | None = None,
+) -> dict[str, Any]:
+    existing = execution_store.get_execution_intent(intent_id)
+    if existing is not None:
+        return {
+            "created": False,
+            "reason": "intent_exists",
+            "execution_intent_id": intent_id,
+        }
+    active_intent_id = _has_active_intent(execution_store, slot_key)
+    if active_intent_id is not None:
+        return {
+            "created": False,
+            "reason": "active_intent_exists",
+            "execution_intent_id": active_intent_id,
+        }
+
+    expiration_date = _as_text(option_selection.get("expiration_date"))
+    strike = _as_float(option_selection.get("strike"))
+    position_intent = "buy_to_open" if trade_intent == "open" else "sell_to_close"
+    intent_payload: dict[str, Any] = {
+        "asset_class": "option",
+        "label": _as_text(payload.get("label")) or "finviz_direct",
+        "market_date": session_date,
+        "underlying_symbol": underlying_symbol,
+        "root_symbol": underlying_symbol,
+        "symbol": option_symbol,
+        "side": side,
+        "quantity": quantity,
+        "limit_price": limit_price,
+        "time_in_force": _as_text(payload.get("option_time_in_force"))
+        or _as_text(payload.get("time_in_force"))
+        or "day",
+        "trade_intent": trade_intent,
+        "position_intent": position_intent,
+        "strategy_family": "long_call",
+        "expiration_date": expiration_date,
+        "option_type": "call",
+        "strike": strike,
+        "execution_runtime": _as_text(payload.get("option_execution_runtime"))
+        or ALPACA_DIRECT_RUNTIME,
+        "approval_mode": _as_text(payload.get("approval_mode")) or "auto",
+        "execution_mode": _as_text(payload.get("execution_mode")) or "paper",
+        "source": dict(source),
+        "entry_rules": _mapping(payload.get("entry_rules")),
+        "option_entry_rules": _mapping(payload.get("option_entry_rules")),
+        "exit_policy": _mapping(
+            payload.get("option_exit_rules") or payload.get("exit_rules")
+        ),
+        "option_selection": dict(option_selection),
+        "legs": [
+            {
+                "symbol": option_symbol,
+                "side": side,
+                "position_intent": position_intent,
+                "ratio_qty": "1",
+                "role": "long",
+                "expiration_date": expiration_date,
+                "strike": strike,
+                "option_type": "call",
+            }
+        ],
+    }
+    underlying_price = _as_float(option_selection.get("underlying_price"))
+    if underlying_price is not None:
+        intent_payload["underlying_price"] = underlying_price
+    if timing is not None:
+        intent_payload["timing"] = dict(timing)
+    if position_id is not None:
+        intent_payload["position_id"] = position_id
+
+    intent = issue_pending_execution_intent(
+        execution_store,
+        execution_intent_id=intent_id,
+        bot_id=bot_id,
+        automation_id=automation_id,
+        opportunity_decision_id=None,
+        strategy_position_id=None,
+        action_type=side,
+        slot_key=slot_key,
+        policy_ref=_base_policy_ref(payload, feed_id),
+        config_hash=_as_text(payload.get("declared_config_hash"))
+        or _as_text(payload.get("config_hash"))
+        or "",
+        expires_at=_expires_at(payload),
+        payload=intent_payload,
+        created_event_payload={
+            "source": dict(source),
+            "timing": None if timing is None else dict(timing),
+            "position_id": position_id,
+            "option_selection": dict(option_selection),
         },
     )
     return {
@@ -667,8 +1186,32 @@ def run_finviz_direct_trading(
     )
     entry_rules = _mapping(payload.get("entry_rules"))
     exit_rules = _mapping(payload.get("exit_rules"))
+    option_entry_rules = _mapping(payload.get("option_entry_rules"))
+    option_exit_rules = _mapping(payload.get("option_exit_rules")) or exit_rules
+    instrument_mode = _instrument_mode(payload)
+    equity_fallback = _as_bool(payload.get("equity_fallback"), True)
     stock_feed = _as_text(payload.get("stock_feed")) or "iex"
     max_candidates = max(_as_int(payload.get("max_candidates"), 3), 1)
+    max_new_positions_per_run = max(
+        _as_int(
+            payload.get(
+                "max_new_positions_per_run",
+                option_entry_rules.get("max_new_positions_per_run", 0),
+            ),
+            0,
+        ),
+        0,
+    )
+    max_open_positions = max(
+        _as_int(
+            payload.get(
+                "max_open_positions",
+                option_entry_rules.get("max_open_positions", 0),
+            ),
+            0,
+        ),
+        0,
+    )
     entry_side = (_as_text(entry_rules.get("side")) or "buy").lower()
     if entry_side not in {"buy", "sell"}:
         entry_side = "buy"
@@ -689,6 +1232,16 @@ def run_finviz_direct_trading(
         if _as_text(position.get("root_symbol")) is not None
     }
     broker_positions = _broker_positions_by_symbol(client)
+    active_entry_intents = _active_entry_intent_count(
+        execution_store,
+        bot_id=bot_id,
+        automation_id=automation_id,
+        feed_id=feed_id,
+    )
+    optionable_symbols: set[str] | None = None
+    optionable_error: str | None = None
+    if instrument_mode == "long_call":
+        optionable_symbols, optionable_error = _optionable_symbol_set(client)
 
     entry_symbols = list(feed_entries)[:max_candidates]
     exit_symbols = list(managed_by_symbol)
@@ -698,6 +1251,7 @@ def run_finviz_direct_trading(
     now = _now()
     decisions: list[dict[str, Any]] = []
     armed = 0
+    entry_armed = 0
 
     for symbol in entry_symbols:
         heartbeat()
@@ -717,11 +1271,33 @@ def run_finviz_direct_trading(
                 {**decision, "passed": False, "reason": "short_selling_disabled"}
             )
             continue
-        if entry_side == "buy" and (
-            symbol in managed_by_symbol or _broker_qty(broker_positions.get(symbol)) > 0
-        ):
+        open_exposure_count = len(managed_positions) + active_entry_intents + entry_armed
+        if max_open_positions > 0 and open_exposure_count >= max_open_positions:
+            decisions.append(
+                {**decision, "passed": False, "reason": "max_open_positions_reached"}
+            )
+            continue
+        if max_new_positions_per_run > 0 and entry_armed >= max_new_positions_per_run:
+            decisions.append(
+                {
+                    **decision,
+                    "passed": False,
+                    "reason": "max_new_positions_per_run_reached",
+                }
+            )
+            continue
+        if entry_side == "buy" and symbol in managed_by_symbol:
             decisions.append(
                 {**decision, "passed": False, "reason": "position_already_open"}
+            )
+            continue
+        if (
+            instrument_mode == "equity"
+            and entry_side == "buy"
+            and _broker_qty(broker_positions.get(symbol)) > 0
+        ):
+            decisions.append(
+                {**decision, "passed": False, "reason": "broker_position_already_open"}
             )
             continue
 
@@ -755,6 +1331,153 @@ def run_finviz_direct_trading(
         if not timing.get("triggered"):
             decisions.append(decision)
             continue
+
+        source = {
+            "source": "finviz_direct_trading",
+            "flow": "finviz_direct",
+            "feed_id": feed_id,
+            "feed_job_key": feed_job_key,
+            "feed_job_run_id": snapshot.get("job_run_id"),
+            "trading_job_run_id": job_run_id,
+            "feed_entry": dict(entry),
+        }
+
+        if instrument_mode == "long_call":
+            if entry_side != "buy":
+                decisions.append(
+                    {
+                        **decision,
+                        "triggered": False,
+                        "reason": "long_call_requires_buy_entry",
+                    }
+                )
+                continue
+            if optionable_symbols is None:
+                if not equity_fallback:
+                    decisions.append(
+                        {
+                            **decision,
+                            "triggered": False,
+                            "reason": "optionable_lookup_unavailable",
+                            "error": optionable_error,
+                        }
+                    )
+                    continue
+            elif symbol not in optionable_symbols:
+                if not equity_fallback:
+                    decisions.append(
+                        {
+                            **decision,
+                            "triggered": False,
+                            "reason": "underlying_not_optionable",
+                        }
+                    )
+                    continue
+            if optionable_symbols is not None and symbol in optionable_symbols:
+                underlying_price = (
+                    _as_float(timing.get("price"))
+                    or _as_float(quote_metrics.get("midpoint"))
+                    or _as_float(rule_decision.get("price"))
+                    or 0.0
+                )
+                option_selection = _select_long_call_contract(
+                    client=client,
+                    symbol=symbol,
+                    underlying_price=underlying_price,
+                    rules=option_entry_rules,
+                    payload=payload,
+                    now=now,
+                    heartbeat=heartbeat,
+                )
+                if not option_selection.get("selected"):
+                    if not equity_fallback:
+                        decisions.append(
+                            {
+                                **decision,
+                                "triggered": False,
+                                "reason": option_selection.get("reason")
+                                or "long_call_unavailable",
+                                "option_selection": option_selection,
+                            }
+                        )
+                        continue
+                else:
+                    option_quote_metrics = _mapping(option_selection.get("quote_metrics"))
+                    limit_price = _limit_price(
+                        side="buy",
+                        quote_metrics=option_quote_metrics,
+                        payload=payload,
+                        rules=option_entry_rules,
+                    )
+                    quantity = _option_quantity(
+                        price=limit_price,
+                        payload=payload,
+                        rules=option_entry_rules,
+                    )
+                    if quantity <= 0:
+                        decisions.append(
+                            {
+                                **decision,
+                                "triggered": False,
+                                "reason": "option_quantity_resolved_to_zero",
+                                "option_selection": option_selection,
+                            }
+                        )
+                        continue
+                    option_selection = {
+                        **option_selection,
+                        "underlying_price": underlying_price,
+                    }
+                    option_symbol = str(option_selection["symbol"])
+                    intent_id = (
+                        "execution_intent:finviz_direct:entry:"
+                        f"{_safe_component(snapshot.get('job_run_id'))}:"
+                        f"{symbol}:{option_symbol}:buy"
+                    )
+                    slot_key = f"finviz_direct:{feed_id}:{symbol}:long_call:entry"
+                    intent_result = _issue_option_intent(
+                        execution_store=execution_store,
+                        intent_id=intent_id,
+                        slot_key=slot_key,
+                        bot_id=bot_id,
+                        automation_id=automation_id,
+                        feed_id=feed_id,
+                        side="buy",
+                        underlying_symbol=symbol,
+                        option_symbol=option_symbol,
+                        quantity=quantity,
+                        limit_price=limit_price,
+                        session_date=session_date,
+                        payload=payload,
+                        source=source,
+                        option_selection=option_selection,
+                        timing=timing,
+                        trade_intent="open",
+                    )
+                    if intent_result.get("created"):
+                        armed += 1
+                        entry_armed += 1
+                    decisions.append(
+                        {
+                            **decision,
+                            "instrument": "long_call",
+                            "option_symbol": option_symbol,
+                            "option_selection": option_selection,
+                            "limit_price": limit_price,
+                            "quantity": quantity,
+                            **{
+                                key: intent_result.get(key)
+                                for key in (
+                                    "created",
+                                    "reason",
+                                    "execution_intent_id",
+                                )
+                                if key in intent_result
+                            },
+                        }
+                    )
+                    continue
+
         limit_price = _limit_price(
             side=entry_side,
             quote_metrics=quote_metrics,
@@ -772,15 +1495,6 @@ def run_finviz_direct_trading(
             f"{_safe_component(snapshot.get('job_run_id'))}:{symbol}:{entry_side}"
         )
         slot_key = f"finviz_direct:{feed_id}:{symbol}:entry"
-        source = {
-            "source": "finviz_direct_trading",
-            "flow": "finviz_direct",
-            "feed_id": feed_id,
-            "feed_job_key": feed_job_key,
-            "feed_job_run_id": snapshot.get("job_run_id"),
-            "trading_job_run_id": job_run_id,
-            "feed_entry": dict(entry),
-        }
         intent_result = _issue_equity_intent(
             execution_store=execution_store,
             intent_id=intent_id,
@@ -800,9 +1514,11 @@ def run_finviz_direct_trading(
         )
         if intent_result.get("created"):
             armed += 1
+            entry_armed += 1
         decisions.append(
             {
                 **decision,
+                "instrument": "equity",
                 "limit_price": limit_price,
                 "quantity": quantity,
                 **{
@@ -813,8 +1529,162 @@ def run_finviz_direct_trading(
             }
         )
 
-    for symbol, position in managed_by_symbol.items():
+    for position in managed_positions:
         heartbeat()
+        symbol = str(position.get("root_symbol") or "").upper()
+        if not symbol:
+            decisions.append(
+                {
+                    "kind": "exit",
+                    "symbol": None,
+                    "side": "sell",
+                    "position_id": position.get("position_id"),
+                    "triggered": False,
+                    "reason": "position_root_symbol_missing",
+                }
+            )
+            continue
+        position_family = _position_strategy_family(position)
+        if position_family == "long_call":
+            option_symbol = _position_option_symbol(position)
+            if option_symbol is None:
+                decisions.append(
+                    {
+                        "kind": "exit",
+                        "symbol": symbol,
+                        "side": "sell",
+                        "position_id": position.get("position_id"),
+                        "triggered": False,
+                        "reason": "option_position_symbol_unavailable",
+                    }
+                )
+                continue
+            option_quotes, option_quote_sources, option_quote_error = (
+                fetch_latest_option_quotes(
+                    [option_symbol],
+                    client=client,
+                    feeds=_option_quote_feeds(option_exit_rules, payload),
+                )
+            )
+            quote_metrics = _live_option_quote_metrics(
+                option_quotes.get(option_symbol, {}),
+                now=now,
+            )
+            exit_decision = _evaluate_exit(
+                position=position,
+                broker_position=broker_positions.get(option_symbol),
+                quote_metrics=quote_metrics,
+                feed_symbols=feed_symbols,
+                feed_available=feed_available,
+                clock=clock,
+                rules=option_exit_rules,
+                now=now,
+            )
+            decision = {
+                "kind": "exit",
+                "symbol": symbol,
+                "instrument": "long_call",
+                "option_symbol": option_symbol,
+                "side": "sell",
+                "position_id": position.get("position_id"),
+                "quote_error": option_quote_error,
+                **exit_decision,
+            }
+            if not exit_decision.get("triggered"):
+                decisions.append(decision)
+                continue
+            limit_price = _limit_price(
+                side="sell",
+                quote_metrics=quote_metrics,
+                payload=payload,
+                rules=option_exit_rules,
+            )
+            max_exit_quantity = int(
+                max(
+                    min(
+                        _broker_qty(broker_positions.get(option_symbol)),
+                        _as_float(position.get("remaining_quantity")) or 0.0,
+                    ),
+                    0.0,
+                )
+            )
+            quantity = _quantity(
+                price=limit_price,
+                payload=payload,
+                rules=option_exit_rules,
+                max_quantity=max_exit_quantity,
+            )
+            if quantity <= 0:
+                decisions.append(
+                    {**decision, "triggered": False, "reason": "exit_quantity_zero"}
+                )
+                continue
+            position_id = str(position["position_id"])
+            reason = str(exit_decision.get("reason") or "exit")
+            intent_id = (
+                "execution_intent:finviz_direct:exit:"
+                f"{_safe_component(job_run_id)}:{_safe_component(position_id)}:"
+                f"{_safe_component(option_symbol)}:{reason}"
+            )
+            slot_key = f"finviz_direct:{feed_id}:{position_id}:long_call:exit"
+            source = {
+                "source": "finviz_direct_trading",
+                "flow": "finviz_direct",
+                "feed_id": feed_id,
+                "feed_job_key": feed_job_key,
+                "feed_job_run_id": snapshot.get("job_run_id"),
+                "trading_job_run_id": job_run_id,
+                "exit_reason": reason,
+                "option_symbol": option_symbol,
+            }
+            legs = position_legs(position)
+            leg = legs[0] if legs else {}
+            option_selection = {
+                "selected": True,
+                "reason": "long_call_exit",
+                "symbol": option_symbol,
+                "expiration_date": _as_text(leg.get("expiration_date")),
+                "strike": _as_float(leg.get("strike")),
+                "quote_metrics": quote_metrics,
+                "quote_source": option_quote_sources.get(option_symbol),
+            }
+            intent_result = _issue_option_intent(
+                execution_store=execution_store,
+                intent_id=intent_id,
+                slot_key=slot_key,
+                bot_id=bot_id,
+                automation_id=automation_id,
+                feed_id=feed_id,
+                side="sell",
+                underlying_symbol=symbol,
+                option_symbol=option_symbol,
+                quantity=quantity,
+                limit_price=limit_price,
+                session_date=session_date,
+                payload=payload,
+                source=source,
+                option_selection=option_selection,
+                timing=exit_decision,
+                trade_intent="close",
+                position_id=position_id,
+            )
+            if intent_result.get("created"):
+                armed += 1
+            decisions.append(
+                {
+                    **decision,
+                    "option_selection": option_selection,
+                    "limit_price": limit_price,
+                    "quantity": quantity,
+                    **{
+                        key: intent_result.get(key)
+                        for key in ("created", "reason", "execution_intent_id")
+                        if key in intent_result
+                    },
+                }
+            )
+            continue
+
         quote_metrics = _quote_metrics(snapshots.get(symbol, {}), now=now)
         exit_decision = _evaluate_exit(
             position=position,
@@ -901,6 +1771,7 @@ def run_finviz_direct_trading(
         decisions.append(
             {
                 **decision,
+                "instrument": "equity",
                 "limit_price": limit_price,
                 "quantity": quantity,
                 **{
@@ -926,9 +1797,12 @@ def run_finviz_direct_trading(
         "feed_job_run_id": snapshot.get("job_run_id"),
         "feed_status": snapshot_status,
         "session_date": session_date,
+        "instrument_mode": instrument_mode,
         "entry_candidates": len(entry_symbols),
         "managed_positions": len(managed_positions),
+        "active_entry_intents": active_entry_intents,
         "armed": armed,
+        "entry_armed": entry_armed,
         "decisions": decisions,
         "dispatch_result": dispatch_result,
     }

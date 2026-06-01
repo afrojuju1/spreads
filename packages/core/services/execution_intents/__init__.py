@@ -19,6 +19,7 @@ from core.services.alpaca import (
 from core.services.execution import (
     ExecutionAdmissionError,
     submit_equity_order,
+    submit_option_order,
     submit_opportunity_execution,
     submit_position_close_by_id,
 )
@@ -53,6 +54,18 @@ def _equity_intent_payload(intent: dict[str, Any]) -> dict[str, Any] | None:
     payload = _intent_payload(intent)
     asset_class = str(payload.get("asset_class") or "").strip().lower()
     if asset_class != "equity":
+        return None
+    symbol = _as_text(payload.get("symbol"))
+    side = str(payload.get("side") or intent.get("action_type") or "").strip().lower()
+    if symbol is None or side not in {"buy", "sell"}:
+        return None
+    return payload
+
+
+def _option_intent_payload(intent: dict[str, Any]) -> dict[str, Any] | None:
+    payload = _intent_payload(intent)
+    asset_class = str(payload.get("asset_class") or "").strip().lower()
+    if asset_class != "option":
         return None
     symbol = _as_text(payload.get("symbol"))
     side = str(payload.get("side") or intent.get("action_type") or "").strip().lower()
@@ -148,6 +161,8 @@ def _intent_target_is_active(
     if _as_text(intent.get("opportunity_decision_id")) is not None or action_type == "open":
         return _opportunity_is_active_for_intent(signal_store, intent)
     if _equity_intent_payload(intent) is not None:
+        return True, None
+    if _option_intent_payload(intent) is not None:
         return True, None
     return False, "source_reference_missing"
 
@@ -347,6 +362,62 @@ def submit_execution_intent(
                         else None
                     ),
                     "source": dict(source_metadata),
+                },
+                storage=storage,
+            )
+        elif (option_payload := _option_intent_payload(source_intent)) is not None:
+            source_metadata = (
+                option_payload.get("source")
+                if isinstance(option_payload.get("source"), dict)
+                else {}
+            )
+            result = submit_option_order(
+                db_target=db_target,
+                symbol=str(option_payload["symbol"]),
+                side=str(option_payload.get("side") or source_intent["action_type"]),
+                quantity=int(option_payload.get("quantity") or 1),
+                limit_price=float(option_payload["limit_price"]),
+                time_in_force=str(option_payload.get("time_in_force") or "day"),
+                label=str(option_payload.get("label") or "research_option"),
+                market_date=_as_text(option_payload.get("market_date")),
+                underlying_symbol=_as_text(option_payload.get("underlying_symbol"))
+                or _as_text(option_payload.get("root_symbol")),
+                strategy_family=_as_text(option_payload.get("strategy_family"))
+                or "long_call",
+                expiration_date=_as_text(option_payload.get("expiration_date")),
+                option_type=_as_text(option_payload.get("option_type")),
+                strike=(
+                    None
+                    if option_payload.get("strike") in (None, "")
+                    else float(option_payload["strike"])
+                ),
+                execution_runtime=option_payload.get("execution_runtime"),
+                request_metadata={
+                    "execution_intent_id": execution_intent_id,
+                    "bot_id": source_intent.get("bot_id"),
+                    "automation_id": source_intent.get("automation_id"),
+                    "strategy_config_id": policy_ref.get("strategy_config_id"),
+                    "strategy_id": policy_ref.get("strategy_id"),
+                    "config_hash": source_intent.get("config_hash"),
+                    "position_id": _as_text(option_payload.get("position_id")),
+                    "trade_intent": _as_text(option_payload.get("trade_intent")),
+                    "exit_policy": (
+                        dict(option_payload["exit_policy"])
+                        if isinstance(option_payload.get("exit_policy"), dict)
+                        else None
+                    ),
+                    "risk_policy": (
+                        dict(option_payload["risk_policy"])
+                        if isinstance(option_payload.get("risk_policy"), dict)
+                        else None
+                    ),
+                    "source": dict(source_metadata),
+                    "underlying_price": option_payload.get("underlying_price"),
+                    "option_selection": (
+                        dict(option_payload["option_selection"])
+                        if isinstance(option_payload.get("option_selection"), dict)
+                        else None
+                    ),
                 },
                 storage=storage,
             )

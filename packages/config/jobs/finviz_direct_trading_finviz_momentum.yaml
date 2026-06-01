@@ -14,14 +14,19 @@ payload:
   max_feed_age_seconds: 300
   max_candidates: 10
   stock_feed: iex
+  instrument_mode: long_call
+  equity_fallback: false
   quantity: 1
   max_notional: 500
   execution_runtime: nautilus
+  option_execution_runtime: alpaca_direct
   approval_mode: auto
   execution_mode: paper
   dispatch_after_trigger: true
   allow_short_selling: false
   allow_off_hours: false
+  max_new_positions_per_run: 1
+  max_open_positions: 1
   entry_rules:
     enabled: true
     side: buy
@@ -38,12 +43,33 @@ payload:
       min_intraday_bars: 5
       recent_lookback_bars: 5
       breakout_tolerance_bps: 5
+  option_entry_rules:
+    min_dte: 7
+    max_dte: 21
+    option_feed: opra
+    quote_feeds:
+      - opra
+      - indicative
+    min_open_interest: 100
+    max_spread_pct: 20
+    max_quote_age_seconds: 180
+    max_premium: 500
+    limit_price_offset_bps: 0
   exit_rules:
     enabled: true
     profit_target_pct: 0.03
     stop_loss_pct: 0.015
     sell_when_removed_from_feed: false
     max_spread_pct: 1.0
+    max_quote_age_seconds: 180
+    limit_price_offset_bps: 0
+  option_exit_rules:
+    enabled: true
+    profit_target_pct: 0.40
+    stop_loss_pct: 0.30
+    sell_when_removed_from_feed: false
+    force_close_minutes_before_close: 15
+    max_spread_pct: 20
     max_quote_age_seconds: 180
     limit_price_offset_bps: 0
 singleton_scope: finviz_momentum

@@ -103,6 +103,7 @@ from .policy import (
     normalize_execution_policy,
 )
 from .runtimes import (
+    ALPACA_DIRECT_RUNTIME,
     NAUTILUS_RUNTIME,
     build_nautilus_equity_order_handoff,
     build_nautilus_submit_order_list_handoff,
@@ -2465,6 +2466,310 @@ def submit_equity_order(
             _publish_execution_attempt_event(
                 failed_attempt,
                 message=f"Equity execution failed before submission: {exc}",
+            )
+        raise
+
+
+@with_storage()
+def submit_option_order(
+    *,
+    db_target: str,
+    symbol: str,
+    side: str,
+    quantity: int,
+    limit_price: float,
+    time_in_force: str = "day",
+    label: str = "manual_option",
+    market_date: str | None = None,
+    underlying_symbol: str | None = None,
+    strategy_family: str = "long_call",
+    expiration_date: str | None = None,
+    option_type: str | None = None,
+    strike: float | None = None,
+    execution_runtime: str | None = None,
+    request_metadata: dict[str, Any] | None = None,
+    storage: Any | None = None,
+) -> dict[str, Any]:
+    execution_store = storage.execution
+    _require_execution_schema(execution_store)
+    normalized_runtime = normalize_execution_runtime(execution_runtime)
+    if normalized_runtime != ALPACA_DIRECT_RUNTIME:
+        raise ValueError("Single-leg option orders currently require alpaca_direct runtime")
+
+    metadata = dict(request_metadata or {})
+    normalized_symbol = str(symbol or "").strip().upper()
+    if not normalized_symbol:
+        raise ValueError("Option order requires a contract symbol")
+    normalized_underlying = str(
+        underlying_symbol or metadata.get("underlying_symbol") or ""
+    ).strip().upper()
+    if not normalized_underlying:
+        raise ValueError("Option order requires an underlying symbol")
+    normalized_side = str(side or "").strip().lower()
+    if normalized_side not in {"buy", "sell"}:
+        raise ValueError("Option order side must be buy or sell")
+    resolved_quantity = int(quantity)
+    if resolved_quantity <= 0:
+        raise ValueError("Option order quantity must be positive")
+    resolved_limit_price = _normalize_limit_value(limit_price)
+    if resolved_limit_price is None or resolved_limit_price <= 0:
+        raise ValueError("Option order requires a positive limit price")
+    resolved_time_in_force = str(time_in_force or "day").strip().lower()
+    if resolved_time_in_force != "day":
+        raise ValueError("Option order time_in_force must be day")
+
+    resolved_strategy_family = str(strategy_family or "long_call").strip().lower()
+    if resolved_strategy_family not in {"long_call", "long_put"}:
+        raise ValueError("Direct option orders currently support long_call and long_put")
+    resolved_trade_intent = resolve_trade_intent(
+        _as_text(metadata.get("trade_intent"))
+        or (OPEN_TRADE_INTENT if normalized_side == "buy" else CLOSE_TRADE_INTENT)
+    )
+    if resolved_trade_intent == OPEN_TRADE_INTENT and normalized_side != "buy":
+        raise ValueError("Long option opens must buy to open")
+    if resolved_trade_intent == CLOSE_TRADE_INTENT and normalized_side != "sell":
+        raise ValueError("Long option closes must sell to close")
+    position_intent = (
+        "buy_to_open"
+        if resolved_trade_intent == OPEN_TRADE_INTENT
+        else "sell_to_close"
+    )
+    resolved_option_type = (
+        _as_text(option_type)
+        or ("call" if resolved_strategy_family == "long_call" else "put")
+    ).lower()
+    if resolved_option_type not in {"call", "put"}:
+        raise ValueError("Option order option_type must be call or put")
+
+    resolved_expiration = _as_text(expiration_date)
+    position_id = _as_text(metadata.get("position_id"))
+    requested_at = _utc_now()
+    resolved_market_date = market_date or datetime.now(UTC).date().isoformat()
+    resolved_label = _as_text(label) or "manual_option"
+    client_order_id = _execution_client_order_id()
+    attempt_id = _execution_attempt_id()
+    legs = [
+        {
+            "symbol": normalized_symbol,
+            "side": normalized_side,
+            "position_intent": position_intent,
+            "ratio_qty": "1",
+            "role": "long",
+            "expiration_date": resolved_expiration,
+            "strike": strike,
+            "option_type": resolved_option_type,
+        }
+    ]
+    order_request = build_order_payload(
+        legs=legs,
+        limit_price=resolved_limit_price,
+        strategy_family=resolved_strategy_family,
+        trade_intent=resolved_trade_intent,
+        quantity=resolved_quantity,
+    )
+    order_request["client_order_id"] = client_order_id
+    profile = _as_text(metadata.get("profile")) or "weekly"
+    policy_fields = resolve_pipeline_policy_fields(
+        profile=profile,
+        root_symbol=normalized_underlying,
+    )
+    option_selection = (
+        dict(metadata.get("option_selection"))
+        if isinstance(metadata.get("option_selection"), Mapping)
+        else {}
+    )
+    candidate_payload = {
+        "underlying_symbol": normalized_underlying,
+        "strategy": resolved_strategy_family,
+        "strategy_family": resolved_strategy_family,
+        "profile": profile,
+        "expiration_date": resolved_expiration,
+        "underlying_price": _coerce_float(metadata.get("underlying_price")),
+        "legs": legs,
+        "order_payload": dict(order_request),
+        "structure_identity": legs_identity_key(
+            strategy=resolved_strategy_family,
+            legs=legs,
+        ),
+        "width": 0.0,
+        "midpoint_credit": resolved_limit_price,
+        "natural_credit": resolved_limit_price,
+        "max_profit": None,
+        "max_loss": round(resolved_limit_price * 100.0, 2),
+        "option_selection": option_selection,
+    }
+    attempt_created = False
+    submitted_order: dict[str, Any] | None = None
+    try:
+        attempt = execution_store.create_attempt(
+            execution_attempt_id=attempt_id,
+            session_id=build_live_run_scope_id(resolved_label, resolved_market_date),
+            session_date=resolved_market_date,
+            label=resolved_label,
+            pipeline_id=build_pipeline_id(resolved_label),
+            bot_id=_as_text(metadata.get("bot_id")),
+            automation_id=_as_text(metadata.get("automation_id")),
+            strategy_config_id=_as_text(metadata.get("strategy_config_id")),
+            market_date=resolved_market_date,
+            cycle_id=None,
+            opportunity_id=_as_text(metadata.get("opportunity_id")),
+            risk_decision_id=None,
+            candidate_id=None,
+            attempt_context="option_order",
+            candidate_generated_at=None,
+            run_id=None,
+            job_run_id=None,
+            underlying_symbol=normalized_underlying,
+            strategy=resolved_strategy_family,
+            expiration_date=resolved_expiration,
+            structure_identity=str(candidate_payload["structure_identity"]),
+            legs=legs,
+            order_payload=order_request,
+            economics={
+                "midpoint_credit": resolved_limit_price,
+                "natural_credit": resolved_limit_price,
+                "max_profit": None,
+                "max_loss": round(resolved_limit_price * 100.0, 2),
+            },
+            trade_intent=resolved_trade_intent,
+            position_id=position_id,
+            root_symbol=normalized_underlying,
+            strategy_family=resolved_strategy_family,
+            style_profile=_as_text(metadata.get("style_profile"))
+            or str(policy_fields["style_profile"]),
+            horizon_intent=_as_text(metadata.get("horizon_intent"))
+            or str(policy_fields["horizon_intent"]),
+            product_class=_as_text(metadata.get("product_class"))
+            or str(policy_fields["product_class"]),
+            quantity=resolved_quantity,
+            limit_price=resolved_limit_price,
+            requested_at=requested_at,
+            status=PENDING_SUBMISSION_STATUS,
+            broker=BROKER_NAME,
+            client_order_id=client_order_id,
+            request={
+                "trade_intent": resolved_trade_intent,
+                "execution_runtime": normalized_runtime,
+                "asset_class": "option",
+                "position_intent": position_intent,
+                **({} if position_id is None else {"position_id": position_id}),
+                **(
+                    {}
+                    if _as_text(metadata.get("bot_id")) is None
+                    else {"bot_id": _as_text(metadata.get("bot_id"))}
+                ),
+                **(
+                    {}
+                    if _as_text(metadata.get("automation_id")) is None
+                    else {"automation_id": _as_text(metadata.get("automation_id"))}
+                ),
+                **(
+                    {}
+                    if _as_text(metadata.get("strategy_config_id")) is None
+                    else {"strategy_config_id": _as_text(metadata.get("strategy_config_id"))}
+                ),
+                **(
+                    {}
+                    if _as_text(metadata.get("strategy_id")) is None
+                    else {"strategy_id": _as_text(metadata.get("strategy_id"))}
+                ),
+                **(
+                    {}
+                    if _as_text(metadata.get("config_hash")) is None
+                    else {"config_hash": _as_text(metadata.get("config_hash"))}
+                ),
+                **(
+                    {}
+                    if _as_text(metadata.get("execution_intent_id")) is None
+                    else {"execution_intent_id": _as_text(metadata.get("execution_intent_id"))}
+                ),
+                **(
+                    {}
+                    if not isinstance(metadata.get("exit_policy"), Mapping)
+                    else {"exit_policy": dict(metadata["exit_policy"])}
+                ),
+                **(
+                    {}
+                    if not isinstance(metadata.get("risk_policy"), Mapping)
+                    else {"risk_policy": dict(metadata["risk_policy"])}
+                ),
+                **(
+                    {}
+                    if not isinstance(metadata.get("source"), Mapping)
+                    else {"source": dict(metadata["source"])}
+                ),
+                **({} if not option_selection else {"option_selection": option_selection}),
+                "order": order_request,
+            },
+            candidate=candidate_payload,
+        )
+        attempt_created = True
+        client = create_alpaca_client_from_env()
+        submitted_order = client.submit_order(order_request)
+        try:
+            order_snapshot = client.get_order(str(submitted_order["id"]), nested=True)
+        except Exception:
+            order_snapshot = submitted_order
+        synced_attempt = _sync_attempt_state(
+            execution_store=execution_store,
+            attempt=dict(attempt),
+            client=client,
+            order_snapshot=order_snapshot,
+        )
+        message = (
+            f"Submitted option {normalized_side} for "
+            f"{resolved_quantity} {normalized_symbol}."
+        )
+        _publish_execution_attempt_event(synced_attempt, message=message)
+        return {
+            "action": "submit",
+            "changed": True,
+            "message": message,
+            "attempt": synced_attempt,
+        }
+    except AlpacaRequestError as exc:
+        if submitted_order is None and attempt_created:
+            classified_error = classify_alpaca_request_error(exc)
+            execution_store.update_attempt(
+                execution_attempt_id=attempt_id,
+                status="failed",
+                client_order_id=client_order_id,
+                completed_at=requested_at,
+                error_text=str(classified_error["message"]),
+                position_id=position_id,
+            )
+            failed_attempt = _get_attempt_payload(execution_store, attempt_id)
+            _publish_execution_attempt_event(
+                failed_attempt,
+                message=(
+                    "Option execution failed before submission: "
+                    f"{classified_error['message']}"
+                ),
+            )
+            if bool(classified_error.get("terminal")):
+                return {
+                    "action": "submit",
+                    "changed": True,
+                    "status": "blocked",
+                    "reason": str(classified_error["reason"]),
+                    "message": str(classified_error["message"]),
+                    "attempt": failed_attempt,
+                }
+        raise
+    except Exception as exc:
+        if submitted_order is None and attempt_created:
+            execution_store.update_attempt(
+                execution_attempt_id=attempt_id,
+                status="failed",
+                client_order_id=client_order_id,
+                completed_at=requested_at,
+                error_text=str(exc),
+                position_id=position_id,
+            )
+            failed_attempt = _get_attempt_payload(execution_store, attempt_id)
+            _publish_execution_attempt_event(
+                failed_attempt,
+                message=f"Option execution failed before submission: {exc}",
             )
         raise
 

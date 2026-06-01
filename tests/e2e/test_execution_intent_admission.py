@@ -250,6 +250,98 @@ class ExecutionIntentAdmissionTests(unittest.TestCase):
         self.assertEqual(request_metadata["execution_runtime"], "nautilus")
         self.assertEqual(request_metadata["source"]["kind"], "management_runtime_exit")
 
+    def test_submit_option_intent_uses_direct_option_order(self) -> None:
+        class _ExecutionStore:
+            def __init__(self) -> None:
+                self.intent = {
+                    "execution_intent_id": "intent-option-1",
+                    "bot_id": "finviz",
+                    "automation_id": "finviz_direct",
+                    "opportunity_decision_id": None,
+                    "strategy_position_id": None,
+                    "execution_attempt_id": None,
+                    "action_type": "buy",
+                    "slot_key": "finviz_direct:finviz_momentum:AAPL:long_call:entry",
+                    "claim_token": None,
+                    "policy_ref": {
+                        "strategy_config_id": "finviz_momentum",
+                        "strategy_id": "finviz_direct",
+                    },
+                    "config_hash": "cfg-1",
+                    "state": "pending",
+                    "expires_at": None,
+                    "superseded_by_id": None,
+                    "payload": {
+                        "asset_class": "option",
+                        "label": "finviz_direct_momentum",
+                        "market_date": "2026-06-01",
+                        "underlying_symbol": "AAPL",
+                        "symbol": "AAPL260612C00100000",
+                        "side": "buy",
+                        "quantity": 1,
+                        "limit_price": 4.95,
+                        "trade_intent": "open",
+                        "strategy_family": "long_call",
+                        "expiration_date": "2026-06-12",
+                        "option_type": "call",
+                        "strike": 100.0,
+                        "execution_runtime": "alpaca_direct",
+                        "source": {"kind": "finviz_direct_trading"},
+                    },
+                    "created_at": "2026-06-01T14:40:00Z",
+                    "updated_at": "2026-06-01T14:40:00Z",
+                }
+                self.events: list[dict[str, object]] = []
+
+            def intent_schema_ready(self) -> bool:
+                return True
+
+            def get_execution_intent(
+                self,
+                execution_intent_id: str,
+            ) -> dict[str, object] | None:
+                if execution_intent_id != "intent-option-1":
+                    return None
+                return dict(self.intent)
+
+            def upsert_execution_intent(self, **payload: object) -> dict[str, object]:
+                self.intent.update(payload)
+                return dict(self.intent)
+
+            def append_execution_intent_event(self, **payload: object) -> None:
+                self.events.append(dict(payload))
+
+        class _Storage:
+            def __init__(self) -> None:
+                self.execution = _ExecutionStore()
+                self.signals = object()
+
+        storage = _Storage()
+        with patch(
+            "core.services.execution_intents.submit_option_order",
+            return_value={
+                "action": "submit",
+                "changed": True,
+                "attempt": {
+                    "execution_attempt_id": "execution-option-1",
+                    "status": "accepted",
+                    "trade_intent": "open",
+                },
+            },
+        ) as submit_mock:
+            result = submit_execution_intent(
+                db_target="postgresql://example",
+                execution_intent_id="intent-option-1",
+                storage=storage,
+            )
+
+        self.assertTrue(result["changed"])
+        submit_mock.assert_called_once()
+        self.assertEqual(submit_mock.call_args.kwargs["symbol"], "AAPL260612C00100000")
+        self.assertEqual(submit_mock.call_args.kwargs["underlying_symbol"], "AAPL")
+        self.assertEqual(submit_mock.call_args.kwargs["strategy_family"], "long_call")
+        self.assertEqual(submit_mock.call_args.kwargs["execution_runtime"], "alpaca_direct")
+
 
 if __name__ == "__main__":
     unittest.main()
