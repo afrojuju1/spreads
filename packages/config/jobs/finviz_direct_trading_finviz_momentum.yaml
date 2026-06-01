@@ -12,7 +12,7 @@ payload:
   feed_id: finviz_momentum
   feed_job_key: symbol_feed:finviz_momentum
   max_feed_age_seconds: 300
-  max_candidates: 3
+  max_candidates: 1
   stock_feed: iex
   quantity: 1
   max_notional: 500
