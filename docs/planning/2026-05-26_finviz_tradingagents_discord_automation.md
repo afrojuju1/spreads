@@ -141,7 +141,7 @@ Prefer a saved Finviz CSV/export URL or local CSV drop over HTML scraping. Finvi
 Add a dedicated research job type instead of using the runtime execution queue. The job should:
 
 - consume the latest Finviz feed snapshot
-- cap the run list, initially `5` tickers
+- cap the run list, initially `1` ticker while validating the flow
 - dedupe by ticker, scanner id, market date, and signal cooldown
 - run `/home/ade/Projects/TradingAgents/scripts/benchmark_run.py`
 - use profile `fast` initially
@@ -164,7 +164,7 @@ payload:
   feed_id: finviz_momentum
   feed_job_key: symbol_feed:finviz_momentum
   max_feed_age_seconds: 1800
-  max_tickers: 5
+  max_tickers: 1
   profile: fast
   output_root: outputs/tradingagents/finviz_momentum
   timeout_seconds: 1800
@@ -318,7 +318,7 @@ Finviz validation metrics:
 - Finviz access method: Elite export URL, manual CSV drop, or another compliant export path
 - First Finviz screen: momentum, earnings, unusual volume, oversold bounce, or analyst action
 - Alert direction: bullish only or bullish plus bearish
-- Max tickers per scan: recommended initial value is `5`
+- Max tickers per scan: current initial validation value is `1`
 - TradingAgents profile: recommended initial value is `fast`
 - Schedule: recommended first pass is market-open plus 20 minutes and after-close review
 - Storage: reuse job result payloads first, add a dedicated research result table only after the workflow proves useful

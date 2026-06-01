@@ -9,7 +9,7 @@ payload:
   feed_id: finviz_momentum
   feed_job_key: symbol_feed:finviz_momentum
   max_feed_age_seconds: 1800
-  max_tickers: 5
+  max_tickers: 1
   profile: fast
   output_root: outputs/tradingagents/finviz_momentum
   timeout_seconds: 1800
