@@ -25,12 +25,13 @@ payload:
   dispatch_after_trigger: true
   allow_short_selling: false
   allow_off_hours: false
-  max_new_positions_per_run: 1
-  max_open_positions: 1
+  max_new_positions_per_run: 10
+  max_open_positions: 10
   entry_rules:
     enabled: true
     side: buy
-    min_price: 5
+    min_price: 10
+    min_market_cap: 1000000000
     min_daily_volume: 1000000
     min_move_percent: 0
     require_positive_momentum: true

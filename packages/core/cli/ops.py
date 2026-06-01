@@ -9,6 +9,7 @@ import typer
 from core.cli.ops_render import (
     build_console,
     render_audit_view,
+    render_finviz_direct_ledger,
     render_job_lanes_view,
     render_jobs_view,
     render_json_payload,
@@ -19,6 +20,7 @@ from core.cli.ops_render import (
 from core.services.ops import (
     OpsLookupError,
     build_audit_view,
+    build_finviz_direct_ledger,
     build_job_lanes_overview,
     build_job_run_view,
     build_jobs_overview,
@@ -155,6 +157,49 @@ def trading_command(
     _run_visibility_command(
         builder=lambda: build_trading_health(db_target=db),
         renderer=render_trading_health,
+        json_output=json_output,
+        watch_seconds=watch,
+        no_color=no_color,
+    )
+
+
+def finviz_ledger_command(
+    environment: str | None = typer.Option(
+        None,
+        "--env",
+        help="Run this command against a named deploy target.",
+    ),
+    feed_id: str = typer.Option(
+        "finviz_momentum",
+        "--feed-id",
+        help="Finviz symbol feed id.",
+    ),
+    market_date: str | None = typer.Option(
+        None,
+        "--date",
+        help="Market date to inspect. Defaults to today in New York.",
+    ),
+    limit: int = typer.Option(10, "--limit", help="Maximum recent rows per section."),
+    db: str | None = typer.Option(None, "--db", help="Database URL override."),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
+    watch: float | None = typer.Option(
+        None, "--watch", help="Refresh every N seconds."
+    ),
+    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
+) -> None:
+    try:
+        resolved_limit = _validate_limit(limit, option_name="--limit")
+    except ValueError as exc:
+        typer.secho(str(exc), err=True, fg=typer.colors.RED)
+        raise typer.Exit(3) from None
+    _run_visibility_command(
+        builder=lambda: build_finviz_direct_ledger(
+            db_target=db,
+            feed_id=feed_id,
+            market_date=market_date,
+            limit=resolved_limit,
+        ),
+        renderer=render_finviz_direct_ledger,
         json_output=json_output,
         watch_seconds=watch,
         no_color=no_color,

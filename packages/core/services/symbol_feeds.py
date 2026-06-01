@@ -530,6 +530,54 @@ def _parse_finviz_int(value: Any) -> int | None:
     return int(round(parsed))
 
 
+def _finviz_text_list_arg(value: Any) -> tuple[str, ...]:
+    if value in (None, "", ()):
+        return ()
+    if isinstance(value, str):
+        raw_items = value.split(",")
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = value
+    else:
+        raw_items = [value]
+    return tuple(str(item).strip() for item in raw_items if str(item or "").strip())
+
+
+def _finviz_slug(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    slug = re.sub(r"[^a-z0-9]+", "_", text).strip("_")
+    return slug or "unknown"
+
+
+def _finviz_contains_keyword(text: Any, keywords: tuple[str, ...]) -> str | None:
+    haystack = str(text or "").strip().lower()
+    if not haystack:
+        return None
+    for keyword in keywords:
+        needle = keyword.strip().lower()
+        if needle and needle in haystack:
+            return keyword
+    return None
+
+
+def _finviz_instrument_exclusion_reason(
+    row: Mapping[str, Any],
+    *,
+    exclude_industries: tuple[str, ...],
+    exclude_company_keywords: tuple[str, ...],
+) -> str | None:
+    industry = pick(row, "industry")
+    industry_match = _finviz_contains_keyword(industry, exclude_industries)
+    if industry_match is not None:
+        return f"industry:{_finviz_slug(industry_match)}"
+
+    company = pick(row, "company", "name")
+    company_match = _finviz_contains_keyword(company, exclude_company_keywords)
+    if company_match is not None:
+        return f"company_keyword:{_finviz_slug(company_match)}"
+
+    return None
+
+
 def _strip_finviz_html(value: str) -> str:
     text = re.sub(r"<[^>]+>", "", value)
     return html.unescape(text).strip()
@@ -650,12 +698,17 @@ def _run_finviz_screener_feed(
 ) -> dict[str, Any]:
     top = max(_as_int(recipe_args.get("top"), 10), 1)
     min_price = max(_as_float(recipe_args.get("min_price"), 0.0), 0.0)
+    min_market_cap = max(_as_float(recipe_args.get("min_market_cap"), 0.0), 0.0)
     min_volume = max(
         _as_int(
             recipe_args.get("min_volume", recipe_args.get("min_daily_volume")),
             0,
         ),
         0,
+    )
+    exclude_industries = _finviz_text_list_arg(recipe_args.get("exclude_industries"))
+    exclude_company_keywords = _finviz_text_list_arg(
+        recipe_args.get("exclude_company_keywords")
     )
     timeout_seconds = max(_as_int(recipe_args.get("timeout_seconds"), 20), 1)
     cookie_env = _as_optional_text(recipe_args.get("cookie_env")) or "FINVIZ_COOKIE"
@@ -692,16 +745,39 @@ def _run_finviz_screener_feed(
     candidates: list[dict[str, Any]] = []
     missing_symbol_count = 0
     below_min_price_count = 0
+    missing_market_cap_count = 0
+    below_min_market_cap_count = 0
     below_min_volume_count = 0
+    excluded_instrument_reason_counts: dict[str, int] = {}
     for index, row in enumerate(rows):
         symbol = _normalize_symbol(pick(row, "ticker", "symbol"))
         if symbol is None:
             missing_symbol_count += 1
             continue
+        exclusion_reason = _finviz_instrument_exclusion_reason(
+            row,
+            exclude_industries=exclude_industries,
+            exclude_company_keywords=exclude_company_keywords,
+        )
+        if exclusion_reason is not None:
+            excluded_instrument_reason_counts[exclusion_reason] = (
+                excluded_instrument_reason_counts.get(exclusion_reason, 0) + 1
+            )
+            continue
         price = _parse_finviz_float(pick(row, "price", "last", "close"))
         if price is not None and price < min_price:
             below_min_price_count += 1
             continue
+        market_cap = _parse_finviz_float(
+            pick(row, "market_cap", "market_capitalization", "mkt_cap")
+        )
+        if min_market_cap > 0:
+            if market_cap is None:
+                missing_market_cap_count += 1
+                continue
+            if market_cap < min_market_cap:
+                below_min_market_cap_count += 1
+                continue
         volume = _parse_finviz_int(pick(row, "volume", "vol"))
         if volume is not None and volume < min_volume:
             below_min_volume_count += 1
@@ -722,10 +798,17 @@ def _run_finviz_screener_feed(
                 reason_codes.append("negative_momentum")
         if relative_volume is not None and relative_volume >= 1.5:
             reason_codes.append("relative_volume")
+        if min_market_cap > 0:
+            reason_codes.append("market_cap_filter")
         candidates.append(
             {
                 "symbol": symbol,
+                "company": pick(row, "company", "name"),
+                "sector": pick(row, "sector"),
+                "industry": pick(row, "industry"),
+                "country": pick(row, "country"),
                 "price": None if price is None else round(price, 4),
+                "market_cap": None if market_cap is None else int(round(market_cap)),
                 "daily_volume": volume,
                 "move_percent": (
                     None if change_percent is None else round(change_percent, 4)
@@ -816,10 +899,19 @@ def _run_finviz_screener_feed(
             "source_format": source_format,
             "top": top,
             "min_price": min_price,
+            "min_market_cap": min_market_cap,
             "min_volume": min_volume,
             "missing_symbol_count": missing_symbol_count,
             "below_min_price_count": below_min_price_count,
+            "missing_market_cap_count": missing_market_cap_count,
+            "below_min_market_cap_count": below_min_market_cap_count,
             "below_min_volume_count": below_min_volume_count,
+            "excluded_instrument_count": sum(
+                excluded_instrument_reason_counts.values()
+            ),
+            "excluded_instrument_reason_counts": dict(
+                sorted(excluded_instrument_reason_counts.items())
+            ),
         },
         "degradation": {
             "status": "ok" if symbols else "empty",

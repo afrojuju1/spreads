@@ -11,6 +11,7 @@ from core.cli.config import config_app
 from core.cli.deploy import deploy_app
 from core.cli.ops import (
     audit_command,
+    finviz_ledger_command,
     jobs_app,
     status_command,
     trading_command,
@@ -43,6 +44,7 @@ app = typer.Typer(
 TARGETABLE_ROOT_COMMANDS = {
     "status",
     "trading",
+    "finviz-ledger",
     "pipelines",
     "automations",
     "opportunities",
@@ -123,6 +125,9 @@ def _run_passthrough(
 
 app.command("status", help="Show system and runtime health.")(status_command)
 app.command("trading", help="Show live trading safety and readiness.")(trading_command)
+app.command("finviz-ledger", help="Show Finviz direct trading ledger.")(
+    finviz_ledger_command
+)
 app.command(
     "pipelines",
     help="List discovery sessions or inspect one pipeline compatibility view.",

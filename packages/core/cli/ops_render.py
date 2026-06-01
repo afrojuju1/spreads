@@ -1746,6 +1746,137 @@ def render_jobs_view(console: Console, payload: dict[str, Any]) -> None:
     _render_jobs_list(console, payload)
 
 
+def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> None:
+    summary = dict(payload.get("summary") or {})
+    details = dict(payload.get("details") or {})
+
+    overview = Table.grid(padding=(0, 2))
+    overview.add_row("Overall", _status_text(payload.get("status")))
+    overview.add_row("Generated", _render_value(payload.get("generated_at")))
+    overview.add_row("Feed", _render_value(summary.get("feed_id")))
+    overview.add_row("Market Date", _render_value(summary.get("market_date")))
+    overview.add_row("Feed Runs", _render_value(summary.get("feed_run_count")))
+    overview.add_row("Direct Runs", _render_value(summary.get("direct_run_count")))
+    overview.add_row("Attempts", _render_value(summary.get("attempt_count")))
+    overview.add_row("Open Positions", _render_value(summary.get("open_position_count")))
+    overview.add_row("Active Intents", _render_value(summary.get("active_intent_count")))
+    overview.add_row(
+        "PnL",
+        (
+            f"realized {_render_money(summary.get('realized_pnl'))} | "
+            f"unrealized {_render_money(summary.get('unrealized_pnl'))} | "
+            f"net {_render_money(summary.get('net_pnl'))}"
+        ),
+    )
+    console.print(
+        Panel(
+            overview,
+            title="Finviz Direct Ledger",
+            border_style=STATUS_STYLES.get(str(payload.get("status")), "white"),
+        )
+    )
+
+    _render_attention(console, payload)
+
+    feed_runs = list(details.get("recent_feed_runs") or [])
+    if feed_runs:
+        table = Table(title="Recent Feed Runs", header_style="bold")
+        table.add_column("Scheduled")
+        table.add_column("Status")
+        table.add_column("Symbols", justify="right")
+        table.add_column("Retained", justify="right")
+        table.add_column("Excluded", justify="right")
+        table.add_column("Reasons")
+        table.add_column("Tickers")
+        for row in feed_runs[:8]:
+            table.add_row(
+                _render_value(row.get("scheduled_for")),
+                _render_value(row.get("job_status")),
+                _render_value(row.get("symbol_count")),
+                _render_value(row.get("retained_count")),
+                _render_value(row.get("excluded_instrument_count")),
+                _render_count_map(row.get("excluded_instrument_reason_counts")),
+                _truncate(", ".join(str(item) for item in row.get("symbols") or []), length=44),
+            )
+        console.print(table)
+
+    direct_runs = list(details.get("recent_direct_runs") or [])
+    if direct_runs:
+        table = Table(title="Recent Direct Runs", header_style="bold")
+        table.add_column("Scheduled")
+        table.add_column("Status")
+        table.add_column("Feed")
+        table.add_column("Candidates", justify="right")
+        table.add_column("Managed", justify="right")
+        table.add_column("Armed", justify="right")
+        table.add_column("Entry Armed", justify="right")
+        table.add_column("Reasons")
+        for row in direct_runs[:8]:
+            table.add_row(
+                _render_value(row.get("scheduled_for")),
+                _render_value(row.get("job_status")),
+                _render_value(row.get("feed_status")),
+                _render_value(row.get("entry_candidates")),
+                _render_value(row.get("managed_positions")),
+                _render_value(row.get("armed")),
+                _render_value(row.get("entry_armed")),
+                _render_count_map(row.get("reason_counts")),
+            )
+        console.print(table)
+
+    positions = list(details.get("positions") or [])
+    if positions:
+        table = Table(title="Finviz Positions", header_style="bold")
+        table.add_column("Root")
+        table.add_column("Long Symbol")
+        table.add_column("Status")
+        table.add_column("Qty", justify="right")
+        table.add_column("Entry", justify="right")
+        table.add_column("Mark", justify="right")
+        table.add_column("Realized", justify="right")
+        table.add_column("Unrealized", justify="right")
+        table.add_column("Reconcile")
+        for row in positions[:10]:
+            table.add_row(
+                _render_value(row.get("root_symbol")),
+                _truncate(row.get("long_symbol"), length=24),
+                _render_value(row.get("status")),
+                _render_value(row.get("remaining_quantity")),
+                _render_money(row.get("entry_value")),
+                _render_money(row.get("close_mark")),
+                _render_money(row.get("realized_pnl")),
+                _render_money(row.get("unrealized_pnl")),
+                _render_value(row.get("reconciliation_status")),
+            )
+        console.print(table)
+
+    attempts = list(details.get("attempts") or [])
+    if attempts:
+        table = Table(title="Finviz Attempts", header_style="bold")
+        table.add_column("Requested")
+        table.add_column("Root")
+        table.add_column("Intent")
+        table.add_column("Status")
+        table.add_column("Symbol")
+        table.add_column("Limit", justify="right")
+        table.add_column("Filled", justify="right")
+        table.add_column("Avg Fill", justify="right")
+        table.add_column("Orders")
+        for row in attempts[:10]:
+            table.add_row(
+                _render_value(row.get("requested_at")),
+                _render_value(row.get("root_symbol")),
+                _render_value(row.get("trade_intent")),
+                _render_value(row.get("status")),
+                _truncate(row.get("long_symbol") or row.get("symbol_path"), length=24),
+                _render_money(row.get("limit_price")),
+                _render_value(row.get("filled_qty")),
+                _render_money(row.get("avg_fill_price")),
+                _render_count_map(row.get("order_statuses")),
+            )
+        console.print(table)
+
+
 def render_pipelines_view(console: Console, payload: dict[str, Any]) -> None:
     if isinstance(payload.get("pipelines"), list):
         _render_pipelines_list(console, payload)

@@ -8,9 +8,28 @@ allow_off_hours: false
 recipe: finviz_screener
 recipe_args:
   source: auto
-  scanner_url: https://finviz.com/screener.ashx?v=111&f=sh_avgvol_o1000,sh_price_o5,sh_relvol_o1.5,ta_change_u&o=-relativevolume
+  scanner_url: https://finviz.com/screener.ashx?v=111&f=sh_avgvol_o1000,sh_price_o10,sh_relvol_o1.5,ta_change_u&o=-relativevolume
   top: 10
-  min_price: 5
+  min_price: 10
+  min_market_cap: 1000000000
   min_volume: 1000000
+  exclude_industries:
+    - Exchange Traded Fund
+  exclude_company_keywords:
+    - ETF
+    - ETN
+    - 2X
+    - 3X
+    - Leveraged
+    - Inverse
+    - Ultra
+    - UltraPro
+    - UltraShort
+    - ProShares
+    - Direxion
+    - GraniteShares
+    - Leverage Shares
+    - Daily Bull
+    - Daily Bear
   timeout_seconds: 20
 singleton_scope: finviz_momentum

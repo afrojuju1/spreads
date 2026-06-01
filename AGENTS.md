@@ -33,7 +33,9 @@
 ## Dev Workflow
 
 - This repo is in active development by default.
+- Default to live validation through the running stack, shipped ops CLI, and targeted runtime smoke checks.
 - Do not add, update, or expand automated tests unless the user explicitly asks for test work.
+- Only write or modify e2e tests when the user explicitly asks for e2e coverage. Do not add e2e tests as default regression coverage for implementation work.
 - This repo has repo-local Codex skills under `.agents/skills`. Prefer these direct repo skills when the task matches:
   - `spreads-incident-triage` for runtime incidents, degraded collectors, trading blocks, and "what broke?" questions
   - `spreads-live-rollout` for changes that must be applied to the running Docker-backed system

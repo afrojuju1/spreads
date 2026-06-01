@@ -521,6 +521,7 @@ def _entry_rule_decision(
         return {"passed": False, "reason": "entry_rules_disabled"}
     score = _as_float(entry.get("score"))
     price = _as_float(entry.get("price"))
+    market_cap = _as_float(entry.get("market_cap"))
     move_percent = _as_float(entry.get("move_percent"))
     relative_volume = _as_float(entry.get("relative_volume"))
     daily_volume = _as_int(entry.get("daily_volume"), 0)
@@ -534,6 +535,15 @@ def _entry_rule_decision(
     max_price = _as_float(rules.get("max_price"))
     if max_price is not None and (price is None or price > max_price):
         return {"passed": False, "reason": "price_above_max"}
+    min_market_cap = _as_float(rules.get("min_market_cap"))
+    if min_market_cap is not None and (
+        market_cap is None or market_cap < min_market_cap
+    ):
+        return {
+            "passed": False,
+            "reason": "market_cap_below_min",
+            "market_cap": market_cap,
+        }
     min_relative_volume = _as_float(rules.get("min_relative_volume"))
     if (
         min_relative_volume is not None
@@ -564,6 +574,7 @@ def _entry_rule_decision(
         "reason": "entry_rules_passed",
         "score": score,
         "price": price,
+        "market_cap": market_cap,
         "move_percent": move_percent,
         "relative_volume": relative_volume,
         "daily_volume": daily_volume,
