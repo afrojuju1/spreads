@@ -329,6 +329,48 @@ def _resolve_opened_at(attempt: Mapping[str, Any]) -> str | None:
     )
 
 
+def _close_state_for_open_sync(
+    *,
+    execution_store: Any,
+    position_id: str,
+    opened_quantity: float,
+    broker_status: str,
+) -> dict[str, Any]:
+    closes = execution_store.list_position_closes(position_id=position_id)
+    total_closed_quantity = sum(
+        _coerce_float(close.get("closed_quantity")) or 0.0 for close in closes
+    )
+    remaining_quantity = max(opened_quantity - total_closed_quantity, 0.0)
+    realized_pnl = round(
+        sum(_coerce_float(close.get("realized_pnl")) or 0.0 for close in closes), 2
+    )
+
+    if total_closed_quantity <= 0:
+        return {
+            "status": _resolve_position_status(broker_status, opened_quantity),
+            "remaining_quantity": opened_quantity,
+            "realized_pnl": 0.0,
+            "unrealized_pnl": None,
+            "closed_at": None,
+        }
+    if remaining_quantity <= 0:
+        closed_times = [_as_text(close.get("closed_at")) for close in closes]
+        return {
+            "status": "closed",
+            "remaining_quantity": 0.0,
+            "realized_pnl": realized_pnl,
+            "unrealized_pnl": 0.0,
+            "closed_at": max((value for value in closed_times if value), default=None),
+        }
+    return {
+        "status": "partial_close",
+        "remaining_quantity": remaining_quantity,
+        "realized_pnl": realized_pnl,
+        "unrealized_pnl": None,
+        "closed_at": None,
+    }
+
+
 def _sync_linked_execution_intent_position(
     *,
     execution_store: Any,
@@ -806,6 +848,18 @@ def _sync_open_position(
         existing = created
     else:
         position_id = str(existing["position_id"])
+        close_state = _close_state_for_open_sync(
+            execution_store=execution_store,
+            position_id=position_id,
+            opened_quantity=filled_quantity,
+            broker_status=broker_status,
+        )
+        position_status = str(close_state["status"])
+        unrealized_pnl = (
+            0.0
+            if position_status == "closed"
+            else _coerce_float(existing.get("unrealized_pnl"))
+        )
         existing = execution_store.update_position(
             position_id=position_id,
             **_position_common_payload(
@@ -813,17 +867,17 @@ def _sync_open_position(
                 existing=existing,
                 requested_quantity=requested_quantity,
                 opened_quantity=filled_quantity,
-                remaining_quantity=filled_quantity,
+                remaining_quantity=float(close_state["remaining_quantity"]),
                 entry_credit=entry_credit,
-                realized_pnl=_coerce_float(existing.get("realized_pnl")) or 0.0,
-                unrealized_pnl=_coerce_float(existing.get("unrealized_pnl")),
+                realized_pnl=float(close_state["realized_pnl"]),
+                unrealized_pnl=unrealized_pnl,
                 close_mark=_coerce_float(existing.get("close_mark")),
                 close_mark_source=_as_text(existing.get("close_mark_source")),
                 close_marked_at=_as_text(existing.get("close_marked_at")),
                 last_broker_status=broker_status,
-                status=_resolve_position_status(broker_status, filled_quantity),
+                status=position_status,
                 opened_at=_resolve_opened_at(attempt),
-                closed_at=None,
+                closed_at=_as_text(close_state.get("closed_at")),
                 last_exit_evaluated_at=_as_text(existing.get("last_exit_evaluated_at")),
                 last_exit_reason=_as_text(existing.get("last_exit_reason")),
                 last_reconciled_at=_as_text(existing.get("last_reconciled_at")),
