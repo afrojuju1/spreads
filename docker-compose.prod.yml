@@ -67,7 +67,11 @@ services:
       ]
     ports:
       - "${SPREADS_BIND_HOST}:${SPREADS_API_PORT}:8000"
-    volumes: *nautilus-bridge-volumes
+    environment:
+      SPREADS_OPS_LOG_DIR: /app/logs/ops
+    volumes:
+      - ${SPREADS_NAUTILUS_BRIDGE_HOST_BINARY}:${SPREADS_NAUTILUS_BRIDGE_CONTAINER_BINARY}:ro
+      - ${SPREADS_OPS_LOG_DIR}:/app/logs/ops:ro
     logging: *default-logging
 
   worker-runtime:

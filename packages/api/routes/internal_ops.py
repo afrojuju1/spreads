@@ -10,6 +10,7 @@ from core.services.ops import (
     build_system_status,
     build_trading_health,
 )
+from core.services.retention import build_retention_status
 
 router = APIRouter()
 
@@ -69,6 +70,20 @@ def get_internal_ops_finviz_ledger_route(
             feed_id=feed_id,
             market_date=market_date,
             limit=limit,
+        )
+    except Exception as exc:
+        raise service_unavailable_error(exc) from exc
+
+
+@router.get("/internal/ops/retention")
+def get_internal_ops_retention_route(
+    include_pending_counts: bool = False,
+    db: str | None = None,
+) -> dict[str, object]:
+    try:
+        return build_retention_status(
+            db_target=_db_target(db),
+            include_pending_counts=include_pending_counts,
         )
     except Exception as exc:
         raise service_unavailable_error(exc) from exc
