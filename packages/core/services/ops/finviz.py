@@ -36,6 +36,38 @@ def _round_money(value: Any) -> float | None:
     return None if parsed is None else round(parsed, 2)
 
 
+def _round_metric(value: Any, digits: int = 4) -> float | None:
+    parsed = _coerce_float(value)
+    if parsed is None:
+        return None
+    rounded = round(parsed, digits)
+    return 0.0 if rounded == 0 else rounded
+
+
+def _round_count(value: Any) -> int | None:
+    parsed = _coerce_float(value)
+    return None if parsed is None else int(round(parsed))
+
+
+def _first_metric(*values: Any) -> float | None:
+    for value in values:
+        parsed = _coerce_float(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _avg_metric(values: list[Any], digits: int = 4) -> float | None:
+    parsed = [
+        float(value)
+        for value in (_coerce_float(item) for item in values)
+        if value is not None
+    ]
+    if not parsed:
+        return None
+    return round(sum(parsed) / len(parsed), digits)
+
+
 def _run_status(row: Mapping[str, Any] | None) -> str:
     if row is None:
         return "blocked"
@@ -136,6 +168,140 @@ def _summarize_feed_run(row: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _summarize_option_selection(value: Any) -> dict[str, Any] | None:
+    payload = _mapping(value)
+    if not payload:
+        return None
+    quote_metrics = _mapping(payload.get("quote_metrics"))
+    bid = _first_metric(quote_metrics.get("bid"), payload.get("snapshot_bid"))
+    ask = _first_metric(quote_metrics.get("ask"), payload.get("snapshot_ask"))
+    midpoint = _first_metric(
+        quote_metrics.get("midpoint"),
+        payload.get("snapshot_midpoint"),
+    )
+    spread = None if bid is None or ask is None else max(ask - bid, 0.0)
+    quote_summary = {
+        "bid": _round_metric(bid),
+        "ask": _round_metric(ask),
+        "midpoint": _round_metric(midpoint),
+        "spread": _round_metric(spread),
+        "spread_pct": _round_metric(
+            _first_metric(quote_metrics.get("spread_pct"), payload.get("snapshot_spread_pct"))
+        ),
+        "age_seconds": _round_metric(quote_metrics.get("age_seconds"), digits=2),
+        "timestamp": quote_metrics.get("timestamp"),
+    }
+    return {
+        "selected": payload.get("selected"),
+        "reason": payload.get("reason"),
+        "symbol": payload.get("symbol"),
+        "expiration_date": payload.get("expiration_date"),
+        "days_to_expiration": _round_count(payload.get("days_to_expiration")),
+        "strike": _round_metric(payload.get("strike")),
+        "underlying_price": _round_metric(payload.get("underlying_price")),
+        "strike_distance": _round_metric(payload.get("strike_distance")),
+        "delta": _round_metric(payload.get("delta")),
+        "delta_distance": _round_metric(payload.get("delta_distance")),
+        "preferred_delta_miss": _round_metric(payload.get("preferred_delta_miss")),
+        "premium": _round_metric(payload.get("premium"), digits=2),
+        "daily_volume": _round_count(payload.get("daily_volume")),
+        "open_interest": _round_count(payload.get("open_interest")),
+        "implied_volatility": _round_metric(payload.get("implied_volatility")),
+        "quote_source": payload.get("quote_source"),
+        "quote_feeds": list(payload.get("quote_feeds") or [])
+        if isinstance(payload.get("quote_feeds"), list)
+        else [],
+        "quote": quote_summary,
+    }
+
+
+def _attempt_side(
+    *,
+    row: Mapping[str, Any],
+    orders: list[dict[str, Any]],
+    fills: list[dict[str, Any]],
+) -> str | None:
+    for fill in fills:
+        side = _as_text(fill.get("side"))
+        if side is not None:
+            return side.lower()
+    for order in orders:
+        side = _as_text(order.get("side") or order.get("leg_side"))
+        if side is not None:
+            return side.lower()
+    return "sell" if _as_text(row.get("trade_intent")) == "close" else "buy"
+
+
+def _summarize_fill_quality(
+    *,
+    row: Mapping[str, Any],
+    orders: list[dict[str, Any]],
+    fills: list[dict[str, Any]],
+    filled_qty: float,
+    avg_fill_price: float | None,
+    option_selection: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    side = _attempt_side(row=row, orders=orders, fills=fills)
+    limit_price = _first_metric(row.get("requested_limit_price"), row.get("limit_price"))
+    quote = _mapping((option_selection or {}).get("quote"))
+    bid = _coerce_float(quote.get("bid"))
+    ask = _coerce_float(quote.get("ask"))
+    midpoint = _coerce_float(quote.get("midpoint"))
+    spread = _coerce_float(quote.get("spread"))
+    price_improvement_vs_limit: float | None = None
+    slippage_vs_midpoint: float | None = None
+    spread_capture: float | None = None
+
+    if avg_fill_price is not None and limit_price is not None:
+        if side == "buy":
+            price_improvement_vs_limit = limit_price - avg_fill_price
+        elif side == "sell":
+            price_improvement_vs_limit = avg_fill_price - limit_price
+
+    if avg_fill_price is not None and midpoint is not None:
+        if side == "buy":
+            slippage_vs_midpoint = avg_fill_price - midpoint
+        elif side == "sell":
+            slippage_vs_midpoint = midpoint - avg_fill_price
+
+    if (
+        avg_fill_price is not None
+        and bid is not None
+        and ask is not None
+        and spread is not None
+        and spread > 0
+    ):
+        if side == "buy":
+            spread_capture = (ask - avg_fill_price) / spread
+        elif side == "sell":
+            spread_capture = (avg_fill_price - bid) / spread
+
+    return {
+        "basis": "selection_quote",
+        "side": side,
+        "status": "filled" if filled_qty > 0 else "unfilled",
+        "requested_limit_price": _round_metric(limit_price),
+        "filled_qty": round(filled_qty, 4),
+        "avg_fill_price": _round_metric(avg_fill_price),
+        "price_improvement_vs_limit": _round_metric(price_improvement_vs_limit),
+        "slippage_vs_limit": _round_metric(
+            None
+            if price_improvement_vs_limit is None
+            else -price_improvement_vs_limit
+        ),
+        "slippage_vs_midpoint": _round_metric(slippage_vs_midpoint),
+        "spread_capture": _round_metric(spread_capture),
+        "filled_notional_estimate": _round_money(
+            None if avg_fill_price is None else avg_fill_price * filled_qty * 100.0
+        ),
+        "quote_bid": _round_metric(bid),
+        "quote_ask": _round_metric(ask),
+        "quote_midpoint": _round_metric(midpoint),
+        "quote_spread_pct": _round_metric(quote.get("spread_pct")),
+        "quote_age_seconds": _round_metric(quote.get("age_seconds"), digits=2),
+    }
+
+
 def _is_finviz_attempt(row: Mapping[str, Any], *, feed_id: str) -> bool:
     if _as_text(row.get("bot_id")) != DEFAULT_BOT_ID:
         return False
@@ -154,6 +320,7 @@ def _summarize_attempt(
     *,
     orders: list[dict[str, Any]],
     fills: list[dict[str, Any]],
+    intent: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     filled_qty = sum(_coerce_float(fill.get("quantity")) or 0.0 for fill in fills)
     fill_notional = sum(
@@ -162,8 +329,22 @@ def _summarize_attempt(
         for fill in fills
     )
     avg_fill_price = None if filled_qty <= 0 else round(fill_notional / filled_qty, 4)
+    intent_payload = _mapping((intent or {}).get("payload"))
+    option_selection = _summarize_option_selection(
+        intent_payload.get("option_selection")
+        or _mapping(row.get("request")).get("option_selection")
+    )
+    fill_quality = _summarize_fill_quality(
+        row=row,
+        orders=orders,
+        fills=fills,
+        filled_qty=filled_qty,
+        avg_fill_price=avg_fill_price,
+        option_selection=option_selection,
+    )
     return {
         "execution_attempt_id": row.get("execution_attempt_id"),
+        "execution_intent_id": None if intent is None else intent.get("execution_intent_id"),
         "position_id": row.get("position_id"),
         "trade_intent": row.get("trade_intent"),
         "status": row.get("status"),
@@ -186,6 +367,8 @@ def _summarize_attempt(
         "fill_count": len(fills),
         "filled_qty": round(filled_qty, 4),
         "avg_fill_price": avg_fill_price,
+        "option_selection": option_selection,
+        "fill_quality": fill_quality,
         "orders": [
             {
                 "broker_order_id": order.get("broker_order_id"),
@@ -217,12 +400,25 @@ def _summarize_position(
     row: Mapping[str, Any],
     *,
     closes: list[dict[str, Any]],
+    attempts_by_id: Mapping[str, dict[str, Any]],
 ) -> dict[str, Any]:
     position = enrich_position_row(row)
     realized = _coerce_float(position.get("realized_pnl")) or 0.0
     unrealized = _coerce_float(position.get("unrealized_pnl")) or 0.0
+    open_attempt_id = _as_text(position.get("open_execution_attempt_id"))
+    opening_intent_id = _as_text(position.get("opening_execution_intent_id"))
+    entry_attempt = (
+        attempts_by_id.get(open_attempt_id) if open_attempt_id is not None else None
+    )
+    close_attempts = [
+        attempts_by_id[str(close.get("execution_attempt_id"))]
+        for close in closes
+        if str(close.get("execution_attempt_id")) in attempts_by_id
+    ]
     return {
         "position_id": position.get("position_id"),
+        "open_execution_attempt_id": open_attempt_id,
+        "opening_execution_intent_id": opening_intent_id,
         "status": position.get("status"),
         "root_symbol": position.get("root_symbol"),
         "strategy_family": position.get("strategy_family"),
@@ -241,6 +437,10 @@ def _summarize_position(
         "last_exit_reason": position.get("last_exit_reason"),
         "reconciliation_status": position.get("reconciliation_status"),
         "close_count": len(closes),
+        "entry_quality": _compact_attempt_quality(entry_attempt),
+        "latest_close_quality": _compact_attempt_quality(close_attempts[0])
+        if close_attempts
+        else None,
         "closes": [
             {
                 "execution_attempt_id": close.get("execution_attempt_id"),
@@ -252,6 +452,242 @@ def _summarize_position(
             }
             for close in closes[:5]
         ],
+    }
+
+
+def _compact_attempt_quality(row: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if not row:
+        return None
+    option_selection = _mapping(row.get("option_selection"))
+    fill_quality = _mapping(row.get("fill_quality"))
+    quote = _mapping(option_selection.get("quote"))
+    return {
+        "execution_attempt_id": row.get("execution_attempt_id"),
+        "execution_intent_id": row.get("execution_intent_id"),
+        "trade_intent": row.get("trade_intent"),
+        "status": row.get("status"),
+        "option_symbol": row.get("long_symbol")
+        or row.get("symbol_path")
+        or option_selection.get("symbol"),
+        "requested_at": row.get("requested_at"),
+        "completed_at": row.get("completed_at"),
+        "limit_price": row.get("limit_price"),
+        "avg_fill_price": row.get("avg_fill_price"),
+        "selection": {
+            "expiration_date": option_selection.get("expiration_date"),
+            "days_to_expiration": option_selection.get("days_to_expiration"),
+            "strike": option_selection.get("strike"),
+            "delta": option_selection.get("delta"),
+            "premium": option_selection.get("premium"),
+            "daily_volume": option_selection.get("daily_volume"),
+            "open_interest": option_selection.get("open_interest"),
+            "implied_volatility": option_selection.get("implied_volatility"),
+            "quote_source": option_selection.get("quote_source"),
+            "quote_spread_pct": quote.get("spread_pct"),
+            "quote_age_seconds": quote.get("age_seconds"),
+        },
+        "fill": fill_quality,
+    }
+
+
+def _append_metric(bucket: dict[str, Any], key: str, value: Any) -> None:
+    parsed = _coerce_float(value)
+    if parsed is not None:
+        bucket.setdefault(key, []).append(parsed)
+
+
+def _build_quality_by_symbol(
+    *,
+    attempts: list[dict[str, Any]],
+    positions: list[dict[str, Any]],
+    market_date: str,
+) -> list[dict[str, Any]]:
+    buckets: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {
+            "contracts": set(),
+            "exit_reasons": Counter(),
+            "entry_attempt_count": 0,
+            "exit_attempt_count": 0,
+            "position_count": 0,
+            "closed_position_count": 0,
+            "open_position_count": 0,
+            "realized_pnl": 0.0,
+            "net_pnl": 0.0,
+        }
+    )
+    for attempt in attempts:
+        symbol = _as_text(attempt.get("root_symbol"))
+        if symbol is None:
+            continue
+        bucket = buckets[symbol]
+        option_symbol = _as_text(attempt.get("long_symbol") or attempt.get("symbol_path"))
+        if option_symbol is not None:
+            bucket["contracts"].add(option_symbol)
+        option_selection = _mapping(attempt.get("option_selection"))
+        quote = _mapping(option_selection.get("quote"))
+        fill_quality = _mapping(attempt.get("fill_quality"))
+        trade_intent = str(attempt.get("trade_intent") or "open").lower()
+        if trade_intent == "close":
+            bucket["exit_attempt_count"] += 1
+            _append_metric(
+                bucket,
+                "exit_slippage_vs_midpoint",
+                fill_quality.get("slippage_vs_midpoint"),
+            )
+            _append_metric(
+                bucket,
+                "exit_price_improvement_vs_limit",
+                fill_quality.get("price_improvement_vs_limit"),
+            )
+        else:
+            bucket["entry_attempt_count"] += 1
+            _append_metric(bucket, "entry_spread_pct", quote.get("spread_pct"))
+            _append_metric(bucket, "entry_quote_age_seconds", quote.get("age_seconds"))
+            _append_metric(
+                bucket,
+                "entry_slippage_vs_midpoint",
+                fill_quality.get("slippage_vs_midpoint"),
+            )
+            _append_metric(
+                bucket,
+                "entry_price_improvement_vs_limit",
+                fill_quality.get("price_improvement_vs_limit"),
+            )
+            _append_metric(bucket, "entry_delta", option_selection.get("delta"))
+            _append_metric(
+                bucket,
+                "entry_days_to_expiration",
+                option_selection.get("days_to_expiration"),
+            )
+            _append_metric(bucket, "entry_daily_volume", option_selection.get("daily_volume"))
+            _append_metric(bucket, "entry_open_interest", option_selection.get("open_interest"))
+
+    for position in positions:
+        if str(position.get("market_date_opened") or "") != market_date:
+            continue
+        symbol = _as_text(position.get("root_symbol"))
+        if symbol is None:
+            continue
+        bucket = buckets[symbol]
+        option_symbol = _as_text(position.get("long_symbol"))
+        if option_symbol is not None:
+            bucket["contracts"].add(option_symbol)
+        bucket["position_count"] += 1
+        if str(position.get("status") or "").lower() in OPEN_POSITION_STATUSES:
+            bucket["open_position_count"] += 1
+        else:
+            bucket["closed_position_count"] += 1
+        realized = _coerce_float(position.get("realized_pnl")) or 0.0
+        net = _coerce_float(position.get("net_pnl")) or 0.0
+        bucket["realized_pnl"] += realized
+        bucket["net_pnl"] += net
+        reason = _as_text(position.get("last_exit_reason"))
+        if reason is not None:
+            bucket["exit_reasons"][reason] += 1
+
+    rows: list[dict[str, Any]] = []
+    for symbol, bucket in sorted(buckets.items()):
+        rows.append(
+            {
+                "symbol": symbol,
+                "selected_contracts": sorted(bucket["contracts"]),
+                "entry_attempt_count": bucket["entry_attempt_count"],
+                "exit_attempt_count": bucket["exit_attempt_count"],
+                "position_count": bucket["position_count"],
+                "closed_position_count": bucket["closed_position_count"],
+                "open_position_count": bucket["open_position_count"],
+                "avg_entry_spread_pct": _avg_metric(bucket.get("entry_spread_pct", [])),
+                "avg_entry_quote_age_seconds": _avg_metric(
+                    bucket.get("entry_quote_age_seconds", []),
+                    digits=2,
+                ),
+                "avg_entry_slippage_vs_midpoint": _avg_metric(
+                    bucket.get("entry_slippage_vs_midpoint", [])
+                ),
+                "avg_entry_price_improvement_vs_limit": _avg_metric(
+                    bucket.get("entry_price_improvement_vs_limit", [])
+                ),
+                "avg_exit_slippage_vs_midpoint": _avg_metric(
+                    bucket.get("exit_slippage_vs_midpoint", [])
+                ),
+                "avg_exit_price_improvement_vs_limit": _avg_metric(
+                    bucket.get("exit_price_improvement_vs_limit", [])
+                ),
+                "avg_entry_delta": _avg_metric(bucket.get("entry_delta", [])),
+                "avg_entry_days_to_expiration": _avg_metric(
+                    bucket.get("entry_days_to_expiration", []),
+                    digits=1,
+                ),
+                "avg_entry_daily_volume": _avg_metric(
+                    bucket.get("entry_daily_volume", []),
+                    digits=0,
+                ),
+                "avg_entry_open_interest": _avg_metric(
+                    bucket.get("entry_open_interest", []),
+                    digits=0,
+                ),
+                "exit_reasons": dict(bucket["exit_reasons"]),
+                "realized_pnl": _round_money(bucket["realized_pnl"]),
+                "net_pnl": _round_money(bucket["net_pnl"]),
+            }
+        )
+    return rows
+
+
+def _build_quality_summary(
+    *,
+    attempts: list[dict[str, Any]],
+    quality_by_symbol: list[dict[str, Any]],
+) -> dict[str, Any]:
+    entry_attempts = [
+        row
+        for row in attempts
+        if str(row.get("trade_intent") or "open").lower() != "close"
+    ]
+    exit_attempts = [
+        row
+        for row in attempts
+        if str(row.get("trade_intent") or "open").lower() == "close"
+    ]
+    return {
+        "symbol_count": len(quality_by_symbol),
+        "entry_attempt_count": len(entry_attempts),
+        "exit_attempt_count": len(exit_attempts),
+        "avg_entry_spread_pct": _avg_metric(
+            [
+                _mapping(_mapping(row.get("option_selection")).get("quote")).get(
+                    "spread_pct"
+                )
+                for row in entry_attempts
+            ]
+        ),
+        "avg_entry_quote_age_seconds": _avg_metric(
+            [
+                _mapping(_mapping(row.get("option_selection")).get("quote")).get(
+                    "age_seconds"
+                )
+                for row in entry_attempts
+            ],
+            digits=2,
+        ),
+        "avg_entry_slippage_vs_midpoint": _avg_metric(
+            [
+                _mapping(row.get("fill_quality")).get("slippage_vs_midpoint")
+                for row in entry_attempts
+            ]
+        ),
+        "avg_exit_slippage_vs_midpoint": _avg_metric(
+            [
+                _mapping(row.get("fill_quality")).get("slippage_vs_midpoint")
+                for row in exit_attempts
+            ]
+        ),
+        "winning_symbol_count": sum(
+            1 for row in quality_by_symbol if (_coerce_float(row.get("net_pnl")) or 0) > 0
+        ),
+        "losing_symbol_count": sum(
+            1 for row in quality_by_symbol if (_coerce_float(row.get("net_pnl")) or 0) < 0
+        ),
     }
 
 
@@ -279,6 +715,7 @@ def _intent_matches(row: Mapping[str, Any], *, feed_id: str) -> bool:
 def _summarize_intent(row: Mapping[str, Any]) -> dict[str, Any]:
     payload = _mapping(row.get("payload"))
     source = _mapping(payload.get("source"))
+    option_selection = _summarize_option_selection(payload.get("option_selection"))
     return {
         "execution_intent_id": row.get("execution_intent_id"),
         "execution_attempt_id": row.get("execution_attempt_id"),
@@ -292,6 +729,7 @@ def _summarize_intent(row: Mapping[str, Any]) -> dict[str, Any]:
         "position_id": payload.get("position_id"),
         "quantity": payload.get("quantity"),
         "limit_price": payload.get("limit_price"),
+        "option_selection": option_selection,
         "feed_job_run_id": source.get("feed_job_run_id"),
         "trading_job_run_id": source.get("trading_job_run_id"),
         "created_at": row.get("created_at"),
@@ -358,9 +796,13 @@ def build_finviz_direct_ledger(
             )
         )
 
-    attempts: list[dict[str, Any]] = []
+    raw_attempts: list[dict[str, Any]] = []
+    raw_positions: list[dict[str, Any]] = []
+    raw_intents: list[dict[str, Any]] = []
     orders_by_attempt: dict[str, list[dict[str, Any]]] = defaultdict(list)
     fills_by_attempt: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    closes_by_position: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    attempts: list[dict[str, Any]] = []
     positions: list[dict[str, Any]] = []
     intents: list[dict[str, Any]] = []
 
@@ -383,14 +825,6 @@ def build_finviz_direct_ledger(
                 fills_by_attempt[str(fill.get("execution_attempt_id"))].append(
                     dict(fill)
                 )
-        attempts = [
-            _summarize_attempt(
-                row,
-                orders=orders_by_attempt[str(row.get("execution_attempt_id"))],
-                fills=fills_by_attempt[str(row.get("execution_attempt_id"))],
-            )
-            for row in raw_attempts
-        ]
 
     if execution_store.portfolio_schema_ready():
         raw_positions = [
@@ -403,21 +837,13 @@ def build_finviz_direct_ledger(
             )
         ]
         position_ids = [str(row["position_id"]) for row in raw_positions]
-        closes_by_position: dict[str, list[dict[str, Any]]] = defaultdict(list)
         if position_ids:
             for close in execution_store.list_position_closes(position_ids=position_ids):
                 closes_by_position[str(close.get("position_id"))].append(dict(close))
-        positions = [
-            _summarize_position(
-                row,
-                closes=closes_by_position[str(row.get("position_id"))],
-            )
-            for row in raw_positions
-        ]
 
     if execution_store.intent_schema_ready():
-        intents = [
-            _summarize_intent(row)
+        raw_intents = [
+            dict(row)
             for row in execution_store.list_execution_intents(
                 bot_id=DEFAULT_BOT_ID,
                 automation_id=DEFAULT_AUTOMATION_ID,
@@ -425,6 +851,44 @@ def build_finviz_direct_ledger(
             )
             if _intent_matches(row, feed_id=resolved_feed_id)
         ]
+
+    intents_by_attempt = {
+        str(row.get("execution_attempt_id")): row
+        for row in raw_intents
+        if row.get("execution_attempt_id")
+    }
+    attempts = [
+        _summarize_attempt(
+            row,
+            orders=orders_by_attempt[str(row.get("execution_attempt_id"))],
+            fills=fills_by_attempt[str(row.get("execution_attempt_id"))],
+            intent=intents_by_attempt.get(str(row.get("execution_attempt_id"))),
+        )
+        for row in raw_attempts
+    ]
+    attempts_by_id = {
+        str(row.get("execution_attempt_id")): row
+        for row in attempts
+        if row.get("execution_attempt_id")
+    }
+    positions = [
+        _summarize_position(
+            row,
+            closes=closes_by_position[str(row.get("position_id"))],
+            attempts_by_id=attempts_by_id,
+        )
+        for row in raw_positions
+    ]
+    intents = [_summarize_intent(row) for row in raw_intents]
+    quality_by_symbol = _build_quality_by_symbol(
+        attempts=attempts,
+        positions=positions,
+        market_date=resolved_market_date,
+    )
+    quality_summary = _build_quality_summary(
+        attempts=attempts,
+        quality_by_symbol=quality_by_symbol,
+    )
 
     open_positions = [
         row
@@ -528,11 +992,13 @@ def build_finviz_direct_ledger(
             "realized_pnl": round(realized_pnl, 2),
             "unrealized_pnl": round(unrealized_pnl, 2),
             "net_pnl": round(realized_pnl + unrealized_pnl, 2),
+            "quality": quality_summary,
         },
         "attention": attention,
         "details": {
             "recent_feed_runs": recent_feed_runs,
             "recent_direct_runs": recent_direct_runs,
+            "quality_by_symbol": quality_by_symbol,
             "positions": positions,
             "attempts": attempts,
             "intents": intents[:limit],

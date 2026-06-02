@@ -63,6 +63,12 @@ def _render_percent(value: Any) -> str:
     return f"{float(value) * 100:.2f}%"
 
 
+def _render_pct_points(value: Any) -> str:
+    if value is None:
+        return "-"
+    return f"{float(value):.2f}%"
+
+
 def _render_duration(value: Any) -> str:
     if value is None:
         return "-"
@@ -1763,6 +1769,7 @@ def render_jobs_view(console: Console, payload: dict[str, Any]) -> None:
 def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> None:
     summary = dict(payload.get("summary") or {})
     details = dict(payload.get("details") or {})
+    quality = dict(summary.get("quality") or {})
 
     overview = Table.grid(padding=(0, 2))
     overview.add_row("Overall", _status_text(payload.get("status")))
@@ -1791,6 +1798,15 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
             f"net {_render_money(summary.get('net_pnl'))}"
         ),
     )
+    if quality:
+        overview.add_row(
+            "Quality",
+            (
+                f"entry spread {_render_pct_points(quality.get('avg_entry_spread_pct'))} | "
+                f"entry slip/mid {_render_money(quality.get('avg_entry_slippage_vs_midpoint'))} | "
+                f"exit slip/mid {_render_money(quality.get('avg_exit_slippage_vs_midpoint'))}"
+            ),
+        )
     console.print(
         Panel(
             overview,
@@ -1800,6 +1816,38 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
     )
 
     _render_attention(console, payload)
+
+    quality_rows = list(details.get("quality_by_symbol") or [])
+    if quality_rows:
+        table = Table(title="Finviz Option Fill Quality", header_style="bold")
+        table.add_column("Symbol")
+        table.add_column("Contract")
+        table.add_column("E/X")
+        table.add_column("Spr", justify="right")
+        table.add_column("Age", justify="right")
+        table.add_column("E Slip", justify="right")
+        table.add_column("X Slip", justify="right")
+        table.add_column("Exit")
+        table.add_column("PnL", justify="right")
+        for row in quality_rows[:10]:
+            table.add_row(
+                _render_value(row.get("symbol")),
+                _truncate(
+                    ", ".join(str(item) for item in row.get("selected_contracts") or []),
+                    length=28,
+                ),
+                (
+                    f"{_render_value(row.get('entry_attempt_count'))}/"
+                    f"{_render_value(row.get('exit_attempt_count'))}"
+                ),
+                _render_pct_points(row.get("avg_entry_spread_pct")),
+                _render_duration(row.get("avg_entry_quote_age_seconds")),
+                _render_money(row.get("avg_entry_slippage_vs_midpoint")),
+                _render_money(row.get("avg_exit_slippage_vs_midpoint")),
+                _render_count_map(row.get("exit_reasons"), item_length=38),
+                _render_money(row.get("net_pnl")),
+            )
+        console.print(table)
 
     feed_runs = list(details.get("recent_feed_runs") or [])
     if feed_runs:
