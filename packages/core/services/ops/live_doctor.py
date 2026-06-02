@@ -104,6 +104,8 @@ def _compact_direct_run(row: Mapping[str, Any] | None) -> dict[str, Any] | None:
         "entry_candidates": row.get("entry_candidates"),
         "managed_positions": row.get("managed_positions"),
         "active_entry_intents": row.get("active_entry_intents"),
+        "max_daily_entries": row.get("max_daily_entries"),
+        "daily_entry_budget": row.get("daily_entry_budget"),
         "armed": row.get("armed"),
         "entry_armed": row.get("entry_armed"),
         "decision_count": row.get("decision_count"),
@@ -263,6 +265,11 @@ def build_live_doctor(
     max_new_positions_per_run = _coerce_int(
         direct_payload.get("max_new_positions_per_run")
     )
+    max_daily_entries = _coerce_int(
+        direct_payload.get("max_daily_entries", direct_payload.get("max_session_entries"))
+    )
+    if max_daily_entries is not None and max_daily_entries <= 0:
+        max_daily_entries = None
 
     checks: list[dict[str, Any]] = []
     market_status = "healthy" if market_open else "idle"
@@ -525,6 +532,13 @@ def build_live_doctor(
     direct_candidate_count = _coerce_int(
         None if latest_direct is None else latest_direct.get("entry_candidates")
     )
+    direct_entry_budget = _mapping(
+        None if latest_direct is None else latest_direct.get("daily_entry_budget")
+    )
+    direct_entry_used = _coerce_int(direct_entry_budget.get("used_entry_count"))
+    direct_entry_remaining = _coerce_int(
+        direct_entry_budget.get("remaining_entry_count")
+    )
     if market_open and direct_status == "healthy" and (direct_candidate_count or 0) <= 0:
         direct_status = "degraded"
     checks.append(
@@ -534,6 +548,8 @@ def build_live_doctor(
             message=(
                 f"candidates={direct_candidate_count if direct_candidate_count is not None else '-'}; "
                 f"created={None if latest_direct is None else latest_direct.get('created_count')}; "
+                f"entries={direct_entry_used if direct_entry_used is not None else '-'}"
+                f"/{max_daily_entries if max_daily_entries is not None else '-'}; "
                 f"latest={direct_scheduled_for or '-'}"
             ),
             metrics={
@@ -545,6 +561,9 @@ def build_live_doctor(
                 "active_entry_intents": None if latest_direct is None else latest_direct.get("active_entry_intents"),
                 "created_count": None if latest_direct is None else latest_direct.get("created_count"),
                 "reason_counts": None if latest_direct is None else latest_direct.get("reason_counts"),
+                "max_daily_entries": max_daily_entries,
+                "daily_entry_budget": direct_entry_budget,
+                "entry_budget_remaining": direct_entry_remaining,
                 "age_seconds": direct_age_seconds,
                 "max_age_seconds": max_feed_age_seconds,
             },
@@ -567,8 +586,20 @@ def build_live_doctor(
     positions = _list(finviz_details.get("positions"))
     position_sync = _position_sync_counts(positions)
     open_position_count = _coerce_int(finviz_summary.get("open_position_count")) or 0
+    session_entry_count = _coerce_int(finviz_summary.get("session_entry_count")) or 0
+    active_entry_intent_count = (
+        _coerce_int(finviz_summary.get("active_entry_intent_count")) or 0
+    )
+    remaining_daily_entries = direct_entry_remaining
+    if remaining_daily_entries is None and max_daily_entries is not None:
+        remaining_daily_entries = max(
+            max_daily_entries - session_entry_count - active_entry_intent_count,
+            0,
+        )
     cap_status = "healthy"
     if max_open_positions is not None and open_position_count > max_open_positions:
+        cap_status = "blocked"
+    if max_daily_entries is not None and session_entry_count > max_daily_entries:
         cap_status = "blocked"
     sync_status = "healthy" if position_sync["reconciliation_mismatch_count"] == 0 else "degraded"
     latest_exit_reason = _latest_closed_position_reason(positions)
@@ -578,6 +609,8 @@ def build_live_doctor(
             status=_combine_statuses(cap_status, sync_status),
             message=(
                 f"open={open_position_count}/{max_open_positions if max_open_positions is not None else '-'}, "
+                f"entries={session_entry_count}/{max_daily_entries if max_daily_entries is not None else '-'}, "
+                f"remaining={remaining_daily_entries if remaining_daily_entries is not None else '-'}, "
                 f"matched_mismatches={position_sync['reconciliation_mismatch_count']}, "
                 f"latest_exit={latest_exit_reason or '-'}"
             ),
@@ -585,6 +618,12 @@ def build_live_doctor(
                 **position_sync,
                 "max_open_positions": max_open_positions,
                 "max_new_positions_per_run": max_new_positions_per_run,
+                "max_daily_entries": max_daily_entries,
+                "filled_entry_count": finviz_summary.get("filled_entry_count"),
+                "position_entry_count": finviz_summary.get("position_entry_count"),
+                "session_entry_count": session_entry_count,
+                "active_entry_intent_count": active_entry_intent_count,
+                "remaining_daily_entries": remaining_daily_entries,
                 "closed_position_count": finviz_summary.get("closed_position_count"),
                 "latest_exit_reason": latest_exit_reason,
                 "realized_pnl": finviz_summary.get("realized_pnl"),
@@ -630,6 +669,11 @@ def build_live_doctor(
             "active_intent_count": active_intent_count,
             "open_position_count": open_position_count,
             "max_open_positions": max_open_positions,
+            "max_daily_entries": max_daily_entries,
+            "filled_entry_count": finviz_summary.get("filled_entry_count"),
+            "position_entry_count": finviz_summary.get("position_entry_count"),
+            "session_entry_count": session_entry_count,
+            "remaining_daily_entries": remaining_daily_entries,
             "realized_pnl": _coerce_float(finviz_summary.get("realized_pnl")),
             "unrealized_pnl": _coerce_float(finviz_summary.get("unrealized_pnl")),
             "net_pnl": _coerce_float(finviz_summary.get("net_pnl")),

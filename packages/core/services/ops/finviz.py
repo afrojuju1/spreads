@@ -93,6 +93,8 @@ def _summarize_direct_run(row: Mapping[str, Any]) -> dict[str, Any]:
         "entry_candidates": result.get("entry_candidates"),
         "managed_positions": result.get("managed_positions"),
         "active_entry_intents": result.get("active_entry_intents"),
+        "max_daily_entries": result.get("max_daily_entries"),
+        "daily_entry_budget": result.get("daily_entry_budget"),
         "armed": result.get("armed"),
         "entry_armed": result.get("entry_armed"),
         "dispatch_result": result.get("dispatch_result"),
@@ -425,6 +427,26 @@ def build_finviz_direct_ledger(
     unrealized_pnl = sum(
         _coerce_float(row.get("unrealized_pnl")) or 0.0 for row in open_positions
     )
+    filled_entry_count = sum(
+        1
+        for row in attempts
+        if str(row.get("trade_intent") or "open").lower() == "open"
+        and str(row.get("status") or "").lower() == "filled"
+    )
+    active_entry_intent_count = sum(
+        1
+        for row in intents
+        if str(row.get("trade_intent") or "open").lower() == "open"
+        and str(row.get("state") or "").lower() in {"pending", "claimed", "dispatching"}
+    )
+    position_entry_count = sum(
+        1
+        for row in positions
+        if str(row.get("market_date_opened") or "") == resolved_market_date
+    )
+    session_entry_count = max(filled_entry_count, position_entry_count)
+    recent_feed_runs = [_summarize_feed_run(row) for row in feed_runs]
+    recent_direct_runs = [_summarize_direct_run(row) for row in direct_runs]
     status = _combine_statuses(_run_status(latest_feed_run), _run_status(latest_direct_run))
     if attention:
         severities = {item.get("severity") for item in attention}
@@ -451,6 +473,9 @@ def build_finviz_direct_ledger(
             "filled_attempt_count": sum(
                 1 for row in attempts if str(row.get("status") or "") == "filled"
             ),
+            "filled_entry_count": filled_entry_count,
+            "position_entry_count": position_entry_count,
+            "session_entry_count": session_entry_count,
             "intent_count": len(intents),
             "active_intent_count": sum(
                 1
@@ -458,6 +483,7 @@ def build_finviz_direct_ledger(
                 if str(row.get("state") or "").lower()
                 in {"pending", "claimed", "dispatching"}
             ),
+            "active_entry_intent_count": active_entry_intent_count,
             "position_count": len(positions),
             "open_position_count": len(open_positions),
             "closed_position_count": sum(
@@ -469,8 +495,8 @@ def build_finviz_direct_ledger(
         },
         "attention": attention,
         "details": {
-            "recent_feed_runs": [_summarize_feed_run(row) for row in feed_runs],
-            "recent_direct_runs": [_summarize_direct_run(row) for row in direct_runs],
+            "recent_feed_runs": recent_feed_runs,
+            "recent_direct_runs": recent_direct_runs,
             "positions": positions,
             "attempts": attempts,
             "intents": intents[:limit],

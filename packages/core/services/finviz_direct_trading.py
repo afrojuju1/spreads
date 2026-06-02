@@ -976,6 +976,82 @@ def _daily_pnl_snapshot(
     }
 
 
+def _finviz_filled_entry_attempt_count(
+    execution_store: Any,
+    *,
+    bot_id: str,
+    automation_id: str,
+    feed_id: str,
+    session_date: str,
+) -> int:
+    if not execution_store.schema_ready():
+        return 0
+    count = 0
+    for row in execution_store.list_attempts_for_market_date(
+        market_date=session_date,
+        limit=1000,
+    ):
+        if _as_text(row.get("bot_id")) not in {None, bot_id}:
+            continue
+        if _as_text(row.get("automation_id")) not in {None, automation_id}:
+            continue
+        strategy_config_id = _as_text(row.get("strategy_config_id"))
+        if strategy_config_id is not None and strategy_config_id != feed_id:
+            continue
+        if strategy_config_id is None:
+            request = row.get("request")
+            if not isinstance(request, Mapping):
+                request = {}
+            source = request.get("source")
+            if not isinstance(source, Mapping):
+                source = {}
+            if source.get("flow") != "finviz_direct" or source.get("feed_id") != feed_id:
+                continue
+        if str(row.get("trade_intent") or "open").lower() != "open":
+            continue
+        if str(row.get("status") or "").lower() == "filled":
+            count += 1
+    return count
+
+
+def _daily_entry_budget_snapshot(
+    positions: list[Mapping[str, Any]],
+    *,
+    session_date: str,
+    max_daily_entries: int,
+    filled_entry_attempt_count: int,
+    active_entry_intents: int,
+    entry_armed: int,
+) -> dict[str, Any]:
+    position_entry_count = sum(
+        1
+        for position in positions
+        if str(position.get("market_date_opened") or position.get("market_date") or "")
+        == session_date
+    )
+    filled_entry_count = max(filled_entry_attempt_count, position_entry_count)
+    reserved_entry_count = max(active_entry_intents, 0) + max(entry_armed, 0)
+    used_entry_count = filled_entry_count + reserved_entry_count
+    remaining_entry_count = None
+    budget_reached = False
+    if max_daily_entries > 0:
+        remaining_entry_count = max(max_daily_entries - used_entry_count, 0)
+        budget_reached = used_entry_count >= max_daily_entries
+    return {
+        "session_date": session_date,
+        "max_daily_entries": max_daily_entries if max_daily_entries > 0 else None,
+        "filled_entry_attempt_count": filled_entry_attempt_count,
+        "position_entry_count": position_entry_count,
+        "filled_entry_count": filled_entry_count,
+        "active_entry_intents": active_entry_intents,
+        "entry_armed": entry_armed,
+        "reserved_entry_count": reserved_entry_count,
+        "used_entry_count": used_entry_count,
+        "remaining_entry_count": remaining_entry_count,
+        "budget_reached": budget_reached,
+    }
+
+
 def _has_active_intent(execution_store: Any, slot_key: str) -> str | None:
     rows = execution_store.list_execution_intents(
         slot_key=slot_key,
@@ -1503,6 +1579,22 @@ def run_finviz_direct_trading(
         ),
         0,
     )
+    max_daily_entries = max(
+        _as_int(
+            payload.get(
+                "max_daily_entries",
+                payload.get(
+                    "max_session_entries",
+                    option_entry_rules.get(
+                        "max_daily_entries",
+                        option_entry_rules.get("max_session_entries", 0),
+                    ),
+                ),
+            ),
+            0,
+        ),
+        0,
+    )
     entry_side = (_as_text(entry_rules.get("side")) or "buy").lower()
     if entry_side not in {"buy", "sell"}:
         entry_side = "buy"
@@ -1549,6 +1641,13 @@ def run_finviz_direct_trading(
         managed_session_positions,
         session_date=session_date,
     )
+    filled_entry_attempt_count = _finviz_filled_entry_attempt_count(
+        execution_store,
+        bot_id=bot_id,
+        automation_id=automation_id,
+        feed_id=feed_id,
+        session_date=session_date,
+    )
     max_daily_loss = _as_float(
         payload.get("max_daily_loss", entry_rules.get("max_daily_loss"))
     )
@@ -1589,6 +1688,24 @@ def run_finviz_direct_trading(
         if entry_side == "sell" and not allow_short_selling:
             decisions.append(
                 {**decision, "passed": False, "reason": "short_selling_disabled"}
+            )
+            continue
+        entry_budget = _daily_entry_budget_snapshot(
+            managed_session_positions,
+            session_date=session_date,
+            max_daily_entries=max_daily_entries,
+            filled_entry_attempt_count=filled_entry_attempt_count,
+            active_entry_intents=active_entry_intents,
+            entry_armed=entry_armed,
+        )
+        if entry_budget["budget_reached"]:
+            decisions.append(
+                {
+                    **decision,
+                    "passed": False,
+                    "reason": "max_daily_entries_reached",
+                    "daily_entry_budget": entry_budget,
+                }
             )
             continue
         open_exposure_count = len(managed_positions) + active_entry_intents + entry_armed
@@ -2205,6 +2322,15 @@ def run_finviz_direct_trading(
         "managed_positions": len(managed_positions),
         "active_entry_intents": active_entry_intents,
         "daily_pnl": daily_pnl,
+        "max_daily_entries": max_daily_entries if max_daily_entries > 0 else None,
+        "daily_entry_budget": _daily_entry_budget_snapshot(
+            managed_session_positions,
+            session_date=session_date,
+            max_daily_entries=max_daily_entries,
+            filled_entry_attempt_count=filled_entry_attempt_count,
+            active_entry_intents=active_entry_intents,
+            entry_armed=entry_armed,
+        ),
         "max_daily_loss": max_daily_loss,
         "daily_loss_reached": daily_loss_reached,
         "armed": armed,

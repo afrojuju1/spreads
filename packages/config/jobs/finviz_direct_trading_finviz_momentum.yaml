@@ -27,6 +27,7 @@ payload:
   allow_off_hours: false
   max_new_positions_per_run: 10
   max_open_positions: 10
+  max_daily_entries: 10
   max_daily_loss: 500
   entry_rules:
     enabled: true

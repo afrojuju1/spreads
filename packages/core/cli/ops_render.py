@@ -43,6 +43,20 @@ def _render_money(value: Any) -> str:
     return f"${float(value):,.2f}"
 
 
+def _render_entry_budget(value: Any, *, fallback_limit: Any = None) -> str:
+    if not isinstance(value, dict):
+        return "-"
+    limit = value.get("max_daily_entries", fallback_limit)
+    used = value.get("used_entry_count", value.get("filled_entry_count"))
+    remaining = value.get("remaining_entry_count")
+    if limit is None and used is None and remaining is None:
+        return "-"
+    return (
+        f"{_render_value(used)}/{_render_value(limit)} used, "
+        f"{_render_value(remaining)} left"
+    )
+
+
 def _render_percent(value: Any) -> str:
     if value is None:
         return "-"
@@ -1810,6 +1824,7 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
         table.add_column("Managed", justify="right")
         table.add_column("Armed", justify="right")
         table.add_column("Entry Armed", justify="right")
+        table.add_column("Entry Budget")
         table.add_column("Reasons")
         for row in direct_runs[:8]:
             table.add_row(
@@ -1820,6 +1835,10 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
                 _render_value(row.get("managed_positions")),
                 _render_value(row.get("armed")),
                 _render_value(row.get("entry_armed")),
+                _render_entry_budget(
+                    row.get("daily_entry_budget"),
+                    fallback_limit=row.get("max_daily_entries"),
+                ),
                 _render_count_map(row.get("reason_counts")),
             )
         console.print(table)
@@ -2002,6 +2021,14 @@ def render_live_doctor(console: Console, payload: dict[str, Any]) -> None:
             f"active intents {_render_value(summary.get('active_intent_count'))}"
         ),
     )
+    overview.add_row(
+        "Entries",
+        (
+            f"{_render_value(summary.get('session_entry_count'))}/"
+            f"{_render_value(summary.get('max_daily_entries'))} filled | "
+            f"remaining {_render_value(summary.get('remaining_daily_entries'))}"
+        ),
+    )
     overview.add_row("Net PnL", _render_money(summary.get("net_pnl")))
     overview.add_row(
         "Workers",
@@ -2041,12 +2068,17 @@ def render_live_doctor(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Status")
         table.add_column("Candidates", justify="right")
         table.add_column("Created", justify="right")
+        table.add_column("Entry Budget")
         table.add_column("Reasons")
         table.add_row(
             _render_value(latest_direct.get("job_run_id")),
             _job_run_status_text(latest_direct.get("job_status")),
             _render_value(latest_direct.get("entry_candidates")),
             _render_value(latest_direct.get("created_count")),
+            _render_entry_budget(
+                latest_direct.get("daily_entry_budget"),
+                fallback_limit=latest_direct.get("max_daily_entries"),
+            ),
             _render_count_map(latest_direct.get("reason_counts"), limit=5),
         )
         console.print(table)
