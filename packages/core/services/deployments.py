@@ -288,6 +288,16 @@ def _secret_value(
     return default
 
 
+def _web_allowed_dev_origins(target: DeployTarget) -> str:
+    origins = ["localhost", "127.0.0.1"]
+    for value in (target.bind_host, target.ssh_host, target.name):
+        normalized = _normalize_text(value)
+        if normalized is None or normalized == "0.0.0.0":
+            continue
+        origins.append(normalized)
+    return ",".join(dict.fromkeys(origins))
+
+
 def build_deploy_env_values(
     target: DeployTarget,
     *,
@@ -338,6 +348,7 @@ def build_deploy_env_values(
         "SPREADS_CONTAINER_OLLAMA_BASE_URL",
         default="http://host.docker.internal:11434/v1",
     )
+    web_allowed_dev_origins = _web_allowed_dev_origins(target)
 
     env_values = {
         "SPREADS_DEPLOY_ENV": target.name,
@@ -361,6 +372,7 @@ def build_deploy_env_values(
         "SPREADS_BACKUP_RETENTION_DAYS": str(target.backup_retention_days),
         "SPREADS_HEALTH_CHECK_MINUTES": str(target.health_check_minutes),
         "SPREADS_WEB_INTERNAL_API_BASE_URL": "http://api:8000",
+        "SPREADS_WEB_ALLOWED_DEV_ORIGINS": web_allowed_dev_origins,
         "POSTGRES_DB": "spreads",
         "POSTGRES_USER": "spreads",
         "POSTGRES_PASSWORD": str(postgres_password),
@@ -535,6 +547,7 @@ def render_deploy_env_file(
         f"SPREADS_INTERNAL_API_BASE_URL={values['SPREADS_INTERNAL_API_BASE_URL']}",
         f"SPREADS_API_BASE_URL={values['SPREADS_API_BASE_URL']}",
         f"SPREADS_WEB_INTERNAL_API_BASE_URL={values['SPREADS_WEB_INTERNAL_API_BASE_URL']}",
+        f"SPREADS_WEB_ALLOWED_DEV_ORIGINS={values['SPREADS_WEB_ALLOWED_DEV_ORIGINS']}",
         f"NEXT_PUBLIC_SPREADS_API_WS_PORT={values['NEXT_PUBLIC_SPREADS_API_WS_PORT']}",
         f"SPREADS_TRADINGAGENTS_HOST_DIR={values['SPREADS_TRADINGAGENTS_HOST_DIR']}",
         f"SPREADS_TRADINGAGENTS_DIR={values['SPREADS_TRADINGAGENTS_DIR']}",

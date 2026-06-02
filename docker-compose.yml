@@ -210,6 +210,7 @@ services:
     environment:
       NODE_ENV: development
       SPREADS_API_BASE_URL: http://api:8000
+      SPREADS_WEB_ALLOWED_DEV_ORIGINS: ${SPREADS_WEB_ALLOWED_DEV_ORIGINS:-localhost,127.0.0.1,100.111.132.114,192.168.2.6,ade-nucbox-k8-plus,ade-NucBox-K8-Plus}
       NEXT_PUBLIC_SPREADS_API_WS_PORT: "58080"
       NEXT_TELEMETRY_DISABLED: "1"
     volumes:

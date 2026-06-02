@@ -712,6 +712,15 @@ const executionRuntimeCapabilitiesSchema = z
   })
   .passthrough();
 
+const opsTradingHealthSchema = z
+  .object({
+    status: z.string().default("unknown"),
+    generated_at: z.string().nullable().optional(),
+    summary: z.record(z.string(), z.unknown()).default({}),
+    details: z.record(z.string(), z.unknown()).default({}),
+  })
+  .passthrough();
+
 const automationRuntimeDetailSchema = automationRuntimeListItemSchema
   .extend({
     summary: z.record(z.string(), z.unknown()).default({}),
@@ -762,6 +771,7 @@ export type Position = z.infer<typeof positionSchema>;
 export type AutomationRuntimeListItem = z.infer<typeof automationRuntimeListItemSchema>;
 export type AutomationRuntimeDetail = z.infer<typeof automationRuntimeDetailSchema>;
 export type ExecutionRuntimeCapabilities = z.infer<typeof executionRuntimeCapabilitiesSchema>;
+export type OpsTradingHealth = z.infer<typeof opsTradingHealthSchema>;
 export type AutoExecutionSummary = z.infer<typeof autoExecutionSummarySchema>;
 export type GlobalRealtimeEvent = z.infer<typeof globalRealtimeEventSchema>;
 export type OpportunityExecutionRequest = {
@@ -929,6 +939,10 @@ export function getRuntimeDetail(
 
 export function getExecutionRuntimes() {
   return fetchApi("executions/runtimes", executionRuntimeCapabilitiesSchema);
+}
+
+export function getOpsTradingHealth() {
+  return fetchApi("internal/ops/trading", opsTradingHealthSchema);
 }
 
 export function submitEquityOrder(payload: EquityOrderRequest) {
