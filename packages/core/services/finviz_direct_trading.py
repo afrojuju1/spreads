@@ -25,6 +25,14 @@ NEW_YORK = ZoneInfo("America/New_York")
 DEFAULT_FEED_ID = "finviz_momentum"
 DEFAULT_FEED_JOB_KEY = "symbol_feed:finviz_momentum"
 OPEN_POSITION_STATUSES = ["open", "partial_open", "partial_close", "pending_open"]
+DEFAULT_REENTRY_RESET_REASONS = frozenset(
+    {
+        "stop_loss",
+        "stop_multiple",
+        "underlying_vwap_recent_low_break",
+        "removed_from_feed",
+    }
+)
 
 
 def _now() -> datetime:
@@ -1052,6 +1060,118 @@ def _daily_entry_budget_snapshot(
     }
 
 
+def _reentry_reset_reasons(payload: Mapping[str, Any]) -> set[str]:
+    reentry_rules = _mapping(payload.get("same_symbol_reentry"))
+    raw_reasons = reentry_rules.get(
+        "invalidation_reasons",
+        payload.get("same_symbol_reentry_invalidation_reasons"),
+    )
+    if not isinstance(raw_reasons, list):
+        return set(DEFAULT_REENTRY_RESET_REASONS)
+    reasons = {
+        str(reason).strip().lower()
+        for reason in raw_reasons
+        if str(reason or "").strip()
+    }
+    return reasons or set(DEFAULT_REENTRY_RESET_REASONS)
+
+
+def _opening_intent_source(
+    execution_store: Any,
+    position: Mapping[str, Any],
+) -> dict[str, Any]:
+    if not execution_store.intent_schema_ready():
+        return {}
+    intent_id = _as_text(position.get("opening_execution_intent_id"))
+    if intent_id is None:
+        return {}
+    intent = execution_store.get_execution_intent(intent_id)
+    if not isinstance(intent, Mapping):
+        return {}
+    payload = intent.get("payload")
+    if not isinstance(payload, Mapping):
+        payload = intent.get("payload_json")
+    if not isinstance(payload, Mapping):
+        return {}
+    source = payload.get("source")
+    return dict(source) if isinstance(source, Mapping) else {}
+
+
+def _same_symbol_reentry_reset_decision(
+    *,
+    execution_store: Any,
+    positions: list[Mapping[str, Any]],
+    symbol: str,
+    entry: Mapping[str, Any],
+    snapshot: Mapping[str, Any],
+    session_date: str,
+    payload: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    if not _as_bool(payload.get("same_symbol_reentry_reset_enabled"), True):
+        return None
+    reset_reasons = _reentry_reset_reasons(payload)
+    matching: list[tuple[datetime, Mapping[str, Any], str]] = []
+    for position in positions:
+        if str(position.get("root_symbol") or "").upper() != symbol:
+            continue
+        if _position_status(position) != "closed":
+            continue
+        opened = str(position.get("market_date_opened") or position.get("market_date") or "")
+        closed = str(position.get("market_date_closed") or opened or "")
+        if opened != session_date and closed != session_date:
+            continue
+        reason = (_as_text(position.get("last_exit_reason")) or "").lower()
+        if reason not in reset_reasons:
+            continue
+        closed_at = parse_datetime(position.get("closed_at"))
+        if closed_at is None:
+            continue
+        matching.append((closed_at.astimezone(UTC), position, reason))
+    if not matching:
+        return None
+
+    closed_at, position, reason = max(matching, key=lambda item: item[0])
+    feed_generated_at = parse_datetime(snapshot.get("generated_at"))
+    current_feed_run_id = _as_text(snapshot.get("job_run_id"))
+    opening_source = _opening_intent_source(execution_store, position)
+    opening_feed_run_id = _as_text(opening_source.get("feed_job_run_id"))
+    feed_is_after_close = (
+        feed_generated_at is not None
+        and feed_generated_at.astimezone(UTC) > closed_at
+    )
+    feed_run_changed = (
+        opening_feed_run_id is None
+        or current_feed_run_id is None
+        or opening_feed_run_id != current_feed_run_id
+    )
+    details = {
+        "previous_position_id": position.get("position_id"),
+        "last_exit_reason": reason,
+        "closed_at": closed_at.isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "feed_generated_at": None
+        if feed_generated_at is None
+        else feed_generated_at.astimezone(UTC)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z"),
+        "feed_job_run_id": current_feed_run_id,
+        "opening_feed_job_run_id": opening_feed_run_id,
+        "feed_is_after_close": feed_is_after_close,
+        "feed_run_changed": feed_run_changed,
+        "entry_setup": {
+            "finviz_rank": entry.get("finviz_rank"),
+            "move_percent": entry.get("move_percent"),
+            "price": entry.get("price"),
+        },
+    }
+    if feed_is_after_close and feed_run_changed:
+        return None
+    return {
+        "passed": False,
+        "reason": "same_symbol_setup_not_reset",
+        "same_symbol_reentry": details,
+    }
+
+
 def _has_active_intent(execution_store: Any, slot_key: str) -> str | None:
     rows = execution_store.list_execution_intents(
         slot_key=slot_key,
@@ -1736,6 +1856,18 @@ def run_finviz_direct_trading(
             decisions.append(
                 {**decision, "passed": False, "reason": "broker_position_already_open"}
             )
+            continue
+        reentry_decision = _same_symbol_reentry_reset_decision(
+            execution_store=execution_store,
+            positions=managed_session_positions,
+            symbol=symbol,
+            entry=entry,
+            snapshot=snapshot,
+            session_date=session_date,
+            payload=payload,
+        )
+        if reentry_decision is not None:
+            decisions.append({**decision, **reentry_decision})
             continue
 
         timing_rules = _mapping(entry_rules.get("timing"))
