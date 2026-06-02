@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Any
 
 from core.db.decorators import with_storage
+from core.jobs.orchestration import NEW_YORK
+from core.services.close_lifecycle import build_close_lifecycle_summary
 from core.services.option_structures import position_legs, primary_short_long_symbols
 from core.services.runtime_identity import build_live_run_scope_id, build_pipeline_id
 
@@ -139,6 +142,54 @@ def _serialize_position(
     }
 
 
+def _matches_optional(value: Any, expected: str | None) -> bool:
+    return expected is None or _as_text(value) == expected
+
+
+def _attempt_matches_scope(
+    row: Mapping[str, Any],
+    *,
+    bot_id: str | None,
+    automation_id: str | None,
+    strategy_config_id: str | None,
+    position_ids: set[str],
+) -> bool:
+    if not _matches_optional(row.get("bot_id"), bot_id):
+        return False
+    if not _matches_optional(row.get("automation_id"), automation_id):
+        return False
+    if not _matches_optional(row.get("strategy_config_id"), strategy_config_id):
+        return False
+    position_id = _as_text(row.get("position_id"))
+    return not position_ids or position_id is None or position_id in position_ids
+
+
+def _intent_matches_scope(
+    row: Mapping[str, Any],
+    *,
+    bot_id: str | None,
+    automation_id: str | None,
+    strategy_config_id: str | None,
+    position_ids: set[str],
+) -> bool:
+    if not _matches_optional(row.get("bot_id"), bot_id):
+        return False
+    if not _matches_optional(row.get("automation_id"), automation_id):
+        return False
+    policy_ref = row.get("policy_ref") if isinstance(row.get("policy_ref"), Mapping) else {}
+    if not _matches_optional(policy_ref.get("strategy_config_id"), strategy_config_id):
+        return False
+    position_id = _as_text(row.get("strategy_position_id"))
+    return not position_ids or position_id is None or position_id in position_ids
+
+
+def _position_in_lifecycle_scope(row: Mapping[str, Any], *, market_date: str) -> bool:
+    status = str(row.get("position_status") or row.get("status") or "").strip().lower()
+    if status in OPEN_POSITION_STATUSES:
+        return True
+    return str(row.get("market_date_opened") or row.get("market_date") or "") == market_date
+
+
 @with_storage()
 def list_positions(
     *,
@@ -183,6 +234,53 @@ def list_positions(
             limit=limit,
         )
     ]
+    position_ids = {
+        str(row["position_id"])
+        for row in rows
+        if _as_text(row.get("position_id")) is not None
+    }
+    lifecycle_market_date = market_date or datetime.now(NEW_YORK).date().isoformat()
+    close_attempts = [
+        dict(row)
+        for row in execution_store.list_attempts_for_market_date(
+            market_date=lifecycle_market_date,
+            limit=500,
+        )
+        if _attempt_matches_scope(
+            row,
+            bot_id=bot_id,
+            automation_id=automation_id,
+            strategy_config_id=strategy_config_id,
+            position_ids=position_ids,
+        )
+    ]
+    close_intents: list[dict[str, Any]] = []
+    if execution_store.intent_schema_ready():
+        close_intents = [
+            dict(row)
+            for row in execution_store.list_execution_intents(
+                bot_id=bot_id,
+                automation_id=automation_id,
+                limit=200,
+            )
+            if _intent_matches_scope(
+                row,
+                bot_id=bot_id,
+                automation_id=automation_id,
+                strategy_config_id=strategy_config_id,
+                position_ids=position_ids,
+            )
+        ]
+    close_lifecycle = build_close_lifecycle_summary(
+        attempts=close_attempts,
+        intents=close_intents,
+        positions=[
+            row
+            for row in rows
+            if _position_in_lifecycle_scope(row, market_date=lifecycle_market_date)
+        ],
+        limit=8,
+    )
     open_count = sum(
         1 for row in rows if str(row.get("position_status")) in OPEN_POSITION_STATUSES
     )
@@ -198,6 +296,8 @@ def list_positions(
             "bot_id": bot_id,
             "automation_id": automation_id,
             "strategy_config_id": strategy_config_id,
+            "close_lifecycle_market_date": lifecycle_market_date,
+            "close_lifecycle": close_lifecycle,
         },
         "positions": rows,
     }

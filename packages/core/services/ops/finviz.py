@@ -7,6 +7,7 @@ from typing import Any
 
 from core.db.decorators import with_storage
 from core.jobs.orchestration import NEW_YORK
+from core.services.close_lifecycle import build_close_lifecycle_summary
 from core.services.positions import OPEN_POSITION_STATUSES, enrich_position_row
 from core.services.value_coercion import (
     as_text as _as_text,
@@ -254,6 +255,13 @@ def _summarize_position(
     }
 
 
+def _position_in_lifecycle_scope(row: Mapping[str, Any], *, market_date: str) -> bool:
+    status = str(row.get("status") or "").strip().lower()
+    if status in OPEN_POSITION_STATUSES:
+        return True
+    return str(row.get("market_date_opened") or "") == market_date
+
+
 def _intent_matches(row: Mapping[str, Any], *, feed_id: str) -> bool:
     if _as_text(row.get("bot_id")) != DEFAULT_BOT_ID:
         return False
@@ -447,6 +455,18 @@ def build_finviz_direct_ledger(
     session_entry_count = max(filled_entry_count, position_entry_count)
     recent_feed_runs = [_summarize_feed_run(row) for row in feed_runs]
     recent_direct_runs = [_summarize_direct_run(row) for row in direct_runs]
+    lifecycle_positions = [
+        row
+        for row in positions
+        if _position_in_lifecycle_scope(row, market_date=resolved_market_date)
+    ]
+    close_lifecycle = build_close_lifecycle_summary(
+        attempts=attempts,
+        intents=intents,
+        positions=lifecycle_positions,
+        recent_direct_runs=recent_direct_runs,
+        limit=limit,
+    )
     status = _combine_statuses(_run_status(latest_feed_run), _run_status(latest_direct_run))
     if attention:
         severities = {item.get("severity") for item in attention}
@@ -489,6 +509,22 @@ def build_finviz_direct_ledger(
             "closed_position_count": sum(
                 1 for row in positions if str(row.get("status") or "").lower() == "closed"
             ),
+            "close_lifecycle_status": close_lifecycle.get("status"),
+            "active_close_attempt_count": close_lifecycle.get(
+                "active_close_attempt_count"
+            ),
+            "pending_close_intent_count": close_lifecycle.get(
+                "pending_close_intent_count"
+            ),
+            "failed_close_attempt_count": close_lifecycle.get(
+                "failed_close_attempt_count"
+            ),
+            "stale_reconciliation_skip_count": close_lifecycle.get(
+                "stale_reconciliation_skip_count"
+            ),
+            "intent_mismatch_reject_count": close_lifecycle.get(
+                "intent_mismatch_reject_count"
+            ),
             "realized_pnl": round(realized_pnl, 2),
             "unrealized_pnl": round(unrealized_pnl, 2),
             "net_pnl": round(realized_pnl + unrealized_pnl, 2),
@@ -500,6 +536,7 @@ def build_finviz_direct_ledger(
             "positions": positions,
             "attempts": attempts,
             "intents": intents[:limit],
+            "close_lifecycle": close_lifecycle,
         },
     }
 

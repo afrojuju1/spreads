@@ -633,6 +633,57 @@ def build_live_doctor(
         )
     )
 
+    close_lifecycle = _mapping(finviz_details.get("close_lifecycle"))
+    latest_failure = _mapping(close_lifecycle.get("latest_failure"))
+    close_status = str(close_lifecycle.get("status") or "unknown")
+    checks.append(
+        _check(
+            "Close Lifecycle",
+            status=close_status,
+            message=(
+                "attempts="
+                f"{close_lifecycle.get('recent_close_attempt_count') or 0}, "
+                "active="
+                f"{close_lifecycle.get('active_close_attempt_count') or 0}, "
+                "pending_intents="
+                f"{close_lifecycle.get('pending_close_intent_count') or 0}, "
+                "failed="
+                f"{close_lifecycle.get('failed_close_attempt_count') or 0}, "
+                "stale_reconcile="
+                f"{close_lifecycle.get('stale_reconciliation_skip_count') or 0}, "
+                "intent_mismatch="
+                f"{close_lifecycle.get('intent_mismatch_reject_count') or 0}"
+            ),
+            metrics={
+                "recent_close_attempt_count": close_lifecycle.get(
+                    "recent_close_attempt_count"
+                ),
+                "close_attempt_status_counts": close_lifecycle.get(
+                    "close_attempt_status_counts"
+                ),
+                "active_close_attempt_count": close_lifecycle.get(
+                    "active_close_attempt_count"
+                ),
+                "pending_close_intent_count": close_lifecycle.get(
+                    "pending_close_intent_count"
+                ),
+                "failed_close_attempt_count": close_lifecycle.get(
+                    "failed_close_attempt_count"
+                ),
+                "stale_reconciliation_skip_count": close_lifecycle.get(
+                    "stale_reconciliation_skip_count"
+                ),
+                "intent_mismatch_reject_count": close_lifecycle.get(
+                    "intent_mismatch_reject_count"
+                ),
+                "latest_failure": latest_failure or None,
+                "latest_filled_closes": list(
+                    close_lifecycle.get("latest_filled_closes") or []
+                )[:3],
+            },
+        )
+    )
+
     status = _combine_statuses(*(str(row.get("status") or "unknown") for row in checks))
     attention = _checks_attention(checks)
 
@@ -674,6 +725,22 @@ def build_live_doctor(
             "position_entry_count": finviz_summary.get("position_entry_count"),
             "session_entry_count": session_entry_count,
             "remaining_daily_entries": remaining_daily_entries,
+            "close_lifecycle_status": close_status,
+            "active_close_attempt_count": close_lifecycle.get(
+                "active_close_attempt_count"
+            ),
+            "pending_close_intent_count": close_lifecycle.get(
+                "pending_close_intent_count"
+            ),
+            "failed_close_attempt_count": close_lifecycle.get(
+                "failed_close_attempt_count"
+            ),
+            "stale_reconciliation_skip_count": close_lifecycle.get(
+                "stale_reconciliation_skip_count"
+            ),
+            "intent_mismatch_reject_count": close_lifecycle.get(
+                "intent_mismatch_reject_count"
+            ),
             "realized_pnl": _coerce_float(finviz_summary.get("realized_pnl")),
             "unrealized_pnl": _coerce_float(finviz_summary.get("unrealized_pnl")),
             "net_pnl": _coerce_float(finviz_summary.get("net_pnl")),
@@ -691,6 +758,7 @@ def build_live_doctor(
             "newest_direct_run": _compact_direct_run(newest_direct),
             "latest_direct_run": _compact_direct_run(latest_direct),
             "positions": positions[:limit],
+            "close_lifecycle": close_lifecycle,
         },
     }
 

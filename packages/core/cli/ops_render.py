@@ -1775,6 +1775,15 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
     overview.add_row("Open Positions", _render_value(summary.get("open_position_count")))
     overview.add_row("Active Intents", _render_value(summary.get("active_intent_count")))
     overview.add_row(
+        "Closes",
+        (
+            f"{_render_value(summary.get('close_lifecycle_status'))} | "
+            f"active {_render_value(summary.get('active_close_attempt_count'))} | "
+            f"pending intents {_render_value(summary.get('pending_close_intent_count'))} | "
+            f"failed {_render_value(summary.get('failed_close_attempt_count'))}"
+        ),
+    )
+    overview.add_row(
         "PnL",
         (
             f"realized {_render_money(summary.get('realized_pnl'))} | "
@@ -1842,6 +1851,84 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
                 _render_count_map(row.get("reason_counts")),
             )
         console.print(table)
+
+    close_lifecycle = dict(details.get("close_lifecycle") or {})
+    if close_lifecycle:
+        overview_table = Table(title="Close Lifecycle", header_style="bold")
+        overview_table.add_column("Status")
+        overview_table.add_column("Attempts", justify="right")
+        overview_table.add_column("Active", justify="right")
+        overview_table.add_column("Pending Intents", justify="right")
+        overview_table.add_column("Failed", justify="right")
+        overview_table.add_column("Stale Reconcile", justify="right")
+        overview_table.add_column("Intent Mismatch", justify="right")
+        overview_table.add_column("Statuses")
+        overview_table.add_row(
+            _render_value(close_lifecycle.get("status")),
+            _render_value(close_lifecycle.get("recent_close_attempt_count")),
+            _render_value(close_lifecycle.get("active_close_attempt_count")),
+            _render_value(close_lifecycle.get("pending_close_intent_count")),
+            _render_value(close_lifecycle.get("failed_close_attempt_count")),
+            _render_value(close_lifecycle.get("stale_reconciliation_skip_count")),
+            _render_value(close_lifecycle.get("intent_mismatch_reject_count")),
+            _render_count_map(close_lifecycle.get("close_attempt_status_counts")),
+        )
+        console.print(overview_table)
+
+        latest_failure = dict(close_lifecycle.get("latest_failure") or {})
+        latest_filled_closes = list(close_lifecycle.get("latest_filled_closes") or [])
+        proof_rows = list(close_lifecycle.get("position_close_proof") or [])
+        if latest_failure:
+            table = Table(title="Latest Close Failure", header_style="bold")
+            table.add_column("Requested")
+            table.add_column("Root")
+            table.add_column("Status")
+            table.add_column("Attempt")
+            table.add_column("Error")
+            table.add_row(
+                _render_value(latest_failure.get("requested_at")),
+                _render_value(latest_failure.get("root_symbol")),
+                _render_value(latest_failure.get("status")),
+                _truncate(latest_failure.get("execution_attempt_id"), length=28),
+                _truncate(latest_failure.get("error_text"), length=72),
+            )
+            console.print(table)
+        if latest_filled_closes:
+            table = Table(title="Latest Filled Closes", header_style="bold")
+            table.add_column("Root")
+            table.add_column("Status")
+            table.add_column("Closed")
+            table.add_column("Broker Order")
+            table.add_column("PnL", justify="right")
+            for row in latest_filled_closes[:6]:
+                latest_close = dict(row.get("latest_close") or {})
+                table.add_row(
+                    _render_value(row.get("root_symbol")),
+                    _render_value(row.get("status")),
+                    _render_value(latest_close.get("closed_at")),
+                    _truncate(latest_close.get("broker_order_id"), length=28),
+                    _render_money(latest_close.get("realized_pnl")),
+                )
+            console.print(table)
+        if proof_rows:
+            table = Table(title="Close Proof By Position", header_style="bold")
+            table.add_column("Root")
+            table.add_column("Status")
+            table.add_column("Reconcile")
+            table.add_column("Exit Reason")
+            table.add_column("Closes", justify="right")
+            table.add_column("Latest Close")
+            for row in proof_rows[:8]:
+                latest_close = dict(row.get("latest_close") or {})
+                table.add_row(
+                    _render_value(row.get("root_symbol")),
+                    _render_value(row.get("status")),
+                    _render_value(row.get("reconciliation_status")),
+                    _render_value(row.get("last_exit_reason")),
+                    _render_value(row.get("close_count")),
+                    _render_value(latest_close.get("closed_at")),
+                )
+            console.print(table)
 
     positions = list(details.get("positions") or [])
     if positions:
@@ -2029,6 +2116,15 @@ def render_live_doctor(console: Console, payload: dict[str, Any]) -> None:
             f"remaining {_render_value(summary.get('remaining_daily_entries'))}"
         ),
     )
+    overview.add_row(
+        "Closes",
+        (
+            f"{_render_value(summary.get('close_lifecycle_status'))} | "
+            f"active {_render_value(summary.get('active_close_attempt_count'))} | "
+            f"pending {_render_value(summary.get('pending_close_intent_count'))} | "
+            f"failed {_render_value(summary.get('failed_close_attempt_count'))}"
+        ),
+    )
     overview.add_row("Net PnL", _render_money(summary.get("net_pnl")))
     overview.add_row(
         "Workers",
@@ -2080,6 +2176,29 @@ def render_live_doctor(console: Console, payload: dict[str, Any]) -> None:
                 fallback_limit=latest_direct.get("max_daily_entries"),
             ),
             _render_count_map(latest_direct.get("reason_counts"), limit=5),
+        )
+        console.print(table)
+
+    close_lifecycle = dict(details.get("close_lifecycle") or {})
+    if close_lifecycle:
+        table = Table(title="Close Lifecycle", header_style="bold")
+        table.add_column("Status")
+        table.add_column("Attempts", justify="right")
+        table.add_column("Active", justify="right")
+        table.add_column("Pending", justify="right")
+        table.add_column("Failed", justify="right")
+        table.add_column("Stale Reconcile", justify="right")
+        table.add_column("Intent Mismatch", justify="right")
+        table.add_column("Statuses")
+        table.add_row(
+            _render_value(close_lifecycle.get("status")),
+            _render_value(close_lifecycle.get("recent_close_attempt_count")),
+            _render_value(close_lifecycle.get("active_close_attempt_count")),
+            _render_value(close_lifecycle.get("pending_close_intent_count")),
+            _render_value(close_lifecycle.get("failed_close_attempt_count")),
+            _render_value(close_lifecycle.get("stale_reconciliation_skip_count")),
+            _render_value(close_lifecycle.get("intent_mismatch_reject_count")),
+            _render_count_map(close_lifecycle.get("close_attempt_status_counts")),
         )
         console.print(table)
 

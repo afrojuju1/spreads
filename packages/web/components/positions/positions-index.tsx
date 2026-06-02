@@ -28,6 +28,7 @@ import {
   formatSignedCurrency,
   LoadingState,
   MetricTile,
+  readNumber,
   readString,
   SectionSurface,
 } from "@/components/operator/operator-primitives";
@@ -40,6 +41,25 @@ function readRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function readRecordList(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value
+        .filter((item) => typeof item === "object" && item !== null && !Array.isArray(item))
+        .map((item) => item as Record<string, unknown>)
+    : [];
+}
+
+function readOptionalNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }
 
 function getPositionOwner(position: Position): Record<string, unknown> {
@@ -307,6 +327,10 @@ export function PositionsIndexPageContent({
 
   const positions = positionsQuery.data?.positions ?? [];
   const summary = positionsQuery.data?.summary ?? {};
+  const closeLifecycle = readRecord(summary.close_lifecycle);
+  const latestFailure = readRecord(closeLifecycle.latest_failure);
+  const latestFilledCloses = readRecordList(closeLifecycle.latest_filled_closes);
+  const closeProofRows = readRecordList(closeLifecycle.position_close_proof);
 
   function clearOwnerScope() {
     startTransition(() => {
@@ -502,6 +526,145 @@ export function PositionsIndexPageContent({
           note={closeMutation.isPending ? "Close queued" : "Live estimate"}
         />
       </div>
+
+      <SectionSurface
+        title="Close Lifecycle"
+        description="Recent close attempts, pending close work, and filled close proof."
+      >
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <MetricTile
+            label="Status"
+            value={readString(closeLifecycle.status, "unknown")}
+            note="Current close health"
+          />
+          <MetricTile
+            label="Attempts"
+            value={String(readNumber(closeLifecycle.recent_close_attempt_count))}
+            note="Recent close requests"
+          />
+          <MetricTile
+            label="Active"
+            value={String(readNumber(closeLifecycle.active_close_attempt_count))}
+            note="Working close attempts"
+          />
+          <MetricTile
+            label="Pending"
+            value={String(readNumber(closeLifecycle.pending_close_intent_count))}
+            note="Close intents"
+          />
+          <MetricTile
+            label="Anomalies"
+            value={String(readNumber(closeLifecycle.anomaly_count))}
+            note={`Failed ${readNumber(closeLifecycle.failed_close_attempt_count)} · stale ${readNumber(closeLifecycle.stale_reconciliation_skip_count)} · mismatch ${readNumber(closeLifecycle.intent_mismatch_reject_count)}`}
+          />
+        </div>
+
+        {Object.keys(latestFailure).length > 0 ? (
+          <div className="mt-4 rounded-lg border border-border/70 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-sm font-medium">Latest close failure</div>
+              <Badge variant="outline">{readString(latestFailure.status)}</Badge>
+            </div>
+            <div className="mt-2 grid gap-2 text-xs text-muted-foreground md:grid-cols-3">
+              <div className="truncate">
+                {readString(latestFailure.root_symbol)} ·{" "}
+                {readString(latestFailure.requested_at)}
+              </div>
+              <div className="truncate">
+                {readString(latestFailure.execution_attempt_id)}
+              </div>
+              <div className="truncate">
+                {readString(latestFailure.error_text)}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="mt-4 grid gap-4 xl:grid-cols-2">
+          <div className="min-w-0">
+            <div className="mb-2 text-sm font-medium">Latest filled closes</div>
+            <div className="divide-y divide-border/70 rounded-lg border border-border/70">
+              {latestFilledCloses.length ? (
+                latestFilledCloses.slice(0, 5).map((row) => {
+                  const latestClose = readRecord(row.latest_close);
+                  return (
+                    <div
+                      key={readString(row.position_id)}
+                      className="grid gap-2 px-3 py-2 text-sm md:grid-cols-[minmax(80px,1fr)_minmax(120px,1.4fr)_minmax(90px,0.8fr)]"
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate font-medium">
+                          {readString(row.root_symbol)}
+                        </div>
+                        <div className="truncate text-xs text-muted-foreground">
+                          {readString(row.status)}
+                        </div>
+                      </div>
+                      <div className="min-w-0 truncate text-xs text-muted-foreground">
+                        {readString(latestClose.closed_at)}
+                      </div>
+                      <div className="text-right">
+                        {formatNullableCurrency(
+                          readOptionalNumber(latestClose.realized_pnl),
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="px-3 py-3 text-sm text-muted-foreground">
+                  No filled closes in scope.
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="min-w-0">
+            <div className="mb-2 text-sm font-medium">Close proof by position</div>
+            <div className="divide-y divide-border/70 rounded-lg border border-border/70">
+              {closeProofRows.length ? (
+                closeProofRows.slice(0, 5).map((row) => {
+                  const latestClose = readRecord(row.latest_close);
+                  return (
+                    <div
+                      key={readString(row.position_id)}
+                      className="grid gap-2 px-3 py-2 text-sm md:grid-cols-[minmax(80px,1fr)_minmax(80px,0.8fr)_minmax(120px,1.3fr)]"
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate font-medium">
+                          {readString(row.root_symbol)}
+                        </div>
+                        <div className="truncate text-xs text-muted-foreground">
+                          {readString(row.strategy_family)}
+                        </div>
+                      </div>
+                      <div>
+                        <Badge variant="outline">{readString(row.status)}</Badge>
+                      </div>
+                      <div className="min-w-0 text-xs text-muted-foreground">
+                        <div className="truncate">
+                          closes {readNumber(row.close_count)} ·{" "}
+                          {readString(row.reconciliation_status)}
+                        </div>
+                        <div className="truncate">
+                          {readString(
+                            latestClose.closed_at,
+                            readString(row.last_exit_reason),
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="px-3 py-3 text-sm text-muted-foreground">
+                  No close proof rows in scope.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </SectionSurface>
 
       <SectionSurface
         title="Position List"
