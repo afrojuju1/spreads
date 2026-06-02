@@ -2700,6 +2700,52 @@ def submit_option_order(
                     if not isinstance(metadata.get("source"), Mapping)
                     else {"source": dict(metadata["source"])}
                 ),
+                **(
+                    {}
+                    if _as_text(metadata.get("original_limit_price")) is None
+                    else {
+                        "original_limit_price": _coerce_float(
+                            metadata.get("original_limit_price")
+                        )
+                    }
+                ),
+                **(
+                    {}
+                    if _as_text(metadata.get("previous_limit_price")) is None
+                    else {
+                        "previous_limit_price": _coerce_float(
+                            metadata.get("previous_limit_price")
+                        )
+                    }
+                ),
+                **(
+                    {}
+                    if _as_text(metadata.get("previous_execution_attempt_id")) is None
+                    else {
+                        "previous_execution_attempt_id": _as_text(
+                            metadata.get("previous_execution_attempt_id")
+                        )
+                    }
+                ),
+                **(
+                    {}
+                    if _as_text(metadata.get("supersedes_execution_intent_id")) is None
+                    else {
+                        "supersedes_execution_intent_id": _as_text(
+                            metadata.get("supersedes_execution_intent_id")
+                        )
+                    }
+                ),
+                **(
+                    {}
+                    if _coerce_int(metadata.get("reprice_count")) is None
+                    else {"reprice_count": _coerce_int(metadata.get("reprice_count"))}
+                ),
+                **(
+                    {}
+                    if not isinstance(metadata.get("repricing_policy"), Mapping)
+                    else {"repricing_policy": dict(metadata["repricing_policy"])}
+                ),
                 **({} if not option_selection else {"option_selection": option_selection}),
                 "order": order_request,
             },

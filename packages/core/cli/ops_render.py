@@ -1926,6 +1926,29 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
         latest_failure = dict(close_lifecycle.get("latest_failure") or {})
         latest_filled_closes = list(close_lifecycle.get("latest_filled_closes") or [])
         proof_rows = list(close_lifecycle.get("position_close_proof") or [])
+        close_attempt_rows = list(close_lifecycle.get("recent_close_attempts") or [])
+        if close_attempt_rows:
+            table = Table(title="Recent Close Attempts", header_style="bold")
+            table.add_column("Requested")
+            table.add_column("Root")
+            table.add_column("Status")
+            table.add_column("Reprice", justify="right")
+            table.add_column("Limit", justify="right")
+            table.add_column("Prev Limit", justify="right")
+            table.add_column("Previous Attempt")
+            table.add_column("Broker Order")
+            for row in close_attempt_rows[:8]:
+                table.add_row(
+                    _render_value(row.get("requested_at")),
+                    _render_value(row.get("root_symbol")),
+                    _render_value(row.get("status")),
+                    _render_value(row.get("reprice_count")),
+                    _render_money(row.get("limit_price")),
+                    _render_money(row.get("previous_limit_price")),
+                    _truncate(row.get("previous_execution_attempt_id"), length=24),
+                    _truncate(row.get("broker_order_id"), length=24),
+                )
+            console.print(table)
         if latest_failure:
             table = Table(title="Latest Close Failure", header_style="bold")
             table.add_column("Requested")

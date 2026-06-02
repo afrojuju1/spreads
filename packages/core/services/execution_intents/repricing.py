@@ -8,14 +8,17 @@ from core.services.execution import refresh_execution_attempt
 
 from .maintenance import _opportunity_is_active_for_intent, _position_is_active_for_intent
 from .shared import (
+    ACTIVE_INTENT_STATES,
     WORKING_REPRICE_ATTEMPT_STATUSES,
     _append_event,
     _as_text,
+    _coerce_int,
     _intent_action_type,
     issue_pending_execution_intent,
     _intent_payload,
     _next_reprice_limit,
     _reprice_count,
+    _repricing_policy,
     _submitted_age_seconds,
     _update_intent,
     _utc_now,
@@ -51,9 +54,17 @@ def _create_replacement_intent(
     now = _utc_now()
     replacement_id = _replacement_intent_id()
     payload = _intent_payload(intent)
+    original_limit_price = payload.get("original_limit_price")
+    if original_limit_price in (None, ""):
+        original_limit_price = (
+            attempt.get("requested_limit_price") or attempt.get("limit_price")
+        )
     payload.update(
         {
             "limit_price": next_limit,
+            "original_limit_price": original_limit_price,
+            "previous_limit_price": attempt.get("requested_limit_price")
+            or attempt.get("limit_price"),
             "reprice_count": _reprice_count(intent) + 1,
             "dispatch_status": "pending",
             "supersedes_execution_intent_id": str(intent["execution_intent_id"]),
@@ -107,6 +118,21 @@ def _create_replacement_intent(
     return updated
 
 
+def _stale_after_seconds(
+    intent: dict[str, Any],
+    attempt: dict[str, Any],
+    *,
+    default_seconds: int,
+) -> int:
+    policy = _repricing_policy(intent, attempt)
+    configured = _coerce_int(
+        policy.get("stale_after_seconds", policy.get("ttl_seconds"))
+    )
+    if configured is None:
+        return max(int(default_seconds), 1)
+    return max(configured, 1)
+
+
 def _manage_submitted_open_intents(
     *,
     db_target: str,
@@ -118,7 +144,7 @@ def _manage_submitted_open_intents(
     intents = [
         dict(row)
         for row in execution_store.list_execution_intents(
-            states=["submitted"],
+            states=sorted(ACTIVE_INTENT_STATES),
             limit=max(int(limit), 1) * 5,
         )
     ]
@@ -190,10 +216,26 @@ def _manage_submitted_open_intents(
                 intent,
             )
         age_seconds = _submitted_age_seconds(refreshed_attempt)
-        if age_seconds is None or age_seconds < float(max(stale_after_seconds, 1)):
+        reprice_after_seconds = _stale_after_seconds(
+            intent,
+            refreshed_attempt,
+            default_seconds=stale_after_seconds,
+        )
+        if age_seconds is None or age_seconds < float(reprice_after_seconds):
             continue
         broker_order_id = _as_text(refreshed_attempt.get("broker_order_id"))
         if broker_order_id is None:
+            continue
+        next_limit = _next_reprice_limit(intent, refreshed_attempt)
+        if next_limit is None:
+            results.append(
+                {
+                    "execution_intent_id": str(intent["execution_intent_id"]),
+                    "status": "reprice_skipped",
+                    "execution_attempt_id": execution_attempt_id,
+                    "age_seconds": age_seconds,
+                }
+            )
             continue
         client.cancel_order(broker_order_id)
         canceled += 1
@@ -205,6 +247,7 @@ def _manage_submitted_open_intents(
                 "execution_attempt_id": execution_attempt_id,
                 "broker_order_id": broker_order_id,
                 "age_seconds": age_seconds,
+                "next_limit_price": next_limit,
             },
         )
         post_cancel = refresh_execution_attempt(

@@ -114,7 +114,10 @@ def _position_is_active_for_intent(
     execution_store: Any,
     intent: dict[str, Any],
 ) -> tuple[bool, str | None]:
-    strategy_position_id = _as_text(intent.get("strategy_position_id"))
+    payload = _intent_payload(intent)
+    strategy_position_id = _as_text(intent.get("strategy_position_id")) or _as_text(
+        payload.get("position_id")
+    )
     if strategy_position_id is None:
         return False, "position_missing"
     position = execution_store.get_position(strategy_position_id)

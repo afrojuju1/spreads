@@ -14,6 +14,8 @@ from core.observability.logging import log_event
 
 DEFAULT_NAUTILUS_BRIDGE_COMMAND = "alpaca-submit-order-list-bridge"
 DEFAULT_NAUTILUS_BRIDGE_TIMEOUT_SECONDS = 45.0
+DEFAULT_NAUTILUS_BRIDGE_LOG_MAX_LINES = 40
+DEFAULT_NAUTILUS_BRIDGE_LOG_MAX_LINE_CHARS = 2000
 DEFAULT_NAUTILUS_BRIDGE_CANDIDATES = (
     DEFAULT_NAUTILUS_BRIDGE_COMMAND,
     "/usr/local/bin/alpaca-submit-order-list-bridge",
@@ -47,7 +49,7 @@ def submit_nautilus_order_list(handoff: Mapping[str, Any]) -> dict[str, Any]:
         logger,
         logging.INFO,
         "nautilus_bridge_submit_started",
-        **_handoff_log_fields(handoff),
+        **_bridge_log_fields(handoff),
         command=_command_summary(command),
         timeout_seconds=timeout_seconds,
     )
@@ -66,7 +68,7 @@ def submit_nautilus_order_list(handoff: Mapping[str, Any]) -> dict[str, Any]:
             logger,
             logging.ERROR,
             "nautilus_bridge_submit_failed",
-            **_handoff_log_fields(handoff),
+            **_bridge_log_fields(handoff),
             reason="nautilus_bridge_not_found",
             command=_command_summary(command),
         )
@@ -76,6 +78,14 @@ def submit_nautilus_order_list(handoff: Mapping[str, Any]) -> dict[str, Any]:
             details={"command": _command_summary(command)},
         ) from exc
     except OSError as exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            "nautilus_bridge_submit_failed",
+            **_bridge_log_fields(handoff),
+            reason="nautilus_bridge_command_start_failed",
+            command=_command_summary(command),
+        )
         raise NautilusBridgeError(
             f"Nautilus bridge command could not be started: {exc}",
             reason="nautilus_bridge_command_start_failed",
@@ -86,10 +96,16 @@ def submit_nautilus_order_list(handoff: Mapping[str, Any]) -> dict[str, Any]:
             logger,
             logging.ERROR,
             "nautilus_bridge_submit_failed",
-            **_handoff_log_fields(handoff),
+            **_bridge_log_fields(handoff),
             reason="nautilus_bridge_timeout",
             command=_command_summary(command),
             timeout_seconds=timeout_seconds,
+        )
+        _log_bridge_process_output(
+            stdout=exc.stdout,
+            stderr=exc.stderr,
+            handoff=handoff,
+            reason="nautilus_bridge_timeout",
         )
         raise NautilusBridgeError(
             f"Nautilus bridge timed out after {timeout_seconds:g}s",
@@ -107,10 +123,16 @@ def submit_nautilus_order_list(handoff: Mapping[str, Any]) -> dict[str, Any]:
             logger,
             logging.ERROR,
             "nautilus_bridge_submit_failed",
-            **_handoff_log_fields(handoff),
+            **_bridge_log_fields(handoff),
             reason="nautilus_bridge_nonzero_exit",
             command=_command_summary(command),
             returncode=completed.returncode,
+        )
+        _log_bridge_process_output(
+            stdout=completed.stdout,
+            stderr=completed.stderr,
+            handoff=handoff,
+            reason="nautilus_bridge_nonzero_exit",
         )
         raise NautilusBridgeError(
             f"Nautilus bridge exited with status {completed.returncode}",
@@ -124,16 +146,31 @@ def submit_nautilus_order_list(handoff: Mapping[str, Any]) -> dict[str, Any]:
         )
 
     result = _validate_bridge_result(_parse_bridge_stdout(completed.stdout))
+    _log_bridge_process_output(
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        handoff=handoff,
+        skip_stdout_result=True,
+    )
     log_event(
         logger,
         logging.INFO,
         "nautilus_bridge_submit_succeeded",
-        **_handoff_log_fields(handoff),
+        **_bridge_log_fields(handoff),
         command=_command_summary(command),
         returncode=completed.returncode,
         bridge_status=result.get("status"),
     )
     return result
+
+
+def _bridge_log_fields(handoff: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "component": "nautilus_bridge",
+        "log_origin_project": "nautilus",
+        "log_origin_service": "bridge",
+        **_handoff_log_fields(handoff),
+    }
 
 
 def _handoff_log_fields(handoff: Mapping[str, Any]) -> dict[str, Any]:
@@ -151,6 +188,111 @@ def _handoff_log_fields(handoff: Mapping[str, Any]) -> dict[str, Any]:
         "strategy": handoff.get("strategy"),
         "order_count": len(orders),
     }
+
+
+def _log_bridge_process_output(
+    *,
+    stdout: str | bytes | None,
+    stderr: str | bytes | None,
+    handoff: Mapping[str, Any],
+    reason: str | None = None,
+    skip_stdout_result: bool = False,
+) -> None:
+    _log_bridge_stream_lines(
+        stream="stdout",
+        raw=stdout,
+        level=logging.INFO,
+        handoff=handoff,
+        reason=reason,
+        skip_result_json=skip_stdout_result,
+    )
+    _log_bridge_stream_lines(
+        stream="stderr",
+        raw=stderr,
+        level=logging.WARNING,
+        handoff=handoff,
+        reason=reason,
+    )
+
+
+def _log_bridge_stream_lines(
+    *,
+    stream: str,
+    raw: str | bytes | None,
+    level: int,
+    handoff: Mapping[str, Any],
+    reason: str | None = None,
+    skip_result_json: bool = False,
+) -> None:
+    text = _decode_process_output(raw)
+    lines = text.splitlines()
+    if not lines:
+        return
+
+    result_index = _bridge_result_line_index(lines) if skip_result_json else None
+    loggable = [
+        (index, line.strip())
+        for index, line in enumerate(lines)
+        if index != result_index and line.strip()
+    ]
+    if not loggable:
+        return
+
+    max_lines = _bridge_log_max_lines()
+    if max_lines <= 0:
+        return
+    omitted_count = max(len(loggable) - max_lines, 0)
+    for index, line in loggable[-max_lines:]:
+        log_event(
+            logger,
+            level,
+            "nautilus_bridge_process_output",
+            **_bridge_log_fields(handoff),
+            stream=stream,
+            line=_truncate_line(line),
+            line_index=index,
+            omitted_count=omitted_count,
+            reason=reason,
+        )
+
+
+def _bridge_result_line_index(lines: list[str]) -> int | None:
+    for index in range(len(lines) - 1, -1, -1):
+        candidate = lines[index].strip()
+        if not candidate.startswith("{"):
+            continue
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and parsed.get("status"):
+            return index
+    return None
+
+
+def _bridge_log_max_lines() -> int:
+    raw = _clean_env_text("SPREADS_NAUTILUS_BRIDGE_LOG_MAX_LINES")
+    if raw is None:
+        return DEFAULT_NAUTILUS_BRIDGE_LOG_MAX_LINES
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return DEFAULT_NAUTILUS_BRIDGE_LOG_MAX_LINES
+    return max(parsed, 0)
+
+
+def _decode_process_output(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return str(value)
+
+
+def _truncate_line(value: str) -> str:
+    if len(value) <= DEFAULT_NAUTILUS_BRIDGE_LOG_MAX_LINE_CHARS:
+        return value
+    return value[: DEFAULT_NAUTILUS_BRIDGE_LOG_MAX_LINE_CHARS - 1].rstrip() + "…"
 
 
 def describe_nautilus_bridge() -> dict[str, Any]:

@@ -27,7 +27,7 @@ payload:
   allow_off_hours: false
   max_new_positions_per_run: 10
   max_open_positions: 10
-  max_daily_entries: 10
+  max_daily_entries: 15
   max_daily_loss: 500
   entry_rules:
     enabled: true
@@ -82,6 +82,12 @@ payload:
     max_spread_pct: 20
     max_quote_age_seconds: 180
     limit_price_offset_bps: 0
+    repricing:
+      enabled: true
+      stale_after_seconds: 75
+      max_reprices: 3
+      price_step: 0.01
+      max_concession: 0.03
     underlying_invalidation:
       enabled: true
       min_intraday_bars: 30

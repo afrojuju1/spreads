@@ -124,8 +124,11 @@ def _latest_close(closes: list[Any]) -> dict[str, Any] | None:
 
 
 def _compact_attempt(row: Mapping[str, Any]) -> dict[str, Any]:
+    request = _mapping(row.get("request"))
     return {
         "execution_attempt_id": row.get("execution_attempt_id"),
+        "execution_intent_id": row.get("execution_intent_id")
+        or request.get("execution_intent_id"),
         "position_id": row.get("position_id"),
         "root_symbol": row.get("root_symbol") or row.get("underlying_symbol"),
         "strategy_family": row.get("strategy_family") or row.get("strategy"),
@@ -135,6 +138,14 @@ def _compact_attempt(row: Mapping[str, Any]) -> dict[str, Any]:
         "completed_at": row.get("completed_at"),
         "broker_order_id": row.get("broker_order_id"),
         "error_text": row.get("error_text"),
+        "limit_price": row.get("limit_price"),
+        "previous_limit_price": request.get("previous_limit_price"),
+        "original_limit_price": request.get("original_limit_price"),
+        "reprice_count": request.get("reprice_count"),
+        "previous_execution_attempt_id": request.get("previous_execution_attempt_id"),
+        "supersedes_execution_intent_id": request.get(
+            "supersedes_execution_intent_id"
+        ),
         "order_statuses": row.get("order_statuses"),
         "filled_qty": row.get("filled_qty"),
         "avg_fill_price": row.get("avg_fill_price"),
@@ -151,6 +162,17 @@ def _compact_intent(row: Mapping[str, Any]) -> dict[str, Any]:
         "position_id": row.get("strategy_position_id") or payload.get("position_id"),
         "symbol": payload.get("symbol") or payload.get("underlying_symbol"),
         "limit_price": payload.get("limit_price"),
+        "original_limit_price": payload.get("original_limit_price"),
+        "previous_limit_price": payload.get("previous_limit_price"),
+        "reprice_count": payload.get("reprice_count"),
+        "previous_execution_attempt_id": payload.get("previous_execution_attempt_id"),
+        "supersedes_execution_intent_id": payload.get(
+            "supersedes_execution_intent_id"
+        ),
+        "replacement_execution_intent_id": payload.get(
+            "replacement_execution_intent_id"
+        )
+        or row.get("superseded_by_id"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "expires_at": row.get("expires_at"),

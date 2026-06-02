@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -43,6 +44,19 @@ def _coerce_float(value: Any) -> float | None:
         return None
 
 
+def _coerce_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
 def _intent_payload(intent: dict[str, Any]) -> dict[str, Any]:
     payload = intent.get("payload")
     if isinstance(payload, dict):
@@ -62,19 +76,27 @@ def _intent_action_type(
     intent: dict[str, Any], attempt: dict[str, Any] | None = None
 ) -> str:
     action_type = str(intent.get("action_type") or "").strip().lower()
-    if action_type:
-        return action_type
     request = {} if attempt is None else _attempt_request(attempt)
+    payload = _intent_payload(intent)
     trade_intent = (
         str(
             request.get("trade_intent")
+            or payload.get("trade_intent")
             or (None if attempt is None else attempt.get("trade_intent"))
             or "open"
         )
         .strip()
         .lower()
     )
-    return "close" if trade_intent == "close" else "open"
+    if action_type in {"open", "close"}:
+        return action_type
+    if trade_intent in {"open", "close"}:
+        return trade_intent
+    if action_type in {"buy", "buy_to_open", "sell_to_open"}:
+        return "open"
+    if action_type in {"sell", "sell_to_close", "buy_to_close"}:
+        return "close"
+    return action_type or "open"
 
 
 def _update_intent(
@@ -293,6 +315,8 @@ def _attempt_state(attempt: dict[str, Any] | None) -> str:
         return "failed"
     if status in {"expired", "revoked"}:
         return status
+    if status in {"new", "accepted", "pending_new", "submitted"}:
+        return "submitted"
     return "claimed"
 
 
@@ -313,6 +337,30 @@ def _submitted_age_seconds(attempt: dict[str, Any]) -> float | None:
     return max((datetime.now(UTC) - submitted_at).total_seconds(), 0.0)
 
 
+def _repricing_policy(intent: dict[str, Any], attempt: dict[str, Any]) -> dict[str, Any]:
+    payload = _intent_payload(intent)
+    request = _attempt_request(attempt)
+    exit_policy = _mapping(request.get("exit_policy")) or _mapping(
+        payload.get("exit_policy")
+    )
+    policy = (
+        _mapping(request.get("repricing_policy"))
+        or _mapping(payload.get("repricing_policy"))
+        or _mapping(payload.get("repricing"))
+        or _mapping(exit_policy.get("repricing"))
+    )
+    return policy
+
+
+def _policy_enabled(policy: dict[str, Any]) -> bool:
+    value = policy.get("enabled")
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def _next_reprice_limit(
     intent: dict[str, Any], attempt: dict[str, Any]
 ) -> float | None:
@@ -330,28 +378,60 @@ def _next_reprice_limit(
         current_limit = _coerce_float(attempt.get("limit_price"))
     if current_limit is None:
         return None
+    policy = _repricing_policy(intent, attempt)
+    action_type = _intent_action_type(intent, attempt)
+    if action_type == "close":
+        if not policy or not _policy_enabled(policy):
+            return None
+        max_reprices = _coerce_int(
+            policy.get("max_reprices", policy.get("max_reprice_count"))
+        )
+        if max_reprices is None:
+            max_reprices = 3
+        if _reprice_count(intent) >= max(max_reprices, 0):
+            return None
     natural_value = _coerce_float(
         candidate.get("natural_credit")
         or candidate.get("natural_debit")
         or candidate.get("natural_value")
     )
     max_credit_concession = max(
-        _coerce_float(execution_policy.get("max_credit_concession")) or 0.02,
+        _coerce_float(
+            policy.get(
+                "max_concession",
+                policy.get(
+                    "max_credit_concession",
+                    execution_policy.get("max_credit_concession"),
+                ),
+            )
+        )
+        or 0.02,
         0.0,
     )
-    step = 0.01
+    step = max(
+        _coerce_float(policy.get("price_step", policy.get("step"))) or 0.01,
+        0.01,
+    )
+    original_limit = _coerce_float(
+        _intent_payload(intent).get(
+            "original_limit_price",
+            request.get("original_limit_price"),
+        )
+    )
+    if original_limit is None:
+        original_limit = current_limit
     premium_kind = net_premium_kind(
         normalize_strategy_family(
             attempt.get("strategy_family") or attempt.get("strategy")
         )
     )
-    if _intent_action_type(intent, attempt) == "close":
+    if action_type == "close":
         if premium_kind == "credit":
             premium_kind = "debit"
         elif premium_kind == "debit":
             premium_kind = "credit"
     if premium_kind == "debit":
-        ceiling = current_limit + max_credit_concession
+        ceiling = original_limit + max_credit_concession
         target = min(round(current_limit + step, 2), round(ceiling, 2))
         if natural_value is not None:
             target = min(target, round(max(natural_value, current_limit), 2))
@@ -359,7 +439,7 @@ def _next_reprice_limit(
             return None
         return target
 
-    floor = round(max(current_limit - max_credit_concession, 0.01), 2)
+    floor = round(max(original_limit - max_credit_concession, 0.01), 2)
     target = max(round(current_limit - step, 2), floor)
     if natural_value is not None:
         target = min(target, round(current_limit - step, 2))

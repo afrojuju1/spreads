@@ -413,6 +413,20 @@ def submit_execution_intent(
                     ),
                     "source": dict(source_metadata),
                     "underlying_price": option_payload.get("underlying_price"),
+                    "original_limit_price": option_payload.get("original_limit_price"),
+                    "previous_limit_price": option_payload.get("previous_limit_price"),
+                    "previous_execution_attempt_id": _as_text(
+                        option_payload.get("previous_execution_attempt_id")
+                    ),
+                    "supersedes_execution_intent_id": _as_text(
+                        option_payload.get("supersedes_execution_intent_id")
+                    ),
+                    "reprice_count": option_payload.get("reprice_count"),
+                    "repricing_policy": (
+                        dict(option_payload["repricing_policy"])
+                        if isinstance(option_payload.get("repricing_policy"), dict)
+                        else None
+                    ),
                     "option_selection": (
                         dict(option_payload["option_selection"])
                         if isinstance(option_payload.get("option_selection"), dict)

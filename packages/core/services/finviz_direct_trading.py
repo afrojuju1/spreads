@@ -223,6 +223,35 @@ def _option_quote_feeds(
     return (feed, "indicative")
 
 
+def _close_repricing_policy(
+    rules: Mapping[str, Any],
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    raw_policy = rules.get("repricing", payload.get("option_exit_repricing"))
+    if raw_policy is None:
+        return {}
+    if not isinstance(raw_policy, Mapping):
+        return {"enabled": _as_bool(raw_policy, False)}
+    enabled = _as_bool(raw_policy.get("enabled"), True)
+    policy: dict[str, Any] = {"enabled": enabled}
+    if not enabled:
+        return policy
+    policy["stale_after_seconds"] = max(
+        _as_int(raw_policy.get("stale_after_seconds"), 75),
+        1,
+    )
+    policy["max_reprices"] = max(_as_int(raw_policy.get("max_reprices"), 3), 0)
+    policy["price_step"] = round(
+        max(_as_float(raw_policy.get("price_step")) or 0.01, 0.01),
+        2,
+    )
+    policy["max_concession"] = round(
+        max(_as_float(raw_policy.get("max_concession")) or 0.03, 0.0),
+        2,
+    )
+    return policy
+
+
 def _optionable_symbol_set(client: Any) -> tuple[set[str] | None, str | None]:
     try:
         return {
@@ -1371,6 +1400,14 @@ def _issue_option_intent(
         intent_payload["timing"] = dict(timing)
     if position_id is not None:
         intent_payload["position_id"] = position_id
+    if trade_intent == "close":
+        intent_payload["original_limit_price"] = limit_price
+        repricing_policy = _close_repricing_policy(
+            _mapping(payload.get("option_exit_rules") or payload.get("exit_rules")),
+            payload,
+        )
+        if repricing_policy:
+            intent_payload["repricing_policy"] = repricing_policy
 
     intent = issue_pending_execution_intent(
         execution_store,
