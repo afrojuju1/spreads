@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -46,6 +47,8 @@ DEFAULT_EXIT_POLICY = {
     "force_close_at": None,
 }
 MANAGED_CLOSE_INTENT_TTL_MINUTES = 5
+BROKER_SYNC_KEY = "broker_sync:alpaca"
+BROKER_SYNC_IN_FLIGHT_STATUSES = {"queued", "running", "leased"}
 
 
 def _utc_now() -> str:
@@ -93,6 +96,105 @@ def _coerce_bool(value: Any) -> bool:
     if isinstance(value, (int, float)):
         return bool(value)
     return False
+
+
+def _latest_broker_sync_run(storage: Any) -> dict[str, Any] | None:
+    job_store = getattr(storage, "jobs", None)
+    if job_store is None:
+        return None
+    rows = job_store.list_job_runs(job_key=BROKER_SYNC_KEY, limit=1)
+    return dict(rows[0]) if rows else None
+
+
+def _broker_sync_snapshot(storage: Any, *, now: datetime) -> dict[str, Any]:
+    latest_run = _latest_broker_sync_run(storage)
+    latest_run_status = (
+        None if latest_run is None else str(latest_run.get("status") or "").lower()
+    )
+    latest_run_started_at = (
+        None if latest_run is None else parse_datetime(latest_run.get("started_at"))
+    )
+    latest_run_started_at_text = (
+        None
+        if latest_run_started_at is None
+        else latest_run_started_at.astimezone(UTC)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
+    broker_sync_in_flight = latest_run_status in BROKER_SYNC_IN_FLIGHT_STATUSES
+    snapshot: dict[str, Any] = {
+        "sync_key": BROKER_SYNC_KEY,
+        "status": "unknown",
+        "reason": None,
+        "updated_at": None,
+        "age_seconds": None,
+        "max_age_seconds": CLOSE_RECONCILIATION_MAX_AGE_SECONDS,
+        "state_status": None,
+        "job_run_id": None if latest_run is None else latest_run.get("job_run_id"),
+        "job_status": latest_run_status,
+        "job_started_at": latest_run_started_at_text,
+        "state_covers_in_flight_run": False,
+    }
+
+    broker_store = getattr(storage, "broker", None)
+    if broker_store is None or not broker_store.schema_ready():
+        snapshot["status"] = "in_flight" if broker_sync_in_flight else "missing"
+        snapshot["reason"] = (
+            "broker_sync_in_flight"
+            if broker_sync_in_flight
+            else "broker_sync_schema_unavailable"
+        )
+        return snapshot
+    state = broker_store.get_sync_state(BROKER_SYNC_KEY)
+    if not isinstance(state, Mapping):
+        snapshot["status"] = "in_flight" if broker_sync_in_flight else "missing"
+        snapshot["reason"] = (
+            "broker_sync_in_flight" if broker_sync_in_flight else "broker_sync_missing"
+        )
+        return snapshot
+
+    updated_at = parse_datetime(_as_text(state.get("updated_at")))
+    state_status = str(state.get("status") or "unknown").lower()
+    age_seconds = None
+    if updated_at is not None:
+        age_seconds = max((now - updated_at.astimezone(UTC)).total_seconds(), 0.0)
+    state_covers_in_flight_run = (
+        broker_sync_in_flight
+        and updated_at is not None
+        and latest_run_started_at is not None
+        and updated_at.astimezone(UTC) >= latest_run_started_at.astimezone(UTC)
+    )
+    snapshot.update(
+        {
+            "updated_at": None
+            if updated_at is None
+            else updated_at.astimezone(UTC)
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z"),
+            "age_seconds": None if age_seconds is None else round(age_seconds, 1),
+            "state_status": state_status,
+            "summary": dict(state.get("summary") or {}),
+            "state_covers_in_flight_run": state_covers_in_flight_run,
+        }
+    )
+    if broker_sync_in_flight and not state_covers_in_flight_run:
+        snapshot["status"] = "in_flight"
+        snapshot["reason"] = "broker_sync_in_flight"
+        return snapshot
+    if state_status != "healthy":
+        snapshot["status"] = "unhealthy"
+        snapshot["reason"] = "broker_sync_unhealthy"
+        return snapshot
+    if age_seconds is None:
+        snapshot["status"] = "missing"
+        snapshot["reason"] = "broker_sync_updated_at_missing"
+        return snapshot
+    if age_seconds > CLOSE_RECONCILIATION_MAX_AGE_SECONDS:
+        snapshot["status"] = "stale"
+        snapshot["reason"] = "broker_sync_stale"
+        return snapshot
+    snapshot["status"] = "current"
+    return snapshot
 
 
 def _calendar_close(
@@ -735,20 +837,8 @@ def run_position_exit_manager(
             "open_attempt_guard": open_attempt_guard,
         }
 
-    try:
-        from core.services.execution import run_open_execution_guard
-
-        open_attempt_guard = run_open_execution_guard(
-            db_target=db_target,
-            storage=storage,
-        )
-    except Exception as exc:
-        open_attempt_guard = {
-            "status": "degraded",
-            "reason": "guard_error",
-            "error": str(exc),
-        }
-
+    now = datetime.now(UTC)
+    broker_sync = _broker_sync_snapshot(storage, now=now)
     open_positions = [
         enrich_position_row(dict(position))
         for position in execution_store.list_positions(
@@ -768,6 +858,43 @@ def run_position_exit_manager(
             "skipped": 0,
             "failure_count": 0,
             "open_attempt_guard": open_attempt_guard,
+            "broker_sync": broker_sync,
+        }
+    if broker_sync.get("status") != "current":
+        return {
+            "status": "skipped",
+            "reason": broker_sync.get("reason") or "broker_sync_not_current",
+            "position_count": len(open_positions),
+            "evaluated": 0,
+            "created_intents": 0,
+            "submitted": 0,
+            "skipped": len(open_positions),
+            "failure_count": 0,
+            "decisions": [
+                {
+                    "position_id": position.get("position_id"),
+                    "reason": broker_sync.get("reason") or "broker_sync_not_current",
+                    "should_close": False,
+                }
+                for position in open_positions[:25]
+            ],
+            "failures": [],
+            "open_attempt_guard": open_attempt_guard,
+            "broker_sync": broker_sync,
+        }
+
+    try:
+        from core.services.execution import run_open_execution_guard
+
+        open_attempt_guard = run_open_execution_guard(
+            db_target=db_target,
+            storage=storage,
+        )
+    except Exception as exc:
+        open_attempt_guard = {
+            "status": "degraded",
+            "reason": "guard_error",
+            "error": str(exc),
         }
 
     _refresh_open_position_marks(
@@ -795,7 +922,6 @@ def run_position_exit_manager(
     skipped = 0
     failures: list[dict[str, str]] = []
     decisions: list[dict[str, Any]] = []
-    now = datetime.now(UTC)
     management_runtimes = tuple(resolve_management_runtimes())
     for position in refreshed_positions:
         position_id = str(position["position_id"])
@@ -956,4 +1082,5 @@ def run_position_exit_manager(
         "decisions": decisions[:25],
         "failures": failures[:25],
         "open_attempt_guard": open_attempt_guard,
+        "broker_sync": broker_sync,
     }

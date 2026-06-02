@@ -54,6 +54,16 @@ def floor_to_interval(now: datetime, minutes: int) -> datetime:
     return now.replace(minute=minute, second=0, microsecond=0)
 
 
+def interval_offset_seconds(schedule: dict[str, object], *, minutes: int) -> int:
+    raw_offset = schedule.get("offset_seconds", 0)
+    try:
+        offset_seconds = int(raw_offset)
+    except (TypeError, ValueError):
+        offset_seconds = 0
+    interval_seconds = max(minutes, 1) * 60
+    return min(max(offset_seconds, 0), max(interval_seconds - 1, 0))
+
+
 def isoformat_utc(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
@@ -80,7 +90,11 @@ def resolve_scheduled_for(
 
     if schedule_type == "interval_minutes":
         minutes = max(int(schedule.get("minutes", 0)), 1)
-        slot = floor_to_interval(current, minutes)
+        slot = floor_to_interval(current, minutes) + timedelta(
+            seconds=interval_offset_seconds(schedule, minutes=minutes)
+        )
+        if current < slot:
+            return None
         payload = dict(definition.get("payload") or {})
         if bool(payload.get("allow_off_hours")):
             return slot.astimezone(UTC)
