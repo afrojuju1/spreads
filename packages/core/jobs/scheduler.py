@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
+import logging
 from datetime import UTC, datetime, timedelta
 from time import perf_counter
 from typing import Any
@@ -28,6 +28,7 @@ from core.jobs.orchestration import (
     singleton_lease_key,
     utc_now,
 )
+from core.observability.logging import configure_logging, log_event
 from core.runtime.config import default_database_url, default_redis_url
 from core.runtime.redis import build_redis_settings
 from core.services.live_slot_updates import write_live_session_slot
@@ -55,14 +56,11 @@ QUEUE_DOMAIN_TO_QUEUE_NAME = {
     "valuation": VALUATION_QUEUE_NAME,
 }
 
+logger = logging.getLogger(__name__)
+
 
 def _log_scheduler_event(event: str, **payload: Any) -> None:
-    record = {
-        "event": event,
-        "timestamp": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
-        **payload,
-    }
-    print(json.dumps(record, separators=(",", ":"), sort_keys=True), flush=True)
+    log_event(logger, logging.INFO, event, **payload)
 
 async def _publish_job_run_update(redis: Any, run_record: Any) -> None:
     try:
@@ -902,6 +900,7 @@ async def scheduler_loop(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_logging(service="scheduler", force=True)
     args = parse_args(argv)
     return asyncio.run(scheduler_loop(args))
 

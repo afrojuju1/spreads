@@ -15,7 +15,11 @@ from core.services.bots import bot_time_reached
 from core.services.execution_portfolio import refresh_session_position_marks
 from core.services.option_structures import net_premium_kind
 from core.services.positions import enrich_position_row
-from core.services.risk_manager import normalize_risk_policy
+from core.services.risk_manager import (
+    CLOSE_RECONCILIATION_MAX_AGE_SECONDS,
+    normalize_risk_policy,
+    validate_close_execution,
+)
 from core.storage.serializers import parse_datetime
 
 OPEN_POSITION_STATUSES = ["open", "partial_close"]
@@ -448,6 +452,50 @@ def _has_active_close_intent(execution_store: Any, position_id: str) -> bool:
     )
 
 
+def _position_status(position: dict[str, Any]) -> str:
+    return str(position.get("position_status") or position.get("status") or "").lower()
+
+
+def _position_close_block_reason(
+    position: dict[str, Any], *, now: datetime
+) -> str | None:
+    status = _position_status(position)
+    if status and status not in OPEN_POSITION_STATUSES:
+        return "position_not_open"
+
+    remaining_quantity = _coerce_float(position.get("remaining_quantity")) or 0.0
+    if remaining_quantity <= 0:
+        return "no_remaining_quantity"
+
+    reconciliation_status = _as_text(position.get("reconciliation_status"))
+    if reconciliation_status != "matched":
+        return "awaiting_broker_reconciliation"
+
+    last_reconciled_at = parse_datetime(_as_text(position.get("last_reconciled_at")))
+    if last_reconciled_at is None:
+        return "awaiting_broker_reconciliation"
+
+    reconciliation_age_seconds = (
+        now - last_reconciled_at.astimezone(UTC)
+    ).total_seconds()
+    if reconciliation_age_seconds > CLOSE_RECONCILIATION_MAX_AGE_SECONDS:
+        return "broker_reconciliation_stale"
+
+    try:
+        validate_close_execution(
+            position=position,
+            quantity=max(int(remaining_quantity), 1),
+            now=now,
+            max_reconciliation_age_seconds=CLOSE_RECONCILIATION_MAX_AGE_SECONDS,
+        )
+    except ValueError as exc:
+        error_text = str(exc)
+        if "broker symbols" in error_text:
+            return "close_symbols_missing"
+        return "close_validation_blocked"
+    return None
+
+
 def _evaluate_position_close_decision(
     *,
     position: dict[str, Any],
@@ -751,6 +799,10 @@ def run_position_exit_manager(
     management_runtimes = tuple(resolve_management_runtimes())
     for position in refreshed_positions:
         position_id = str(position["position_id"])
+        latest_position = execution_store.get_position(position_id)
+        if latest_position is not None:
+            position = enrich_position_row(dict(latest_position))
+
         if _has_open_close_attempt(execution_store, position_id):
             evaluated += 1
             skipped += 1
@@ -764,6 +816,26 @@ def run_position_exit_manager(
                 {
                     "position_id": position_id,
                     "reason": "close_already_open",
+                    "should_close": False,
+                }
+            )
+            continue
+
+        close_block_reason = _position_close_block_reason(position, now=now)
+        if close_block_reason is not None:
+            evaluated += 1
+            skipped += 1
+            if _position_status(position) in OPEN_POSITION_STATUSES:
+                execution_store.update_position(
+                    position_id=position_id,
+                    last_exit_evaluated_at=_utc_now(),
+                    last_exit_reason=close_block_reason,
+                    updated_at=_utc_now(),
+                )
+            decisions.append(
+                {
+                    "position_id": position_id,
+                    "reason": close_block_reason,
                     "should_close": False,
                 }
             )
@@ -792,6 +864,23 @@ def run_position_exit_manager(
         if not decision["should_close"]:
             skipped += 1
             continue
+
+        latest_position = execution_store.get_position(position_id)
+        if latest_position is not None:
+            position = enrich_position_row(dict(latest_position))
+        close_block_reason = _position_close_block_reason(position, now=now)
+        if close_block_reason is not None:
+            skipped += 1
+            execution_store.update_position(
+                position_id=position_id,
+                last_exit_evaluated_at=_utc_now(),
+                last_exit_reason=close_block_reason,
+                updated_at=_utc_now(),
+            )
+            decisions[-1]["reason"] = close_block_reason
+            decisions[-1]["should_close"] = False
+            continue
+
         if management_runtime is not None:
             if not execution_store.intent_schema_ready():
                 skipped += 1

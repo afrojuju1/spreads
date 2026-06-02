@@ -57,6 +57,7 @@ from core.services.runtime_identity import (
     resolve_pipeline_policy_fields,
 )
 from core.services.risk_manager import (
+    CLOSE_RECONCILIATION_MAX_AGE_SECONDS,
     build_open_candidate_position_sizing,
     evaluate_open_execution,
     normalize_risk_policy,
@@ -2097,6 +2098,7 @@ def submit_position_close_by_id(
             position=position,
             quantity=resolved_quantity,
             limit_price=resolved_limit_price,
+            max_reconciliation_age_seconds=CLOSE_RECONCILIATION_MAX_AGE_SECONDS,
         )
         pipeline_id = _as_text(position.get("pipeline_id"))
         label = _as_text(position.get("label"))

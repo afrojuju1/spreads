@@ -236,6 +236,17 @@ def _date_from_iso(value: Any) -> date | None:
         return None
 
 
+def _time_from_text(value: Any) -> time | None:
+    text = _as_text(value)
+    if text is None:
+        return None
+    try:
+        hour_text, minute_text = text.split(":", 1)
+        return time(int(hour_text), int(minute_text[:2]))
+    except (TypeError, ValueError):
+        return None
+
+
 def _days_to_expiration(expiration_date: Any, *, now: datetime) -> int | None:
     expiration = _date_from_iso(expiration_date)
     if expiration is None:
@@ -275,6 +286,11 @@ def _option_contract_candidates(
         _as_int(_rule_value(rules, payload, "min_daily_volume", 0), 0),
         0,
     )
+    min_delta = _as_float(_rule_value(rules, payload, "min_delta"))
+    max_delta = _as_float(_rule_value(rules, payload, "max_delta"))
+    target_delta = _as_float(_rule_value(rules, payload, "target_delta"))
+    preferred_min_delta = _as_float(_rule_value(rules, payload, "preferred_min_delta"))
+    preferred_max_delta = _as_float(_rule_value(rules, payload, "preferred_max_delta"))
     chain_feed = (
         _as_text(_rule_value(rules, payload, "option_feed"))
         or _as_text(payload.get("option_feed"))
@@ -327,6 +343,25 @@ def _option_contract_candidates(
             daily_volume = _as_int(getattr(snapshot, "daily_volume", None), 0)
             if min_daily_volume > 0 and daily_volume < min_daily_volume:
                 continue
+            delta = _as_float(getattr(snapshot, "delta", None))
+            if min_delta is not None and (delta is None or delta < min_delta):
+                continue
+            if max_delta is not None and (delta is None or delta > max_delta):
+                continue
+            delta_distance = (
+                abs(delta - target_delta)
+                if delta is not None and target_delta is not None
+                else None
+            )
+            preferred_delta_miss = 0.0
+            if delta is not None:
+                if preferred_min_delta is not None and delta < preferred_min_delta:
+                    preferred_delta_miss = preferred_min_delta - delta
+                if preferred_max_delta is not None and delta > preferred_max_delta:
+                    preferred_delta_miss = max(
+                        preferred_delta_miss,
+                        delta - preferred_max_delta,
+                    )
             days_to_expiration = _days_to_expiration(expiration, now=now)
             if days_to_expiration is None:
                 continue
@@ -342,16 +377,25 @@ def _option_contract_candidates(
                     "snapshot_ask": float(snapshot.ask),
                     "snapshot_midpoint": float(snapshot.midpoint),
                     "snapshot_spread_pct": round(spread_pct, 4),
-                    "delta": getattr(snapshot, "delta", None),
+                    "delta": delta,
+                    "delta_distance": delta_distance,
+                    "preferred_delta_miss": round(preferred_delta_miss, 6),
                     "implied_volatility": getattr(snapshot, "implied_volatility", None),
                     "strike_distance": abs(float(contract.strike_price) - underlying_price),
                 }
             )
     candidates.sort(
         key=lambda item: (
+            float(item["preferred_delta_miss"]),
+            (
+                float(item["delta_distance"])
+                if item.get("delta_distance") is not None
+                else math.inf
+            ),
             float(item["strike_distance"]),
             int(item["days_to_expiration"]),
             float(item["snapshot_spread_pct"]),
+            -int(item["daily_volume"]),
             -int(item["open_interest"]),
             str(item["symbol"]),
         )
@@ -469,7 +513,12 @@ def _select_long_call_contract(
     }
 
 
-def _bar_stats(bars: list[Any], *, lookback_bars: int) -> dict[str, Any]:
+def _bar_stats(
+    bars: list[Any],
+    *,
+    lookback_bars: int,
+    confirmation_bars: int = 0,
+) -> dict[str, Any]:
     if not bars:
         return {}
     volume_sum = sum(max(int(getattr(bar, "volume", 0) or 0), 0) for bar in bars)
@@ -480,15 +529,30 @@ def _bar_stats(bars: list[Any], *, lookback_bars: int) -> dict[str, Any]:
             * max(int(bar.volume or 0), 0)
             for bar in bars
         ) / volume_sum
-    recent = bars[-max(lookback_bars, 1) - 1 : -1] if len(bars) > 1 else bars
+    resolved_confirmation_bars = max(int(confirmation_bars or 0), 0)
+    reference_end = (
+        len(bars) - resolved_confirmation_bars
+        if resolved_confirmation_bars > 0
+        else len(bars) - 1
+    )
+    if reference_end <= 0:
+        reference_end = len(bars)
+    reference_start = max(reference_end - max(lookback_bars, 1), 0)
+    recent = bars[reference_start:reference_end]
     if not recent:
         recent = bars
+    confirmation = (
+        bars[-resolved_confirmation_bars:]
+        if resolved_confirmation_bars > 0 and len(bars) >= resolved_confirmation_bars
+        else []
+    )
     return {
         "bar_count": len(bars),
         "latest_close": float(bars[-1].close),
         "vwap": vwap,
         "recent_high": max(float(bar.high) for bar in recent),
         "recent_low": min(float(bar.low) for bar in recent),
+        "confirmation_closes": [float(bar.close) for bar in confirmation],
         "volume": volume_sum,
     }
 
@@ -588,6 +652,7 @@ def _timing_decision(
     stats: Mapping[str, Any],
     rules: Mapping[str, Any],
     payload: Mapping[str, Any],
+    now: datetime,
 ) -> dict[str, Any]:
     timing_rules = _mapping(rules.get("timing"))
     mode = (
@@ -595,6 +660,18 @@ def _timing_decision(
         or _as_text(_rule_value(rules, payload, "timing_mode"))
         or ("vwap_reclaim" if side == "buy" else "vwap_breakdown")
     ).lower()
+    not_before = _time_from_text(
+        timing_rules.get(
+            "not_before_time",
+            _rule_value(rules, payload, "not_before_time"),
+        )
+    )
+    if not_before is not None and now.astimezone(NEW_YORK).time() < not_before:
+        return {
+            "triggered": False,
+            "reason": "entry_before_start_time",
+            "not_before_time": not_before.isoformat(timespec="minutes"),
+        }
     max_spread_pct = float(_rule_value(rules, payload, "max_spread_pct", 1.0) or 1.0)
     max_quote_age_seconds = max(
         _as_int(_rule_value(rules, payload, "max_quote_age_seconds", 180), 180),
@@ -657,6 +734,41 @@ def _timing_decision(
     else:
         triggered = price <= vwap and price <= recent_low * (1.0 + tolerance)
         reason = "sell_vwap_recent_low_break" if triggered else "sell_timing_not_ready"
+    confirmation_bars = max(
+        _as_int(
+            timing_rules.get(
+                "confirmation_bars",
+                _rule_value(rules, payload, "confirmation_bars", 0),
+            ),
+            0,
+        ),
+        0,
+    )
+    confirmation_closes = [
+        float(value)
+        for value in stats.get("confirmation_closes") or []
+        if _as_float(value) is not None
+    ]
+    if triggered and confirmation_bars > 0:
+        if len(confirmation_closes) < confirmation_bars:
+            triggered = False
+            reason = "insufficient_confirmation_bars"
+        elif side == "buy":
+            confirmed = all(
+                close >= vwap and close >= recent_high * (1.0 - tolerance)
+                for close in confirmation_closes[-confirmation_bars:]
+            )
+            if not confirmed:
+                triggered = False
+                reason = "buy_reclaim_unconfirmed"
+        else:
+            confirmed = all(
+                close <= vwap and close <= recent_low * (1.0 + tolerance)
+                for close in confirmation_closes[-confirmation_bars:]
+            )
+            if not confirmed:
+                triggered = False
+                reason = "sell_breakdown_unconfirmed"
     return {
         "triggered": triggered,
         "reason": reason,
@@ -667,6 +779,7 @@ def _timing_decision(
         "spread_pct": round(spread_pct, 4),
         "quote_age_seconds": round(age_seconds, 1),
         "bar_count": bar_count,
+        "confirmation_bars": confirmation_bars,
     }
 
 
@@ -755,6 +868,10 @@ def _position_option_symbol(position: Mapping[str, Any]) -> str | None:
     return None if symbol is None else symbol.upper()
 
 
+def _position_status(position: Mapping[str, Any]) -> str:
+    return str(position.get("position_status") or position.get("status") or "").lower()
+
+
 def _active_entry_intent_count(
     execution_store: Any,
     *,
@@ -792,17 +909,18 @@ def _broker_qty(position: Mapping[str, Any] | None) -> float:
     return 0.0 if qty is None else qty
 
 
-def _local_managed_positions(
+def _local_position_rows(
     execution_store: Any,
     *,
     bot_id: str,
     automation_id: str,
     strategy_config_id: str,
+    statuses: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     if not execution_store.portfolio_schema_ready():
         return []
     rows = execution_store.list_positions(
-        statuses=OPEN_POSITION_STATUSES,
+        statuses=statuses,
         strategy_config_id=strategy_config_id,
         limit=500,
     )
@@ -817,6 +935,45 @@ def _local_managed_positions(
         if symbol is not None:
             managed.append(item)
     return managed
+
+
+def _local_managed_positions(
+    execution_store: Any,
+    *,
+    bot_id: str,
+    automation_id: str,
+    strategy_config_id: str,
+) -> list[dict[str, Any]]:
+    return _local_position_rows(
+        execution_store,
+        bot_id=bot_id,
+        automation_id=automation_id,
+        strategy_config_id=strategy_config_id,
+        statuses=OPEN_POSITION_STATUSES,
+    )
+
+
+def _daily_pnl_snapshot(
+    positions: list[Mapping[str, Any]],
+    *,
+    session_date: str,
+) -> dict[str, Any]:
+    daily_realized = 0.0
+    open_unrealized = 0.0
+    for position in positions:
+        opened = str(position.get("market_date_opened") or position.get("market_date") or "")
+        closed = str(position.get("market_date_closed") or "")
+        if opened == session_date or closed == session_date:
+            daily_realized += _as_float(position.get("realized_pnl")) or 0.0
+        if _position_status(position) in OPEN_POSITION_STATUSES:
+            open_unrealized += _as_float(position.get("unrealized_pnl")) or 0.0
+    daily_total = daily_realized + open_unrealized
+    return {
+        "session_date": session_date,
+        "daily_realized_pnl": round(daily_realized, 2),
+        "open_unrealized_pnl": round(open_unrealized, 2),
+        "daily_total_pnl": round(daily_total, 2),
+    }
 
 
 def _has_active_intent(execution_store: Any, slot_key: str) -> str | None:
@@ -1153,6 +1310,129 @@ def _evaluate_exit(
     }
 
 
+def _underlying_invalidation_decision(
+    *,
+    quote_metrics: Mapping[str, Any],
+    stats: Mapping[str, Any],
+    rules: Mapping[str, Any],
+    payload: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    invalidation_rules = _mapping(rules.get("underlying_invalidation"))
+    enabled = _as_bool(
+        invalidation_rules.get(
+            "enabled",
+            _rule_value(rules, payload, "underlying_invalidation_enabled", False),
+        ),
+        False,
+    )
+    if not enabled:
+        return None
+
+    bid = _as_float(quote_metrics.get("bid"))
+    midpoint = _as_float(quote_metrics.get("midpoint"))
+    price = bid or midpoint
+    if price is None or price <= 0:
+        return {"triggered": False, "reason": "underlying_quote_unavailable"}
+    age_seconds = _as_float(quote_metrics.get("age_seconds"))
+    max_quote_age_seconds = max(
+        _as_int(
+            invalidation_rules.get(
+                "max_quote_age_seconds",
+                _rule_value(rules, payload, "underlying_max_quote_age_seconds", 180),
+            ),
+            180,
+        ),
+        1,
+    )
+    if age_seconds is None:
+        return {"triggered": False, "reason": "underlying_quote_timestamp_missing"}
+    if age_seconds > max_quote_age_seconds:
+        return {"triggered": False, "reason": "underlying_quote_stale"}
+    spread_pct = _as_float(quote_metrics.get("spread_pct"))
+    max_spread_pct = _as_float(
+        invalidation_rules.get(
+            "max_spread_pct",
+            _rule_value(rules, payload, "underlying_max_spread_pct", 1.0),
+        )
+    )
+    if max_spread_pct is not None and (
+        spread_pct is None or spread_pct > max_spread_pct
+    ):
+        return {"triggered": False, "reason": "underlying_spread_too_wide"}
+
+    min_bars = max(
+        _as_int(
+            invalidation_rules.get(
+                "min_intraday_bars",
+                _rule_value(rules, payload, "underlying_min_intraday_bars", 30),
+            ),
+            30,
+        ),
+        1,
+    )
+    bar_count = _as_int(stats.get("bar_count"), 0)
+    if bar_count < min_bars:
+        return {"triggered": False, "reason": "underlying_insufficient_intraday_bars"}
+    vwap = _as_float(stats.get("vwap"))
+    recent_low = _as_float(stats.get("recent_low"))
+    if vwap is None or recent_low is None:
+        return {"triggered": False, "reason": "underlying_timing_metrics_unavailable"}
+
+    tolerance_bps = max(
+        _as_float(
+            invalidation_rules.get(
+                "breakdown_tolerance_bps",
+                _rule_value(rules, payload, "underlying_breakdown_tolerance_bps", 5.0),
+            )
+        )
+        or 0.0,
+        0.0,
+    )
+    tolerance = tolerance_bps / 10_000.0
+    threshold = recent_low * (1.0 + tolerance)
+    confirmation_bars = max(
+        _as_int(
+            invalidation_rules.get(
+                "confirmation_bars",
+                _rule_value(rules, payload, "underlying_confirmation_bars", 2),
+            ),
+            2,
+        ),
+        0,
+    )
+    confirmation_closes = [
+        float(value)
+        for value in stats.get("confirmation_closes") or []
+        if _as_float(value) is not None
+    ]
+    if confirmation_bars > 0 and len(confirmation_closes) < confirmation_bars:
+        return {"triggered": False, "reason": "underlying_insufficient_confirmation_bars"}
+    confirmed = True
+    if confirmation_bars > 0:
+        confirmed = all(
+            close <= vwap and close <= threshold
+            for close in confirmation_closes[-confirmation_bars:]
+        )
+    triggered = price <= vwap and price <= threshold and confirmed
+    return {
+        "triggered": triggered,
+        "reason": (
+            "underlying_vwap_recent_low_break"
+            if triggered
+            else "underlying_invalidation_not_triggered"
+        ),
+        "underlying_price": round(price, 4),
+        "underlying_vwap": round(vwap, 4),
+        "underlying_recent_low": round(recent_low, 4),
+        "underlying_spread_pct": None
+        if spread_pct is None
+        else round(spread_pct, 4),
+        "underlying_quote_age_seconds": round(age_seconds, 1),
+        "underlying_bar_count": bar_count,
+        "underlying_confirmation_bars": confirmation_bars,
+    }
+
+
 def run_finviz_direct_trading(
     *,
     db_target: str,
@@ -1231,12 +1511,17 @@ def run_finviz_direct_trading(
     feed_entries = _feed_entry_by_symbol(snapshot) if snapshot_status == "ready" else {}
     feed_symbols = set(feed_entries)
     feed_available = snapshot_status in {"ready", "empty"}
-    managed_positions = _local_managed_positions(
+    managed_session_positions = _local_position_rows(
         execution_store,
         bot_id=bot_id,
         automation_id=automation_id,
         strategy_config_id=feed_id,
     )
+    managed_positions = [
+        row
+        for row in managed_session_positions
+        if _position_status(row) in OPEN_POSITION_STATUSES
+    ]
     managed_by_symbol = {
         str(position.get("root_symbol")).upper(): position
         for position in managed_positions
@@ -1260,6 +1545,19 @@ def run_finviz_direct_trading(
     snapshots = client.get_stock_snapshots(all_symbols, feed=stock_feed) if all_symbols else {}
 
     now = _now()
+    daily_pnl = _daily_pnl_snapshot(
+        managed_session_positions,
+        session_date=session_date,
+    )
+    max_daily_loss = _as_float(
+        payload.get("max_daily_loss", entry_rules.get("max_daily_loss"))
+    )
+    daily_loss_reached = (
+        max_daily_loss is not None
+        and max_daily_loss > 0
+        and (_as_float(daily_pnl.get("daily_total_pnl")) or 0.0) <= -abs(max_daily_loss)
+    )
+    bars_by_symbol: dict[str, list[Any]] = {}
     decisions: list[dict[str, Any]] = []
     armed = 0
     entry_armed = 0
@@ -1276,6 +1574,17 @@ def run_finviz_direct_trading(
         }
         if not rule_decision.get("passed"):
             decisions.append(decision)
+            continue
+        if daily_loss_reached:
+            decisions.append(
+                {
+                    **decision,
+                    "passed": False,
+                    "reason": "daily_loss_limit_reached",
+                    "daily_pnl": dict(daily_pnl),
+                    "max_daily_loss": max_daily_loss,
+                }
+            )
             continue
         if entry_side == "sell" and not allow_short_selling:
             decisions.append(
@@ -1312,15 +1621,26 @@ def run_finviz_direct_trading(
             )
             continue
 
+        timing_rules = _mapping(entry_rules.get("timing"))
         lookback_bars = max(
             _as_int(
-                _mapping(entry_rules.get("timing")).get(
+                timing_rules.get(
                     "recent_lookback_bars",
                     _rule_value(entry_rules, payload, "recent_lookback_bars", 5),
                 ),
                 5,
             ),
             1,
+        )
+        confirmation_bars = max(
+            _as_int(
+                timing_rules.get(
+                    "confirmation_bars",
+                    _rule_value(entry_rules, payload, "confirmation_bars", 0),
+                ),
+                0,
+            ),
+            0,
         )
         bars = client.get_intraday_bars(
             symbol,
@@ -1329,14 +1649,20 @@ def run_finviz_direct_trading(
             stock_feed=stock_feed,
             timeframe=_as_text(payload.get("bar_timeframe")) or "1Min",
         )
+        bars_by_symbol[symbol] = bars
         quote_metrics = _quote_metrics(snapshots.get(symbol, {}), now=now)
-        stats = _bar_stats(bars, lookback_bars=lookback_bars)
+        stats = _bar_stats(
+            bars,
+            lookback_bars=lookback_bars,
+            confirmation_bars=confirmation_bars,
+        )
         timing = _timing_decision(
             side=entry_side,
             quote_metrics=quote_metrics,
             stats=stats,
             rules=entry_rules,
             payload=payload,
+            now=now,
         )
         decision = {**decision, **timing}
         if not timing.get("triggered"):
@@ -1591,6 +1917,70 @@ def run_finviz_direct_trading(
                 rules=option_exit_rules,
                 now=now,
             )
+            underlying_exit = None
+            if not exit_decision.get("triggered") and exit_decision.get("reason") == "hold":
+                invalidation_rules = _mapping(
+                    option_exit_rules.get("underlying_invalidation")
+                )
+                if _as_bool(
+                    invalidation_rules.get(
+                        "enabled",
+                        option_exit_rules.get("underlying_invalidation_enabled"),
+                    ),
+                    False,
+                ):
+                    underlying_bars = bars_by_symbol.get(symbol)
+                    if underlying_bars is None:
+                        underlying_bars = client.get_intraday_bars(
+                            symbol,
+                            start=_session_start(now).isoformat().replace(
+                                "+00:00",
+                                "Z",
+                            ),
+                            end=now.isoformat(timespec="seconds").replace(
+                                "+00:00",
+                                "Z",
+                            ),
+                            stock_feed=stock_feed,
+                            timeframe=_as_text(payload.get("bar_timeframe")) or "1Min",
+                        )
+                        bars_by_symbol[symbol] = underlying_bars
+                    underlying_lookback_bars = max(
+                        _as_int(
+                            invalidation_rules.get("recent_lookback_bars", 5),
+                            5,
+                        ),
+                        1,
+                    )
+                    underlying_confirmation_bars = max(
+                        _as_int(
+                            invalidation_rules.get("confirmation_bars", 2),
+                            2,
+                        ),
+                        0,
+                    )
+                    underlying_stats = _bar_stats(
+                        underlying_bars,
+                        lookback_bars=underlying_lookback_bars,
+                        confirmation_bars=underlying_confirmation_bars,
+                    )
+                    underlying_quote_metrics = _quote_metrics(
+                        snapshots.get(symbol, {}),
+                        now=now,
+                    )
+                    underlying_exit = _underlying_invalidation_decision(
+                        quote_metrics=underlying_quote_metrics,
+                        stats=underlying_stats,
+                        rules=option_exit_rules,
+                        payload=payload,
+                    )
+                    if underlying_exit is not None and underlying_exit.get("triggered"):
+                        exit_decision = {
+                            **exit_decision,
+                            "triggered": True,
+                            "reason": str(underlying_exit.get("reason")),
+                            "underlying_exit": underlying_exit,
+                        }
             decision = {
                 "kind": "exit",
                 "symbol": symbol,
@@ -1601,6 +1991,8 @@ def run_finviz_direct_trading(
                 "quote_error": option_quote_error,
                 **exit_decision,
             }
+            if underlying_exit is not None and not underlying_exit.get("triggered"):
+                decision["underlying_exit"] = underlying_exit
             if not exit_decision.get("triggered"):
                 decisions.append(decision)
                 continue
@@ -1812,6 +2204,9 @@ def run_finviz_direct_trading(
         "entry_candidates": len(entry_symbols),
         "managed_positions": len(managed_positions),
         "active_entry_intents": active_entry_intents,
+        "daily_pnl": daily_pnl,
+        "max_daily_loss": max_daily_loss,
+        "daily_loss_reached": daily_loss_reached,
         "armed": armed,
         "entry_armed": entry_armed,
         "decisions": decisions,

@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import asyncio
-import json
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
 from core.events.bus import publish_global_event_async
+from core.observability.logging import log_event
 from core.services.discovery_run_health.enrichment import (
     enrich_discovery_run_job_run_payload,
 )
 
 DISCOVERY_RUN_STREAM_STALL_THRESHOLD = 2
 DISCOVERY_RUN_SLOT_LAG_THRESHOLD = 2
+
+logger = logging.getLogger(__name__)
 
 
 async def _publish_job_run_event(ctx: dict[str, Any], run_record: Any) -> None:
@@ -210,7 +213,16 @@ async def _emit_discovery_run_observability(
         consecutive_stream_zero_slots=consecutive_stream_zero_slots,
         slot_lag_slots=slot_lag_slots,
     )
-    print(json.dumps(log_payload, separators=(",", ":"), sort_keys=True), flush=True)
+    log_event(
+        logger,
+        logging.INFO,
+        "discovery_run_slot_completed",
+        **{
+            key: value
+            for key, value in log_payload.items()
+            if key != "event"
+        },
+    )
     degradation = _build_discovery_run_degradation(
         run_payload,
         consecutive_stream_zero_slots=consecutive_stream_zero_slots,
@@ -218,13 +230,11 @@ async def _emit_discovery_run_observability(
     )
     if degradation is None:
         return
-    print(
-        json.dumps(
-            {"event": "discovery_run_slot_degraded", **degradation},
-            separators=(",", ":"),
-            sort_keys=True,
-        ),
-        flush=True,
+    log_event(
+        logger,
+        logging.WARNING,
+        "discovery_run_slot_degraded",
+        **degradation,
     )
     event_bus = ctx.get("event_bus")
     if event_bus is None:

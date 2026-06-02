@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from typing import Any
 
 from core.integrations.alpaca.client import AlpacaClient
+from core.observability.logging import log_event
 from core.services.discovery_run_health.capture import (
     build_quote_capture_summary,
     build_trade_capture_summary,
@@ -23,8 +25,7 @@ from core.storage.run_history_repository import RunHistoryRepository
 from core.services.discovery_runs.models import LiveCaptureSnapshot, LiveTickContext
 
 from .events import (
-    record_quote_market_events,
-    record_trade_market_events,
+    record_market_capture_summary_event,
     record_uoa_decision_event,
     record_uoa_summary_event,
 )
@@ -34,6 +35,8 @@ from .market_data import (
     collect_latest_quote_records,
     collect_recorded_market_data_records,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _optional_float(value: Any) -> float | None:
@@ -162,7 +165,16 @@ def capture_live_option_market_state(
                     ),
                 )
             except Exception as exc:
-                print(f"Preselection capture target refresh unavailable: {exc}")
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "preselection_capture_target_refresh_unavailable",
+                    label=label,
+                    cycle_id=cycle_id,
+                    session_date=session_date,
+                    error=str(exc),
+                    exc_info=True,
+                )
         try:
             latest_quote_records = collect_latest_quote_records(
                 client=client,
@@ -176,29 +188,27 @@ def capture_live_option_market_state(
                 quotes=latest_quote_records,
             )
             quote_event_count += baseline_quote_event_count
-            try:
-                record_quote_market_events(
-                    event_store=event_store,
-                    cycle_id=cycle_id,
-                    label=label,
-                    profile=args.profile,
-                    session_date=session_date,
-                    session_id=None
-                    if tick_context is None
-                    else tick_context.session_id,
-                    job_run_id=None
-                    if tick_context is None
-                    else tick_context.job_run_id,
-                    quotes=latest_quote_records,
-                )
-            except Exception as exc:
-                print(f"Live latest quote event normalization unavailable: {exc}")
         except Exception as exc:
-            print(f"Live latest quote capture unavailable: {exc}")
+            log_event(
+                logger,
+                logging.WARNING,
+                "live_latest_quote_capture_unavailable",
+                label=label,
+                cycle_id=cycle_id,
+                session_date=session_date,
+                error=str(exc),
+                exc_info=True,
+            )
         trade_storage_ready = history_store.schema_has_tables("option_trade_events")
         if args.trade_capture_seconds > 0 and not trade_storage_ready:
-            print(
-                "Option trade capture unavailable: option_trade_events table is missing."
+            log_event(
+                logger,
+                logging.WARNING,
+                "option_trade_capture_unavailable",
+                label=label,
+                cycle_id=cycle_id,
+                session_date=session_date,
+                reason="option_trade_events_table_missing",
             )
         stream_quote_duration_seconds = float(max(args.quote_capture_seconds, 0))
         stream_trade_duration_seconds = (
@@ -210,8 +220,14 @@ def capture_live_option_market_state(
                     "Market recorder capture unavailable: recovery schema is not ready."
                 )
                 stream_trade_error = stream_quote_error
-                print(
-                    f"Live stream market-data capture unavailable: {stream_quote_error}"
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "live_stream_market_data_capture_unavailable",
+                    label=label,
+                    cycle_id=cycle_id,
+                    session_date=session_date,
+                    reason=stream_quote_error,
                 )
             else:
                 capture_response = collect_recorded_market_data_records(
@@ -251,57 +267,31 @@ def capture_live_option_market_state(
                     else str(capture_response.get("trade_error"))
                 )
                 if stream_quote_error:
-                    print(
-                        f"Live stream quote capture unavailable: {stream_quote_error}"
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        "live_stream_quote_capture_unavailable",
+                        label=label,
+                        cycle_id=cycle_id,
+                        session_date=session_date,
+                        reason=stream_quote_error,
                     )
                 if stream_trade_error:
-                    print(
-                        f"Live stream trade capture unavailable: {stream_trade_error}"
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        "live_stream_trade_capture_unavailable",
+                        label=label,
+                        cycle_id=cycle_id,
+                        session_date=session_date,
+                        reason=stream_trade_error,
                     )
                 if stream_quote_records:
                     stream_quote_event_count = len(stream_quote_records)
                     quote_event_count += stream_quote_event_count
-                    try:
-                        record_quote_market_events(
-                            event_store=event_store,
-                            cycle_id=cycle_id,
-                            label=label,
-                            profile=args.profile,
-                            session_date=session_date,
-                            session_id=None
-                            if tick_context is None
-                            else tick_context.session_id,
-                            job_run_id=None
-                            if tick_context is None
-                            else tick_context.job_run_id,
-                            quotes=stream_quote_records,
-                        )
-                    except Exception as exc:
-                        print(
-                            f"Live stream quote event normalization unavailable: {exc}"
-                        )
                 if stream_trade_records:
                     stream_trade_event_count = len(stream_trade_records)
                     trade_event_count += stream_trade_event_count
-                    try:
-                        record_trade_market_events(
-                            event_store=event_store,
-                            cycle_id=cycle_id,
-                            label=label,
-                            profile=args.profile,
-                            session_date=session_date,
-                            session_id=None
-                            if tick_context is None
-                            else tick_context.session_id,
-                            job_run_id=None
-                            if tick_context is None
-                            else tick_context.job_run_id,
-                            trades=stream_trade_records,
-                        )
-                    except Exception as exc:
-                        print(
-                            f"Live stream trade event normalization unavailable: {exc}"
-                        )
         if quote_event_count == 0:
             try:
                 recovery_quote_records = collect_latest_quote_records(
@@ -319,26 +309,18 @@ def capture_live_option_market_state(
                     quotes=recovery_quote_records,
                 )
                 quote_event_count += recovered_quote_event_count
-                try:
-                    record_quote_market_events(
-                        event_store=event_store,
-                        cycle_id=cycle_id,
-                        label=label,
-                        profile=args.profile,
-                        session_date=session_date,
-                        session_id=None
-                        if tick_context is None
-                        else tick_context.session_id,
-                        job_run_id=None
-                        if tick_context is None
-                        else tick_context.job_run_id,
-                        quotes=recovery_quote_records,
-                    )
-                except Exception as exc:
-                    print(f"Live recovery quote event normalization unavailable: {exc}")
                 recovery_quote_event_count = recovered_quote_event_count
             except Exception as exc:
-                print(f"Live quote recovery unavailable: {exc}")
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "live_quote_recovery_unavailable",
+                    label=label,
+                    cycle_id=cycle_id,
+                    session_date=session_date,
+                    error=str(exc),
+                    exc_info=True,
+                )
     quote_capture = build_quote_capture_summary(
         expected_quote_symbols=expected_quote_symbols,
         total_quote_events_saved=quote_event_count,
@@ -390,6 +372,44 @@ def capture_live_option_market_state(
         capture_window_seconds=float(max(args.trade_capture_seconds, 1)),
         stock_context_by_symbol=stock_context_by_symbol,
     )
+    if (
+        expected_quote_symbols
+        or expected_trade_symbols
+        or quote_event_count
+        or trade_event_count
+        or stream_quote_error
+        or stream_trade_error
+    ):
+        try:
+            record_market_capture_summary_event(
+                event_store=event_store,
+                cycle_id=cycle_id,
+                generated_at=generated_at,
+                label=label,
+                profile=args.profile,
+                session_date=session_date,
+                session_id=None if tick_context is None else tick_context.session_id,
+                job_run_id=None if tick_context is None else tick_context.job_run_id,
+                quote_capture=quote_capture,
+                trade_capture=trade_capture,
+                expected_quote_symbols=expected_quote_symbols,
+                expected_trade_symbols=expected_trade_symbols,
+                quote_records=reactive_quote_records,
+                trade_records=stream_trade_records,
+                stream_quote_error=stream_quote_error,
+                stream_trade_error=stream_trade_error,
+            )
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.WARNING,
+                "market_capture_summary_event_unavailable",
+                label=label,
+                cycle_id=cycle_id,
+                session_date=session_date,
+                error=str(exc),
+                exc_info=True,
+            )
     if expected_trade_symbols or stream_trade_records:
         try:
             record_uoa_summary_event(
@@ -404,7 +424,16 @@ def capture_live_option_market_state(
                 summary=uoa_summary,
             )
         except Exception as exc:
-            print(f"UOA summary event publish unavailable: {exc}")
+            log_event(
+                logger,
+                logging.WARNING,
+                "uoa_summary_event_publish_unavailable",
+                label=label,
+                cycle_id=cycle_id,
+                session_date=session_date,
+                error=str(exc),
+                exc_info=True,
+            )
         try:
             record_uoa_decision_event(
                 event_store=event_store,
@@ -418,7 +447,16 @@ def capture_live_option_market_state(
                 decisions=uoa_decisions,
             )
         except Exception as exc:
-            print(f"UOA decision event publish unavailable: {exc}")
+            log_event(
+                logger,
+                logging.WARNING,
+                "uoa_decision_event_publish_unavailable",
+                label=label,
+                cycle_id=cycle_id,
+                session_date=session_date,
+                error=str(exc),
+                exc_info=True,
+            )
     return LiveCaptureSnapshot(
         candidates=list(capture_candidates),
         contract_metadata_by_symbol=contract_metadata_by_symbol,

@@ -42,6 +42,7 @@ from core.services.value_coercion import (
 from core.storage.serializers import parse_datetime
 
 OPEN_POSITION_STATUSES = ["open", "partial_close"]
+CLOSE_RECONCILIATION_MAX_AGE_SECONDS = 180
 POSITION_SIZING_STRATEGIES = {
     "short_call",
     "short_put",
@@ -1594,7 +1595,14 @@ def validate_close_execution(
     position: dict[str, Any],
     quantity: int,
     limit_price: float | None = None,
+    now: datetime | None = None,
+    max_reconciliation_age_seconds: float | None = None,
 ) -> dict[str, Any]:
+    position_status = str(
+        position.get("position_status") or position.get("status") or ""
+    ).lower()
+    if position_status and position_status not in OPEN_POSITION_STATUSES:
+        raise ValueError("Position is already closed.")
     remaining_quantity = _coerce_float(position.get("remaining_quantity"))
     if remaining_quantity is None or remaining_quantity <= 0:
         raise ValueError("Position does not have remaining quantity to close.")
@@ -1606,6 +1614,29 @@ def validate_close_execution(
         raise ValueError("Close execution requires a positive limit price.")
     if not position_legs(position):
         raise ValueError("Position is missing the broker symbols required to close.")
+    if max_reconciliation_age_seconds is not None:
+        reconciliation_status = _as_text(position.get("reconciliation_status"))
+        if reconciliation_status != "matched":
+            raise ValueError(
+                "Position broker reconciliation is not matched; "
+                "wait for broker sync before closing."
+            )
+        last_reconciled_at = parse_datetime(
+            _as_text(position.get("last_reconciled_at"))
+        )
+        if last_reconciled_at is None:
+            raise ValueError(
+                "Position broker reconciliation is missing; "
+                "wait for broker sync before closing."
+            )
+        reconciliation_age = (
+            (now or datetime.now(UTC)) - last_reconciled_at.astimezone(UTC)
+        ).total_seconds()
+        if reconciliation_age > max_reconciliation_age_seconds:
+            raise ValueError(
+                "Position broker reconciliation is stale; "
+                "wait for broker sync before closing."
+            )
     return {
         "status": "ok",
     }

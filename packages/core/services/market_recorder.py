@@ -2,18 +2,18 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
+import logging
 import os
 import socket
 from collections import defaultdict
 from collections.abc import Mapping
-from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
 from core.common import load_local_env
 from core.integrations.alpaca.client import DEFAULT_DATA_BASE_URL
 from core.jobs.orchestration import market_recorder_runtime_lease_key
+from core.observability.logging import configure_logging, log_event
 from core.runtime.config import default_database_url
 from core.services.discovery_recovery import refresh_execution_capture_targets
 from core.services.option_quote_records import build_quote_records
@@ -30,6 +30,8 @@ DEFAULT_TRADE_DURATION_SECONDS = 20.0
 DEFAULT_TARGET_LIMIT = 1000
 MARKET_RECORDER_SOURCE = "market_recorder"
 MARKET_RECORDER_LEASE_SCOPE = "alpaca_options"
+
+logger = logging.getLogger(__name__)
 
 
 def _as_text(value: Any) -> str | None:
@@ -509,17 +511,11 @@ async def run_market_recorder_loop(args: argparse.Namespace) -> int:
                 lease_key=lease_key,
                 lease_owner=lease_owner,
             )
-            print(
-                json.dumps(
-                    {
-                        "event": "market_recorder_iteration",
-                        "timestamp": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
-                        **summary,
-                    },
-                    separators=(",", ":"),
-                    sort_keys=True,
-                ),
-                flush=True,
+            log_event(
+                logger,
+                logging.INFO,
+                "market_recorder_iteration",
+                **summary,
             )
             if args.once:
                 return 0
@@ -579,6 +575,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     load_local_env()
+    configure_logging(service="market-recorder", force=True)
     args = parse_args(argv)
     try:
         return asyncio.run(run_market_recorder_loop(args))

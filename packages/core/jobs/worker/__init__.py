@@ -53,6 +53,7 @@ class RuntimeWorkerSettings:
     on_startup = runtime_startup
     on_shutdown = shutdown
     keep_result = 0
+    log_results = False
     job_timeout = 8 * 60 * 60
     max_jobs = 4
 
@@ -67,6 +68,7 @@ class DiscoveryWorkerSettings:
     on_startup = discovery_startup
     on_shutdown = shutdown
     keep_result = 0
+    log_results = False
     job_timeout = 8 * 60 * 60
     max_jobs = 1
 
@@ -82,6 +84,7 @@ class ValuationWorkerSettings:
     on_startup = valuation_startup
     on_shutdown = shutdown
     keep_result = 0
+    log_results = False
     job_timeout = 8 * 60 * 60
     max_jobs = 1
 
@@ -95,6 +98,7 @@ class ResearchWorkerSettings:
     on_startup = research_startup
     on_shutdown = shutdown
     keep_result = 0
+    log_results = False
     job_timeout = 8 * 60 * 60
     max_jobs = 1
 

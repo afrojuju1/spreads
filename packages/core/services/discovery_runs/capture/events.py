@@ -6,92 +6,68 @@ from core.events.bus import build_global_event
 from core.storage.event_repository import EventRepository
 
 
-def record_quote_market_events(
+def _source_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        source = str(row.get("source") or "unknown")
+        counts[source] = counts.get(source, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def record_market_capture_summary_event(
     *,
     event_store: EventRepository,
     cycle_id: str,
+    generated_at: str,
     label: str,
     profile: str,
     session_date: str,
     session_id: str | None,
     job_run_id: str | None,
-    quotes: list[dict[str, Any]],
+    quote_capture: dict[str, Any],
+    trade_capture: dict[str, Any],
+    expected_quote_symbols: list[str],
+    expected_trade_symbols: list[str],
+    quote_records: list[dict[str, Any]],
+    trade_records: list[dict[str, Any]],
+    stream_quote_error: str | None,
+    stream_trade_error: str | None,
 ) -> int:
-    if not quotes or not event_store.schema_ready():
+    if not event_store.schema_ready():
         return 0
-    envelopes = [
-        build_global_event(
-            topic="market.quote.captured",
-            event_class="market_event",
-            event_type="option_quote.captured",
-            entity_type="option_quote",
-            entity_id=str(quote["option_symbol"]),
-            payload={
-                **dict(quote),
-                "cycle_id": cycle_id,
-                "label": label,
-                "profile": profile,
-                **({} if session_id is None else {"session_id": session_id}),
-                **({} if job_run_id is None else {"job_run_id": job_run_id}),
-            },
-            timestamp=str(quote["captured_at"]),
-            source=str(quote.get("source") or "option_quote_capture"),
-            session_date=session_date,
-            market_session="regular",
-            correlation_id=cycle_id,
-            causation_id=job_run_id,
-        )
-        for quote in quotes
-        if quote.get("option_symbol") and quote.get("captured_at")
-    ]
-    if not envelopes:
-        return 0
-    event_store.create_events(envelopes)
-    return len(envelopes)
-
-
-def record_trade_market_events(
-    *,
-    event_store: EventRepository,
-    cycle_id: str,
-    label: str,
-    profile: str,
-    session_date: str,
-    session_id: str | None,
-    job_run_id: str | None,
-    trades: list[dict[str, Any]],
-) -> int:
-    if not trades or not event_store.schema_ready():
-        return 0
-    envelopes = [
-        build_global_event(
-            topic="market.trade.captured",
-            event_class="market_event",
-            event_type="option_trade.captured",
-            entity_type="option_trade",
-            entity_id=str(trade["option_symbol"]),
-            payload={
-                **dict(trade),
-                "cycle_id": cycle_id,
-                "label": label,
-                "profile": profile,
-                **({} if session_id is None else {"session_id": session_id}),
-                **({} if job_run_id is None else {"job_run_id": job_run_id}),
-            },
-            timestamp=str(trade["captured_at"]),
-            source=str(trade.get("source") or "option_trade_capture"),
-            session_date=session_date,
-            market_session="regular",
-            correlation_id=cycle_id,
-            causation_id=job_run_id,
-        )
-        for trade in trades
-        if trade.get("option_symbol") and trade.get("captured_at")
-    ]
-    if not envelopes:
-        return 0
-    event_store.create_events(envelopes)
-    return len(envelopes)
+    payload = {
+        "cycle_id": cycle_id,
+        "label": label,
+        "profile": profile,
+        "quote_capture": dict(quote_capture),
+        "trade_capture": dict(trade_capture),
+        "expected_quote_symbol_count": len(expected_quote_symbols),
+        "expected_trade_symbol_count": len(expected_trade_symbols),
+        "expected_quote_symbols_sample": list(expected_quote_symbols[:10]),
+        "expected_trade_symbols_sample": list(expected_trade_symbols[:10]),
+        "quote_source_counts": _source_counts(quote_records),
+        "trade_source_counts": _source_counts(trade_records),
+        **({} if stream_quote_error is None else {"stream_quote_error": stream_quote_error}),
+        **({} if stream_trade_error is None else {"stream_trade_error": stream_trade_error}),
+        **({} if session_id is None else {"session_id": session_id}),
+        **({} if job_run_id is None else {"job_run_id": job_run_id}),
+    }
+    envelope = build_global_event(
+        topic="market.capture.summary",
+        event_class="market_event",
+        event_type="market_capture.summary",
+        entity_type="market_capture_cycle",
+        entity_id=cycle_id,
+        payload=payload,
+        timestamp=generated_at,
+        source="discovery_capture",
+        session_date=session_date,
+        market_session="regular",
+        correlation_id=cycle_id,
+        causation_id=job_run_id,
+    )
+    event_store.create_events([envelope])
+    return 1
 
 
 def record_uoa_summary_event(
@@ -198,8 +174,7 @@ def record_uoa_decision_event(
 
 
 __all__ = [
-    "record_quote_market_events",
-    "record_trade_market_events",
+    "record_market_capture_summary_event",
     "record_uoa_decision_event",
     "record_uoa_summary_event",
 ]

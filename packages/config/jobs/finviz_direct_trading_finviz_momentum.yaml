@@ -27,6 +27,7 @@ payload:
   allow_off_hours: false
   max_new_positions_per_run: 10
   max_open_positions: 10
+  max_daily_loss: 500
   entry_rules:
     enabled: true
     side: buy
@@ -40,8 +41,10 @@ payload:
     limit_price_offset_bps: 0
     timing:
       mode: vwap_reclaim
-      min_intraday_bars: 5
+      not_before_time: "10:00"
+      min_intraday_bars: 30
       recent_lookback_bars: 5
+      confirmation_bars: 2
       breakout_tolerance_bps: 5
   option_entry_rules:
     min_dte: 7
@@ -50,8 +53,14 @@ payload:
     quote_feeds:
       - opra
       - indicative
-    min_open_interest: 100
-    max_spread_pct: 20
+    min_open_interest: 500
+    min_daily_volume: 100
+    min_delta: 0.45
+    preferred_min_delta: 0.50
+    preferred_max_delta: 0.65
+    max_delta: 0.75
+    target_delta: 0.55
+    max_spread_pct: 10
     max_quote_age_seconds: 180
     max_premium: 500
     limit_price_offset_bps: 0
@@ -72,4 +81,12 @@ payload:
     max_spread_pct: 20
     max_quote_age_seconds: 180
     limit_price_offset_bps: 0
+    underlying_invalidation:
+      enabled: true
+      min_intraday_bars: 30
+      recent_lookback_bars: 5
+      confirmation_bars: 2
+      breakdown_tolerance_bps: 5
+      max_spread_pct: 1.0
+      max_quote_age_seconds: 180
 singleton_scope: finviz_momentum

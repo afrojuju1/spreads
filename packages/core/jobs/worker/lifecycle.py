@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import socket
 from typing import Any
@@ -14,11 +15,14 @@ from core.jobs.registry import (
     RUNTIME_QUEUE_NAME,
     VALUATION_QUEUE_NAME,
 )
+from core.observability.logging import configure_logging, log_event
 from core.runtime.config import default_database_url, default_redis_url
 from core.storage.factory import build_job_repository, build_storage_context
 
 WORKER_HEARTBEAT_SECONDS = 30
 WORKER_LEASE_TTL_SECONDS = 90
+
+logger = logging.getLogger(__name__)
 
 
 def worker_name() -> str:
@@ -46,6 +50,7 @@ async def _heartbeat_runtime(job_store: Any, runtime_owner: str) -> None:
 
 
 async def startup(ctx: dict[str, Any]) -> None:
+    configure_logging(service=f"worker-{ctx.get('worker_lane', 'unknown')}", force=True)
     ctx["database_url"] = default_database_url()
     ctx["redis_url"] = default_redis_url()
     ctx["worker_name"] = worker_name()
@@ -65,6 +70,15 @@ async def startup(ctx: dict[str, Any]) -> None:
     ctx["event_bus"] = redis_async.from_url(ctx["redis_url"], decode_responses=True)
     ctx["runtime_heartbeat_task"] = asyncio.create_task(
         _heartbeat_runtime(ctx["job_store"], ctx["worker_name"])
+    )
+    log_event(
+        logger,
+        logging.INFO,
+        "worker_started",
+        worker_name=ctx["worker_name"],
+        lane=ctx.get("worker_lane"),
+        settings_name=ctx.get("worker_settings_name"),
+        queue_name=ctx.get("worker_queue_name"),
     )
 
 
@@ -118,3 +132,12 @@ async def shutdown(ctx: dict[str, Any]) -> None:
     event_bus = ctx.get("event_bus")
     if event_bus is not None:
         await event_bus.aclose()
+    log_event(
+        logger,
+        logging.INFO,
+        "worker_stopped",
+        worker_name=ctx.get("worker_name"),
+        lane=ctx.get("worker_lane"),
+        settings_name=ctx.get("worker_settings_name"),
+        queue_name=ctx.get("worker_queue_name"),
+    )

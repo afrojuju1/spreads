@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shlex
 import shutil
@@ -8,6 +9,8 @@ import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+
+from core.observability.logging import log_event
 
 DEFAULT_NAUTILUS_BRIDGE_COMMAND = "alpaca-submit-order-list-bridge"
 DEFAULT_NAUTILUS_BRIDGE_TIMEOUT_SECONDS = 45.0
@@ -18,6 +21,8 @@ DEFAULT_NAUTILUS_BRIDGE_CANDIDATES = (
     "/home/ade/Projects/nautilus_trader/target/release/alpaca-submit-order-list-bridge",
     "/home/ade/Projects/nautilus_trader/target/debug/alpaca-submit-order-list-bridge",
 )
+
+logger = logging.getLogger(__name__)
 
 
 class NautilusBridgeError(RuntimeError):
@@ -38,6 +43,14 @@ def submit_nautilus_order_list(handoff: Mapping[str, Any]) -> dict[str, Any]:
     timeout_seconds = _bridge_timeout_seconds()
     stdin_payload = json.dumps(dict(handoff), separators=(",", ":"), sort_keys=True)
     cwd = _clean_env_text("SPREADS_NAUTILUS_BRIDGE_CWD")
+    log_event(
+        logger,
+        logging.INFO,
+        "nautilus_bridge_submit_started",
+        **_handoff_log_fields(handoff),
+        command=_command_summary(command),
+        timeout_seconds=timeout_seconds,
+    )
     try:
         completed = subprocess.run(
             command,
@@ -49,6 +62,14 @@ def submit_nautilus_order_list(handoff: Mapping[str, Any]) -> dict[str, Any]:
             cwd=cwd,
         )
     except FileNotFoundError as exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            "nautilus_bridge_submit_failed",
+            **_handoff_log_fields(handoff),
+            reason="nautilus_bridge_not_found",
+            command=_command_summary(command),
+        )
         raise NautilusBridgeError(
             f"Nautilus bridge command not found: {command[0]}",
             reason="nautilus_bridge_command_not_found",
@@ -61,6 +82,15 @@ def submit_nautilus_order_list(handoff: Mapping[str, Any]) -> dict[str, Any]:
             details={"command": _command_summary(command)},
         ) from exc
     except subprocess.TimeoutExpired as exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            "nautilus_bridge_submit_failed",
+            **_handoff_log_fields(handoff),
+            reason="nautilus_bridge_timeout",
+            command=_command_summary(command),
+            timeout_seconds=timeout_seconds,
+        )
         raise NautilusBridgeError(
             f"Nautilus bridge timed out after {timeout_seconds:g}s",
             reason="nautilus_bridge_timeout",
@@ -73,6 +103,15 @@ def submit_nautilus_order_list(handoff: Mapping[str, Any]) -> dict[str, Any]:
         ) from exc
 
     if completed.returncode != 0:
+        log_event(
+            logger,
+            logging.ERROR,
+            "nautilus_bridge_submit_failed",
+            **_handoff_log_fields(handoff),
+            reason="nautilus_bridge_nonzero_exit",
+            command=_command_summary(command),
+            returncode=completed.returncode,
+        )
         raise NautilusBridgeError(
             f"Nautilus bridge exited with status {completed.returncode}",
             reason="nautilus_bridge_process_failed",
@@ -84,7 +123,34 @@ def submit_nautilus_order_list(handoff: Mapping[str, Any]) -> dict[str, Any]:
             },
         )
 
-    return _validate_bridge_result(_parse_bridge_stdout(completed.stdout))
+    result = _validate_bridge_result(_parse_bridge_stdout(completed.stdout))
+    log_event(
+        logger,
+        logging.INFO,
+        "nautilus_bridge_submit_succeeded",
+        **_handoff_log_fields(handoff),
+        command=_command_summary(command),
+        returncode=completed.returncode,
+        bridge_status=result.get("status"),
+    )
+    return result
+
+
+def _handoff_log_fields(handoff: Mapping[str, Any]) -> dict[str, Any]:
+    orders = handoff.get("orders")
+    if not isinstance(orders, list):
+        orders = handoff.get("order_list")
+    if not isinstance(orders, list):
+        orders = []
+    return {
+        "execution_attempt_id": handoff.get("execution_attempt_id"),
+        "execution_intent_id": handoff.get("execution_intent_id"),
+        "opportunity_id": handoff.get("opportunity_id"),
+        "underlying_symbol": handoff.get("underlying_symbol")
+        or handoff.get("root_symbol"),
+        "strategy": handoff.get("strategy"),
+        "order_count": len(orders),
+    }
 
 
 def describe_nautilus_bridge() -> dict[str, Any]:

@@ -20,6 +20,7 @@ from core.cli.ops import (
     uoa_app,
 )
 from core.cli.market_intel import market_intel_app
+from core.cli.retention import retention_app
 from core.cli.runtime import (
     automations_command,
     execution_runtimes_command,
@@ -58,6 +59,7 @@ TARGETABLE_ROOT_COMMANDS = {
     "jobs",
     "uoa",
     "market-intel",
+    "retention",
 }
 
 
@@ -164,6 +166,7 @@ app.add_typer(backtest_app, name="backtest")
 app.add_typer(company_valuation_app, name="company-valuation")
 app.add_typer(config_app, name="config")
 app.add_typer(deploy_app, name="deploy")
+app.add_typer(retention_app, name="retention")
 app.add_typer(uoa_app, name="uoa")
 
 

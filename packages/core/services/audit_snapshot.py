@@ -17,6 +17,7 @@ from core.storage.serializers import parse_datetime
 DEFAULT_TIMELINE_LIMIT = 500
 DEFAULT_EVENT_SCAN_LIMIT = 5000
 MARKET_QUOTE_CAPTURE_TOPIC = "market.quote.captured"
+MARKET_CAPTURE_SUMMARY_TOPIC = "market.capture.summary"
 
 
 def _as_text(value: Any) -> str | None:
@@ -84,6 +85,16 @@ def _detail_subset(payload: Mapping[str, Any]) -> dict[str, Any]:
         "reason",
         "reason_code",
         "message",
+        "quote_capture",
+        "trade_capture",
+        "expected_quote_symbol_count",
+        "expected_trade_symbol_count",
+        "expected_quote_symbols_sample",
+        "expected_trade_symbols_sample",
+        "quote_source_counts",
+        "trade_source_counts",
+        "stream_quote_error",
+        "stream_trade_error",
         "opportunity_id",
         "signal_state_id",
         "risk_decision_id",
@@ -165,6 +176,24 @@ def _event_summary(event: Mapping[str, Any]) -> str:
             or "trade"
         )
         return f"{symbol} trade captured."
+    if topic == MARKET_CAPTURE_SUMMARY_TOPIC:
+        quote_capture = (
+            payload.get("quote_capture")
+            if isinstance(payload.get("quote_capture"), Mapping)
+            else {}
+        )
+        trade_capture = (
+            payload.get("trade_capture")
+            if isinstance(payload.get("trade_capture"), Mapping)
+            else {}
+        )
+        cycle_id = _as_text(payload.get("cycle_id")) or entity_key or "unknown_cycle"
+        quote_count = int(quote_capture.get("total_quote_events_saved") or 0)
+        trade_count = int(trade_capture.get("total_trade_events_saved") or 0)
+        return (
+            f"Market capture summary for cycle {cycle_id}: "
+            f"{quote_count} quote rows / {trade_count} trade rows."
+        )
     if topic == "uoa.summary.updated":
         overview = (
             payload.get("overview")
