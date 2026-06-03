@@ -9,6 +9,7 @@ from core.cli.backtest import backtest_app
 from core.cli.company_valuation import company_valuation_app
 from core.cli.config import config_app
 from core.cli.deploy import deploy_app
+from core.cli.lifecycle import lifecycle_app
 from core.cli.ops import (
     audit_command,
     finviz_ledger_command,
@@ -166,6 +167,7 @@ app.add_typer(backtest_app, name="backtest")
 app.add_typer(company_valuation_app, name="company-valuation")
 app.add_typer(config_app, name="config")
 app.add_typer(deploy_app, name="deploy")
+app.add_typer(lifecycle_app, name="lifecycle")
 app.add_typer(retention_app, name="retention")
 app.add_typer(uoa_app, name="uoa")
 

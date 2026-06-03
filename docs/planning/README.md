@@ -11,6 +11,7 @@ Use these entrypoints:
 - [Trading Lifecycle State Machines](./2026-06-03_trading_lifecycle_state_machines.md) for the object/state lifecycle reference that should be understood before heavy trading-engine refactors
 - [Target Trading Lifecycle Object Model](./2026-06-03_target_trading_lifecycle_object_model.md) for the `spr-g9s.1` decision record defining the clean target objects, states, invariants, replacement stance, and historical-data cutover posture
 - [Lifecycle Contracts Module](./2026-06-03_lifecycle_contracts_module.md) for the `spr-g9s.2` implementation note covering the typed lifecycle state module and its current non-wired runtime risk
+- [Lifecycle Storage Shape](./2026-06-03_lifecycle_storage_shape.md) for the `spr-g9s.3` schema note covering lifecycle fact tables, the position projection, cutover posture, and schema CLI
 - [Trading Lifecycle Bead Plan](./2026-06-03_trading_lifecycle_bead_plan.md) for the ready-to-create bead breakdown, dependency order, and acceptance criteria for the lifecycle rewrite
 - [Current-System Options Automation Implementation Approach](./2026-04-15_current_system_options_automation_implementation_approach.md) for the migration path that uses the existing backend instead of starting clean-sheet
 - [Backtest System Recommendation](./2026-04-16_backtest_system_recommendation.md) for the design background behind the cutover to one canonical config-driven backtest engine
