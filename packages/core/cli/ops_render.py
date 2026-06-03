@@ -9,7 +9,6 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
-
 STATUS_STYLES = {
     "healthy": "green",
     "degraded": "yellow",
@@ -51,10 +50,7 @@ def _render_entry_budget(value: Any, *, fallback_limit: Any = None) -> str:
     remaining = value.get("remaining_entry_count")
     if limit is None and used is None and remaining is None:
         return "-"
-    return (
-        f"{_render_value(used)}/{_render_value(limit)} used, "
-        f"{_render_value(remaining)} left"
-    )
+    return f"{_render_value(used)}/{_render_value(limit)} used, " f"{_render_value(remaining)} left"
 
 
 def _render_percent(value: Any) -> str:
@@ -84,16 +80,12 @@ def _render_duration(value: Any) -> str:
 
 def _stream_quote_count(mapping: dict[str, Any] | None) -> Any:
     payload = {} if mapping is None else mapping
-    return payload.get(
-        "stream_quote_events_saved", payload.get("websocket_quote_events_saved")
-    )
+    return payload.get("stream_quote_events_saved", payload.get("websocket_quote_events_saved"))
 
 
 def _stream_trade_count(mapping: dict[str, Any] | None) -> Any:
     payload = {} if mapping is None else mapping
-    return payload.get(
-        "stream_trade_events_saved", payload.get("websocket_trade_events_saved")
-    )
+    return payload.get("stream_trade_events_saved", payload.get("websocket_trade_events_saved"))
 
 
 def _truncate(value: Any, *, length: int = 48) -> str:
@@ -112,16 +104,10 @@ def _render_count_map(
     if not isinstance(value, dict) or not value:
         return "-"
     ranked = sorted(
-        (
-            (str(key), int(raw_value))
-            for key, raw_value in value.items()
-            if str(key or "").strip()
-        ),
+        ((str(key), int(raw_value)) for key, raw_value in value.items() if str(key or "").strip()),
         key=lambda item: (-item[1], item[0]),
     )
-    rendered = ", ".join(
-        f"{name} {_render_value(count)}" for name, count in ranked[:limit]
-    )
+    rendered = ", ".join(f"{name} {_render_value(count)}" for name, count in ranked[:limit])
     if len(ranked) > limit:
         rendered += ", …"
     return _truncate(rendered, length=item_length)
@@ -158,9 +144,7 @@ def _render_runtime_candidate_previews(
                 delta_text = f" vs min {float(delta):+.1f}"
             except (TypeError, ValueError):
                 delta_text = f" vs min {_render_value(delta)}"
-        parts.append(
-            f"{symbol} {strategy} score {_render_value(score)}{delta_text} ({reason})"
-        )
+        parts.append(f"{symbol} {strategy} score {_render_value(score)}{delta_text} ({reason})")
     return _truncate(", ".join(parts) or "-", length=length)
 
 
@@ -183,10 +167,7 @@ def _render_session_schedule(value: Any, *, length: int = 72) -> str:
         sign = "+" if minutes > 0 else ""
         return f"{anchor}{sign}{minutes}m"
 
-    rendered = (
-        f"{interval_text}, "
-        f"{_offset('open', start_offset)}..{_offset('close', end_offset)}"
-    )
+    rendered = f"{interval_text}, " f"{_offset('open', start_offset)}..{_offset('close', end_offset)}"
     return _truncate(rendered, length=length)
 
 
@@ -219,37 +200,22 @@ def _render_session_state(value: Any, *, length: int = 40) -> str:
 
 def _render_expected_slot(value: Any, *, length: int = 28) -> str:
     payload = value if isinstance(value, dict) else {}
-    expected_slot_at = payload.get("expected_current_slot_at") or payload.get(
-        "expected_last_slot_at"
-    )
+    expected_slot_at = payload.get("expected_current_slot_at") or payload.get("expected_last_slot_at")
     return _truncate(expected_slot_at or "-", length=length)
 
 
-def _render_flat_ranking_policy_summary(
-    payload: dict[str, Any], *, length: int = 88
-) -> str:
+def _render_flat_ranking_policy_summary(payload: dict[str, Any], *, length: int = 88) -> str:
     parts: list[str] = []
     if payload.get("min_probability_of_profit") is not None:
-        parts.append(
-            f"PoP >= {float(payload.get('min_probability_of_profit')):.2f}"
-        )
+        parts.append(f"PoP >= {float(payload.get('min_probability_of_profit')):.2f}")
     if payload.get("min_expected_value_dollars") is not None:
-        parts.append(
-            f"EV >= ${float(payload.get('min_expected_value_dollars')):.2f}"
-        )
+        parts.append(f"EV >= ${float(payload.get('min_expected_value_dollars')):.2f}")
     if payload.get("min_slippage_adjusted_expected_value_dollars") is not None:
-        parts.append(
-            "sEV >= "
-            f"${float(payload.get('min_slippage_adjusted_expected_value_dollars')):.2f}"
-        )
+        parts.append("sEV >= " f"${float(payload.get('min_slippage_adjusted_expected_value_dollars')):.2f}")
     if payload.get("max_entry_slippage_dollars") is not None:
-        parts.append(
-            f"slip <= ${float(payload.get('max_entry_slippage_dollars')):.2f}"
-        )
+        parts.append(f"slip <= ${float(payload.get('max_entry_slippage_dollars')):.2f}")
     if payload.get("min_model_implied_volatility") is not None:
-        parts.append(
-            f"IV >= {float(payload.get('min_model_implied_volatility')):.2f}"
-        )
+        parts.append(f"IV >= {float(payload.get('min_model_implied_volatility')):.2f}")
     return _truncate(", ".join(parts) or "-", length=length)
 
 
@@ -257,11 +223,7 @@ def _render_ranking_policy_summary(value: Any, *, length: int = 88) -> str:
     payload = value if isinstance(value, dict) else {}
     if not payload:
         return "-"
-    by_strategy_family = (
-        payload.get("by_strategy_family")
-        if isinstance(payload.get("by_strategy_family"), dict)
-        else {}
-    )
+    by_strategy_family = payload.get("by_strategy_family") if isinstance(payload.get("by_strategy_family"), dict) else {}
     if by_strategy_family:
         if len(by_strategy_family) == 1:
             return _render_flat_ranking_policy_summary(
@@ -283,20 +245,13 @@ def _render_ranking_vector(value: Any, *, length: int = 88) -> str:
     if payload.get("probability_of_profit") is not None:
         parts.append(f"PoP {_render_percent(payload.get('probability_of_profit'))}")
     if payload.get("breakeven_touch_probability") is not None:
-        parts.append(
-            f"Touch {_render_percent(payload.get('breakeven_touch_probability'))}"
-        )
+        parts.append(f"Touch {_render_percent(payload.get('breakeven_touch_probability'))}")
     if payload.get("expected_value_dollars") is not None:
         parts.append(f"EV {_render_money(payload.get('expected_value_dollars'))}")
     if payload.get("slippage_adjusted_expected_value_dollars") is not None:
-        parts.append(
-            "sEV "
-            f"{_render_money(payload.get('slippage_adjusted_expected_value_dollars'))}"
-        )
+        parts.append("sEV " f"{_render_money(payload.get('slippage_adjusted_expected_value_dollars'))}")
     if payload.get("entry_slippage_dollars") is not None:
-        parts.append(
-            f"Slip {_render_money(payload.get('entry_slippage_dollars'))}"
-        )
+        parts.append(f"Slip {_render_money(payload.get('entry_slippage_dollars'))}")
     if payload.get("model_implied_volatility") is not None:
         parts.append(f"IV {_render_percent(payload.get('model_implied_volatility'))}")
     return _truncate(", ".join(parts) or "-", length=length)
@@ -304,18 +259,10 @@ def _render_ranking_vector(value: Any, *, length: int = 88) -> str:
 
 def _render_ranking_margin_to_pass(value: Any, *, length: int = 64) -> str:
     payload = value if isinstance(value, dict) else {}
-    margin_to_pass = (
-        payload.get("ranking_policy_margin_to_pass")
-        if isinstance(payload.get("ranking_policy_margin_to_pass"), dict)
-        else {}
-    )
+    margin_to_pass = payload.get("ranking_policy_margin_to_pass") if isinstance(payload.get("ranking_policy_margin_to_pass"), dict) else {}
     if not margin_to_pass:
         return "-"
-    ranking_policy = (
-        payload.get("ranking_policy")
-        if isinstance(payload.get("ranking_policy"), dict)
-        else {}
-    )
+    ranking_policy = payload.get("ranking_policy") if isinstance(payload.get("ranking_policy"), dict) else {}
     parts: list[str] = []
     pop_gap = margin_to_pass.get("probability_of_profit")
     if isinstance(pop_gap, (int, float)) and float(pop_gap) > 0:
@@ -334,11 +281,7 @@ def _render_ranking_margin_to_pass(value: Any, *, length: int = 64) -> str:
         direction = "+"
         actual_iv = payload.get("model_implied_volatility")
         max_iv = ranking_policy.get("max_model_implied_volatility")
-        if (
-            isinstance(actual_iv, (int, float))
-            and isinstance(max_iv, (int, float))
-            and float(actual_iv) > float(max_iv)
-        ):
+        if isinstance(actual_iv, (int, float)) and isinstance(max_iv, (int, float)) and float(actual_iv) > float(max_iv):
             direction = "-"
         parts.append(f"IV {direction}{float(iv_gap):.2f}")
     return _truncate(", ".join(parts) or "-", length=length)
@@ -356,9 +299,7 @@ def _render_auto_execution_summary(value: Any) -> str:
     if symbol:
         return f"{status} {symbol}"
     if blockers:
-        return _truncate(
-            f"{status} {', '.join(str(item) for item in blockers)}", length=40
-        )
+        return _truncate(f"{status} {', '.join(str(item) for item in blockers)}", length=40)
     if reason:
         return _truncate(f"{status} {reason}", length=40)
     return status
@@ -377,9 +318,7 @@ def _render_selection_summary(
     table.add_column("Metric", style="bold")
     table.add_column("Value")
     table.add_row("Opportunities", _render_value(payload.get("opportunity_count")))
-    table.add_row(
-        "Auto Live Eligible", _render_value(payload.get("auto_live_eligible_count"))
-    )
+    table.add_row("Auto Live Eligible", _render_value(payload.get("auto_live_eligible_count")))
     table.add_row("Shadow Only", _render_value(payload.get("shadow_only_count")))
     table.add_row("Families", _render_count_map(payload.get("strategy_family_counts")))
     table.add_row("Phases", _render_count_map(payload.get("earnings_phase_counts")))
@@ -388,11 +327,7 @@ def _render_selection_summary(
         "Timing Confidence",
         _render_count_map(payload.get("timing_confidence_counts")),
     )
-    blocker_counts = (
-        payload.get("blocker_counts")
-        if isinstance(payload.get("blocker_counts"), dict)
-        else {}
-    )
+    blocker_counts = payload.get("blocker_counts") if isinstance(payload.get("blocker_counts"), dict) else {}
     table.add_row("Policy Blockers", _render_count_map(blocker_counts.get("policy")))
     table.add_row(
         "Signal Blockers",
@@ -434,11 +369,7 @@ def _render_raw_candidate_summary(
         "Ranking Policy",
         _render_ranking_policy_summary(payload.get("resolved_ranking_policy")),
     )
-    ranking_gate_summary = (
-        payload.get("ranking_policy_gate_summary")
-        if isinstance(payload.get("ranking_policy_gate_summary"), dict)
-        else {}
-    )
+    ranking_gate_summary = payload.get("ranking_policy_gate_summary") if isinstance(payload.get("ranking_policy_gate_summary"), dict) else {}
     overview.add_row(
         "Ranking Status",
         _render_count_map(
@@ -512,11 +443,7 @@ def _render_candidate_row_table(
 
 def _render_automation_sync_value(value: Any) -> str:
     payload = value if isinstance(value, dict) else {}
-    runtime_selection = (
-        payload.get("runtime_selection_summary")
-        if isinstance(payload.get("runtime_selection_summary"), dict)
-        else {}
-    )
+    runtime_selection = payload.get("runtime_selection_summary") if isinstance(payload.get("runtime_selection_summary"), dict) else {}
     has_runtime_selection_detail = (
         int(runtime_selection.get("candidate_count") or 0) > 0
         or int(runtime_selection.get("candidate_symbol_count") or 0) > 0
@@ -525,15 +452,12 @@ def _render_automation_sync_value(value: Any) -> str:
         or bool(runtime_selection.get("rejection_reason_counts"))
         or bool(runtime_selection.get("runtime_filter_reason_counts"))
     )
-    if (
-        not payload
-        or (
-            int(payload.get("automation_runs_upserted") or 0) <= 0
-            and int(payload.get("runtime_opportunities_upserted") or 0) <= 0
-            and int(payload.get("runtime_opportunities_expired") or 0) <= 0
-            and int(runtime_selection.get("opportunity_count") or 0) <= 0
-            and not has_runtime_selection_detail
-        )
+    if not payload or (
+        int(payload.get("automation_runs_upserted") or 0) <= 0
+        and int(payload.get("runtime_opportunities_upserted") or 0) <= 0
+        and int(payload.get("runtime_opportunities_expired") or 0) <= 0
+        and int(runtime_selection.get("opportunity_count") or 0) <= 0
+        and not has_runtime_selection_detail
     ):
         return "-"
     return (
@@ -551,11 +475,7 @@ def _render_automation_sync_summary(
     value: Any,
 ) -> None:
     payload = value if isinstance(value, dict) else {}
-    runtime_selection = (
-        payload.get("runtime_selection_summary")
-        if isinstance(payload.get("runtime_selection_summary"), dict)
-        else {}
-    )
+    runtime_selection = payload.get("runtime_selection_summary") if isinstance(payload.get("runtime_selection_summary"), dict) else {}
     if _render_automation_sync_value(payload) == "-":
         return
     table = Table(title=title, show_edge=False, header_style="bold")
@@ -640,11 +560,7 @@ def _render_automations_list(console: Console, payload: dict[str, Any]) -> None:
     table.add_column("Positions", justify="right")
     table.add_column("Latest Selection", overflow="fold")
     for row in rows:
-        latest_selection = (
-            row.get("latest_runtime_selection_summary")
-            if isinstance(row.get("latest_runtime_selection_summary"), dict)
-            else {}
-        )
+        latest_selection = row.get("latest_runtime_selection_summary") if isinstance(row.get("latest_runtime_selection_summary"), dict) else {}
         selection_preview = _render_automation_sync_value(
             {
                 "runtime_selection_summary": latest_selection,
@@ -669,55 +585,33 @@ def _render_automations_list(console: Console, payload: dict[str, Any]) -> None:
 
 def _render_automation_detail(console: Console, payload: dict[str, Any]) -> None:
     summary = dict(payload.get("summary") or {})
-    latest_run = (
-        payload.get("latest_automation_run")
-        if isinstance(payload.get("latest_automation_run"), dict)
-        else {}
-    )
-    latest_selection = (
-        payload.get("latest_runtime_selection_summary")
-        if isinstance(payload.get("latest_runtime_selection_summary"), dict)
-        else {}
-    )
-    latest_discovery = (
-        payload.get("latest_discovery")
-        if isinstance(payload.get("latest_discovery"), dict)
-        else {}
-    )
+    latest_run = payload.get("latest_automation_run") if isinstance(payload.get("latest_automation_run"), dict) else {}
+    latest_selection = payload.get("latest_runtime_selection_summary") if isinstance(payload.get("latest_runtime_selection_summary"), dict) else {}
+    latest_discovery = payload.get("latest_discovery") if isinstance(payload.get("latest_discovery"), dict) else {}
 
     overview = Table.grid(padding=(0, 2))
     overview.add_row(
         "Automation",
-        f"{_render_value(payload.get('bot_name') or payload.get('bot_id'))} / "
-        f"{_render_value(payload.get('automation_id'))}",
+        f"{_render_value(payload.get('bot_name') or payload.get('bot_id'))} / " f"{_render_value(payload.get('automation_id'))}",
     )
     overview.add_row("Market Date", _render_value(payload.get("market_date")))
     overview.add_row(
         "Mode",
-        f"{_render_value(payload.get('approval_mode'))} / "
-        f"{_render_value(payload.get('execution_mode'))}",
+        f"{_render_value(payload.get('approval_mode'))} / " f"{_render_value(payload.get('execution_mode'))}",
     )
     overview.add_row(
         "Trigger Policy",
         f"min score {_render_value((payload.get('trigger_policy') or {}).get('min_opportunity_score'))}",
     )
     overview.add_row("Opportunities", _render_value(summary.get("opportunity_count")))
-    overview.add_row(
-        "Live Opportunities", _render_value(summary.get("live_opportunity_count"))
-    )
+    overview.add_row("Live Opportunities", _render_value(summary.get("live_opportunity_count")))
     overview.add_row("Decisions", _render_value(summary.get("decision_count")))
     overview.add_row("Intents", _render_value(summary.get("intent_count")))
-    overview.add_row(
-        "Open Positions", _render_value(summary.get("open_position_count"))
-    )
-    overview.add_row(
-        "Latest Run", _render_value(latest_run.get("started_at") or latest_run.get("completed_at"))
-    )
+    overview.add_row("Open Positions", _render_value(summary.get("open_position_count")))
+    overview.add_row("Latest Run", _render_value(latest_run.get("started_at") or latest_run.get("completed_at")))
     overview.add_row(
         "Latest Discovery",
-        _render_value(latest_discovery.get("label"))
-        + " @ "
-        + _render_value(latest_discovery.get("cycle_id")),
+        _render_value(latest_discovery.get("label")) + " @ " + _render_value(latest_discovery.get("cycle_id")),
     )
     console.print(Panel(overview, title="Automation Runtime"))
 
@@ -745,11 +639,7 @@ def _render_discovery_run_raw_candidates(
     *,
     discovery_run_rows: list[dict[str, Any]],
 ) -> None:
-    rows_with_raw = [
-        row
-        for row in discovery_run_rows
-        if isinstance(row.get("raw_candidate_summary"), dict)
-    ]
+    rows_with_raw = [row for row in discovery_run_rows if isinstance(row.get("raw_candidate_summary"), dict)]
     if not rows_with_raw:
         return
     table = Table(title="Discovery-Run Raw Candidates", header_style="bold")
@@ -762,26 +652,14 @@ def _render_discovery_run_raw_candidates(
     table.add_column("Top Blockers")
     for row in rows_with_raw:
         raw_summary = dict(row.get("raw_candidate_summary") or {})
-        selection_summary = (
-            row.get("selection_summary")
-            if isinstance(row.get("selection_summary"), dict)
-            else {}
-        )
-        gate_summary = (
-            raw_summary.get("ranking_policy_gate_summary")
-            if isinstance(raw_summary.get("ranking_policy_gate_summary"), dict)
-            else {}
-        )
+        selection_summary = row.get("selection_summary") if isinstance(row.get("selection_summary"), dict) else {}
+        gate_summary = raw_summary.get("ranking_policy_gate_summary") if isinstance(raw_summary.get("ranking_policy_gate_summary"), dict) else {}
         table.add_row(
             str(row.get("job_key") or "-"),
             _render_value(raw_summary.get("candidate_count")),
             _render_value(selection_summary.get("opportunity_count")),
-            _render_count_map(
-                raw_summary.get("symbol_counts"), limit=4, item_length=48
-            ),
-            _render_count_map(
-                raw_summary.get("strategy_counts"), limit=4, item_length=48
-            ),
+            _render_count_map(raw_summary.get("symbol_counts"), limit=4, item_length=48),
+            _render_count_map(raw_summary.get("strategy_counts"), limit=4, item_length=48),
             _render_count_map(gate_summary.get("status_counts"), item_length=36),
             _render_count_map(gate_summary.get("blocker_counts"), item_length=48),
         )
@@ -839,9 +717,7 @@ def _render_automation_runtime_summary(
     table.add_column("Metric", style="bold")
     table.add_column("Value")
     table.add_row("Bots", _render_value(payload.get("bot_count")))
-    table.add_row(
-        "Entry Automations", _render_value(payload.get("entry_automation_count"))
-    )
+    table.add_row("Entry Automations", _render_value(payload.get("entry_automation_count")))
     table.add_row(
         "Mgmt Automations",
         _render_value(payload.get("management_automation_count")),
@@ -942,9 +818,7 @@ def _render_automation_performance(
         )
         parts: list[str] = []
         for symbol, stats in ranked[:4]:
-            parts.append(
-                f"{symbol} open {_render_value(stats.get('open_positions'))} net {_render_money(stats.get('net_pnl'))}"
-            )
+            parts.append(f"{symbol} open {_render_value(stats.get('open_positions'))} net {_render_money(stats.get('net_pnl'))}")
         return ", ".join(parts) if parts else "-"
 
     bot_rows = list(payload.get("bots") or [])
@@ -972,29 +846,17 @@ def _render_automation_performance(
         )
     console.print(table)
 
-    entry_funnel = (
-        payload.get("entry_funnel")
-        if isinstance(payload.get("entry_funnel"), dict)
-        else {}
-    )
-    overall_funnel = (
-        entry_funnel.get("overall")
-        if isinstance(entry_funnel.get("overall"), dict)
-        else {}
-    )
+    entry_funnel = payload.get("entry_funnel") if isinstance(payload.get("entry_funnel"), dict) else {}
+    overall_funnel = entry_funnel.get("overall") if isinstance(entry_funnel.get("overall"), dict) else {}
     if overall_funnel:
-        overview = Table(
-            title="Entry Funnel Overview", show_edge=False, header_style="bold"
-        )
+        overview = Table(title="Entry Funnel Overview", show_edge=False, header_style="bold")
         overview.add_column("Metric", style="bold")
         overview.add_column("Value")
         overview.add_row("Considered", _render_value(overall_funnel.get("considered")))
         overview.add_row("Selected", _render_value(overall_funnel.get("selected")))
         overview.add_row("Blocked", _render_value(overall_funnel.get("blocked")))
         overview.add_row("Rejected", _render_value(overall_funnel.get("rejected")))
-        overview.add_row(
-            "Intents", _render_value(overall_funnel.get("intents_created"))
-        )
+        overview.add_row("Intents", _render_value(overall_funnel.get("intents_created")))
         overview.add_row("Submitted", _render_value(overall_funnel.get("submitted")))
         overview.add_row("Repriced", _render_value(overall_funnel.get("repriced")))
         overview.add_row("Canceled", _render_value(overall_funnel.get("canceled")))
@@ -1015,23 +877,15 @@ def _render_automation_performance(
         )
         overview.add_row(
             "Blockers",
-            _render_count_map(
-                overall_funnel.get("blocker_reasons"), limit=6, item_length=80
-            ),
+            _render_count_map(overall_funnel.get("blocker_reasons"), limit=6, item_length=80),
         )
         console.print(overview)
 
-    funnel_bots = (
-        entry_funnel.get("bots") if isinstance(entry_funnel.get("bots"), list) else []
-    )
+    funnel_bots = entry_funnel.get("bots") if isinstance(entry_funnel.get("bots"), list) else []
     strategy_rows: list[dict[str, Any]] = []
     for bot_row in funnel_bots:
         bot_name = str(bot_row.get("bot_name") or bot_row.get("bot_id") or "-")
-        funnel = (
-            bot_row.get("strategies")
-            if isinstance(bot_row.get("strategies"), list)
-            else []
-        )
+        funnel = bot_row.get("strategies") if isinstance(bot_row.get("strategies"), list) else []
         for strategy in funnel:
             strategy_rows.append(
                 {
@@ -1069,20 +923,10 @@ def _render_automation_performance(
             )
         console.print(table)
 
-    entry_decision_audit = (
-        value.get("entry_decision_audit")
-        if isinstance(value.get("entry_decision_audit"), dict)
-        else {}
-    )
-    audit_summary = (
-        entry_decision_audit.get("summary")
-        if isinstance(entry_decision_audit.get("summary"), dict)
-        else {}
-    )
+    entry_decision_audit = value.get("entry_decision_audit") if isinstance(value.get("entry_decision_audit"), dict) else {}
+    audit_summary = entry_decision_audit.get("summary") if isinstance(entry_decision_audit.get("summary"), dict) else {}
     if audit_summary and int(audit_summary.get("row_count") or 0) > 0:
-        overview = Table(
-            title="Selected Decision Audit", show_edge=False, header_style="bold"
-        )
+        overview = Table(title="Selected Decision Audit", show_edge=False, header_style="bold")
         overview.add_column("Metric", style="bold")
         overview.add_column("Value")
         overview.add_row("Selected", _render_value(audit_summary.get("selected_count")))
@@ -1116,9 +960,7 @@ def _render_automation_performance(
         )
         overview.add_row(
             "Blocked Policy/Risk",
-            _render_value(
-                audit_summary.get("blocked_by_policy_or_risk_budget_count")
-            ),
+            _render_value(audit_summary.get("blocked_by_policy_or_risk_budget_count")),
         )
         overview.add_row(
             "Reasons",
@@ -1130,11 +972,7 @@ def _render_automation_performance(
         )
         console.print(overview)
 
-    audit_samples = (
-        entry_decision_audit.get("samples")
-        if isinstance(entry_decision_audit.get("samples"), list)
-        else []
-    )
+    audit_samples = entry_decision_audit.get("samples") if isinstance(entry_decision_audit.get("samples"), list) else []
     if audit_samples:
         table = Table(title="Selected Decision Samples", header_style="bold")
         table.add_column("Bot")
@@ -1164,11 +1002,7 @@ def _render_automation_performance(
                 _render_duration(row.get("decision_to_intent_seconds")),
                 _render_duration(row.get("intent_to_submit_seconds")),
                 _render_duration(row.get("submit_to_terminal_seconds")),
-                str(
-                    row.get("terminal_reason")
-                    or row.get("execution_admission_reason")
-                    or "-"
-                ),
+                str(row.get("terminal_reason") or row.get("execution_admission_reason") or "-"),
             )
         console.print(table)
 
@@ -1186,11 +1020,7 @@ def _job_run_status_text(status: str | None) -> Text:
 
 
 def _render_schedule(row: dict[str, Any]) -> str:
-    session_schedule = (
-        row.get("session_schedule")
-        if isinstance(row.get("session_schedule"), dict)
-        else {}
-    )
+    session_schedule = row.get("session_schedule") if isinstance(row.get("session_schedule"), dict) else {}
     if session_schedule:
         return _render_session_schedule(session_schedule)
     schedule_type = str(row.get("schedule_type") or "")
@@ -1285,8 +1115,7 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
     )
     overview.add_row(
         "Alerts",
-        "dead-letter "
-        f"{_render_value(alert_delivery.get('dead_letter_count'))} | retry {_render_value(alert_delivery.get('retry_wait_count'))}",
+        "dead-letter " f"{_render_value(alert_delivery.get('dead_letter_count'))} | retry {_render_value(alert_delivery.get('retry_wait_count'))}",
     )
     console.print(
         Panel(
@@ -1312,11 +1141,7 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Last Slot")
         table.add_column("Expected")
         for row in discovery_run_rows:
-            selection_summary = (
-                row.get("selection_summary")
-                if isinstance(row.get("selection_summary"), dict)
-                else {}
-            )
+            selection_summary = row.get("selection_summary") if isinstance(row.get("selection_summary"), dict) else {}
             table.add_row(
                 str(row.get("job_key") or "-"),
                 _render_session_state(row.get("session_schedule")),
@@ -1373,9 +1198,7 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
     overview = Table.grid(padding=(0, 2))
     overview.add_row("Overall", _status_text(payload.get("status")))
     overview.add_row("Generated", _render_value(payload.get("generated_at")))
-    overview.add_row(
-        "Trading Allowed", "yes" if summary.get("trading_allowed") else "no"
-    )
+    overview.add_row("Trading Allowed", "yes" if summary.get("trading_allowed") else "no")
     overview.add_row("Market", _render_value(market_session.get("status")))
     overview.add_row("Account Source", _render_value(summary.get("account_source")))
     overview.add_row("Environment", _render_value(summary.get("environment")))
@@ -1383,18 +1206,10 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row("Cash", _render_money(account.get("cash")))
     overview.add_row("Buying Power", _render_money(account.get("buying_power")))
     overview.add_row("Day PnL", _render_money(details.get("pnl", {}).get("day_change")))
-    overview.add_row(
-        "Day PnL %", _render_percent(details.get("pnl", {}).get("day_change_percent"))
-    )
-    overview.add_row(
-        "Open Positions", _render_value(summary.get("open_position_count"))
-    )
-    overview.add_row(
-        "Open Executions", _render_value(summary.get("open_execution_count"))
-    )
-    overview.add_row(
-        "Stale Open Execs", _render_value(summary.get("stale_open_execution_count"))
-    )
+    overview.add_row("Day PnL %", _render_percent(details.get("pnl", {}).get("day_change_percent")))
+    overview.add_row("Open Positions", _render_value(summary.get("open_position_count")))
+    overview.add_row("Open Executions", _render_value(summary.get("open_execution_count")))
+    overview.add_row("Stale Open Execs", _render_value(summary.get("stale_open_execution_count")))
     overview.add_row(
         "Unknown Submit",
         _render_value(summary.get("submit_unknown_execution_count")),
@@ -1404,18 +1219,11 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
         _render_value(summary.get("capacity_blocked_underlying_count")),
     )
     overview.add_row("Risk Breaches", _render_value(summary.get("risk_breach_count")))
-    overview.add_row(
-        "Mismatches", _render_value(summary.get("reconciliation_mismatch_count"))
-    )
-    overview.add_row(
-        "Execution Health", _render_value(summary.get("execution_health_status"))
-    )
+    overview.add_row("Mismatches", _render_value(summary.get("reconciliation_mismatch_count")))
+    overview.add_row("Execution Health", _render_value(summary.get("execution_health_status")))
     overview.add_row(
         "Nautilus",
-        (
-            f"{_render_value(summary.get('nautilus_bridge_status'))} | "
-            f"entries {_render_value(summary.get('nautilus_entry_automation_count'))}"
-        ),
+        (f"{_render_value(summary.get('nautilus_bridge_status'))} | " f"entries {_render_value(summary.get('nautilus_entry_automation_count'))}"),
     )
     overview.add_row("Discovery Runs", _render_value(summary.get("discovery_run_count")))
     overview.add_row(
@@ -1496,10 +1304,7 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
                 str(row.get("execution_runtime") or "-"),
                 str(row.get("attempt_status") or "-"),
                 str(row.get("bridge_status") or "-"),
-                (
-                    f"{_render_value(row.get('alpaca_order_count'))}/"
-                    f"{_render_value(row.get('alpaca_fill_count'))}"
-                ),
+                (f"{_render_value(row.get('alpaca_order_count'))}/" f"{_render_value(row.get('alpaca_fill_count'))}"),
                 str(row.get("session_position_status") or "-"),
             )
         console.print(table)
@@ -1554,15 +1359,11 @@ def _render_pipelines_list(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row("Pipelines", _render_value(len(rows)))
     overview.add_row(
         "Healthy",
-        _render_value(
-            sum(1 for row in rows if str(row.get("status") or "") == "healthy")
-        ),
+        _render_value(sum(1 for row in rows if str(row.get("status") or "") == "healthy")),
     )
     overview.add_row(
         "Degraded",
-        _render_value(
-            sum(1 for row in rows if str(row.get("status") or "") == "degraded")
-        ),
+        _render_value(sum(1 for row in rows if str(row.get("status") or "") == "degraded")),
     )
     overview.add_row(
         "Idle",
@@ -1581,19 +1382,12 @@ def _render_pipelines_list(console: Console, payload: dict[str, Any]) -> None:
     table.add_column("Rank Gate")
     table.add_column("Updated")
     for row in rows:
-        gate_summary = (
-            row.get("ranking_policy_gate_summary")
-            if isinstance(row.get("ranking_policy_gate_summary"), dict)
-            else {}
-        )
+        gate_summary = row.get("ranking_policy_gate_summary") if isinstance(row.get("ranking_policy_gate_summary"), dict) else {}
         table.add_row(
             str(row.get("pipeline_id") or "-"),
             str(row.get("status") or "-"),
             _render_value(row.get("tradeability_state")),
-            (
-                f"{_render_value(row.get('promotable_count'))}/"
-                f"{_render_value(row.get('monitor_count'))}"
-            ),
+            (f"{_render_value(row.get('promotable_count'))}/" f"{_render_value(row.get('monitor_count'))}"),
             _render_value(row.get("alert_count")),
             _render_count_map(gate_summary.get("status_counts"), item_length=36),
             _render_value(row.get("updated_at")),
@@ -1603,39 +1397,17 @@ def _render_pipelines_list(console: Console, payload: dict[str, Any]) -> None:
 
 def _render_pipeline_detail(console: Console, payload: dict[str, Any]) -> None:
     current_cycle = dict(payload.get("current_cycle") or {})
-    raw_candidate_summary = (
-        current_cycle.get("raw_candidate_summary")
-        if isinstance(current_cycle.get("raw_candidate_summary"), dict)
-        else {}
-    )
+    raw_candidate_summary = current_cycle.get("raw_candidate_summary") if isinstance(current_cycle.get("raw_candidate_summary"), dict) else {}
     if not raw_candidate_summary:
-        raw_candidate_summary = (
-            payload.get("raw_candidate_summary")
-            if isinstance(payload.get("raw_candidate_summary"), dict)
-            else {}
-        )
-    ranking_policy = (
-        current_cycle.get("resolved_ranking_policy")
-        if isinstance(current_cycle.get("resolved_ranking_policy"), dict)
-        else {}
-    )
+        raw_candidate_summary = payload.get("raw_candidate_summary") if isinstance(payload.get("raw_candidate_summary"), dict) else {}
+    ranking_policy = current_cycle.get("resolved_ranking_policy") if isinstance(current_cycle.get("resolved_ranking_policy"), dict) else {}
     if not ranking_policy:
-        ranking_policy = (
-            payload.get("resolved_ranking_policy")
-            if isinstance(payload.get("resolved_ranking_policy"), dict)
-            else {}
-        )
+        ranking_policy = payload.get("resolved_ranking_policy") if isinstance(payload.get("resolved_ranking_policy"), dict) else {}
     ranking_gate_summary = (
-        current_cycle.get("ranking_policy_gate_summary")
-        if isinstance(current_cycle.get("ranking_policy_gate_summary"), dict)
-        else {}
+        current_cycle.get("ranking_policy_gate_summary") if isinstance(current_cycle.get("ranking_policy_gate_summary"), dict) else {}
     )
     if not ranking_gate_summary:
-        ranking_gate_summary = (
-            payload.get("ranking_policy_gate_summary")
-            if isinstance(payload.get("ranking_policy_gate_summary"), dict)
-            else {}
-        )
+        ranking_gate_summary = payload.get("ranking_policy_gate_summary") if isinstance(payload.get("ranking_policy_gate_summary"), dict) else {}
 
     overview = Table.grid(padding=(0, 2))
     overview.add_row("Overall", _status_text(payload.get("status")))
@@ -1647,9 +1419,7 @@ def _render_pipeline_detail(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row("Session", _render_session_state(payload.get("session_schedule")))
     overview.add_row("Tradeability", _render_value(payload.get("tradeability_state")))
     overview.add_row("Risk", _render_value(payload.get("risk_status")))
-    overview.add_row(
-        "Reconciliation", _render_value(payload.get("reconciliation_status"))
-    )
+    overview.add_row("Reconciliation", _render_value(payload.get("reconciliation_status")))
     overview.add_row(
         "Capture",
         (
@@ -1678,10 +1448,7 @@ def _render_pipeline_detail(console: Console, payload: dict[str, Any]) -> None:
         table.add_row("Expected Slot", _render_expected_slot(payload.get("session_schedule")))
         table.add_row(
             "Candidates",
-            (
-                f"promotable {_render_value(current_cycle.get('promotable_count'))} | "
-                f"monitor {_render_value(current_cycle.get('monitor_count'))}"
-            ),
+            (f"promotable {_render_value(current_cycle.get('promotable_count'))} | " f"monitor {_render_value(current_cycle.get('monitor_count'))}"),
         )
         table.add_row(
             "Automation",
@@ -1711,18 +1478,14 @@ def _render_pipeline_detail(console: Console, payload: dict[str, Any]) -> None:
     )
 
     uoa_overview = (
-        dict(payload.get("uoa_summary") or {}).get("overview")
-        if isinstance(dict(payload.get("uoa_summary") or {}).get("overview"), dict)
-        else {}
+        dict(payload.get("uoa_summary") or {}).get("overview") if isinstance(dict(payload.get("uoa_summary") or {}).get("overview"), dict) else {}
     )
     if uoa_overview:
         table = Table(title="UOA Overview", show_edge=False, header_style="bold")
         table.add_column("Field", style="bold")
         table.add_column("Value")
         table.add_row("Status", _render_value(uoa_overview.get("summary_status")))
-        table.add_row(
-            "Scoreable Roots", _render_value(uoa_overview.get("scoreable_root_count"))
-        )
+        table.add_row("Scoreable Roots", _render_value(uoa_overview.get("scoreable_root_count")))
         table.add_row(
             "Scoreable Premium",
             _render_money(uoa_overview.get("scoreable_premium")),
@@ -1782,6 +1545,10 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
     overview.add_row("Open Positions", _render_value(summary.get("open_position_count")))
     overview.add_row("Active Intents", _render_value(summary.get("active_intent_count")))
     overview.add_row(
+        "Decisions",
+        _render_count_map(summary.get("latest_lifecycle_decision_state_counts")),
+    )
+    overview.add_row(
         "Closes",
         (
             f"{_render_value(summary.get('close_lifecycle_status'))} | "
@@ -1836,10 +1603,7 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
                     ", ".join(str(item) for item in row.get("selected_contracts") or []),
                     length=28,
                 ),
-                (
-                    f"{_render_value(row.get('entry_attempt_count'))}/"
-                    f"{_render_value(row.get('exit_attempt_count'))}"
-                ),
+                (f"{_render_value(row.get('entry_attempt_count'))}/" f"{_render_value(row.get('exit_attempt_count'))}"),
                 _render_pct_points(row.get("avg_entry_spread_pct")),
                 _render_duration(row.get("avg_entry_quote_age_seconds")),
                 _render_money(row.get("avg_entry_slippage_vs_midpoint")),
@@ -1882,6 +1646,7 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
         table.add_column("Armed", justify="right")
         table.add_column("Entry Armed", justify="right")
         table.add_column("Entry Budget")
+        table.add_column("Lifecycle")
         table.add_column("Reasons")
         for row in direct_runs[:8]:
             table.add_row(
@@ -1896,6 +1661,7 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
                     row.get("daily_entry_budget"),
                     fallback_limit=row.get("max_daily_entries"),
                 ),
+                _render_count_map(row.get("lifecycle_decision_state_counts")),
                 _render_count_map(row.get("reason_counts")),
             )
         console.print(table)
@@ -2122,11 +1888,7 @@ def render_job_lanes_view(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Settings")
         table.add_column("Expires")
         for row in workers:
-            lease_state = (
-                row.get("lease_state")
-                if isinstance(row.get("lease_state"), dict)
-                else {}
-            )
+            lease_state = row.get("lease_state") if isinstance(row.get("lease_state"), dict) else {}
             table.add_row(
                 str(row.get("owner") or "-"),
                 _render_value(lease_state.get("lane")),
@@ -2157,10 +1919,7 @@ def render_live_doctor(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row("Environment", _render_value(summary.get("environment")))
     overview.add_row(
         "Broker Sync",
-        (
-            f"{_render_value(summary.get('broker_sync_status'))} "
-            f"age={_render_duration(summary.get('broker_sync_age_seconds'))}"
-        ),
+        (f"{_render_value(summary.get('broker_sync_status'))} " f"age={_render_duration(summary.get('broker_sync_age_seconds'))}"),
     )
     overview.add_row(
         "Finviz",
@@ -2300,9 +2059,7 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
         f"{_render_value(scheduler.get('status'))} @ {_render_value(scheduler.get('expires_at'))}",
     )
     overview.add_row("Workers", _render_value(len(list(details.get("workers") or []))))
-    overview.add_row(
-        "Singleton Leases", _render_value(summary.get("singleton_lease_count"))
-    )
+    overview.add_row("Singleton Leases", _render_value(summary.get("singleton_lease_count")))
     overview.add_row("Worker Lanes", _render_value(summary.get("worker_lane_count")))
     if summary.get("status_filter") == "failed" or summary.get("actionable_failed_count"):
         overview.add_row(
@@ -2365,9 +2122,7 @@ def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:
             latest_status = row.get("latest_run_status")
             latest_text = "-"
             if latest_status or latest:
-                latest_text = (
-                    f"{_render_value(latest_status)} @ {_render_value(latest)}"
-                )
+                latest_text = f"{_render_value(latest_status)} @ {_render_value(latest)}"
             table.add_row(
                 str(row.get("job_key") or "-"),
                 str(row.get("job_type") or "-"),
@@ -2625,10 +2380,7 @@ def _render_uoa_detail(console: Console, payload: dict[str, Any]) -> None:
         _render_value(trade_capture.get("capture_status")),
         _render_value(trade_capture.get("expected_trade_symbol_count")),
         _render_value(trade_capture.get("total_trade_events_saved")),
-        (
-            f"roots {_render_value(decision_overview.get('root_count'))} | "
-            f"scoreable {_render_value(uoa_overview.get('scoreable_trade_count'))}"
-        ),
+        (f"roots {_render_value(decision_overview.get('root_count'))} | " f"scoreable {_render_value(uoa_overview.get('scoreable_trade_count'))}"),
     )
     console.print(capture)
 
@@ -2752,12 +2504,7 @@ def _render_uoa_detail(console: Console, payload: dict[str, Any]) -> None:
                 str(row.get("setup_status") or "-"),
                 _render_value(row.get("eligibility")),
                 _truncate(
-                    str(
-                        row.get("state_reason")
-                        or row.get("scoring_state_reason")
-                        or ", ".join(row.get("reason_codes") or [])
-                        or "-"
-                    ),
+                    str(row.get("state_reason") or row.get("scoring_state_reason") or ", ".join(row.get("reason_codes") or []) or "-"),
                     length=40,
                 ),
                 _render_blocker_list(row.get("execution_blockers")),
@@ -2786,17 +2533,9 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
     details = dict(payload.get("details") or {})
     current_cycle = dict(details.get("current_cycle") or {})
     audit_target = dict(details.get("target") or {})
-    raw_candidate_summary = (
-        current_cycle.get("raw_candidate_summary")
-        if isinstance(current_cycle.get("raw_candidate_summary"), dict)
-        else {}
-    )
+    raw_candidate_summary = current_cycle.get("raw_candidate_summary") if isinstance(current_cycle.get("raw_candidate_summary"), dict) else {}
     if not raw_candidate_summary:
-        raw_candidate_summary = (
-            details.get("raw_candidate_summary")
-            if isinstance(details.get("raw_candidate_summary"), dict)
-            else {}
-    )
+        raw_candidate_summary = details.get("raw_candidate_summary") if isinstance(details.get("raw_candidate_summary"), dict) else {}
     portfolio_summary = dict(details.get("portfolio_summary") or {})
     timeline_stats = dict(details.get("timeline_stats") or {})
 
@@ -2809,9 +2548,7 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row("Run Status", _render_value(summary.get("run_status")))
     overview.add_row("Control", _render_value(summary.get("control_mode")))
     overview.add_row("Risk", _render_value(summary.get("risk_status")))
-    overview.add_row(
-        "Reconciliation", _render_value(summary.get("reconciliation_status"))
-    )
+    overview.add_row("Reconciliation", _render_value(summary.get("reconciliation_status")))
     overview.add_row("Net PnL", _render_money(summary.get("net_pnl_total")))
     overview.add_row(
         "Counts",
@@ -2823,11 +2560,7 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
     )
     overview.add_row(
         "Timeline",
-        (
-            f"{_render_value(summary.get('returned_timeline_item_count'))}/"
-            f"{_render_value(summary.get('timeline_item_count'))} "
-            f"items"
-        ),
+        (f"{_render_value(summary.get('returned_timeline_item_count'))}/" f"{_render_value(summary.get('timeline_item_count'))} " f"items"),
     )
     console.print(
         Panel(
@@ -2840,27 +2573,17 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
     _render_attention(console, payload)
 
     if current_cycle:
-        current_cycle_policy = (
-            current_cycle.get("resolved_ranking_policy")
-            if isinstance(current_cycle.get("resolved_ranking_policy"), dict)
-            else {}
-        )
+        current_cycle_policy = current_cycle.get("resolved_ranking_policy") if isinstance(current_cycle.get("resolved_ranking_policy"), dict) else {}
         if not current_cycle_policy:
             current_cycle_policy = (
-                audit_target.get("resolved_ranking_policy")
-                if isinstance(audit_target.get("resolved_ranking_policy"), dict)
-                else {}
+                audit_target.get("resolved_ranking_policy") if isinstance(audit_target.get("resolved_ranking_policy"), dict) else {}
             )
         ranking_gate_summary = (
-            current_cycle.get("ranking_policy_gate_summary")
-            if isinstance(current_cycle.get("ranking_policy_gate_summary"), dict)
-            else {}
+            current_cycle.get("ranking_policy_gate_summary") if isinstance(current_cycle.get("ranking_policy_gate_summary"), dict) else {}
         )
         if not ranking_gate_summary:
             ranking_gate_summary = (
-                audit_target.get("ranking_policy_gate_summary")
-                if isinstance(audit_target.get("ranking_policy_gate_summary"), dict)
-                else {}
+                audit_target.get("ranking_policy_gate_summary") if isinstance(audit_target.get("ranking_policy_gate_summary"), dict) else {}
             )
         table = Table(title="Current Cycle", show_edge=False, header_style="bold")
         table.add_column("Field", style="bold")
@@ -2873,10 +2596,7 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
         table.add_row("Universe", _render_value(current_cycle.get("universe_label")))
         table.add_row(
             "Candidates",
-            (
-                f"promotable {_render_value(current_cycle.get('promotable_count'))} | "
-                f"monitor {_render_value(current_cycle.get('monitor_count'))}"
-            ),
+            (f"promotable {_render_value(current_cycle.get('promotable_count'))} | " f"monitor {_render_value(current_cycle.get('monitor_count'))}"),
         )
         table.add_row(
             "Automation",
@@ -2909,33 +2629,19 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
             value=raw_candidate_summary,
         )
 
-    portfolio_table = Table(
-        title="Portfolio Summary", show_edge=False, header_style="bold"
-    )
+    portfolio_table = Table(title="Portfolio Summary", show_edge=False, header_style="bold")
     portfolio_table.add_column("Field", style="bold")
     portfolio_table.add_column("Value")
-    portfolio_table.add_row(
-        "Positions", _render_value(portfolio_summary.get("position_count"))
-    )
-    portfolio_table.add_row(
-        "Open Positions", _render_value(portfolio_summary.get("open_position_count"))
-    )
-    portfolio_table.add_row(
-        "Realized PnL", _render_money(portfolio_summary.get("realized_pnl_total"))
-    )
-    portfolio_table.add_row(
-        "Unrealized PnL", _render_money(portfolio_summary.get("unrealized_pnl_total"))
-    )
-    portfolio_table.add_row(
-        "Net PnL", _render_money(portfolio_summary.get("net_pnl_total"))
-    )
+    portfolio_table.add_row("Positions", _render_value(portfolio_summary.get("position_count")))
+    portfolio_table.add_row("Open Positions", _render_value(portfolio_summary.get("open_position_count")))
+    portfolio_table.add_row("Realized PnL", _render_money(portfolio_summary.get("realized_pnl_total")))
+    portfolio_table.add_row("Unrealized PnL", _render_money(portfolio_summary.get("unrealized_pnl_total")))
+    portfolio_table.add_row("Net PnL", _render_money(portfolio_summary.get("net_pnl_total")))
     portfolio_table.add_row(
         "Mismatches",
         _render_value(portfolio_summary.get("mismatch_position_count")),
     )
-    portfolio_table.add_row(
-        "Mark Source", _render_value(portfolio_summary.get("mark_source"))
-    )
+    portfolio_table.add_row("Mark Source", _render_value(portfolio_summary.get("mark_source")))
     console.print(portfolio_table)
 
     slot_runs = list(details.get("slot_runs") or [])
@@ -3075,10 +2781,7 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
         title = "Timeline"
         if timeline_stats.get("timeline_window"):
             window = dict(timeline_stats.get("timeline_window") or {})
-            title = (
-                "Timeline "
-                f"({_render_value(window.get('started_at'))} -> {_render_value(window.get('ended_at'))})"
-            )
+            title = "Timeline " f"({_render_value(window.get('started_at'))} -> {_render_value(window.get('ended_at'))})"
         table = Table(title=title, header_style="bold")
         table.add_column("At")
         table.add_column("Topic")
