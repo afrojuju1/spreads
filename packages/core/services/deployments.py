@@ -313,7 +313,7 @@ def build_deploy_env_values(
     tradingagents_host_dir = _secret_value(
         merged,
         "SPREADS_TRADINGAGENTS_HOST_DIR",
-        default="/home/ade/Projects/TradingAgents",
+        default="/home/ade/Projects/spreads/external/TradingAgents",
     )
     tradingagents_container_dir = _secret_value(
         merged,

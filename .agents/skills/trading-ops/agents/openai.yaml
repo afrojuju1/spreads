@@ -1,0 +1,4 @@
+interface:
+  display_name: "Trading Ops"
+  short_description: "Live trading stack checks and rollout rhythm"
+  default_prompt: "Use $trading-ops to check the live paper trading system and summarize only actionable issues."

@@ -17,7 +17,7 @@ from core.storage.serializers import parse_datetime
 
 
 NEW_YORK = ZoneInfo("America/New_York")
-DEFAULT_TRADINGAGENTS_DIR = "/home/ade/Projects/TradingAgents"
+DEFAULT_TRADINGAGENTS_DIR = "/home/ade/Projects/spreads/external/TradingAgents"
 DEFAULT_ACTIONABLE_SIGNALS = ("Buy", "Overweight", "Sell", "Underweight")
 RESEARCH_SOURCE = "research.tradingagents_scan"
 QUALITY_MESSAGE_VALUE_RE = re.compile(

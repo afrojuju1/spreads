@@ -28,6 +28,7 @@ Related:
 | Canonical opportunity state | `services/signal_state.py`, `services/opportunity_generation.py`, `services/opportunities.py`, `storage/signal_repository.py` | Owns signal state, canonical opportunity rows, and runtime-owned projections derived from discovery run cycles. |
 | Runtime, automation, discovery-session, pipeline-compat, and ops read models | `services/automation_runtimes.py`, `services/discovery_sessions.py`, `services/live_runtime.py`, `services/discovery_run_health/`, `services/pipelines.py`, `services/ops/` | Owns owner-plane automation runtime views, discovery-run-owned discovery-session views, compatibility pipeline projections, and operator CLI payloads. |
 | Execution and portfolio state | `services/execution/`, `services/execution_intents/`, `services/execution_portfolio.py`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py` | Owns execution intents, broker/runtime handoff, immutable execution ledger, day-local position ownership, reconciliation, and exit behavior. `alpaca_direct` is the only supported execution runtime for equity, option, and Alpaca order-payload submission. |
+| Research AI layer | `services/tradingagents_scan.py`, `packages/config/jobs/tradingagents_scan_finviz_momentum.yaml`, `external/TradingAgents` | Spreads owns orchestration, job config, alerts, outputs, and operator visibility. The external TradingAgents repo owns its own agent internals and is linked into Spreads at `external/TradingAgents`. |
 | Historical backtest and evaluation | `backtest/` | `backtest/` owns the canonical historical evaluation engine and artifacts. |
 | Persistence and event transport | Postgres, Redis | Postgres is source of truth. Redis handles queues, leases, and pub/sub fanout. |
 
@@ -45,6 +46,8 @@ Related:
 - `execution_intents` is the strategy/control-plane handoff boundary. It chooses the execution runtime before broker submission. Runtime `alpaca_direct` is the current Python-native Alpaca adapter path for equity, single-leg option, and Alpaca order-payload submission. `services/execution/runtimes.py` owns the runtime capability declaration, and `spreads execution-runtimes`, `GET /executions/runtimes`, `spreads trading`, and the runtime catalog expose the active adapter surface.
 - `execution` is the immutable broker-facing ledger. `session_positions` is the mutable owner of day-local position attribution.
 - `broker_sync` reconciles broker reality and health, but it does not take ownership of session attribution away from `session_positions`.
+- Spreads is the active trading-ops and research-orchestration home. The old `trading_operator` wrapper repo is not an active hub for future operator guidance.
+- `external/TradingAgents` is a symlink to `/home/ade/Projects/TradingAgents`. Spreads may orchestrate research jobs against it, but does not own the external repo's agent internals.
 - Active operator-state refactor `spr-zuy` replaces the fragmented `live-doctor`, `status`, `trading`, and `finviz-ledger` product surfaces with `TradingOpsState` and `StorageOpsState`. During that refactor, prefer full removal of the old active surfaces over compatibility wrappers.
 
 ## Domain Ownership Map
@@ -66,6 +69,7 @@ This map defines domain vocabulary and source-of-truth ownership. Agents should 
 | Broker sync | Poll-first broker/account health and fact ingestion. | `services/broker_sync.py`; operator normalization in `services/ops/broker_sync.py`. | Session attribution, risk policy, or trading decision ownership. |
 | Trading ops state | Operator-facing live trading control-room state: market, control, scheduler/workers, runtime, broker sync, flows, decisions, intents, attempts, positions, exits, risk, and attention. | Target owner under `spr-zuy`: `services/ops/trading_ops_state.py` and `/internal/trading-ops/state`. Current state is fragmented across `services/ops/live_doctor.py`, `services/ops/trading.py`, `services/ops/system.py`, and `services/ops/finviz.py`. | Frontend stitching, API-only aggregators, live Alpaca account calls during normal dashboard render, or vendor-ledger product surfaces. |
 | Storage ops state | Operator-facing storage/retention health: table sizes, stats, latest retention result, schedule, and maintenance warnings. | Target owner under `spr-zuy`: `services/ops/storage_ops_state.py` and `/internal/storage-ops/state`. Current retention state lives in `services/retention.py` and `/internal/ops/retention`. | Live trading state, raw quote/event scans on default dashboard load, or dashboard-only calculations. |
+| Research scan | A batch research run that evaluates a bounded ticker list through the external TradingAgents AI layer. | `services/tradingagents_scan.py`, job config `tradingagents_scan:finviz_momentum`, and artifacts under `outputs/tradingagents/`; external code path is `external/TradingAgents`. | Live trading decisions, execution admission, or Spreads-owned strategy lifecycle state. |
 
 ## Runtime Stack
 
@@ -448,7 +452,7 @@ Current main job types are:
 
 Management automations are still config-owned runtime concepts, but they are evaluated inside `position_exit_manager` rather than through a separate `options_automation_management` job type.
 Recurring maintenance jobs now run only through declared job definitions; `discovery_recovery` no longer inlines `broker_sync` or `position_exit_manager`.
-The TradingAgents research lane is intentionally host-run on the NUC so it can use `/home/ade/Projects/TradingAgents/.venv`; the compose deployment scales the container `worker-research` service to `0` by default.
+The TradingAgents research lane is intentionally host-run on the NUC so it can use the external research environment linked at `external/TradingAgents` (`/home/ade/Projects/TradingAgents`). The compose deployment scales the container `worker-research` service to `0` by default.
 
 Redis is transport and event fanout. Postgres remains the source of truth for job state.
 

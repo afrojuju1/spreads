@@ -42,9 +42,12 @@
 - Do not add, update, or expand automated tests unless the user explicitly asks for test work.
 - Only write or modify e2e tests when the user explicitly asks for e2e coverage. Do not add e2e tests as default regression coverage for implementation work.
 - This repo has repo-local Codex skills under `.agents/skills`. Prefer these direct repo skills when the task matches:
+  - `trading-ops` for live paper trading health, market-open readiness, Finviz direct trading behavior, worker or scheduler status, rollout verification, and "how is the system doing?" checks
   - `spreads-incident-triage` for runtime incidents, degraded collectors, trading blocks, and "what broke?" questions
   - `spreads-live-rollout` for changes that must be applied to the running Docker-backed system
   - `spreads-architecture-docs` for architecture-doc maintenance, boundary updates, and source-of-truth consolidation
+- Spreads owns the active trading-ops skill and operator guidance. Do not add new active guidance to the retired `trading_operator` hub repo.
+- The external research AI layer is linked at [external/TradingAgents](external/TradingAgents), which resolves to `/home/ade/Projects/TradingAgents`. Spreads owns orchestration, job config, alerts, outputs, and operator visibility around that layer; the external repo owns its own agent internals.
 - For operator visibility or runtime triage, prefer the shipped ops CLI first when it fits the question:
   - `uv run spreads status`
   - `uv run spreads trading`
