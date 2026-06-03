@@ -10,6 +10,7 @@ from core.jobs.orchestration import NEW_YORK
 from core.services.close_lifecycle import build_close_lifecycle_summary
 from core.services.execution_lifecycle import project_execution_attempt_lifecycle
 from core.services.finviz_lifecycle import summarize_lifecycle_decision_states
+from core.services.position_lifecycle import build_position_lifecycle
 from core.services.positions import OPEN_POSITION_STATUSES, enrich_position_row
 from core.services.value_coercion import (
     as_text as _as_text,
@@ -379,6 +380,7 @@ def _summarize_position(
     *,
     closes: list[dict[str, Any]],
     attempts_by_id: Mapping[str, dict[str, Any]],
+    close_intents: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     position = enrich_position_row(row)
     realized = _coerce_float(position.get("realized_pnl")) or 0.0
@@ -389,11 +391,19 @@ def _summarize_position(
     close_attempts = [
         attempts_by_id[str(close.get("execution_attempt_id"))] for close in closes if str(close.get("execution_attempt_id")) in attempts_by_id
     ]
+    position_lifecycle = build_position_lifecycle(
+        position,
+        closes=closes,
+        close_attempts=close_attempts,
+        close_intents=close_intents or [],
+    )
     return {
         "position_id": position.get("position_id"),
         "open_execution_attempt_id": open_attempt_id,
         "opening_execution_intent_id": opening_intent_id,
         "status": position.get("status"),
+        "lifecycle_state": position_lifecycle.get("lifecycle_state"),
+        "next_action": position_lifecycle.get("next_action"),
         "root_symbol": position.get("root_symbol"),
         "strategy_family": position.get("strategy_family"),
         "long_symbol": position.get("long_symbol"),
@@ -411,6 +421,10 @@ def _summarize_position(
         "last_exit_reason": position.get("last_exit_reason"),
         "reconciliation_status": position.get("reconciliation_status"),
         "close_count": len(closes),
+        "active_close_count": position_lifecycle.get("active_close_count"),
+        "active_close_attempt_count": position_lifecycle.get("active_close_attempt_count"),
+        "pending_close_intent_count": position_lifecycle.get("pending_close_intent_count"),
+        "close_allowed": position_lifecycle.get("close_allowed"),
         "entry_quality": _compact_attempt_quality(entry_attempt),
         "latest_close_quality": _compact_attempt_quality(close_attempts[0]) if close_attempts else None,
         "closes": [
@@ -644,6 +658,7 @@ def _summarize_intent(row: Mapping[str, Any]) -> dict[str, Any]:
     source = _mapping(payload.get("source"))
     option_selection = _summarize_option_selection(payload.get("option_selection"))
     execution_admission = _mapping(payload.get("execution_admission"))
+    close_decision = _mapping(payload.get("close_decision"))
     return {
         "execution_intent_id": row.get("execution_intent_id"),
         "execution_attempt_id": row.get("execution_attempt_id"),
@@ -654,7 +669,9 @@ def _summarize_intent(row: Mapping[str, Any]) -> dict[str, Any]:
         "position_intent": payload.get("position_intent"),
         "symbol": payload.get("symbol"),
         "underlying_symbol": payload.get("underlying_symbol"),
-        "position_id": payload.get("position_id"),
+        "position_id": row.get("strategy_position_id") or payload.get("position_id"),
+        "close_decision_id": close_decision.get("close_decision_id"),
+        "close_decision_state": close_decision.get("decision_state"),
         "quantity": payload.get("quantity"),
         "limit_price": payload.get("limit_price"),
         "option_selection": option_selection,
@@ -789,15 +806,23 @@ def build_finviz_direct_ledger(
         for row in raw_attempts
     ]
     attempts_by_id = {str(row.get("execution_attempt_id")): row for row in attempts if row.get("execution_attempt_id")}
+    intents = [_summarize_intent(row) for row in raw_intents]
+    close_intents_by_position: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in intents:
+        if str(row.get("action_type") or "").strip().lower() != "close":
+            continue
+        position_id = _as_text(row.get("position_id"))
+        if position_id is not None:
+            close_intents_by_position[position_id].append(row)
     positions = [
         _summarize_position(
             row,
             closes=closes_by_position[str(row.get("position_id"))],
             attempts_by_id=attempts_by_id,
+            close_intents=close_intents_by_position[str(row.get("position_id"))],
         )
         for row in raw_positions
     ]
-    intents = [_summarize_intent(row) for row in raw_intents]
     quality_by_symbol = _build_quality_by_symbol(
         attempts=attempts,
         positions=positions,

@@ -316,6 +316,10 @@ def submit_execution_intent(
             }
             if isinstance(payload.get("source"), dict):
                 close_request_metadata["source"] = dict(payload["source"])
+            if isinstance(payload.get("close_decision"), dict):
+                close_request_metadata["close_decision"] = dict(
+                    payload["close_decision"]
+                )
             result = submit_position_close_by_id(
                 db_target=db_target,
                 position_id=str(source_intent["strategy_position_id"]),
@@ -366,6 +370,11 @@ def submit_execution_intent(
                         else None
                     ),
                     "source": dict(source_metadata),
+                    "close_decision": (
+                        dict(equity_payload["close_decision"])
+                        if isinstance(equity_payload.get("close_decision"), dict)
+                        else None
+                    ),
                 },
                 storage=storage,
             )
@@ -419,6 +428,11 @@ def submit_execution_intent(
                         else None
                     ),
                     "source": dict(source_metadata),
+                    "close_decision": (
+                        dict(option_payload["close_decision"])
+                        if isinstance(option_payload.get("close_decision"), dict)
+                        else None
+                    ),
                     "underlying_price": option_payload.get("underlying_price"),
                     "original_limit_price": option_payload.get("original_limit_price"),
                     "previous_limit_price": option_payload.get("previous_limit_price"),

@@ -15,6 +15,7 @@ from core.services.automations import automation_should_run_now
 from core.services.bots import bot_time_reached
 from core.services.execution_portfolio import refresh_session_position_marks
 from core.services.option_structures import net_premium_kind
+from core.services.position_lifecycle import build_close_decision_lifecycle
 from core.services.positions import enrich_position_row
 from core.services.risk_manager import (
     CLOSE_RECONCILIATION_MAX_AGE_SECONDS,
@@ -520,7 +521,59 @@ def _close_source_payload(*, kind: str, decision: dict[str, Any]) -> dict[str, A
     }
     if exit_context:
         payload["exit_context"] = exit_context
+    close_decision = decision.get("close_decision")
+    if isinstance(close_decision, Mapping):
+        payload["close_decision"] = dict(close_decision)
     return payload
+
+
+def _close_decision_lifecycle(
+    *,
+    position: dict[str, Any],
+    decision: Mapping[str, Any],
+    decision_source: str | None = None,
+    decided_at: str | None = None,
+) -> dict[str, Any]:
+    close_decision = decision.get("close_decision")
+    if isinstance(close_decision, Mapping):
+        return dict(close_decision)
+    return build_close_decision_lifecycle(
+        position=position,
+        decision=decision,
+        decision_source=decision_source,
+        decided_at=decided_at,
+    )
+
+
+def _blocked_close_decision(
+    *,
+    position: dict[str, Any],
+    reason: str,
+    decision_source: str,
+    decided_at: str | None = None,
+) -> dict[str, Any]:
+    return build_close_decision_lifecycle(
+        position=position,
+        decision={
+            "should_close": False,
+            "reason": reason,
+            "recipe_ref": None,
+            "limit_price": None,
+            "limit_price_source": None,
+            "decision_source": decision_source,
+            "decision_details": None,
+        },
+        decision_source=decision_source,
+        decided_at=decided_at,
+    )
+
+
+def _close_decision_row_fields(close_decision: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "close_decision_id": close_decision.get("close_decision_id"),
+        "close_decision_state": close_decision.get("decision_state"),
+        "close_decision": dict(close_decision),
+    }
 
 
 def _has_open_close_attempt(execution_store: Any, position_id: str) -> bool:
@@ -702,6 +755,12 @@ def describe_position_exit_state(
         now=current_time,
         management_runtimes=runtimes,
     )
+    close_decision = _close_decision_lifecycle(
+        position=position,
+        decision=decision,
+        decision_source=_decision_source,
+        decided_at=current_time.isoformat(timespec="seconds").replace("+00:00", "Z"),
+    )
     details = (
         dict(decision.get("decision_details") or {})
         if isinstance(decision.get("decision_details"), dict)
@@ -738,6 +797,9 @@ def describe_position_exit_state(
         ],
         "should_close": bool(decision.get("should_close")),
         "reason": str(decision.get("reason") or "unknown"),
+        "close_decision_state": close_decision.get("decision_state"),
+        "close_decision_id": close_decision.get("close_decision_id"),
+        "close_decision": close_decision,
         "recipe_ref": _as_text(decision.get("recipe_ref")),
         "limit_price": _coerce_float(decision.get("limit_price")),
         "limit_price_source": _as_text(decision.get("limit_price_source")),
@@ -762,6 +824,12 @@ def _create_managed_close_intent(
     from core.services.execution_intents.shared import issue_pending_execution_intent
 
     position_id = str(position["position_id"])
+    close_decision = _close_decision_lifecycle(
+        position=position,
+        decision=decision,
+        decision_source=_as_text(decision.get("decision_source")),
+    )
+    decision = {**decision, "close_decision": close_decision}
     return issue_pending_execution_intent(
         execution_store,
         execution_intent_id=_close_intent_id(position_id, runtime.automation_id),
@@ -789,6 +857,7 @@ def _create_managed_close_intent(
             "limit_price_source": decision.get("limit_price_source"),
             "reason": decision.get("reason"),
             "recipe_ref": decision.get("recipe_ref"),
+            "close_decision": close_decision,
             "decision_source": decision.get("decision_source"),
             "decision_details": dict(decision.get("decision_details") or {}),
             "source": _close_source_payload(
@@ -803,6 +872,8 @@ def _create_managed_close_intent(
             "position_id": position_id,
             "reason": decision.get("reason"),
             "recipe_ref": decision.get("recipe_ref"),
+            "close_decision_id": close_decision.get("close_decision_id"),
+            "close_decision_state": close_decision.get("decision_state"),
             "limit_price": decision.get("limit_price"),
             "execution_runtime": runtime.automation.automation.execution_runtime,
         },
@@ -861,23 +932,35 @@ def run_position_exit_manager(
             "broker_sync": broker_sync,
         }
     if broker_sync.get("status") != "current":
+        broker_reason = str(broker_sync.get("reason") or "broker_sync_not_current")
+        broker_decisions: list[dict[str, Any]] = []
+        decided_at = now.isoformat(timespec="seconds").replace("+00:00", "Z")
+        for position in open_positions[:25]:
+            close_decision = _blocked_close_decision(
+                position=position,
+                reason=broker_reason,
+                decision_source="broker_sync",
+                decided_at=decided_at,
+            )
+            broker_decisions.append(
+                {
+                    "position_id": position.get("position_id"),
+                    "reason": broker_reason,
+                    "decision_source": "broker_sync",
+                    "should_close": False,
+                    **_close_decision_row_fields(close_decision),
+                }
+            )
         return {
             "status": "skipped",
-            "reason": broker_sync.get("reason") or "broker_sync_not_current",
+            "reason": broker_reason,
             "position_count": len(open_positions),
             "evaluated": 0,
             "created_intents": 0,
             "submitted": 0,
             "skipped": len(open_positions),
             "failure_count": 0,
-            "decisions": [
-                {
-                    "position_id": position.get("position_id"),
-                    "reason": broker_sync.get("reason") or "broker_sync_not_current",
-                    "should_close": False,
-                }
-                for position in open_positions[:25]
-            ],
+            "decisions": broker_decisions,
             "failures": [],
             "open_attempt_guard": open_attempt_guard,
             "broker_sync": broker_sync,
@@ -923,6 +1006,7 @@ def run_position_exit_manager(
     failures: list[dict[str, str]] = []
     decisions: list[dict[str, Any]] = []
     management_runtimes = tuple(resolve_management_runtimes())
+    now_iso = now.isoformat(timespec="seconds").replace("+00:00", "Z")
     for position in refreshed_positions:
         position_id = str(position["position_id"])
         latest_position = execution_store.get_position(position_id)
@@ -938,11 +1022,19 @@ def run_position_exit_manager(
                 last_exit_reason="close_already_open",
                 updated_at=_utc_now(),
             )
+            close_decision = _blocked_close_decision(
+                position=position,
+                reason="close_already_open",
+                decision_source="close_guard",
+                decided_at=now_iso,
+            )
             decisions.append(
                 {
                     "position_id": position_id,
                     "reason": "close_already_open",
+                    "decision_source": "close_guard",
                     "should_close": False,
+                    **_close_decision_row_fields(close_decision),
                 }
             )
             continue
@@ -958,11 +1050,19 @@ def run_position_exit_manager(
                     last_exit_reason=close_block_reason,
                     updated_at=_utc_now(),
                 )
+            close_decision = _blocked_close_decision(
+                position=position,
+                reason=close_block_reason,
+                decision_source="close_guard",
+                decided_at=now_iso,
+            )
             decisions.append(
                 {
                     "position_id": position_id,
                     "reason": close_block_reason,
+                    "decision_source": "close_guard",
                     "should_close": False,
+                    **_close_decision_row_fields(close_decision),
                 }
             )
             continue
@@ -972,6 +1072,13 @@ def run_position_exit_manager(
             now=now,
             management_runtimes=management_runtimes,
         )
+        close_decision = _close_decision_lifecycle(
+            position=position,
+            decision=decision,
+            decision_source=decision_source,
+            decided_at=now_iso,
+        )
+        decision = {**decision, "close_decision": close_decision}
         evaluated += 1
         execution_store.update_position(
             position_id=position_id,
@@ -985,6 +1092,7 @@ def run_position_exit_manager(
                 "reason": decision["reason"],
                 "decision_source": decision_source,
                 "should_close": bool(decision["should_close"]),
+                **_close_decision_row_fields(close_decision),
             }
         )
         if not decision["should_close"]:
@@ -1003,8 +1111,16 @@ def run_position_exit_manager(
                 last_exit_reason=close_block_reason,
                 updated_at=_utc_now(),
             )
+            close_decision = _blocked_close_decision(
+                position=position,
+                reason=close_block_reason,
+                decision_source="close_guard",
+                decided_at=now_iso,
+            )
             decisions[-1]["reason"] = close_block_reason
+            decisions[-1]["decision_source"] = "close_guard"
             decisions[-1]["should_close"] = False
+            decisions[-1].update(_close_decision_row_fields(close_decision))
             continue
 
         if management_runtime is not None:
@@ -1016,8 +1132,16 @@ def run_position_exit_manager(
                     last_exit_reason="execution_intent_schema_unavailable",
                     updated_at=_utc_now(),
                 )
+                close_decision = _blocked_close_decision(
+                    position=position,
+                    reason="execution_intent_schema_unavailable",
+                    decision_source="close_guard",
+                    decided_at=now_iso,
+                )
                 decisions[-1]["reason"] = "execution_intent_schema_unavailable"
+                decisions[-1]["decision_source"] = "close_guard"
                 decisions[-1]["should_close"] = False
+                decisions[-1].update(_close_decision_row_fields(close_decision))
                 continue
             if _has_active_close_intent(execution_store, position_id):
                 skipped += 1
@@ -1027,8 +1151,16 @@ def run_position_exit_manager(
                     last_exit_reason="close_intent_already_open",
                     updated_at=_utc_now(),
                 )
+                close_decision = _blocked_close_decision(
+                    position=position,
+                    reason="close_intent_already_open",
+                    decision_source="close_guard",
+                    decided_at=now_iso,
+                )
                 decisions[-1]["reason"] = "close_intent_already_open"
+                decisions[-1]["decision_source"] = "close_guard"
                 decisions[-1]["should_close"] = False
+                decisions[-1].update(_close_decision_row_fields(close_decision))
                 continue
             try:
                 _create_managed_close_intent(
@@ -1054,6 +1186,7 @@ def run_position_exit_manager(
                 position_id=position_id,
                 limit_price=float(decision["limit_price"]),
                 request_metadata={
+                    "close_decision": close_decision,
                     "source": _close_source_payload(
                         kind="exit_manager",
                         decision=decision,

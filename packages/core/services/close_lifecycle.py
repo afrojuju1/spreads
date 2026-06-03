@@ -4,6 +4,8 @@ from collections import Counter
 from collections.abc import Mapping
 from typing import Any
 
+from core.services.position_lifecycle import build_position_lifecycle
+
 ACTIVE_CLOSE_ATTEMPT_STATUSES = {
     "accepted",
     "accepted_for_bidding",
@@ -125,6 +127,7 @@ def _latest_close(closes: list[Any]) -> dict[str, Any] | None:
 
 def _compact_attempt(row: Mapping[str, Any]) -> dict[str, Any]:
     request = _mapping(row.get("request"))
+    close_decision = _mapping(request.get("close_decision"))
     return {
         "execution_attempt_id": row.get("execution_attempt_id"),
         "execution_intent_id": row.get("execution_intent_id")
@@ -133,6 +136,13 @@ def _compact_attempt(row: Mapping[str, Any]) -> dict[str, Any]:
         "root_symbol": row.get("root_symbol") or row.get("underlying_symbol"),
         "strategy_family": row.get("strategy_family") or row.get("strategy"),
         "status": row.get("status"),
+        "lifecycle_state": row.get("lifecycle_state"),
+        "lifecycle_phase": row.get("lifecycle_phase"),
+        "broker_order_state": row.get("broker_order_state"),
+        "next_action": row.get("next_action"),
+        "stale": bool(row.get("stale")),
+        "close_decision_id": close_decision.get("close_decision_id"),
+        "close_decision_state": close_decision.get("decision_state"),
         "requested_at": row.get("requested_at"),
         "submitted_at": row.get("submitted_at"),
         "completed_at": row.get("completed_at"),
@@ -154,12 +164,15 @@ def _compact_attempt(row: Mapping[str, Any]) -> dict[str, Any]:
 
 def _compact_intent(row: Mapping[str, Any]) -> dict[str, Any]:
     payload = _mapping(row.get("payload"))
+    close_decision = _mapping(payload.get("close_decision"))
     return {
         "execution_intent_id": row.get("execution_intent_id"),
         "execution_attempt_id": row.get("execution_attempt_id"),
         "state": row.get("state"),
         "action_type": row.get("action_type"),
         "position_id": row.get("strategy_position_id") or payload.get("position_id"),
+        "close_decision_id": close_decision.get("close_decision_id"),
+        "close_decision_state": close_decision.get("decision_state"),
         "symbol": payload.get("symbol") or payload.get("underlying_symbol"),
         "limit_price": payload.get("limit_price"),
         "original_limit_price": payload.get("original_limit_price"),
@@ -179,18 +192,35 @@ def _compact_intent(row: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _position_close_proof(row: Mapping[str, Any]) -> dict[str, Any]:
+def _position_close_proof(
+    row: Mapping[str, Any],
+    *,
+    close_attempts: list[dict[str, Any]] | None = None,
+    close_intents: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     closes = _list(row.get("closes"))
     latest_close = _latest_close(closes)
+    position_lifecycle = build_position_lifecycle(
+        row,
+        closes=closes,
+        close_attempts=close_attempts or [],
+        close_intents=close_intents or [],
+    )
     return {
         "position_id": row.get("position_id"),
         "root_symbol": row.get("root_symbol") or row.get("underlying_symbol"),
         "strategy_family": row.get("strategy_family") or row.get("strategy"),
         "status": row.get("status") or row.get("position_status"),
+        "lifecycle_state": position_lifecycle.get("lifecycle_state"),
+        "next_action": position_lifecycle.get("next_action"),
         "remaining_quantity": row.get("remaining_quantity"),
         "last_exit_reason": row.get("last_exit_reason"),
         "reconciliation_status": row.get("reconciliation_status"),
         "close_count": len([item for item in closes if isinstance(item, Mapping)]),
+        "active_close_count": position_lifecycle.get("active_close_count"),
+        "active_close_attempt_count": position_lifecycle.get("active_close_attempt_count"),
+        "pending_close_intent_count": position_lifecycle.get("pending_close_intent_count"),
+        "close_allowed": position_lifecycle.get("close_allowed"),
         "latest_close": latest_close,
     }
 
@@ -207,6 +237,19 @@ def _reason_count(rows: list[Mapping[str, Any]], reasons: set[str]) -> int:
 def _attempt_error_matches(row: Mapping[str, Any], needles: tuple[str, ...]) -> bool:
     text = str(row.get("error_text") or "").strip().lower()
     return bool(text) and all(needle in text for needle in needles)
+
+
+def _close_decision_state(row: Mapping[str, Any]) -> str | None:
+    rendered = _as_text(row.get("close_decision_state"))
+    if rendered is not None:
+        return rendered.lower()
+    request_decision = _mapping(_mapping(row.get("request")).get("close_decision"))
+    rendered = _as_text(request_decision.get("decision_state"))
+    if rendered is not None:
+        return rendered.lower()
+    payload_decision = _mapping(_mapping(row.get("payload")).get("close_decision"))
+    rendered = _as_text(payload_decision.get("decision_state"))
+    return None if rendered is None else rendered.lower()
 
 
 def build_close_lifecycle_summary(
@@ -252,6 +295,19 @@ def build_close_lifecycle_summary(
         for row in close_intents
         if str(row.get("state") or "").strip().lower() in PENDING_CLOSE_INTENT_STATES
     ]
+    close_attempts_by_position: dict[str, list[dict[str, Any]]] = {}
+    for row in close_attempts:
+        position_id = _as_text(row.get("position_id"))
+        if position_id is not None:
+            close_attempts_by_position.setdefault(position_id, []).append(row)
+    close_intents_by_position: dict[str, list[dict[str, Any]]] = {}
+    for row in close_intents:
+        payload = _mapping(row.get("payload"))
+        position_id = _as_text(row.get("strategy_position_id")) or _as_text(
+            payload.get("position_id")
+        )
+        if position_id is not None:
+            close_intents_by_position.setdefault(position_id, []).append(row)
 
     stale_position_count = sum(
         1
@@ -269,7 +325,14 @@ def build_close_lifecycle_summary(
         or _attempt_error_matches(row, ("position", "conflict"))
     )
 
-    proof_rows = [_position_close_proof(row) for row in positions]
+    proof_rows = [
+        _position_close_proof(
+            row,
+            close_attempts=close_attempts_by_position.get(str(row.get("position_id")), []),
+            close_intents=close_intents_by_position.get(str(row.get("position_id")), []),
+        )
+        for row in positions
+    ]
     proof_rows.sort(
         key=lambda row: str(
             _mapping(row.get("latest_close")).get("closed_at")
@@ -288,6 +351,21 @@ def build_close_lifecycle_summary(
 
     active_count = len(active_attempts) + len(pending_intents)
     failed_count = len(failed_attempts)
+    position_lifecycle_state_counts = dict(
+        sorted(
+            Counter(
+                str(row.get("lifecycle_state") or "unknown").strip().lower()
+                for row in proof_rows
+            ).items()
+        )
+    )
+    close_decision_states = [
+        state
+        for row in close_attempts + close_intents
+        if (state := _close_decision_state(row)) is not None
+    ]
+    close_decision_state_counts = dict(sorted(Counter(close_decision_states).items()))
+    missing_close_decision_count = len(close_attempts) + len(close_intents) - len(close_decision_states)
     anomaly_count = (
         failed_count
         + max(stale_position_count, stale_decision_count)
@@ -298,6 +376,9 @@ def build_close_lifecycle_summary(
         "status": "degraded" if active_count or failed_count else "healthy",
         "recent_close_attempt_count": len(close_attempts),
         "close_attempt_status_counts": status_counts,
+        "position_lifecycle_state_counts": position_lifecycle_state_counts,
+        "close_decision_state_counts": close_decision_state_counts,
+        "missing_close_decision_count": missing_close_decision_count,
         "active_close_attempt_count": len(active_attempts),
         "pending_close_intent_count": len(pending_intents),
         "failed_close_attempt_count": failed_count,
