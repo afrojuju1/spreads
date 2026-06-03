@@ -16,7 +16,6 @@ from core.services.admission_lifecycle import (
     admission_allows_attempt,
     normalize_lifecycle_admission,
 )
-from core.services.alpaca import create_alpaca_client_from_env
 from core.services.automation_runtime import resolve_entry_runtime
 from core.services.candidate_policy import (
     candidate_has_intraday_setup_context,
@@ -83,6 +82,7 @@ from core.services.value_coercion import (
 from core.services.strategy_configs import load_strategy_configs
 from core.storage.serializers import parse_datetime
 
+from .alpaca_adapter import create_alpaca_order_adapter
 from .attempts import (
     _flatten_order_snapshot,
     _get_attempt_payload,
@@ -2124,11 +2124,11 @@ def refresh_live_session_execution(
                 "message": message,
                 "attempt": payload,
             }
-        client = create_alpaca_client_from_env()
+        adapter = create_alpaca_order_adapter()
         reconciled_attempt = _reconcile_submit_unknown_attempt(
             execution_store=execution_store,
             attempt=attempt,
-            client=client,
+            client=adapter.client,
         )
         if reconciled_attempt is None:
             payload = _get_attempt_payload(execution_store, execution_attempt_id)
@@ -2169,12 +2169,12 @@ def refresh_live_session_execution(
     if broker_order_id is None:
         raise ValueError("Execution does not have a broker order id to refresh")
 
-    client = create_alpaca_client_from_env()
-    order_snapshot = client.get_order(broker_order_id, nested=True)
+    adapter = create_alpaca_order_adapter()
+    order_snapshot = adapter.get_order_snapshot(broker_order_id, nested=True)
     payload = _sync_attempt_state(
         execution_store=execution_store,
         attempt=dict(attempt),
-        client=client,
+        client=adapter.client,
         order_snapshot=order_snapshot,
     )
     message = f"Refreshed execution {execution_attempt_id}: {payload['status']}."
@@ -2670,17 +2670,14 @@ def submit_equity_order(
                 symbol=normalized_symbol,
             )
 
-        client = create_alpaca_client_from_env()
-        submitted_order = client.submit_order(order_request)
-        try:
-            order_snapshot = client.get_order(str(submitted_order["id"]), nested=True)
-        except Exception:
-            order_snapshot = submitted_order
+        adapter = create_alpaca_order_adapter()
+        submission = adapter.submit_order(order_request)
+        submitted_order = submission.submitted_order
         synced_attempt = _sync_equity_attempt_state(
             execution_store=execution_store,
             attempt=attempt,
-            client=client,
-            order_snapshot=order_snapshot,
+            client=adapter.client,
+            order_snapshot=submission.order_snapshot,
         )
         message = (
             f"Submitted equity {normalized_side} for "
@@ -3089,17 +3086,14 @@ def submit_option_order(
             candidate=candidate_payload,
         )
         attempt_created = True
-        client = create_alpaca_client_from_env()
-        submitted_order = client.submit_order(order_request)
-        try:
-            order_snapshot = client.get_order(str(submitted_order["id"]), nested=True)
-        except Exception:
-            order_snapshot = submitted_order
+        adapter = create_alpaca_order_adapter()
+        submission = adapter.submit_order(order_request)
+        submitted_order = submission.submitted_order
         synced_attempt = _sync_attempt_state(
             execution_store=execution_store,
             attempt=dict(attempt),
-            client=client,
-            order_snapshot=order_snapshot,
+            client=adapter.client,
+            order_snapshot=submission.order_snapshot,
         )
         message = (
             f"Submitted option {normalized_side} for "
@@ -3297,7 +3291,7 @@ def _submit_nautilus_equity_runtime_order(
         synced_attempt = _sync_equity_attempt_state(
             execution_store=execution_store,
             attempt=attempt,
-            client=create_alpaca_client_from_env(),
+            client=create_alpaca_order_adapter().client,
             order_snapshot=dict(order_snapshot),
         )
 
@@ -3395,22 +3389,20 @@ def cancel_execution_attempt(
             "attempt": payload,
         }
 
-    client = create_alpaca_client_from_env()
-    client.cancel_order(broker_order_id)
+    adapter = create_alpaca_order_adapter()
+    order_snapshot = adapter.request_cancel(broker_order_id)
     execution_store.update_attempt(
         execution_attempt_id=execution_attempt_id,
         status="pending_cancel",
         position_id=_as_text(attempt.get("position_id")),
     )
-    try:
-        order_snapshot = client.get_order(broker_order_id, nested=True)
-    except Exception:
+    if order_snapshot is None:
         payload = _get_attempt_payload(execution_store, execution_attempt_id)
     else:
         payload = _sync_attempt_state(
             execution_store=execution_store,
             attempt=dict(attempt),
-            client=client,
+            client=adapter.client,
             order_snapshot=order_snapshot,
         )
     message = f"Requested cancel for execution {execution_attempt_id}: {payload['status']}."
@@ -3794,7 +3786,8 @@ def run_execution_submit(
 
     if callable(heartbeat):
         heartbeat()
-    client = create_alpaca_client_from_env()
+    adapter = create_alpaca_order_adapter()
+    client = adapter.client
     runtime_live_quote: Mapping[str, Any] | None = None
     if str(payload.get("trade_intent") or OPEN_TRADE_INTENT) == OPEN_TRADE_INTENT:
         request_payload = (
@@ -3919,7 +3912,8 @@ def run_execution_submit(
 
     submitted_order: dict[str, Any] | None = None
     try:
-        submitted_order = client.submit_order(order_request)
+        submission = adapter.submit_order(order_request)
+        submitted_order = submission.submitted_order
         execution_store.update_attempt(
             execution_attempt_id=execution_attempt_id,
             status=str(submitted_order.get("status") or "submitted").lower(),
@@ -3931,15 +3925,11 @@ def run_execution_submit(
         )
         if callable(heartbeat):
             heartbeat()
-        try:
-            order_snapshot = client.get_order(str(submitted_order["id"]), nested=True)
-        except Exception:
-            order_snapshot = submitted_order
         synced_attempt = _sync_attempt_state(
             execution_store=execution_store,
             attempt=payload,
             client=client,
-            order_snapshot=order_snapshot,
+            order_snapshot=submission.order_snapshot,
         )
         message = _submission_message(synced_attempt, queued=False)
         _publish_execution_attempt_event(synced_attempt, message=message)

@@ -6,8 +6,6 @@ from typing import Any
 
 from core.db.decorators import with_storage
 from core.jobs.specs import get_declared_job_row
-from core.integrations.alpaca.client import AlpacaClient
-from core.services.alpaca import create_alpaca_client_from_env
 from core.services.candidate_policy import resolve_candidate_profile
 from core.services.execution_lifecycle import (
     PENDING_SUBMISSION_GRACE_SECONDS,
@@ -28,9 +26,10 @@ from core.services.value_coercion import (
 from .attempts import (
     _get_attempt_payload,
     _publish_execution_attempt_event,
-    _sync_linked_execution_intent,
     _sync_attempt_state,
+    _sync_linked_execution_intent,
 )
+from .alpaca_adapter import create_alpaca_order_adapter
 from .policy import _attempt_exit_policy, _validate_open_timing_window
 from .shared import OPEN_STATUSES, _is_terminal_status
 
@@ -244,7 +243,7 @@ def run_open_execution_guard(
         }
 
     now = datetime.now(UTC)
-    client: AlpacaClient | None = None
+    adapter: Any | None = None
     evaluated = 0
     canceled = 0
     failed_unsubmitted = 0
@@ -346,13 +345,13 @@ def run_open_execution_guard(
             continue
 
         try:
-            if client is None:
-                client = create_alpaca_client_from_env()
-            order_snapshot = client.get_order(broker_order_id, nested=True)
+            if adapter is None:
+                adapter = create_alpaca_order_adapter()
+            order_snapshot = adapter.get_order_snapshot(broker_order_id, nested=True)
             synced_attempt = _sync_attempt_state(
                 execution_store=execution_store,
                 attempt=attempt,
-                client=client,
+                client=adapter.client,
                 order_snapshot=order_snapshot,
             )
             current_status = str(synced_attempt.get("status") or "").lower()
@@ -383,16 +382,15 @@ def run_open_execution_guard(
                 continue
 
             if current_status != "pending_cancel":
-                client.cancel_order(broker_order_id)
-                try:
-                    cancel_snapshot = client.get_order(broker_order_id, nested=True)
+                cancel_snapshot = adapter.request_cancel(broker_order_id)
+                if cancel_snapshot is not None:
                     synced_attempt = _sync_attempt_state(
                         execution_store=execution_store,
                         attempt=synced_attempt,
-                        client=client,
+                        client=adapter.client,
                         order_snapshot=cancel_snapshot,
                     )
-                except Exception:
+                else:
                     execution_store.update_attempt(
                         execution_attempt_id=execution_attempt_id,
                         status="pending_cancel",
