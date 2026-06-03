@@ -12,8 +12,8 @@ from core.services.broker_sync import BROKER_SYNC_KEY
 from core.services.execution import OPEN_STATUSES
 from core.services.exit_manager import describe_position_exit_state
 from core.services.execution_lifecycle import (
-    classify_open_execution_attempt,
     is_open_execution_attempt_status,
+    project_execution_attempt_lifecycle,
     resolve_execution_attempt_source_job,
     resolve_execution_submit_job_run_id,
 )
@@ -160,7 +160,10 @@ def _execution_attempt_lifecycle(
     source_definition = (
         None if source_job_key is None else source_definitions.get(source_job_key)
     )
-    return classify_open_execution_attempt(
+    attached_lifecycle = attempt.get("execution_attempt_lifecycle")
+    if isinstance(attached_lifecycle, Mapping):
+        return dict(attached_lifecycle)
+    return project_execution_attempt_lifecycle(
         attempt,
         now=now,
         submit_job=submit_job,
@@ -182,10 +185,13 @@ def _summarize_execution_attempt(
         "strategy": attempt.get("strategy"),
         "trade_intent": attempt.get("trade_intent"),
         "status": attempt.get("status"),
+        "lifecycle_state": lifecycle_payload.get("lifecycle_state"),
         "requested_at": attempt.get("requested_at"),
         "submitted_at": attempt.get("submitted_at"),
         "completed_at": attempt.get("completed_at"),
         "broker_order_id": attempt.get("broker_order_id"),
+        "broker_order_state": lifecycle_payload.get("broker_order_state"),
+        "broker_order_state_counts": lifecycle_payload.get("broker_order_state_counts"),
         "candidate_id": attempt.get("candidate_id"),
         "source_kind": lifecycle_payload.get("source_kind"),
         "lifecycle_phase": lifecycle_payload.get("phase"),

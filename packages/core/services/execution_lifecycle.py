@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
+from core.services.trading_lifecycle import (
+    BrokerOrderState,
+    ExecutionAttemptState,
+    LifecycleObject,
+    is_terminal_lifecycle_state,
+    normalize_lifecycle_state,
+)
 from core.storage.serializers import parse_datetime
 
 PENDING_SUBMISSION_STATUS = "pending_submission"
@@ -84,6 +92,32 @@ def normalize_execution_attempt_status(value: Any) -> str:
     return str(value or "").strip().lower()
 
 
+def normalize_execution_attempt_lifecycle_state(value: Any) -> str:
+    status = normalize_execution_attempt_status(value)
+    if status in {"", "unknown"}:
+        return ExecutionAttemptState.SUBMIT_UNKNOWN.value
+    try:
+        return normalize_lifecycle_state(
+            LifecycleObject.EXECUTION_ATTEMPT,
+            status,
+        ).value
+    except ValueError:
+        return ExecutionAttemptState.SUBMIT_UNKNOWN.value
+
+
+def normalize_broker_order_lifecycle_state(value: Any) -> str | None:
+    status = normalize_execution_attempt_status(value)
+    if not status:
+        return None
+    try:
+        return normalize_lifecycle_state(
+            LifecycleObject.BROKER_ORDER,
+            status,
+        ).value
+    except ValueError:
+        return BrokerOrderState.UNKNOWN.value
+
+
 def is_terminal_execution_attempt_status(value: Any) -> bool:
     return normalize_execution_attempt_status(value) in TERMINAL_ATTEMPT_STATUSES
 
@@ -129,6 +163,21 @@ def resolve_execution_attempt_primary_order(
     if primary is not None:
         return primary
     return next((order for order in orders if isinstance(order, Mapping)), None)
+
+
+def _order_state_counts(attempt: Mapping[str, Any]) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for order in attempt.get("orders") or []:
+        if not isinstance(order, Mapping):
+            continue
+        state = normalize_broker_order_lifecycle_state(order.get("order_status"))
+        if state is not None:
+            counts[state] += 1
+    return dict(sorted(counts.items()))
+
+
+def _mapping_row_count(rows: Any) -> int:
+    return len([row for row in rows or [] if isinstance(row, Mapping)])
 
 
 def resolve_execution_attempt_filled_quantity(
@@ -392,6 +441,154 @@ def classify_open_execution_attempt(
     return lifecycle
 
 
+def _phase_for_lifecycle_state(
+    state: str,
+    *,
+    status: str,
+    broker_order_id: str | None,
+) -> str:
+    if state == ExecutionAttemptState.PENDING_SUBMISSION.value:
+        return "queued_local"
+    if state == ExecutionAttemptState.SUBMIT_UNKNOWN.value:
+        return "submit_unknown"
+    if state == ExecutionAttemptState.CANCELING.value:
+        return "canceling"
+    if state == ExecutionAttemptState.PARTIALLY_FILLED.value:
+        return "partial"
+    if state == ExecutionAttemptState.WORKING.value:
+        return "working" if broker_order_id else "working_unlinked"
+    if state in {
+        ExecutionAttemptState.FILLED.value,
+        ExecutionAttemptState.CANCELED.value,
+        ExecutionAttemptState.REJECTED.value,
+        ExecutionAttemptState.EXPIRED.value,
+        ExecutionAttemptState.FAILED.value,
+    }:
+        return "terminal"
+    if status == "stale":
+        return "stale"
+    return "unknown"
+
+
+def _next_action_for_lifecycle_state(
+    state: str,
+    *,
+    stale: bool,
+    broker_order_id: str | None,
+) -> str:
+    if stale:
+        if state == ExecutionAttemptState.SUBMIT_UNKNOWN.value:
+            return "reconcile_broker"
+        if state == ExecutionAttemptState.PENDING_SUBMISSION.value:
+            return "fail_unsubmitted"
+        if state == ExecutionAttemptState.WORKING.value:
+            return "refresh_or_cancel"
+        return "operator_review"
+    if state == ExecutionAttemptState.PENDING_SUBMISSION.value:
+        return "wait_for_submit_job"
+    if state == ExecutionAttemptState.SUBMIT_UNKNOWN.value:
+        return "reconcile_broker"
+    if state == ExecutionAttemptState.CANCELING.value:
+        return "wait_for_cancel_confirmation"
+    if state == ExecutionAttemptState.PARTIALLY_FILLED.value:
+        return "sync_fills_and_manage_position"
+    if state == ExecutionAttemptState.WORKING.value:
+        return "wait_for_broker_update" if broker_order_id else "reconcile_broker"
+    return "none"
+
+
+def project_execution_attempt_lifecycle(
+    attempt: Mapping[str, Any],
+    *,
+    now: datetime,
+    submit_job: Mapping[str, Any] | None = None,
+    source_job_definition: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    status = normalize_execution_attempt_status(attempt.get("status"))
+    state = normalize_execution_attempt_lifecycle_state(status)
+    broker_order_id = _as_text(attempt.get("broker_order_id"))
+    primary_order = resolve_execution_attempt_primary_order(attempt)
+    broker_order_state = (
+        None
+        if primary_order is None
+        else normalize_broker_order_lifecycle_state(primary_order.get("order_status"))
+    )
+    filled_quantity = resolve_execution_attempt_filled_quantity(
+        attempt,
+        primary_order=primary_order,
+    )
+    requested_quantity = max(_coerce_float(attempt.get("quantity")) or 0.0, 0.0)
+    pending_quantity = max(
+        requested_quantity - min(filled_quantity, requested_quantity),
+        0.0,
+    )
+    lifecycle: dict[str, Any] = {
+        "object_type": LifecycleObject.EXECUTION_ATTEMPT.value,
+        "lifecycle_state": state,
+        "phase": _phase_for_lifecycle_state(
+            state,
+            status=status,
+            broker_order_id=broker_order_id,
+        ),
+        "status": status,
+        "terminal": is_terminal_lifecycle_state(
+            LifecycleObject.EXECUTION_ATTEMPT,
+            state,
+        ),
+        "stale": False,
+        "next_action": _next_action_for_lifecycle_state(
+            state,
+            stale=False,
+            broker_order_id=broker_order_id,
+        ),
+        "broker_order_state": broker_order_state,
+        "broker_order_state_counts": _order_state_counts(attempt),
+        "primary_broker_order_id": None if primary_order is None else primary_order.get("broker_order_id"),
+        "order_count": _mapping_row_count(attempt.get("orders")),
+        "fill_count": _mapping_row_count(attempt.get("fills")),
+        "filled_quantity": round(filled_quantity, 4),
+        "pending_quantity": round(pending_quantity, 4),
+        "age_seconds": _seconds_since(
+            _as_text(attempt.get("submitted_at"))
+            or _as_text(attempt.get("requested_at")),
+            now=now,
+        ),
+        "queue_age_seconds": _seconds_since(attempt.get("requested_at"), now=now),
+        "completed_age_seconds": _seconds_since(attempt.get("completed_at"), now=now),
+        "note": None,
+    }
+    if not lifecycle["terminal"] and is_open_execution_attempt_status(status):
+        open_lifecycle = classify_open_execution_attempt(
+            attempt,
+            now=now,
+            submit_job=submit_job,
+            source_job_definition=source_job_definition,
+        )
+        lifecycle.update(open_lifecycle)
+        lifecycle["object_type"] = LifecycleObject.EXECUTION_ATTEMPT.value
+        lifecycle["lifecycle_state"] = state
+        if bool(open_lifecycle.get("stale")):
+            lifecycle["lifecycle_state"] = (
+                ExecutionAttemptState.STALE.value
+                if state == ExecutionAttemptState.WORKING.value
+                else state
+            )
+        lifecycle["broker_order_state"] = broker_order_state
+        lifecycle["broker_order_state_counts"] = _order_state_counts(attempt)
+        lifecycle["primary_broker_order_id"] = None if primary_order is None else primary_order.get("broker_order_id")
+        lifecycle["order_count"] = _mapping_row_count(attempt.get("orders"))
+        lifecycle["fill_count"] = _mapping_row_count(attempt.get("fills"))
+    if lifecycle.get("intervention") is not None:
+        lifecycle["next_action"] = lifecycle["intervention"]
+    elif _as_text(lifecycle.get("next_action")) is None:
+        lifecycle["next_action"] = _next_action_for_lifecycle_state(
+            str(lifecycle.get("lifecycle_state") or state),
+            stale=bool(lifecycle.get("stale")),
+            broker_order_id=broker_order_id,
+        )
+    return lifecycle
+
+
 __all__ = [
     "AUTO_OPEN_ATTEMPT_STALE_AFTER_FALLBACK_SECONDS",
     "AUTO_OPEN_ATTEMPT_STALE_AFTER_MIN_SECONDS",
@@ -407,6 +604,9 @@ __all__ = [
     "is_open_execution_attempt_status",
     "is_terminal_execution_attempt_status",
     "normalize_execution_attempt_status",
+    "normalize_execution_attempt_lifecycle_state",
+    "normalize_broker_order_lifecycle_state",
+    "project_execution_attempt_lifecycle",
     "resolve_execution_submit_job_run_id",
     "resolve_execution_attempt_filled_quantity",
     "resolve_execution_attempt_primary_order",

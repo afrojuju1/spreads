@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from core.db.decorators import with_storage
 from core.jobs.orchestration import NEW_YORK
 from core.services.close_lifecycle import build_close_lifecycle_summary
+from core.services.execution_lifecycle import project_execution_attempt_lifecycle
 from core.services.finviz_lifecycle import summarize_lifecycle_decision_states
 from core.services.positions import OPEN_POSITION_STATUSES, enrich_position_row
 from core.services.value_coercion import (
@@ -295,6 +296,14 @@ def _summarize_attempt(
     fills: list[dict[str, Any]],
     intent: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    attempt_lifecycle = project_execution_attempt_lifecycle(
+        {
+            **dict(row),
+            "orders": orders,
+            "fills": fills,
+        },
+        now=datetime.now(UTC),
+    )
     filled_qty = sum(_coerce_float(fill.get("quantity")) or 0.0 for fill in fills)
     fill_notional = sum((_coerce_float(fill.get("quantity")) or 0.0) * (_coerce_float(fill.get("price")) or 0.0) for fill in fills)
     avg_fill_price = None if filled_qty <= 0 else round(fill_notional / filled_qty, 4)
@@ -314,6 +323,11 @@ def _summarize_attempt(
         "position_id": row.get("position_id"),
         "trade_intent": row.get("trade_intent"),
         "status": row.get("status"),
+        "lifecycle_state": attempt_lifecycle.get("lifecycle_state"),
+        "lifecycle_phase": attempt_lifecycle.get("phase"),
+        "broker_order_state": attempt_lifecycle.get("broker_order_state"),
+        "next_action": attempt_lifecycle.get("next_action"),
+        "stale": bool(attempt_lifecycle.get("stale")),
         "root_symbol": row.get("root_symbol") or row.get("underlying_symbol"),
         "strategy_family": row.get("strategy_family") or row.get("strategy"),
         "symbol_path": row.get("symbol_path"),

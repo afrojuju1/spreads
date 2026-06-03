@@ -17,6 +17,7 @@ from core.services.session_positions import (
     OPEN_TRADE_INTENT,
     sync_session_position_from_attempt,
 )
+from core.services.execution_lifecycle import project_execution_attempt_lifecycle
 from core.services.value_coercion import (
     as_text as _as_text,
     coerce_float as _coerce_float,
@@ -68,23 +69,35 @@ def _attach_attempt_details(
         )
 
     payloads: list[dict[str, Any]] = []
+    now = datetime.now(UTC)
     for attempt in attempts:
         attempt_context = _normalize_attempt_context(
             attempt.get("attempt_context", attempt.get("bucket"))
         )
+        attempt_payload = {
+            **attempt,
+            "orders": orders_by_attempt.get(str(attempt["execution_attempt_id"]), []),
+            "fills": fills_by_attempt.get(str(attempt["execution_attempt_id"]), []),
+        }
+        lifecycle = project_execution_attempt_lifecycle(
+            attempt_payload,
+            now=now,
+        )
         payloads.append(
             {
-                **attempt,
+                **attempt_payload,
                 "attempt_context": attempt_context,
                 "bucket": _deprecated_bucket(attempt_context),
                 "order_intent_id": str(attempt["execution_attempt_id"]),
                 "order_intent_key": _order_intent_key(
                     str(attempt["execution_attempt_id"])
                 ),
-                "orders": orders_by_attempt.get(
-                    str(attempt["execution_attempt_id"]), []
-                ),
-                "fills": fills_by_attempt.get(str(attempt["execution_attempt_id"]), []),
+                "execution_attempt_lifecycle": lifecycle,
+                "lifecycle_state": lifecycle.get("lifecycle_state"),
+                "lifecycle_phase": lifecycle.get("phase"),
+                "broker_order_state": lifecycle.get("broker_order_state"),
+                "next_action": lifecycle.get("next_action"),
+                "stale": bool(lifecycle.get("stale")),
             }
         )
     return payloads
@@ -333,7 +346,10 @@ def _sync_linked_execution_intent(
     message: str,
     payload_updates: dict[str, Any] | None = None,
 ) -> None:
-    from core.services.execution_intents.shared import sync_execution_intent_from_attempt
+    from core.services.execution_intents.shared import (
+        sync_execution_intent_from_attempt,
+        validate_execution_intent_transition,
+    )
 
     execution_intent_id = _linked_execution_intent_id(attempt)
     if execution_intent_id is None or not execution_store.intent_schema_ready():
@@ -344,6 +360,18 @@ def _sync_linked_execution_intent(
     resolved_state = state or _intent_state_from_attempt_status(
         str(attempt.get("status") or "")
     )
+    transition = validate_execution_intent_transition(
+        intent.get("state"),
+        resolved_state,
+    )
+    if not transition.allowed:
+        resolved_state = str(intent.get("state") or "")
+    lifecycle = attempt.get("execution_attempt_lifecycle")
+    if not isinstance(lifecycle, Mapping):
+        lifecycle = project_execution_attempt_lifecycle(
+            attempt,
+            now=datetime.now(UTC),
+        )
     sync_execution_intent_from_attempt(
         execution_store,
         intent=dict(intent),
@@ -354,8 +382,12 @@ def _sync_linked_execution_intent(
             "execution_attempt_id": _as_text(attempt.get("execution_attempt_id")),
             "message": message,
             "attempt_status": str(attempt.get("status") or ""),
+            "execution_attempt_lifecycle": dict(lifecycle),
         },
-        payload_updates=payload_updates,
+        payload_updates={
+            "execution_attempt_lifecycle": dict(lifecycle),
+            **({} if payload_updates is None else payload_updates),
+        },
     )
 
 

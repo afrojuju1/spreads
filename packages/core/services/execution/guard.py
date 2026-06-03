@@ -28,6 +28,7 @@ from core.services.value_coercion import (
 from .attempts import (
     _get_attempt_payload,
     _publish_execution_attempt_event,
+    _sync_linked_execution_intent,
     _sync_attempt_state,
 )
 from .policy import _attempt_exit_policy, _validate_open_timing_window
@@ -286,6 +287,12 @@ def run_open_execution_guard(
                 uncertain_attempt,
                 message=message,
             )
+            _sync_linked_execution_intent(
+                execution_store=execution_store,
+                attempt=uncertain_attempt,
+                event_type="submit_unknown",
+                message=message,
+            )
             submit_unknown += 1
             decisions.append(
                 {
@@ -317,6 +324,13 @@ def run_open_execution_guard(
                 failed_attempt,
                 message=message,
             )
+            _sync_linked_execution_intent(
+                execution_store=execution_store,
+                attempt=failed_attempt,
+                state="failed",
+                event_type="failed",
+                message=message,
+            )
             failed_unsubmitted += 1
             decisions.append(
                 {
@@ -343,6 +357,15 @@ def run_open_execution_guard(
             )
             current_status = str(synced_attempt.get("status") or "").lower()
             if _is_terminal_status(current_status):
+                _sync_linked_execution_intent(
+                    execution_store=execution_store,
+                    attempt=synced_attempt,
+                    event_type="guard_synced_terminal",
+                    message=_guard_intervention_message(
+                        guard_decision,
+                        submitted=True,
+                    ),
+                )
                 terminal_synced += 1
                 decisions.append(
                     {
@@ -381,6 +404,15 @@ def run_open_execution_guard(
                 canceled += 1
                 _publish_execution_attempt_event(
                     synced_attempt,
+                    message=_guard_intervention_message(
+                        guard_decision,
+                        submitted=True,
+                    ),
+                )
+                _sync_linked_execution_intent(
+                    execution_store=execution_store,
+                    attempt=synced_attempt,
+                    event_type="cancel_requested",
                     message=_guard_intervention_message(
                         guard_decision,
                         submitted=True,

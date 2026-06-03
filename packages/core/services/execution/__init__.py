@@ -2108,13 +2108,20 @@ def refresh_live_session_execution(
         client_order_id = _as_text(attempt.get("client_order_id"))
         if client_order_id is None:
             payload = _get_attempt_payload(execution_store, execution_attempt_id)
+            message = (
+                "Execution submit outcome is uncertain and cannot be reconciled "
+                "because the client order id is missing."
+            )
+            _sync_linked_execution_intent(
+                execution_store=execution_store,
+                attempt=payload,
+                event_type="submit_unknown_unresolved",
+                message=message,
+            )
             return {
                 "action": "refresh",
                 "changed": False,
-                "message": (
-                    "Execution submit outcome is uncertain and cannot be reconciled "
-                    "because the client order id is missing."
-                ),
+                "message": message,
                 "attempt": payload,
             }
         client = create_alpaca_client_from_env()
@@ -2125,13 +2132,20 @@ def refresh_live_session_execution(
         )
         if reconciled_attempt is None:
             payload = _get_attempt_payload(execution_store, execution_attempt_id)
+            message = (
+                "Execution submit outcome is uncertain and no broker order has been "
+                f"found yet for client_order_id {client_order_id}."
+            )
+            _sync_linked_execution_intent(
+                execution_store=execution_store,
+                attempt=payload,
+                event_type="submit_unknown_unresolved",
+                message=message,
+            )
             return {
                 "action": "refresh",
                 "changed": False,
-                "message": (
-                    "Execution submit outcome is uncertain and no broker order has been "
-                    f"found yet for client_order_id {client_order_id}."
-                ),
+                "message": message,
                 "attempt": payload,
             }
         message = (
