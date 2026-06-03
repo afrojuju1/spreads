@@ -2,7 +2,7 @@
 
 Date: 2026-06-03
 
-Status: beads created with breaking-rewrite posture.
+Status: lifecycle runtime cutover completed with breaking-rewrite posture. Active config now uses the Python-native `alpaca_direct` adapter; `nautilus` is retired for new Spreads execution declarations.
 
 Related:
 

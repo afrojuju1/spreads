@@ -18,7 +18,7 @@ payload:
   equity_fallback: false
   quantity: 1
   max_notional: 500
-  execution_runtime: nautilus
+  execution_runtime: alpaca_direct
   option_execution_runtime: alpaca_direct
   approval_mode: auto
   execution_mode: paper

@@ -18,8 +18,6 @@ web_enabled: true
 backup_retention_days: 7
 health_check_minutes: 5
 market_recorder_owner_env: ade-nucbox-k8-plus
-nautilus_bridge_host_binary: /home/ade/Projects/nautilus_trader/target/debug/alpaca-submit-order-list-bridge
-nautilus_bridge_timeout_seconds: 45
 excluded_job_types:
   - tradingagents_scan
   - company_valuation_bootstrap

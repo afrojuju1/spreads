@@ -553,8 +553,8 @@ class AutomationExecution:
             raise ValueError("execution.approval_mode must be auto or manual")
         if mode not in {"paper", "live", "shadow"}:
             raise ValueError("execution.mode must be paper, live, or shadow")
-        if runtime not in {"alpaca_direct", "nautilus"}:
-            raise ValueError("execution.runtime must be alpaca_direct or nautilus")
+        if runtime != "alpaca_direct":
+            raise ValueError("execution.runtime must be alpaca_direct")
         object.__setattr__(self, "approval_mode", approval_mode)
         object.__setattr__(self, "mode", mode)
         object.__setattr__(self, "runtime", runtime)

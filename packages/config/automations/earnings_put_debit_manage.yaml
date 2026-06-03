@@ -11,5 +11,5 @@ universe: liquid_stocks
 execution:
   approval_mode: auto
   mode: paper
-  runtime: nautilus
+  runtime: alpaca_direct
 enabled: true

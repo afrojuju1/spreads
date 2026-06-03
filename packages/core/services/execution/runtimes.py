@@ -16,7 +16,8 @@ from .nautilus_bridge import describe_nautilus_bridge
 
 ALPACA_DIRECT_RUNTIME = "alpaca_direct"
 NAUTILUS_RUNTIME = "nautilus"
-SUPPORTED_EXECUTION_RUNTIMES = {ALPACA_DIRECT_RUNTIME, NAUTILUS_RUNTIME}
+SUPPORTED_EXECUTION_RUNTIMES = {ALPACA_DIRECT_RUNTIME}
+RETIRED_EXECUTION_RUNTIMES = {NAUTILUS_RUNTIME}
 ALPACA_VENUE = "ALPACA"
 NAUTILUS_HANDOFF_SCHEMA_VERSION = "spreads.nautilus.submit_order_list.v1"
 NAUTILUS_EQUITY_HANDOFF_SCHEMA_VERSION = "spreads.nautilus.submit_order.v1"
@@ -46,7 +47,9 @@ def normalize_execution_runtime(value: Any) -> str:
     if runtime in {"alpaca", "direct", "alpaca_direct"}:
         return ALPACA_DIRECT_RUNTIME
     if runtime == NAUTILUS_RUNTIME:
-        return NAUTILUS_RUNTIME
+        raise ValueError(
+            "execution runtime 'nautilus' is retired; use alpaca_direct"
+        )
     raise ValueError(
         "execution runtime must be one of "
         f"{', '.join(sorted(SUPPORTED_EXECUTION_RUNTIMES))}"
@@ -399,7 +402,6 @@ def _runtime_usage_summary(config_root: Any = None) -> dict[str, dict[str, Any]]
 def resolve_execution_runtime_capabilities(config_root: Any = None) -> dict[str, Any]:
     usage = _runtime_usage_summary(config_root)
     bridge = describe_nautilus_bridge()
-    nautilus_ready = bool(bridge.get("ready"))
     return {
         "schema_version": EXECUTION_RUNTIME_CAPABILITIES_SCHEMA_VERSION,
         "default_runtime": ALPACA_DIRECT_RUNTIME,
@@ -433,10 +435,10 @@ def resolve_execution_runtime_capabilities(config_root: Any = None) -> dict[str,
             },
             {
                 "runtime": NAUTILUS_RUNTIME,
-                "status": "ready" if nautilus_ready else "blocked",
-                "ready": nautilus_ready,
-                "reason": bridge.get("reason"),
-                **usage[NAUTILUS_RUNTIME],
+                "status": "retired",
+                "ready": False,
+                "reason": "nautilus_runtime_retired_python_alpaca_adapter_active",
+                **usage.get(NAUTILUS_RUNTIME, {"entry_automation_count": 0, "strategy_families": {}}),
                 "bridge": bridge,
                 "capabilities": [
                     {
@@ -447,19 +449,19 @@ def resolve_execution_runtime_capabilities(config_root: Any = None) -> dict[str,
                         "strategy_families": sorted(
                             NAUTILUS_OPTION_SPREAD_FAMILIES
                         ),
-                        "status": "ready" if nautilus_ready else "blocked",
+                        "status": "retired",
                     },
                     {
                         "name": "option_close_cancel_refresh",
                         "asset_classes": ["option"],
                         "actions": ["close", "cancel", "refresh"],
-                        "status": "ready",
+                        "status": "retired",
                     },
                     {
                         "name": NAUTILUS_EQUITY_BUY_SELL_CAPABILITY,
                         "asset_classes": ["equity"],
                         "actions": ["buy", "sell"],
-                        "status": "ready" if nautilus_ready else "blocked",
+                        "status": "retired",
                     },
                 ],
             },
@@ -471,6 +473,7 @@ __all__ = [
     "ALPACA_DIRECT_RUNTIME",
     "EXECUTION_RUNTIME_CAPABILITIES_SCHEMA_VERSION",
     "NAUTILUS_RUNTIME",
+    "RETIRED_EXECUTION_RUNTIMES",
     "NAUTILUS_HANDOFF_SCHEMA_VERSION",
     "NAUTILUS_EQUITY_BUY_SELL_CAPABILITY",
     "NAUTILUS_EQUITY_HANDOFF_SCHEMA_VERSION",
