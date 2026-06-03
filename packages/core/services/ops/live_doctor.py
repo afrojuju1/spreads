@@ -636,6 +636,8 @@ def build_live_doctor(
     close_lifecycle = _mapping(finviz_details.get("close_lifecycle"))
     latest_failure = _mapping(close_lifecycle.get("latest_failure"))
     close_status = str(close_lifecycle.get("status") or "unknown")
+    position_lifecycle_counts = close_lifecycle.get("position_lifecycle_state_counts")
+    close_decision_counts = close_lifecycle.get("close_decision_state_counts")
     checks.append(
         _check(
             "Close Lifecycle",
@@ -660,6 +662,11 @@ def build_live_doctor(
                 ),
                 "close_attempt_status_counts": close_lifecycle.get(
                     "close_attempt_status_counts"
+                ),
+                "position_lifecycle_state_counts": position_lifecycle_counts,
+                "close_decision_state_counts": close_decision_counts,
+                "missing_close_decision_count": close_lifecycle.get(
+                    "missing_close_decision_count"
                 ),
                 "active_close_attempt_count": close_lifecycle.get(
                     "active_close_attempt_count"
@@ -726,6 +733,11 @@ def build_live_doctor(
             "session_entry_count": session_entry_count,
             "remaining_daily_entries": remaining_daily_entries,
             "close_lifecycle_status": close_status,
+            "position_lifecycle_state_counts": position_lifecycle_counts,
+            "close_decision_state_counts": close_decision_counts,
+            "missing_close_decision_count": close_lifecycle.get(
+                "missing_close_decision_count"
+            ),
             "active_close_attempt_count": close_lifecycle.get(
                 "active_close_attempt_count"
             ),

@@ -1558,6 +1558,17 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
         ),
     )
     overview.add_row(
+        "Position States",
+        _render_count_map(summary.get("position_lifecycle_state_counts")),
+    )
+    overview.add_row(
+        "Close Decisions",
+        (
+            f"{_render_count_map(summary.get('close_decision_state_counts'))} | "
+            f"missing {_render_value(summary.get('missing_close_decision_count'))}"
+        ),
+    )
+    overview.add_row(
         "PnL",
         (
             f"realized {_render_money(summary.get('realized_pnl'))} | "
@@ -1671,21 +1682,27 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
         overview_table = Table(title="Close Lifecycle", header_style="bold")
         overview_table.add_column("Status")
         overview_table.add_column("Attempts", justify="right")
-        overview_table.add_column("Active", justify="right")
-        overview_table.add_column("Pending Intents", justify="right")
-        overview_table.add_column("Failed", justify="right")
-        overview_table.add_column("Stale Reconcile", justify="right")
-        overview_table.add_column("Intent Mismatch", justify="right")
-        overview_table.add_column("Statuses")
+        overview_table.add_column("Active/Pending")
+        overview_table.add_column("Issues")
+        overview_table.add_column("Lifecycle")
         overview_table.add_row(
             _render_value(close_lifecycle.get("status")),
             _render_value(close_lifecycle.get("recent_close_attempt_count")),
-            _render_value(close_lifecycle.get("active_close_attempt_count")),
-            _render_value(close_lifecycle.get("pending_close_intent_count")),
-            _render_value(close_lifecycle.get("failed_close_attempt_count")),
-            _render_value(close_lifecycle.get("stale_reconciliation_skip_count")),
-            _render_value(close_lifecycle.get("intent_mismatch_reject_count")),
-            _render_count_map(close_lifecycle.get("close_attempt_status_counts")),
+            (
+                f"active {_render_value(close_lifecycle.get('active_close_attempt_count'))} | "
+                f"pending {_render_value(close_lifecycle.get('pending_close_intent_count'))}"
+            ),
+            (
+                f"failed {_render_value(close_lifecycle.get('failed_close_attempt_count'))} | "
+                f"stale {_render_value(close_lifecycle.get('stale_reconciliation_skip_count'))} | "
+                f"mismatch {_render_value(close_lifecycle.get('intent_mismatch_reject_count'))}"
+            ),
+            (
+                f"attempts {_render_count_map(close_lifecycle.get('close_attempt_status_counts'))} | "
+                f"positions {_render_count_map(close_lifecycle.get('position_lifecycle_state_counts'))} | "
+                f"decisions {_render_count_map(close_lifecycle.get('close_decision_state_counts'))} | "
+                f"missing {_render_value(close_lifecycle.get('missing_close_decision_count'))}"
+            ),
         )
         console.print(overview_table)
 
@@ -1698,6 +1715,8 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
             table.add_column("Requested")
             table.add_column("Root")
             table.add_column("Status")
+            table.add_column("Lifecycle")
+            table.add_column("Next")
             table.add_column("Reprice", justify="right")
             table.add_column("Limit", justify="right")
             table.add_column("Prev Limit", justify="right")
@@ -1708,6 +1727,8 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
                     _render_value(row.get("requested_at")),
                     _render_value(row.get("root_symbol")),
                     _render_value(row.get("status")),
+                    _render_value(row.get("lifecycle_state")),
+                    _render_value(row.get("next_action")),
                     _render_value(row.get("reprice_count")),
                     _render_money(row.get("limit_price")),
                     _render_money(row.get("previous_limit_price")),
@@ -1751,8 +1772,12 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
             table = Table(title="Close Proof By Position", header_style="bold")
             table.add_column("Root")
             table.add_column("Status")
+            table.add_column("Lifecycle")
+            table.add_column("Next")
             table.add_column("Reconcile")
             table.add_column("Exit Reason")
+            table.add_column("Active", justify="right")
+            table.add_column("Allowed")
             table.add_column("Closes", justify="right")
             table.add_column("Latest Close")
             for row in proof_rows[:8]:
@@ -1760,8 +1785,12 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
                 table.add_row(
                     _render_value(row.get("root_symbol")),
                     _render_value(row.get("status")),
+                    _render_value(row.get("lifecycle_state")),
+                    _render_value(row.get("next_action")),
                     _render_value(row.get("reconciliation_status")),
                     _render_value(row.get("last_exit_reason")),
+                    _render_value(row.get("active_close_count")),
+                    _render_value(row.get("close_allowed")),
                     _render_value(row.get("close_count")),
                     _render_value(latest_close.get("closed_at")),
                 )
@@ -1773,6 +1802,8 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
         table.add_column("Root")
         table.add_column("Long Symbol")
         table.add_column("Status")
+        table.add_column("Lifecycle")
+        table.add_column("Next")
         table.add_column("Qty", justify="right")
         table.add_column("Entry", justify="right")
         table.add_column("Mark", justify="right")
@@ -1784,6 +1815,8 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
                 _render_value(row.get("root_symbol")),
                 _truncate(row.get("long_symbol"), length=24),
                 _render_value(row.get("status")),
+                _render_value(row.get("lifecycle_state")),
+                _render_value(row.get("next_action")),
                 _render_value(row.get("remaining_quantity")),
                 _render_money(row.get("entry_value")),
                 _render_money(row.get("close_mark")),
@@ -1800,6 +1833,8 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
         table.add_column("Root")
         table.add_column("Intent")
         table.add_column("Status")
+        table.add_column("Lifecycle")
+        table.add_column("Next")
         table.add_column("Symbol")
         table.add_column("Limit", justify="right")
         table.add_column("Filled", justify="right")
@@ -1811,6 +1846,8 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
                 _render_value(row.get("root_symbol")),
                 _render_value(row.get("trade_intent")),
                 _render_value(row.get("status")),
+                _render_value(row.get("lifecycle_state")),
+                _render_value(row.get("next_action")),
                 _truncate(row.get("long_symbol") or row.get("symbol_path"), length=24),
                 _render_money(row.get("limit_price")),
                 _render_value(row.get("filled_qty")),
@@ -1828,6 +1865,7 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
         table.add_column("State")
         table.add_column("Admission")
         table.add_column("Reason")
+        table.add_column("Close Decision")
         table.add_column("Attempt")
         for row in intents[:10]:
             table.add_row(
@@ -1837,6 +1875,7 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
                 _render_value(row.get("state")),
                 _render_value(row.get("admission_state")),
                 _truncate(row.get("admission_reason"), length=42),
+                _render_value(row.get("close_decision_state")),
                 _truncate(row.get("execution_attempt_id"), length=24),
             )
         console.print(table)
@@ -1977,6 +2016,17 @@ def render_live_doctor(console: Console, payload: dict[str, Any]) -> None:
             f"failed {_render_value(summary.get('failed_close_attempt_count'))}"
         ),
     )
+    overview.add_row(
+        "Position States",
+        _render_count_map(summary.get("position_lifecycle_state_counts")),
+    )
+    overview.add_row(
+        "Close Decisions",
+        (
+            f"{_render_count_map(summary.get('close_decision_state_counts'))} | "
+            f"missing {_render_value(summary.get('missing_close_decision_count'))}"
+        ),
+    )
     overview.add_row("Net PnL", _render_money(summary.get("net_pnl")))
     overview.add_row(
         "Workers",
@@ -2036,21 +2086,27 @@ def render_live_doctor(console: Console, payload: dict[str, Any]) -> None:
         table = Table(title="Close Lifecycle", header_style="bold")
         table.add_column("Status")
         table.add_column("Attempts", justify="right")
-        table.add_column("Active", justify="right")
-        table.add_column("Pending", justify="right")
-        table.add_column("Failed", justify="right")
-        table.add_column("Stale Reconcile", justify="right")
-        table.add_column("Intent Mismatch", justify="right")
-        table.add_column("Statuses")
+        table.add_column("Active/Pending")
+        table.add_column("Issues")
+        table.add_column("Lifecycle")
         table.add_row(
             _render_value(close_lifecycle.get("status")),
             _render_value(close_lifecycle.get("recent_close_attempt_count")),
-            _render_value(close_lifecycle.get("active_close_attempt_count")),
-            _render_value(close_lifecycle.get("pending_close_intent_count")),
-            _render_value(close_lifecycle.get("failed_close_attempt_count")),
-            _render_value(close_lifecycle.get("stale_reconciliation_skip_count")),
-            _render_value(close_lifecycle.get("intent_mismatch_reject_count")),
-            _render_count_map(close_lifecycle.get("close_attempt_status_counts")),
+            (
+                f"active {_render_value(close_lifecycle.get('active_close_attempt_count'))} | "
+                f"pending {_render_value(close_lifecycle.get('pending_close_intent_count'))}"
+            ),
+            (
+                f"failed {_render_value(close_lifecycle.get('failed_close_attempt_count'))} | "
+                f"stale {_render_value(close_lifecycle.get('stale_reconciliation_skip_count'))} | "
+                f"mismatch {_render_value(close_lifecycle.get('intent_mismatch_reject_count'))}"
+            ),
+            (
+                f"attempts {_render_count_map(close_lifecycle.get('close_attempt_status_counts'))} | "
+                f"positions {_render_count_map(close_lifecycle.get('position_lifecycle_state_counts'))} | "
+                f"decisions {_render_count_map(close_lifecycle.get('close_decision_state_counts'))} | "
+                f"missing {_render_value(close_lifecycle.get('missing_close_decision_count'))}"
+            ),
         )
         console.print(table)
 
