@@ -145,8 +145,8 @@ export function AutomationDetailPageContent({
         <div className="app-tone-error rounded-2xl border px-4 py-3 text-sm">
           Runtime detail could not be loaded.
         </div>
-        <Link href="/runtimes" className={buttonVariants({ variant: "outline" })}>
-          Back to runtimes
+        <Link href="/automations" className={buttonVariants({ variant: "outline" })}>
+          Back to automations
         </Link>
       </div>
     );
@@ -263,8 +263,8 @@ export function AutomationDetailPageContent({
               <RefreshCw data-icon="inline-start" />
               Refresh
             </Button>
-            <Link href="/runtimes" className={buttonVariants({ variant: "outline" })}>
-              All runtimes
+            <Link href="/automations" className={buttonVariants({ variant: "outline" })}>
+              All automations
             </Link>
           </div>
         </div>

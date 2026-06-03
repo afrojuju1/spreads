@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Radar, RefreshCw, TriangleAlert } from "lucide-react";
+import { ExternalLink, Radar, RefreshCw, TriangleAlert } from "lucide-react";
 import { startTransition, useEffect, type ReactNode } from "react";
 
 import { DataTable } from "@/components/data-table";
@@ -41,6 +41,7 @@ import {
   type Opportunity,
 } from "@/lib/api";
 import { parseDateValue } from "@/lib/date";
+import { grafanaTradingLogsUrl } from "@/lib/grafana";
 import { cn } from "@/lib/utils";
 
 function readRecord(value: unknown): Record<string, unknown> {
@@ -1832,6 +1833,15 @@ export function OpportunitiesIndexPageContent({
               <RefreshCw data-icon="inline-start" />
               Refresh
             </Button>
+            <a
+              href={grafanaTradingLogsUrl({ from: "now-6h" })}
+              target="_blank"
+              rel="noreferrer"
+              className={buttonVariants({ variant: "outline" })}
+            >
+              <ExternalLink data-icon="inline-start" />
+              Logs
+            </a>
             {hasOwnerScope || label ? (
               <Button type="button" variant="outline" onClick={clearOwnerScope}>
                 Clear scope

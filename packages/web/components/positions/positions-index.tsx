@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { startTransition, useMemo, useState } from "react";
-import { BriefcaseBusiness, RefreshCw, Send, XCircle } from "lucide-react";
+import { BriefcaseBusiness, ExternalLink, RefreshCw, Send, XCircle } from "lucide-react";
 
 import { DataTable } from "@/components/data-table";
 import {
@@ -20,8 +20,9 @@ import {
   type Position,
 } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { grafanaTradingLogsUrl } from "@/lib/grafana";
 import {
   formatNullableCurrency,
   formatQuantity,
@@ -382,6 +383,15 @@ export function PositionsIndexPageContent({
               <RefreshCw data-icon="inline-start" />
               Refresh
             </Button>
+            <a
+              href={grafanaTradingLogsUrl({ from: "now-6h" })}
+              target="_blank"
+              rel="noreferrer"
+              className={buttonVariants({ variant: "outline" })}
+            >
+              <ExternalLink data-icon="inline-start" />
+              Logs
+            </a>
             {hasOwnerScope || label ? (
               <Button type="button" variant="outline" onClick={clearOwnerScope}>
                 Clear scope

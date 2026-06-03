@@ -30,6 +30,20 @@ export function readString(value: unknown, fallback: unknown = "—"): string {
   return typeof fallback === "string" ? fallback : "—";
 }
 
+export function readRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+export function readRecordList(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value
+        .filter((item) => typeof item === "object" && item !== null && !Array.isArray(item))
+        .map((item) => item as Record<string, unknown>)
+    : [];
+}
+
 export function formatDate(value: string | null | undefined): string {
   return formatCalendarDate(value);
 }
@@ -83,6 +97,32 @@ export function formatQuantity(value: number | null | undefined): string {
   return new Intl.NumberFormat(undefined, {
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+export function formatCompactNumber(value: number | null | undefined): string {
+  if (value == null) {
+    return "—";
+  }
+  return new Intl.NumberFormat(undefined, {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
+export function formatBytes(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) {
+    return "—";
+  }
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let resolved = Math.abs(value);
+  let index = 0;
+  while (resolved >= 1024 && index < units.length - 1) {
+    resolved /= 1024;
+    index += 1;
+  }
+  const sign = value < 0 ? "-" : "";
+  const precision = resolved >= 10 || index === 0 ? 0 : 1;
+  return `${sign}${resolved.toFixed(precision)} ${units[index]}`;
 }
 
 export function formatSignedPercent(

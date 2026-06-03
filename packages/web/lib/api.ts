@@ -717,6 +717,17 @@ const opsTradingHealthSchema = z
     status: z.string().default("unknown"),
     generated_at: z.string().nullable().optional(),
     summary: z.record(z.string(), z.unknown()).default({}),
+    attention: z.array(z.record(z.string(), z.unknown())).default([]),
+    details: z.record(z.string(), z.unknown()).default({}),
+  })
+  .passthrough();
+
+const opsEnvelopeSchema = z
+  .object({
+    status: z.string().default("unknown"),
+    generated_at: z.string().nullable().optional(),
+    summary: z.record(z.string(), z.unknown()).default({}),
+    attention: z.array(z.record(z.string(), z.unknown())).default([]),
     details: z.record(z.string(), z.unknown()).default({}),
   })
   .passthrough();
@@ -772,6 +783,7 @@ export type AutomationRuntimeListItem = z.infer<typeof automationRuntimeListItem
 export type AutomationRuntimeDetail = z.infer<typeof automationRuntimeDetailSchema>;
 export type ExecutionRuntimeCapabilities = z.infer<typeof executionRuntimeCapabilitiesSchema>;
 export type OpsTradingHealth = z.infer<typeof opsTradingHealthSchema>;
+export type OpsEnvelope = z.infer<typeof opsEnvelopeSchema>;
 export type AutoExecutionSummary = z.infer<typeof autoExecutionSummarySchema>;
 export type GlobalRealtimeEvent = z.infer<typeof globalRealtimeEventSchema>;
 export type OpportunityExecutionRequest = {
@@ -945,6 +957,42 @@ export function getOpsTradingHealth() {
   return fetchApi("internal/ops/trading", opsTradingHealthSchema);
 }
 
+export function getOpsLiveDoctor(filters?: {
+  feedId?: string;
+  marketDate?: string;
+  limit?: number;
+}) {
+  return fetchApi("internal/ops/live-doctor", opsEnvelopeSchema, {
+    feed_id: filters?.feedId,
+    market_date: filters?.marketDate,
+    limit: filters?.limit,
+  });
+}
+
+export function getOpsStatus() {
+  return fetchApi("internal/ops/status", opsEnvelopeSchema);
+}
+
+export function getOpsFinvizLedger(filters?: {
+  feedId?: string;
+  marketDate?: string;
+  limit?: number;
+}) {
+  return fetchApi("internal/ops/finviz-ledger", opsEnvelopeSchema, {
+    feed_id: filters?.feedId,
+    market_date: filters?.marketDate,
+    limit: filters?.limit,
+  });
+}
+
+export function getOpsRetention(filters?: {
+  includePendingCounts?: boolean;
+}) {
+  return fetchApi("internal/ops/retention", opsEnvelopeSchema, {
+    include_pending_counts: filters?.includePendingCounts,
+  });
+}
+
 export function submitEquityOrder(payload: EquityOrderRequest) {
   return postApi(
     "executions/equity-orders",
@@ -1080,9 +1128,9 @@ export function buildRuntimeHref(
   marketDate?: string | null,
 ) {
   if (!botId || !automationId) {
-    return "/runtimes";
+    return "/automations";
   }
-  const basePath = `/runtimes/${encodeURIComponent(botId)}/${encodeURIComponent(automationId)}`;
+  const basePath = `/automations/${encodeURIComponent(botId)}/${encodeURIComponent(automationId)}`;
   if (!marketDate) {
     return basePath;
   }

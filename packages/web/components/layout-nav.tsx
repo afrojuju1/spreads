@@ -7,18 +7,20 @@ import {
   Bot,
   BriefcaseBusiness,
   CandlestickChart,
+  Gauge,
   Radar,
   Search,
+  Server,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
 export const LAYOUT_NAV_ITEMS = [
   {
-    href: "/scan",
-    label: "Scan",
-    caption: "manual run",
-    icon: Search,
+    href: "/today",
+    label: "Today",
+    caption: "command center",
+    icon: Gauge,
   },
   {
     href: "/opportunities",
@@ -33,10 +35,28 @@ export const LAYOUT_NAV_ITEMS = [
     icon: BriefcaseBusiness,
   },
   {
+    href: "/automations",
+    label: "Automations",
+    caption: "runtime owners",
+    icon: Bot,
+  },
+  {
+    href: "/scan",
+    label: "Scan",
+    caption: "manual run",
+    icon: Search,
+  },
+  {
     href: "/pipelines",
     label: "Diagnostics",
     caption: "discovery runs",
     icon: CandlestickChart,
+  },
+  {
+    href: "/ops",
+    label: "Ops",
+    caption: "resources",
+    icon: Server,
   },
   {
     href: "/account",
@@ -47,14 +67,19 @@ export const LAYOUT_NAV_ITEMS = [
 ];
 
 const RUNTIME_LAYOUT_ITEM = {
-  href: "/runtimes",
-  label: "Runtime",
-  caption: "owner detail",
+  href: "/automations",
+  label: "Automations",
+  caption: "runtime owners",
   icon: Bot,
 };
 
 export function resolveActiveLayoutItem(pathname: string) {
-  if (pathname === "/runtimes" || pathname.startsWith("/runtimes/")) {
+  if (
+    pathname === "/runtimes" ||
+    pathname.startsWith("/runtimes/") ||
+    pathname === "/automations" ||
+    pathname.startsWith("/automations/")
+  ) {
     return RUNTIME_LAYOUT_ITEM;
   }
   return (

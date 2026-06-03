@@ -75,7 +75,7 @@ function buildAutomationRows(
 const AUTOMATION_COLUMNS: ColumnDef<AutomationListRow>[] = [
   {
     accessorKey: "botName",
-    header: "Runtime",
+    header: "Automation",
     cell: ({ row }) => (
       <div className="min-w-[260px]">
         <div className="font-semibold">{row.original.botName}</div>
@@ -90,7 +90,7 @@ const AUTOMATION_COLUMNS: ColumnDef<AutomationListRow>[] = [
   },
   {
     accessorKey: "automationType",
-    header: "Runtime",
+    header: "Mode",
     cell: ({ row }) => (
       <div className="space-y-1">
         <Badge variant="outline">{row.original.automationType}</Badge>
@@ -219,16 +219,15 @@ export function AutomationsIndexPageContent() {
                 className="rounded-full border-border/70 bg-background/80 px-2.5 py-1 text-[11px] uppercase tracking-[0.18em] text-muted-foreground"
               >
                 <Bot data-icon="inline-start" />
-                Runtime
+                Automations
               </Badge>
             </div>
             <div className="mt-4 text-3xl font-semibold tracking-[0.02em]">
-              Runtime catalog
+              Automation catalog
             </div>
             <div className="mt-2 text-sm text-foreground/70">
-              Inspect bot-owned runtime configurations when you need schedule,
-              caps, recent decisions, or linked diagnostics outside a specific
-              opportunity or position.
+              Inspect bot-owned trading automation configs, caps, recent
+              decisions, linked diagnostics, and current owner-attributed risk.
             </div>
           </div>
           <Button
@@ -244,20 +243,20 @@ export function AutomationsIndexPageContent() {
 
       {runtimesQuery.isError ? (
         <div className="app-tone-error rounded-2xl border px-4 py-3 text-sm">
-          Runtime catalog could not be loaded.
+          Automation catalog could not be loaded.
         </div>
       ) : null}
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricTile
-          label="Runtimes"
+          label="Automations"
           value={String(automations.length)}
-          note="Active runtime configs"
+          note="Active automation configs"
         />
         <MetricTile
           label="Live opportunities"
           value={String(liveOpportunityTotal)}
-          note="Across all runtimes"
+          note="Across all automations"
         />
         <MetricTile
           label="Open positions"
@@ -272,15 +271,15 @@ export function AutomationsIndexPageContent() {
       </div>
 
       <SectionSurface
-        title="Runtime List"
-        description="Open a runtime to inspect recent runs, linked diagnostics, opportunities, execution intents, and positions."
+        title="Automation List"
+        description="Open an automation to inspect recent runs, linked diagnostics, opportunities, execution intents, and positions."
       >
         {!automationRows.length ? (
           <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
             <Rows3 className="size-10 text-muted-foreground" />
-            <div className="text-lg font-medium">No runtimes found</div>
+            <div className="text-lg font-medium">No automations found</div>
             <div className="max-w-[34rem] text-sm text-muted-foreground">
-              Active bot-owned runtimes will appear here after the configured
+              Active bot-owned automations will appear here after the configured
               runtime set is loaded.
             </div>
           </div>
@@ -289,7 +288,7 @@ export function AutomationsIndexPageContent() {
             columns={AUTOMATION_COLUMNS}
             data={automationRows}
             getRowId={(row) => row.id}
-            emptyMessage="No runtimes matched the current query."
+            emptyMessage="No automations matched the current query."
           />
         )}
       </SectionSurface>
