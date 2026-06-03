@@ -11,7 +11,10 @@ from core.services.bot_analytics import evaluate_entry_controls
 from core.services.bots import load_active_bots
 from core.services.entry_planner import plan_entry_selection, score_opportunity
 from core.services.execution_intents import request_options_automation_dispatch
-from core.services.execution_intents.shared import issue_pending_execution_intent
+from core.services.execution_intents.shared import (
+    ACTIVE_INTENT_STATES,
+    issue_pending_execution_intent,
+)
 from core.services.management_recipes import build_exit_policy_from_recipe_refs
 from core.services.option_structures import normalize_strategy_family
 from core.services.risk_manager import (
@@ -21,7 +24,6 @@ from core.services.risk_manager import (
 from core.services.runtime_policy import build_runtime_policy_ref
 from core.services.automation_runtime import resolve_entry_runtime
 
-ACTIVE_INTENT_STATES = ["pending", "claimed", "submitted", "partially_filled"]
 ENTRY_INTENT_TTL_MINUTES = 5
 
 
@@ -271,7 +273,7 @@ def run_entry_automation_decision(
         )
         existing_active = execution_store.list_execution_intents(
             slot_key=slot_key,
-            states=ACTIVE_INTENT_STATES,
+            states=sorted(ACTIVE_INTENT_STATES),
             limit=1,
         )
         if existing_active:

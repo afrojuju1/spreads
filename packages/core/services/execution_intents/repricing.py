@@ -97,11 +97,11 @@ def _create_replacement_intent(
     updated = _update_intent(
         execution_store,
         intent,
-        state="canceled",
+        state="superseded",
         execution_attempt_id=_as_text(attempt.get("execution_attempt_id")),
         superseded_by_id=replacement_id,
         payload_updates={
-            "dispatch_status": "canceled_for_reprice",
+            "dispatch_status": "superseded_for_reprice",
             "replacement_execution_intent_id": replacement_id,
         },
         updated_at=now,

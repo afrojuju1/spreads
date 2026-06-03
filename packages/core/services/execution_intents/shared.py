@@ -8,10 +8,22 @@ from core.services.option_structures import (
     net_premium_kind,
     normalize_strategy_family,
 )
+from core.services.trading_lifecycle import (
+    ExecutionIntentState,
+    LifecycleObject,
+    require_lifecycle_transition,
+    validate_lifecycle_transition,
+    normalize_lifecycle_state,
+)
 from core.storage.serializers import parse_datetime
 
 AUTO_EXECUTION_MODES = {"paper", "live"}
-ACTIVE_INTENT_STATES = {"pending", "claimed", "submitted", "partially_filled"}
+ACTIVE_INTENT_STATES = {
+    ExecutionIntentState.PENDING.value,
+    ExecutionIntentState.CLAIMED.value,
+    ExecutionIntentState.SUBMITTED.value,
+    ExecutionIntentState.PARTIALLY_FILLED.value,
+}
 OPEN_POSITION_STATES = {"open", "partial_open", "partial_close"}
 WORKING_REPRICE_ATTEMPT_STATUSES = {
     "accepted",
@@ -20,7 +32,14 @@ WORKING_REPRICE_ATTEMPT_STATUSES = {
     "pending_new",
     "replaced",
 }
-TERMINAL_INTENT_STATES = {"failed", "canceled", "revoked", "expired"}
+TERMINAL_INTENT_STATES = {
+    ExecutionIntentState.FILLED.value,
+    ExecutionIntentState.FAILED.value,
+    ExecutionIntentState.CANCELED.value,
+    ExecutionIntentState.REVOKED.value,
+    ExecutionIntentState.EXPIRED.value,
+    ExecutionIntentState.SUPERSEDED.value,
+}
 _UNCHANGED = object()
 
 
@@ -65,6 +84,37 @@ def _intent_payload(intent: dict[str, Any]) -> dict[str, Any]:
     if isinstance(payload_json, dict):
         return dict(payload_json)
     return {}
+
+
+def normalize_execution_intent_state(value: Any) -> str:
+    return normalize_lifecycle_state(
+        LifecycleObject.EXECUTION_INTENT,
+        value,
+    ).value
+
+
+def validate_execution_intent_transition(
+    from_state: Any,
+    to_state: Any,
+):
+    return validate_lifecycle_transition(
+        LifecycleObject.EXECUTION_INTENT,
+        None if _as_text(from_state) is None else normalize_execution_intent_state(from_state),
+        normalize_execution_intent_state(to_state),
+    )
+
+
+def require_execution_intent_transition(
+    from_state: Any,
+    to_state: Any,
+) -> str:
+    normalized_to = normalize_execution_intent_state(to_state)
+    require_lifecycle_transition(
+        LifecycleObject.EXECUTION_INTENT,
+        None if _as_text(from_state) is None else normalize_execution_intent_state(from_state),
+        normalized_to,
+    )
+    return normalized_to
 
 
 def _attempt_request(attempt: dict[str, Any]) -> dict[str, Any]:
@@ -121,6 +171,13 @@ def _update_intent(
     )
     if payload_updates:
         resolved_payload.update(payload_updates)
+    current_state = _as_text(intent.get("state"))
+    if state is _UNCHANGED:
+        if current_state is None:
+            raise ValueError("Execution intent is missing its lifecycle state.")
+        resolved_state = normalize_execution_intent_state(current_state)
+    else:
+        resolved_state = require_execution_intent_transition(current_state, state)
     return execution_store.upsert_execution_intent(
         execution_intent_id=str(intent["execution_intent_id"]),
         bot_id=str(intent["bot_id"]),
@@ -149,11 +206,7 @@ def _update_intent(
         ),
         policy_ref=dict(intent.get("policy_ref") or {}),
         config_hash=str(intent.get("config_hash") or ""),
-        state=(
-            str(intent.get("state") or "")
-            if state is _UNCHANGED
-            else str(state)
-        ),
+        state=resolved_state,
         expires_at=(
             _as_text(intent.get("expires_at"))
             if expires_at is _UNCHANGED
@@ -206,6 +259,7 @@ def issue_pending_execution_intent(
     state: str = "pending",
 ) -> dict[str, Any]:
     created_at = _utc_now()
+    resolved_state = require_execution_intent_transition(None, state)
     intent = execution_store.upsert_execution_intent(
         execution_intent_id=execution_intent_id,
         bot_id=bot_id,
@@ -218,7 +272,7 @@ def issue_pending_execution_intent(
         claim_token=claim_token,
         policy_ref=policy_ref,
         config_hash=config_hash,
-        state=state,
+        state=resolved_state,
         expires_at=expires_at,
         superseded_by_id=superseded_by_id,
         payload={} if payload is None else dict(payload),

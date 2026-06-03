@@ -45,6 +45,7 @@ from .shared import (
     _intent_payload,
     _update_intent,
     _utc_now,
+    normalize_execution_intent_state,
 )
 
 PRE_DISPATCH_EXPIRE_REASON = "dispatch_window_elapsed"
@@ -181,7 +182,7 @@ def submit_execution_intent(
     intent = execution_store.get_execution_intent(execution_intent_id)
     if intent is None:
         raise ValueError(f"Unknown execution_intent_id: {execution_intent_id}")
-    state = str(intent.get("state") or "")
+    state = normalize_execution_intent_state(intent.get("state"))
     if state not in {"pending", "claimed"}:
         return {
             "action": "submit_execution_intent",

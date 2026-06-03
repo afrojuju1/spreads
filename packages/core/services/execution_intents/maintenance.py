@@ -24,6 +24,7 @@ from .shared import (
     _update_intent,
     _utc_now,
     link_execution_intent_position,
+    normalize_execution_intent_state,
 )
 
 
@@ -157,7 +158,7 @@ def _cleanup_slot_conflicts(
         )
         anchor_id: str | None = None
         for intent in intents:
-            state = str(intent.get("state") or "")
+            state = normalize_execution_intent_state(intent.get("state"))
             intent_id = str(intent["execution_intent_id"])
             if anchor_id is None and state in ACTIVE_INTENT_STATES.union({"filled"}):
                 anchor_id = intent_id
@@ -273,7 +274,7 @@ def _cleanup_terminal_intent_history(
     for intent in intents:
         if retained >= max(int(limit), 1):
             break
-        state = str(intent.get("state") or "")
+        state = normalize_execution_intent_state(intent.get("state"))
         if state not in TERMINAL_INTENT_STATES:
             continue
         created_at = parse_datetime(_as_text(intent.get("created_at")))
