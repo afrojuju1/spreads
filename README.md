@@ -97,6 +97,18 @@ Run the scheduler directly:
 uv run spreads scheduler
 ```
 
+Format touched Python files:
+
+```bash
+uv run black <paths>
+```
+
+Run the loose repo linter:
+
+```bash
+uv run ruff check .
+```
+
 `spreads` is the canonical CLI.
 
 ## Local Development Notes

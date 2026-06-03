@@ -75,11 +75,12 @@ This bead defines the target storage and schema inspection surface only. Live Fi
 
 Validation for this bead is schema and runtime-smoke oriented, not automated-test oriented.
 
-Formatter note: `uv run ruff format ...` was attempted, but `ruff` is not installed in the current `uv` environment.
+Formatter note: at bead close, `ruff` and `black` were not installed yet. A follow-up tooling setup added both formatters and ran Black against the lifecycle schema files.
 
 Commands run:
 
 ```bash
+uv run black packages/core/storage/lifecycle_models.py alembic/versions/20260603_0042_target_trade_lifecycle_schema.py
 uv run python -m py_compile packages/core/storage/lifecycle_models.py packages/core/services/lifecycle_schema.py packages/core/cli/lifecycle.py packages/core/cli/main.py alembic/env.py alembic/versions/20260603_0042_target_trade_lifecycle_schema.py
 uv run spreads lifecycle schema --json
 uv run spreads lifecycle schema

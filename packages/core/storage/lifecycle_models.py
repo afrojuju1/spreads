@@ -9,7 +9,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from core.storage.db import Base
 
-
 TARGET_LIFECYCLE_TABLES: tuple[dict[str, str], ...] = (
     {"name": "trade_signals", "role": "signal fact"},
     {"name": "trade_decisions", "role": "decision fact"},

@@ -11,7 +11,6 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-
 revision = "20260603_0042"
 down_revision = "20260602_0041"
 branch_labels = None
@@ -186,9 +185,7 @@ def upgrade() -> None:
         sa.Column(
             "execution_intent_id",
             sa.Text(),
-            sa.ForeignKey(
-                "trade_execution_intents.execution_intent_id", ondelete="CASCADE"
-            ),
+            sa.ForeignKey("trade_execution_intents.execution_intent_id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column(
@@ -239,9 +236,7 @@ def upgrade() -> None:
         sa.Column(
             "execution_intent_id",
             sa.Text(),
-            sa.ForeignKey(
-                "trade_execution_intents.execution_intent_id", ondelete="CASCADE"
-            ),
+            sa.ForeignKey("trade_execution_intents.execution_intent_id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column(
@@ -297,9 +292,7 @@ def upgrade() -> None:
         sa.Column(
             "execution_attempt_id",
             sa.Text(),
-            sa.ForeignKey(
-                "trade_execution_attempts.execution_attempt_id", ondelete="CASCADE"
-            ),
+            sa.ForeignKey("trade_execution_attempts.execution_attempt_id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column("broker", sa.Text(), nullable=False),
@@ -342,9 +335,7 @@ def upgrade() -> None:
         sa.Column(
             "execution_attempt_id",
             sa.Text(),
-            sa.ForeignKey(
-                "trade_execution_attempts.execution_attempt_id", ondelete="CASCADE"
-            ),
+            sa.ForeignKey("trade_execution_attempts.execution_attempt_id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column(

@@ -74,9 +74,7 @@ def build_institutional_holder_id(
     manager_name: str,
     manager_cik: str | None = None,
 ) -> str:
-    return (
-        f"institutional_holder:{_hash_parts(_normalize_name(manager_name), _normalize_cik(manager_cik) if manager_cik else '')}"
-    )
+    return f"institutional_holder:{_hash_parts(_normalize_name(manager_name), _normalize_cik(manager_cik) if manager_cik else '')}"
 
 
 def build_institutional_filing_id(accession_no: str) -> str:
@@ -98,18 +96,19 @@ def build_institutional_position_source_row_hash(
 ) -> str:
     issuer_name_token = re.sub(r"[^a-z0-9 ]", "", re.sub(r"\s+", " ", str(issuer_name_reported or "").lower()).strip())
     title_token = re.sub(r"[^a-z0-9 ]", "", re.sub(r"\s+", " ", str(title_of_class or "").lower()).strip())
-    return f"13frow:{_hash_parts(
+    source_parts = (
         _as_text(filing_id),
         _as_text(institutional_holder_id),
         issuer_name_token,
         title_token,
-        re.sub(r'[^A-Z0-9]', '', str(cusip or '').upper()),
-        re.sub(r'[^A-Z0-9]', '', str(figi or '').upper()),
-        str(put_call or '').upper().strip(),
-        '' if share_count is None else f'{float(share_count):.12g}',
-        '' if market_value_reported is None else f'{float(market_value_reported):.12g}',
-        str(discretion_type or '').upper().strip(),
-    )}"
+        re.sub(r"[^A-Z0-9]", "", str(cusip or "").upper()),
+        re.sub(r"[^A-Z0-9]", "", str(figi or "").upper()),
+        str(put_call or "").upper().strip(),
+        "" if share_count is None else f"{float(share_count):.12g}",
+        "" if market_value_reported is None else f"{float(market_value_reported):.12g}",
+        str(discretion_type or "").upper().strip(),
+    )
+    return f"13frow:{_hash_parts(*source_parts)}"
 
 
 def build_group_id(issuer_cik: str, seed: str) -> str:
@@ -124,11 +123,7 @@ def build_security_identifier_id(
 ) -> str:
     effective_token = ""
     if effective_from is not None:
-        effective_token = (
-            effective_from.isoformat()
-            if isinstance(effective_from, date)
-            else str(effective_from)
-        )
+        effective_token = effective_from.isoformat() if isinstance(effective_from, date) else str(effective_from)
     return f"security_identifier:{_hash_parts(_as_text(security_id), _as_text(identifier_type), _as_text(identifier_value), effective_token)}"
 
 

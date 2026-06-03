@@ -32,3 +32,26 @@ spreads = "core.cli.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["packages/core", "packages/api"]
+
+[tool.black]
+line-length = 150
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 150
+target-version = "py311"
+src = ["packages/core", "packages/api", "scripts", "alembic"]
+extend-exclude = ["backups", "data", "logs", "outputs"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+"packages/api/main.py" = ["F401"]
+"scripts/one_time/*.py" = ["E402"]
+
+[dependency-groups]
+dev = [
+    "black>=26.5.1",
+    "ruff>=0.15.15",
+]
