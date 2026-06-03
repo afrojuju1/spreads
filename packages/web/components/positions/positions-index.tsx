@@ -222,7 +222,7 @@ export function PositionsIndexPageContent({
 }) {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const [closeRuntime, setCloseRuntime] = useState("alpaca_direct");
+  const closeRuntime = "alpaca_direct";
   const [equitySymbol, setEquitySymbol] = useState("AAPL");
   const [equitySide, setEquitySide] = useState<EquityOrderRequest["side"]>("buy");
   const [equityQuantity, setEquityQuantity] = useState("1");
@@ -373,29 +373,7 @@ export function PositionsIndexPageContent({
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-                Close runtime
-              </span>
-              <div className="flex rounded-lg border border-border/70 p-0.5">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={closeRuntime === "alpaca_direct" ? "default" : "ghost"}
-                  onClick={() => setCloseRuntime("alpaca_direct")}
-                >
-                  Alpaca
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={closeRuntime === "nautilus" ? "default" : "ghost"}
-                  onClick={() => setCloseRuntime("nautilus")}
-                >
-                  Nautilus
-                </Button>
-              </div>
-            </div>
+            <Badge variant="outline">Close runtime · Alpaca</Badge>
             <Button
               type="button"
               variant="outline"

@@ -27,7 +27,7 @@ Related:
 | Discovery and collection | `services/scanners/`, `services/discovery_runs/`, `services/live_selection.py`, `services/opportunity_scoring.py`, `services/candidate_policy.py` | Owns symbol scanning, cycle orchestration, live ranking, and promotable/monitor state assignment. |
 | Canonical opportunity state | `services/signal_state.py`, `services/opportunity_generation.py`, `services/opportunities.py`, `storage/signal_repository.py` | Owns signal state, canonical opportunity rows, and runtime-owned projections derived from discovery run cycles. |
 | Runtime, automation, discovery-session, pipeline-compat, and ops read models | `services/automation_runtimes.py`, `services/discovery_sessions.py`, `services/live_runtime.py`, `services/discovery_run_health/`, `services/pipelines.py`, `services/ops/` | Owns owner-plane automation runtime views, discovery-run-owned discovery-session views, compatibility pipeline projections, and operator CLI payloads. |
-| Execution and portfolio state | `services/execution/`, `services/execution_intents/`, `services/execution_portfolio.py`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py` | Owns execution intents, broker/runtime handoff, immutable execution ledger, day-local position ownership, reconciliation, and exit behavior. Direct Alpaca submit remains the default runtime; migrated two-leg vertical and index iron-condor entry automations select the Nautilus runtime, submit through the configured `alpaca-submit-order-list-bridge`, and fail closed if the bridge is unavailable or rejected. |
+| Execution and portfolio state | `services/execution/`, `services/execution_intents/`, `services/execution_portfolio.py`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py` | Owns execution intents, broker/runtime handoff, immutable execution ledger, day-local position ownership, reconciliation, and exit behavior. `alpaca_direct` is the only supported execution runtime for equity, option, and Alpaca order-payload submission. |
 | Historical backtest and evaluation | `backtest/` | `backtest/` owns the canonical historical evaluation engine and artifacts. |
 | Persistence and event transport | Postgres, Redis | Postgres is source of truth. Redis handles queues, leases, and pub/sub fanout. |
 
@@ -42,7 +42,7 @@ Related:
 - `EntryRuntime.symbols` and `ManagementRuntime.symbols` are derived from the resolved automation universe. Discovery-run scope may union symbols across active entry automations when building a scanner scope.
 - Scanner and collection CLI flags such as `--symbols` and `--symbols-file` are ad hoc operator and research overrides, not the persisted bot or automation ownership model.
 - Shared dynamic symbol lists are owned separately by declared `symbol_feed` jobs and `services/symbol_feeds.py`. They materialize bounded underlying lists for consumers such as UOA, but they do not own bots, opportunities, or execution. The live `uoa_weekly` feed currently applies a minimum daily-volume floor and excludes leveraged or inverse ETFs before handing symbols to UOA.
-- `execution_intents` is the strategy/control-plane handoff boundary. It chooses the execution runtime before broker submission. Runtime `alpaca_direct` is the current Python-native Alpaca adapter path for equity, single-leg option, and Alpaca order-payload submission. Runtime `nautilus` is retired for new Spreads execution declarations; the old bridge code remains historical context only and should not be treated as a live fallback. `services/execution/runtimes.py` owns the runtime capability declaration, and `spreads execution-runtimes`, `GET /executions/runtimes`, `spreads trading`, and the runtime catalog expose the active adapter and retired bridge surfaces.
+- `execution_intents` is the strategy/control-plane handoff boundary. It chooses the execution runtime before broker submission. Runtime `alpaca_direct` is the current Python-native Alpaca adapter path for equity, single-leg option, and Alpaca order-payload submission. `services/execution/runtimes.py` owns the runtime capability declaration, and `spreads execution-runtimes`, `GET /executions/runtimes`, `spreads trading`, and the runtime catalog expose the active adapter surface.
 - `execution` is the immutable broker-facing ledger. `session_positions` is the mutable owner of day-local position attribution.
 - `broker_sync` reconciles broker reality and health, but it does not take ownership of session attribution away from `session_positions`.
 
@@ -264,8 +264,7 @@ Redis = transport, queueing, leases, and pub/sub fanout
               +------------+-------------+
               | execution service        |
               | submit_*_execution(...)  |
-              | alpaca_direct or         |
-              | Nautilus SubmitOrderList |
+              | alpaca_direct adapter    |
               +------------+-------------+
                            |
                            | immutable broker ledger
@@ -351,8 +350,6 @@ Auto close --------> execution_intents / submit_session_position_close(...)
                                       v
                          execution runtime selection
                          | alpaca_direct -> current Alpaca submit path
-                         | nautilus      -> SubmitOrderList bridge,
-                         |                  fail-closed on bridge failure
                                       |
                                       v
                                   execution ledger
@@ -503,9 +500,9 @@ This domain records:
 
 It is the broker-order history, not the mutable session position state.
 
-All opens and closes, manual or automated, flow through the intent/ledger path first. The default and supported runtime is now `alpaca_direct`. Previously Nautilus-routed automations have been cut over to `execution.runtime: alpaca_direct`, and new automation declarations reject `execution.runtime: nautilus`. The Python-native adapter centralizes Alpaca submit, nested order refresh, submit-unknown reconciliation support, and cancel requests while lifecycle state remains in the Spreads execution ledger.
+All opens and closes, manual or automated, flow through the intent/ledger path first. The default and supported runtime is `alpaca_direct`; declarations for any other execution runtime fail validation. The Python-native adapter centralizes Alpaca submit, nested order refresh, submit-unknown reconciliation support, and cancel requests while lifecycle state remains in the Spreads execution ledger.
 
-On the `ade-nucbox-k8-plus` deployment, the active Spreads runtime no longer requires the compiled Nautilus bridge binary to be mounted into API or worker containers. If old bridge environment variables remain in generated compose output, runtime capabilities still report `nautilus` as `retired`; operator health should key off the active `alpaca_direct` adapter and zero Nautilus-routed automations.
+On the `ade-nucbox-k8-plus` deployment, the active Spreads runtime does not mount any external bridge binary into API or worker containers. Generated compose and env output should expose only the active `alpaca_direct` adapter.
 
 ### 5. Session Positions Domain
 

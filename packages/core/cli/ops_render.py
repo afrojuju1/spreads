@@ -1221,10 +1221,6 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row("Risk Breaches", _render_value(summary.get("risk_breach_count")))
     overview.add_row("Mismatches", _render_value(summary.get("reconciliation_mismatch_count")))
     overview.add_row("Execution Health", _render_value(summary.get("execution_health_status")))
-    overview.add_row(
-        "Nautilus",
-        (f"{_render_value(summary.get('nautilus_bridge_status'))} | " f"entries {_render_value(summary.get('nautilus_entry_automation_count'))}"),
-    )
     overview.add_row("Discovery Runs", _render_value(summary.get("discovery_run_count")))
     overview.add_row(
         "Automation",
@@ -1261,53 +1257,6 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
         title="Automation Performance",
         value=automation_performance,
     )
-    nautilus_lifecycle = dict(details.get("nautilus_lifecycle") or {})
-    nautilus_proof = dict(nautilus_lifecycle.get("proof_by_family") or {})
-    if nautilus_proof:
-        table = Table(title="Nautilus Lifecycle Proof", header_style="bold")
-        table.add_column("Family")
-        table.add_column("Status")
-        table.add_column("Opens", justify="right")
-        table.add_column("Closed/Matched", justify="right")
-        table.add_column("Nautilus Close", justify="right")
-        table.add_column("Direct/Unset Close", justify="right")
-        table.add_column("Latest PnL", justify="right")
-        for family, row in sorted(nautilus_proof.items()):
-            details_row = dict(row or {})
-            table.add_row(
-                str(family),
-                _render_value(details_row.get("status")),
-                _render_value(details_row.get("open_count")),
-                _render_value(details_row.get("closed_matched_count")),
-                _render_value(details_row.get("nautilus_close_count")),
-                _render_value(details_row.get("direct_or_unset_close_count")),
-                _render_money(details_row.get("latest_realized_pnl")),
-            )
-        console.print(table)
-
-    nautilus_attempts = list(nautilus_lifecycle.get("recent_attempts") or [])
-    if nautilus_attempts:
-        table = Table(title="Recent Nautilus Lifecycle Attempts", header_style="bold")
-        table.add_column("Underlying")
-        table.add_column("Family")
-        table.add_column("Intent")
-        table.add_column("Runtime")
-        table.add_column("Status")
-        table.add_column("Bridge")
-        table.add_column("Orders/Fills", justify="right")
-        table.add_column("Position")
-        for row in nautilus_attempts[:8]:
-            table.add_row(
-                str(row.get("underlying_symbol") or "-"),
-                str(row.get("strategy_family") or "-"),
-                str(row.get("trade_intent") or "-"),
-                str(row.get("execution_runtime") or "-"),
-                str(row.get("attempt_status") or "-"),
-                str(row.get("bridge_status") or "-"),
-                (f"{_render_value(row.get('alpaca_order_count'))}/" f"{_render_value(row.get('alpaca_fill_count'))}"),
-                str(row.get("session_position_status") or "-"),
-            )
-        console.print(table)
     _render_discovery_run_raw_candidates(console, discovery_run_rows=discovery_run_rows)
 
     top_positions = list(details.get("top_positions") or [])

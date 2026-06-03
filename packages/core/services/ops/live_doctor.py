@@ -439,33 +439,6 @@ def build_live_doctor(
         )
     )
 
-    nautilus_ready = bool(trading_summary.get("nautilus_ready"))
-    nautilus_status = str(trading_summary.get("nautilus_bridge_status") or "unknown")
-    nautilus_entry_count = _coerce_int(
-        trading_summary.get("nautilus_entry_automation_count")
-    ) or 0
-    nautilus_retired = nautilus_status == "retired"
-    checks.append(
-        _check(
-            "Nautilus Bridge",
-            status=(
-                "healthy"
-                if nautilus_ready or (nautilus_retired and nautilus_entry_count == 0)
-                else "degraded"
-            ),
-            message=(
-                f"bridge={nautilus_status}, ready={nautilus_ready}, "
-                f"entries={nautilus_entry_count}"
-            ),
-            metrics={
-                "nautilus_ready": nautilus_ready,
-                "nautilus_bridge_status": nautilus_status,
-                "nautilus_entry_automation_count": nautilus_entry_count,
-                "nautilus_retired": nautilus_retired,
-            },
-        )
-    )
-
     feed_runs = [
         dict(item)
         for item in _list(finviz_details.get("recent_feed_runs"))
@@ -724,9 +697,6 @@ def build_live_doctor(
             "actionable_failed_job_count": actionable_failed_count,
             "broker_sync_status": broker_sync.get("status"),
             "broker_sync_age_seconds": broker_sync.get("age_seconds"),
-            "nautilus_ready": nautilus_ready,
-            "nautilus_bridge_status": nautilus_status,
-            "nautilus_entry_automation_count": nautilus_entry_count,
             "feed_id": resolved_feed_id,
             "finviz_feed_status": feed_status,
             "finviz_feed_symbol_count": feed_symbol_count,

@@ -2,7 +2,7 @@
 
 Date: 2026-06-03
 
-Status: lifecycle runtime cutover completed with breaking-rewrite posture. Active config now uses the Python-native `alpaca_direct` adapter; `nautilus` is retired for new Spreads execution declarations.
+Status: lifecycle runtime cutover completed with breaking-rewrite posture. Active config now uses the Python-native `alpaca_direct` adapter; the old bridge runtime has been removed from active Spreads execution code, deploy plumbing, and operator surfaces.
 
 Related:
 

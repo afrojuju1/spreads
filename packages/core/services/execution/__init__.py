@@ -99,7 +99,6 @@ from .attempts import (
     list_session_execution_attempts as list_session_execution_attempts,
 )
 from .guard import run_open_execution_guard as run_open_execution_guard
-from .nautilus_bridge import NautilusBridgeError, submit_nautilus_order_list
 from .policy import (
     _build_policy_refs,
     _requested_policy_payload,
@@ -109,9 +108,6 @@ from .policy import (
 )
 from .runtimes import (
     ALPACA_DIRECT_RUNTIME,
-    NAUTILUS_RUNTIME,
-    build_nautilus_equity_order_handoff,
-    build_nautilus_submit_order_list_handoff,
     execution_runtime_from_request,
     normalize_execution_runtime,
 )
@@ -2658,18 +2654,6 @@ def submit_equity_order(
             candidate={},
         )
         attempt_created = True
-        if normalized_runtime == NAUTILUS_RUNTIME:
-            return _submit_nautilus_equity_runtime_order(
-                execution_store=execution_store,
-                attempt=attempt,
-                order_request=order_request,
-                requested_at=requested_at,
-                client_order_id=client_order_id,
-                side=normalized_side,
-                quantity=resolved_quantity,
-                symbol=normalized_symbol,
-            )
-
         adapter = create_alpaca_order_adapter()
         submission = adapter.submit_order(order_request)
         submitted_order = submission.submitted_order
@@ -3153,161 +3137,6 @@ def submit_option_order(
         raise
 
 
-def _submit_nautilus_equity_runtime_order(
-    *,
-    execution_store: Any,
-    attempt: Mapping[str, Any],
-    order_request: Mapping[str, Any],
-    requested_at: str,
-    client_order_id: str | None,
-    side: str,
-    quantity: int,
-    symbol: str,
-) -> dict[str, Any]:
-    execution_attempt_id = str(attempt["execution_attempt_id"])
-    runtime_handoff = build_nautilus_equity_order_handoff(
-        attempt=attempt,
-        order_request=order_request,
-    )
-    if not runtime_handoff.get("ready"):
-        reason = (
-            _as_text(runtime_handoff.get("not_ready_reason"))
-            or "nautilus_equity_handoff_not_ready"
-        )
-        message = f"Nautilus equity handoff is not ready: {reason}"
-        execution_store.update_attempt(
-            execution_attempt_id=execution_attempt_id,
-            status="failed",
-            client_order_id=client_order_id,
-            completed_at=requested_at,
-            error_text=message,
-        )
-        failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
-        _publish_execution_attempt_event(
-            failed_attempt,
-            message=f"Equity execution failed before submission: {message}",
-        )
-        return {
-            "action": "submit",
-            "changed": True,
-            "status": "blocked",
-            "reason": reason,
-            "message": message,
-            "runtime_handoff": runtime_handoff,
-            "attempt": failed_attempt,
-        }
-
-    try:
-        runtime_result = submit_nautilus_order_list(runtime_handoff)
-    except NautilusBridgeError as exc:
-        runtime_result = {
-            "status": "failed",
-            "reason": exc.reason,
-            "message": str(exc),
-            **({"details": exc.details} if exc.details else {}),
-        }
-        message = f"Nautilus equity bridge failed: {exc}"
-        execution_store.update_attempt(
-            execution_attempt_id=execution_attempt_id,
-            status="failed",
-            client_order_id=client_order_id,
-            completed_at=requested_at,
-            error_text=message,
-        )
-        failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
-        _publish_execution_attempt_event(
-            failed_attempt,
-            message=f"Equity execution failed before submission: {message}",
-        )
-        return {
-            "action": "submit",
-            "changed": True,
-            "status": "blocked",
-            "reason": exc.reason,
-            "message": message,
-            "runtime_handoff": runtime_handoff,
-            "runtime_result": runtime_result,
-            "attempt": failed_attempt,
-        }
-
-    runtime_status = str(runtime_result.get("status") or "").strip().lower()
-    failed_runtime_statuses = {
-        "canceled",
-        "cancelled",
-        "error",
-        "expired",
-        "failed",
-        "rejected",
-        "timeout",
-    }
-    if runtime_status in failed_runtime_statuses:
-        event_reasons = [
-            str(event.get("reason"))
-            for event in runtime_result.get("events") or []
-            if isinstance(event, Mapping) and event.get("reason")
-        ]
-        message = (
-            f"Nautilus equity bridge returned {runtime_status}"
-            + (f": {'; '.join(event_reasons[:2])}" if event_reasons else "")
-        )
-        execution_store.update_attempt(
-            execution_attempt_id=execution_attempt_id,
-            status="failed",
-            client_order_id=client_order_id,
-            completed_at=requested_at,
-            error_text=message,
-        )
-        failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
-        _publish_execution_attempt_event(
-            failed_attempt,
-            message=f"Equity execution failed during submission: {message}",
-        )
-        return {
-            "action": "submit",
-            "changed": True,
-            "status": "blocked",
-            "reason": f"nautilus_bridge_{runtime_status}",
-            "message": message,
-            "runtime_handoff": runtime_handoff,
-            "runtime_result": runtime_result,
-            "attempt": failed_attempt,
-        }
-
-    order_snapshot = (
-        runtime_result.get("order_snapshot")
-        if isinstance(runtime_result.get("order_snapshot"), dict)
-        else None
-    )
-    if order_snapshot is None:
-        execution_store.update_attempt(
-            execution_attempt_id=execution_attempt_id,
-            status=runtime_status or "submitted",
-            client_order_id=client_order_id,
-            submitted_at=requested_at,
-            error_text=None,
-        )
-        synced_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
-    else:
-        synced_attempt = _sync_equity_attempt_state(
-            execution_store=execution_store,
-            attempt=attempt,
-            client=create_alpaca_order_adapter().client,
-            order_snapshot=dict(order_snapshot),
-        )
-
-    message = f"Submitted equity {side} for {quantity} {symbol} through Nautilus."
-    _publish_execution_attempt_event(synced_attempt, message=message)
-    return {
-        "action": "submit",
-        "changed": True,
-        "status": "submitted",
-        "message": message,
-        "runtime_handoff": runtime_handoff,
-        "runtime_result": runtime_result,
-        "attempt": synced_attempt,
-    }
-
-
 @with_storage()
 def refresh_execution_attempt(
     *,
@@ -3421,210 +3250,6 @@ def cancel_execution_attempt(
     }
 
 
-def _resolve_nautilus_live_quote(
-    *,
-    payload: Mapping[str, Any],
-    order_request: Mapping[str, Any],
-    client: Any,
-) -> tuple[dict[str, Any] | None, str | None]:
-    legs = order_payload_legs(
-        order_request,
-        expiration_date=_as_text(payload.get("expiration_date")),
-    )
-    if not legs:
-        return None, "nautilus_handoff_requires_order_legs_for_live_quotes"
-    return build_structure_quote_snapshot(
-        legs=legs,
-        strategy_family=_strategy_family_from_payload(payload),
-        client=client,
-    )
-
-
-def _submit_nautilus_runtime_order(
-    *,
-    execution_store: Any,
-    payload: Mapping[str, Any],
-    order_request: Mapping[str, Any],
-    live_quote: Mapping[str, Any] | None,
-    client: Any,
-    requested_at: str,
-    client_order_id: str | None,
-) -> dict[str, Any]:
-    execution_attempt_id = str(payload["execution_attempt_id"])
-    runtime_handoff = build_nautilus_submit_order_list_handoff(
-        attempt=payload,
-        order_request=order_request,
-        live_quote=live_quote,
-    )
-    runtime_payload_updates = {
-        "execution_runtime": NAUTILUS_RUNTIME,
-        "runtime_handoff": runtime_handoff,
-    }
-    if not runtime_handoff.get("ready"):
-        reason = (
-            _as_text(runtime_handoff.get("not_ready_reason"))
-            or "nautilus_handoff_not_ready"
-        )
-        message = f"Nautilus execution handoff is not ready: {reason}"
-        execution_store.update_attempt(
-            execution_attempt_id=execution_attempt_id,
-            status="failed",
-            completed_at=_utc_now(),
-            error_text=message,
-            position_id=_as_text(payload.get("position_id")),
-        )
-        failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
-        _publish_execution_attempt_event(
-            failed_attempt,
-            message=f"Execution failed before submission: {message}",
-        )
-        _sync_linked_execution_intent(
-            execution_store=execution_store,
-            attempt=failed_attempt,
-            state="failed",
-            event_type="failed",
-            message=f"Execution failed before submission: {message}",
-            payload_updates=runtime_payload_updates,
-        )
-        return {
-            "status": "blocked",
-            "reason": reason,
-            "execution_attempt_id": execution_attempt_id,
-            "message": message,
-            "runtime_handoff": runtime_handoff,
-            "attempt": failed_attempt,
-        }
-    try:
-        runtime_result = submit_nautilus_order_list(runtime_handoff)
-    except NautilusBridgeError as exc:
-        runtime_result = {
-            "status": "failed",
-            "reason": exc.reason,
-            "message": str(exc),
-            **({"details": exc.details} if exc.details else {}),
-        }
-        runtime_payload_updates["runtime_result"] = runtime_result
-        message = f"Nautilus execution bridge failed: {exc}"
-        execution_store.update_attempt(
-            execution_attempt_id=execution_attempt_id,
-            status="failed",
-            completed_at=_utc_now(),
-            error_text=message,
-            position_id=_as_text(payload.get("position_id")),
-        )
-        failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
-        _publish_execution_attempt_event(
-            failed_attempt,
-            message=f"Execution failed before submission: {message}",
-        )
-        _sync_linked_execution_intent(
-            execution_store=execution_store,
-            attempt=failed_attempt,
-            state="failed",
-            event_type="failed",
-            message=f"Execution failed before submission: {message}",
-            payload_updates=runtime_payload_updates,
-        )
-        return {
-            "status": "blocked",
-            "reason": exc.reason,
-            "execution_attempt_id": execution_attempt_id,
-            "message": message,
-            "runtime_handoff": runtime_handoff,
-            "runtime_result": runtime_result,
-            "attempt": failed_attempt,
-        }
-
-    runtime_payload_updates["runtime_result"] = runtime_result
-    runtime_status = str(runtime_result.get("status") or "").strip().lower()
-    failed_runtime_statuses = {
-        "canceled",
-        "cancelled",
-        "error",
-        "expired",
-        "failed",
-        "rejected",
-        "timeout",
-    }
-    if runtime_status in failed_runtime_statuses:
-        event_reasons = [
-            str(event.get("reason"))
-            for event in runtime_result.get("events") or []
-            if isinstance(event, Mapping) and event.get("reason")
-        ]
-        message = (
-            f"Nautilus execution bridge returned {runtime_status}"
-            + (f": {'; '.join(event_reasons[:2])}" if event_reasons else "")
-        )
-        execution_store.update_attempt(
-            execution_attempt_id=execution_attempt_id,
-            status="failed",
-            completed_at=_utc_now(),
-            error_text=message,
-            position_id=_as_text(payload.get("position_id")),
-        )
-        failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
-        _publish_execution_attempt_event(
-            failed_attempt,
-            message=f"Execution failed during submission: {message}",
-        )
-        _sync_linked_execution_intent(
-            execution_store=execution_store,
-            attempt=failed_attempt,
-            state="failed",
-            event_type="failed",
-            message=f"Execution failed during submission: {message}",
-            payload_updates=runtime_payload_updates,
-        )
-        return {
-            "status": "blocked",
-            "reason": f"nautilus_bridge_{runtime_status}",
-            "execution_attempt_id": execution_attempt_id,
-            "message": message,
-            "runtime_handoff": runtime_handoff,
-            "runtime_result": runtime_result,
-            "attempt": failed_attempt,
-        }
-
-    order_snapshot = runtime_result.get("order_snapshot")
-    if isinstance(order_snapshot, Mapping):
-        synced_attempt = _sync_attempt_state(
-            execution_store=execution_store,
-            attempt=dict(payload),
-            client=client,
-            order_snapshot=dict(order_snapshot),
-        )
-    else:
-        execution_store.update_attempt(
-            execution_attempt_id=execution_attempt_id,
-            status=runtime_status or "submitted",
-            broker_order_id=_as_text(runtime_result.get("parent_order_id")),
-            client_order_id=_as_text(runtime_result.get("parent_client_order_id"))
-            or _as_text(runtime_handoff.get("order_list_id"))
-            or client_order_id,
-            submitted_at=requested_at,
-            position_id=_as_text(payload.get("position_id")),
-        )
-        synced_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
-    message = _submission_message(synced_attempt, queued=False)
-    _publish_execution_attempt_event(synced_attempt, message=message)
-    _sync_linked_execution_intent(
-        execution_store=execution_store,
-        attempt=synced_attempt,
-        event_type="submitted",
-        message=message,
-        payload_updates=runtime_payload_updates,
-    )
-    return {
-        "status": "submitted",
-        "execution_attempt_id": execution_attempt_id,
-        "message": message,
-        "runtime_handoff": runtime_handoff,
-        "runtime_result": runtime_result,
-        "attempt": synced_attempt,
-    }
-
-
 def _sync_equity_attempt_state(
     *,
     execution_store: Any,
@@ -3717,7 +3342,7 @@ def run_execution_submit(
         }
 
     request = dict(payload.get("request") or {})
-    execution_runtime = execution_runtime_from_request(request)
+    execution_runtime_from_request(request)
     order_request = request.get("order")
     if not isinstance(order_request, dict) or not order_request:
         execution_store.update_attempt(
@@ -3788,7 +3413,6 @@ def run_execution_submit(
         heartbeat()
     adapter = create_alpaca_order_adapter()
     client = adapter.client
-    runtime_live_quote: Mapping[str, Any] | None = None
     if str(payload.get("trade_intent") or OPEN_TRADE_INTENT) == OPEN_TRADE_INTENT:
         request_payload = (
             payload.get("request")
@@ -3887,24 +3511,6 @@ def run_execution_submit(
                 "message": str(account_capacity["message"]),
                 "attempt": failed_attempt,
             }
-        if isinstance(live_deployment_quality.get("live_quote"), Mapping):
-            runtime_live_quote = dict(live_deployment_quality["live_quote"])
-    if execution_runtime == NAUTILUS_RUNTIME:
-        if runtime_live_quote is None:
-            runtime_live_quote, _ = _resolve_nautilus_live_quote(
-                payload=payload,
-                order_request=order_request,
-                client=client,
-            )
-        return _submit_nautilus_runtime_order(
-            execution_store=execution_store,
-            payload=payload,
-            order_request=order_request,
-            live_quote=runtime_live_quote,
-            client=client,
-            requested_at=requested_at,
-            client_order_id=client_order_id,
-        )
     order_request = _normalize_submit_order_request(
         payload=payload,
         order_request=order_request,

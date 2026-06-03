@@ -71,12 +71,6 @@ class DeployTarget:
     health_check_minutes: int
     excluded_job_types: tuple[str, ...]
     market_recorder_owner_env: str | None = None
-    nautilus_bridge_host_binary: str | None = None
-    nautilus_bridge_container_binary: str = (
-        "/usr/local/bin/alpaca-submit-order-list-bridge"
-    )
-    nautilus_bridge_command: str | None = None
-    nautilus_bridge_timeout_seconds: int = 45
     ssh_host: str | None = None
 
     @property
@@ -220,18 +214,6 @@ def _load_target(path: Path) -> DeployTarget:
         ),
         market_recorder_owner_env=_normalize_text(
             payload.get("market_recorder_owner_env")
-        ),
-        nautilus_bridge_host_binary=_normalize_text(
-            payload.get("nautilus_bridge_host_binary")
-        ),
-        nautilus_bridge_container_binary=_normalize_text(
-            payload.get("nautilus_bridge_container_binary")
-        )
-        or "/usr/local/bin/alpaca-submit-order-list-bridge",
-        nautilus_bridge_command=_normalize_text(payload.get("nautilus_bridge_command")),
-        nautilus_bridge_timeout_seconds=_coerce_positive_int(
-            payload.get("nautilus_bridge_timeout_seconds", 45),
-            field_name="nautilus_bridge_timeout_seconds",
         ),
         ssh_host=ssh_host,
     )
@@ -394,19 +376,6 @@ def build_deploy_env_values(
         "SPREADS_MARKET_RECORDER_OWNER_ENV": str(
             _normalize_text(target.market_recorder_owner_env) or ""
         ),
-        "SPREADS_NAUTILUS_BRIDGE_HOST_BINARY": str(
-            _normalize_text(target.nautilus_bridge_host_binary) or "/dev/null"
-        ),
-        "SPREADS_NAUTILUS_BRIDGE_CONTAINER_BINARY": str(
-            target.nautilus_bridge_container_binary
-        ),
-        "SPREADS_NAUTILUS_BRIDGE_COMMAND": str(
-            _normalize_text(target.nautilus_bridge_command)
-            or target.nautilus_bridge_container_binary
-        ),
-        "SPREADS_NAUTILUS_BRIDGE_TIMEOUT_SECONDS": str(
-            target.nautilus_bridge_timeout_seconds
-        ),
     }
 
     if require_secrets:
@@ -490,13 +459,6 @@ def build_host_env_values(
         "SPREADS_MARKET_RECORDER_OWNER_ENV": values[
             "SPREADS_MARKET_RECORDER_OWNER_ENV"
         ],
-        "SPREADS_NAUTILUS_BRIDGE_COMMAND": (
-            target.nautilus_bridge_host_binary
-            or values["SPREADS_NAUTILUS_BRIDGE_COMMAND"]
-        ),
-        "SPREADS_NAUTILUS_BRIDGE_TIMEOUT_SECONDS": values[
-            "SPREADS_NAUTILUS_BRIDGE_TIMEOUT_SECONDS"
-        ],
     }
 
 
@@ -533,8 +495,6 @@ def render_deploy_env_file(
         f"SPREADS_DOCKER_LOG_MAX_SIZE={values['SPREADS_DOCKER_LOG_MAX_SIZE']}",
         f"SPREADS_DOCKER_LOG_MAX_FILE={values['SPREADS_DOCKER_LOG_MAX_FILE']}",
         f"SPREADS_MARKET_RECORDER_OWNER_ENV={values['SPREADS_MARKET_RECORDER_OWNER_ENV']}",
-        f"SPREADS_NAUTILUS_BRIDGE_HOST_BINARY={values['SPREADS_NAUTILUS_BRIDGE_HOST_BINARY']}",
-        f"SPREADS_NAUTILUS_BRIDGE_CONTAINER_BINARY={values['SPREADS_NAUTILUS_BRIDGE_CONTAINER_BINARY']}",
         "",
         "# Application secrets",
         f"APCA_API_KEY_ID={values['APCA_API_KEY_ID']}",
@@ -556,8 +516,6 @@ def render_deploy_env_file(
         f"SPREADS_TRADINGAGENTS_DIR={values['SPREADS_TRADINGAGENTS_DIR']}",
         f"SPREADS_TRADINGAGENTS_UV_ENVIRONMENT={values['SPREADS_TRADINGAGENTS_UV_ENVIRONMENT']}",
         f"OLLAMA_BASE_URL={values['OLLAMA_BASE_URL']}",
-        f"SPREADS_NAUTILUS_BRIDGE_COMMAND={values['SPREADS_NAUTILUS_BRIDGE_COMMAND']}",
-        f"SPREADS_NAUTILUS_BRIDGE_TIMEOUT_SECONDS={values['SPREADS_NAUTILUS_BRIDGE_TIMEOUT_SECONDS']}",
         "",
     ]
     return "\n".join(lines)
@@ -620,6 +578,8 @@ def _compose_base_args(target: DeployTarget) -> list[str]:
     ]
     if target.web_enabled:
         args.extend(["--profile", "web"])
+    if target.worker_research_replicas > 0:
+        args.extend(["--profile", "container-research"])
     return args
 
 
@@ -630,7 +590,8 @@ def _compose_up_args(target: DeployTarget, *, build: bool) -> list[str]:
         args.append("--build")
     args.extend(["--scale", f"worker-runtime={target.worker_runtime_replicas}"])
     args.extend(["--scale", f"worker-discovery={target.worker_discovery_replicas}"])
-    args.extend(["--scale", f"worker-research={target.worker_research_replicas}"])
+    if target.worker_research_replicas > 0:
+        args.extend(["--scale", f"worker-research={target.worker_research_replicas}"])
     return args
 
 
@@ -1104,10 +1065,6 @@ def deploy_target_payload(target: DeployTarget) -> dict[str, Any]:
         "health_check_minutes": target.health_check_minutes,
         "excluded_job_types": list(target.excluded_job_types),
         "market_recorder_owner_env": target.market_recorder_owner_env,
-        "nautilus_bridge_host_binary": target.nautilus_bridge_host_binary,
-        "nautilus_bridge_container_binary": target.nautilus_bridge_container_binary,
-        "nautilus_bridge_command": target.nautilus_bridge_command,
-        "nautilus_bridge_timeout_seconds": target.nautilus_bridge_timeout_seconds,
         "overlay_env_file": str(target.local_overlay_env_path),
         "service_name": target.service_name,
     }

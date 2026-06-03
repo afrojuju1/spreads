@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 from core.common import parse_float, parse_int
 from core.services.alpaca import create_alpaca_client_from_env
-from core.services.execution.runtimes import ALPACA_DIRECT_RUNTIME, NAUTILUS_RUNTIME
+from core.services.execution.runtimes import ALPACA_DIRECT_RUNTIME
 from core.services.execution_portfolio import fetch_latest_option_quotes
 from core.services.execution_intents import dispatch_pending_execution_intents
 from core.services.execution_intents.shared import (
@@ -1198,7 +1198,7 @@ def _issue_equity_intent(
         "limit_price": limit_price,
         "time_in_force": _as_text(payload.get("time_in_force")) or "day",
         "trade_intent": trade_intent,
-        "execution_runtime": _as_text(payload.get("execution_runtime")) or NAUTILUS_RUNTIME,
+        "execution_runtime": _as_text(payload.get("execution_runtime")) or ALPACA_DIRECT_RUNTIME,
         "approval_mode": _as_text(payload.get("approval_mode")) or "auto",
         "execution_mode": _as_text(payload.get("execution_mode")) or "paper",
         "source": dict(source),
