@@ -8,6 +8,7 @@ Related:
 
 - [Trading Lifecycle State Machines](./2026-06-03_trading_lifecycle_state_machines.md)
 - [Target Trading Lifecycle Object Model](./2026-06-03_target_trading_lifecycle_object_model.md)
+- [Lifecycle Contracts Module](./2026-06-03_lifecycle_contracts_module.md)
 - [Nautilus Patterns Inside Spreads](./2026-06-03_nautilus_patterns_inside_spreads_architecture.md)
 - [Spreads Architecture Review](./2026-06-03_spreads_architecture_review.md)
 
