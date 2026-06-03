@@ -19,23 +19,16 @@
   - migration or rollout risk
   - validation needed after the change
 
-## Canonical Ownership
+## Canonical Ownership Source
 
-- discovery and collection flow: `services/scanners/`, `services/discovery_runs/`, `services/live_selection.py`, `services/opportunity_scoring.py`, and `services/candidate_policy.py`
-- canonical signal and opportunity state: `services/signal_state.py`, `services/opportunity_generation.py`, and `services/opportunities.py`
-- runtime and operator read models: `services/live_runtime.py`, `services/discovery_run_health/`, `services/pipelines.py`, and `services/ops/`
-- pipeline/session runtime list/detail: `services/pipelines.py`
-- actual account and trading health: `services/account_state.py`
-- execution intents, portfolio, and reconciliation: `services/execution_intents/`, `services/execution/`, `services/execution_portfolio.py`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, and `services/exit_manager.py`
-- historical evaluation and policy research: `backtest/`
-- alert delivery state: `storage/alert_repository.py`
-- job execution and scheduler behavior: `jobs/worker.py`, `jobs/registry.py`, and `storage/job_repository.py`
-- broker-sync distinction: `services/broker_sync.py` owns actual broker reconciliation, while `services/ops/broker_sync.py` owns operator-read normalization only.
+- Do not duplicate the domain ownership map in package `AGENTS.md` files. Use [../../docs/current_system_state.md](../../docs/current_system_state.md) for current domain vocabulary, service ownership, source-of-truth tables, and current-versus-target operator-state boundaries.
+- Keep this file focused on backend operating rules and rollout constraints. If ownership changes, update `docs/current_system_state.md` first, then adjust package instructions only where the workflow changes.
 
 ## Operator Visibility
 
 - For operator visibility work, reuse these modules with thin adapters instead of introducing parallel API-only logic.
 - For session health and current runtime state, prefer `services/live_runtime.py`, `services/discovery_run_health/`, `services/pipelines.py`, and `services/ops/` over creating new read-model owners.
+- Active cleanup `spr-zuy` is replacing fragmented operator health surfaces with `TradingOpsState` and `StorageOpsState`. During that work, remove old active `live-doctor`, `status`, `trading`, and `finviz-ledger` product surfaces rather than extending them.
 - For jobs health, read operator-facing status fields first. Raw historical failed runs can remain visible while `operator_status` and `actionable_failed_count` show whether they still require action.
 - For first-pass ops/runtime checks and historical backtest workflows, follow the repo-level CLI guidance in [../../AGENTS.md](../../AGENTS.md). Keep the canonical command list there instead of repeating it in backend-specific instructions.
 - Treat `ade-nucbox-k8-plus` as the canonical live paper backend target. Prefer `uv run spreads ... --env ade-nucbox-k8-plus` for operator reads instead of raw `--db` overrides.

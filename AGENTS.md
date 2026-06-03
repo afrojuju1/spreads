@@ -2,14 +2,17 @@
 
 ## Core
 
+- Spreads is live trading infrastructure. Treat runtime safety, operator clarity, and clean ownership as first-class constraints.
 - Keep changes minimal and focused unless broader refactors are explicitly requested.
 - Do not commit or push unless explicitly asked.
 - Do not create or switch branches unless explicitly asked. Treat the currently checked-out branch as the default workflow.
 - If the user asks for a commit or push without mentioning branches, stay on the current branch. Treat any external branch-naming or branch-prefix guidance as conditional naming only, not permission to create a branch.
 - Prefer `uv run` for Python commands in this repo.
 - Treat [docs/current_system_state.md](docs/current_system_state.md) as the canonical source of truth for the current overall runtime architecture and service boundaries.
+- Do not duplicate the domain ownership map in `AGENTS.md`. If ownership, object vocabulary, or runtime topology matters, read or update [docs/current_system_state.md](docs/current_system_state.md).
 - For Alpaca-related research, scanner design, or alerting work, read the canonical capability statement in [docs/research/alpaca_capabilities_statement.md](docs/research/alpaca_capabilities_statement.md) first. Re-check Alpaca's official docs/OpenAPI only when the task depends on current product changes, limits, or newly added endpoints.
 - Current execution direction: `spreads` owns the live paper runtime. The active execution adapter is `alpaca_direct`; Nautilus Trader is retained only as historical context and a source of architectural ideas. Do not route new live Spreads work through Nautilus, Rust bridge paths, or host-managed Nautilus services unless the user explicitly asks to re-enable a separate experiment.
+- Active ops-state cleanup: bead epic `spr-zuy` is replacing fragmented operator surfaces with `TradingOpsState` and `StorageOpsState`. While working that epic, remove old active `live-doctor`, `status`, `trading`, and `finviz-ledger` product surfaces instead of wrapping them.
 
 ## Code Quality And Architecture
 
@@ -33,6 +36,8 @@
 ## Dev Workflow
 
 - This repo is in active development by default.
+- For substantial work, use Beads as the durable work ledger. Create or update beads for meaningful discoveries, claim the active bead before implementation, and close beads with live validation notes when the work is done.
+- When Ade asks to commit per bead, finish and validate the bead before committing; do not bundle unrelated beads into one commit.
 - Default to live validation through the running stack, shipped ops CLI, and targeted runtime smoke checks.
 - Do not add, update, or expand automated tests unless the user explicitly asks for test work.
 - Only write or modify e2e tests when the user explicitly asks for e2e coverage. Do not add e2e tests as default regression coverage for implementation work.
@@ -48,6 +53,7 @@
   - `uv run spreads jobs`
   - `uv run spreads uoa`
   - `uv run spreads audit <pipeline-id> --date <YYYY-MM-DD>`
+- During the `spr-zuy` ops-state refactor, prefer the new state commands and routes once they exist. Do not add new frontend or API callers to the old fragmented ops surfaces.
 - The deploy target `ade-nucbox-k8-plus` is the canonical live paper environment. Treat it as live operator infrastructure, not a scratch box.
 - For target-aware operator reads, prefer `--env <target>` over raw connection overrides. Do not use bare `--db postgresql://...` when a named deploy target exists.
 - Canonical live-ops examples:

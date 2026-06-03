@@ -2,6 +2,7 @@
 
 - Keep `packages/api` as a thin adapter over backend services.
 - Treat [../../docs/current_system_state.md](../../docs/current_system_state.md) as the canonical source of truth for current route and service ownership.
+- Do not duplicate the domain ownership map in this file. If API work raises ownership questions, update `docs/current_system_state.md` rather than adding a parallel map here.
 - Do not re-implement business rules, aggregation, or repository queries in route handlers when a service can own them.
 - Prefer extending existing service payloads over creating API-only parallel logic.
 - Keep endpoint shapes narrow and caller-driven. Expand only when there is a real consumer.
@@ -14,4 +15,5 @@
   - UOA routes -> `services/uoa_state.py`
   - internal ops/health visibility routes -> `services/ops/`
   - account overview routes -> `services/account_state.py`
+- Active cleanup `spr-zuy` is replacing fragmented internal ops routes with properly named trading/storage ops state routes. During that work, remove old active route concepts instead of preserving compatibility wrappers.
 - For runtime and rollout guidance, also follow [packages/core/AGENTS.md](../../packages/core/AGENTS.md).

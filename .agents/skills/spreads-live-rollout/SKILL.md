@@ -47,15 +47,9 @@ Before rollout, classify what changed:
 - backtest-only or CLI-only code changed
 - API-only or web-only code changed
 
-Use these current code owners while classifying:
+Use imports, touched paths, and the canonical architecture doc to decide the minimum safe rollout. Do not use this skill as an ownership map; read [docs/current_system_state.md](../../../docs/current_system_state.md), which owns the current domain vocabulary and service boundaries.
 
-- discovery and collection: `services/scanners/`, `services/discovery_runs/`, `services/live_selection.py`, `services/opportunity_scoring.py`, `services/candidate_policy.py`
-- canonical opportunity state: `services/signal_state.py`, `services/opportunity_generation.py`, `services/opportunities.py`
-- runtime read models: `services/live_runtime.py`, `services/discovery_run_health/`, `services/pipelines.py`, `services/ops/`
-- account snapshot and broker read model: `services/account_state.py`
-- execution admission and positions: `services/account_capacity.py`, `services/execution/`, `services/execution_portfolio.py`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py`
-
-Use that classification to decide the minimum safe rollout.
+Active cleanup `spr-zuy` is replacing fragmented operator health surfaces with `TradingOpsState` and `StorageOpsState`; update this rollout playbook when those shipped commands exist.
 
 ## Validation Before Rollout
 
@@ -124,6 +118,8 @@ uv run spreads trading
 uv run spreads automations --bot-id <bot-id> --automation-id <automation-id> --date <YYYY-MM-DD> --json
 uv run spreads pipelines
 ```
+
+During `spr-zuy`, prefer the canonical state commands once they exist, and do not add new rollout checks around the old fragmented ops product surfaces.
 
 Then drill into impacted labels:
 

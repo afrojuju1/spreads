@@ -13,5 +13,6 @@ Prefer `lodash-es` for standard utility work in this app when it cleanly covers 
 - Do not expand that UI model as if it were the long-term selection architecture; the target direction is one canonical opportunity list with rendered views.
 - When touching generator/operator surfaces, preserve existing behavior unless the change is explicitly part of the selection-state migration.
 - Keep web surfaces as read models over `services/live_runtime.py`, `services/pipelines.py`, `services/opportunities.py`, and `services/ops/`; do not invent web-only business-logic owners.
+- Active cleanup `spr-zuy` is replacing fragmented ops endpoints with canonical trading/storage ops state surfaces. During that work, do not add new frontend callers to old `live-doctor`, `status`, `trading`, or `finviz-ledger` product routes.
 - Do not reintroduce high-frequency polling without an explicit runtime need and a clear owner for the load it creates.
 - Do not recreate the removed Automations page as a generic compatibility surface. If automation runtime details are needed, fold them into cohesive operator views backed by current API/read-model surfaces.

@@ -8,7 +8,7 @@ If another planning or design document disagrees about current ownership, topolo
 
 Use planning documents for target-state design, subsystem specifications, migration plans, and historical context.
 
-Last updated: 2026-05-25
+Last updated: 2026-06-03
 
 Related:
 
@@ -45,6 +45,27 @@ Related:
 - `execution_intents` is the strategy/control-plane handoff boundary. It chooses the execution runtime before broker submission. Runtime `alpaca_direct` is the current Python-native Alpaca adapter path for equity, single-leg option, and Alpaca order-payload submission. `services/execution/runtimes.py` owns the runtime capability declaration, and `spreads execution-runtimes`, `GET /executions/runtimes`, `spreads trading`, and the runtime catalog expose the active adapter surface.
 - `execution` is the immutable broker-facing ledger. `session_positions` is the mutable owner of day-local position attribution.
 - `broker_sync` reconciles broker reality and health, but it does not take ownership of session attribution away from `session_positions`.
+- Active operator-state refactor `spr-zuy` replaces the fragmented `live-doctor`, `status`, `trading`, and `finviz-ledger` product surfaces with `TradingOpsState` and `StorageOpsState`. During that refactor, prefer full removal of the old active surfaces over compatibility wrappers.
+
+## Domain Ownership Map
+
+This map defines domain vocabulary and source-of-truth ownership. Agents should update this document when ownership changes instead of copying the map into `AGENTS.md` or repo-local skills.
+
+| Domain object | Meaning | Current source of truth / owner | Must not own |
+|---|---|---|---|
+| Signal | A normalized market/setup observation that may become an opportunity. | `services/signal_state.py`, `services/opportunity_generation.py`, `storage/signal_repository.py`; persisted in `signal_states` and `signal_state_transitions`. | Web/API route handlers, alerts, or execution code. |
+| Decision | A strategy or lifecycle choice made from a signal/opportunity, including selected, skipped, blocked, or no-entry reasons. | Strategy and lifecycle services that create canonical opportunities or execution-intent payloads; currently split across opportunity generation, Finviz direct logic, and lifecycle projection code. Active cleanup should move decision vocabulary toward explicit lifecycle/state objects. | Alert delivery, dashboard-only read models, or broker-sync reconciliation. |
+| Admission | Account/risk/policy answer to "can this approved idea be carried now?" | `services/account_capacity.py`, `services/risk_manager.py`, `services/execution/`, and execution-intent admission payloads. | `services/account_state.py`; account snapshots are broker/account reads, not admission policy owners. |
+| Intent | The control-plane handoff requesting an open or close action. | `services/execution_intents/` and `execution_intents`. | Broker ledger tables, alerts, or frontend state. |
+| Attempt | One broker-facing submission/refresh/cancel lifecycle for an intent. | `services/execution/` and `execution_attempts`. | `session_positions`; positions are projections/ownership, not submission history. |
+| Order | Broker order facts attached to an attempt. | `execution_orders`, written/refreshed by `services/execution/` and broker sync. | Opportunity, alert, or dashboard services. |
+| Fill | Broker fill facts attached to an order/attempt. | `execution_fills`, written/refreshed by `services/execution/` and broker sync. | Position ownership logic except as an input to projection. |
+| Position | Day/session-local ownership and PnL projection for a trade. | `services/session_positions.py`, `services/execution_portfolio.py`, and `session_positions`. | Broker positions alone; broker inventory is reconciliation input, not session ownership truth. |
+| Close | A decision, intent, attempt, and fill path that reduces or exits a position. | `services/exit_manager.py`, `services/session_positions.py`, `services/execution_intents/`, and `services/execution/`; close facts persist in `session_position_closes` plus execution tables. | Separate close-only workflows that bypass execution intents and attempts. |
+| Reconciliation | Matching local attempts/positions against broker reality and marking mismatches. | `services/broker_sync.py`, `account_snapshots`, and `broker_sync_state`; position mismatch flags live on position projections. | Discovery, alerts, or account snapshots as independent truth. |
+| Broker sync | Poll-first broker/account health and fact ingestion. | `services/broker_sync.py`; operator normalization in `services/ops/broker_sync.py`. | Session attribution, risk policy, or trading decision ownership. |
+| Trading ops state | Operator-facing live trading control-room state: market, control, scheduler/workers, runtime, broker sync, flows, decisions, intents, attempts, positions, exits, risk, and attention. | Target owner under `spr-zuy`: `services/ops/trading_ops_state.py` and `/internal/trading-ops/state`. Current state is fragmented across `services/ops/live_doctor.py`, `services/ops/trading.py`, `services/ops/system.py`, and `services/ops/finviz.py`. | Frontend stitching, API-only aggregators, live Alpaca account calls during normal dashboard render, or vendor-ledger product surfaces. |
+| Storage ops state | Operator-facing storage/retention health: table sizes, stats, latest retention result, schedule, and maintenance warnings. | Target owner under `spr-zuy`: `services/ops/storage_ops_state.py` and `/internal/storage-ops/state`. Current retention state lives in `services/retention.py` and `/internal/ops/retention`. | Live trading state, raw quote/event scans on default dashboard load, or dashboard-only calculations. |
 
 ## Runtime Stack
 
@@ -589,6 +610,8 @@ Current service owners here are:
 - `services/discovery_run_health/` for capture, selection, enrichment, and tradeability summaries
 - `services/pipelines.py` for pipeline-facing runtime projections
 - `services/ops/` for operator CLI read models such as `status`, `trading`, `jobs`, `audit`, and `uoa`
+
+Active cleanup `spr-zuy` is replacing the fragmented operator health/read-model surfaces with `TradingOpsState` for live trading operations and `StorageOpsState` for storage and retention health. While that work is in progress, treat the existing `status`, `trading`, `live-doctor`, and `finviz-ledger` style surfaces as current implementation details to be removed from active product surfaces, not as names to extend.
 
 Examples:
 

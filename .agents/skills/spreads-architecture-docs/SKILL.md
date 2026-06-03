@@ -36,38 +36,17 @@ Use these only for the roles they now own:
 Do not let these supporting docs become rival top-level architecture sources.
 Older planning docs may still mention pre-cutover `replay` or `audit_replay` surfaces; when they do, prefer the current names and boundaries from `docs/current_system_state.md`.
 
-## Current Boundary Map
+## Boundary Map Belongs In Current System State
 
-When documenting the current system, use these owners:
+Do not duplicate the domain ownership map in `AGENTS.md` files or repo-local skills.
 
-- discovery and collection:
-  - `packages/core/services/scanners/`
-  - `packages/core/services/discovery_runs/`
-  - `packages/core/services/live_selection.py`
-  - `packages/core/services/opportunity_scoring.py`
-  - `packages/core/services/candidate_policy.py`
-- canonical opportunity state:
-  - `packages/core/services/signal_state.py`
-  - `packages/core/services/opportunity_generation.py`
-  - `packages/core/services/opportunities.py`
-- account snapshots and operator-facing read models:
-  - `packages/core/services/account_state.py`
-  - `packages/core/services/ops/`
-- runtime, pipeline, and ops read models:
-  - `packages/core/services/live_runtime.py`
-  - `packages/core/services/discovery_run_health/`
-  - `packages/core/services/pipelines.py`
-- execution admission and portfolio state:
-  - `packages/core/services/execution_intents/`
-  - `packages/core/services/account_capacity.py`
-  - `packages/core/services/execution/`
-  - `packages/core/services/execution_portfolio.py`
-  - `packages/core/services/session_positions.py`
-  - `packages/core/services/broker_sync.py`
-  - `packages/core/services/risk_manager.py`
-  - `packages/core/services/exit_manager.py`
-- market-data capture:
-  - `packages/core/services/market_recorder.py`
+When documenting current ownership, update:
+
+- [docs/current_system_state.md](../../../docs/current_system_state.md)
+
+That document owns the vocabulary and service ownership for signals, decisions, admissions, intents, attempts, orders, fills, positions, closes, reconciliation, broker sync, trading ops state, and storage ops state.
+
+Repo-local skills should remain workflow playbooks that point to the canonical doc.
 
 ## Update Order
 
@@ -85,6 +64,7 @@ When editing repo instructions:
 
 - root `AGENTS.md` should point architecture and ownership questions to `docs/current_system_state.md`
 - package-level `AGENTS.md` files should name the real current owners, not stale monoliths
+- do not turn `AGENTS.md` into an architecture encyclopedia; put domain ownership in `docs/current_system_state.md`
 - avoid stale references to old surfaces like `scanner.py`, `live_collector.py`, `execution.py`, or `ops_visibility.py` as if they still own the split responsibilities
 
 ## Repo Skill Rules
@@ -92,7 +72,7 @@ When editing repo instructions:
 When editing repo-local skills under `.agents/skills`:
 
 - keep commands aligned with the real CLI surface under `uv run spreads ...`
-- prefer `status`, `trading`, `automations`, `pipelines`, `jobs`, `uoa`, `audit`, and `backtest`
+- prefer the current shipped CLI surface while it exists, and update this skill when `spr-zuy` replaces fragmented ops commands with canonical state commands
 - keep runtime ownership aligned with `docs/current_system_state.md`
 - refresh stale service references when package splits change ownership
 - keep selection, execution-admission, and alert-projection boundaries explicit instead of letting them collapse into one vague “trading” layer

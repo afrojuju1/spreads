@@ -1,8 +1,10 @@
 # Test Instructions
 
-- Critical flow validations belong under `tests/e2e/`.
+- Do not add, update, or expand automated tests unless Ade explicitly asks for test work.
+- Only write or modify e2e tests when Ade explicitly asks for e2e coverage.
+- Default implementation validation belongs in the running stack, shipped CLIs, operator commands, and targeted runtime smoke checks.
+- When Ade explicitly asks for tests, critical flow validations belong under `tests/e2e/`.
 - Do not add new test files under `tests/` root. Critical validations belong in `tests/e2e/`; if a test does not merit that directory, it probably should not exist.
-- Add tests only for absolutely critical runtime flows and regressions.
 - Prefer one high-signal end-to-end validation through the canonical path over multiple narrow tests.
 - Do not add fake unit tests, helper tests, render-only tests, coercion tests, or mock-heavy tests that only prove implementation details.
 - Test behavior at the system boundary that matters in production: scheduler flow, discovery run flow, execution flow, backtest decisions, API/runtime read models, and critical policy gates.

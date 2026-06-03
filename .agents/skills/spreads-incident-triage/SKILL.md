@@ -33,17 +33,15 @@ Start with the running system, not code inspection.
 
 For ops and end-of-day questions, prefer the live Docker-backed state before reading implementation files.
 
-## Canonical Owners
+## Canonical Ownership Source
 
-- runtime and pipeline detail: `packages/core/services/live_runtime.py` and `packages/core/services/pipelines.py`
-- operator health views: `packages/core/services/ops/`
-- discovery and collection flow: `packages/core/services/discovery_runs/`, `packages/core/services/scanners/`, `packages/core/services/live_selection.py`, `packages/core/services/opportunity_scoring.py`, and `packages/core/services/candidate_policy.py`
-- canonical opportunity state: `packages/core/services/signal_state.py`, `packages/core/services/opportunity_generation.py`, and `packages/core/services/opportunities.py`
-- account snapshot read model: `packages/core/services/account_state.py`
-- execution admission and broker-capacity truth: `packages/core/services/account_capacity.py`, `packages/core/services/risk_manager.py`, `packages/core/services/execution/`, and `packages/core/services/ops/trading.py`
-- historical decision evaluation and policy research: `packages/core/backtest/`
-- alert delivery state: `packages/core/storage/alert_repository.py`
-- worker and scheduler behavior: `packages/core/jobs/worker.py`, `packages/core/jobs/registry.py`, and `packages/core/storage/job_repository.py`
+Do not rely on this skill as an architecture map. For domain ownership, object vocabulary, and current-versus-target operator-state boundaries, read:
+
+- [docs/current_system_state.md](../../../docs/current_system_state.md)
+
+That document owns the map for signals, decisions, admissions, intents, attempts, orders, fills, positions, closes, reconciliation, broker sync, trading ops state, and storage ops state.
+
+Active cleanup `spr-zuy` is replacing fragmented operator health surfaces with `TradingOpsState` and `StorageOpsState`. Until those commands exist, use the current shipped CLI below; once they land, update this skill instead of continuing to teach old surfaces.
 
 Keep these boundaries straight while triaging:
 
@@ -64,6 +62,8 @@ uv run spreads pipelines
 uv run spreads jobs
 uv run spreads uoa
 ```
+
+During `spr-zuy`, do not add new investigation workflow around old `live-doctor`, `status`, `trading`, or `finviz-ledger` product names. Use them only as current shipped evidence until the canonical state commands replace them.
 
 Use direct API reads or code inspection only when the CLI is insufficient.
 
