@@ -9,6 +9,7 @@ Use these entrypoints:
 - [Nautilus Architecture Review](./2026-06-03_nautilus_architecture_review.md) for the 2026-06-03 investigation of upstream Nautilus patterns and Ade's local Alpaca options runtime
 - [Nautilus Patterns Inside Spreads](./2026-06-03_nautilus_patterns_inside_spreads_architecture.md) for the target architecture to house Nautilus-like engine patterns inside Spreads while moving live runtime ownership away from Rust
 - [Trading Lifecycle State Machines](./2026-06-03_trading_lifecycle_state_machines.md) for the object/state lifecycle reference that should be understood before heavy trading-engine refactors
+- [Target Trading Lifecycle Object Model](./2026-06-03_target_trading_lifecycle_object_model.md) for the `spr-g9s.1` decision record defining the clean target objects, states, invariants, replacement stance, and historical-data cutover posture
 - [Trading Lifecycle Bead Plan](./2026-06-03_trading_lifecycle_bead_plan.md) for the ready-to-create bead breakdown, dependency order, and acceptance criteria for the lifecycle rewrite
 - [Current-System Options Automation Implementation Approach](./2026-04-15_current_system_options_automation_implementation_approach.md) for the migration path that uses the existing backend instead of starting clean-sheet
 - [Backtest System Recommendation](./2026-04-16_backtest_system_recommendation.md) for the design background behind the cutover to one canonical config-driven backtest engine
