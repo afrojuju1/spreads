@@ -5,9 +5,14 @@ This directory holds architecture notes, refactor plans, and design specificatio
 Use these entrypoints:
 
 - [System Architecture](../current_system_state.md) as the canonical source of truth for the current overall runtime architecture and service boundaries
+- [Spreads Architecture Review](./2026-06-03_spreads_architecture_review.md) for the 2026-06-03 investigation of the current Spreads runtime, strengths, risks, and engine-consolidation takeaways
+- [Nautilus Architecture Review](./2026-06-03_nautilus_architecture_review.md) for the 2026-06-03 investigation of upstream Nautilus patterns and Ade's local Alpaca options runtime
+- [Nautilus Patterns Inside Spreads](./2026-06-03_nautilus_patterns_inside_spreads_architecture.md) for the target architecture to house Nautilus-like engine patterns inside Spreads while moving live runtime ownership away from Rust
+- [Trading Lifecycle State Machines](./2026-06-03_trading_lifecycle_state_machines.md) for the object/state lifecycle reference that should be understood before heavy trading-engine refactors
+- [Trading Lifecycle Bead Plan](./2026-06-03_trading_lifecycle_bead_plan.md) for the ready-to-create bead breakdown, dependency order, and acceptance criteria for the lifecycle rewrite
 - [Current-System Options Automation Implementation Approach](./2026-04-15_current_system_options_automation_implementation_approach.md) for the migration path that uses the existing backend instead of starting clean-sheet
 - [Backtest System Recommendation](./2026-04-16_backtest_system_recommendation.md) for the design background behind the cutover to one canonical config-driven backtest engine
-- [Spreads + Nautilus Integration Roadmap](./2026-05-16_spreads_nautilus_integration_roadmap.md) for the staged plan to keep `spreads` as the operator product while migrating reusable execution, replay, and engine responsibilities into Nautilus
+- [Spreads + Nautilus Integration Roadmap](./2026-05-16_spreads_nautilus_integration_roadmap.md) for historical May 2026 context on the bridge-first Nautilus migration path; the 2026-06-03 target direction is now [Nautilus Patterns Inside Spreads](./2026-06-03_nautilus_patterns_inside_spreads_architecture.md)
 - [Multi-Strategy Builder Replay Validation](./2026-04-19_multi_strategy_builder_replay_validation.md) for the shared framework to confirm builder behavior across strategy families against scan-time artifacts and Alpaca history without adding a parallel replay subsystem
 - [Config-Driven Runtime Prerequisite Plan](./2026-04-16_config_driven_runtime_prerequisite_plan.md) for the implementation architecture needed before the improved backtest is meaningful
 - [Multi-Paper Alpaca Account Plan](./2026-04-27_multi_paper_alpaca_account_plan.md) for the deferred design to route bots across several Alpaca paper accounts without duplicating discovery
