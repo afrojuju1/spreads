@@ -22,3 +22,6 @@
 {"id":"int-523eb103","kind":"field_change","created_at":"2026-06-03T16:21:25.580796476Z","actor":"ade b","issue_id":"spr-g9s.4","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-3da1f114","kind":"field_change","created_at":"2026-06-03T16:21:25.580919083Z","actor":"ade b","issue_id":"spr-g9s.4","extra":{"field":"assignee","new_value":"ade b","old_value":""}}
 {"id":"int-791a8a68","kind":"field_change","created_at":"2026-06-03T16:26:18.831239758Z","actor":"ade b","issue_id":"spr-g9s.4","extra":{"field":"status","new_value":"closed","old_value":"in_progress"}}
+{"id":"int-072f7f23","kind":"field_change","created_at":"2026-06-03T16:26:38.188421451Z","actor":"ade b","issue_id":"spr-g9s.5","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-e67e95f0","kind":"field_change","created_at":"2026-06-03T16:26:38.188538518Z","actor":"ade b","issue_id":"spr-g9s.5","extra":{"field":"assignee","new_value":"ade b","old_value":""}}
+{"id":"int-1e5eaf1f","kind":"field_change","created_at":"2026-06-03T16:38:03.908165274Z","actor":"ade b","issue_id":"spr-g9s.5","extra":{"field":"status","new_value":"closed","old_value":"in_progress"}}

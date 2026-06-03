@@ -12,6 +12,10 @@ from core.services.account_capacity import (
     estimate_buying_power_requirement,
     resolve_available_buying_power,
 )
+from core.services.admission_lifecycle import (
+    admission_allows_attempt,
+    normalize_lifecycle_admission,
+)
 from core.services.alpaca import create_alpaca_client_from_env
 from core.services.automation_runtime import resolve_entry_runtime
 from core.services.candidate_policy import (
@@ -140,6 +144,13 @@ class ExecutionAdmissionError(ValueError):
 
 def _execution_admission_payload_from_risk_evaluation(
     risk_evaluation: Mapping[str, Any],
+    *,
+    admission_kind: str = "open_execution",
+    source_object_type: str | None = None,
+    source_object_id: str | None = None,
+    session_date: str | None = None,
+    requested_notional: float | None = None,
+    max_loss: float | None = None,
 ) -> dict[str, Any]:
     metrics = (
         risk_evaluation.get("metrics")
@@ -173,8 +184,8 @@ def _execution_admission_payload_from_risk_evaluation(
     admissible_quantity = _coerce_int(metrics.get("recommended_quantity"))
     if resolved_status == "blocked" and admissible_quantity is None:
         admissible_quantity = 0
-    return {
-        "status": "admissible" if resolved_status == "approved" else resolved_status,
+    snapshot = {
+        "status": "approved" if resolved_status == "approved" else resolved_status,
         "reason": resolved_reason,
         "message": str(risk_evaluation.get("note") or "") or None,
         "evaluated_at": _utc_now(),
@@ -200,6 +211,21 @@ def _execution_admission_payload_from_risk_evaluation(
         ),
         "requested_quantity": None if requested_quantity <= 0 else int(requested_quantity),
     }
+    return normalize_lifecycle_admission(
+        snapshot,
+        admission_kind=admission_kind,
+        source_object_type=source_object_type,
+        source_object_id=source_object_id,
+        session_date=session_date,
+        requested_quantity=None if requested_quantity <= 0 else int(requested_quantity),
+        requested_notional=requested_notional,
+        max_loss=max_loss,
+        policy_snapshot=risk_evaluation.get("policy") if isinstance(risk_evaluation.get("policy"), Mapping) else {},
+        metrics=metrics,
+        evidence=risk_evaluation.get("evidence") if isinstance(risk_evaluation.get("evidence"), Mapping) else {},
+        reason_codes=reason_codes,
+        blockers=[str(value) for value in risk_evaluation.get("blockers") or [] if str(value).strip()],
+    )
 
 
 def _execution_admission_payload_from_account_capacity(
@@ -207,6 +233,7 @@ def _execution_admission_payload_from_account_capacity(
     attempt: Mapping[str, Any],
     account_capacity: Mapping[str, Any],
 ) -> dict[str, Any]:
+    request = attempt.get("request") if isinstance(attempt.get("request"), Mapping) else {}
     required_buying_power = _coerce_float(account_capacity.get("required_buying_power"))
     available_buying_power = _coerce_float(account_capacity.get("available_buying_power"))
     reserved_buying_power = _coerce_float(account_capacity.get("reserved_buying_power"))
@@ -228,7 +255,14 @@ def _execution_admission_payload_from_account_capacity(
             available_buying_power + max(reserved_buying_power or 0.0, 0.0),
             2,
         )
-    return {
+    buying_power_basis = _as_text(
+        estimate_buying_power_requirement(
+            dict(attempt.get("candidate") or {}),
+            1.0,
+            limit_price=_coerce_float(attempt.get("limit_price")),
+        ).get("basis")
+    )
+    snapshot = {
         "status": "blocked",
         "reason": _as_text(account_capacity.get("reason")),
         "message": _as_text(account_capacity.get("message")),
@@ -238,19 +272,40 @@ def _execution_admission_payload_from_account_capacity(
         "available_buying_power": available_buying_power,
         "account_available_buying_power": account_available_buying_power,
         "reserved_buying_power": reserved_buying_power,
-        "buying_power_basis": _as_text(
-            estimate_buying_power_requirement(
-                dict(attempt.get("candidate") or {}),
-                1.0,
-                limit_price=_coerce_float(attempt.get("limit_price")),
-            ).get("basis")
-        ),
+        "buying_power_basis": buying_power_basis,
         "buying_power_source_field": _as_text(account_capacity.get("source_field")),
         "broker_buying_power_status": "ok",
         "limiting_constraint": "available_broker_buying_power",
         "strategy_risk_budget": None,
         "requested_quantity": None if requested_quantity <= 0 else int(requested_quantity),
     }
+    source_object_id = _as_text(request.get("execution_intent_id")) or _as_text(attempt.get("execution_attempt_id"))
+    return normalize_lifecycle_admission(
+        snapshot,
+        admission_kind="submit_account_capacity",
+        source_object_type="execution_intent" if _as_text(request.get("execution_intent_id")) is not None else "execution_attempt",
+        source_object_id=source_object_id,
+        session_date=_as_text(attempt.get("session_date")) or _as_text(attempt.get("market_date")),
+        requested_quantity=None if requested_quantity <= 0 else int(requested_quantity),
+        requested_notional=_execution_notional(
+            quantity=None if requested_quantity <= 0 else int(requested_quantity),
+            limit_price=_coerce_float(attempt.get("limit_price")),
+        ),
+        policy_snapshot=request.get("risk_policy") if isinstance(request.get("risk_policy"), Mapping) else {},
+        capability_snapshot=account_capacity,
+        metrics={
+            "required_buying_power": required_buying_power,
+            "available_buying_power": available_buying_power,
+            "reserved_buying_power": reserved_buying_power,
+            "account_available_buying_power": account_available_buying_power,
+            "buying_power_basis": buying_power_basis,
+            "buying_power_source_field": _as_text(account_capacity.get("source_field")),
+            "admissible_quantity": admissible_quantity,
+        },
+        evidence={"account_capacity": dict(account_capacity)},
+        reason_codes=[_as_text(account_capacity.get("reason")) or "insufficient_buying_power"],
+        blockers=[_as_text(account_capacity.get("reason")) or "insufficient_buying_power"],
+    )
 
 
 def _execution_admission_payload_from_broker_rejection(
@@ -258,6 +313,7 @@ def _execution_admission_payload_from_broker_rejection(
     attempt: Mapping[str, Any],
     classified_error: Mapping[str, Any],
 ) -> dict[str, Any]:
+    request = attempt.get("request") if isinstance(attempt.get("request"), Mapping) else {}
     quantity = max(_coerce_float(attempt.get("quantity")) or 0.0, 0.0)
     requirement = estimate_buying_power_requirement(
         dict(attempt.get("candidate") or {}),
@@ -270,7 +326,7 @@ def _execution_admission_payload_from_broker_rejection(
         "insufficient_buying_power",
     }:
         required_buying_power = None
-    return {
+    snapshot = {
         "status": "blocked",
         "reason": _as_text(classified_error.get("reason")),
         "message": _as_text(classified_error.get("message")),
@@ -287,6 +343,123 @@ def _execution_admission_payload_from_broker_rejection(
         "strategy_risk_budget": None,
         "requested_quantity": None if quantity <= 0 else int(quantity),
     }
+    source_object_id = _as_text(request.get("execution_intent_id")) or _as_text(attempt.get("execution_attempt_id"))
+    return normalize_lifecycle_admission(
+        snapshot,
+        admission_kind="broker_rejection",
+        source_object_type="execution_intent" if _as_text(request.get("execution_intent_id")) is not None else "execution_attempt",
+        source_object_id=source_object_id,
+        session_date=_as_text(attempt.get("session_date")) or _as_text(attempt.get("market_date")),
+        requested_quantity=None if quantity <= 0 else int(quantity),
+        requested_notional=_execution_notional(
+            quantity=None if quantity <= 0 else int(quantity),
+            limit_price=_coerce_float(attempt.get("limit_price")),
+        ),
+        policy_snapshot=request.get("risk_policy") if isinstance(request.get("risk_policy"), Mapping) else {},
+        capability_snapshot=classified_error,
+        metrics={
+            "required_buying_power": required_buying_power,
+            "buying_power_basis": _as_text(requirement.get("basis")),
+            "broker_buying_power_status": "rejected",
+        },
+        evidence={"classified_error": dict(classified_error), "buying_power_requirement": dict(requirement)},
+        reason_codes=[_as_text(classified_error.get("reason")) or "broker_rejected"],
+        blockers=[_as_text(classified_error.get("reason")) or "broker_rejected"],
+    )
+
+
+def _execution_notional(*, quantity: int | None, limit_price: float | None, multiplier: float = 100.0) -> float | None:
+    if quantity is None or quantity <= 0 or limit_price is None or limit_price <= 0:
+        return None
+    return round(float(quantity) * float(limit_price) * multiplier, 2)
+
+
+def _metadata_policy(metadata: Mapping[str, Any], key: str) -> dict[str, Any]:
+    value = metadata.get(key)
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _direct_order_execution_policy(
+    metadata: Mapping[str, Any],
+    *,
+    risk_policy: Mapping[str, Any] | None,
+    quantity: int,
+) -> dict[str, Any]:
+    raw_policy = _metadata_policy(metadata, "execution_policy")
+    raw_policy.setdefault("enabled", True)
+    raw_policy.setdefault("mode", "top_promotable")
+    raw_policy.setdefault("quantity", quantity)
+    if _as_text(raw_policy.get("deployment_mode")) is None:
+        raw_policy["deployment_mode"] = _as_text(metadata.get("deployment_mode")) or _as_text(
+            metadata.get("execution_deployment_mode")
+        ) or ("live_auto" if _as_text(metadata.get("execution_mode")) == "live" else "paper_auto")
+    return normalize_execution_policy(
+        {
+            "execution_policy": raw_policy,
+            "risk_policy": dict(risk_policy) if isinstance(risk_policy, Mapping) else None,
+        }
+    )
+
+
+def _admission_source_from_metadata(
+    metadata: Mapping[str, Any],
+    *,
+    fallback_type: str,
+    fallback_id: str | None,
+) -> tuple[str, str | None]:
+    execution_intent_id = _as_text(metadata.get("execution_intent_id"))
+    if execution_intent_id is not None:
+        return "execution_intent", execution_intent_id
+    position_id = _as_text(metadata.get("position_id"))
+    if position_id is not None:
+        return "position", position_id
+    return fallback_type, fallback_id
+
+
+def _raise_if_admission_blocks(admission: Mapping[str, Any]) -> None:
+    if admission_allows_attempt(admission):
+        return
+    message = (
+        _as_text(admission.get("message"))
+        or _as_text(admission.get("reason"))
+        or "Execution admission blocked."
+    )
+    raise ExecutionAdmissionError(message, admission=admission)
+
+
+def _approved_execution_admission(
+    *,
+    admission_kind: str,
+    source_object_type: str | None,
+    source_object_id: str | None,
+    session_date: str | None,
+    requested_quantity: int | None,
+    requested_notional: float | None,
+    reason: str,
+    message: str,
+    max_loss: float | None = None,
+    policy_snapshot: Mapping[str, Any] | None = None,
+    evidence: Mapping[str, Any] | None = None,
+    decided_at: str | None = None,
+) -> dict[str, Any]:
+    return normalize_lifecycle_admission(
+        {
+            "status": "approved",
+            "reason": reason,
+            "message": message,
+            "evaluated_at": decided_at or _utc_now(),
+        },
+        admission_kind=admission_kind,
+        source_object_type=source_object_type,
+        source_object_id=source_object_id,
+        session_date=session_date,
+        requested_quantity=requested_quantity,
+        requested_notional=requested_notional,
+        max_loss=max_loss,
+        policy_snapshot=policy_snapshot,
+        evidence=evidence,
+        reason_codes=[reason],
+    )
 
 
 def _opportunity_legs_from_row(opportunity: Mapping[str, Any]) -> list[OpportunityLeg]:
@@ -1661,6 +1834,22 @@ def submit_live_session_execution(
                 "position_size_pct_of_available_balance"
             ],
         )
+        risk_metrics = risk_evaluation.get("metrics") if isinstance(risk_evaluation.get("metrics"), Mapping) else {}
+        admission_source_type = "opportunity" if opportunity_ref is not None else "candidate"
+        admission_source_id = (
+            str(opportunity_ref["opportunity_id"])
+            if opportunity_ref is not None
+            else _as_text(candidate.get("candidate_id"))
+        )
+        execution_admission = _execution_admission_payload_from_risk_evaluation(
+            risk_evaluation,
+            admission_kind="open_execution",
+            source_object_type=admission_source_type,
+            source_object_id=admission_source_id,
+            session_date=str(cycle["session_date"]),
+            requested_notional=_coerce_float(risk_metrics.get("position_notional")),
+            max_loss=_coerce_float(risk_metrics.get("position_max_loss")),
+        )
         resolved_risk_policy = dict(risk_evaluation["policy"])
         policy_refs = _build_policy_refs(
             request_metadata=request_metadata,
@@ -1727,9 +1916,7 @@ def submit_live_session_execution(
                 _publish_risk_decision_event(risk_decision)
             raise ExecutionAdmissionError(
                 str(risk_evaluation["note"]),
-                admission=_execution_admission_payload_from_risk_evaluation(
-                    risk_evaluation
-                ),
+                admission=execution_admission,
             )
 
         pipeline_policy_fields = resolve_pipeline_policy_fields(
@@ -1809,6 +1996,7 @@ def submit_live_session_execution(
                 "execution_runtime": execution_runtime,
                 "execution_policy": resolved_execution_policy,
                 "risk_policy": resolved_risk_policy,
+                "execution_admission": execution_admission,
                 "exit_policy": resolved_exit_policy,
                 "source_job": {
                     "job_type": source_policies["source_job_type"],
@@ -2121,6 +2309,31 @@ def submit_position_close_by_id(
             if attempt_legs
             else None
         )
+        close_source_type, close_source_id = _admission_source_from_metadata(
+            request_metadata or {},
+            fallback_type="position",
+            fallback_id=position_id,
+        )
+        execution_admission = _approved_execution_admission(
+            admission_kind="position_close",
+            source_object_type=close_source_type,
+            source_object_id=close_source_id,
+            session_date=market_date,
+            requested_quantity=resolved_quantity,
+            requested_notional=_execution_notional(
+                quantity=resolved_quantity,
+                limit_price=resolved_limit_price,
+            ),
+            reason="close_validation_passed",
+            message="Close order passed position and order validation.",
+            policy_snapshot=request_metadata.get("risk_policy") if isinstance(request_metadata, Mapping) and isinstance(request_metadata.get("risk_policy"), Mapping) else {},
+            evidence={
+                "position_id": position_id,
+                "trade_intent": trade_intent,
+                "order_validation": "passed",
+            },
+            decided_at=requested_at,
+        )
         attempt = execution_store.create_attempt(
             execution_attempt_id=attempt_id,
             session_id=build_live_run_scope_id(label, market_date),
@@ -2169,6 +2382,7 @@ def submit_position_close_by_id(
                 **({} if request_metadata is None else request_metadata),
                 "trade_intent": trade_intent,
                 "position_id": position_id,
+                "execution_admission": execution_admission,
                 "order": order_request,
             },
             candidate={},
@@ -2291,6 +2505,42 @@ def submit_equity_order(
     ]
     strategy = "equity_short" if leg_role == "short" else "equity_long"
     pipeline_id = build_pipeline_id(resolved_label)
+    equity_source_type, equity_source_id = _admission_source_from_metadata(
+        metadata,
+        fallback_type="direct_equity_order",
+        fallback_id=attempt_id,
+    )
+    equity_risk_policy = _metadata_policy(metadata, "risk_policy")
+    equity_execution_policy = _direct_order_execution_policy(
+        metadata,
+        risk_policy=equity_risk_policy,
+        quantity=resolved_quantity,
+    )
+    execution_admission = _approved_execution_admission(
+        admission_kind=f"direct_equity_{resolved_trade_intent}",
+        source_object_type=equity_source_type,
+        source_object_id=equity_source_id,
+        session_date=resolved_market_date,
+        requested_quantity=resolved_quantity,
+        requested_notional=_execution_notional(
+            quantity=resolved_quantity,
+            limit_price=resolved_limit_price,
+            multiplier=1.0,
+        ),
+        reason="direct_equity_request_validated",
+        message="Direct equity order passed request validation.",
+        policy_snapshot={
+            "risk_policy": equity_risk_policy,
+            "execution_policy": equity_execution_policy,
+        },
+        evidence={
+            "asset_class": "equity",
+            "symbol": normalized_symbol,
+            "side": normalized_side,
+            "position_intent": position_intent,
+        },
+        decided_at=requested_at,
+    )
     attempt_created = False
     submitted_order: dict[str, Any] | None = None
     try:
@@ -2335,6 +2585,7 @@ def submit_equity_order(
             request={
                 "trade_intent": resolved_trade_intent,
                 "execution_runtime": normalized_runtime,
+                "execution_policy": equity_execution_policy,
                 "asset_class": "equity",
                 "position_intent": position_intent,
                 **(
@@ -2382,6 +2633,7 @@ def submit_equity_order(
                     if not isinstance(metadata.get("risk_policy"), Mapping)
                     else {"risk_policy": dict(metadata["risk_policy"])}
                 ),
+                "execution_admission": execution_admission,
                 **(
                     {}
                     if not isinstance(metadata.get("source"), Mapping)
@@ -2580,11 +2832,14 @@ def submit_option_order(
         if isinstance(metadata.get("option_selection"), Mapping)
         else {}
     )
+    option_quote_metrics = _metadata_policy(option_selection, "quote_metrics")
+    candidate_generated_at = _as_text(option_quote_metrics.get("timestamp")) or requested_at
     candidate_payload = {
         "underlying_symbol": normalized_underlying,
         "strategy": resolved_strategy_family,
         "strategy_family": resolved_strategy_family,
         "profile": profile,
+        "generated_at": candidate_generated_at,
         "expiration_date": resolved_expiration,
         "underlying_price": _coerce_float(metadata.get("underlying_price")),
         "legs": legs,
@@ -2600,6 +2855,72 @@ def submit_option_order(
         "max_loss": round(resolved_limit_price * 100.0, 2),
         "option_selection": option_selection,
     }
+    option_source_type, option_source_id = _admission_source_from_metadata(
+        metadata,
+        fallback_type="direct_option_order",
+        fallback_id=attempt_id,
+    )
+    requested_option_notional = _execution_notional(
+        quantity=resolved_quantity,
+        limit_price=resolved_limit_price,
+    )
+    option_risk_policy = _metadata_policy(metadata, "risk_policy")
+    option_execution_policy = _direct_order_execution_policy(
+        metadata,
+        risk_policy=option_risk_policy,
+        quantity=resolved_quantity,
+    )
+    if resolved_trade_intent == OPEN_TRADE_INTENT:
+        position_size_policy = _strategy_position_size_policy(
+            bot_id=_as_text(metadata.get("bot_id")),
+            automation_id=_as_text(metadata.get("automation_id")),
+            strategy_config_id=_as_text(metadata.get("strategy_config_id")),
+        )
+        risk_evaluation = evaluate_open_execution(
+            execution_store=execution_store,
+            session_id=build_live_run_scope_id(resolved_label, resolved_market_date),
+            candidate=candidate_payload,
+            cycle={
+                "session_date": resolved_market_date,
+                "label": resolved_label,
+                "generated_at": candidate_generated_at,
+            },
+            quantity=resolved_quantity,
+            limit_price=resolved_limit_price,
+            risk_policy=option_risk_policy,
+            execution_policy=option_execution_policy,
+            strategy_risk_budget=position_size_policy["max_risk_per_trade"],
+            position_size_pct_of_available_balance=position_size_policy["position_size_pct_of_available_balance"],
+        )
+        execution_admission = _execution_admission_payload_from_risk_evaluation(
+            risk_evaluation,
+            admission_kind="direct_option_open",
+            source_object_type=option_source_type,
+            source_object_id=option_source_id,
+            session_date=resolved_market_date,
+            requested_notional=requested_option_notional,
+            max_loss=requested_option_notional,
+        )
+        _raise_if_admission_blocks(execution_admission)
+    else:
+        execution_admission = _approved_execution_admission(
+            admission_kind="direct_option_close",
+            source_object_type=option_source_type,
+            source_object_id=option_source_id,
+            session_date=resolved_market_date,
+            requested_quantity=resolved_quantity,
+            requested_notional=requested_option_notional,
+            reason="direct_option_close_request_validated",
+            message="Direct option close order passed request validation.",
+            policy_snapshot=option_risk_policy,
+            evidence={
+                "asset_class": "option",
+                "symbol": normalized_symbol,
+                "underlying_symbol": normalized_underlying,
+                "position_intent": position_intent,
+            },
+            decided_at=requested_at,
+        )
     attempt_created = False
     submitted_order: dict[str, Any] | None = None
     try:
@@ -2652,6 +2973,7 @@ def submit_option_order(
             request={
                 "trade_intent": resolved_trade_intent,
                 "execution_runtime": normalized_runtime,
+                "execution_policy": option_execution_policy,
                 "asset_class": "option",
                 "position_intent": position_intent,
                 **({} if position_id is None else {"position_id": position_id}),
@@ -2695,6 +3017,7 @@ def submit_option_order(
                     if not isinstance(metadata.get("risk_policy"), Mapping)
                     else {"risk_policy": dict(metadata["risk_policy"])}
                 ),
+                "execution_admission": execution_admission,
                 **(
                     {}
                     if not isinstance(metadata.get("source"), Mapping)

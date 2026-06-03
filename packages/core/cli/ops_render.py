@@ -1819,6 +1819,28 @@ def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> No
             )
         console.print(table)
 
+    intents = list(details.get("intents") or [])
+    if intents:
+        table = Table(title="Finviz Intents", header_style="bold")
+        table.add_column("Created")
+        table.add_column("Root")
+        table.add_column("Intent")
+        table.add_column("State")
+        table.add_column("Admission")
+        table.add_column("Reason")
+        table.add_column("Attempt")
+        for row in intents[:10]:
+            table.add_row(
+                _render_value(row.get("created_at")),
+                _render_value(row.get("underlying_symbol") or row.get("symbol")),
+                _render_value(row.get("trade_intent") or row.get("action_type")),
+                _render_value(row.get("state")),
+                _render_value(row.get("admission_state")),
+                _truncate(row.get("admission_reason"), length=42),
+                _truncate(row.get("execution_attempt_id"), length=24),
+            )
+        console.print(table)
+
 
 def render_pipelines_view(console: Console, payload: dict[str, Any]) -> None:
     if isinstance(payload.get("pipelines"), list):

@@ -629,6 +629,7 @@ def _summarize_intent(row: Mapping[str, Any]) -> dict[str, Any]:
     payload = _mapping(row.get("payload"))
     source = _mapping(payload.get("source"))
     option_selection = _summarize_option_selection(payload.get("option_selection"))
+    execution_admission = _mapping(payload.get("execution_admission"))
     return {
         "execution_intent_id": row.get("execution_intent_id"),
         "execution_attempt_id": row.get("execution_attempt_id"),
@@ -643,6 +644,10 @@ def _summarize_intent(row: Mapping[str, Any]) -> dict[str, Any]:
         "quantity": payload.get("quantity"),
         "limit_price": payload.get("limit_price"),
         "option_selection": option_selection,
+        "execution_admission": execution_admission,
+        "admission_state": execution_admission.get("admission_state") or execution_admission.get("status"),
+        "admission_reason": execution_admission.get("reason")
+        or next(iter(execution_admission.get("reason_codes") or []), None),
         "feed_job_run_id": source.get("feed_job_run_id"),
         "trading_job_run_id": source.get("trading_job_run_id"),
         "created_at": row.get("created_at"),

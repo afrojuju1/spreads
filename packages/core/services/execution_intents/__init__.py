@@ -351,6 +351,9 @@ def submit_execution_intent(
                     "config_hash": source_intent.get("config_hash"),
                     "position_id": _as_text(equity_payload.get("position_id")),
                     "trade_intent": _as_text(equity_payload.get("trade_intent")),
+                    "approval_mode": _as_text(equity_payload.get("approval_mode")),
+                    "execution_mode": _as_text(equity_payload.get("execution_mode")),
+                    "execution_policy": execution_policy,
                     "exit_policy": (
                         dict(equity_payload["exit_policy"])
                         if isinstance(equity_payload.get("exit_policy"), dict)
@@ -401,6 +404,9 @@ def submit_execution_intent(
                     "config_hash": source_intent.get("config_hash"),
                     "position_id": _as_text(option_payload.get("position_id")),
                     "trade_intent": _as_text(option_payload.get("trade_intent")),
+                    "approval_mode": _as_text(option_payload.get("approval_mode")),
+                    "execution_mode": _as_text(option_payload.get("execution_mode")),
+                    "execution_policy": execution_policy,
                     "exit_policy": (
                         dict(option_payload["exit_policy"])
                         if isinstance(option_payload.get("exit_policy"), dict)
@@ -492,6 +498,8 @@ def submit_execution_intent(
         None if attempt is None else _as_text(attempt.get("execution_attempt_id"))
     )
     next_state = _attempt_state(attempt)
+    attempt_request = attempt.get("request") if isinstance(attempt, dict) and isinstance(attempt.get("request"), dict) else {}
+    execution_admission = attempt_request.get("execution_admission")
     linked_intent = _update_intent(
         execution_store,
         dict(claimed_intent),
@@ -503,6 +511,11 @@ def submit_execution_intent(
                 {}
                 if linked_attempt_id is None
                 else {"execution_attempt_id": linked_attempt_id}
+            ),
+            **(
+                {}
+                if not isinstance(execution_admission, dict)
+                else {"execution_admission": dict(execution_admission)}
             ),
         },
         updated_at=_utc_now(),
