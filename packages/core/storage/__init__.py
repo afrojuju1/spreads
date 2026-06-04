@@ -2,6 +2,7 @@ from .capabilities import StorageCapabilities
 from .context import StorageContext
 from .alert_repository import AlertRepository
 from .broker_repository import BrokerRepository
+from .capture_repository import CaptureRepository
 from .control_repository import ControlRepository
 from .db import DEFAULT_POSTGRES_URL, default_database_url
 from .discovery_run_repository import DiscoveryRunRepository
@@ -11,6 +12,7 @@ from .ops_store import OpsStore
 from .factory import (
     build_alert_repository,
     build_broker_repository,
+    build_capture_repository,
     build_discovery_repository,
     build_control_repository,
     build_event_repository,
@@ -32,6 +34,7 @@ from .trading_store import TradingStore
 __all__ = [
     "AlertRepository",
     "BrokerRepository",
+    "CaptureRepository",
     "DiscoveryRunRepository",
     "ControlRepository",
     "DEFAULT_POSTGRES_URL",
@@ -47,6 +50,7 @@ __all__ = [
     "TradingStore",
     "build_alert_repository",
     "build_broker_repository",
+    "build_capture_repository",
     "build_discovery_repository",
     "build_control_repository",
     "build_event_repository",

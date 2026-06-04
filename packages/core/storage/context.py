@@ -3,6 +3,7 @@ from __future__ import annotations
 from core.runtime.config import default_database_url
 from core.storage.alert_repository import AlertRepository
 from core.storage.broker_repository import BrokerRepository
+from core.storage.capture_repository import CaptureRepository
 from core.storage.capabilities import StorageCapabilities
 from core.storage.discovery_run_repository import DiscoveryRunRepository
 from core.storage.control_repository import ControlRepository
@@ -45,6 +46,10 @@ class StorageContext:
     @property
     def broker(self) -> BrokerRepository:
         return self._build_repository("broker", BrokerRepository)  # type: ignore[return-value]
+
+    @property
+    def capture(self) -> CaptureRepository:
+        return self._build_repository("capture", CaptureRepository)  # type: ignore[return-value]
 
     @property
     def discovery(self) -> DiscoveryRunRepository:

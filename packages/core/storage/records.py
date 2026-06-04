@@ -48,7 +48,8 @@ ExecutionFillRecord = StorageRow
 PortfolioPositionRecord = StorageRow
 PositionCloseRecord = StorageRow
 LiveSessionSlotRecord = StorageRow
-MarketRecorderTargetRecord = StorageRow
+CaptureTargetRecord = StorageRow
+CaptureSummaryRecord = StorageRow
 SourceRunRecord = StorageRow
 SourceTickerRecord = StorageRow
 CandidateRunRecord = StorageRow
@@ -94,7 +95,8 @@ __all__ = [
     "PortfolioPositionRecord",
     "PositionCloseRecord",
     "LiveSessionSlotRecord",
-    "MarketRecorderTargetRecord",
+    "CaptureTargetRecord",
+    "CaptureSummaryRecord",
     "SourceRunRecord",
     "SourceTickerRecord",
     "CandidateRunRecord",

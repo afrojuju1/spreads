@@ -9,6 +9,7 @@ from sqlalchemy import create_engine, pool
 from core.storage import alert_models as storage_alert_models  # noqa: F401
 from core.storage import broker_models as storage_broker_models  # noqa: F401
 from core.storage import calendar_models as storage_calendar_models  # noqa: F401
+from core.storage import capture_models as storage_capture_models  # noqa: F401
 from core.storage import company_valuation_models as storage_company_valuation_models  # noqa: F401
 from core.storage import control_models as storage_control_models  # noqa: F401
 from core.storage import discovery_run_models as storage_discovery_run_models  # noqa: F401

@@ -4,6 +4,7 @@ This package names the engine roles first; runtime wiring moves here bead by bea
 """
 
 from .data import DataEngine
+from .capture_targets import refresh_engine_capture_targets
 from .data_runtime import PostgresDataEngine
 from .execution import ExecutionEngine
 from .kernel import EngineComponentRole, EngineContext, EngineRunRef
@@ -23,4 +24,5 @@ __all__ = [
     "PostgresPortfolioEngine",
     "RiskEngine",
     "StrategyEngine",
+    "refresh_engine_capture_targets",
 ]

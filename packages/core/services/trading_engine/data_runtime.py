@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from core.services.live_pipelines import build_live_snapshot_label
@@ -10,11 +10,10 @@ from core.services.opportunity_generation import build_trading_strategy_run_id
 from core.services.scanners.config import parse_args as parse_scanner_args
 from core.services.strategy_builders import build_entry_runtime_candidates, runtime_owner_key
 from core.services.ticker_sources import resolve_ticker_source_symbols
-from core.services.trading_engine.data import CandidateBuildRequest, CandidateBuildResult, ResolvedTickerSet, TickerSourceSpec
+from core.services.trading_engine.data import CaptureTargetRequest, CandidateBuildRequest, CandidateBuildResult, ResolvedTickerSet, TickerSourceSpec
 from core.services.trading_engine.kernel import EngineContext
 from core.services.trading_strategies import StrategySource, load_universe_symbols
 from core.services.trading_strategy_runtime import EntryRuntime
-
 
 DEFAULT_ENTRY_CANDIDATE_LIMIT = 10
 DEFAULT_GREEKS_SOURCE = "auto"
@@ -192,10 +191,43 @@ class PostgresDataEngine:
         self,
         requests: Any,
     ) -> Mapping[str, Any]:
+        capture_store = self.context.storage.capture
+        if not capture_store.target_schema_ready():
+            return {"status": "skipped", "reason": "capture_schema_unavailable"}
+
+        request_rows = [request for request in list(requests or []) if isinstance(request, CaptureTargetRequest)]
+        counts: dict[str, int] = {}
+        now = datetime.now(UTC)
+        for request in request_rows:
+            expires_at = (now + timedelta(seconds=max(int(request.ttl_seconds), 1))).isoformat(timespec="seconds").replace("+00:00", "Z")
+            rows = [
+                {
+                    "option_symbol": symbol,
+                    "underlying_symbol": request.metadata.get("underlying_symbol"),
+                    "strategy": request.metadata.get("strategy"),
+                    "leg_role": request.metadata.get("leg_role") or "contract",
+                    "quote_enabled": request.metadata.get("quote_enabled", True),
+                    "trade_enabled": request.metadata.get("trade_enabled", False),
+                    "feed": request.metadata.get("feed") or "opra",
+                    "data_base_url": request.metadata.get("data_base_url"),
+                    "expires_at": expires_at,
+                    "priority": request.priority,
+                    "metadata": dict(request.metadata),
+                }
+                for symbol in request.symbols
+            ]
+            persisted = capture_store.replace_capture_targets(
+                owner_kind=request.owner_type,
+                owner_key=request.owner_id,
+                reason=request.reason,
+                priority=request.priority,
+                rows=rows,
+            )
+            counts[request.reason] = counts.get(request.reason, 0) + len(persisted)
         return {
-            "status": "deferred",
-            "reason": "capture_target_engine_not_wired",
-            "request_count": len(list(requests or [])),
+            "status": "ok",
+            "request_count": len(request_rows),
+            "target_counts": counts,
         }
 
     def _resolved_ticker_set(

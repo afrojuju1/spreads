@@ -4,7 +4,7 @@ This document is the canonical source of truth for the current `spreads` runtime
 
 It describes the system as it exists in code today. Planning documents can describe history or target states, but when they disagree with this file, this file wins.
 
-Last updated: 2026-06-03
+Last updated: 2026-06-04
 
 ## Top-Level Boundaries
 
@@ -14,7 +14,7 @@ Last updated: 2026-06-03
 | Trading strategy config | `packages/config/trading_strategies`, `services/trading_strategies.py`, `services/trading_strategy_runtime.py` | A `trading_strategy` is the product/operator owner for source, trade structure, entry routine, management routine, risk, limits, and execution settings. |
 | Scheduling and workers | `packages/config/jobs`, `packages/core/jobs`, `services/runtime_policy.py` | Declared jobs and generated trading-strategy jobs are the scheduler source of truth. Runtime workers execute broker sync, strategy entry/manage, dispatch, recovery, and alert jobs. |
 | Dynamic ticker sources | `packages/config/ticker_sources`, `services/ticker_sources.py` | Ticker sources materialize reusable underlying lists. `finviz_momentum` feeds `momentum_long_calls`. |
-| Market data capture | `services/market_recorder.py`, `services/discovery_runs/capture/`, `services/discovery_recovery/` | `market_recorder.py` is the normal Alpaca option websocket owner. Discovery and runtime services consume persisted recorder-backed state where possible. |
+| Market data capture | `services/trading_engine/capture_targets.py`, `services/market_recorder.py`, `storage/capture_repository.py` | `DataEngine` owns desired capture state in `capture_targets`; `market_recorder.py` is the normal Alpaca option websocket owner and reconciles the prioritized target set into quote/trade events plus `capture_summaries`. |
 | Discovery and scanning | `services/scanners/`, `services/discovery_runs/`, `services/live_selection.py`, `services/opportunity_scoring.py`, `services/candidate_policy.py` | Discovery scans strategy scopes, ranks candidates, captures diagnostics, and persists discovery-owned cycle state. |
 | Signal and opportunity state | `services/signal_state.py`, `services/opportunity_generation.py`, `services/opportunities.py`, `storage/signal_repository.py` | Owns signal states, strategy runs, opportunities, and strategy-owned runtime projections. |
 | Execution and portfolio state | `services/execution/`, `services/execution_intents/`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py` | Owns intent dispatch, broker submission, order/fill facts, position attribution, reconciliation, and close behavior. |
@@ -33,7 +33,8 @@ Last updated: 2026-06-03
 - Discovery runs are diagnostic/scanning surfaces. They are not the product owner of execution.
 - Strategy-owned opportunities are projections over scan/feed candidates and are persisted with `trading_strategy_id` and `strategy_run_id`.
 - `pipeline_id` remains discovery lineage and compatibility identity, not the primary runtime owner.
-- `services/market_recorder.py` is the sole Alpaca option websocket owner in normal runtime.
+- Capture is desired state, not a discovery side effect. The priority order is open positions, working intents/attempts, selected candidates, then watch candidates.
+- `services/market_recorder.py` is the sole Alpaca option websocket owner in normal runtime. It reads `capture_targets` by priority and records `capture_summaries`.
 - `execution_intents` is the control-plane handoff boundary. It selects an execution runtime before broker submission.
 - `alpaca_direct` is the active Python-native runtime for equity, single-leg option, and Alpaca order-payload submission.
 - `session_positions` owns day/session position attribution. Broker positions are reconciliation input, not the sole position truth.
@@ -61,6 +62,8 @@ Last updated: 2026-06-03
 | Position | Day/session-local ownership and PnL projection. | `services/session_positions.py`, `portfolio_positions`, close records | Broker inventory as independent truth. |
 | Close | Decision, intent, attempt, and fill path that reduces or exits a position. | `services/exit_manager.py`, `services/execution_intents/`, `services/execution/` | Separate close-only bypasses. |
 | Broker sync | Poll-first broker/account health and fact ingestion. | `services/broker_sync.py`, `broker_sync_state`, `account_snapshots` | Trading decisions or owner attribution. |
+| Capture target | Desired option contract capture need with owner, reason, priority, TTL, and quote/trade flags. | `services/trading_engine/capture_targets.py`, `capture_targets`, `storage/capture_repository.py` | Scanner diagnostics or broker order truth. |
+| Capture summary | Market-recorder iteration summary for target pressure, captured rows, groups, and errors. | `services/market_recorder.py`, `capture_summaries` | Raw quote/trade event retention. |
 | Trading ops state | Operator-facing trading health: market, control, scheduler/workers, strategies, decisions, intents, attempts, positions, exits, risk, and attention. | `services/ops/`, `services/live_runtime.py`, `services/pipelines.py` | Frontend stitching or live Alpaca calls during default dashboard render. |
 | Storage ops state | Operator-facing retention/storage health. | `services/retention.py`, storage ops surfaces | Live trading decisions. |
 | Research scan | Batch TradingAgents research run over a bounded ticker list. | `services/tradingagents_scan.py`, `outputs/tradingagents/`, `external/TradingAgents` | Live execution admission. |
@@ -89,7 +92,7 @@ ARQ workers
 
 Market recorder
   |
-  +--> Alpaca option websocket -> option quote/trade tables
+  +--> prioritized capture_targets -> Alpaca option websocket -> option quote/trade tables + capture_summaries
 
 Postgres = source of truth
 Redis = queues, leases, pub/sub

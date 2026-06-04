@@ -7,8 +7,9 @@ from typing import Any
 from sqlalchemy import delete, select
 
 from core.storage.base import RepositoryBase
-from core.storage.recovery_models import LiveSessionSlotModel, MarketRecorderTargetModel
-from core.storage.records import LiveSessionSlotRecord, MarketRecorderTargetRecord
+from core.storage.capture_models import CaptureTargetModel
+from core.storage.recovery_models import LiveSessionSlotModel
+from core.storage.records import CaptureTargetRecord, LiveSessionSlotRecord
 from core.storage.serializers import parse_date, parse_datetime
 
 
@@ -37,7 +38,7 @@ def _capture_target_id(
 
 class RecoveryRepository(RepositoryBase):
     def schema_ready(self) -> bool:
-        return self.schema_has_tables("live_session_slots", "market_recorder_targets")
+        return self.schema_has_tables("live_session_slots", "capture_targets")
 
     def get_live_session_slot(
         self,
@@ -49,9 +50,7 @@ class RecoveryRepository(RepositoryBase):
         if slot_at_dt is None:
             raise ValueError("slot_at is required")
         statement = (
-            select(LiveSessionSlotModel)
-            .where(LiveSessionSlotModel.session_id == session_id)
-            .where(LiveSessionSlotModel.slot_at == slot_at_dt)
+            select(LiveSessionSlotModel).where(LiveSessionSlotModel.session_id == session_id).where(LiveSessionSlotModel.slot_at == slot_at_dt)
         )
         with self.session_factory() as session:
             row = session.scalar(statement)
@@ -87,9 +86,7 @@ class RecoveryRepository(RepositoryBase):
         updated_at_dt = parse_datetime(updated_at) or now
         with self.session_scope() as session:
             statement = (
-                select(LiveSessionSlotModel)
-                .where(LiveSessionSlotModel.session_id == session_id)
-                .where(LiveSessionSlotModel.slot_at == slot_at_dt)
+                select(LiveSessionSlotModel).where(LiveSessionSlotModel.session_id == session_id).where(LiveSessionSlotModel.slot_at == slot_at_dt)
             )
             row = session.scalar(statement)
             if row is None:
@@ -131,18 +128,13 @@ class RecoveryRepository(RepositoryBase):
         if not slots:
             return []
         now = _utc_now()
-        slot_times = [
-            parse_datetime(slot.get("slot_at") or slot.get("scheduled_for"))
-            for slot in slots
-        ]
+        slot_times = [parse_datetime(slot.get("slot_at") or slot.get("scheduled_for")) for slot in slots]
         slot_times = [slot_time for slot_time in slot_times if slot_time is not None]
         if not slot_times:
             return []
         with self.session_scope() as session:
             existing_rows = session.scalars(
-                select(LiveSessionSlotModel)
-                .where(LiveSessionSlotModel.session_id == session_id)
-                .where(LiveSessionSlotModel.slot_at.in_(slot_times))
+                select(LiveSessionSlotModel).where(LiveSessionSlotModel.session_id == session_id).where(LiveSessionSlotModel.slot_at.in_(slot_times))
             ).all()
             existing_by_slot = {row.slot_at: row for row in existing_rows}
             persisted: list[LiveSessionSlotModel] = []
@@ -221,20 +213,17 @@ class RecoveryRepository(RepositoryBase):
         label: str | None = None,
         profile: str | None = None,
         rows: list[dict[str, Any]],
-    ) -> list[MarketRecorderTargetRecord]:
+    ) -> list[CaptureTargetRecord]:
         now = _utc_now()
         with self.session_scope() as session:
             existing_rows = session.scalars(
-                select(MarketRecorderTargetModel)
-                .where(MarketRecorderTargetModel.owner_kind == owner_kind)
-                .where(MarketRecorderTargetModel.owner_key == owner_key)
-                .where(MarketRecorderTargetModel.reason == reason)
+                select(CaptureTargetModel)
+                .where(CaptureTargetModel.owner_kind == owner_kind)
+                .where(CaptureTargetModel.owner_key == owner_key)
+                .where(CaptureTargetModel.reason == reason)
             ).all()
-            existing_by_symbol = {
-                str(row.option_symbol): row
-                for row in existing_rows
-            }
-            persisted: list[MarketRecorderTargetModel] = []
+            existing_by_symbol = {str(row.option_symbol): row for row in existing_rows}
+            persisted: list[CaptureTargetModel] = []
             desired_symbols: set[str] = set()
             for payload in rows:
                 option_symbol = str(payload.get("option_symbol") or "").strip()
@@ -243,7 +232,7 @@ class RecoveryRepository(RepositoryBase):
                 desired_symbols.add(option_symbol)
                 row = existing_by_symbol.get(option_symbol)
                 if row is None:
-                    row = MarketRecorderTargetModel(
+                    row = CaptureTargetModel(
                         capture_target_id=_capture_target_id(
                             owner_kind=owner_kind,
                             owner_key=owner_key,
@@ -257,6 +246,7 @@ class RecoveryRepository(RepositoryBase):
                 row.owner_kind = owner_kind
                 row.owner_key = owner_key
                 row.reason = reason
+                row.priority = int(payload.get("priority") or 100)
                 row.session_id = session_id
                 row.session_date = None if session_date is None else parse_date(session_date)
                 row.label = label
@@ -288,13 +278,13 @@ class RecoveryRepository(RepositoryBase):
         owner_key: str | None = None,
         reason: str | None = None,
     ) -> int:
-        statement = delete(MarketRecorderTargetModel)
+        statement = delete(CaptureTargetModel)
         if owner_kind is not None:
-            statement = statement.where(MarketRecorderTargetModel.owner_kind == owner_kind)
+            statement = statement.where(CaptureTargetModel.owner_kind == owner_kind)
         if owner_key is not None:
-            statement = statement.where(MarketRecorderTargetModel.owner_key == owner_key)
+            statement = statement.where(CaptureTargetModel.owner_key == owner_key)
         if reason is not None:
-            statement = statement.where(MarketRecorderTargetModel.reason == reason)
+            statement = statement.where(CaptureTargetModel.reason == reason)
         with self.session_scope() as session:
             result = session.execute(statement)
         return int(result.rowcount or 0)
@@ -306,15 +296,11 @@ class RecoveryRepository(RepositoryBase):
         active_owner_keys: list[str],
         reason: str | None = None,
     ) -> int:
-        statement = delete(MarketRecorderTargetModel).where(
-            MarketRecorderTargetModel.owner_kind == owner_kind
-        )
+        statement = delete(CaptureTargetModel).where(CaptureTargetModel.owner_kind == owner_kind)
         if reason is not None:
-            statement = statement.where(MarketRecorderTargetModel.reason == reason)
+            statement = statement.where(CaptureTargetModel.reason == reason)
         if active_owner_keys:
-            statement = statement.where(
-                ~MarketRecorderTargetModel.owner_key.in_(active_owner_keys)
-            )
+            statement = statement.where(~CaptureTargetModel.owner_key.in_(active_owner_keys))
         with self.session_scope() as session:
             result = session.execute(statement)
         return int(result.rowcount or 0)
@@ -329,27 +315,26 @@ class RecoveryRepository(RepositoryBase):
         active_only: bool = False,
         as_of: str | datetime | None = None,
         limit: int | None = None,
-    ) -> list[MarketRecorderTargetRecord]:
-        statement = select(MarketRecorderTargetModel)
+    ) -> list[CaptureTargetRecord]:
+        statement = select(CaptureTargetModel)
         if owner_kind is not None:
-            statement = statement.where(MarketRecorderTargetModel.owner_kind == owner_kind)
+            statement = statement.where(CaptureTargetModel.owner_kind == owner_kind)
         if owner_key is not None:
-            statement = statement.where(MarketRecorderTargetModel.owner_key == owner_key)
+            statement = statement.where(CaptureTargetModel.owner_key == owner_key)
         if session_id is not None:
-            statement = statement.where(MarketRecorderTargetModel.session_id == session_id)
+            statement = statement.where(CaptureTargetModel.session_id == session_id)
         if reasons:
-            statement = statement.where(MarketRecorderTargetModel.reason.in_(reasons))
+            statement = statement.where(CaptureTargetModel.reason.in_(reasons))
         if active_only:
             as_of_dt = parse_datetime(as_of) or _utc_now()
-            statement = statement.where(
-                (MarketRecorderTargetModel.expires_at.is_(None))
-                | (MarketRecorderTargetModel.expires_at > as_of_dt)
-            )
+            statement = statement.where((CaptureTargetModel.expires_at.is_(None)) | (CaptureTargetModel.expires_at > as_of_dt))
         statement = statement.order_by(
-            MarketRecorderTargetModel.owner_kind.asc(),
-            MarketRecorderTargetModel.owner_key.asc(),
-            MarketRecorderTargetModel.reason.asc(),
-            MarketRecorderTargetModel.option_symbol.asc(),
+            CaptureTargetModel.priority.asc(),
+            CaptureTargetModel.updated_at.desc(),
+            CaptureTargetModel.owner_kind.asc(),
+            CaptureTargetModel.owner_key.asc(),
+            CaptureTargetModel.reason.asc(),
+            CaptureTargetModel.option_symbol.asc(),
         )
         if limit is not None:
             statement = statement.limit(limit)
@@ -362,7 +347,7 @@ class RecoveryRepository(RepositoryBase):
         *,
         as_of: str | datetime | None = None,
         limit: int | None = None,
-    ) -> list[MarketRecorderTargetRecord]:
+    ) -> list[CaptureTargetRecord]:
         return self.list_capture_targets(
             active_only=True,
             as_of=as_of,

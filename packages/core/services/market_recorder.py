@@ -15,13 +15,13 @@ from core.integrations.alpaca.client import DEFAULT_DATA_BASE_URL
 from core.jobs.orchestration import market_recorder_runtime_lease_key
 from core.observability.logging import configure_logging, log_event
 from core.runtime.config import default_database_url
-from core.services.discovery_recovery import refresh_execution_capture_targets
 from core.services.option_quote_records import build_quote_records
 from core.services.option_stream_broker import (
     AlpacaOptionStreamBroker,
     render_option_capture_timestamp,
 )
 from core.services.option_trade_records import build_trade_records
+from core.services.trading_engine.capture_targets import refresh_engine_capture_targets
 from core.storage.factory import build_storage_context
 
 DEFAULT_POLL_SECONDS = 25.0
@@ -79,10 +79,7 @@ def _owner_mismatch_payload() -> dict[str, Any] | None:
         "reason": "owner_env_mismatch",
         "deploy_env": current_env,
         "configured_owner_env": configured_owner_env,
-        "message": (
-            f"Market recorder ownership is assigned to {configured_owner_env}; "
-            f"{current_env or 'unknown'} is read-only."
-        ),
+        "message": (f"Market recorder ownership is assigned to {configured_owner_env}; " f"{current_env or 'unknown'} is read-only."),
     }
 
 
@@ -90,12 +87,7 @@ def _build_route(row: Mapping[str, Any]) -> dict[str, Any] | None:
     option_symbol = _as_text(row.get("option_symbol"))
     if option_symbol is None:
         return None
-    label = (
-        _as_text(row.get("label"))
-        or _as_text(row.get("session_id"))
-        or _as_text(row.get("owner_key"))
-        or "market_recorder"
-    )
+    label = _as_text(row.get("label")) or _as_text(row.get("session_id")) or _as_text(row.get("owner_key")) or "market_recorder"
     return {
         "option_symbol": option_symbol,
         "label": label,
@@ -159,29 +151,20 @@ def _build_capture_groups(
                 "trade_enabled": False,
             },
         )
-        existing_route["quote_enabled"] = bool(
-            existing_route["quote_enabled"] or route["quote_enabled"]
-        )
-        existing_route["trade_enabled"] = bool(
-            existing_route["trade_enabled"] or route["trade_enabled"]
-        )
+        existing_route["quote_enabled"] = bool(existing_route["quote_enabled"] or route["quote_enabled"])
+        existing_route["trade_enabled"] = bool(existing_route["trade_enabled"] or route["trade_enabled"])
 
     groups: list[dict[str, Any]] = []
     for group in grouped.values():
         candidates_by_symbol = dict(group.pop("candidates_by_symbol"))
         routes_by_symbol = {
-            option_symbol: [dict(route) for route in route_map.values()]
-            for option_symbol, route_map in dict(group.pop("routes_by_symbol")).items()
+            option_symbol: [dict(route) for route in route_map.values()] for option_symbol, route_map in dict(group.pop("routes_by_symbol")).items()
         }
         quote_symbols = sorted(
-            option_symbol
-            for option_symbol, routes in routes_by_symbol.items()
-            if any(bool(route.get("quote_enabled")) for route in routes)
+            option_symbol for option_symbol, routes in routes_by_symbol.items() if any(bool(route.get("quote_enabled")) for route in routes)
         )
         trade_symbols = sorted(
-            option_symbol
-            for option_symbol, routes in routes_by_symbol.items()
-            if any(bool(route.get("trade_enabled")) for route in routes)
+            option_symbol for option_symbol, routes in routes_by_symbol.items() if any(bool(route.get("trade_enabled")) for route in routes)
         )
         groups.append(
             {
@@ -193,6 +176,60 @@ def _build_capture_groups(
             }
         )
     return groups
+
+
+def _target_counts(target_rows: list[Mapping[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in target_rows:
+        reason = _as_text(row.get("reason")) or "unknown"
+        counts[reason] = counts.get(reason, 0) + 1
+    return counts
+
+
+def _capture_group_summary(capture_groups: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "feed": group.get("feed"),
+            "data_base_url": group.get("data_base_url"),
+            "quote_symbol_count": len(list(group.get("quote_symbols") or [])),
+            "trade_symbol_count": len(list(group.get("trade_symbols") or [])),
+        }
+        for group in capture_groups
+    ]
+
+
+def _save_capture_summary(
+    *,
+    capture_store: Any,
+    summary: dict[str, Any],
+    target_rows: list[Mapping[str, Any]],
+    target_limit: int,
+    target_refresh: Mapping[str, Any],
+    capture_groups: list[Mapping[str, Any]],
+) -> dict[str, Any]:
+    if not capture_store.schema_ready():
+        return summary
+    capture_summary = capture_store.save_capture_summary(
+        source=MARKET_RECORDER_SOURCE,
+        status=str(summary.get("status") or "unknown"),
+        active_target_count=int(target_refresh.get("active_target_count") or len(target_rows)),
+        selected_target_count=len(target_rows),
+        capture_group_count=int(summary.get("capture_group_count") or len(capture_groups)),
+        quote_rows_saved=int(summary.get("quote_rows_saved") or 0),
+        trade_rows_saved=int(summary.get("trade_rows_saved") or 0),
+        target_limit=target_limit,
+        target_counts=dict(target_refresh.get("active_target_counts") or _target_counts(target_rows)),
+        group_summary=_capture_group_summary(capture_groups),
+        errors={
+            "quote_errors": list(summary.get("quote_errors") or []),
+            "trade_errors": list(summary.get("trade_errors") or []),
+        },
+        metadata={
+            "target_refresh": dict(target_refresh),
+            "active_target_limit_reached": int(target_refresh.get("active_target_count") or len(target_rows)) > len(target_rows),
+        },
+    )
+    return {**summary, "capture_summary_id": capture_summary.get("capture_summary_id")}
 
 
 def _fan_out_quote_rows(
@@ -215,8 +252,7 @@ def _fan_out_quote_rows(
                     "cycle_id": cycle_id,
                     "label": route["label"],
                     "profile": route.get("profile"),
-                    "underlying_symbol": route.get("underlying_symbol")
-                    or record.get("underlying_symbol"),
+                    "underlying_symbol": route.get("underlying_symbol") or record.get("underlying_symbol"),
                     "strategy": route.get("strategy") or record.get("strategy"),
                     "leg_role": route.get("leg_role") or record.get("leg_role"),
                     "source": MARKET_RECORDER_SOURCE,
@@ -245,8 +281,7 @@ def _fan_out_trade_rows(
                     "cycle_id": cycle_id,
                     "label": route["label"],
                     "profile": route.get("profile"),
-                    "underlying_symbol": route.get("underlying_symbol")
-                    or record.get("underlying_symbol"),
+                    "underlying_symbol": route.get("underlying_symbol") or record.get("underlying_symbol"),
                     "strategy": route.get("strategy") or record.get("strategy"),
                     "leg_role": route.get("leg_role") or record.get("leg_role"),
                     "source": MARKET_RECORDER_SOURCE,
@@ -264,11 +299,7 @@ async def _capture_group(
 ) -> dict[str, Any]:
     quote_symbols = list(group.get("quote_symbols") or [])
     trade_symbols = list(group.get("trade_symbols") or [])
-    routes_by_symbol = (
-        group.get("routes_by_symbol")
-        if isinstance(group.get("routes_by_symbol"), Mapping)
-        else {}
-    )
+    routes_by_symbol = group.get("routes_by_symbol") if isinstance(group.get("routes_by_symbol"), Mapping) else {}
     data_base_url = str(group.get("data_base_url") or DEFAULT_DATA_BASE_URL)
     feed = str(group.get("feed") or "opra")
 
@@ -298,17 +329,9 @@ async def _capture_group(
         )
 
     captured_at = render_option_capture_timestamp()
-    candidates = [
-        dict(row)
-        for row in list(group.get("candidates") or [])
-        if isinstance(row, Mapping)
-    ]
-    quote_candidates = [
-        row for row in candidates if _as_text(row.get("option_symbol")) in set(quote_symbols)
-    ]
-    trade_candidates = [
-        row for row in candidates if _as_text(row.get("option_symbol")) in set(trade_symbols)
-    ]
+    candidates = [dict(row) for row in list(group.get("candidates") or []) if isinstance(row, Mapping)]
+    quote_candidates = [row for row in candidates if _as_text(row.get("option_symbol")) in set(quote_symbols)]
+    trade_candidates = [row for row in candidates if _as_text(row.get("option_symbol")) in set(trade_symbols)]
 
     quote_records: list[dict[str, Any]] = []
     trade_records: list[dict[str, Any]] = []
@@ -319,11 +342,7 @@ async def _capture_group(
             quote_result = await quote_task
             quote_records = build_quote_records(
                 captured_at=captured_at,
-                symbol_metadata={
-                    str(row["option_symbol"]): dict(row)
-                    for row in quote_candidates
-                    if _as_text(row.get("option_symbol")) is not None
-                },
+                symbol_metadata={str(row["option_symbol"]): dict(row) for row in quote_candidates if _as_text(row.get("option_symbol")) is not None},
                 quotes=quote_result.quotes,
                 source=MARKET_RECORDER_SOURCE,
             )
@@ -334,11 +353,7 @@ async def _capture_group(
             trade_result = await trade_task
             trade_records = build_trade_records(
                 captured_at=captured_at,
-                symbol_metadata={
-                    str(row["option_symbol"]): dict(row)
-                    for row in trade_candidates
-                    if _as_text(row.get("option_symbol")) is not None
-                },
+                symbol_metadata={str(row["option_symbol"]): dict(row) for row in trade_candidates if _as_text(row.get("option_symbol")) is not None},
                 trades=trade_result.trades,
                 source=MARKET_RECORDER_SOURCE,
             )
@@ -383,7 +398,7 @@ async def run_market_recorder_iteration(
 
     with build_storage_context(db_target) as storage:
         jobs_store = storage.jobs
-        recovery_store = storage.recovery
+        capture_store = storage.capture
         history_store = storage.history
         if jobs_store.schema_ready():
             lease_seconds = _market_recorder_lease_seconds(
@@ -409,33 +424,38 @@ async def run_market_recorder_iteration(
                     "status": "skipped",
                     "reason": "lease_unavailable",
                     "lease_key": lease_key,
-                    "lease_owner": existing_lease.get("owner")
-                    if isinstance(existing_lease, Mapping)
-                    else None,
+                    "lease_owner": existing_lease.get("owner") if isinstance(existing_lease, Mapping) else None,
                     "message": "Another market recorder already owns the live options stream lease.",
                 }
-        if not recovery_store.schema_ready():
+        if not capture_store.target_schema_ready():
             return {
                 "status": "skipped",
-                "reason": "recovery_schema_unavailable",
+                "reason": "capture_schema_unavailable",
             }
-        execution_targets = refresh_execution_capture_targets(storage=storage)
-        target_rows = [
-            dict(row)
-            for row in recovery_store.list_active_capture_targets(limit=target_limit)
-        ]
+        target_refresh = refresh_engine_capture_targets(storage=storage)
+        target_rows = [dict(row) for row in capture_store.list_active_capture_targets(limit=target_limit)]
         capture_groups = _build_capture_groups(target_rows)
         if not capture_groups:
-            return {
+            summary = {
                 "status": "idle",
-                "active_target_count": 0,
+                "active_target_count": int(target_refresh.get("active_target_count") or 0),
+                "selected_target_count": len(target_rows),
                 "capture_group_count": 0,
-                "execution_targets": execution_targets,
+                "target_refresh": target_refresh,
+                "target_counts": dict(target_refresh.get("active_target_counts") or {}),
                 "quote_rows_saved": 0,
                 "trade_rows_saved": 0,
                 "quote_errors": [],
                 "trade_errors": [],
             }
+            return _save_capture_summary(
+                capture_store=capture_store,
+                summary=summary,
+                target_rows=target_rows,
+                target_limit=target_limit,
+                target_refresh=target_refresh,
+                capture_groups=capture_groups,
+            )
 
         group_results = await asyncio.gather(
             *[
@@ -448,29 +468,17 @@ async def run_market_recorder_iteration(
                 for group in capture_groups
             ]
         )
-        quote_rows = [
-            row
-            for result in group_results
-            for row in list(result.get("quote_rows") or [])
-            if isinstance(row, Mapping)
-        ]
-        trade_rows = [
-            row
-            for result in group_results
-            for row in list(result.get("trade_rows") or [])
-            if isinstance(row, Mapping)
-        ]
-        quote_rows_saved = history_store.save_option_quote_event_rows(
-            rows=[dict(row) for row in quote_rows]
-        )
-        trade_rows_saved = history_store.save_option_trade_event_rows(
-            rows=[dict(row) for row in trade_rows]
-        )
-        return {
+        quote_rows = [row for result in group_results for row in list(result.get("quote_rows") or []) if isinstance(row, Mapping)]
+        trade_rows = [row for result in group_results for row in list(result.get("trade_rows") or []) if isinstance(row, Mapping)]
+        quote_rows_saved = history_store.save_option_quote_event_rows(rows=[dict(row) for row in quote_rows])
+        trade_rows_saved = history_store.save_option_trade_event_rows(rows=[dict(row) for row in trade_rows])
+        summary = {
             "status": "ok",
-            "active_target_count": len(target_rows),
+            "active_target_count": int(target_refresh.get("active_target_count") or len(target_rows)),
+            "selected_target_count": len(target_rows),
             "capture_group_count": len(capture_groups),
-            "execution_targets": execution_targets,
+            "target_refresh": target_refresh,
+            "target_counts": dict(target_refresh.get("active_target_counts") or _target_counts(target_rows)),
             "quote_rows_saved": quote_rows_saved,
             "trade_rows_saved": trade_rows_saved,
             "quote_errors": [
@@ -492,6 +500,14 @@ async def run_market_recorder_iteration(
                 if _as_text(result.get("trade_error")) is not None
             ],
         }
+        return _save_capture_summary(
+            capture_store=capture_store,
+            summary=summary,
+            target_rows=target_rows,
+            target_limit=target_limit,
+            target_refresh=target_refresh,
+            capture_groups=capture_groups,
+        )
 
 
 async def run_market_recorder_loop(args: argparse.Namespace) -> int:
@@ -533,9 +549,7 @@ async def run_market_recorder_loop(args: argparse.Namespace) -> int:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Continuously record raw option quote and trade events for active recovery capture targets."
-    )
+    parser = argparse.ArgumentParser(description="Continuously record raw option quote and trade events for active capture targets.")
     parser.add_argument(
         "--db",
         default=default_database_url(),

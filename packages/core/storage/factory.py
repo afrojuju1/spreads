@@ -3,6 +3,7 @@ from __future__ import annotations
 from core.runtime.config import DEFAULT_POSTGRES_URL, default_database_url
 from core.storage.alert_repository import AlertRepository
 from core.storage.broker_repository import BrokerRepository
+from core.storage.capture_repository import CaptureRepository
 from core.storage.discovery_run_repository import DiscoveryRunRepository
 from core.storage.control_repository import ControlRepository
 from core.storage.context import StorageContext
@@ -24,9 +25,7 @@ def _resolve_postgres_url(path_or_url: str | None = None) -> str:
     value = str(path_or_url)
     if value.startswith("postgres://") or value.startswith("postgresql://") or value.startswith("postgresql+psycopg://"):
         return value
-    raise RuntimeError(
-        f"Storage is Postgres-only. Use a PostgreSQL URL, for example {DEFAULT_POSTGRES_URL}."
-    )
+    raise RuntimeError(f"Storage is Postgres-only. Use a PostgreSQL URL, for example {DEFAULT_POSTGRES_URL}.")
 
 
 def build_storage_context(path_or_url: str | None = None) -> StorageContext:
@@ -59,6 +58,13 @@ def build_broker_repository(path_or_url: str | None = None, *, context: StorageC
         return context.broker
     value = _resolve_postgres_url(path_or_url)
     return BrokerRepository(value)
+
+
+def build_capture_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):
+    if context is not None:
+        return context.capture
+    value = _resolve_postgres_url(path_or_url)
+    return CaptureRepository(value)
 
 
 def build_job_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):

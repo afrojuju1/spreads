@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from core.storage.base import RepositoryBase
 from core.storage.engine_models import CandidateRunModel, SourceRunModel, SourceTickerModel, TradeCandidateModel
@@ -493,6 +493,66 @@ class EngineFactRepository(RepositoryBase):
         if row is None:
             return None
         return self.row(row)
+
+    def list_trade_signals(
+        self,
+        *,
+        signal_states: list[str] | None = None,
+        routine: str | None = None,
+        as_of: str | None = None,
+        limit: int = 100,
+    ) -> list[StorageRow]:
+        as_of_dt = parse_datetime(as_of)
+        statement = select(TradeSignalModel)
+        if signal_states:
+            statement = statement.where(TradeSignalModel.signal_state.in_(signal_states))
+        if routine is not None:
+            statement = statement.where(TradeSignalModel.routine == routine)
+        if as_of_dt is not None:
+            statement = statement.where(or_(TradeSignalModel.expires_at.is_(None), TradeSignalModel.expires_at > as_of_dt))
+        statement = statement.order_by(
+            TradeSignalModel.score.desc().nullslast(),
+            TradeSignalModel.rank.asc().nullslast(),
+            TradeSignalModel.updated_at.desc(),
+            TradeSignalModel.trade_signal_id.asc(),
+        ).limit(max(int(limit), 1))
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return self.rows(rows)
+
+    def list_trade_decisions_with_signals(
+        self,
+        *,
+        decision_states: list[str] | None = None,
+        routine: str | None = None,
+        as_of: str | None = None,
+        limit: int = 100,
+    ) -> list[StorageRow]:
+        as_of_dt = parse_datetime(as_of)
+        statement = select(TradeDecisionModel, TradeSignalModel).join(
+            TradeSignalModel, TradeDecisionModel.trade_signal_id == TradeSignalModel.trade_signal_id
+        )
+        if decision_states:
+            statement = statement.where(TradeDecisionModel.decision_state.in_(decision_states))
+        if routine is not None:
+            statement = statement.where(TradeDecisionModel.routine == routine)
+        if as_of_dt is not None:
+            statement = statement.where(or_(TradeSignalModel.expires_at.is_(None), TradeSignalModel.expires_at > as_of_dt))
+        statement = statement.order_by(
+            TradeDecisionModel.score.desc().nullslast(),
+            TradeDecisionModel.rank.asc().nullslast(),
+            TradeDecisionModel.decided_at.desc(),
+            TradeDecisionModel.trade_decision_id.asc(),
+        ).limit(max(int(limit), 1))
+        with self.session_factory() as session:
+            rows = session.execute(statement).all()
+        return [
+            {
+                "trade_decision": self.row(decision),
+                "trade_signal": self.row(signal),
+            }
+            for decision, signal in rows
+        ]
 
     def upsert_trade_execution_intent(
         self,
