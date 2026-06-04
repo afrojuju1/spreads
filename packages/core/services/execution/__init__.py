@@ -386,6 +386,76 @@ def _admission_source_from_metadata(
     return fallback_type, fallback_id
 
 
+def _metadata_trade_refs(metadata: Mapping[str, Any]) -> dict[str, str | None]:
+    execution_admission = metadata.get("execution_admission") if isinstance(metadata.get("execution_admission"), Mapping) else {}
+    return {
+        "trade_signal_id": _as_text(metadata.get("trade_signal_id")),
+        "trade_decision_id": _as_text(metadata.get("trade_decision_id")),
+        "admission_decision_id": _as_text(metadata.get("admission_decision_id")) or _as_text(execution_admission.get("admission_decision_id")),
+    }
+
+
+def _attempt_source_from_metadata(
+    metadata: Mapping[str, Any],
+    *,
+    fallback_type: str,
+    fallback_id: str | None,
+) -> tuple[str, str | None]:
+    source_object_type = _as_text(metadata.get("source_object_type"))
+    source_object_id = _as_text(metadata.get("source_object_id"))
+    if source_object_type is not None and source_object_id is not None:
+        return source_object_type, source_object_id
+
+    trade_decision_id = _as_text(metadata.get("trade_decision_id"))
+    if trade_decision_id is not None:
+        return "trade_decision", trade_decision_id
+    trade_signal_id = _as_text(metadata.get("trade_signal_id"))
+    if trade_signal_id is not None:
+        return "trade_signal", trade_signal_id
+
+    close_decision = metadata.get("close_decision")
+    if isinstance(close_decision, Mapping):
+        close_decision_id = _as_text(close_decision.get("close_decision_id"))
+        if close_decision_id is not None:
+            return "close_decision", close_decision_id
+
+    source = metadata.get("source")
+    if isinstance(source, Mapping):
+        source_type = _as_text(source.get("source_object_type")) or _as_text(source.get("kind")) or _as_text(source.get("source_type"))
+        source_id = _as_text(source.get("source_object_id")) or _as_text(source.get("id")) or _as_text(source.get("source_id"))
+        if source_type is not None and source_id is not None:
+            return source_type, source_id
+
+    position_id = _as_text(metadata.get("position_id"))
+    if position_id is not None:
+        return "position", position_id
+    execution_intent_id = _as_text(metadata.get("execution_intent_id"))
+    if execution_intent_id is not None:
+        return "execution_intent", execution_intent_id
+    opportunity_id = _as_text(metadata.get("opportunity_id"))
+    if opportunity_id is not None:
+        return "opportunity", opportunity_id
+    return fallback_type, fallback_id
+
+
+def _attempt_ref_kwargs(
+    metadata: Mapping[str, Any],
+    *,
+    fallback_type: str,
+    fallback_id: str | None,
+) -> dict[str, str | None]:
+    source_object_type, source_object_id = _attempt_source_from_metadata(
+        metadata,
+        fallback_type=fallback_type,
+        fallback_id=fallback_id,
+    )
+    return {
+        "source_object_type": source_object_type,
+        "source_object_id": source_object_id,
+        **_metadata_trade_refs(metadata),
+    }
+
+
 def _raise_if_admission_blocks(admission: Mapping[str, Any]) -> None:
     if admission_allows_attempt(admission):
         return
@@ -1672,6 +1742,11 @@ def submit_live_session_execution(
         )
         attempt_legs = normalize_legs(order_request.get("legs")) or candidate_legs(candidate_payload)
         attempt_id = _execution_attempt_id()
+        attempt_refs = _attempt_ref_kwargs(
+            request_metadata or {},
+            fallback_type=("opportunity" if opportunity_ref is not None else "candidate"),
+            fallback_id=(str(opportunity_ref["opportunity_id"]) if opportunity_ref is not None else _as_text(candidate.get("candidate_id"))),
+        )
         attempt = execution_store.create_attempt(
             execution_attempt_id=attempt_id,
             session_id=session_id,
@@ -1717,6 +1792,7 @@ def submit_live_session_execution(
             client_order_id=client_order_id,
             request={
                 **({} if request_metadata is None else request_metadata),
+                **{key: value for key, value in attempt_refs.items() if value is not None},
                 **({} if opportunity_ref is None else {"opportunity": opportunity_ref}),
                 **(
                     {}
@@ -1743,6 +1819,7 @@ def submit_live_session_execution(
                 "order": order_request,
             },
             candidate=candidate_payload,
+            **attempt_refs,
         )
         payload = _queue_execution_attempt(
             job_store=job_store,
@@ -2053,6 +2130,11 @@ def submit_position_close_by_id(
             },
             decided_at=requested_at,
         )
+        attempt_refs = _attempt_ref_kwargs(
+            request_metadata or {},
+            fallback_type="position",
+            fallback_id=position_id,
+        )
         attempt = execution_store.create_attempt(
             execution_attempt_id=attempt_id,
             session_id=build_live_run_scope_id(label, market_date),
@@ -2091,12 +2173,14 @@ def submit_position_close_by_id(
             client_order_id=client_order_id,
             request={
                 **({} if request_metadata is None else request_metadata),
+                **{key: value for key, value in attempt_refs.items() if value is not None},
                 "trade_intent": trade_intent,
                 "position_id": position_id,
                 "execution_admission": execution_admission,
                 "order": order_request,
             },
             candidate={},
+            **attempt_refs,
         )
         payload = _queue_execution_attempt(
             job_store=job_store,
@@ -2237,6 +2321,11 @@ def submit_equity_order(
         },
         decided_at=requested_at,
     )
+    attempt_refs = _attempt_ref_kwargs(
+        metadata,
+        fallback_type="direct_equity_order",
+        fallback_id=attempt_id,
+    )
     attempt_created = False
     submitted_order: dict[str, Any] | None = None
     try:
@@ -2277,6 +2366,7 @@ def submit_equity_order(
             broker=BROKER_NAME,
             client_order_id=client_order_id,
             request={
+                **{key: value for key, value in attempt_refs.items() if value is not None},
                 "trade_intent": resolved_trade_intent,
                 "execution_runtime": normalized_runtime,
                 "execution_policy": equity_execution_policy,
@@ -2301,6 +2391,7 @@ def submit_equity_order(
                 "order": order_request,
             },
             candidate={},
+            **attempt_refs,
         )
         attempt_created = True
         adapter = create_alpaca_order_adapter()
@@ -2543,6 +2634,11 @@ def submit_option_order(
             },
             decided_at=requested_at,
         )
+    attempt_refs = _attempt_ref_kwargs(
+        metadata,
+        fallback_type="direct_option_order",
+        fallback_id=attempt_id,
+    )
     attempt_created = False
     submitted_order: dict[str, Any] | None = None
     try:
@@ -2588,6 +2684,7 @@ def submit_option_order(
             broker=BROKER_NAME,
             client_order_id=client_order_id,
             request={
+                **{key: value for key, value in attempt_refs.items() if value is not None},
                 "trade_intent": resolved_trade_intent,
                 "execution_runtime": normalized_runtime,
                 "execution_policy": option_execution_policy,
@@ -2635,6 +2732,7 @@ def submit_option_order(
                 "order": order_request,
             },
             candidate=candidate_payload,
+            **attempt_refs,
         )
         attempt_created = True
         adapter = create_alpaca_order_adapter()

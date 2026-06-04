@@ -54,9 +54,7 @@ class EngineFactRepository(RepositoryBase):
         if generated_at_dt is None or updated_at_dt is None:
             raise ValueError("generated_at and updated_at are required")
         entries_by_symbol = {
-            str(entry.get("symbol") or "").upper(): dict(entry)
-            for entry in list(entries or [])
-            if str(entry.get("symbol") or "").strip()
+            str(entry.get("symbol") or "").upper(): dict(entry) for entry in list(entries or []) if str(entry.get("symbol") or "").strip()
         }
         normalized_symbols = list(dict.fromkeys(str(symbol).upper() for symbol in symbols if str(symbol or "").strip()))
         with self.session_scope() as session:
@@ -482,6 +480,20 @@ class EngineFactRepository(RepositoryBase):
             session.refresh(row)
             return self.row(row)
 
+    def get_trade_signal(self, trade_signal_id: str) -> StorageRow | None:
+        with self.session_factory() as session:
+            row = session.get(TradeSignalModel, trade_signal_id)
+        if row is None:
+            return None
+        return self.row(row)
+
+    def get_trade_decision(self, trade_decision_id: str) -> StorageRow | None:
+        with self.session_factory() as session:
+            row = session.get(TradeDecisionModel, trade_decision_id)
+        if row is None:
+            return None
+        return self.row(row)
+
     def upsert_trade_execution_intent(
         self,
         *,
@@ -649,6 +661,21 @@ class EngineFactRepository(RepositoryBase):
                 row.note = note
                 row.execution_attempt_id = execution_attempt_id
                 row.decided_at = decided_at_dt
+            session.flush()
+            session.refresh(row)
+            return self.row(row)
+
+    def attach_trade_admission_attempt(
+        self,
+        *,
+        admission_decision_id: str,
+        execution_attempt_id: str,
+    ) -> StorageRow | None:
+        with self.session_scope() as session:
+            row = session.get(TradeAdmissionModel, admission_decision_id)
+            if row is None:
+                return None
+            row.execution_attempt_id = execution_attempt_id
             session.flush()
             session.refresh(row)
             return self.row(row)

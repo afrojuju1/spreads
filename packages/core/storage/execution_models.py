@@ -37,6 +37,10 @@ class ExecutionAttemptModel(Base):
         ),
         Index("idx_execution_attempts_status_requested", "status", "requested_at"),
         Index("idx_execution_attempts_candidate_requested", "candidate_id", "requested_at"),
+        Index("idx_execution_attempts_source_object", "source_object_type", "source_object_id"),
+        Index("idx_execution_attempts_trade_signal", "trade_signal_id"),
+        Index("idx_execution_attempts_trade_decision", "trade_decision_id"),
+        Index("idx_execution_attempts_admission_decision", "admission_decision_id"),
         Index(
             "idx_execution_attempts_runtime_position_requested",
             "position_id",
@@ -79,6 +83,23 @@ class ExecutionAttemptModel(Base):
     candidate_id: Mapped[int | None] = mapped_column(
         BigInteger,
         ForeignKey("discovery_run_candidates.candidate_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    source_object_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_object_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trade_signal_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("trade_signals.trade_signal_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    trade_decision_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("trade_decisions.trade_decision_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    admission_decision_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("trade_admissions.admission_decision_id", ondelete="SET NULL"),
         nullable=True,
     )
     attempt_context: Mapped[str | None] = mapped_column(Text, nullable=True)

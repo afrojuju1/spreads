@@ -121,6 +121,11 @@ class ExecutionRepository(RepositoryBase):
         submitted_at: str | None = None,
         completed_at: str | None = None,
         error_text: str | None = None,
+        source_object_type: str | None = None,
+        source_object_id: str | None = None,
+        trade_signal_id: str | None = None,
+        trade_decision_id: str | None = None,
+        admission_decision_id: str | None = None,
     ) -> ExecutionAttemptRecord:
         resolved_legs = normalize_legs(legs, expiration_date=expiration_date)
         if not resolved_legs:
@@ -148,6 +153,11 @@ class ExecutionRepository(RepositoryBase):
                 opportunity_id=opportunity_id,
                 risk_decision_id=risk_decision_id,
                 candidate_id=candidate_id,
+                source_object_type=source_object_type,
+                source_object_id=source_object_id,
+                trade_signal_id=trade_signal_id,
+                trade_decision_id=trade_decision_id,
+                admission_decision_id=admission_decision_id,
                 attempt_context=attempt_context,
                 candidate_generated_at=parse_datetime(candidate_generated_at),
                 run_id=run_id,
