@@ -463,7 +463,6 @@ def _open_positions(execution_store: Any, *, session_id: str) -> list[dict[str, 
     return [
         enrich_position_row(dict(position))
         for position in execution_store.list_positions(
-            pipeline_id=f"pipeline:{resolved['label']}",
             market_date=resolved["market_date"],
             statuses=OPEN_POSITION_STATUSES,
             limit=200,

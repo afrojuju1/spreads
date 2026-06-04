@@ -23,7 +23,6 @@ class ExecutionAttemptModel(Base):
     __tablename__ = "execution_attempts"
     __table_args__ = (
         Index("idx_execution_attempts_session_requested", "session_id", "requested_at"),
-        Index("idx_execution_attempts_pipeline_requested", "pipeline_id", "requested_at"),
         Index(
             "idx_execution_attempts_strategy_requested",
             "trading_strategy_id",
@@ -36,7 +35,6 @@ class ExecutionAttemptModel(Base):
             "requested_at",
         ),
         Index("idx_execution_attempts_status_requested", "status", "requested_at"),
-        Index("idx_execution_attempts_candidate_requested", "candidate_id", "requested_at"),
         Index("idx_execution_attempts_source_object", "source_object_type", "source_object_id"),
         Index("idx_execution_attempts_trade_signal", "trade_signal_id"),
         Index("idx_execution_attempts_trade_decision", "trade_decision_id"),
@@ -46,40 +44,16 @@ class ExecutionAttemptModel(Base):
             "position_id",
             "requested_at",
         ),
-        Index(
-            "idx_execution_attempts_opportunity_requested",
-            "opportunity_id",
-            "requested_at",
-        ),
-        Index(
-            "idx_execution_attempts_risk_decision_requested",
-            "risk_decision_id",
-            "requested_at",
-        ),
     )
 
     execution_attempt_id: Mapped[str] = mapped_column(Text, primary_key=True)
     session_id: Mapped[str] = mapped_column(Text, nullable=False)
     session_date: Mapped[date] = mapped_column(Date, nullable=False)
     label: Mapped[str] = mapped_column(Text, nullable=False)
-    pipeline_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     trading_strategy_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     market_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     cycle_id: Mapped[str | None] = mapped_column(
         Text,
-        nullable=True,
-    )
-    opportunity_id: Mapped[str | None] = mapped_column(
-        Text,
-        nullable=True,
-    )
-    risk_decision_id: Mapped[str | None] = mapped_column(
-        Text,
-        ForeignKey("risk_decisions.risk_decision_id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    candidate_id: Mapped[int | None] = mapped_column(
-        BigInteger,
         nullable=True,
     )
     source_object_type: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -284,13 +258,15 @@ class ExecutionFillModel(Base):
 class PortfolioPositionModel(Base):
     __tablename__ = "portfolio_positions"
     __table_args__ = (
-        Index("idx_portfolio_positions_pipeline_updated", "pipeline_id", "updated_at"),
-        Index("idx_portfolio_positions_pipeline_status", "pipeline_id", "status"),
         Index(
             "idx_portfolio_positions_strategy_status",
             "trading_strategy_id",
             "status",
         ),
+        Index("idx_portfolio_positions_source_object", "source_object_type", "source_object_id"),
+        Index("idx_portfolio_positions_trade_signal", "trade_signal_id"),
+        Index("idx_portfolio_positions_trade_decision", "trade_decision_id"),
+        Index("idx_portfolio_positions_admission_decision", "admission_decision_id"),
         Index(
             "ux_portfolio_positions_open_attempt",
             "open_execution_attempt_id",
@@ -299,10 +275,22 @@ class PortfolioPositionModel(Base):
     )
 
     position_id: Mapped[str] = mapped_column(Text, primary_key=True)
-    pipeline_id: Mapped[str] = mapped_column(Text, nullable=False)
     trading_strategy_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source_opportunity_id: Mapped[str | None] = mapped_column(
+    source_object_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_object_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trade_signal_id: Mapped[str | None] = mapped_column(
         Text,
+        ForeignKey("trade_signals.trade_signal_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    trade_decision_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("trade_decisions.trade_decision_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    admission_decision_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("trade_admissions.admission_decision_id", ondelete="SET NULL"),
         nullable=True,
     )
     opening_execution_intent_id: Mapped[str | None] = mapped_column(

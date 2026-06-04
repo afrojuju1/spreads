@@ -17,7 +17,6 @@ from core.storage import event_models as storage_event_models  # noqa: F401
 from core.storage import execution_models as storage_execution_models  # noqa: F401
 from core.storage import job_models as storage_job_models  # noqa: F401
 from core.storage import lifecycle_models as storage_lifecycle_models  # noqa: F401
-from core.storage import risk_models as storage_risk_models  # noqa: F401
 from core.storage import signal_models as storage_signal_models  # noqa: F401
 from core.storage.db import Base
 from core.storage import models as storage_models  # noqa: F401

@@ -176,7 +176,6 @@ const executionAttemptSchema = z
     session_date: z.string(),
     label: z.string(),
     cycle_id: z.string().nullable().optional(),
-    candidate_id: z.number().nullable().optional(),
     bucket: z.string().nullable().optional(),
     candidate_generated_at: z.string().nullable().optional(),
     run_id: z.string().nullable().optional(),

@@ -84,13 +84,9 @@ class ExecutionRepository(RepositoryBase):
         session_id: str,
         session_date: str,
         label: str,
-        pipeline_id: str | None = None,
         trading_strategy_id: str | None = None,
         market_date: str | None = None,
         cycle_id: str | None,
-        opportunity_id: str | None,
-        risk_decision_id: str | None,
-        candidate_id: int | None,
         attempt_context: str | None,
         candidate_generated_at: str | None,
         run_id: str | None,
@@ -146,13 +142,9 @@ class ExecutionRepository(RepositoryBase):
                 session_id=session_id,
                 session_date=parse_date(session_date),
                 label=label,
-                pipeline_id=pipeline_id,
                 trading_strategy_id=trading_strategy_id,
                 market_date=parse_date(market_date or session_date),
                 cycle_id=cycle_id,
-                opportunity_id=opportunity_id,
-                risk_decision_id=risk_decision_id,
-                candidate_id=candidate_id,
                 source_object_type=source_object_type,
                 source_object_id=source_object_id,
                 trade_signal_id=trade_signal_id,
@@ -218,24 +210,6 @@ class ExecutionRepository(RepositoryBase):
             )
             .limit(limit)
         )
-        with self.session_factory() as session:
-            rows = session.scalars(statement).all()
-        return self._attempt_rows(rows)
-
-    def list_pipeline_attempts(
-        self,
-        *,
-        pipeline_id: str,
-        market_date: str | None = None,
-        limit: int = 50,
-    ) -> list[ExecutionAttemptRecord]:
-        statement = select(ExecutionAttemptModel).where(ExecutionAttemptModel.pipeline_id == pipeline_id)
-        if market_date is not None:
-            statement = statement.where(ExecutionAttemptModel.market_date == parse_date(market_date))
-        statement = statement.order_by(
-            ExecutionAttemptModel.requested_at.desc(),
-            ExecutionAttemptModel.execution_attempt_id.desc(),
-        ).limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
         return self._attempt_rows(rows)
@@ -677,15 +651,12 @@ class ExecutionRepository(RepositoryBase):
     def list_positions(
         self,
         *,
-        pipeline_id: str | None = None,
         market_date: str | None = None,
         trading_strategy_id: str | None = None,
         statuses: list[str] | None = None,
         limit: int | None = None,
     ) -> list[PortfolioPositionRecord]:
         statement = select(PortfolioPositionModel)
-        if pipeline_id is not None:
-            statement = statement.where(PortfolioPositionModel.pipeline_id == pipeline_id)
         if market_date is not None:
             market_date_value = parse_date(market_date)
             statement = statement.where(PortfolioPositionModel.market_date_opened == market_date_value)
@@ -707,9 +678,12 @@ class ExecutionRepository(RepositoryBase):
         self,
         *,
         position_id: str,
-        pipeline_id: str,
         trading_strategy_id: str | None,
-        source_opportunity_id: str | None,
+        source_object_type: str | None,
+        source_object_id: str | None,
+        trade_signal_id: str | None,
+        trade_decision_id: str | None,
+        admission_decision_id: str | None,
         opening_execution_intent_id: str | None,
         open_execution_attempt_id: str,
         root_symbol: str,
@@ -752,9 +726,12 @@ class ExecutionRepository(RepositoryBase):
         with self.session_scope() as session:
             row = PortfolioPositionModel(
                 position_id=position_id,
-                pipeline_id=pipeline_id,
                 trading_strategy_id=trading_strategy_id,
-                source_opportunity_id=source_opportunity_id,
+                source_object_type=source_object_type,
+                source_object_id=source_object_id,
+                trade_signal_id=trade_signal_id,
+                trade_decision_id=trade_decision_id,
+                admission_decision_id=admission_decision_id,
                 opening_execution_intent_id=opening_execution_intent_id,
                 open_execution_attempt_id=open_execution_attempt_id,
                 root_symbol=root_symbol,
@@ -803,9 +780,12 @@ class ExecutionRepository(RepositoryBase):
         self,
         *,
         position_id: str,
-        pipeline_id: str | None = None,
         trading_strategy_id: str | None = None,
-        source_opportunity_id: str | None = None,
+        source_object_type: str | None = None,
+        source_object_id: str | None = None,
+        trade_signal_id: str | None = None,
+        trade_decision_id: str | None = None,
+        admission_decision_id: str | None = None,
         opening_execution_intent_id: str | None = None,
         root_symbol: str | None = None,
         strategy_family: str | None = None,
@@ -847,12 +827,18 @@ class ExecutionRepository(RepositoryBase):
             row = session.get(PortfolioPositionModel, position_id)
             if row is None:
                 raise ValueError(f"Unknown position_id: {position_id}")
-            if pipeline_id is not None:
-                row.pipeline_id = pipeline_id
             if trading_strategy_id is not None:
                 row.trading_strategy_id = trading_strategy_id
-            if source_opportunity_id is not None:
-                row.source_opportunity_id = source_opportunity_id
+            if source_object_type is not None:
+                row.source_object_type = source_object_type
+            if source_object_id is not None:
+                row.source_object_id = source_object_id
+            if trade_signal_id is not None:
+                row.trade_signal_id = trade_signal_id
+            if trade_decision_id is not None:
+                row.trade_decision_id = trade_decision_id
+            if admission_decision_id is not None:
+                row.admission_decision_id = admission_decision_id
             if opening_execution_intent_id is not None:
                 row.opening_execution_intent_id = opening_execution_intent_id
             if root_symbol is not None:

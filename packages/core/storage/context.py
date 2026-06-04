@@ -12,7 +12,6 @@ from core.storage.engine_fact_repository import EngineFactRepository
 from core.storage.execution_repository import ExecutionRepository
 from core.storage.job_repository import JobRepository
 from core.storage.ops_store import OpsStore
-from core.storage.risk_repository import RiskDecisionRepository
 from core.storage.run_history_repository import RunHistoryRepository
 from core.storage.signal_repository import SignalRepository
 from core.storage.trading_store import TradingStore
@@ -80,10 +79,6 @@ class StorageContext:
     @property
     def jobs(self) -> JobRepository:
         return self._build_repository("jobs", JobRepository)  # type: ignore[return-value]
-
-    @property
-    def risk(self) -> RiskDecisionRepository:
-        return self._build_repository("risk", RiskDecisionRepository)  # type: ignore[return-value]
 
     @property
     def ops(self) -> OpsStore:

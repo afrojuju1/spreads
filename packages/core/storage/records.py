@@ -31,7 +31,6 @@ PolicyRolloutRecord = StorageRow
 SignalStateRecord = StorageRow
 SignalStateTransitionRecord = StorageRow
 StrategyRunRecord = StorageRow
-RiskDecisionRecord = StorageRow
 JobLeaseRecord = StorageRow
 ExecutionIntentRecord = StorageRow
 ExecutionIntentEventRecord = StorageRow
@@ -70,7 +69,6 @@ __all__ = [
     "SignalStateRecord",
     "SignalStateTransitionRecord",
     "StrategyRunRecord",
-    "RiskDecisionRecord",
     "JobLeaseRecord",
     "ExecutionIntentRecord",
     "ExecutionIntentEventRecord",

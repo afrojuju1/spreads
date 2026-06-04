@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.services.runtime_identity import resolve_pipeline_policy_fields
+from core.services.runtime_identity import resolve_runtime_policy_fields as _resolve_runtime_policy_fields
 
 
 def resolve_runtime_policy_fields(
@@ -10,7 +10,7 @@ def resolve_runtime_policy_fields(
     profile: str,
     root_symbol: str | None = None,
 ) -> dict[str, str]:
-    return resolve_pipeline_policy_fields(profile=profile, root_symbol=root_symbol)
+    return _resolve_runtime_policy_fields(profile=profile, root_symbol=root_symbol)
 
 
 def build_runtime_policy_ref(

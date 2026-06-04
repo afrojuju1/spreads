@@ -391,25 +391,6 @@ def _sync_linked_execution_intent(
     )
 
 
-def _publish_risk_decision_event(risk_decision: dict[str, Any]) -> None:
-    try:
-        publish_global_event_sync(
-            topic="risk.decision.recorded",
-            event_class="risk_event",
-            entity_type="risk_decision",
-            entity_id=str(risk_decision["risk_decision_id"]),
-            payload=risk_decision,
-            timestamp=risk_decision.get("decided_at") or _utc_now(),
-            source="execution",
-            session_date=_as_text(risk_decision.get("session_date")),
-            correlation_id=_as_text(risk_decision.get("opportunity_id"))
-            or _as_text(risk_decision.get("session_id")),
-            causation_id=_as_text(risk_decision.get("candidate_id")),
-        )
-    except Exception:
-        pass
-
-
 def _submission_message(attempt: dict[str, Any], *, queued: bool) -> str:
     symbol_path = str(attempt.get("symbol_path") or "n/a")
     if str(attempt.get("trade_intent") or OPEN_TRADE_INTENT) == CLOSE_TRADE_INTENT:

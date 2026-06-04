@@ -453,7 +453,6 @@ def _signal_row_from_selection(
         "execution_shape": _execution_shape(candidate),
         "risk_hints": risk_hints(candidate),
         "source_cycle_id": strategy_run_id,
-        "source_candidate_id": None,
         "source_selection_state": row.get("selection_state"),
         "candidate_identity": _candidate_identity(candidate),
         "candidate": candidate,

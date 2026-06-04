@@ -3,25 +3,6 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-PIPELINE_ID_PREFIX = "pipeline"
-
-
-def build_pipeline_id(label: str) -> str:
-    normalized_label = str(label).strip().lower()
-    return f"{PIPELINE_ID_PREFIX}:{normalized_label}"
-
-
-def parse_pipeline_id(pipeline_id: str) -> dict[str, str] | None:
-    if not pipeline_id:
-        return None
-    prefix, separator, label = str(pipeline_id).partition(":")
-    if prefix != PIPELINE_ID_PREFIX or not separator or not label:
-        return None
-    return {
-        "pipeline_id": str(pipeline_id),
-        "label": label,
-    }
-
 
 def build_live_run_scope_id(label: str, market_date: str | date) -> str:
     rendered = (
@@ -93,7 +74,7 @@ def resolve_product_class(
     return "options"
 
 
-def resolve_pipeline_policy_fields(
+def resolve_runtime_policy_fields(
     *,
     profile: Any,
     universe_label: str | None = None,

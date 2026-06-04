@@ -81,11 +81,52 @@ def enrich_position_row(row: Mapping[str, Any]) -> dict[str, Any]:
             "source": {
                 "source_object_type": source_object_type,
                 "source_object_id": source_object_id,
-                "source_opportunity_id": payload.get("source_opportunity_id"),
+                "trade_signal_id": payload.get("trade_signal_id"),
+                "trade_decision_id": payload.get("trade_decision_id"),
+                "admission_decision_id": payload.get("admission_decision_id"),
             },
         }
     )
     return payload
+
+
+def _serialize_attempt_ref(attempt: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if attempt is None:
+        return None
+    keys = (
+        "execution_attempt_id",
+        "session_date",
+        "trading_strategy_id",
+        "market_date",
+        "source_object_type",
+        "source_object_id",
+        "trade_signal_id",
+        "trade_decision_id",
+        "admission_decision_id",
+        "attempt_context",
+        "underlying_symbol",
+        "strategy",
+        "trade_intent",
+        "position_id",
+        "root_symbol",
+        "strategy_family",
+        "requested_quantity",
+        "requested_limit_price",
+        "quantity",
+        "limit_price",
+        "requested_at",
+        "submitted_at",
+        "completed_at",
+        "status",
+        "broker",
+        "broker_order_id",
+        "client_order_id",
+        "error_text",
+        "short_symbol",
+        "long_symbol",
+        "symbol_path",
+    )
+    return {key: attempt.get(key) for key in keys if key in attempt}
 
 
 def _serialize_position(
@@ -100,9 +141,14 @@ def _serialize_position(
         if key
         not in {
             "label",
+            "opening_execution_intent_id",
+            "source_job_type",
+            "source_job_key",
+            "source_job_run_id",
         }
     }
     closes = execution_store.list_position_closes(position_id=str(row["position_id"]))
+    open_attempt = execution_store.get_attempt(str(row["open_execution_attempt_id"]))
     total_closed_quantity = sum(_coerce_float(close.get("closed_quantity")) or 0.0 for close in closes)
     realized_pnl = _coerce_float(row.get("realized_pnl")) or 0.0
     unrealized_pnl = _coerce_float(row.get("unrealized_pnl"))
@@ -112,7 +158,7 @@ def _serialize_position(
         "position_status": row.get("status"),
         "closed_quantity": _round_money(total_closed_quantity),
         "net_pnl": _round_money(realized_pnl + (unrealized_pnl or 0.0)),
-        "open_execution_attempt": execution_store.get_attempt(str(row["open_execution_attempt_id"])),
+        "open_execution_attempt": _serialize_attempt_ref(open_attempt),
         "closes": closes,
     }
 
@@ -177,7 +223,6 @@ def list_positions(
     rows = [
         _serialize_position(dict(row), execution_store=execution_store)
         for row in execution_store.list_positions(
-            pipeline_id=None,
             market_date=market_date,
             trading_strategy_id=trading_strategy_id,
             limit=limit,

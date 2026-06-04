@@ -37,8 +37,7 @@ from core.services.option_structures import (
 from core.services.positions import enrich_position_row
 from core.services.runtime_identity import (
     build_live_run_scope_id,
-    build_pipeline_id,
-    resolve_pipeline_policy_fields,
+    resolve_runtime_policy_fields,
 )
 from core.services.risk_manager import (
     CLOSE_RECONCILIATION_MAX_AGE_SECONDS,
@@ -1359,12 +1358,21 @@ def submit_position_close_by_id(
             limit_price=resolved_limit_price,
             max_reconciliation_age_seconds=CLOSE_RECONCILIATION_MAX_AGE_SECONDS,
         )
-        pipeline_id = _as_text(position.get("pipeline_id"))
-        label = _as_text(position.get("label"))
-        market_date = _as_text(position.get("market_date"))
-        if pipeline_id is None or label is None or market_date is None:
-            raise ValueError("Position is missing pipeline or market_date")
-        policy_fields = resolve_pipeline_policy_fields(
+        open_attempt_id = _as_text(position.get("open_execution_attempt_id"))
+        open_attempt = execution_store.get_attempt(open_attempt_id) if open_attempt_id is not None else None
+        label = _as_text(open_attempt.get("label") if isinstance(open_attempt, Mapping) else None) or _as_text(
+            position.get("trading_strategy_id")
+        )
+        market_date = (
+            _as_text(position.get("market_date"))
+            or _as_text(position.get("market_date_opened"))
+            or _as_text(open_attempt.get("market_date") if isinstance(open_attempt, Mapping) else None)
+            or _as_text(open_attempt.get("session_date") if isinstance(open_attempt, Mapping) else None)
+        )
+        session_id = _as_text(open_attempt.get("session_id") if isinstance(open_attempt, Mapping) else None)
+        if label is None or market_date is None:
+            raise ValueError("Position is missing opening attempt context or market_date")
+        policy_fields = resolve_runtime_policy_fields(
             profile=(position.get("risk_policy") or {}).get("profile"),
             root_symbol=str(position["underlying_symbol"]),
         )
@@ -1414,16 +1422,12 @@ def submit_position_close_by_id(
         )
         attempt = execution_store.create_attempt(
             execution_attempt_id=attempt_id,
-            session_id=build_live_run_scope_id(label, market_date),
+            session_id=session_id or build_live_run_scope_id(label, market_date),
             session_date=market_date,
             label=label,
-            pipeline_id=pipeline_id,
             trading_strategy_id=_as_text(position.get("trading_strategy_id")),
             market_date=market_date,
             cycle_id=None,
-            opportunity_id=None,
-            risk_decision_id=None,
-            candidate_id=None,
             attempt_context="position_close",
             candidate_generated_at=None,
             run_id=None,
@@ -1561,7 +1565,6 @@ def submit_equity_order(
         }
     ]
     strategy = "equity_short" if leg_role == "short" else "equity_long"
-    pipeline_id = build_pipeline_id(resolved_label)
     equity_source_type, equity_source_id = _admission_source_from_metadata(
         metadata,
         fallback_type="direct_equity_order",
@@ -1611,13 +1614,9 @@ def submit_equity_order(
             session_id=build_live_run_scope_id(resolved_label, resolved_market_date),
             session_date=resolved_market_date,
             label=resolved_label,
-            pipeline_id=pipeline_id,
             trading_strategy_id=_as_text(metadata.get("trading_strategy_id")),
             market_date=resolved_market_date,
             cycle_id=None,
-            opportunity_id=None,
-            risk_decision_id=None,
-            candidate_id=None,
             attempt_context="equity_order",
             candidate_generated_at=None,
             run_id=None,
@@ -1819,7 +1818,7 @@ def submit_option_order(
     )
     order_request["client_order_id"] = client_order_id
     profile = _as_text(metadata.get("profile")) or "weekly"
-    policy_fields = resolve_pipeline_policy_fields(
+    policy_fields = resolve_runtime_policy_fields(
         profile=profile,
         root_symbol=normalized_underlying,
     )
@@ -1924,13 +1923,9 @@ def submit_option_order(
             session_id=build_live_run_scope_id(resolved_label, resolved_market_date),
             session_date=resolved_market_date,
             label=resolved_label,
-            pipeline_id=build_pipeline_id(resolved_label),
             trading_strategy_id=_as_text(metadata.get("trading_strategy_id")),
             market_date=resolved_market_date,
             cycle_id=None,
-            opportunity_id=None,
-            risk_decision_id=None,
-            candidate_id=None,
             attempt_context="option_order",
             candidate_generated_at=None,
             run_id=None,

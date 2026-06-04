@@ -196,15 +196,25 @@ def _sum_or_none(values: list[float | None]) -> float | None:
     return round(sum(resolved), 2)
 
 
-def _position_matches_session_id(position: dict[str, Any], session_id: str) -> bool:
+def _position_matches_session_id(
+    position: dict[str, Any],
+    session_id: str,
+    *,
+    execution_store: Any | None = None,
+) -> bool:
     resolved = parse_live_run_scope_id(session_id)
     if resolved is None:
         return False
-    return (
-        str(position.get("pipeline_id")) == f"pipeline:{resolved['label']}"
-        and str(position.get("market_date_opened") or position.get("market_date"))
-        == resolved["market_date"]
-    )
+    if str(position.get("market_date_opened") or position.get("market_date")) != resolved["market_date"]:
+        return False
+    if execution_store is None:
+        return True
+    open_attempt_id = _as_text(position.get("open_execution_attempt_id"))
+    if open_attempt_id is None:
+        return True
+    open_attempt = execution_store.get_attempt(open_attempt_id)
+    attempt_session_id = _as_text(open_attempt.get("session_id") if isinstance(open_attempt, dict) else None)
+    return attempt_session_id is None or attempt_session_id == session_id
 
 
 def _empty_portfolio() -> dict[str, Any]:
@@ -262,7 +272,11 @@ def refresh_session_position_marks(
             position
             for position in open_positions
             if any(
-                _position_matches_session_id(position, str(session_id))
+                _position_matches_session_id(
+                    position,
+                    str(session_id),
+                    execution_store=execution_store,
+                )
                 for session_id in session_ids
             )
         ]
@@ -353,13 +367,11 @@ def build_session_execution_portfolio(
         if resolved_scope is None:
             return _empty_portfolio()
 
-        persisted_positions = [
-            enrich_position_row(dict(position))
-            for position in resolved_execution_store.list_positions(
-                pipeline_id=f"pipeline:{resolved_scope['label']}",
-                market_date=resolved_scope["market_date"],
-            )
-        ]
+        persisted_positions: list[dict[str, Any]] = []
+        for position in resolved_execution_store.list_positions(market_date=resolved_scope["market_date"]):
+            payload = enrich_position_row(dict(position))
+            if _position_matches_session_id(payload, session_id, execution_store=resolved_execution_store):
+                persisted_positions.append(payload)
         if not persisted_positions:
             return _empty_portfolio()
         retrieved_at = _utc_now()
@@ -412,7 +424,6 @@ def build_session_execution_portfolio(
                     "open_execution_attempt_id": str(
                         persisted["open_execution_attempt_id"]
                     ),
-                    "candidate_id": persisted.get("candidate_id"),
                     "underlying_symbol": str(persisted["underlying_symbol"]),
                     "strategy": str(persisted["strategy"]),
                     "short_symbol": short_symbol,

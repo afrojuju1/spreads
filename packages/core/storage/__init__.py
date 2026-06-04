@@ -20,13 +20,11 @@ from .factory import (
     build_history_store,
     build_job_repository,
     build_ops_store,
-    build_risk_repository,
     build_signal_repository,
     build_storage_context,
     build_trading_store,
 )
 from .job_repository import JobRepository
-from .risk_repository import RiskDecisionRepository
 from .run_history_repository import RunHistoryRepository
 from .signal_repository import SignalRepository
 from .trading_store import TradingStore
@@ -42,7 +40,6 @@ __all__ = [
     "EventRepository",
     "JobRepository",
     "OpsStore",
-    "RiskDecisionRepository",
     "RunHistoryRepository",
     "SignalRepository",
     "StorageCapabilities",
@@ -58,7 +55,6 @@ __all__ = [
     "build_history_store",
     "build_job_repository",
     "build_ops_store",
-    "build_risk_repository",
     "build_signal_repository",
     "build_storage_context",
     "build_trading_store",

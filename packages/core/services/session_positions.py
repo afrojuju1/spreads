@@ -17,8 +17,7 @@ from core.services.option_structures import (
     structure_width,
 )
 from core.services.runtime_identity import (
-    build_pipeline_id,
-    resolve_pipeline_policy_fields,
+    resolve_runtime_policy_fields,
 )
 
 OPEN_TRADE_INTENT = "open"
@@ -503,13 +502,10 @@ def _position_common_payload(
     candidate = attempt.get("candidate") if isinstance(attempt.get("candidate"), Mapping) else {}
     existing_payload = existing if isinstance(existing, Mapping) else {}
     root_symbol = str(attempt.get("underlying_symbol") or existing_payload.get("root_symbol") or "")
-    pipeline_id = (
-        _as_text(attempt.get("pipeline_id")) or _as_text(existing_payload.get("pipeline_id")) or build_pipeline_id(str(attempt.get("label") or ""))
-    )
     market_date = (
         _as_text(attempt.get("market_date")) or _as_text(attempt.get("session_date")) or _as_text(existing_payload.get("market_date_opened"))
     )
-    policy_fields = resolve_pipeline_policy_fields(
+    policy_fields = resolve_runtime_policy_fields(
         profile=candidate.get("profile") or _as_text(attempt.get("style_profile")) or _as_text(existing_payload.get("style_profile")),
         root_symbol=root_symbol,
     )
@@ -550,10 +546,17 @@ def _position_common_payload(
         existing.get("opening_execution_intent_id") if isinstance(existing, Mapping) else None
     )
     return {
-        "pipeline_id": pipeline_id,
         "trading_strategy_id": trading_strategy_id,
-        "source_opportunity_id": _as_text(attempt.get("opportunity_id"))
-        or _as_text(existing.get("source_opportunity_id") if isinstance(existing, Mapping) else None),
+        "source_object_type": _as_text(attempt.get("source_object_type"))
+        or _as_text(existing.get("source_object_type") if isinstance(existing, Mapping) else None),
+        "source_object_id": _as_text(attempt.get("source_object_id"))
+        or _as_text(existing.get("source_object_id") if isinstance(existing, Mapping) else None),
+        "trade_signal_id": _as_text(attempt.get("trade_signal_id"))
+        or _as_text(existing.get("trade_signal_id") if isinstance(existing, Mapping) else None),
+        "trade_decision_id": _as_text(attempt.get("trade_decision_id"))
+        or _as_text(existing.get("trade_decision_id") if isinstance(existing, Mapping) else None),
+        "admission_decision_id": _as_text(attempt.get("admission_decision_id"))
+        or _as_text(existing.get("admission_decision_id") if isinstance(existing, Mapping) else None),
         "opening_execution_intent_id": opening_execution_intent_id,
         "root_symbol": root_symbol,
         "strategy_family": strategy_family or str(attempt.get("strategy") or "unknown"),

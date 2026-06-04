@@ -210,7 +210,7 @@ def publish_control_gate_event(
     session_id: str | None,
     session_date: str | None,
     label: str | None,
-    candidate_id: int | None = None,
+    source_object_id: str | None = None,
     cycle_id: str | None = None,
 ) -> None:
     if decision.get("allowed"):
@@ -225,7 +225,7 @@ def publish_control_gate_event(
         "session_id": session_id,
         "session_date": session_date,
         "label": label,
-        "candidate_id": candidate_id,
+        "source_object_id": source_object_id,
         "cycle_id": cycle_id,
         "control": control,
     }
@@ -238,7 +238,7 @@ def publish_control_gate_event(
         source="control_plane",
         session_date=session_date,
         correlation_id=_as_text(control.get("triggered_by_action_id")) or session_id,
-        causation_id=cycle_id or (None if candidate_id is None else str(candidate_id)),
+        causation_id=cycle_id or source_object_id,
         database_url=db_target,
     )
 

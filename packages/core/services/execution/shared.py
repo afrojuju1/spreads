@@ -59,10 +59,6 @@ def _execution_attempt_id() -> str:
     return f"execution:{uuid4().hex}"
 
 
-def _risk_decision_id() -> str:
-    return f"risk_decision:{uuid4().hex}"
-
-
 def _execution_client_order_id() -> str:
     return f"spr-exec-{uuid4().hex[:20]}"
 

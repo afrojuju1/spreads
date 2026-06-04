@@ -11,7 +11,6 @@ from core.storage.event_repository import EventRepository
 from core.storage.execution_repository import ExecutionRepository
 from core.storage.job_repository import JobRepository
 from core.storage.ops_store import OpsStore
-from core.storage.risk_repository import RiskDecisionRepository
 from core.storage.run_history_repository import RunHistoryRepository
 from core.storage.signal_repository import SignalRepository
 from core.storage.trading_store import TradingStore
@@ -70,13 +69,6 @@ def build_control_repository(path_or_url: str | None = None, *, context: Storage
         return context.control
     value = _resolve_postgres_url(path_or_url)
     return ControlRepository(value)
-
-
-def build_risk_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):
-    if context is not None:
-        return context.risk
-    value = _resolve_postgres_url(path_or_url)
-    return RiskDecisionRepository(value)
 
 
 def build_execution_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):
