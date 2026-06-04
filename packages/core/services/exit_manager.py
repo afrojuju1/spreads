@@ -12,6 +12,12 @@ from core.services.trading_strategy_runtime import (
     find_management_runtime_for_position,
     resolve_management_runtimes,
 )
+from core.services.trading_engine.portfolio_runtime import (
+    OPEN_POSITION_STATUSES,
+    PostgresPortfolioEngine,
+    build_portfolio_run_ref,
+    build_position_snapshot,
+)
 from core.services.trading_strategies import routine_should_run_now
 from core.services.execution_portfolio import refresh_session_position_marks
 from core.services.option_structures import net_premium_kind
@@ -24,7 +30,6 @@ from core.services.risk_manager import (
 )
 from core.storage.serializers import parse_datetime
 
-OPEN_POSITION_STATUSES = ["open", "partial_close"]
 OPEN_CLOSE_ATTEMPT_STATUSES = [
     "accepted",
     "accepted_for_bidding",
@@ -847,17 +852,27 @@ def run_position_exit_manager(
 
     now = datetime.now(UTC)
     broker_sync = _broker_sync_snapshot(storage, now=now)
-    open_positions = [
-        enrich_position_row(dict(position))
-        for position in execution_store.list_positions(
-            trading_strategy_id=trading_strategy_id,
-            statuses=OPEN_POSITION_STATUSES,
-            limit=200,
-        )
-    ]
+    management_runtimes = tuple(resolve_management_runtimes())
+    portfolio_engine = PostgresPortfolioEngine(
+        execution_store=execution_store,
+        now=now,
+        management_runtimes=management_runtimes,
+    )
+    portfolio_run_ref = build_portfolio_run_ref(
+        trading_strategy_id=trading_strategy_id,
+        now=now,
+    )
+    open_position_snapshots = portfolio_engine.list_open_positions(
+        trading_strategy_id=trading_strategy_id,
+        limit=200,
+    )
+    open_positions = [dict(position.payload) for position in open_position_snapshots]
     if not open_positions:
         return {
             "status": "degraded" if open_attempt_guard.get("status") == "degraded" else "ok",
+            "portfolio_engine": {
+                "run_id": portfolio_run_ref.run_id,
+            },
             "position_count": 0,
             "evaluated": 0,
             "created_intents": 0,
@@ -884,12 +899,16 @@ def run_position_exit_manager(
                     "reason": broker_reason,
                     "decision_source": "broker_sync",
                     "should_close": False,
+                    "portfolio_run_id": portfolio_run_ref.run_id,
                     **_close_decision_row_fields(close_decision),
                 }
             )
         return {
             "status": "skipped",
             "reason": broker_reason,
+            "portfolio_engine": {
+                "run_id": portfolio_run_ref.run_id,
+            },
             "position_count": len(open_positions),
             "evaluated": 0,
             "created_intents": 0,
@@ -921,14 +940,11 @@ def run_position_exit_manager(
         session_ids=sorted({str(position["session_id"]) for position in open_positions if position.get("session_id")}),
         storage=storage,
     )
-    refreshed_positions = [
-        enrich_position_row(dict(position))
-        for position in execution_store.list_positions(
-            trading_strategy_id=trading_strategy_id,
-            statuses=OPEN_POSITION_STATUSES,
-            limit=200,
-        )
-    ]
+    refreshed_position_snapshots = portfolio_engine.list_open_positions(
+        trading_strategy_id=trading_strategy_id,
+        limit=200,
+    )
+    refreshed_positions = [dict(position.payload) for position in refreshed_position_snapshots]
 
     evaluated = 0
     created_intents = 0
@@ -936,13 +952,14 @@ def run_position_exit_manager(
     skipped = 0
     failures: list[dict[str, str]] = []
     decisions: list[dict[str, Any]] = []
-    management_runtimes = tuple(resolve_management_runtimes())
     now_iso = now.isoformat(timespec="seconds").replace("+00:00", "Z")
-    for position in refreshed_positions:
-        position_id = str(position["position_id"])
+    for position_snapshot in refreshed_position_snapshots:
+        position = dict(position_snapshot.payload)
+        position_id = str(position_snapshot.position_id)
         latest_position = execution_store.get_position(position_id)
         if latest_position is not None:
             position = enrich_position_row(dict(latest_position))
+            position_snapshot = build_position_snapshot(position)
 
         if _has_open_close_attempt(execution_store, position_id):
             evaluated += 1
@@ -965,6 +982,7 @@ def run_position_exit_manager(
                     "reason": "close_already_open",
                     "decision_source": "close_guard",
                     "should_close": False,
+                    "portfolio_run_id": portfolio_run_ref.run_id,
                     **_close_decision_row_fields(close_decision),
                 }
             )
@@ -993,23 +1011,20 @@ def run_position_exit_manager(
                     "reason": close_block_reason,
                     "decision_source": "close_guard",
                     "should_close": False,
+                    "portfolio_run_id": portfolio_run_ref.run_id,
                     **_close_decision_row_fields(close_decision),
                 }
             )
             continue
 
-        decision, decision_source, management_runtime = _evaluate_position_close_decision(
-            position=position,
-            now=now,
-            management_runtimes=management_runtimes,
+        close_result = portfolio_engine.evaluate_close(
+            run_ref=portfolio_run_ref,
+            position=position_snapshot,
         )
-        close_decision = _close_decision_lifecycle(
-            position=position,
-            decision=decision,
-            decision_source=decision_source,
-            decided_at=now_iso,
-        )
-        decision = {**decision, "close_decision": close_decision}
+        decision = dict(close_result.payload.get("decision") or {})
+        decision_source = _as_text(close_result.payload.get("decision_source")) or "portfolio_engine"
+        management_runtime = close_result.payload.get("management_runtime")
+        close_decision = dict(close_result.payload.get("close_decision") or decision.get("close_decision") or {})
         evaluated += 1
         execution_store.update_position(
             position_id=position_id,
@@ -1023,6 +1038,7 @@ def run_position_exit_manager(
                 "reason": decision["reason"],
                 "decision_source": decision_source,
                 "should_close": bool(decision["should_close"]),
+                "portfolio_run_id": portfolio_run_ref.run_id,
                 **_close_decision_row_fields(close_decision),
             }
         )
@@ -1033,6 +1049,7 @@ def run_position_exit_manager(
         latest_position = execution_store.get_position(position_id)
         if latest_position is not None:
             position = enrich_position_row(dict(latest_position))
+            position_snapshot = build_position_snapshot(position)
         close_block_reason = _position_close_block_reason(position, now=now)
         if close_block_reason is not None:
             skipped += 1
@@ -1123,6 +1140,7 @@ def run_position_exit_manager(
                         decision=decision,
                     ),
                 },
+                storage=storage,
             )
             submitted += 1
         except Exception as exc:
@@ -1135,6 +1153,9 @@ def run_position_exit_manager(
 
     return {
         "status": "degraded" if failures or open_attempt_guard.get("status") == "degraded" else "ok",
+        "portfolio_engine": {
+            "run_id": portfolio_run_ref.run_id,
+        },
         "position_count": len(refreshed_positions),
         "evaluated": evaluated,
         "created_intents": created_intents,

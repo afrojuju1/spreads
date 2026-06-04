@@ -8,6 +8,7 @@ from .data_runtime import PostgresDataEngine
 from .execution import ExecutionEngine
 from .kernel import EngineComponentRole, EngineContext, EngineRunRef
 from .portfolio import PortfolioEngine
+from .portfolio_runtime import PostgresPortfolioEngine
 from .risk import RiskEngine
 from .strategy import StrategyEngine
 
@@ -19,6 +20,7 @@ __all__ = [
     "ExecutionEngine",
     "PortfolioEngine",
     "PostgresDataEngine",
+    "PostgresPortfolioEngine",
     "RiskEngine",
     "StrategyEngine",
 ]
