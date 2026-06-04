@@ -11,7 +11,6 @@ from zoneinfo import ZoneInfo
 
 import yaml
 
-from core.services.candidate_policy import resolve_strategy_min_return_on_risk
 from core.services.config_inheritance import resolve_policy_mapping
 from core.services.strategy_specs import StrategySpec, resolve_strategy_spec
 from core.services.trading_strategy_models import (
@@ -527,144 +526,6 @@ def build_entry_strategy_symbols(
     return tuple(sorted({symbol for strategy in strategies for symbol in strategy.symbols}))
 
 
-def _aggregate_scope_ranking_policy(strategies: list[TradingStrategyConfig]) -> dict[str, float]:
-    values_by_key: dict[str, list[float]] = {key: [] for key in RANKING_POLICY_ARG_KEYS}
-    for strategy in strategies:
-        builder_params = strategy.builder_params
-        for key in RANKING_POLICY_ARG_KEYS:
-            value = builder_params.get(key)
-            if value is None:
-                continue
-            values_by_key[key].append(float(value))
-    payload: dict[str, float] = {}
-    for key, values in values_by_key.items():
-        if not values:
-            continue
-        if key.startswith("ranking_weight_"):
-            payload[key] = sum(values) / len(values)
-        elif key.startswith("ranking_max_"):
-            payload[key] = max(values)
-        else:
-            payload[key] = min(values)
-    return payload
-
-
-def build_discovery_run_scope(
-    config_root: str | Path | None = None,
-    *,
-    scanner_strategy: str | None = None,
-    scanner_profile: str | None = None,
-) -> dict[str, Any]:
-    strategies = active_entry_strategies(
-        config_root,
-        scanner_strategy=scanner_strategy,
-        scanner_profile=scanner_profile,
-    )
-    static_strategies = [strategy for strategy in strategies if strategy.source.is_static]
-    if not static_strategies:
-        return {
-            "enabled": False,
-            "symbols": (),
-            "scanner_strategy": None,
-            "scanner_profile": None,
-            "entry_strategies": [],
-        }
-    symbols = sorted({symbol for strategy in static_strategies for symbol in strategy.symbols})
-    scanner_strategies = {strategy.scanner_strategy for strategy in static_strategies}
-    scanner_profiles = {strategy.scanner_profile for strategy in static_strategies}
-    universe_refs = {strategy.source.ref for strategy in static_strategies if strategy.source.ref}
-    dte_mins = [
-        int(strategy.builder_params.get("dte_min") or 0) for strategy in static_strategies if strategy.builder_params.get("dte_min") is not None
-    ]
-    dte_maxs = [
-        int(strategy.builder_params.get("dte_max") or 0) for strategy in static_strategies if strategy.builder_params.get("dte_max") is not None
-    ]
-    short_delta_mins = [
-        float(strategy.builder_params.get("short_delta_min") or 0.0)
-        for strategy in static_strategies
-        if strategy.builder_params.get("short_delta_min") is not None
-    ]
-    short_delta_maxs = [
-        float(strategy.builder_params.get("short_delta_max") or 0.0)
-        for strategy in static_strategies
-        if strategy.builder_params.get("short_delta_max") is not None
-    ]
-    short_delta_targets = [
-        float(strategy.builder_params.get("short_delta_target") or 0.0)
-        for strategy in static_strategies
-        if strategy.builder_params.get("short_delta_target") is not None
-    ]
-    short_delta_target = None
-    if short_delta_targets:
-        short_delta_target = sum(short_delta_targets) / len(short_delta_targets)
-    elif short_delta_mins and short_delta_maxs:
-        short_delta_target = (min(short_delta_mins) + max(short_delta_maxs)) / 2.0
-    widths = [float(width) for strategy in static_strategies for width in list(strategy.builder_params.get("width_points") or [])]
-    open_interest_values = [
-        int(strategy.liquidity_rules.get("min_open_interest") or 0)
-        for strategy in static_strategies
-        if strategy.liquidity_rules.get("min_open_interest") is not None
-    ]
-    relative_spread_values = [
-        float(strategy.liquidity_rules.get("max_leg_spread_pct_mid") or 0.0)
-        for strategy in static_strategies
-        if strategy.liquidity_rules.get("max_leg_spread_pct_mid") is not None
-    ]
-    return_on_risk_values = [
-        float(minimum_return_on_risk)
-        for strategy in static_strategies
-        if (
-            minimum_return_on_risk := resolve_strategy_min_return_on_risk(
-                strategy.scanner_profile,
-                risk_defaults=strategy.risk_defaults,
-            )
-        )
-        is not None
-    ]
-    return {
-        "enabled": True,
-        "symbols": tuple(symbols),
-        "scanner_strategy": None if len(scanner_strategies) != 1 else next(iter(scanner_strategies)),
-        "scanner_profile": None if len(scanner_profiles) != 1 else next(iter(scanner_profiles)),
-        "universe_ref": None if len(universe_refs) != 1 else next(iter(universe_refs)),
-        "scanner_args": {
-            **({} if not dte_mins else {"min_dte": min(dte_mins)}),
-            **({} if not dte_maxs else {"max_dte": max(dte_maxs)}),
-            **({} if not short_delta_mins else {"short_delta_min": min(short_delta_mins)}),
-            **({} if not short_delta_maxs else {"short_delta_max": max(short_delta_maxs)}),
-            **({} if short_delta_target is None else {"short_delta_target": short_delta_target}),
-            **({} if not widths else {"min_width": min(widths), "max_width": max(widths)}),
-            **({} if not open_interest_values else {"min_open_interest": min(open_interest_values)}),
-            **({} if not relative_spread_values else {"max_relative_spread": max(relative_spread_values)}),
-            **({} if not return_on_risk_values else {"min_return_on_risk": min(return_on_risk_values)}),
-            **_aggregate_scope_ranking_policy(static_strategies),
-        },
-        "entry_strategies": static_strategies,
-    }
-
-
-def build_discovery_run_scopes(
-    config_root: str | Path | None = None,
-) -> list[dict[str, Any]]:
-    groups: dict[tuple[str, str], list[TradingStrategyConfig]] = {}
-    for strategy in active_entry_strategies(config_root):
-        if not strategy.source.is_static:
-            continue
-        key = (strategy.scanner_strategy, strategy.scanner_profile)
-        groups.setdefault(key, []).append(strategy)
-
-    scopes: list[dict[str, Any]] = []
-    for scanner_strategy, scanner_profile in sorted(groups):
-        scope = build_discovery_run_scope(
-            config_root,
-            scanner_strategy=scanner_strategy,
-            scanner_profile=scanner_profile,
-        )
-        if scope.get("enabled"):
-            scopes.append(scope)
-    return scopes
-
-
 __all__ = [
     "DYNAMIC_SOURCE",
     "STATIC_SOURCE",
@@ -672,8 +533,6 @@ __all__ = [
     "StrategySource",
     "TradingStrategyConfig",
     "active_entry_strategies",
-    "build_discovery_run_scope",
-    "build_discovery_run_scopes",
     "build_entry_strategy_symbols",
     "cadence_minutes",
     "default_config_root",

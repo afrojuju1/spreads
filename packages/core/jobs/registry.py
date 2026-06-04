@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 RUNTIME_QUEUE_NAME = "arq:queue:runtime"
-DISCOVERY_QUEUE_NAME = "arq:queue:discovery"
+DATA_QUEUE_NAME = "arq:queue:data"
 VALUATION_QUEUE_NAME = "arq:queue:valuation"
 RESEARCH_QUEUE_NAME = "arq:queue:research"
 
@@ -11,11 +11,9 @@ BROKER_SYNC_JOB_TYPE = "broker_sync"
 EXECUTION_SUBMIT_JOB_TYPE = "execution_submit"
 ALERT_DELIVERY_JOB_TYPE = "alert_delivery"
 ALERT_RECONCILE_JOB_TYPE = "alert_reconcile"
-DISCOVERY_RUN_JOB_TYPE = "discovery_run"
 TICKER_SOURCE_JOB_TYPE = "ticker_source"
 TRADINGAGENTS_SCAN_JOB_TYPE = "tradingagents_scan"
 POSITION_EXIT_MANAGER_JOB_TYPE = "position_exit_manager"
-DISCOVERY_RECOVERY_JOB_TYPE = "discovery_recovery"
 TRADING_STRATEGY_ENTRY_JOB_TYPE = "trading_strategy_entry"
 TRADING_STRATEGY_MANAGE_JOB_TYPE = "trading_strategy_manage"
 EXECUTION_INTENT_DISPATCH_JOB_TYPE = "execution_intent_dispatch"
@@ -26,7 +24,6 @@ COMPANY_VALUATION_RESOLVE_UNRESOLVED_JOB_TYPE = "company_valuation_resolve_unres
 EXECUTION_SUBMIT_ADHOC_JOB_KEY = "execution_submit:adhoc"
 ALERT_DELIVERY_ADHOC_JOB_KEY = "alert_delivery:adhoc"
 ALERT_RECONCILE_JOB_KEY = "alert_reconcile:scheduled"
-DISCOVERY_RECOVERY_JOB_KEY = "discovery_recovery:global"
 EXECUTION_INTENT_DISPATCH_ADHOC_JOB_KEY = "execution_intent_dispatch:adhoc"
 COMPANY_VALUATION_BOOTSTRAP_ADHOC_JOB_KEY = "company_valuation_bootstrap:adhoc"
 COMPANY_VALUATION_SCREEN_MATERIALIZE_ADHOC_JOB_KEY = "company_valuation_screen_materialize:adhoc"
@@ -77,24 +74,14 @@ JOB_SPECS = {
             queue_name=RUNTIME_QUEUE_NAME,
         ),
         JobSpec(
-            job_type=DISCOVERY_RUN_JOB_TYPE,
-            task_name="run_discovery_run_job",
-            queue_name=DISCOVERY_QUEUE_NAME,
-        ),
-        JobSpec(
             job_type=TICKER_SOURCE_JOB_TYPE,
             task_name="run_ticker_source_job",
-            queue_name=DISCOVERY_QUEUE_NAME,
+            queue_name=DATA_QUEUE_NAME,
         ),
         JobSpec(
             job_type=TRADINGAGENTS_SCAN_JOB_TYPE,
             task_name="run_tradingagents_scan_job",
             queue_name=RESEARCH_QUEUE_NAME,
-        ),
-        JobSpec(
-            job_type=DISCOVERY_RECOVERY_JOB_TYPE,
-            task_name="run_discovery_recovery_job",
-            queue_name=RUNTIME_QUEUE_NAME,
         ),
         JobSpec(
             job_type=TRADING_STRATEGY_ENTRY_JOB_TYPE,
@@ -139,7 +126,6 @@ WORKER_LANES = (
             JOB_SPECS[ALERT_DELIVERY_JOB_TYPE].task_name,
             JOB_SPECS[ALERT_RECONCILE_JOB_TYPE].task_name,
             JOB_SPECS[POSITION_EXIT_MANAGER_JOB_TYPE].task_name,
-            JOB_SPECS[DISCOVERY_RECOVERY_JOB_TYPE].task_name,
             JOB_SPECS[TRADING_STRATEGY_ENTRY_JOB_TYPE].task_name,
             JOB_SPECS[TRADING_STRATEGY_MANAGE_JOB_TYPE].task_name,
             JOB_SPECS[EXECUTION_INTENT_DISPATCH_JOB_TYPE].task_name,
@@ -147,12 +133,9 @@ WORKER_LANES = (
         max_jobs=4,
     ),
     WorkerLaneSpec(
-        settings_name="DiscoveryWorkerSettings",
-        queue_name=DISCOVERY_QUEUE_NAME,
-        task_names=(
-            JOB_SPECS[DISCOVERY_RUN_JOB_TYPE].task_name,
-            JOB_SPECS[TICKER_SOURCE_JOB_TYPE].task_name,
-        ),
+        settings_name="DataWorkerSettings",
+        queue_name=DATA_QUEUE_NAME,
+        task_names=(JOB_SPECS[TICKER_SOURCE_JOB_TYPE].task_name,),
     ),
     WorkerLaneSpec(
         settings_name="ValuationWorkerSettings",

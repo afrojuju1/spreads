@@ -5,7 +5,7 @@
 - Prefer extending existing service entrypoints instead of adding parallel aggregators.
 - Keep module boundaries clear: `services/` owns business logic, `storage/` owns persistence and query shapes, `jobs/` owns scheduling and worker entrypoints, and `packages/api` stays a thin adapter over services.
 - Treat [../../docs/current_system_state.md](../../docs/current_system_state.md) as the canonical source of truth for current backend ownership and runtime boundaries.
-- `services/market_recorder.py` is the sole owner of the Alpaca option websocket connection in the normal runtime. Do not add API-owned or discovery-run-owned reactive option stream capture paths; discovery runs and APIs should consume recorder-backed persisted rows or shared services over that state unless an explicit architecture change is being made.
+- `services/market_recorder.py` is the sole owner of the Alpaca option websocket connection in the normal runtime. Do not add API-owned reactive option stream capture paths; strategies and APIs should consume recorder-backed persisted rows or shared services over that state unless an explicit architecture change is being made.
 - When multiple hosts share one Alpaca account, only one live `market-recorder` should own the option websocket at a time. Stop secondary/local recorders before validating another host's live capture.
 - Favor one canonical backend path per responsibility. If logic is already repeated, extract the shared behavior before adding more.
 - Keep the recent package splits canonical. Do not reintroduce monolithic ownership around old `scanner.py`, `discovery_run.py`, `execution.py`, or `ops_visibility.py` mental models.
@@ -27,7 +27,7 @@
 ## Operator Visibility
 
 - For operator visibility work, reuse these modules with thin adapters instead of introducing parallel API-only logic.
-- For session health and current runtime state, prefer `services/live_runtime.py`, `services/discovery_run_health/`, `services/pipelines.py`, and `services/ops/` over creating new read-model owners.
+- For current runtime state, prefer `services/ops/`, `services/positions.py`, `services/execution/runtimes.py`, and engine fact repositories over creating new read-model owners.
 - Active cleanup `spr-zuy` is replacing fragmented operator health surfaces with `TradingOpsState` and `StorageOpsState`. During that work, remove retired fragmented ops product surfaces rather than extending them.
 - For jobs health, read operator-facing status fields first. Raw historical failed runs can remain visible while `operator_status` and `actionable_failed_count` show whether they still require action.
 - For first-pass ops/runtime checks and live validation workflows, follow the repo-level CLI guidance in [../../AGENTS.md](../../AGENTS.md). Keep the canonical command list there instead of repeating it in backend-specific instructions.
@@ -37,18 +37,18 @@
 
 ## End-Of-Day And Ops Queries
 
-- For questions about "how did we do today", market-close summaries, discovery run health, or live ops status, prefer the running Docker-backed system state before code inspection.
+- For questions about "how did we do today", market-close summaries, or live ops status, prefer the running Docker-backed system state before code inspection.
 - Use the existing stack and narrow live reads first:
   - account and trading health: `services/account_state.py` or `http://localhost:58080/account/overview?history_range=1D`
-  - pipeline/session runtime health: `services/pipelines.py` or `uv run spreads pipelines`
+- strategy/source/signal/decision health: `services/ops/` or `uv run spreads trading`
 - strategy tuning: prefer live/runtime read models and documented strategy-run summaries; add a new strategy-owned evaluation surface only when explicitly requested.
 - After market close, use exact dates in summaries.
 
 ## Rollout Checklist
 
 - After schema changes, run `uv run alembic upgrade head`.
-- If declared job YAML or discovery run config changed, restart the scheduler and affected workers so they reload config.
-- After changing code imported by `worker-runtime`, `worker-discovery`, or `scheduler`, restart those containers before trusting runtime behavior.
+- If declared job YAML, ticker-source config, or strategy config changed, restart the scheduler and affected workers so they reload config.
+- After changing code imported by `worker-runtime`, `worker-data`, or `scheduler`, restart those containers before trusting runtime behavior.
 - Use `docker compose ps` and recent `docker compose logs` to verify startup and job execution after restart.
 - Restart `api` only when the changed runtime surface requires it or when explicitly requested.
 - When the live target is already deployed on `ade-nucbox-k8-plus`, avoid bringing local scheduler/workers/recorder back up unless the user explicitly wants dual-host validation. The NUC is the live owner.

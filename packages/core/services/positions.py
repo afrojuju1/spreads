@@ -8,7 +8,7 @@ from core.db.decorators import with_storage
 from core.jobs.orchestration import NEW_YORK
 from core.services.close_lifecycle import build_close_lifecycle_summary
 from core.services.option_structures import position_legs, primary_short_long_symbols
-from core.services.runtime_identity import build_live_run_scope_id, build_pipeline_id
+from core.services.runtime_identity import build_live_run_scope_id
 
 OPEN_POSITION_STATUSES = {"open", "partial_open", "partial_close", "pending_open"}
 
@@ -52,11 +52,10 @@ def enrich_position_row(row: Mapping[str, Any]) -> dict[str, Any]:
     economics = payload.get("economics") if isinstance(payload.get("economics"), Mapping) else {}
     strategy_metrics = payload.get("strategy_metrics") if isinstance(payload.get("strategy_metrics"), Mapping) else {}
     short_symbol, long_symbol, expiration_date = _derive_position_legs(payload)
-    pipeline_id = _as_text(payload.get("pipeline_id"))
     label = _as_text(payload.get("label"))
-    if label is None and pipeline_id is not None:
-        label = pipeline_id.partition(":")[2]
     market_date = _as_text(payload.get("market_date_opened"))
+    source_object_type = _as_text(payload.get("source_object_type"))
+    source_object_id = _as_text(payload.get("source_object_id"))
     payload.update(
         {
             "market_date": market_date,
@@ -75,14 +74,13 @@ def enrich_position_row(row: Mapping[str, Any]) -> dict[str, Any]:
             "max_loss": _coerce_float(economics.get("max_loss")),
             "width": _coerce_float(strategy_metrics.get("width")),
             "owner": {
-                "owner_kind": ("trading_strategy" if payload.get("trading_strategy_id") else "discovery"),
+                "owner_kind": ("trading_strategy" if payload.get("trading_strategy_id") else "broker_or_manual"),
                 "trading_strategy_id": payload.get("trading_strategy_id"),
                 "config_hash": payload.get("config_hash"),
             },
-            "discovery": {
-                "label": label,
-                "pipeline_id": pipeline_id,
-                "session_id": None if label is None or market_date is None else build_live_run_scope_id(label, market_date),
+            "source": {
+                "source_object_type": source_object_type,
+                "source_object_id": source_object_id,
                 "source_opportunity_id": payload.get("source_opportunity_id"),
             },
         }
@@ -158,23 +156,18 @@ def _position_in_lifecycle_scope(row: Mapping[str, Any], *, market_date: str) ->
 def list_positions(
     *,
     db_target: str,
-    pipeline_id: str | None = None,
-    label: str | None = None,
     market_date: str | None = None,
     trading_strategy_id: str | None = None,
     limit: int = 200,
     storage: Any | None = None,
 ) -> dict[str, Any]:
     execution_store = storage.execution
-    resolved_pipeline_id = pipeline_id or (None if label is None else build_pipeline_id(label))
     if not execution_store.portfolio_schema_ready():
         return {
             "summary": {
                 "position_count": 0,
                 "open_position_count": 0,
                 "closed_position_count": 0,
-                "pipeline_id": resolved_pipeline_id,
-                "label": label,
                 "market_date": market_date,
                 "trading_strategy_id": trading_strategy_id,
             },
@@ -184,7 +177,7 @@ def list_positions(
     rows = [
         _serialize_position(dict(row), execution_store=execution_store)
         for row in execution_store.list_positions(
-            pipeline_id=resolved_pipeline_id,
+            pipeline_id=None,
             market_date=market_date,
             trading_strategy_id=trading_strategy_id,
             limit=limit,
@@ -231,8 +224,6 @@ def list_positions(
             "position_count": len(rows),
             "open_position_count": open_count,
             "closed_position_count": closed_count,
-            "pipeline_id": resolved_pipeline_id,
-            "label": label,
             "market_date": market_date,
             "trading_strategy_id": trading_strategy_id,
             "close_lifecycle_market_date": lifecycle_market_date,

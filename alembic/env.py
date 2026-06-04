@@ -12,13 +12,11 @@ from core.storage import calendar_models as storage_calendar_models  # noqa: F40
 from core.storage import capture_models as storage_capture_models  # noqa: F401
 from core.storage import company_valuation_models as storage_company_valuation_models  # noqa: F401
 from core.storage import control_models as storage_control_models  # noqa: F401
-from core.storage import discovery_run_models as storage_discovery_run_models  # noqa: F401
 from core.storage import engine_models as storage_engine_models  # noqa: F401
 from core.storage import event_models as storage_event_models  # noqa: F401
 from core.storage import execution_models as storage_execution_models  # noqa: F401
 from core.storage import job_models as storage_job_models  # noqa: F401
 from core.storage import lifecycle_models as storage_lifecycle_models  # noqa: F401
-from core.storage import recovery_models as storage_recovery_models  # noqa: F401
 from core.storage import risk_models as storage_risk_models  # noqa: F401
 from core.storage import signal_models as storage_signal_models  # noqa: F401
 from core.storage.db import Base

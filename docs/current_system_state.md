@@ -12,13 +12,13 @@ Last updated: 2026-06-04
 |---|---|---|
 | Operator interfaces | `packages/web`, `packages/api`, `packages/core/cli` | Web, API, and CLI are adapters over service-owned state. They must not own trading logic. |
 | Trading strategy config | `packages/config/trading_strategies`, `services/trading_strategies.py`, `services/trading_strategy_runtime.py` | A `trading_strategy` is the product/operator owner for source, trade structure, entry routine, management routine, risk, limits, and execution settings. |
-| Scheduling and workers | `packages/config/jobs`, `packages/core/jobs`, `services/runtime_policy.py` | Declared jobs and generated trading-strategy jobs are the scheduler source of truth. Runtime workers execute broker sync, strategy entry/manage, dispatch, recovery, and alert jobs. |
+| Scheduling and workers | `packages/config/jobs`, `packages/core/jobs`, `services/runtime_policy.py` | Declared jobs and generated trading-strategy jobs are the scheduler source of truth. Runtime workers execute broker sync, strategy entry/manage, dispatch, and alert jobs; data workers execute ticker sources. |
 | Dynamic ticker sources | `packages/config/ticker_sources`, `services/ticker_sources.py` | Ticker sources materialize reusable underlying lists. `finviz_momentum` feeds `momentum_long_calls`. |
 | Market data capture | `services/trading_engine/capture_targets.py`, `services/market_recorder.py`, `storage/capture_repository.py` | `DataEngine` owns desired capture state in `capture_targets`; `market_recorder.py` is the normal Alpaca option websocket owner and reconciles the prioritized target set into quote/trade events plus `capture_summaries`. |
-| Discovery and scanning | `services/scanners/`, `services/discovery_runs/`, `services/live_selection.py`, `services/opportunity_scoring.py`, `services/candidate_policy.py` | Discovery scans strategy scopes, ranks candidates, captures diagnostics, and persists discovery-owned cycle state. |
-| Signal and opportunity state | `services/signal_state.py`, `services/opportunity_generation.py`, `services/opportunities.py`, `storage/signal_repository.py` | Owns signal states, strategy runs, opportunities, and strategy-owned runtime projections. |
+| Engine data and scanning | `services/trading_engine/data_runtime.py`, `services/scanners/`, `services/live_selection.py`, `services/opportunity_scoring.py`, `services/candidate_policy.py` | DataEngine resolves ticker sources/static sources and builds candidate inputs directly for strategy entry. Scanner math remains reusable; discovery-run ownership is retired. |
+| Strategy signals and decisions | `services/trading_engine/facts.py`, `services/decision_engine.py`, `storage/engine_fact_repository.py` | Owns source runs, candidate runs, trade candidates, trade signals, trade decisions, and admission decisions before intents. |
 | Execution and portfolio state | `services/execution/`, `services/execution_intents/`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py` | Owns intent dispatch, broker submission, order/fill facts, position attribution, reconciliation, and close behavior. |
-| Operator read models | `services/live_runtime.py`, `services/discovery_run_health/`, `services/pipelines.py`, `services/ops/` | Read models compose persisted state for operator status, jobs, trading health, audit, positions, and opportunities. |
+| Operator read models | `services/ops/`, `services/positions.py`, `services/execution/runtimes.py` | Read models compose persisted engine, jobs, trading health, positions, execution, account, retention, and capture state. Retired pipeline/discovery/UOA product routes are not active surfaces. |
 | Research AI layer | `services/tradingagents_scan.py`, `packages/config/jobs/tradingagents_scan_finviz_momentum.yaml`, `external/TradingAgents` | Spreads owns orchestration, job config, artifacts, alerts, and visibility. The external TradingAgents repo owns its own agent internals. |
 | Persistence and transport | Postgres, Redis | Postgres is source of truth. Redis handles queues, leases, and pub/sub fanout. |
 
@@ -30,9 +30,8 @@ Last updated: 2026-06-04
 - `execution_intent_dispatch:global` owns the global pending-intent dispatch loop.
 - `trade_structure` names reusable option construction behavior, such as `long_call`, `call_credit_spread`, `iron_condor`, or `short_put`.
 - `source` names the candidate source for a strategy. Current source types are `static` and `dynamic`.
-- Discovery runs are diagnostic/scanning surfaces. They are not the product owner of execution.
-- Strategy-owned opportunities are projections over scan/feed candidates and are persisted with `trading_strategy_id` and `strategy_run_id`.
-- `pipeline_id` remains discovery lineage and compatibility identity, not the primary runtime owner.
+- Discovery runs, pipelines, symbol feeds, and UOA-only runtime paths are retired active surfaces. Do not add wrappers around them.
+- Trade candidates, trade signals, trade decisions, and admission decisions are the active strategy-entry facts.
 - Capture is desired state, not a discovery side effect. The priority order is open positions, working intents/attempts, selected candidates, then watch candidates.
 - `services/market_recorder.py` is the sole Alpaca option websocket owner in normal runtime. It reads `capture_targets` by priority and records `capture_summaries`.
 - `execution_intents` is the control-plane handoff boundary. It selects an execution runtime before broker submission.
@@ -49,11 +48,10 @@ Last updated: 2026-06-04
 | Trade structure | Reusable option construction family. | `services/strategy_builders.py`, `services/option_structures.py`, scanner builders | Runtime owner identity. |
 | Routine | Scheduled strategy behavior such as entry or manage. | `services/trading_strategy_runtime.py`, generated job specs | Broker submission facts. |
 | Ticker source | Reusable dynamic symbol list. | `packages/config/ticker_sources`, `services/ticker_sources.py`, `ticker_source:*` jobs | Execution ownership or position attribution. |
-| Discovery run | Scanner/capture cycle for a strategy scope. | `packages/config/discovery_runs`, `services/discovery_runs/`, `discovery_runs` tables | Product/runtime ownership. |
-| Strategy run | One persisted strategy-runtime sync pass for a strategy/cycle. | `strategy_runs`, `storage/signal_repository.py` | Broker facts or position PnL. |
-| Signal | Normalized market/setup observation that may become an opportunity. | `signal_states`, `signal_state_transitions`, `services/signal_state.py` | Alerts, broker sync, or frontend state. |
-| Opportunity | Candidate trade row, either discovery-owned or strategy-owned. | `opportunities`, `services/opportunity_generation.py`, `services/opportunities.py` | Order/fill truth or account policy. |
-| Decision | Strategy/lifecycle choice such as selected, skipped, blocked, or no-entry. | Strategy and lifecycle services that create opportunity decisions and intent payloads | Alert delivery or dashboard-only read models. |
+| Source run | One ticker-source/materialized source refresh used by strategies. | `source_runs`, `source_tickers`, `services/trading_engine/data_runtime.py` | Execution ownership or broker facts. |
+| Candidate run | One strategy candidate-build pass over resolved tickers. | `candidate_runs`, `trade_candidates`, `services/trading_engine/facts.py` | Broker facts or position PnL. |
+| Trade signal | Normalized market/setup observation from a candidate. | `trade_signals`, `services/trading_engine/facts.py` | Broker sync or frontend state. |
+| Trade decision | Strategy/lifecycle choice such as selected, skipped, blocked, or no-entry. | `trade_decisions`, strategy services | Alert delivery or dashboard-only read models. |
 | Admission | Account/risk/policy answer to whether an approved idea can be carried now. | `services/risk_manager.py`, `services/execution/`, admission payloads | Account snapshots alone. |
 | Intent | Control-plane request to open, manage, or close. | `execution_intents`, `services/execution_intents/` | Broker order/fill persistence. |
 | Attempt | Broker-facing submission/refresh/cancel lifecycle for an intent. | `execution_attempts`, `services/execution/` | Session position attribution. |
@@ -64,7 +62,7 @@ Last updated: 2026-06-04
 | Broker sync | Poll-first broker/account health and fact ingestion. | `services/broker_sync.py`, `broker_sync_state`, `account_snapshots` | Trading decisions or owner attribution. |
 | Capture target | Desired option contract capture need with owner, reason, priority, TTL, and quote/trade flags. | `services/trading_engine/capture_targets.py`, `capture_targets`, `storage/capture_repository.py` | Scanner diagnostics or broker order truth. |
 | Capture summary | Market-recorder iteration summary for target pressure, captured rows, groups, and errors. | `services/market_recorder.py`, `capture_summaries` | Raw quote/trade event retention. |
-| Trading ops state | Operator-facing trading health: market, control, scheduler/workers, strategies, decisions, intents, attempts, positions, exits, risk, and attention. | `services/ops/`, `services/live_runtime.py`, `services/pipelines.py` | Frontend stitching or live Alpaca calls during default dashboard render. |
+| Trading ops state | Operator-facing trading health: market, control, scheduler/workers, sources, candidates, signals, decisions, intents, attempts, positions, exits, risk, capture, and attention. | `services/ops/` | Frontend stitching or live Alpaca calls during default dashboard render. |
 | Storage ops state | Operator-facing retention/storage health. | `services/retention.py`, storage ops surfaces | Live trading decisions. |
 | Research scan | Batch TradingAgents research run over a bounded ticker list. | `services/tradingagents_scan.py`, `outputs/tradingagents/`, `external/TradingAgents` | Live execution admission. |
 
@@ -85,8 +83,8 @@ Scheduler
 
 ARQ workers
   |
-  +--> runtime lane: broker sync, trading strategy entry/manage, intent dispatch, recovery, alerts
-  +--> discovery lane: discovery runs, ticker sources
+  +--> runtime lane: broker sync, trading strategy entry/manage, intent dispatch, alerts
+  +--> data lane: ticker sources
   +--> valuation lane: company valuation jobs
   +--> research lane: TradingAgents jobs when enabled
 
@@ -103,9 +101,7 @@ Redis = queues, leases, pub/sub
 Current main job types:
 
 - `ticker_source`
-- `discovery_run`
 - `broker_sync`
-- `discovery_recovery`
 - `trading_strategy_entry`
 - `trading_strategy_manage`
 - `execution_intent_dispatch`
@@ -148,20 +144,25 @@ Current active strategies:
 
 `momentum_long_calls` is the Finviz-fed long-call strategy. It consumes `ticker_source:finviz_momentum`, enters during market hours on a 2-minute cadence, and manages during market hours on a 1-minute cadence.
 
-## Discovery And Opportunity State
+## Engine Entry State
 
-Discovery runs still scan and persist diagnostic cycle state. They are useful for scanner health, capture health, candidate diagnostics, and research/operator inspection.
+Strategy entry follows the Nautilus-shaped spine:
 
-Strategy-owned entry state is persisted separately through:
+`DataEngine -> engine facts/read models -> StrategyEngine -> RiskEngine -> ExecutionEngine -> PortfolioEngine -> Ops projections`.
 
-- `strategy_runs`
-- `opportunities.trading_strategy_id`
-- `opportunities.strategy_run_id`
-- `opportunity_decisions.trading_strategy_id`
+Active entry facts are persisted through:
+
+- `source_runs`
+- `source_tickers`
+- `candidate_runs`
+- `trade_candidates`
+- `trade_signals`
+- `trade_decisions`
+- `trade_admissions`
 - `execution_intents.trading_strategy_id`
 - `portfolio_positions.trading_strategy_id`
 
-This removes the old split between direct source jobs and config-wrapper runtime jobs. Dynamic-source and static strategies both flow through the same strategy ownership model.
+Dynamic-source and static-source strategies both flow through the same strategy ownership model.
 
 ## Execution Domain
 
@@ -180,9 +181,6 @@ This removes the old split between direct source jobs and config-wrapper runtime
 Operator views should read service-owned state through:
 
 - `services/ops/`
-- `services/live_runtime.py`
-- `services/pipelines.py`
-- `services/opportunities.py`
 - `services/positions.py`
 - `services/execution/runtimes.py`
 
@@ -192,5 +190,5 @@ The dashboard should show strategy-owned runtime state, not recreate old runtime
 
 - After schema changes, run `uv run alembic upgrade head`.
 - After declared job YAML or strategy config changes, restart the scheduler and affected workers so they reload config.
-- After code imported by runtime/discovery workers changes, restart those containers before trusting live behavior.
+- After code imported by runtime/data workers changes, restart those containers before trusting live behavior.
 - Default validation is live/runtime checks through shipped CLIs and operator reads. Do not add automated tests unless explicitly requested.

@@ -131,50 +131,6 @@ class JobRepository(RepositoryBase):
             rows = session.scalars(statement).all()
         return self.rows(rows)
 
-    def get_latest_discovery_run(
-        self,
-        *,
-        label: str | None = None,
-        status: str | None = "succeeded",
-    ) -> JobRunRecord | None:
-        statement = select(JobRunModel).where(JobRunModel.job_type == "discovery_run")
-        if label:
-            statement = statement.where(JobRunModel.payload_json["label"].astext == label)
-        if status:
-            statement = statement.where(JobRunModel.status == status)
-        statement = statement.order_by(JobRunModel.scheduled_for.desc(), JobRunModel.job_run_id.desc()).limit(1)
-        with self.session_factory() as session:
-            row = session.scalar(statement)
-        if row is None:
-            return None
-        return self.row(row)
-
-    def get_discovery_run_by_cycle_id(
-        self,
-        *,
-        cycle_id: str,
-        label: str | None = None,
-        status: str | None = "succeeded",
-    ) -> JobRunRecord | None:
-        statement = select(JobRunModel).where(JobRunModel.job_type == "discovery_run")
-        if label:
-            statement = statement.where(JobRunModel.payload_json["label"].astext == label)
-        if status:
-            statement = statement.where(JobRunModel.status == status)
-        statement = statement.order_by(JobRunModel.scheduled_for.desc(), JobRunModel.job_run_id.desc()).limit(500)
-        with self.session_factory() as session:
-            rows = session.scalars(statement).all()
-        for row in rows:
-            payload = self.row(row)
-            result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
-            result_cycle_id = str(result.get("cycle_id") or "").strip()
-            if result_cycle_id == cycle_id:
-                return payload
-            result_cycle_ids = result.get("cycle_ids")
-            if isinstance(result_cycle_ids, list) and cycle_id in [str(item or "").strip() for item in result_cycle_ids]:
-                return payload
-        return None
-
     def list_latest_runs_by_session_ids(
         self,
         *,
@@ -184,31 +140,24 @@ class JobRepository(RepositoryBase):
     ) -> list[JobRunRecord]:
         if not session_ids:
             return []
-        ranked_runs = (
-            select(
-                JobRunModel.job_run_id.label("job_run_id"),
-                func.row_number()
-                .over(
-                    partition_by=JobRunModel.session_id,
-                    order_by=(
-                        JobRunModel.scheduled_for.desc(),
-                        JobRunModel.job_run_id.desc(),
-                    ),
-                )
-                .label("run_rank"),
+        ranked_runs = select(
+            JobRunModel.job_run_id.label("job_run_id"),
+            func.row_number()
+            .over(
+                partition_by=JobRunModel.session_id,
+                order_by=(
+                    JobRunModel.scheduled_for.desc(),
+                    JobRunModel.job_run_id.desc(),
+                ),
             )
-            .where(JobRunModel.session_id.in_(session_ids))
-        )
+            .label("run_rank"),
+        ).where(JobRunModel.session_id.in_(session_ids))
         if job_type:
             ranked_runs = ranked_runs.where(JobRunModel.job_type == job_type)
         if statuses:
             ranked_runs = ranked_runs.where(JobRunModel.status.in_(statuses))
         ranked_runs = ranked_runs.subquery()
-        statement = (
-            select(JobRunModel)
-            .join(ranked_runs, JobRunModel.job_run_id == ranked_runs.c.job_run_id)
-            .where(ranked_runs.c.run_rank == 1)
-        )
+        statement = select(JobRunModel).join(ranked_runs, JobRunModel.job_run_id == ranked_runs.c.job_run_id).where(ranked_runs.c.run_rank == 1)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
         return self.rows(rows)
@@ -221,29 +170,22 @@ class JobRepository(RepositoryBase):
     ) -> list[JobRunRecord]:
         if not job_keys:
             return []
-        ranked_runs = (
-            select(
-                JobRunModel.job_run_id.label("job_run_id"),
-                func.row_number()
-                .over(
-                    partition_by=JobRunModel.job_key,
-                    order_by=(
-                        JobRunModel.scheduled_for.desc(),
-                        JobRunModel.job_run_id.desc(),
-                    ),
-                )
-                .label("run_rank"),
+        ranked_runs = select(
+            JobRunModel.job_run_id.label("job_run_id"),
+            func.row_number()
+            .over(
+                partition_by=JobRunModel.job_key,
+                order_by=(
+                    JobRunModel.scheduled_for.desc(),
+                    JobRunModel.job_run_id.desc(),
+                ),
             )
-            .where(JobRunModel.job_key.in_(job_keys))
-        )
+            .label("run_rank"),
+        ).where(JobRunModel.job_key.in_(job_keys))
         if statuses:
             ranked_runs = ranked_runs.where(JobRunModel.status.in_(statuses))
         ranked_runs = ranked_runs.subquery()
-        statement = (
-            select(JobRunModel)
-            .join(ranked_runs, JobRunModel.job_run_id == ranked_runs.c.job_run_id)
-            .where(ranked_runs.c.run_rank == 1)
-        )
+        statement = select(JobRunModel).join(ranked_runs, JobRunModel.job_run_id == ranked_runs.c.job_run_id).where(ranked_runs.c.run_rank == 1)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
         return self.rows(rows)
@@ -263,16 +205,10 @@ class JobRepository(RepositoryBase):
                 JobRunModel.scheduled_for,
             )
         )
-        statement = select(JobRunModel.session_id, activity_at.label("activity_at")).where(
-            JobRunModel.session_id.is_not(None)
-        )
+        statement = select(JobRunModel.session_id, activity_at.label("activity_at")).where(JobRunModel.session_id.is_not(None))
         if job_type:
             statement = statement.where(JobRunModel.job_type == job_type)
-        statement = (
-            statement.group_by(JobRunModel.session_id)
-            .order_by(activity_at.desc(), JobRunModel.session_id.desc())
-            .limit(limit)
-        )
+        statement = statement.group_by(JobRunModel.session_id).order_by(activity_at.desc(), JobRunModel.session_id.desc()).limit(limit)
         with self.session_factory() as session:
             rows = session.execute(statement).all()
         return [str(session_id) for session_id, _ in rows if session_id]

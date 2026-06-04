@@ -166,7 +166,7 @@ def persist_entry_engine_facts(
     generated_at: str,
     ticker_set: ResolvedTickerSet,
     candidate_result: CandidateBuildResult | None,
-    opportunities: Sequence[Mapping[str, Any]],
+    signal_rows: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     if engine_facts is None or not engine_facts.schema_ready():
         return {
@@ -273,12 +273,12 @@ def persist_entry_engine_facts(
             )
 
     trade_signal_refs: list[dict[str, Any]] = []
-    for opportunity in opportunities:
-        candidate = _candidate_payload(opportunity)
-        identity = str(opportunity.get("candidate_identity") or _candidate_identity(candidate))
+    for signal_row in signal_rows:
+        candidate = _candidate_payload(signal_row)
+        identity = str(signal_row.get("candidate_identity") or _candidate_identity(candidate))
         if not identity:
             continue
-        symbol = str(opportunity.get("underlying_symbol") or candidate.get("underlying_symbol") or "").upper()
+        symbol = str(signal_row.get("underlying_symbol") or candidate.get("underlying_symbol") or "").upper()
         if not symbol:
             continue
         trade_candidate_id = trade_candidate_ids_by_identity.get(identity)
@@ -294,7 +294,7 @@ def persist_entry_engine_facts(
             underlying_symbol=symbol,
             candidate_identity=identity,
         )
-        signal_state = _signal_state(opportunity)
+        signal_state = _signal_state(signal_row)
         engine_facts.upsert_trade_signal(
             trade_signal_id=trade_signal_id,
             idempotency_key=idempotency_key,
@@ -308,38 +308,36 @@ def persist_entry_engine_facts(
             session_date=market_date,
             market_session="regular",
             observed_at=generated_at,
-            expires_at=None if opportunity.get("expires_at") in (None, "") else str(opportunity.get("expires_at")),
+            expires_at=None if signal_row.get("expires_at") in (None, "") else str(signal_row.get("expires_at")),
             underlying_symbol=symbol,
-            root_symbol=str(opportunity.get("root_symbol") or symbol),
+            root_symbol=str(signal_row.get("root_symbol") or symbol),
             asset_class="option",
-            product_class=(None if opportunity.get("product_class") in (None, "") else str(opportunity.get("product_class"))),
-            horizon=(None if opportunity.get("horizon_intent") in (None, "") else str(opportunity.get("horizon_intent"))),
-            style_profile=(None if opportunity.get("style_profile") in (None, "") else str(opportunity.get("style_profile"))),
+            product_class=(None if signal_row.get("product_class") in (None, "") else str(signal_row.get("product_class"))),
+            horizon=(None if signal_row.get("horizon_intent") in (None, "") else str(signal_row.get("horizon_intent"))),
+            style_profile=(None if signal_row.get("style_profile") in (None, "") else str(signal_row.get("style_profile"))),
             signal_state=signal_state,
-            rank=_optional_int(opportunity.get("selection_rank")),
-            score=_score(opportunity),
-            confidence=_optional_float(opportunity.get("confidence")),
-            legs=list(opportunity.get("legs") or candidate_legs(candidate)),
-            execution_shape=dict(opportunity.get("execution_shape") or {}),
-            economics=dict(opportunity.get("economics") or candidate_economics(candidate)),
-            reason_codes=_text_list(opportunity.get("reason_codes")),
-            blockers=_blockers(opportunity),
+            rank=_optional_int(signal_row.get("selection_rank")),
+            score=_score(signal_row),
+            confidence=_optional_float(signal_row.get("confidence")),
+            legs=list(signal_row.get("legs") or candidate_legs(candidate)),
+            execution_shape=dict(signal_row.get("execution_shape") or {}),
+            economics=dict(signal_row.get("economics") or candidate_economics(candidate)),
+            reason_codes=_text_list(signal_row.get("reason_codes")),
+            blockers=_blockers(signal_row),
             evidence={
                 "source_run_id": source_run["source_run_id"],
                 "candidate_run_id": candidate_run_id,
                 "trade_candidate_id": trade_candidate_id,
-                "opportunity_id": opportunity.get("opportunity_id"),
-                "selection_state": opportunity.get("selection_state"),
+                "selection_state": signal_row.get("selection_state"),
                 "candidate_identity": identity,
             },
-            metrics=dict(opportunity.get("strategy_metrics") or {}),
+            metrics=dict(signal_row.get("strategy_metrics") or {}),
             updated_at=now,
         )
         trade_signal_refs.append(
             {
                 "trade_signal_id": trade_signal_id,
                 "trade_candidate_id": trade_candidate_id,
-                "opportunity_id": opportunity.get("opportunity_id"),
                 "underlying_symbol": symbol,
                 "candidate_identity": identity,
                 "signal_state": signal_state,

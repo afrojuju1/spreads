@@ -1,6 +1,0 @@
-extends: short_dated_weekly
-discovery_run_id: short_dated_index_call_credit
-job_key: discovery_run:trading_strategy_short_dated_index_call_credit
-label: explore_10_call_credit_weekly_auto
-scanner_strategy: call_credit
-singleton_scope: trading_strategy_short_dated_index_call_credit

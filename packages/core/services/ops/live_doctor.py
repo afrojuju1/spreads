@@ -90,6 +90,18 @@ def _declared_job(
     return {}
 
 
+def _latest_run_from_definition(definition: Mapping[str, Any]) -> dict[str, Any] | None:
+    if not any(definition.get(key) for key in ("latest_run_id", "latest_run_status", "latest_run_at", "expected_slot_at")):
+        return None
+    return {
+        "job_run_id": definition.get("latest_run_id"),
+        "job_status": definition.get("latest_run_status"),
+        "job_key": definition.get("job_key"),
+        "scheduled_for": definition.get("latest_run_at") or definition.get("expected_slot_at"),
+        "operator_status": definition.get("operator_status"),
+    }
+
+
 def _compact_source_run(row: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if row is None:
         return None
@@ -118,10 +130,10 @@ def _compact_strategy_run(row: Mapping[str, Any] | None) -> dict[str, Any] | Non
         "scheduled_for": row.get("scheduled_for"),
         "worker_name": row.get("worker_name"),
         "result_status": row.get("result_status"),
-        "opportunity_count": row.get("opportunity_count"),
+        "signal_count": row.get("signal_count"),
         "decision_count": row.get("decision_count"),
         "execution_intent_id": row.get("execution_intent_id"),
-        "selected_opportunity_id": row.get("selected_opportunity_id"),
+        "selected_trade_signal_id": row.get("selected_trade_signal_id"),
         "reason": row.get("result_reason") or row.get("reason"),
     }
 
@@ -403,12 +415,7 @@ def build_live_doctor(
     if newest_source is not None and str(newest_source.get("job_status") or newest_source.get("status") or "").strip().lower() != "succeeded":
         latest_source = _latest_completed_run(source_runs) or newest_source
     if latest_source is None and source_definition:
-        latest_source = {
-            "job_run_id": source_definition.get("latest_run_id"),
-            "job_status": source_definition.get("latest_run_status"),
-            "scheduled_for": source_definition.get("latest_run_at") or source_definition.get("expected_slot_at"),
-            "operator_status": source_definition.get("operator_status"),
-        }
+        latest_source = _latest_run_from_definition(source_definition)
     source_status = _status_for_job_run(latest_source, market_open=market_open)
     source_scheduled_for = None if latest_source is None else latest_source.get("scheduled_for")
     source_status, source_age_seconds = _fresh_job_status(
@@ -451,12 +458,7 @@ def build_live_doctor(
     if newest_entry is not None and str(newest_entry.get("job_status") or newest_entry.get("status") or "").strip().lower() != "succeeded":
         latest_entry = _latest_completed_run(entry_runs) or newest_entry
     if latest_entry is None and entry_definition:
-        latest_entry = {
-            "job_run_id": entry_definition.get("latest_run_id"),
-            "job_status": entry_definition.get("latest_run_status"),
-            "scheduled_for": entry_definition.get("latest_run_at") or entry_definition.get("expected_slot_at"),
-            "operator_status": entry_definition.get("operator_status"),
-        }
+        latest_entry = _latest_run_from_definition(entry_definition)
     entry_status = _status_for_job_run(latest_entry, market_open=market_open)
     entry_scheduled_for = None if latest_entry is None else latest_entry.get("scheduled_for")
     entry_max_age_seconds = max(
@@ -470,14 +472,14 @@ def build_live_doctor(
         max_age_seconds=entry_max_age_seconds,
         market_open=market_open,
     )
-    entry_opportunity_count = _coerce_int(None if latest_entry is None else latest_entry.get("opportunity_count"))
+    entry_signal_count = _coerce_int(None if latest_entry is None else latest_entry.get("signal_count"))
     checks.append(
         _check(
             "Strategy Entry",
             status=entry_status,
             message=(
                 f"strategy={resolved_trading_strategy_id}; "
-                f"opportunities={entry_opportunity_count if entry_opportunity_count is not None else '-'}; "
+                f"signals={entry_signal_count if entry_signal_count is not None else '-'}; "
                 f"latest={entry_scheduled_for or '-'}"
             ),
             metrics={
@@ -486,9 +488,9 @@ def build_live_doctor(
                 "job_run_id": None if latest_entry is None else latest_entry.get("job_run_id"),
                 "job_status": None if latest_entry is None else latest_entry.get("job_status") or latest_entry.get("status"),
                 "result_status": None if latest_entry is None else latest_entry.get("result_status"),
-                "opportunity_count": entry_opportunity_count,
+                "signal_count": entry_signal_count,
                 "decision_count": None if latest_entry is None else latest_entry.get("decision_count"),
-                "selected_opportunity_id": None if latest_entry is None else latest_entry.get("selected_opportunity_id"),
+                "selected_trade_signal_id": None if latest_entry is None else latest_entry.get("selected_trade_signal_id"),
                 "execution_intent_id": None if latest_entry is None else latest_entry.get("execution_intent_id"),
                 "age_seconds": entry_age_seconds,
                 "max_age_seconds": entry_max_age_seconds,
@@ -503,12 +505,7 @@ def build_live_doctor(
     if newest_manage is not None and str(newest_manage.get("job_status") or newest_manage.get("status") or "").strip().lower() != "succeeded":
         latest_manage = _latest_completed_run(manage_runs) or newest_manage
     if latest_manage is None and manage_definition:
-        latest_manage = {
-            "job_run_id": manage_definition.get("latest_run_id"),
-            "job_status": manage_definition.get("latest_run_status"),
-            "scheduled_for": manage_definition.get("latest_run_at") or manage_definition.get("expected_slot_at"),
-            "operator_status": manage_definition.get("operator_status"),
-        }
+        latest_manage = _latest_run_from_definition(manage_definition)
     manage_status = _status_for_job_run(latest_manage, market_open=market_open)
     manage_scheduled_for = None if latest_manage is None else latest_manage.get("scheduled_for")
     manage_max_age_seconds = max(
@@ -540,21 +537,29 @@ def build_live_doctor(
     )
 
     dispatch_runs = _runs_for_job_key(jobs_details, dispatch_job_key, limit=limit)
-    latest_dispatch = dispatch_runs[0] if dispatch_runs else _declared_job(jobs_details, dispatch_job_key)
+    dispatch_definition = _declared_job(jobs_details, dispatch_job_key)
+    latest_dispatch = dispatch_runs[0] if dispatch_runs else _latest_run_from_definition(dispatch_definition)
     dispatch_status = _status_for_job_run(latest_dispatch, market_open=market_open)
+    dispatch_latest_text = "-" if latest_dispatch is None else latest_dispatch.get("scheduled_for") or latest_dispatch.get("latest_run_at") or "-"
+    dispatch_status_text = (
+        "-"
+        if latest_dispatch is None
+        else latest_dispatch.get("job_status") or latest_dispatch.get("status") or latest_dispatch.get("latest_run_status") or "-"
+    )
     checks.append(
         _check(
             "Intent Dispatch",
             status=dispatch_status,
-            message=(
-                f"latest={latest_dispatch.get('scheduled_for') or latest_dispatch.get('latest_run_at') or '-'}; "
-                f"status={latest_dispatch.get('job_status') or latest_dispatch.get('status') or latest_dispatch.get('latest_run_status') or '-'}"
-            ),
+            message=f"latest={dispatch_latest_text}; status={dispatch_status_text}",
             metrics={
                 "job_key": dispatch_job_key,
-                "job_run_id": latest_dispatch.get("job_run_id") or latest_dispatch.get("latest_run_id"),
-                "job_status": latest_dispatch.get("job_status") or latest_dispatch.get("status") or latest_dispatch.get("latest_run_status"),
-                "result_status": latest_dispatch.get("result_status"),
+                "job_run_id": None if latest_dispatch is None else latest_dispatch.get("job_run_id") or latest_dispatch.get("latest_run_id"),
+                "job_status": (
+                    None
+                    if latest_dispatch is None
+                    else latest_dispatch.get("job_status") or latest_dispatch.get("status") or latest_dispatch.get("latest_run_status")
+                ),
+                "result_status": None if latest_dispatch is None else latest_dispatch.get("result_status"),
             },
         )
     )
@@ -686,7 +691,7 @@ def build_live_doctor(
             "finviz_source_symbol_count": source_symbol_count,
             "finviz_source_age_seconds": source_age_seconds,
             "strategy_entry_status": entry_status,
-            "strategy_entry_opportunity_count": entry_opportunity_count,
+            "strategy_entry_signal_count": entry_signal_count,
             "strategy_entry_age_seconds": entry_age_seconds,
             "strategy_manage_status": manage_status,
             "strategy_manage_age_seconds": manage_age_seconds,

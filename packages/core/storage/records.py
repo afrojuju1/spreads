@@ -19,11 +19,6 @@ ScanCandidateRecord = StorageRow
 SessionTopRunRecord = StorageRow
 OptionQuoteEventRecord = StorageRow
 OptionTradeEventRecord = StorageRow
-DiscoveryRunRecord = StorageRow
-DiscoveryRunCandidateRecord = StorageRow
-DiscoveryRunEventRecord = StorageRow
-PipelineRecord = StorageRow
-PipelineCycleRecord = StorageRow
 AlertEventRecord = StorageRow
 AlertStateRecord = StorageRow
 JobRunRecord = StorageRow
@@ -36,8 +31,6 @@ PolicyRolloutRecord = StorageRow
 SignalStateRecord = StorageRow
 SignalStateTransitionRecord = StorageRow
 StrategyRunRecord = StorageRow
-OpportunityRecord = StorageRow
-OpportunityDecisionRecord = StorageRow
 RiskDecisionRecord = StorageRow
 JobLeaseRecord = StorageRow
 ExecutionIntentRecord = StorageRow
@@ -47,7 +40,6 @@ ExecutionOrderRecord = StorageRow
 ExecutionFillRecord = StorageRow
 PortfolioPositionRecord = StorageRow
 PositionCloseRecord = StorageRow
-LiveSessionSlotRecord = StorageRow
 CaptureTargetRecord = StorageRow
 CaptureSummaryRecord = StorageRow
 SourceRunRecord = StorageRow
@@ -66,11 +58,6 @@ __all__ = [
     "SessionTopRunRecord",
     "OptionQuoteEventRecord",
     "OptionTradeEventRecord",
-    "DiscoveryRunRecord",
-    "DiscoveryRunCandidateRecord",
-    "DiscoveryRunEventRecord",
-    "PipelineRecord",
-    "PipelineCycleRecord",
     "AlertEventRecord",
     "AlertStateRecord",
     "JobRunRecord",
@@ -83,8 +70,6 @@ __all__ = [
     "SignalStateRecord",
     "SignalStateTransitionRecord",
     "StrategyRunRecord",
-    "OpportunityRecord",
-    "OpportunityDecisionRecord",
     "RiskDecisionRecord",
     "JobLeaseRecord",
     "ExecutionIntentRecord",
@@ -94,7 +79,6 @@ __all__ = [
     "ExecutionFillRecord",
     "PortfolioPositionRecord",
     "PositionCloseRecord",
-    "LiveSessionSlotRecord",
     "CaptureTargetRecord",
     "CaptureSummaryRecord",
     "SourceRunRecord",

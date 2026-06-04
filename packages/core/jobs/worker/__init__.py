@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from core.jobs.registry import (
-    DISCOVERY_QUEUE_NAME,
+    DATA_QUEUE_NAME,
     RESEARCH_QUEUE_NAME,
     RUNTIME_QUEUE_NAME,
     VALUATION_QUEUE_NAME,
@@ -10,7 +10,7 @@ from core.runtime.config import default_redis_url
 from core.runtime.redis import build_redis_settings
 
 from .lifecycle import (
-    discovery_startup,
+    data_startup,
     research_startup,
     runtime_startup,
     shutdown,
@@ -24,9 +24,7 @@ from .tasks import (
     run_company_valuation_bootstrap_job,
     run_company_valuation_resolve_unresolved_job,
     run_company_valuation_screen_materialize_job,
-    run_discovery_recovery_job,
     run_execution_submit_job,
-    run_discovery_run_job,
     run_execution_intent_dispatch_job,
     run_position_exit_manager_job,
     run_ticker_source_job,
@@ -39,7 +37,6 @@ from .tasks import (
 class RuntimeWorkerSettings:
     functions = [
         run_broker_sync_job,
-        run_discovery_recovery_job,
         run_execution_submit_job,
         run_trading_strategy_entry_job,
         run_trading_strategy_manage_job,
@@ -58,14 +55,11 @@ class RuntimeWorkerSettings:
     max_jobs = 4
 
 
-class DiscoveryWorkerSettings:
-    functions = [
-        run_discovery_run_job,
-        run_ticker_source_job,
-    ]
-    queue_name = DISCOVERY_QUEUE_NAME
+class DataWorkerSettings:
+    functions = [run_ticker_source_job]
+    queue_name = DATA_QUEUE_NAME
     redis_settings = build_redis_settings(default_redis_url())
-    on_startup = discovery_startup
+    on_startup = data_startup
     on_shutdown = shutdown
     keep_result = 0
     log_results = False
@@ -107,7 +101,7 @@ WorkerSettings = RuntimeWorkerSettings
 
 
 __all__ = [
-    "DiscoveryWorkerSettings",
+    "DataWorkerSettings",
     "ManagedJobFailure",
     "ResearchWorkerSettings",
     "RuntimeWorkerSettings",
@@ -120,9 +114,7 @@ __all__ = [
     "run_company_valuation_bootstrap_job",
     "run_company_valuation_resolve_unresolved_job",
     "run_company_valuation_screen_materialize_job",
-    "run_discovery_recovery_job",
     "run_execution_submit_job",
-    "run_discovery_run_job",
     "run_execution_intent_dispatch_job",
     "run_position_exit_manager_job",
     "run_ticker_source_job",

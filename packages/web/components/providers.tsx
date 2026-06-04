@@ -19,8 +19,6 @@ import {
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
-  buildOpportunitiesHref,
-  buildPipelineHref,
   buildGlobalEventsWebSocketUrl,
   parseGlobalRealtimeEvent,
   type GlobalRealtimeEvent,
@@ -106,29 +104,10 @@ function humanizeToken(value: string): string {
 }
 
 function resolveOperatorHrefFromPayload(payload: Record<string, unknown>): string {
-  const tradingStrategyId = readText(payload.trading_strategy_id);
-  const marketDate =
-    readText(payload.market_date) ?? readText(payload.session_date);
-  if (tradingStrategyId) {
-    return buildOpportunitiesHref({
-      tradingStrategyId,
-      marketDate,
-    });
+  if (readText(payload.position_id)) {
+    return "/positions";
   }
-  const pipelineId = readText(payload.pipeline_id);
-  if (pipelineId) {
-    return buildPipelineHref(pipelineId, marketDate);
-  }
-  const sessionId = readText(payload.session_id);
-  if (sessionId && sessionId.startsWith("live:")) {
-    const parts = sessionId.split(":");
-    const sessionDate = parts.pop();
-    const label = parts.slice(1).join(":");
-    if (label && sessionDate) {
-      return buildPipelineHref(`pipeline:${label}`, sessionDate);
-    }
-  }
-  return "/opportunities";
+  return "/today";
 }
 
 function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null {
@@ -194,23 +173,6 @@ function buildRealtimeNotice(event: GlobalRealtimeEvent): RealtimeNotice | null 
         summary: `Job ${jobType} ${humanizeToken(status)}`,
         timestamp: event.timestamp,
         tone: status === "failed" ? "error" : "warning",
-      };
-    }
-    case "live.discovery_run.degraded": {
-      const label = readText(payload.label) ?? "discovery run";
-      const captureStatus = humanizeToken(readText(payload.capture_status) ?? "degraded");
-      const reasons = Array.isArray(payload.reasons)
-        ? payload.reasons.filter(isString).map((reason) => humanizeToken(reason))
-        : [];
-      const reasonText = reasons.length ? reasons.join(", ") : "Discovery-run health degraded";
-      return {
-        id: `${event.topic}:${event.entity_id}:${reasonText}`,
-        title: `Discovery run degraded for ${label}`,
-        body: `${captureStatus}. ${reasonText}.`,
-        href: resolveOperatorHrefFromPayload(payload),
-        summary: `Live ${label} degraded`,
-        timestamp: event.timestamp,
-        tone: "warning",
       };
     }
     case "execution.attempt.updated": {
@@ -285,42 +247,23 @@ function GlobalRealtimeBridge({
   const handleRealtimeEvent = useEffectEvent((payload: string) => {
     const realtimeEvent = parseGlobalRealtimeEvent(payload);
     onEvent(realtimeEvent);
-    const pipelineId = readText(realtimeEvent.payload.pipeline_id);
     switch (realtimeEvent.topic) {
       case "alert.event.created":
       case "alert.event.updated":
-        queryClient.invalidateQueries({ queryKey: ["pipelines"] });
-        queryClient.invalidateQueries({ queryKey: ["opportunities"] });
-        if (pipelineId) {
-          queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
-        }
+        queryClient.invalidateQueries({ queryKey: ["today"] });
         break;
       case "live.cycle.updated":
-        queryClient.invalidateQueries({ queryKey: ["pipelines"] });
-        queryClient.invalidateQueries({ queryKey: ["opportunities"] });
-        if (pipelineId) {
-          queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
-        }
+        queryClient.invalidateQueries({ queryKey: ["today"] });
         break;
       case "job.run.updated":
-        queryClient.invalidateQueries({ queryKey: ["pipelines"] });
-        if (pipelineId) {
-          queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
-        }
-        break;
-      case "live.discovery_run.degraded":
-        queryClient.invalidateQueries({ queryKey: ["pipelines"] });
-        if (pipelineId) {
-          queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
-        }
+        queryClient.invalidateQueries({ queryKey: ["jobs"] });
+        queryClient.invalidateQueries({ queryKey: ["ops"] });
+        queryClient.invalidateQueries({ queryKey: ["today"] });
         break;
       case "execution.attempt.updated":
         queryClient.invalidateQueries({ queryKey: ["account-overview"] });
-        queryClient.invalidateQueries({ queryKey: ["pipelines"] });
         queryClient.invalidateQueries({ queryKey: ["positions"] });
-        if (pipelineId) {
-          queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
-        }
+        queryClient.invalidateQueries({ queryKey: ["today"] });
         break;
       default:
         break;

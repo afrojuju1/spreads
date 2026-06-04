@@ -9,10 +9,8 @@ Prefer `lodash-es` for standard utility work in this app when it cleanly covers 
 ## Repo Notes
 
 - Treat [../../docs/current_system_state.md](../../docs/current_system_state.md) as the canonical source of truth for current operator-surface boundaries and runtime ownership.
-- The generator workbench's `board` and `watchlist` promote actions are legacy manual overrides over the discovery run state.
-- Do not expand that UI model as if it were the long-term selection architecture; the target direction is one canonical opportunity list with rendered views.
-- When touching generator/operator surfaces, preserve existing behavior unless the change is explicitly part of the selection-state migration.
-- Keep web surfaces as read models over `services/live_runtime.py`, `services/pipelines.py`, `services/opportunities.py`, and `services/ops/`; do not invent web-only business-logic owners.
+- Pipeline, opportunity, discovery-run, and UOA product pages are retired active surfaces. Do not recreate route wrappers, nav links, or compatibility helpers around them.
+- Keep web surfaces as read models over current API/read-model owners such as `services/ops/`, `services/positions.py`, execution runtime services, and engine fact projections; do not invent web-only business-logic owners.
 - Active cleanup `spr-zuy` is replacing fragmented ops endpoints with canonical trading/storage ops state surfaces. During that work, do not add new frontend callers to retired fragmented ops product routes.
 - Do not reintroduce high-frequency polling without an explicit runtime need and a clear owner for the load it creates.
 - Do not recreate removed runtime pages as generic compatibility surfaces. If strategy runtime details are needed, fold them into cohesive operator views backed by current API/read-model surfaces.

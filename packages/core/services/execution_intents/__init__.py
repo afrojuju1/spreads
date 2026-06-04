@@ -18,7 +18,6 @@ from core.services.execution import (
     ExecutionAdmissionError,
     submit_equity_order,
     submit_option_order,
-    submit_opportunity_execution,
     submit_position_close_by_id,
 )
 from core.services.option_structures import normalize_strategy_family, order_payload_legs
@@ -28,11 +27,10 @@ from .maintenance import (
     _auto_execution_gate,
     _backfill_strategy_position_links,
     _cleanup_slot_conflicts,
-    _cleanup_stale_strategy_opportunities,
+    _cleanup_inactive_strategy_intents,
     _cleanup_terminal_intent_history,
     _intent_execution_policy,
     _intent_exit_policy,
-    _opportunity_is_active_for_intent,
     _position_is_active_for_intent,
 )
 from .repricing import _manage_submitted_open_intents
@@ -208,7 +206,6 @@ def _trade_decision_option_payload(
             "kind": "trade_decision",
             "id": trade_decision_id,
             "trade_signal_id": signal["trade_signal_id"],
-            "opportunity_id": (signal.get("evidence") or {}).get("opportunity_id") if isinstance(signal.get("evidence"), dict) else None,
         },
     }
 
@@ -292,7 +289,6 @@ def _intent_target_is_active(
     *,
     intent: dict[str, Any],
     execution_store: Any,
-    signal_store: Any,
     engine_facts: Any,
 ) -> tuple[bool, str | None]:
     action_type = _intent_action_type(intent)
@@ -300,14 +296,10 @@ def _intent_target_is_active(
         return _trade_decision_is_active_for_intent(engine_facts, intent)
     if _as_text(intent.get("strategy_position_id")) is not None or action_type == "close":
         return _position_is_active_for_intent(execution_store, intent)
-    if _as_text(intent.get("opportunity_decision_id")) is not None:
-        return _opportunity_is_active_for_intent(signal_store, intent)
     if _equity_intent_payload(intent) is not None:
         return True, None
     if _option_intent_payload(intent) is not None:
         return True, None
-    if action_type == "open" and _as_text(_intent_payload(intent).get("opportunity_id")) is not None:
-        return _opportunity_is_active_for_intent(signal_store, intent)
     return False, "source_reference_missing"
 
 
@@ -319,7 +311,6 @@ def submit_execution_intent(
     storage: Any | None = None,
 ) -> dict[str, Any]:
     execution_store = storage.execution
-    signal_store = storage.signals
     engine_facts = getattr(storage, "engine_facts", None)
     if not execution_store.intent_schema_ready():
         raise ValueError("Execution intent tables are not available yet.")
@@ -338,7 +329,6 @@ def submit_execution_intent(
     target_active, inactive_reason = _intent_target_is_active(
         intent=dict(intent),
         execution_store=execution_store,
-        signal_store=signal_store,
         engine_facts=engine_facts,
     )
     if not target_active:
@@ -381,7 +371,6 @@ def submit_execution_intent(
         claimed_intent = execution_store.upsert_execution_intent(
             execution_intent_id=str(claimed_intent["execution_intent_id"]),
             trading_strategy_id=str(claimed_intent["trading_strategy_id"]),
-            opportunity_decision_id=_as_text(claimed_intent.get("opportunity_decision_id")),
             trade_signal_id=_as_text(claimed_intent.get("trade_signal_id")),
             trade_decision_id=_as_text(claimed_intent.get("trade_decision_id")),
             strategy_position_id=_as_text(claimed_intent.get("strategy_position_id")),
@@ -459,32 +448,6 @@ def submit_execution_intent(
                     "repricing_policy": (dict(payload["repricing_policy"]) if isinstance(payload.get("repricing_policy"), dict) else None),
                     **engine_ref_metadata,
                 },
-                storage=storage,
-            )
-        elif source_intent.get("opportunity_decision_id"):
-            decision = signal_store.get_opportunity_decision(str(source_intent["opportunity_decision_id"]))
-            if decision is None:
-                raise ValueError(f"Missing opportunity decision for execution intent {execution_intent_id}")
-            request_metadata = {
-                "execution_intent_id": execution_intent_id,
-                "trading_strategy_id": source_intent.get("trading_strategy_id"),
-                "trade_structure": policy_ref.get("trade_structure"),
-                "routine": policy_ref.get("routine"),
-                "config_hash": source_intent.get("config_hash"),
-                "execution_runtime": payload.get("execution_runtime"),
-            }
-            if execution_policy is not None:
-                request_metadata["execution_policy"] = execution_policy
-            if exit_policy is not None:
-                request_metadata["exit_policy"] = exit_policy
-            if isinstance(payload.get("execution_admission"), dict):
-                request_metadata["execution_admission"] = dict(payload["execution_admission"])
-            request_metadata.update(engine_ref_metadata)
-            result = submit_opportunity_execution(
-                db_target=db_target,
-                opportunity_id=str(decision["opportunity_id"]),
-                limit_price=(None if payload.get("limit_price") in (None, "") else float(payload["limit_price"])),
-                request_metadata=request_metadata,
                 storage=storage,
             )
         elif source_intent.get("strategy_position_id"):
@@ -692,13 +655,10 @@ def dispatch_pending_execution_intents(
         return {"status": "skipped", "reason": "execution_intent_schema_unavailable"}
 
     batch_limit = max(int(limit), 1)
-    market_date = datetime.now(UTC).date().isoformat()
     client = create_alpaca_client_from_env()
     trading_environment = resolve_trading_environment(client.trading_base_url)
-    opportunity_cleanup = _cleanup_stale_strategy_opportunities(
-        signal_store=storage.signals,
-        job_store=storage.jobs,
-        market_date=market_date,
+    intent_owner_cleanup = _cleanup_inactive_strategy_intents(
+        execution_store=execution_store,
         limit=batch_limit,
     )
     intent_cleanup = _cleanup_terminal_intent_history(
@@ -834,7 +794,7 @@ def dispatch_pending_execution_intents(
     return {
         "status": "ok",
         "trading_environment": trading_environment,
-        "opportunity_cleanup": opportunity_cleanup,
+        "intent_owner_cleanup": intent_owner_cleanup,
         "intent_cleanup": intent_cleanup,
         "position_linkage": position_linkage,
         "slot_cleanup": slot_cleanup,

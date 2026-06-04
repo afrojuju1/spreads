@@ -10,7 +10,7 @@ import redis.asyncio as redis_async
 
 from core.jobs.orchestration import worker_runtime_lease_key
 from core.jobs.registry import (
-    DISCOVERY_QUEUE_NAME,
+    DATA_QUEUE_NAME,
     RESEARCH_QUEUE_NAME,
     RUNTIME_QUEUE_NAME,
     VALUATION_QUEUE_NAME,
@@ -33,9 +33,7 @@ async def _heartbeat_runtime(job_store: Any, runtime_owner: str) -> None:
     state = {
         "kind": "worker",
         "lane": str(getattr(job_store, "_worker_lane", "") or "unknown"),
-        "settings_name": str(
-            getattr(job_store, "_worker_settings_name", "") or "unknown"
-        ),
+        "settings_name": str(getattr(job_store, "_worker_settings_name", "") or "unknown"),
         "queue_name": str(getattr(job_store, "_worker_queue_name", "") or "unknown"),
     }
     while True:
@@ -68,9 +66,7 @@ async def startup(ctx: dict[str, Any]) -> None:
         ctx.get("worker_queue_name", "unknown"),
     )
     ctx["event_bus"] = redis_async.from_url(ctx["redis_url"], decode_responses=True)
-    ctx["runtime_heartbeat_task"] = asyncio.create_task(
-        _heartbeat_runtime(ctx["job_store"], ctx["worker_name"])
-    )
+    ctx["runtime_heartbeat_task"] = asyncio.create_task(_heartbeat_runtime(ctx["job_store"], ctx["worker_name"]))
     log_event(
         logger,
         logging.INFO,
@@ -89,10 +85,10 @@ async def runtime_startup(ctx: dict[str, Any]) -> None:
     await startup(ctx)
 
 
-async def discovery_startup(ctx: dict[str, Any]) -> None:
-    ctx["worker_lane"] = "discovery"
-    ctx["worker_settings_name"] = "DiscoveryWorkerSettings"
-    ctx["worker_queue_name"] = DISCOVERY_QUEUE_NAME
+async def data_startup(ctx: dict[str, Any]) -> None:
+    ctx["worker_lane"] = "data"
+    ctx["worker_settings_name"] = "DataWorkerSettings"
+    ctx["worker_queue_name"] = DATA_QUEUE_NAME
     await startup(ctx)
 
 

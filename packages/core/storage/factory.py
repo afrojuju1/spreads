@@ -4,7 +4,6 @@ from core.runtime.config import DEFAULT_POSTGRES_URL, default_database_url
 from core.storage.alert_repository import AlertRepository
 from core.storage.broker_repository import BrokerRepository
 from core.storage.capture_repository import CaptureRepository
-from core.storage.discovery_run_repository import DiscoveryRunRepository
 from core.storage.control_repository import ControlRepository
 from core.storage.context import StorageContext
 from core.storage.engine_fact_repository import EngineFactRepository
@@ -12,7 +11,6 @@ from core.storage.event_repository import EventRepository
 from core.storage.execution_repository import ExecutionRepository
 from core.storage.job_repository import JobRepository
 from core.storage.ops_store import OpsStore
-from core.storage.recovery_repository import RecoveryRepository
 from core.storage.risk_repository import RiskDecisionRepository
 from core.storage.run_history_repository import RunHistoryRepository
 from core.storage.signal_repository import SignalRepository
@@ -37,13 +35,6 @@ def build_history_store(path_or_url: str | None = None, *, context: StorageConte
         return context.history
     value = _resolve_postgres_url(path_or_url)
     return RunHistoryRepository(value)
-
-
-def build_discovery_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):
-    if context is not None:
-        return context.discovery
-    value = _resolve_postgres_url(path_or_url)
-    return DiscoveryRunRepository(value)
 
 
 def build_alert_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):
@@ -121,13 +112,6 @@ def build_trading_store(path_or_url: str | None = None, *, context: StorageConte
         return context.trading
     value = _resolve_postgres_url(path_or_url)
     return TradingStore(value)
-
-
-def build_recovery_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):
-    if context is not None:
-        return context.recovery
-    value = _resolve_postgres_url(path_or_url)
-    return RecoveryRepository(value)
 
 
 def build_ops_store(path_or_url: str | None = None, *, context: StorageContext | None = None) -> OpsStore:

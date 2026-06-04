@@ -6,7 +6,7 @@ from uuid import uuid4
 from core.services.alpaca import create_alpaca_client_from_env
 from core.services.execution import refresh_execution_attempt
 
-from .maintenance import _opportunity_is_active_for_intent, _position_is_active_for_intent
+from .maintenance import _position_is_active_for_intent
 from .shared import (
     ACTIVE_INTENT_STATES,
     WORKING_REPRICE_ATTEMPT_STATUSES,
@@ -72,7 +72,6 @@ def _create_replacement_intent(
         execution_store,
         execution_intent_id=replacement_id,
         trading_strategy_id=str(intent["trading_strategy_id"]),
-        opportunity_decision_id=_as_text(intent.get("opportunity_decision_id")),
         trade_signal_id=_as_text(intent.get("trade_signal_id")),
         trade_decision_id=_as_text(intent.get("trade_decision_id")),
         strategy_position_id=_as_text(intent.get("strategy_position_id")),
@@ -195,11 +194,7 @@ def _manage_submitted_open_intents(
         if status not in WORKING_REPRICE_ATTEMPT_STATUSES:
             continue
         if action_type == "open":
-            active, inactive_reason = _opportunity_is_active_for_intent(
-                storage.signals,
-                intent,
-                execution_attempt_id=execution_attempt_id,
-            )
+            active, inactive_reason = True, None
         else:
             active, inactive_reason = _position_is_active_for_intent(
                 execution_store,

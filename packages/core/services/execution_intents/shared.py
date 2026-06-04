@@ -149,7 +149,6 @@ def _update_intent(
     state: str | object = _UNCHANGED,
     payload_updates: dict[str, Any] | None = None,
     payload: dict[str, Any] | object = _UNCHANGED,
-    opportunity_decision_id: str | None | object = _UNCHANGED,
     trade_signal_id: str | None | object = _UNCHANGED,
     trade_decision_id: str | None | object = _UNCHANGED,
     strategy_position_id: str | None | object = _UNCHANGED,
@@ -172,9 +171,6 @@ def _update_intent(
     return execution_store.upsert_execution_intent(
         execution_intent_id=str(intent["execution_intent_id"]),
         trading_strategy_id=str(intent["trading_strategy_id"]),
-        opportunity_decision_id=(
-            _as_text(intent.get("opportunity_decision_id")) if opportunity_decision_id is _UNCHANGED else opportunity_decision_id
-        ),
         trade_signal_id=(_as_text(intent.get("trade_signal_id")) if trade_signal_id is _UNCHANGED else trade_signal_id),
         trade_decision_id=(_as_text(intent.get("trade_decision_id")) if trade_decision_id is _UNCHANGED else trade_decision_id),
         strategy_position_id=(_as_text(intent.get("strategy_position_id")) if strategy_position_id is _UNCHANGED else strategy_position_id),
@@ -213,7 +209,6 @@ def issue_pending_execution_intent(
     *,
     execution_intent_id: str,
     trading_strategy_id: str,
-    opportunity_decision_id: str | None,
     strategy_position_id: str | None,
     action_type: str,
     slot_key: str,
@@ -234,7 +229,6 @@ def issue_pending_execution_intent(
     intent = execution_store.upsert_execution_intent(
         execution_intent_id=execution_intent_id,
         trading_strategy_id=trading_strategy_id,
-        opportunity_decision_id=opportunity_decision_id,
         trade_signal_id=trade_signal_id,
         trade_decision_id=trade_decision_id,
         strategy_position_id=strategy_position_id,

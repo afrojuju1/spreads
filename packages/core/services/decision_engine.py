@@ -7,15 +7,24 @@ from typing import Any
 from core.alerts.runtime import plan_runtime_entry_selected_alert
 from core.db.decorators import with_storage
 from core.services.admission_lifecycle import admission_allows_attempt, normalize_lifecycle_admission
-from core.services.entry_planner import plan_entry_selection, score_opportunity
+from core.services.entry_planner import plan_entry_selection
 from core.services.execution_intents import request_execution_intent_dispatch
 from core.services.execution_intents.shared import (
     ACTIVE_INTENT_STATES,
     issue_pending_execution_intent,
 )
+from core.services.live_selection import select_live_signals
 from core.services.management_recipes import build_exit_policy_from_recipe_refs
-from core.services.option_structures import normalize_strategy_family
-from core.services.opportunity_generation import sync_entry_runtime_opportunities
+from core.services.option_structures import candidate_legs, payload_structure_identity
+from core.services.opportunity_fields import (
+    candidate_economics,
+    candidate_evidence_metrics,
+    candidate_policy_context,
+    candidate_strategy_metrics,
+    risk_hints,
+)
+from core.services.runtime_candidate_filters import filter_runtime_symbol_candidates
+from core.services.runtime_policy import resolve_runtime_policy_fields
 from core.services.risk_manager import (
     build_execution_admission_snapshot,
     resolve_position_size_policy,
@@ -115,9 +124,25 @@ def _group_candidate_rows(candidates: tuple[Any, ...]) -> dict[str, list[dict[st
     return grouped
 
 
-def _candidate_identity_from_opportunity(opportunity: dict[str, Any]) -> str:
-    candidate = opportunity.get("candidate") if isinstance(opportunity.get("candidate"), dict) else {}
-    return str(opportunity.get("candidate_identity") or candidate.get("candidate_identity") or candidate.get("structure_identity") or "").strip()
+def _candidate_payload(row: dict[str, Any]) -> dict[str, Any]:
+    candidate = row.get("candidate")
+    if isinstance(candidate, dict):
+        return dict(candidate)
+    return dict(row)
+
+
+def _candidate_identity(candidate: dict[str, Any]) -> str:
+    return str(
+        candidate.get("candidate_identity")
+        or candidate.get("structure_identity")
+        or payload_structure_identity(candidate, strategy=candidate.get("strategy"))
+        or ""
+    ).strip()
+
+
+def _candidate_identity_from_signal(signal: dict[str, Any]) -> str:
+    candidate = _candidate_payload(signal)
+    return str(signal.get("candidate_identity") or _candidate_identity(candidate)).strip()
 
 
 def _trade_signal_refs(candidate_generation: dict[str, Any]) -> tuple[dict[str, Any], ...]:
@@ -128,19 +153,16 @@ def _trade_signal_refs(candidate_generation: dict[str, Any]) -> tuple[dict[str, 
     return tuple(dict(ref) for ref in refs if isinstance(ref, dict))
 
 
-def _trade_signal_id_for_opportunity(
+def _trade_signal_id_for_signal(
     *,
     candidate_generation: dict[str, Any],
     runtime: EntryRuntime,
     market_date: str,
-    opportunity: dict[str, Any],
+    signal: dict[str, Any],
 ) -> str | None:
-    opportunity_id = str(opportunity.get("opportunity_id") or "")
-    symbol = str(opportunity.get("underlying_symbol") or "").upper()
-    candidate_identity = _candidate_identity_from_opportunity(opportunity)
+    symbol = str(signal.get("underlying_symbol") or "").upper()
+    candidate_identity = _candidate_identity_from_signal(signal)
     for ref in _trade_signal_refs(candidate_generation):
-        if opportunity_id and str(ref.get("opportunity_id") or "") == opportunity_id:
-            return None if ref.get("trade_signal_id") in (None, "") else str(ref["trade_signal_id"])
         if (
             symbol
             and candidate_identity
@@ -178,7 +200,7 @@ def _persist_trade_admission(
     execution_intent_id: str,
     slot_key: str,
     admission_snapshot: dict[str, Any],
-    opportunity: dict[str, Any],
+    signal: dict[str, Any],
     expires_at: str,
 ) -> dict[str, Any]:
     normalized = normalize_lifecycle_admission(
@@ -201,8 +223,8 @@ def _persist_trade_admission(
             "trade_decision_id": trade_decision_id,
             "execution_intent_id": execution_intent_id,
             "slot_key": slot_key,
-            "opportunity_id": opportunity.get("opportunity_id"),
-            "underlying_symbol": opportunity.get("underlying_symbol"),
+            "underlying_symbol": signal.get("underlying_symbol"),
+            "candidate_identity": _candidate_identity_from_signal(signal),
         },
     )
     target_intent_state = "pending" if admission_allows_attempt(normalized) else "revoked"
@@ -228,8 +250,8 @@ def _persist_trade_admission(
         supersedes_intent_id=None,
         superseded_by_intent_id=None,
         payload={
-            "opportunity_id": opportunity.get("opportunity_id"),
-            "underlying_symbol": opportunity.get("underlying_symbol"),
+            "underlying_symbol": signal.get("underlying_symbol"),
+            "candidate_identity": _candidate_identity_from_signal(signal),
             "execution_runtime": runtime.strategy.execution.runtime,
         },
         policy_snapshot=policy_ref,
@@ -293,13 +315,181 @@ def _record_skipped_strategy_run(
             "reason": reason,
             "ticker_set": _ticker_set_summary(ticker_set),
             "candidate_count": 0,
-            "opportunity_count": 0,
+            "signal_count": 0,
         },
         config_hash=runtime.config_hash,
     )
 
 
-def _refresh_entry_runtime_opportunities(
+def _runtime_signal_eligibility(runtime: EntryRuntime, row: dict[str, Any]) -> str:
+    eligibility = str(row.get("eligibility") or "live").strip().lower() or "live"
+    if runtime.strategy.execution.mode == "shadow" and eligibility == "live":
+        return "analysis_only"
+    return eligibility
+
+
+def _signal_blockers(candidate: dict[str, Any], *, eligibility: str | None = None) -> list[str]:
+    blockers: list[str] = []
+    if str(eligibility or "live").strip().lower() != "live":
+        blockers.append("analysis_only")
+    for field in ("scoring_blockers", "execution_blockers", "ranking_policy_blockers"):
+        for blocker in _normalized_blockers(candidate.get(field)):
+            if blocker not in blockers:
+                blockers.append(blocker)
+    return blockers
+
+
+def _execution_shape(candidate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "underlying_symbol": candidate.get("underlying_symbol"),
+        "structure_identity": _candidate_identity(candidate),
+        "legs": candidate_legs(candidate),
+        "order_payload": dict(candidate.get("order_payload") or {}),
+    }
+
+
+def _read_previous_entry_selection(
+    *,
+    signal_store: Any,
+    runtime: EntryRuntime,
+    session_date: str,
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    previous_runs = [
+        dict(row)
+        for row in signal_store.list_strategy_runs(
+            trading_strategy_id=runtime.trading_strategy_id,
+            session_date=session_date,
+            limit=1,
+        )
+    ]
+    if not previous_runs:
+        return {}, {}
+    result_payload = previous_runs[0].get("result")
+    if not isinstance(result_payload, dict):
+        result_payload = previous_runs[0].get("result_json")
+    if not isinstance(result_payload, dict):
+        return {}, {}
+    selection_memory = {
+        str(symbol): dict(state)
+        for symbol, state in dict(result_payload.get("selection_memory") or {}).items()
+        if isinstance(symbol, str) and isinstance(state, dict)
+    }
+    previous_promotable: dict[str, dict[str, Any]] = {}
+    for row in list(result_payload.get("selected_signal_rows") or []):
+        if not isinstance(row, dict) or str(row.get("selection_state") or "") != "promotable":
+            continue
+        candidate = _candidate_payload(row)
+        symbol = str(row.get("underlying_symbol") or candidate.get("underlying_symbol") or "").upper()
+        if symbol:
+            previous_promotable[symbol] = candidate
+    return previous_promotable, selection_memory
+
+
+def _signal_row_from_selection(
+    *,
+    runtime: EntryRuntime,
+    market_date: str,
+    generated_at: str,
+    strategy_run_id: str,
+    row: dict[str, Any],
+) -> dict[str, Any]:
+    candidate = _candidate_payload(row)
+    symbol = str(candidate.get("underlying_symbol") or row.get("underlying_symbol") or "").upper()
+    eligibility = _runtime_signal_eligibility(runtime, row)
+    policy_fields = resolve_runtime_policy_fields(
+        profile=runtime.build_settings.scanner_profile,
+        root_symbol=symbol,
+    )
+    return {
+        **dict(row),
+        "label": entry_engine_label(runtime),
+        "market_date": market_date,
+        "session_date": market_date,
+        "root_symbol": symbol,
+        "trading_strategy_id": runtime.trading_strategy_id,
+        "strategy_run_id": strategy_run_id,
+        "config_hash": runtime.config_hash,
+        "strategy_family": runtime.trade_structure,
+        "trade_structure": runtime.trade_structure,
+        "profile": runtime.build_settings.scanner_profile,
+        "style_profile": str(policy_fields["style_profile"]),
+        "horizon_intent": str(policy_fields["horizon_intent"]),
+        "product_class": str(policy_fields["product_class"]),
+        "expiration_date": candidate.get("expiration_date"),
+        "underlying_symbol": symbol,
+        "selection_state": str(row.get("selection_state") or "monitor"),
+        "selection_rank": (None if row.get("selection_rank") in (None, "") else int(row["selection_rank"])),
+        "state_reason": str(row.get("state_reason") or "selected_runtime_signal"),
+        "origin": "engine_selection",
+        "eligibility": eligibility,
+        "eligibility_state": eligibility,
+        "promotion_score": candidate.get("promotion_score"),
+        "execution_score": candidate.get("execution_score"),
+        "confidence": candidate.get("confidence"),
+        "created_at": generated_at,
+        "updated_at": generated_at,
+        "expires_at": None,
+        "reason_codes": [str(row.get("state_reason") or "selected_runtime_signal")],
+        "blockers": _signal_blockers(candidate, eligibility=eligibility),
+        "legs": candidate_legs(candidate),
+        "economics": candidate_economics(candidate),
+        "strategy_metrics": candidate_strategy_metrics(candidate),
+        "order_payload": dict(candidate.get("order_payload") or {}),
+        "evidence": {
+            "runtime_kind": "entry",
+            "trading_strategy_id": runtime.trading_strategy_id,
+            "trade_structure": runtime.trade_structure,
+            "entry_recipe_refs": list(runtime.entry_recipe_refs),
+            "trigger_policy": dict(runtime.trigger_policy),
+            "execution_mode": runtime.strategy.execution.mode,
+            "approval_mode": runtime.strategy.execution.approval,
+            "selection_state": row.get("selection_state"),
+            "selection_rank": row.get("selection_rank"),
+            "generated_at": generated_at,
+            "last_present_at": generated_at,
+            **candidate_evidence_metrics(candidate),
+            **candidate_policy_context(candidate),
+        },
+        "execution_shape": _execution_shape(candidate),
+        "risk_hints": risk_hints(candidate),
+        "source_cycle_id": strategy_run_id,
+        "source_candidate_id": None,
+        "source_selection_state": row.get("selection_state"),
+        "candidate_identity": _candidate_identity(candidate),
+        "candidate": candidate,
+    }
+
+
+def _selection_summary(
+    *,
+    filtered_candidates: dict[str, list[dict[str, Any]]],
+    runtime_filter_reason_counts: dict[str, int],
+    selected_rows: list[dict[str, Any]],
+    selection_memory: dict[str, Any],
+) -> dict[str, Any]:
+    candidate_count = sum(len(rows) for rows in filtered_candidates.values())
+    signal_count = len(selected_rows)
+    if signal_count:
+        status = "signals_selected"
+        message = f"{signal_count} signal{' was' if signal_count == 1 else 's were'} selected from {candidate_count} candidates."
+    elif candidate_count:
+        status = "no_entry_signals"
+        message = "Candidates existed, but none cleared live selection for this strategy run."
+    else:
+        status = "no_candidates"
+        message = "No candidates matched this strategy in the current run."
+    return {
+        "status": status,
+        "message": message,
+        "candidate_symbol_count": len(filtered_candidates),
+        "candidate_count": candidate_count,
+        "signal_count": signal_count,
+        "runtime_filter_reason_counts": dict(runtime_filter_reason_counts),
+        "selection_memory": dict(selection_memory),
+    }
+
+
+def _refresh_entry_runtime_signals(
     *,
     db_target: str,
     storage: Any,
@@ -331,7 +521,7 @@ def _refresh_entry_runtime_opportunities(
             generated_at=generated_at,
             ticker_set=ticker_set,
             candidate_result=None,
-            opportunities=[],
+            signal_rows=[],
         )
         _record_skipped_strategy_run(
             signal_store=storage.signals,
@@ -348,7 +538,7 @@ def _refresh_entry_runtime_opportunities(
             "reason": "ticker_source_blocked",
             "ticker_set": ticker_summary,
             "candidate_build": _candidate_result_summary(None),
-            "strategy_sync": {},
+            "strategy_run": {},
             "engine_facts": engine_fact_summary,
         }
 
@@ -379,27 +569,65 @@ def _refresh_entry_runtime_opportunities(
         runtime=runtime_with_symbols,
     )
     symbol_candidates = _group_candidate_rows(candidate_result.candidates)
-    strategy_sync = sync_entry_runtime_opportunities(
-        signal_store=storage.signals,
-        label=entry_engine_label(runtime_with_symbols),
-        session_date=market_date,
-        generated_at=generated_at,
-        cycle_id=run_key,
-        entry_runtimes=[runtime_with_symbols],
+    filtered_candidates, runtime_filter_reason_counts = filter_runtime_symbol_candidates(
         symbol_candidates=symbol_candidates,
-        runtime_candidate_rows_by_owner=None,
-        persisted_opportunities=[],
-        job_run_id=planner_job_run_id,
+        runtime=runtime_with_symbols,
+    )
+    previous_promotable, previous_selection_memory = _read_previous_entry_selection(
+        signal_store=storage.signals,
+        runtime=runtime_with_symbols,
+        session_date=market_date,
+    )
+    selection = select_live_signals(
+        label=entry_engine_label(runtime_with_symbols),
+        cycle_id=run_key,
+        generated_at=generated_at,
+        symbol_candidates=filtered_candidates,
+        previous_promotable=previous_promotable,
+        previous_selection_memory=previous_selection_memory,
         top_promotable=_entry_candidate_limit(runtime_with_symbols),
         top_monitor=ENTRY_MONITOR_LIMIT,
-        selection_memory=None,
+        profile=runtime_with_symbols.build_settings.scanner_profile,
         signal_cycle_context={
             "ticker_set": ticker_summary,
             "candidate_build": _candidate_result_summary(candidate_result),
         },
-        trigger_type="trading_strategy_entry",
     )
-    synced_opportunities = [dict(row) for row in list(strategy_sync.get("opportunities") or []) if isinstance(row, dict)]
+    selected_rows = [
+        _signal_row_from_selection(
+            runtime=runtime_with_symbols,
+            market_date=market_date,
+            generated_at=generated_at,
+            strategy_run_id=entry_engine_strategy_run_id(run_key, runtime_with_symbols.trading_strategy_id),
+            row=dict(row),
+        )
+        for row in list(selection.get("signals") or [])
+        if isinstance(row, dict)
+    ]
+    selection_memory = dict(selection.get("selection_memory") or {})
+    selection_summary = _selection_summary(
+        filtered_candidates=filtered_candidates,
+        runtime_filter_reason_counts=runtime_filter_reason_counts,
+        selected_rows=selected_rows,
+        selection_memory=selection_memory,
+    )
+    strategy_run = storage.signals.upsert_strategy_run(
+        strategy_run_id=entry_engine_strategy_run_id(run_key, runtime_with_symbols.trading_strategy_id),
+        trading_strategy_id=runtime_with_symbols.trading_strategy_id,
+        trigger_type="trading_strategy_entry",
+        job_run_id=planner_job_run_id,
+        cycle_id=run_key,
+        label=entry_engine_label(runtime_with_symbols),
+        session_date=market_date,
+        started_at=generated_at,
+        completed_at=generated_at,
+        status="completed",
+        result={
+            **selection_summary,
+            "selected_signal_rows": selected_rows,
+        },
+        config_hash=runtime_with_symbols.config_hash,
+    )
     engine_fact_summary = persist_entry_engine_facts(
         engine_facts=getattr(storage, "engine_facts", None),
         runtime=runtime_with_symbols,
@@ -408,20 +636,40 @@ def _refresh_entry_runtime_opportunities(
         generated_at=generated_at,
         ticker_set=ticker_set,
         candidate_result=candidate_result,
-        opportunities=synced_opportunities,
+        signal_rows=selected_rows,
     )
+    signal_refs_by_key = {
+        (
+            str(ref.get("underlying_symbol") or "").upper(),
+            str(ref.get("candidate_identity") or ""),
+        ): str(ref["trade_signal_id"])
+        for ref in list(engine_fact_summary.get("trade_signals") or [])
+        if isinstance(ref, dict) and ref.get("trade_signal_id") not in (None, "")
+    }
+    signals = []
+    for row in selected_rows:
+        key = (str(row.get("underlying_symbol") or "").upper(), _candidate_identity_from_signal(row))
+        trade_signal_id = signal_refs_by_key.get(key) or _trade_signal_id_for_signal(
+            candidate_generation={"engine_facts": engine_fact_summary},
+            runtime=runtime_with_symbols,
+            market_date=market_date,
+            signal=row,
+        )
+        if trade_signal_id is None:
+            continue
+        signals.append({**row, "trade_signal_id": trade_signal_id})
     return {
         "status": "ok",
         "reason": None,
         "ticker_set": ticker_summary,
         "candidate_build": _candidate_result_summary(candidate_result),
-        "strategy_sync": {
-            "strategy_runs_upserted": int(strategy_sync.get("strategy_runs_upserted") or 0),
-            "runtime_opportunities_upserted": int(strategy_sync.get("runtime_opportunities_upserted") or 0),
-            "runtime_opportunities_expired": int(strategy_sync.get("runtime_opportunities_expired") or 0),
-            "opportunity_count": len(synced_opportunities),
+        "strategy_run": {
+            "strategy_run_id": strategy_run.get("strategy_run_id"),
+            "signal_count": len(signals),
+            "selection_summary": selection_summary,
         },
         "engine_facts": engine_fact_summary,
+        "signals": signals,
     }
 
 
@@ -440,13 +688,13 @@ def _selected_execution_admission(
     *,
     execution_store: Any,
     runtime: Any,
-    opportunity: dict[str, Any],
+    signal: dict[str, Any],
 ) -> dict[str, Any]:
     position_size_policy = resolve_position_size_policy(getattr(runtime.build_settings, "risk_defaults", {}))
     try:
         return build_execution_admission_snapshot(
             execution_store=execution_store,
-            candidate=opportunity,
+            candidate=signal,
             limit_price=None,
             strategy_risk_budget=position_size_policy["max_risk_per_trade"],
             position_size_pct_of_available_balance=position_size_policy["position_size_pct_of_available_balance"],
@@ -470,65 +718,6 @@ def _selected_execution_admission(
             "position_size_pct_of_available_balance": position_size_policy["position_size_pct_of_available_balance"],
             "position_size_budget": None,
         }
-
-
-def _opportunity_blockers(row: dict[str, Any]) -> list[str]:
-    blockers = _normalized_blockers(row.get("blockers"))
-    candidate = row.get("candidate")
-    if isinstance(candidate, dict):
-        for field in ("scoring_blockers", "execution_blockers"):
-            for blocker in _normalized_blockers(candidate.get(field)):
-                if blocker not in blockers:
-                    blockers.append(blocker)
-    evidence = row.get("evidence")
-    if isinstance(evidence, dict):
-        for blocker in _normalized_blockers(evidence.get("execution_blockers")):
-            if blocker not in blockers:
-                blockers.append(blocker)
-    return blockers
-
-
-def _matching_opportunities(
-    *,
-    signal_store: Any,
-    market_date: str,
-    symbols: tuple[str, ...] | None = None,
-    strategy_family: str | None = None,
-    allowed_labels: set[str] | None = None,
-    trading_strategy_id: str | None = None,
-    trade_structure: str | None = None,
-    runtime_owned: bool | None = None,
-) -> list[dict[str, Any]]:
-    rows = [
-        dict(row)
-        for row in signal_store.list_opportunities(
-            market_date=market_date,
-            eligibility_state="live",
-            trading_strategy_id=trading_strategy_id,
-            trade_structure=trade_structure,
-            runtime_owned=runtime_owned,
-            limit=500,
-        )
-    ]
-    allowed_symbols = set(symbols or ())
-    filtered = [
-        row
-        for row in rows
-        if (strategy_family is None or normalize_strategy_family(row.get("strategy_family")) == strategy_family)
-        and (not allowed_symbols or str(row.get("underlying_symbol") or "").upper() in allowed_symbols)
-        and (not allowed_labels or str(row.get("label") or "") in allowed_labels)
-        and not _opportunity_blockers(row)
-        and str(row.get("lifecycle_state") or "") in {"candidate", "ready", "blocked"}
-        and row.get("consumed_by_execution_attempt_id") in (None, "")
-    ]
-    filtered.sort(
-        key=lambda row: (
-            -score_opportunity(row),
-            int(row.get("selection_rank") or 999999),
-            str(row.get("opportunity_id") or ""),
-        )
-    )
-    return filtered
 
 
 @with_storage()
@@ -570,7 +759,7 @@ def run_trading_strategy_entry_decision(
         routine="entry",
         market_date=resolved_market_date,
     )
-    candidate_generation = _refresh_entry_runtime_opportunities(
+    candidate_generation = _refresh_entry_runtime_signals(
         db_target=db_target,
         storage=storage,
         runtime=runtime,
@@ -587,13 +776,7 @@ def run_trading_strategy_entry_decision(
             "run_key": run_key,
             "candidate_generation": candidate_generation,
         }
-    opportunities = _matching_opportunities(
-        signal_store=signal_store,
-        market_date=resolved_market_date,
-        trading_strategy_id=runtime.trading_strategy_id,
-        trade_structure=runtime.trade_structure,
-        runtime_owned=True,
-    )
+    signals = [dict(row) for row in list(candidate_generation.get("signals") or []) if isinstance(row, dict)]
     min_score = float(runtime.trigger_policy.get("min_opportunity_score") or 0.0)
     controls_allowed, controls_reason, strategy_metrics = evaluate_trading_strategy_entry_controls(
         storage=storage,
@@ -601,7 +784,7 @@ def run_trading_strategy_entry_decision(
         market_date=resolved_market_date,
     )
     plan = plan_entry_selection(
-        opportunities=opportunities,
+        signals=signals,
         controls_allowed=controls_allowed,
         controls_reason=controls_reason,
         bot_metrics=strategy_metrics,
@@ -614,36 +797,40 @@ def run_trading_strategy_entry_decision(
     admissions: list[dict[str, Any]] = []
     selected_intent: dict[str, Any] | None = None
     selected_decision: dict[str, Any] | None = None
-    selected_opportunity: dict[str, Any] | None = None
+    selected_signal: dict[str, Any] | None = None
     selected_execution_admission: dict[str, Any] | None = None
     dispatch_job_run_id: str | None = None
-    for decision_plan, opportunity in zip(plan["decisions"], opportunities, strict=False):
-        opportunity_id = str(opportunity["opportunity_id"])
+    for decision_plan, signal in zip(plan["decisions"], signals, strict=False):
         slot_key = _slot_key(
             runtime.trading_strategy_id,
-            str(opportunity.get("underlying_symbol") or ""),
+            str(signal.get("underlying_symbol") or ""),
         )
-        trade_signal_id = _trade_signal_id_for_opportunity(
+        trade_signal_id = _trade_signal_id_for_signal(
             candidate_generation=candidate_generation,
             runtime=runtime,
             market_date=resolved_market_date,
-            opportunity=opportunity,
+            signal=signal,
         )
         if trade_signal_id is None:
             continue
         trade_decision_state = _trade_decision_state(decision_plan["state"])
         reason_codes = list(decision_plan["reason_codes"])
         evidence = {
-            "opportunity_id": opportunity_id,
             "policy_ref": policy_ref,
             "decision_plan": dict(decision_plan["payload"]),
+            "candidate_identity": _candidate_identity_from_signal(signal),
+            "underlying_symbol": signal.get("underlying_symbol"),
             "candidate_generation": {
-                "candidate_run_id": (candidate_generation.get("engine_facts") or {}).get("candidate_run_id")
-                if isinstance(candidate_generation.get("engine_facts"), dict)
-                else None,
-                "source_run_id": (candidate_generation.get("engine_facts") or {}).get("source_run_id")
-                if isinstance(candidate_generation.get("engine_facts"), dict)
-                else None,
+                "candidate_run_id": (
+                    (candidate_generation.get("engine_facts") or {}).get("candidate_run_id")
+                    if isinstance(candidate_generation.get("engine_facts"), dict)
+                    else None
+                ),
+                "source_run_id": (
+                    (candidate_generation.get("engine_facts") or {}).get("source_run_id")
+                    if isinstance(candidate_generation.get("engine_facts"), dict)
+                    else None
+                ),
             },
         }
         if str(decision_plan["state"]) == "selected":
@@ -670,7 +857,7 @@ def run_trading_strategy_entry_decision(
             score=float(decision_plan["score"]),
             rank=int(decision_plan["rank"]),
             selected_quantity=None,
-            selected_execution_shape=dict(opportunity.get("execution_shape") or {}),
+            selected_execution_shape=dict(signal.get("execution_shape") or {}),
             reason_codes=reason_codes,
             blockers=(reason_codes if trade_decision_state in {"skip", "selected_blocked"} else []),
             evidence=evidence,
@@ -687,7 +874,7 @@ def run_trading_strategy_entry_decision(
         selected_execution_admission = _selected_execution_admission(
             execution_store=execution_store,
             runtime=runtime,
-            opportunity=opportunity,
+            signal=signal,
         )
         execution_intent_id = _intent_id(str(decision["trade_decision_id"]))
         intent_expires_at = _expires_in(ENTRY_INTENT_TTL_MINUTES)
@@ -701,19 +888,18 @@ def run_trading_strategy_entry_decision(
             execution_intent_id=execution_intent_id,
             slot_key=slot_key,
             admission_snapshot=selected_execution_admission,
-            opportunity=opportunity,
+            signal=signal,
             expires_at=intent_expires_at,
         )
         admissions.append(selected_admission)
         if not admission_allows_attempt(selected_admission):
             selected_decision = decision
-            selected_opportunity = opportunity
+            selected_signal = signal
             continue
         selected_intent = issue_pending_execution_intent(
             execution_store,
             execution_intent_id=execution_intent_id,
             trading_strategy_id=runtime.trading_strategy_id,
-            opportunity_decision_id=None,
             trade_signal_id=trade_signal_id,
             trade_decision_id=str(decision["trade_decision_id"]),
             strategy_position_id=None,
@@ -730,9 +916,8 @@ def run_trading_strategy_entry_decision(
                 "trade_signal_id": trade_signal_id,
                 "trade_decision_id": decision["trade_decision_id"],
                 "admission_decision_id": selected_admission["admission_decision_id"],
-                "opportunity_id": opportunity_id,
-                "opportunity_expires_at": opportunity.get("expires_at"),
-                "underlying_symbol": opportunity.get("underlying_symbol"),
+                "underlying_symbol": signal.get("underlying_symbol"),
+                "candidate_identity": _candidate_identity_from_signal(signal),
                 "execution_mode": runtime.strategy.execution.mode,
                 "approval_mode": runtime.strategy.execution.approval,
                 "execution_runtime": runtime.strategy.execution.runtime,
@@ -743,13 +928,12 @@ def run_trading_strategy_entry_decision(
                 "trade_signal_id": trade_signal_id,
                 "trade_decision_id": decision["trade_decision_id"],
                 "admission_decision_id": selected_admission["admission_decision_id"],
-                "opportunity_id": opportunity_id,
                 "slot_key": slot_key,
                 "execution_runtime": runtime.strategy.execution.runtime,
             },
         )
         selected_decision = decision
-        selected_opportunity = opportunity
+        selected_signal = signal
     if selected_intent is not None:
         dispatch_request = request_execution_intent_dispatch(
             job_store=job_store,
@@ -774,7 +958,7 @@ def run_trading_strategy_entry_decision(
             )
 
     runtime_alert: dict[str, Any] | None = None
-    if selected_intent is not None and selected_decision is not None and selected_opportunity is not None:
+    if selected_intent is not None and selected_decision is not None and selected_signal is not None:
         try:
             runtime_alert = plan_runtime_entry_selected_alert(
                 alert_store=getattr(storage, "alerts", None),
@@ -782,7 +966,7 @@ def run_trading_strategy_entry_decision(
                 trading_strategy_id=runtime.trading_strategy_id,
                 market_date=resolved_market_date,
                 run_key=run_key,
-                opportunity=selected_opportunity,
+                trade_signal=selected_signal,
                 decision=selected_decision,
                 execution_intent=selected_intent,
                 execution_mode=runtime.strategy.execution.mode,
@@ -798,10 +982,10 @@ def run_trading_strategy_entry_decision(
         "trading_strategy_id": runtime.trading_strategy_id,
         "market_date": resolved_market_date,
         "run_key": run_key,
-        "opportunity_count": len(opportunities),
+        "signal_count": len(signals),
         "decision_count": len(decisions),
         "admission_count": len(admissions),
-        "selected_opportunity_id": None if selected is None else str(selected.get("opportunity_id")),
+        "selected_trade_signal_id": None if selected is None else str(selected.get("trade_signal_id")),
         "execution_intent_id": None if selected_intent is None else str(selected_intent.get("execution_intent_id")),
         "execution_admission": selected_execution_admission,
         "admission_decision_id": None if not admissions else admissions[-1].get("admission_decision_id"),

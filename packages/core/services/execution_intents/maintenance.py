@@ -3,12 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from core.jobs.specs import list_declared_job_rows
 from core.services.deployment_policy import (
     DEPLOYMENT_MODE_LIVE_AUTO,
     DEPLOYMENT_MODE_PAPER_AUTO,
 )
-from core.services.live_pipelines import resolve_discovery_run_label
+from core.services.trading_strategies import load_active_trading_strategies
 from core.storage.serializers import parse_datetime
 
 from .shared import (
@@ -60,42 +59,6 @@ def _intent_exit_policy(intent: dict[str, Any]) -> dict[str, Any] | None:
     payload = _intent_payload(intent)
     exit_policy = payload.get("exit_policy")
     return dict(exit_policy) if isinstance(exit_policy, dict) else None
-
-
-def _resolve_intent_opportunity_id(
-    signal_store: Any,
-    intent: dict[str, Any],
-) -> str | None:
-    opportunity_decision_id = _as_text(intent.get("opportunity_decision_id"))
-    if opportunity_decision_id:
-        decision = signal_store.get_opportunity_decision(opportunity_decision_id)
-        if decision is not None:
-            return _as_text(decision.get("opportunity_id"))
-    return _as_text(_intent_payload(intent).get("opportunity_id"))
-
-
-def _opportunity_is_active_for_intent(
-    signal_store: Any,
-    intent: dict[str, Any],
-    *,
-    execution_attempt_id: str | None = None,
-) -> tuple[bool, str | None]:
-    opportunity_id = _resolve_intent_opportunity_id(signal_store, intent)
-    if opportunity_id is None:
-        return False, "opportunity_missing"
-    opportunity = signal_store.get_opportunity(opportunity_id)
-    if opportunity is None:
-        return False, "opportunity_missing"
-    lifecycle_state = str(opportunity.get("lifecycle_state") or "")
-    eligibility_state = str(opportunity.get("eligibility_state") or "")
-    if lifecycle_state not in {"candidate", "ready", "blocked"}:
-        return False, "opportunity_inactive"
-    if eligibility_state != "live":
-        return False, "opportunity_not_live"
-    consumed = _as_text(opportunity.get("consumed_by_execution_attempt_id"))
-    if execution_attempt_id and consumed not in {None, "", execution_attempt_id}:
-        return False, "opportunity_consumed_elsewhere"
-    return True, None
 
 
 def _position_is_active_for_intent(
@@ -225,14 +188,8 @@ def _backfill_strategy_position_links(execution_store: Any, *, limit: int) -> di
     return {"linked": linked, "results": results[:25]}
 
 
-def _active_trading_strategy_labels(job_store: Any) -> set[str]:
-    labels: set[str] = set()
-    for definition in list_declared_job_rows(enabled_only=True, job_type="discovery_run"):
-        payload = dict(definition.get("payload") or {})
-        if not bool(payload.get("trading_strategy_enabled", False)):
-            continue
-        labels.add(resolve_discovery_run_label(payload))
-    return labels
+def _active_trading_strategy_ids() -> set[str]:
+    return set(load_active_trading_strategies().keys())
 
 
 def _cleanup_terminal_intent_history(
@@ -266,57 +223,57 @@ def _cleanup_terminal_intent_history(
     return {"deleted": 0, "retained": retained, "results": results[:25]}
 
 
-def _cleanup_stale_strategy_opportunities(
+def _cleanup_inactive_strategy_intents(
     *,
-    signal_store: Any,
-    job_store: Any,
-    market_date: str,
+    execution_store: Any,
     limit: int,
     older_than_minutes: int = 15,
 ) -> dict[str, Any]:
-    if not signal_store.schema_ready():
-        return {"deleted": 0, "terminalized": 0, "results": []}
-    active_labels = _active_trading_strategy_labels(job_store)
+    active_strategy_ids = _active_trading_strategy_ids()
     threshold = datetime.now(UTC) - timedelta(minutes=max(older_than_minutes, 1))
-    terminalized = 0
+    revoked = 0
     results: list[dict[str, Any]] = []
-    opportunities = [
+    intents = [
         dict(row)
-        for row in signal_store.list_opportunities(
-            market_date=market_date,
-            runtime_owned=True,
-            limit=max(int(limit), 1) * 50,
+        for row in execution_store.list_execution_intents(
+            states=sorted(ACTIVE_INTENT_STATES),
+            limit=max(int(limit), 1) * 25,
         )
     ]
-    for opportunity in opportunities:
-        if terminalized >= max(int(limit), 1):
+    for intent in intents:
+        if revoked >= max(int(limit), 1):
             break
-        opportunity_id = str(opportunity["opportunity_id"])
-        label = str(opportunity.get("label") or "")
-        lifecycle_state = str(opportunity.get("lifecycle_state") or "")
-        updated_at = parse_datetime(_as_text(opportunity.get("updated_at")))
-        if updated_at is None or updated_at >= threshold:
+        trading_strategy_id = str(intent.get("trading_strategy_id") or "")
+        if trading_strategy_id in active_strategy_ids:
             continue
-        if _as_text(opportunity.get("consumed_by_execution_attempt_id")):
+        created_at = parse_datetime(_as_text(intent.get("created_at")))
+        if created_at is None or created_at >= threshold:
             continue
-        if lifecycle_state == "expired":
+        execution_intent_id = str(intent["execution_intent_id"])
+        if _as_text(intent.get("execution_attempt_id")):
             continue
-        if label in active_labels:
-            continue
-        expired = signal_store.expire_opportunity(
-            opportunity_id,
-            expired_at=_utc_now(),
-            reason_code="expired_inactive_strategy_label",
+        updated = _update_intent(
+            execution_store,
+            intent,
+            state="revoked",
+            payload_updates={
+                "dispatch_status": "revoked",
+                "revoke_reason": "inactive_trading_strategy",
+            },
+            updated_at=_utc_now(),
         )
-        if expired is None:
-            continue
-        terminalized += 1
+        _append_event(
+            execution_store,
+            execution_intent_id=execution_intent_id,
+            event_type="revoked",
+            payload={"reason": "inactive_trading_strategy"},
+        )
+        revoked += 1
         results.append(
             {
-                "opportunity_id": opportunity_id,
-                "label": label,
-                "previous_lifecycle_state": lifecycle_state,
-                "lifecycle_state": expired.get("lifecycle_state"),
+                "execution_intent_id": execution_intent_id,
+                "trading_strategy_id": trading_strategy_id,
+                "state": updated.get("state"),
             }
         )
-    return {"deleted": 0, "terminalized": terminalized, "results": results[:25]}
+    return {"revoked": revoked, "results": results[:25]}

@@ -779,7 +779,6 @@ def _create_managed_close_intent(
         execution_store,
         execution_intent_id=_close_intent_id(position_id, runtime.trading_strategy_id),
         trading_strategy_id=runtime.trading_strategy_id,
-        opportunity_decision_id=None,
         strategy_position_id=position_id,
         execution_attempt_id=None,
         action_type="close",

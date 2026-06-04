@@ -7,13 +7,12 @@
 - Prefer extending existing service payloads over creating API-only parallel logic.
 - Keep endpoint shapes narrow and caller-driven. Expand only when there is a real consumer.
 - Keep route ownership explicit:
-  - pipeline list/detail routes -> `services/pipelines.py`
-  - current runtime/session health surfaces -> `services/live_runtime.py`, `services/discovery_run_health/`, and `services/pipelines.py`
-  - opportunities routes -> `services/opportunities.py`
-  - opportunity and position execution mutations -> `services/execution/`
+  - internal ops/trading/live-doctor routes -> `services/ops/`
+  - position execution mutations -> `services/execution/`
   - positions read routes -> `services/positions.py`
-  - UOA routes -> `services/uoa_state.py`
-  - internal ops/health visibility routes -> `services/ops/`
   - account overview routes -> `services/account_state.py`
+  - control routes -> `services/control_plane.py`
+  - execution runtime/manual order routes -> `services/execution/`
+- Pipeline, opportunities, discovery-run, and UOA routes are retired active surfaces. Do not re-add compatibility route wrappers around them.
 - Active cleanup `spr-zuy` is replacing fragmented internal ops routes with properly named trading/storage ops state routes. During that work, remove old active route concepts instead of preserving compatibility wrappers.
 - For runtime and rollout guidance, also follow [packages/core/AGENTS.md](../../packages/core/AGENTS.md).

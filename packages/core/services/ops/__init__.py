@@ -6,7 +6,6 @@ from core.services.control_plane import (
     resolve_execution_kill_switch_reason,
 )
 
-from .audit import build_audit_view
 from .jobs import (
     build_job_lanes_overview,
     build_job_run_view,
@@ -17,11 +16,9 @@ from .live_doctor import build_live_doctor
 from .shared import OpsLookupError
 from .system import build_system_status
 from .trading import build_trading_health
-from .uoa import build_uoa_cycle_view, build_uoa_overview
 
 __all__ = [
     "OpsLookupError",
-    "build_audit_view",
     "build_engine_ops_state",
     "build_job_lanes_overview",
     "build_job_run_view",
@@ -29,8 +26,6 @@ __all__ = [
     "build_live_doctor",
     "build_system_status",
     "build_trading_health",
-    "build_uoa_cycle_view",
-    "build_uoa_overview",
     "get_account_overview",
     "get_control_state_snapshot",
     "resolve_execution_kill_switch_reason",

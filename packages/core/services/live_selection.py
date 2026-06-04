@@ -64,14 +64,8 @@ def candidate_identity(candidate: dict[str, Any]) -> str:
 
 def summarize_candidate(candidate: dict[str, Any]) -> str:
     display_fields = payload_display_fields(candidate)
-    strike_path = (
-        str(candidate.get("strike_path") or "").strip()
-        or str(display_fields.get("strike_path") or "n/a")
-    )
-    return (
-        f"{candidate['strategy']} {strike_path} "
-        f"score {_selection_score(candidate):.1f}"
-    )
+    strike_path = str(candidate.get("strike_path") or "").strip() or str(display_fields.get("strike_path") or "n/a")
+    return f"{candidate['strategy']} {strike_path} " f"score {_selection_score(candidate):.1f}"
 
 
 def _selection_score(candidate: dict[str, Any]) -> float:
@@ -85,20 +79,14 @@ def _candidate_promotion_floor(
     candidate: dict[str, Any],
     thresholds: dict[str, Any],
 ) -> float:
-    return float(
-        (candidate.get("score_thresholds") or {}).get("promotion_floor")
-        or thresholds["promotable_score_floor"]
-    )
+    return float((candidate.get("score_thresholds") or {}).get("promotion_floor") or thresholds["promotable_score_floor"])
 
 
 def _candidate_monitor_floor(
     candidate: dict[str, Any],
     thresholds: dict[str, Any],
 ) -> float:
-    return float(
-        (candidate.get("score_thresholds") or {}).get("monitor_floor")
-        or thresholds["monitor_score_floor"]
-    )
+    return float((candidate.get("score_thresholds") or {}).get("monitor_floor") or thresholds["monitor_score_floor"])
 
 
 def _scored_candidate(
@@ -141,9 +129,7 @@ def _scored_candidate(
     confidence = round(
         max(
             0.0,
-            min(
-                (execution_score - monitor_floor) / max(100.0 - monitor_floor, 1.0), 1.0
-            ),
+            min((execution_score - monitor_floor) / max(100.0 - monitor_floor, 1.0), 1.0),
         ),
         4,
     )
@@ -180,9 +166,7 @@ def _scored_candidate(
 def promotable_candidate_is_eligible(candidate: dict[str, Any]) -> bool:
     if not candidate_requires_favorable_setup(candidate):
         return True
-    return str(candidate.get("setup_status") or "").lower() == "favorable" and (
-        candidate_has_intraday_setup_context(candidate)
-    )
+    return str(candidate.get("setup_status") or "").lower() == "favorable" and (candidate_has_intraday_setup_context(candidate))
 
 
 def _meets_midpoint_credit_floor(
@@ -236,11 +220,7 @@ def read_previous_selection(
             previous[str(symbol)] = payload
 
     raw_memory = latest_cycle.get("selection_memory") or {}
-    selection_memory = {
-        str(symbol): state
-        for symbol, state in raw_memory.items()
-        if isinstance(symbol, str) and isinstance(state, dict)
-    }
+    selection_memory = {str(symbol): state for symbol, state in raw_memory.items() if isinstance(symbol, str) and isinstance(state, dict)}
     return previous, selection_memory
 
 
@@ -271,11 +251,7 @@ def _sort_candidates(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
         key=lambda candidate: (
             _selection_score(candidate),
             float(candidate.get("execution_score") or 0.0),
-            float(
-                candidate.get("discovery_score")
-                or candidate.get("quality_score")
-                or 0.0
-            ),
+            float(candidate.get("discovery_score") or candidate.get("quality_score") or 0.0),
             float(candidate.get("return_on_risk") or 0.0),
             float(candidate.get("midpoint_credit") or 0.0),
             min(
@@ -323,22 +299,16 @@ def _select_promotable_candidates(
         if previous is None:
             if winner is not None:
                 if (
-                    _selection_score(winner)
-                    >= float(thresholds["promotable_strong_score"])
+                    _selection_score(winner) >= float(thresholds["promotable_strong_score"])
                     or runner_up is None
-                    or (
-                        winner_gap is not None
-                        and winner_gap >= float(thresholds["promotable_winner_gap"])
-                    )
+                    or (winner_gap is not None and winner_gap >= float(thresholds["promotable_winner_gap"]))
                 ):
                     accepted = winner
                 else:
                     confirmed, memory_update = _evaluate_pending_candidate(
                         winner=winner,
                         previous_memory=symbol_memory,
-                        confirmation_cycles=int(
-                            thresholds["promotable_confirmation_cycles"]
-                        ),
+                        confirmation_cycles=int(thresholds["promotable_confirmation_cycles"]),
                     )
                     if confirmed:
                         accepted = winner
@@ -357,32 +327,21 @@ def _select_promotable_candidates(
 
         previous_id = candidate_identity(previous)
         previous_match = next(
-            (
-                candidate
-                for candidate in options
-                if candidate_identity(candidate) == previous_id
-            ),
+            (candidate for candidate in options if candidate_identity(candidate) == previous_id),
             None,
         )
         previous_same_side = next(
-            (
-                candidate
-                for candidate in options
-                if candidate["strategy"] == previous["strategy"]
-            ),
+            (candidate for candidate in options if candidate["strategy"] == previous["strategy"]),
             None,
         )
         current_anchor = previous_match or previous_same_side
-        if current_anchor is not None and not promotable_candidate_is_eligible(
-            current_anchor
-        ):
+        if current_anchor is not None and not promotable_candidate_is_eligible(current_anchor):
             current_anchor = None
 
         if current_anchor is not None and _meets_promotable_thresholds(
             current_anchor,
             thresholds,
-            score_floor=_candidate_promotion_floor(current_anchor, thresholds)
-            - float(thresholds["promotable_hold_tolerance"]),
+            score_floor=_candidate_promotion_floor(current_anchor, thresholds) - float(thresholds["promotable_hold_tolerance"]),
         ):
             accepted = current_anchor
         elif winner is not None:
@@ -392,9 +351,7 @@ def _select_promotable_candidates(
                 confirmed, memory_update = _evaluate_pending_candidate(
                     winner=winner,
                     previous_memory=symbol_memory,
-                    confirmation_cycles=int(
-                        thresholds["promotable_confirmation_cycles"]
-                    ),
+                    confirmation_cycles=int(thresholds["promotable_confirmation_cycles"]),
                 )
                 if confirmed:
                     accepted = winner
@@ -411,26 +368,19 @@ def _select_promotable_candidates(
                         confirmed, memory_update = _evaluate_pending_candidate(
                             winner=winner,
                             previous_memory=symbol_memory,
-                            confirmation_cycles=int(
-                                thresholds["promotable_confirmation_cycles"]
-                            ),
+                            confirmation_cycles=int(thresholds["promotable_confirmation_cycles"]),
                         )
                         if confirmed:
                             accepted = winner
                             memory_update = {}
                 else:
-                    if score_gap >= float(
-                        thresholds["promotable_side_switch_margin"]
-                    ) and (
-                        winner_gap is None
-                        or winner_gap >= float(thresholds["promotable_winner_gap"])
+                    if score_gap >= float(thresholds["promotable_side_switch_margin"]) and (
+                        winner_gap is None or winner_gap >= float(thresholds["promotable_winner_gap"])
                     ):
                         confirmed, memory_update = _evaluate_pending_candidate(
                             winner=winner,
                             previous_memory=symbol_memory,
-                            confirmation_cycles=int(
-                                thresholds["promotable_confirmation_cycles"]
-                            ),
+                            confirmation_cycles=int(thresholds["promotable_confirmation_cycles"]),
                         )
                         if confirmed:
                             accepted = winner
@@ -446,9 +396,7 @@ def _select_promotable_candidates(
                         "accepted_score": accepted_score,
                     }
                 )
-                if memory_update.get("pending_identity") == memory_update.get(
-                    "accepted_identity"
-                ):
+                if memory_update.get("pending_identity") == memory_update.get("accepted_identity"):
                     memory_update.pop("pending_identity", None)
                     memory_update.pop("pending_strategy", None)
                     memory_update.pop("pending_count", None)
@@ -466,9 +414,7 @@ def _select_monitor_candidates(
     top: int,
     thresholds: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    accepted_ids = {
-        candidate_identity(candidate) for candidate in promotable_candidates
-    }
+    accepted_ids = {candidate_identity(candidate) for candidate in promotable_candidates}
     monitor: list[dict[str, Any]] = []
 
     for symbol in sorted(symbol_candidates):
@@ -478,9 +424,7 @@ def _select_monitor_candidates(
                 continue
             if str(candidate.get("scoring_state") or "") == "blocked":
                 continue
-            if _selection_score(candidate) < _candidate_monitor_floor(
-                candidate, thresholds
-            ):
+            if _selection_score(candidate) < _candidate_monitor_floor(candidate, thresholds):
                 continue
             if not _meets_midpoint_credit_floor(
                 candidate,
@@ -564,16 +508,10 @@ def build_selection_events(
         current_identity = candidate_identity(current)
         if previous["strategy"] != current["strategy"]:
             event_type = "promotable_side_flip"
-            message = (
-                f"{symbol} promotable side flipped: "
-                f"{summarize_candidate(previous)} -> {summarize_candidate(current)}"
-            )
+            message = f"{symbol} promotable side flipped: " f"{summarize_candidate(previous)} -> {summarize_candidate(current)}"
         elif previous_identity != current_identity:
             event_type = "promotable_replaced"
-            message = (
-                f"{symbol} promotable idea replaced: "
-                f"{summarize_candidate(previous)} -> {summarize_candidate(current)}"
-            )
+            message = f"{symbol} promotable idea replaced: " f"{summarize_candidate(previous)} -> {summarize_candidate(current)}"
         else:
             score_change = _selection_score(current) - _selection_score(previous)
             if abs(score_change) < score_delta_threshold:
@@ -601,7 +539,7 @@ def build_selection_events(
     return events
 
 
-def select_live_opportunities(
+def select_live_signals(
     *,
     label: str,
     cycle_id: str,
@@ -653,9 +591,9 @@ def select_live_opportunities(
         thresholds=thresholds,
     )
 
-    opportunities: list[dict[str, Any]] = []
+    signals: list[dict[str, Any]] = []
     for index, candidate in enumerate(promotable_candidates, start=1):
-        opportunities.append(
+        signals.append(
             _selection_row(
                 candidate,
                 selection_state="promotable",
@@ -666,9 +604,9 @@ def select_live_opportunities(
             )
         )
 
-    next_rank = len(opportunities) + 1
+    next_rank = len(signals) + 1
     for candidate in monitor_candidates:
-        opportunities.append(
+        signals.append(
             _selection_row(
                 candidate,
                 selection_state="monitor",
@@ -681,7 +619,7 @@ def select_live_opportunities(
         next_rank += 1
 
     for candidate in scored_recovered_candidates:
-        opportunities.append(
+        signals.append(
             _selection_row(
                 candidate,
                 selection_state="monitor",
@@ -693,10 +631,7 @@ def select_live_opportunities(
         )
         next_rank += 1
 
-    current_promotable = {
-        str(candidate["underlying_symbol"]): candidate
-        for candidate in promotable_candidates
-    }
+    current_promotable = {str(candidate["underlying_symbol"]): candidate for candidate in promotable_candidates}
     events = build_selection_events(
         label=label,
         cycle_id=cycle_id,
@@ -706,7 +641,7 @@ def select_live_opportunities(
     )
 
     return {
-        "opportunities": opportunities,
+        "signals": signals,
         "symbol_candidates": scored_symbol_candidates,
         "selection_memory": selection_memory,
         "promotable_candidates": promotable_candidates,

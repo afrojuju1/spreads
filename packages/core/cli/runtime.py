@@ -9,17 +9,8 @@ from rich.table import Table
 from core.cli.ops_render import (
     build_console,
     render_json_payload,
-    render_pipelines_view,
 )
 from core.services.execution.runtimes import resolve_execution_runtime_capabilities
-from core.services.discovery_sessions import (
-    get_discovery_session_detail,
-    list_discovery_sessions,
-)
-from core.services.opportunities import (
-    get_opportunity_detail,
-    list_opportunities,
-)
 from core.services.positions import get_position_detail, list_positions
 
 
@@ -75,75 +66,6 @@ def execution_runtimes_command(
     _render_execution_runtimes(payload, no_color=no_color)
 
 
-def pipelines_command(
-    pipeline_id: str | None = typer.Argument(None, help="Pipeline id to inspect."),
-    environment: str | None = typer.Option(
-        None,
-        "--env",
-        help="Run this command against a named deploy target.",
-    ),
-    date: str | None = typer.Option(None, "--date", help="Optional market date."),
-    limit: int = typer.Option(25, "--limit", help="Maximum pipelines to list."),
-    db: str | None = typer.Option(None, "--db", help="Database URL override."),
-    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
-    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
-) -> None:
-    payload = (
-        list_discovery_sessions(db_target=db, limit=limit, market_date=date)
-        if pipeline_id is None
-        else get_discovery_session_detail(
-            db_target=db,
-            pipeline_id=pipeline_id,
-            market_date=date,
-        )
-    )
-    console = build_console(no_color=no_color)
-    if json_output:
-        render_json_payload(console, payload)
-        return
-    render_pipelines_view(console, payload)
-
-
-def opportunities_command(
-    opportunity_id: str | None = typer.Argument(None, help="Opportunity id to inspect."),
-    environment: str | None = typer.Option(
-        None,
-        "--env",
-        help="Run this command against a named deploy target.",
-    ),
-    pipeline_id: str | None = typer.Option(None, "--pipeline-id", help="Optional pipeline filter."),
-    label: str | None = typer.Option(None, "--label", help="Optional discovery label filter."),
-    trading_strategy_id: str | None = typer.Option(
-        None,
-        "--trading-strategy-id",
-        help="Optional trading strategy owner filter.",
-    ),
-    date: str | None = typer.Option(None, "--date", help="Optional market date."),
-    include_expired: bool = typer.Option(
-        False,
-        "--include-expired",
-        help="Include expired opportunities in list output.",
-    ),
-    limit: int = typer.Option(50, "--limit", help="Maximum opportunities to list."),
-    db: str | None = typer.Option(None, "--db", help="Database URL override."),
-    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
-) -> None:
-    payload = (
-        list_opportunities(
-            db_target=db,
-            pipeline_id=pipeline_id,
-            label=label,
-            market_date=date,
-            trading_strategy_id=trading_strategy_id,
-            include_expired=include_expired,
-            limit=limit,
-        )
-        if opportunity_id is None
-        else get_opportunity_detail(db_target=db, opportunity_id=opportunity_id)
-    )
-    _print_payload(payload, json_output=json_output)
-
-
 def positions_command(
     position_id: str | None = typer.Argument(None, help="Position id to inspect."),
     environment: str | None = typer.Option(
@@ -151,8 +73,6 @@ def positions_command(
         "--env",
         help="Run this command against a named deploy target.",
     ),
-    pipeline_id: str | None = typer.Option(None, "--pipeline-id", help="Optional pipeline filter."),
-    label: str | None = typer.Option(None, "--label", help="Optional discovery label filter."),
     trading_strategy_id: str | None = typer.Option(
         None,
         "--trading-strategy-id",
@@ -166,8 +86,6 @@ def positions_command(
     payload = (
         list_positions(
             db_target=db,
-            pipeline_id=pipeline_id,
-            label=label,
             market_date=date,
             trading_strategy_id=trading_strategy_id,
             limit=limit,

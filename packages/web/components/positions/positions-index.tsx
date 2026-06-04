@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -10,7 +9,6 @@ import { BriefcaseBusiness, ExternalLink, RefreshCw, Send, XCircle } from "lucid
 import { DataTable } from "@/components/data-table";
 import {
   buildPositionsHref,
-  buildPipelineHref,
   cancelExecution,
   closePosition,
   getPositions,
@@ -66,10 +64,6 @@ function getPositionOwner(position: Position): Record<string, unknown> {
   return readRecord(positionRecord(position).owner);
 }
 
-function getPositionDiscovery(position: Position): Record<string, unknown> {
-  return readRecord(positionRecord(position).discovery);
-}
-
 function hasPositionTradingStrategyOwner(position: Position): boolean {
   const owner = getPositionOwner(position);
   return Boolean(readString(owner.trading_strategy_id, ""));
@@ -78,20 +72,6 @@ function hasPositionTradingStrategyOwner(position: Position): boolean {
 function getPositionTradingStrategyLabel(position: Position): string {
   const owner = getPositionOwner(position);
   return readString(owner.trading_strategy_id, "—");
-}
-
-function getPositionDiscoveryLabel(position: Position): string {
-  const discovery = getPositionDiscovery(position);
-  return readString(discovery.label, readString(position.pipeline_id));
-}
-
-function getPositionDiscoveryHref(position: Position): string {
-  const discovery = getPositionDiscovery(position);
-  const pipelineId =
-    typeof discovery.pipeline_id === "string"
-      ? discovery.pipeline_id
-      : position.pipeline_id;
-  return buildPipelineHref(pipelineId, position.market_date);
 }
 
 const TERMINAL_ATTEMPT_STATUSES = new Set([
@@ -142,12 +122,6 @@ const POSITION_COLUMNS: ColumnDef<Position>[] = [
             Trading strategy · {getPositionTradingStrategyLabel(row.original)}
           </div>
         ) : null}
-        <Link
-          href={getPositionDiscoveryHref(row.original)}
-          className="mt-1 inline-block text-xs text-muted-foreground underline-offset-4 hover:underline"
-        >
-          Diagnostics · {getPositionDiscoveryLabel(row.original)}
-        </Link>
       </div>
     ),
   },
@@ -174,13 +148,11 @@ const POSITION_COLUMNS: ColumnDef<Position>[] = [
     cell: ({ getValue }) => formatSignedCurrency(getValue() as number | null | undefined),
   },
   {
-    id: "pipeline",
+    id: "owner",
     header: "",
     cell: ({ row }) => (
       <span className="text-xs text-muted-foreground">
-        {hasPositionTradingStrategyOwner(row.original)
-          ? "Trading strategy owner"
-          : "Diagnostics lineage only"}
+        {hasPositionTradingStrategyOwner(row.original) ? "Trading strategy owner" : "Manual or broker-synced"}
       </span>
     ),
   },
@@ -189,14 +161,12 @@ const POSITION_COLUMNS: ColumnDef<Position>[] = [
 type PositionsIndexPageContentProps = {
   marketDate?: string;
   tradingStrategyId?: string;
-  label?: string;
   [key: string]: unknown;
 };
 
 export function PositionsIndexPageContent({
   marketDate,
   tradingStrategyId: tradingStrategyIdProp,
-  label,
 }: PositionsIndexPageContentProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -216,21 +186,17 @@ export function PositionsIndexPageContent({
   const hasOwnerScope = Boolean(tradingStrategyId);
   const ownerScopeLabel = hasOwnerScope
     ? `Trading strategy · ${tradingStrategyId}`
-    : label
-      ? `Diagnostics · ${label}`
-      : "All trading strategies";
+    : "All trading strategies";
   const positionsQuery = useQuery({
     queryKey: [
       "positions",
       marketDate ?? "",
       tradingStrategyId ?? "",
-      label ?? "",
     ],
     queryFn: () =>
       getPositions({
         marketDate,
         tradingStrategyId,
-        label,
         limit: 200,
       }),
   });
@@ -249,7 +215,6 @@ export function PositionsIndexPageContent({
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["runtimes"] }),
         queryClient.invalidateQueries({ queryKey: ["positions"] }),
-        queryClient.invalidateQueries({ queryKey: ["pipelines"] }),
       ]);
     },
   });
@@ -259,7 +224,6 @@ export function PositionsIndexPageContent({
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["runtimes"] }),
         queryClient.invalidateQueries({ queryKey: ["positions"] }),
-        queryClient.invalidateQueries({ queryKey: ["pipelines"] }),
       ]);
     },
   });
@@ -282,11 +246,11 @@ export function PositionsIndexPageContent({
       quantity,
       limit_price: limitPrice,
       time_in_force: "day" as const,
-      label: label ?? "manual_equity",
+      label: "manual_equity",
       market_date: marketDate,
       execution_runtime: "alpaca_direct",
     };
-  }, [equityLimitPrice, equityQuantity, equitySide, equitySymbol, label, marketDate]);
+  }, [equityLimitPrice, equityQuantity, equitySide, equitySymbol, marketDate]);
   const equityMutation = useMutation({
     mutationFn: (payload: EquityOrderRequest) => submitEquityOrder(payload),
     onSuccess: async (result) => {
@@ -294,7 +258,6 @@ export function PositionsIndexPageContent({
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["runtimes"] }),
         queryClient.invalidateQueries({ queryKey: ["positions"] }),
-        queryClient.invalidateQueries({ queryKey: ["pipelines"] }),
       ]);
     },
     onError: (error) => {
@@ -340,17 +303,14 @@ export function PositionsIndexPageContent({
               {hasOwnerScope ? (
                 <Badge variant="outline">{ownerScopeLabel}</Badge>
               ) : null}
-              {!hasOwnerScope && label ? (
-                <Badge variant="outline">{ownerScopeLabel}</Badge>
-              ) : null}
             </div>
             <div className="mt-4 text-3xl font-semibold tracking-[0.02em]">
               Open risk inventory
             </div>
             <div className="mt-2 text-sm text-foreground/70">
-              Inspect current risk first. Trading strategy ownership and diagnostics
-              lineage stay attached to each row, but this surface stays focused
-              on inventory and exits. Current workspace scope: {ownerScopeLabel}.
+              Inspect current risk first. Trading strategy ownership stays
+              attached to each row, but this surface stays focused on inventory
+              and exits. Current workspace scope: {ownerScopeLabel}.
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -372,7 +332,7 @@ export function PositionsIndexPageContent({
               <ExternalLink data-icon="inline-start" />
               Logs
             </a>
-            {hasOwnerScope || label ? (
+            {hasOwnerScope ? (
               <Button type="button" variant="outline" onClick={clearOwnerScope}>
                 Clear scope
               </Button>

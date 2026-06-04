@@ -86,7 +86,7 @@ services:
     command: ["uv", "run", "arq", "core.jobs.worker.RuntimeWorkerSettings"]
     logging: *default-logging
 
-  worker-discovery:
+  worker-data:
     build:
       context: .
     restart: unless-stopped
@@ -99,7 +99,7 @@ services:
         condition: service_started
     env_file:
       - ${SPREADS_CONTAINER_ENV_FILE}
-    command: ["uv", "run", "arq", "core.jobs.worker.DiscoveryWorkerSettings"]
+    command: ["uv", "run", "arq", "core.jobs.worker.DataWorkerSettings"]
     logging: *default-logging
 
   worker-research:

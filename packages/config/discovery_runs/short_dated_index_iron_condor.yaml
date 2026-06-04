@@ -1,6 +1,0 @@
-extends: short_dated_weekly
-discovery_run_id: short_dated_index_iron_condor
-job_key: discovery_run:trading_strategy_short_dated_index_iron_condor
-label: explore_10_iron_condor_weekly_auto
-scanner_strategy: iron_condor
-singleton_scope: trading_strategy_short_dated_index_iron_condor

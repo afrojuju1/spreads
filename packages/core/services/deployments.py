@@ -60,7 +60,7 @@ class DeployTarget:
     redis_port: int
     web_port: int
     worker_runtime_replicas: int
-    worker_discovery_replicas: int
+    worker_data_replicas: int
     worker_research_replicas: int
     web_enabled: bool
     postgres_volume_name: str
@@ -181,9 +181,9 @@ def _load_target(path: Path) -> DeployTarget:
             payload.get("worker_runtime_replicas", 1),
             field_name="worker_runtime_replicas",
         ),
-        worker_discovery_replicas=_coerce_positive_int(
-            payload.get("worker_discovery_replicas", 2),
-            field_name="worker_discovery_replicas",
+        worker_data_replicas=_coerce_positive_int(
+            payload.get("worker_data_replicas", 2),
+            field_name="worker_data_replicas",
         ),
         worker_research_replicas=_coerce_non_negative_int(
             payload.get("worker_research_replicas", 0),
@@ -342,7 +342,7 @@ def build_deploy_env_values(
         "SPREADS_COMPOSE_FILE": target.compose_file,
         "SPREADS_WEB_ENABLED": "true" if target.web_enabled else "false",
         "SPREADS_WORKER_RUNTIME_REPLICAS": str(target.worker_runtime_replicas),
-        "SPREADS_WORKER_DISCOVERY_REPLICAS": str(target.worker_discovery_replicas),
+        "SPREADS_WORKER_DATA_REPLICAS": str(target.worker_data_replicas),
         "SPREADS_WORKER_RESEARCH_REPLICAS": str(target.worker_research_replicas),
         "SPREADS_BACKUP_RETENTION_DAYS": str(target.backup_retention_days),
         "SPREADS_HEALTH_CHECK_MINUTES": str(target.health_check_minutes),
@@ -416,7 +416,7 @@ def build_host_env_values(
         "SPREADS_COMPOSE_FILE": values["SPREADS_COMPOSE_FILE"],
         "SPREADS_WEB_ENABLED": values["SPREADS_WEB_ENABLED"],
         "SPREADS_WORKER_RUNTIME_REPLICAS": values["SPREADS_WORKER_RUNTIME_REPLICAS"],
-        "SPREADS_WORKER_DISCOVERY_REPLICAS": values["SPREADS_WORKER_DISCOVERY_REPLICAS"],
+        "SPREADS_WORKER_DATA_REPLICAS": values["SPREADS_WORKER_DATA_REPLICAS"],
         "SPREADS_WORKER_RESEARCH_REPLICAS": values["SPREADS_WORKER_RESEARCH_REPLICAS"],
         "SPREADS_BACKUP_RETENTION_DAYS": values["SPREADS_BACKUP_RETENTION_DAYS"],
         "SPREADS_HEALTH_CHECK_MINUTES": values["SPREADS_HEALTH_CHECK_MINUTES"],
@@ -460,7 +460,7 @@ def render_deploy_env_file(
         f"SPREADS_WEB_PORT={values['SPREADS_WEB_PORT']}",
         f"SPREADS_WEB_ENABLED={values['SPREADS_WEB_ENABLED']}",
         f"SPREADS_WORKER_RUNTIME_REPLICAS={values['SPREADS_WORKER_RUNTIME_REPLICAS']}",
-        f"SPREADS_WORKER_DISCOVERY_REPLICAS={values['SPREADS_WORKER_DISCOVERY_REPLICAS']}",
+        f"SPREADS_WORKER_DATA_REPLICAS={values['SPREADS_WORKER_DATA_REPLICAS']}",
         f"SPREADS_WORKER_RESEARCH_REPLICAS={values['SPREADS_WORKER_RESEARCH_REPLICAS']}",
         f"SPREADS_BACKUP_RETENTION_DAYS={values['SPREADS_BACKUP_RETENTION_DAYS']}",
         f"SPREADS_HEALTH_CHECK_MINUTES={values['SPREADS_HEALTH_CHECK_MINUTES']}",
@@ -560,7 +560,7 @@ def _compose_up_args(target: DeployTarget, *, build: bool) -> list[str]:
     if build:
         args.append("--build")
     args.extend(["--scale", f"worker-runtime={target.worker_runtime_replicas}"])
-    args.extend(["--scale", f"worker-discovery={target.worker_discovery_replicas}"])
+    args.extend(["--scale", f"worker-data={target.worker_data_replicas}"])
     if target.worker_research_replicas > 0:
         args.extend(["--scale", f"worker-research={target.worker_research_replicas}"])
     return args
@@ -770,7 +770,7 @@ def _ops_script_command(target: DeployTarget, script_path: Path) -> str:
         "SPREADS_COMPOSE_FILE": target.compose_file,
         "SPREADS_WEB_ENABLED": "true" if target.web_enabled else "false",
         "SPREADS_WORKER_RUNTIME_REPLICAS": str(target.worker_runtime_replicas),
-        "SPREADS_WORKER_DISCOVERY_REPLICAS": str(target.worker_discovery_replicas),
+        "SPREADS_WORKER_DATA_REPLICAS": str(target.worker_data_replicas),
         "SPREADS_WORKER_RESEARCH_REPLICAS": str(target.worker_research_replicas),
         "SPREADS_BACKUP_RETENTION_DAYS": str(target.backup_retention_days),
         "SPREADS_BACKUP_ROOT": str(_backup_root(target)),
@@ -1008,7 +1008,7 @@ def deploy_target_payload(target: DeployTarget) -> dict[str, Any]:
         "redis_port": target.redis_port,
         "web_port": target.web_port,
         "worker_runtime_replicas": target.worker_runtime_replicas,
-        "worker_discovery_replicas": target.worker_discovery_replicas,
+        "worker_data_replicas": target.worker_data_replicas,
         "worker_research_replicas": target.worker_research_replicas,
         "web_enabled": target.web_enabled,
         "postgres_volume_name": target.postgres_volume_name,

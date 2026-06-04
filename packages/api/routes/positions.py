@@ -18,8 +18,6 @@ def _db_target(db: str | None) -> str:
 
 @router.get("/positions")
 def list_positions_route(
-    pipeline_id: str | None = None,
-    label: str | None = None,
     trading_strategy_id: str | None = None,
     market_date: str | None = None,
     limit: int = Query(default=200, ge=1, le=500),
@@ -31,8 +29,6 @@ def list_positions_route(
         raise bad_request_error(exc) from exc
     return list_positions(
         db_target=_db_target(db),
-        pipeline_id=pipeline_id,
-        label=label,
         market_date=resolved_market_date,
         trading_strategy_id=trading_strategy_id,
         limit=limit,

@@ -24,10 +24,7 @@ from api.routes.events_ws import router as events_ws_router
 from api.routes.executions import router as executions_router
 from api.routes.health import router as health_router
 from api.routes.internal_ops import router as internal_ops_router
-from api.routes.opportunities import router as opportunities_router
-from api.routes.pipelines import router as pipelines_router
 from api.routes.positions import router as positions_router
-from api.routes.uoa import router as uoa_router
 from core.observability.logging import configure_logging, log_event
 
 logger = logging.getLogger(__name__)
@@ -76,13 +73,10 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(account_router)
     app.include_router(control_router)
-    app.include_router(pipelines_router)
-    app.include_router(opportunities_router)
     app.include_router(positions_router)
     app.include_router(executions_router)
     app.include_router(internal_ops_router)
     app.include_router(company_valuation_router)
-    app.include_router(uoa_router)
     app.include_router(events_ws_router)
     return app
 

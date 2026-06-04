@@ -286,10 +286,10 @@ export function TodayCommandCenter() {
             />
             <div className="mt-3 flex flex-wrap gap-2">
               <Link
-                href={`/opportunities?marketDate=${encodeURIComponent(marketDate)}&tradingStrategyId=momentum_long_calls`}
+                href="/ops"
                 className={buttonVariants({ variant: "outline", size: "sm" })}
               >
-                Opportunities
+                Ops
               </Link>
               <Link href="/positions" className={buttonVariants({ variant: "outline", size: "sm" })}>
                 Positions

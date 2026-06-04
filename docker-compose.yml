@@ -99,7 +99,7 @@ services:
     command: ["uv", "run", "arq", "core.jobs.worker.RuntimeWorkerSettings"]
     volumes:
       - .:/app
-  worker-discovery:
+  worker-data:
     build:
       context: .
     restart: unless-stopped
@@ -116,7 +116,7 @@ services:
       SPREADS_DATABASE_URL: postgresql://spreads:spreads@postgres:5432/spreads
       REDIS_URL: redis://redis:6379/0
       SPREADS_INTERNAL_API_BASE_URL: http://api:8000
-    command: ["uv", "run", "arq", "core.jobs.worker.DiscoveryWorkerSettings"]
+    command: ["uv", "run", "arq", "core.jobs.worker.DataWorkerSettings"]
     volumes:
       - .:/app
   worker-valuation:

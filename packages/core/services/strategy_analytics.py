@@ -35,20 +35,20 @@ def build_trading_strategy_metrics(
     market_date: str | None = None,
 ) -> dict[str, Any]:
     resolved_market_date, window_start, window_end = _window_bounds(market_date)
-    signal_store = storage.signals
+    engine_facts = storage.engine_facts
     execution_store = storage.execution
 
     decisions: list[dict[str, Any]] = []
-    if signal_store.decision_schema_ready():
+    if engine_facts.schema_ready():
         decisions = [
             dict(row)
-            for row in signal_store.list_opportunity_decisions(
+            for row in engine_facts.list_trade_decisions(
                 trading_strategy_id=trading_strategy_id,
                 limit=1000,
             )
             if _in_window(row.get("decided_at"), start=window_start, end=window_end)
         ]
-    decision_state_counts = Counter(str(row.get("state") or "unknown") for row in decisions)
+    decision_state_counts = Counter(str(row.get("decision_state") or "unknown") for row in decisions)
 
     intents: list[dict[str, Any]] = []
     if execution_store.intent_schema_ready():

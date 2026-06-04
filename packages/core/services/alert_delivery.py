@@ -12,7 +12,7 @@ from core.jobs.registry import (
     ALERT_DELIVERY_ADHOC_JOB_KEY,
     ALERT_DELIVERY_JOB_TYPE,
 )
-from core.services.live_pipelines import build_live_run_scope_id
+from core.services.runtime_identity import build_live_run_scope_id
 from core.storage.alert_repository import (
     ALERT_RECORD_KIND_DELIVERY,
     AlertRepository,
@@ -53,10 +53,7 @@ def _payload_with_deploy_env(payload: Mapping[str, Any]) -> dict[str, Any]:
 def resolve_delivery_webhook_url(webhook_url: str | None = None) -> str | None:
     if webhook_url is not None:
         return _as_text(webhook_url)
-    return _as_text(
-        os.environ.get("SPREADS_DISCORD_WEBHOOK_URL")
-        or os.environ.get("DISCORD_WEBHOOK_URL")
-    )
+    return _as_text(os.environ.get("SPREADS_DISCORD_WEBHOOK_URL") or os.environ.get("DISCORD_WEBHOOK_URL"))
 
 
 def alert_delivery_job_run_id(alert_id: int) -> str:
@@ -87,9 +84,7 @@ def publish_alert_event(
             **dict(row),
             "session_id": session_id,
         },
-        timestamp=str(
-            row["updated_at"] if topic == "alert.event.updated" else row["created_at"]
-        ),
+        timestamp=str(row["updated_at"] if topic == "alert.event.updated" else row["created_at"]),
         source=source,
         session_date=_as_text(row.get("session_date")),
         correlation_id=correlation_id,
@@ -199,11 +194,7 @@ def plan_alert_delivery(
     resolved_session_id = _resolve_session_id(normalized_payload, session_id=session_id)
     resolved_webhook_url = resolve_delivery_webhook_url(webhook_url)
     status = "pending" if resolved_webhook_url else "suppressed"
-    response = (
-        None
-        if resolved_webhook_url
-        else {"reason": "missing_SPREADS_DISCORD_WEBHOOK_URL"}
-    )
+    response = None if resolved_webhook_url else {"reason": "missing_SPREADS_DISCORD_WEBHOOK_URL"}
     row, created = alert_store.plan_delivery_event(
         created_at=normalized_payload["created_at"],
         session_date=normalized_payload["session_date"],
@@ -276,11 +267,7 @@ def run_alert_delivery(
     if not webhook_url:
         attempt_count = int(claimed.get("attempt_count") or 0)
         retry_at = _retry_schedule(attempt_count)
-        final_status = (
-            "dead_letter"
-            if attempt_count >= ALERT_DELIVERY_MAX_ATTEMPTS
-            else "retry_wait"
-        )
+        final_status = "dead_letter" if attempt_count >= ALERT_DELIVERY_MAX_ATTEMPTS else "retry_wait"
         completed = alert_store.finish_delivery_event(
             alert_id=alert_id,
             status=final_status,
@@ -309,11 +296,7 @@ def run_alert_delivery(
     except Exception as exc:
         attempt_count = int(claimed.get("attempt_count") or 0)
         retry_at = _retry_schedule(attempt_count)
-        final_status = (
-            "dead_letter"
-            if attempt_count >= ALERT_DELIVERY_MAX_ATTEMPTS
-            else "retry_wait"
-        )
+        final_status = "dead_letter" if attempt_count >= ALERT_DELIVERY_MAX_ATTEMPTS else "retry_wait"
         completed = alert_store.finish_delivery_event(
             alert_id=alert_id,
             status=final_status,
@@ -366,15 +349,9 @@ def reconcile_alert_delivery(
             force_requeue = True
             reconciled.append(int(current["alert_id"]))
 
-        job_run_id = _as_text(
-            current.get("delivery_job_run_id")
-        ) or alert_delivery_job_run_id(int(current["alert_id"]))
+        job_run_id = _as_text(current.get("delivery_job_run_id")) or alert_delivery_job_run_id(int(current["alert_id"]))
         existing_job_run = job_store.get_job_run(job_run_id)
-        if (
-            not force_requeue
-            and existing_job_run is not None
-            and existing_job_run["status"] in {"queued", "running"}
-        ):
+        if not force_requeue and existing_job_run is not None and existing_job_run["status"] in {"queued", "running"}:
             skipped.append(int(current["alert_id"]))
             continue
         try:

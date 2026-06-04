@@ -5,10 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   Activity,
   BriefcaseBusiness,
-  CandlestickChart,
   Gauge,
-  Radar,
-  Search,
   Server,
 } from "lucide-react";
 
@@ -22,28 +19,10 @@ export const LAYOUT_NAV_ITEMS = [
     icon: Gauge,
   },
   {
-    href: "/opportunities",
-    label: "Opportunities",
-    caption: "trade queue",
-    icon: Radar,
-  },
-  {
     href: "/positions",
     label: "Positions",
     caption: "open risk",
     icon: BriefcaseBusiness,
-  },
-  {
-    href: "/scan",
-    label: "Scan",
-    caption: "manual run",
-    icon: Search,
-  },
-  {
-    href: "/pipelines",
-    label: "Diagnostics",
-    caption: "discovery runs",
-    icon: CandlestickChart,
   },
   {
     href: "/ops",

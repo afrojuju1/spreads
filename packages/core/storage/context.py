@@ -5,7 +5,6 @@ from core.storage.alert_repository import AlertRepository
 from core.storage.broker_repository import BrokerRepository
 from core.storage.capture_repository import CaptureRepository
 from core.storage.capabilities import StorageCapabilities
-from core.storage.discovery_run_repository import DiscoveryRunRepository
 from core.storage.control_repository import ControlRepository
 from core.storage.event_repository import EventRepository
 from core.storage.db import build_session_factory
@@ -13,7 +12,6 @@ from core.storage.engine_fact_repository import EngineFactRepository
 from core.storage.execution_repository import ExecutionRepository
 from core.storage.job_repository import JobRepository
 from core.storage.ops_store import OpsStore
-from core.storage.recovery_repository import RecoveryRepository
 from core.storage.risk_repository import RiskDecisionRepository
 from core.storage.run_history_repository import RunHistoryRepository
 from core.storage.signal_repository import SignalRepository
@@ -52,10 +50,6 @@ class StorageContext:
         return self._build_repository("capture", CaptureRepository)  # type: ignore[return-value]
 
     @property
-    def discovery(self) -> DiscoveryRunRepository:
-        return self._build_repository("discovery", DiscoveryRunRepository)  # type: ignore[return-value]
-
-    @property
     def trading(self) -> TradingStore:
         return self._build_repository("trading", TradingStore)  # type: ignore[return-value]
 
@@ -90,10 +84,6 @@ class StorageContext:
     @property
     def risk(self) -> RiskDecisionRepository:
         return self._build_repository("risk", RiskDecisionRepository)  # type: ignore[return-value]
-
-    @property
-    def recovery(self) -> RecoveryRepository:
-        return self._build_repository("recovery", RecoveryRepository)  # type: ignore[return-value]
 
     @property
     def ops(self) -> OpsStore:

@@ -67,12 +67,10 @@ class ExecutionAttemptModel(Base):
     market_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     cycle_id: Mapped[str | None] = mapped_column(
         Text,
-        ForeignKey("discovery_runs.cycle_id", ondelete="SET NULL"),
         nullable=True,
     )
     opportunity_id: Mapped[str | None] = mapped_column(
         Text,
-        ForeignKey("opportunities.opportunity_id", ondelete="SET NULL"),
         nullable=True,
     )
     risk_decision_id: Mapped[str | None] = mapped_column(
@@ -82,7 +80,6 @@ class ExecutionAttemptModel(Base):
     )
     candidate_id: Mapped[int | None] = mapped_column(
         BigInteger,
-        ForeignKey("discovery_run_candidates.candidate_id", ondelete="SET NULL"),
         nullable=True,
     )
     source_object_type: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -153,7 +150,6 @@ class ExecutionIntentModel(Base):
             "created_at",
         ),
         Index("idx_execution_intents_slot_state", "slot_key", "state"),
-        Index("idx_execution_intents_opportunity_decision", "opportunity_decision_id"),
         Index("idx_execution_intents_trade_signal", "trade_signal_id"),
         Index("idx_execution_intents_trade_decision", "trade_decision_id"),
         Index("idx_execution_intents_strategy_position", "strategy_position_id"),
@@ -162,11 +158,6 @@ class ExecutionIntentModel(Base):
 
     execution_intent_id: Mapped[str] = mapped_column(Text, primary_key=True)
     trading_strategy_id: Mapped[str] = mapped_column(Text, nullable=False)
-    opportunity_decision_id: Mapped[str | None] = mapped_column(
-        Text,
-        ForeignKey("opportunity_decisions.opportunity_decision_id", ondelete="SET NULL"),
-        nullable=True,
-    )
     trade_signal_id: Mapped[str | None] = mapped_column(
         Text,
         ForeignKey("trade_signals.trade_signal_id", ondelete="SET NULL"),
@@ -312,7 +303,6 @@ class PortfolioPositionModel(Base):
     trading_strategy_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_opportunity_id: Mapped[str | None] = mapped_column(
         Text,
-        ForeignKey("opportunities.opportunity_id", ondelete="SET NULL"),
         nullable=True,
     )
     opening_execution_intent_id: Mapped[str | None] = mapped_column(

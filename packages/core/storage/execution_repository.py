@@ -356,7 +356,6 @@ class ExecutionRepository(RepositoryBase):
         *,
         execution_intent_id: str,
         trading_strategy_id: str,
-        opportunity_decision_id: str | None,
         strategy_position_id: str | None,
         execution_attempt_id: str | None,
         action_type: str,
@@ -385,7 +384,6 @@ class ExecutionRepository(RepositoryBase):
                     execution_intent_id=execution_intent_id,
                     created_at=created_at_dt,
                     trading_strategy_id=trading_strategy_id,
-                    opportunity_decision_id=opportunity_decision_id,
                     trade_signal_id=trade_signal_id,
                     trade_decision_id=trade_decision_id,
                     strategy_position_id=strategy_position_id,
@@ -404,7 +402,6 @@ class ExecutionRepository(RepositoryBase):
                 session.add(row)
             else:
                 row.trading_strategy_id = trading_strategy_id
-                row.opportunity_decision_id = opportunity_decision_id
                 row.trade_signal_id = trade_signal_id
                 row.trade_decision_id = trade_decision_id
                 row.strategy_position_id = strategy_position_id
@@ -427,7 +424,6 @@ class ExecutionRepository(RepositoryBase):
         self,
         *,
         trading_strategy_id: str | None = None,
-        opportunity_decision_id: str | None = None,
         trade_signal_id: str | None = None,
         trade_decision_id: str | None = None,
         strategy_position_id: str | None = None,
@@ -439,8 +435,6 @@ class ExecutionRepository(RepositoryBase):
         statement = select(ExecutionIntentModel)
         if trading_strategy_id:
             statement = statement.where(ExecutionIntentModel.trading_strategy_id == trading_strategy_id)
-        if opportunity_decision_id:
-            statement = statement.where(ExecutionIntentModel.opportunity_decision_id == opportunity_decision_id)
         if trade_signal_id:
             statement = statement.where(ExecutionIntentModel.trade_signal_id == trade_signal_id)
         if trade_decision_id:

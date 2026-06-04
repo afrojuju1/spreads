@@ -10,10 +10,10 @@ Operator dashboard for the `spreads` backend. The app is built with:
 
 ## What It Shows
 
-- strategy runtime and linked discovery lineage
-- live opportunity board with direct execution actions
+- strategy/source/signal/decision health
+- execution, capture, and runtime diagnostics
 - open positions and broker account state
-- read-only discovery diagnostics for run health, UOA, and linked outcomes
+- retention and storage health for operator-maintained tables
 
 ## Canonical Dev Run
 

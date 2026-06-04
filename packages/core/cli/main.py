@@ -10,20 +10,16 @@ from core.cli.config import config_app
 from core.cli.deploy import deploy_app
 from core.cli.lifecycle import lifecycle_app
 from core.cli.ops import (
-    audit_command,
     jobs_app,
     live_doctor_command,
     market_open_monitor_command,
     status_command,
     trading_command,
-    uoa_app,
 )
 from core.cli.market_intel import market_intel_app
 from core.cli.retention import retention_app
 from core.cli.runtime import (
     execution_runtimes_command,
-    opportunities_command,
-    pipelines_command,
     positions_command,
 )
 from core.services.deployments import (
@@ -48,13 +44,9 @@ TARGETABLE_ROOT_COMMANDS = {
     "trading",
     "live-doctor",
     "market-open-monitor",
-    "pipelines",
-    "opportunities",
     "positions",
     "execution-runtimes",
-    "audit",
     "jobs",
-    "uoa",
     "market-intel",
     "retention",
 }
@@ -130,21 +122,14 @@ app.command("status", help="Show system and runtime health.")(status_command)
 app.command("trading", help="Show live trading safety and readiness.")(trading_command)
 app.command("live-doctor", help="Run the compact live trading health doctor.")(live_doctor_command)
 app.command("market-open-monitor", help="Watch the market-open live health doctor.")(market_open_monitor_command)
-app.command(
-    "pipelines",
-    help="List discovery sessions or inspect one pipeline compatibility view.",
-)(pipelines_command)
-app.command("opportunities", help="List opportunities or inspect one opportunity.")(opportunities_command)
 app.command("positions", help="List positions or inspect one position.")(positions_command)
 app.command("execution-runtimes", help="Show execution runtime capabilities.")(execution_runtimes_command)
-app.command("audit", help="Audit one pipeline date for operator investigation.")(audit_command)
 app.add_typer(jobs_app, name="jobs")
 app.add_typer(company_valuation_app, name="company-valuation")
 app.add_typer(config_app, name="config")
 app.add_typer(deploy_app, name="deploy")
 app.add_typer(lifecycle_app, name="lifecycle")
 app.add_typer(retention_app, name="retention")
-app.add_typer(uoa_app, name="uoa")
 
 
 @app.command(
@@ -156,17 +141,6 @@ def scan_command(ctx: typer.Context) -> None:
     from core.services.scanners.service import main as scan_main
 
     _run_passthrough(ctx=ctx, entrypoint=scan_main)
-
-
-@app.command(
-    "discover",
-    context_settings=PASSTHROUGH_CONTEXT_SETTINGS,
-    help="Run a live discovery run session.",
-)
-def discover_command(ctx: typer.Context) -> None:
-    from core.services.discovery_runs.runtime import main as discover_main
-
-    _run_passthrough(ctx=ctx, entrypoint=discover_main)
 
 
 app.add_typer(market_intel_app, name="market-intel")

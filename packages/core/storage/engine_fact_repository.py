@@ -524,6 +524,7 @@ class EngineFactRepository(RepositoryBase):
         self,
         *,
         decision_states: list[str] | None = None,
+        trading_strategy_id: str | None = None,
         routine: str | None = None,
         as_of: str | None = None,
         limit: int = 100,
@@ -534,6 +535,8 @@ class EngineFactRepository(RepositoryBase):
         )
         if decision_states:
             statement = statement.where(TradeDecisionModel.decision_state.in_(decision_states))
+        if trading_strategy_id is not None:
+            statement = statement.where(TradeDecisionModel.trading_strategy_id == trading_strategy_id)
         if routine is not None:
             statement = statement.where(TradeDecisionModel.routine == routine)
         if as_of_dt is not None:
@@ -553,6 +556,29 @@ class EngineFactRepository(RepositoryBase):
             }
             for decision, signal in rows
         ]
+
+    def list_trade_decisions(
+        self,
+        *,
+        trading_strategy_id: str | None = None,
+        decision_states: list[str] | None = None,
+        routine: str | None = None,
+        limit: int = 200,
+    ) -> list[StorageRow]:
+        statement = select(TradeDecisionModel)
+        if trading_strategy_id is not None:
+            statement = statement.where(TradeDecisionModel.trading_strategy_id == trading_strategy_id)
+        if decision_states:
+            statement = statement.where(TradeDecisionModel.decision_state.in_(decision_states))
+        if routine is not None:
+            statement = statement.where(TradeDecisionModel.routine == routine)
+        statement = statement.order_by(
+            TradeDecisionModel.decided_at.desc(),
+            TradeDecisionModel.trade_decision_id.asc(),
+        ).limit(max(int(limit), 1))
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return self.rows(rows)
 
     def upsert_trade_execution_intent(
         self,

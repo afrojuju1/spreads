@@ -6,7 +6,7 @@ from typing import Any
 
 from core.jobs.orchestration import singleton_lease_key
 
-from .observability import _emit_discovery_run_observability, _publish_job_run_event
+from .observability import _publish_job_run_event
 
 JOB_LEASE_TTL_SECONDS = 600
 
@@ -21,9 +21,7 @@ class SupersededJobRun(RuntimeError):
     pass
 
 
-async def _mark_running(
-    job_store: Any, job_run_id: str, runtime_owner: str, arq_job_id: str
-) -> Any:
+async def _mark_running(job_store: Any, job_run_id: str, runtime_owner: str, arq_job_id: str) -> Any:
     now = datetime.now(UTC)
     run_record = await asyncio.to_thread(
         job_store.update_job_run_status,
@@ -108,9 +106,7 @@ async def _execute_managed_job(
             await _publish_job_run_event(ctx, skipped_record)
             return result
 
-    running_record = await _mark_running(
-        job_store, job_run_id, runtime_owner, arq_job_id
-    )
+    running_record = await _mark_running(job_store, job_run_id, runtime_owner, arq_job_id)
     await _publish_job_run_event(ctx, running_record)
     if on_running is not None:
         await on_running(running_record)
@@ -126,11 +122,7 @@ async def _execute_managed_job(
             ),
         )
         compact = compact_result(result)
-        final_status = (
-            "skipped"
-            if isinstance(result, dict) and result.get("status") == "skipped"
-            else "succeeded"
-        )
+        final_status = "skipped" if isinstance(result, dict) and result.get("status") == "skipped" else "succeeded"
         completed_record = await asyncio.to_thread(
             job_store.update_job_run_status,
             job_run_id=job_run_id,
@@ -142,14 +134,10 @@ async def _execute_managed_job(
             result=compact,
         )
         if completed_record is None:
-            raise SupersededJobRun(
-                f"Job run {job_run_id} was superseded before completion."
-            )
+            raise SupersededJobRun(f"Job run {job_run_id} was superseded before completion.")
         await _publish_job_run_event(ctx, completed_record)
         if on_completed is not None:
             await on_completed(completed_record, result)
-        if payload.get("job_type") == "discovery_run" and final_status == "succeeded":
-            await _emit_discovery_run_observability(ctx, completed_record)
         return compact
     except SupersededJobRun:
         return {"status": "superseded", "job_run_id": job_run_id}
@@ -172,6 +160,4 @@ async def _execute_managed_job(
         raise
     finally:
         if lease_key is not None:
-            await asyncio.to_thread(
-                job_store.release_lease, lease_key, owner=job_run_id
-            )
+            await asyncio.to_thread(job_store.release_lease, lease_key, owner=job_run_id)

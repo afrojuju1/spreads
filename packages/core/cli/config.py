@@ -7,13 +7,10 @@ import typer
 
 from core.services.config_validation import validate_trading_strategy_config
 
-config_app = typer.Typer(
-    add_completion=False,
-    help="Validate config-driven trading strategy models.",
-)
+config_app = typer.Typer(add_completion=False, help="Validate config-driven trading models.")
 
 
-@config_app.command("validate", help="Validate trading strategy and discovery config.")
+@config_app.command("validate", help="Validate ticker source and trading strategy config.")
 def validate_command(
     config_root: str | None = typer.Option(
         None,
@@ -34,8 +31,8 @@ def validate_command(
                 f"active_trading_strategies: {payload['active_trading_strategy_count']}",
                 f"entry_routines: {payload['entry_routine_count']}",
                 f"management_routines: {payload['management_routine_count']}",
-                f"discovery_run_scopes: {payload['discovery_run_scope_count']}",
-                f"discovery_runs: {payload['discovery_run_count']}",
+                f"sources: {payload['source_counts']}",
+                f"trade_structures: {payload['trade_structure_counts']}",
             ]
         )
     )

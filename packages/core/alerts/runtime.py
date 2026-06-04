@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from core.services.alert_delivery import plan_alert_delivery
-from core.services.live_pipelines import build_live_run_scope_id
+from core.services.runtime_identity import build_live_run_scope_id
 
 RUNTIME_ENTRY_SELECTED_ALERT_TYPE = "runtime_entry_selected"
 
@@ -28,14 +28,14 @@ def runtime_entry_selected_key(
     *,
     market_date: str,
     trading_strategy_id: str,
-    opportunity_id: str,
+    trade_signal_id: str,
 ) -> str:
-    return f"{RUNTIME_ENTRY_SELECTED_ALERT_TYPE}|{market_date}|{trading_strategy_id}|" f"{opportunity_id}"
+    return f"{RUNTIME_ENTRY_SELECTED_ALERT_TYPE}|{market_date}|{trading_strategy_id}|{trade_signal_id}"
 
 
 def _selected_score(
     *,
-    opportunity: Mapping[str, Any],
+    trade_signal: Mapping[str, Any],
     decision: Mapping[str, Any],
 ) -> float:
     for key in ("score",):
@@ -43,10 +43,10 @@ def _selected_score(
         if value is not None:
             return value
     for key in ("execution_score", "promotion_score"):
-        value = _as_float(opportunity.get(key))
+        value = _as_float(trade_signal.get(key))
         if value is not None:
             return value
-    candidate = opportunity.get("candidate")
+    candidate = trade_signal.get("candidate")
     if isinstance(candidate, Mapping):
         value = _as_float(candidate.get("quality_score"))
         if value is not None:
@@ -56,20 +56,20 @@ def _selected_score(
 
 def _candidate_payload(
     *,
-    opportunity: Mapping[str, Any],
+    trade_signal: Mapping[str, Any],
     decision: Mapping[str, Any],
 ) -> dict[str, Any]:
-    candidate_source = opportunity.get("candidate")
+    candidate_source = trade_signal.get("candidate")
     candidate = dict(candidate_source) if isinstance(candidate_source, Mapping) else {}
-    score = _selected_score(opportunity=opportunity, decision=decision)
-    symbol = _as_text(opportunity.get("underlying_symbol")) or _as_text(candidate.get("underlying_symbol"))
-    strategy = _as_text(candidate.get("strategy")) or _as_text(opportunity.get("strategy_family"))
+    score = _selected_score(trade_signal=trade_signal, decision=decision)
+    symbol = _as_text(trade_signal.get("underlying_symbol")) or _as_text(candidate.get("underlying_symbol"))
+    strategy = _as_text(candidate.get("strategy")) or _as_text(trade_signal.get("strategy_family"))
     candidate.setdefault("underlying_symbol", symbol or "UNKNOWN")
     candidate.setdefault("strategy", strategy or "unknown")
     candidate.setdefault("quality_score", score)
-    candidate.setdefault("promotion_score", opportunity.get("promotion_score") or score)
-    candidate.setdefault("execution_score", opportunity.get("execution_score") or score)
-    candidate.setdefault("selection_notes", list(opportunity.get("reason_codes") or []))
+    candidate.setdefault("promotion_score", trade_signal.get("promotion_score") or score)
+    candidate.setdefault("execution_score", trade_signal.get("execution_score") or score)
+    candidate.setdefault("selection_notes", list(trade_signal.get("reason_codes") or []))
     candidate.setdefault("setup_status", "selected")
     candidate.setdefault("calendar_status", "unknown")
     candidate.setdefault("data_status", "unknown")
@@ -121,7 +121,7 @@ def _alert_description(
     score_text = "n/a" if score is None else f"{score:.1f}"
     intent_id = None if execution_intent is None else _as_text(execution_intent.get("execution_intent_id"))
     details = [
-        f"{trading_strategy_id} selected this opportunity for entry",
+        f"{trading_strategy_id} selected this trade signal for entry",
         f"score {score_text}",
     ]
     if execution_mode:
@@ -151,7 +151,7 @@ def plan_runtime_entry_selected_alert(
     trading_strategy_id: str,
     market_date: str,
     run_key: str,
-    opportunity: Mapping[str, Any],
+    trade_signal: Mapping[str, Any],
     decision: Mapping[str, Any],
     execution_intent: Mapping[str, Any] | None,
     execution_mode: str | None,
@@ -166,24 +166,22 @@ def plan_runtime_entry_selected_alert(
     if hasattr(job_store, "schema_ready") and not job_store.schema_ready():
         return None
 
-    opportunity_id = str(opportunity["opportunity_id"])
-    candidate_source = opportunity.get("candidate")
+    trade_signal_id = _as_text(trade_signal.get("trade_signal_id")) or _as_text(decision.get("trade_signal_id"))
+    candidate_source = trade_signal.get("candidate")
     candidate_mapping = candidate_source if isinstance(candidate_source, Mapping) else {}
-    symbol = _as_text(opportunity.get("underlying_symbol")) or _as_text(candidate_mapping.get("underlying_symbol")) or "UNKNOWN"
-    label = _as_text(opportunity.get("label")) or trading_strategy_id
+    symbol = _as_text(trade_signal.get("underlying_symbol")) or _as_text(candidate_mapping.get("underlying_symbol")) or "UNKNOWN"
+    label = _as_text(trade_signal.get("label")) or trading_strategy_id
     session_id = build_live_run_scope_id(label, market_date)
-    cycle_id = _as_text(opportunity.get("cycle_id")) or run_key
-    candidate = _candidate_payload(opportunity=opportunity, decision=decision)
+    cycle_id = _as_text(trade_signal.get("source_cycle_id")) or run_key
+    candidate = _candidate_payload(trade_signal=trade_signal, decision=decision)
     execution_intent_id = None if execution_intent is None else _as_text(execution_intent.get("execution_intent_id"))
-    score = _selected_score(opportunity=opportunity, decision=decision)
+    score = _selected_score(trade_signal=trade_signal, decision=decision)
     reason_codes = [str(value) for value in list(decision.get("reason_codes") or [])]
     execution_admission = _execution_admission_payload(execution_intent)
     details = {
         "trading_strategy_id": trading_strategy_id,
-        "opportunity_id": opportunity_id,
         "trade_decision_id": _as_text(decision.get("trade_decision_id")),
-        "trade_signal_id": _as_text(decision.get("trade_signal_id")),
-        "opportunity_decision_id": _as_text(decision.get("opportunity_decision_id")),
+        "trade_signal_id": trade_signal_id,
         "execution_intent_id": execution_intent_id,
         "dispatch_job_run_id": dispatch_job_run_id,
         "score": score,
@@ -195,14 +193,14 @@ def plan_runtime_entry_selected_alert(
         "execution_admission_reason": None if execution_admission is None else execution_admission.get("reason"),
     }
     payload = {
-        "created_at": _as_text(decision.get("decided_at")) or _as_text(opportunity.get("updated_at")),
+        "created_at": _as_text(decision.get("decided_at")) or _as_text(trade_signal.get("updated_at")),
         "session_date": market_date,
         "label": label,
         "cycle_id": cycle_id,
         "symbol": symbol,
         "alert_type": RUNTIME_ENTRY_SELECTED_ALERT_TYPE,
-        "strategy_mode": str(opportunity.get("strategy_family") or "runtime_entry"),
-        "profile": str(opportunity.get("profile") or "runtime"),
+        "strategy_mode": str(trade_signal.get("strategy_family") or "runtime_entry"),
+        "profile": str(trade_signal.get("profile") or "runtime"),
         "candidate": candidate,
         "execution_admission": execution_admission,
         "description": _alert_description(
@@ -227,7 +225,7 @@ def plan_runtime_entry_selected_alert(
         dedupe_key=runtime_entry_selected_key(
             market_date=market_date,
             trading_strategy_id=trading_strategy_id,
-            opportunity_id=opportunity_id,
+            trade_signal_id=trade_signal_id or execution_intent_id,
         ),
         dedupe_state=details,
         session_id=session_id,

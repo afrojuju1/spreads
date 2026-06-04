@@ -1,9 +1,0 @@
-job_key: discovery_recovery:global
-job_type: discovery_recovery
-enabled: true
-schedule:
-  type: interval_minutes
-  minutes: 1
-payload:
-  allow_off_hours: true
-singleton_scope: global

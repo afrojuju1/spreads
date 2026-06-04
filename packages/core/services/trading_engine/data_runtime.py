@@ -5,8 +5,6 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from core.services.live_pipelines import build_live_snapshot_label
-from core.services.opportunity_generation import build_trading_strategy_run_id
 from core.services.scanners.config import parse_args as parse_scanner_args
 from core.services.strategy_builders import build_entry_runtime_candidates, runtime_owner_key
 from core.services.ticker_sources import resolve_ticker_source_symbols
@@ -17,6 +15,16 @@ from core.services.trading_strategy_runtime import EntryRuntime
 
 DEFAULT_ENTRY_CANDIDATE_LIMIT = 10
 DEFAULT_GREEKS_SOURCE = "auto"
+
+
+def engine_snapshot_label(
+    *,
+    universe_label: str,
+    strategy: str,
+    profile: str,
+    greeks_source: str,
+) -> str:
+    return f"{universe_label}_{strategy}_{profile}_{greeks_source}".lower()
 
 
 def ticker_source_spec_from_strategy_source(source: StrategySource) -> TickerSourceSpec:
@@ -42,7 +50,7 @@ def entry_engine_label(runtime: EntryRuntime) -> str:
 
 
 def entry_engine_strategy_run_id(run_id: str, trading_strategy_id: str) -> str:
-    return build_trading_strategy_run_id(run_id, trading_strategy_id)
+    return f"strategy_run:{run_id}:{trading_strategy_id}:entry"
 
 
 class PostgresDataEngine:
@@ -62,7 +70,7 @@ class PostgresDataEngine:
                 source=source,
                 symbols=symbols,
                 resolved_at=as_of,
-                reason_codes=("static_universe",),
+                reason_codes=("static_source",),
                 evidence={
                     "kind": "static",
                     "universe_ref": source.ref,
@@ -296,7 +304,7 @@ class PostgresDataEngine:
         args.top = self._candidate_limit(request)
         args.per_symbol_top = max(int(request.build_policy.get("per_symbol_top") or 1), 1)
         args.history_db = self.context.db_target
-        args.session_label = build_live_snapshot_label(
+        args.session_label = engine_snapshot_label(
             universe_label=entry_engine_label(runtime),
             strategy=runtime.build_settings.scanner_strategy,
             profile=runtime.build_settings.scanner_profile,
