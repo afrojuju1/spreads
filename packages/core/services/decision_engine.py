@@ -14,16 +14,27 @@ from core.services.execution_intents.shared import (
 )
 from core.services.management_recipes import build_exit_policy_from_recipe_refs
 from core.services.option_structures import normalize_strategy_family
+from core.services.opportunity_generation import sync_entry_runtime_opportunities
 from core.services.risk_manager import (
     build_execution_admission_snapshot,
     resolve_position_size_policy,
 )
 from core.services.runtime_policy import build_runtime_policy_ref
 from core.services.strategy_analytics import evaluate_trading_strategy_entry_controls
+from core.services.trading_engine.data import CandidateBuildRequest, CandidateBuildResult, ResolvedTickerSet
+from core.services.trading_engine.data_runtime import (
+    PostgresDataEngine,
+    entry_engine_label,
+    entry_engine_strategy_run_id,
+    entry_runtime_with_symbols,
+    ticker_source_spec_from_strategy_source,
+)
+from core.services.trading_engine.kernel import EngineComponentRole, EngineContext, EngineRunRef
 from core.services.trading_strategies import load_active_trading_strategies, routine_should_run_now
-from core.services.trading_strategy_runtime import resolve_entry_runtime
+from core.services.trading_strategy_runtime import EntryRuntime, resolve_entry_runtime
 
 ENTRY_INTENT_TTL_MINUTES = 5
+ENTRY_MONITOR_LIMIT = 12
 
 
 def _utc_now() -> str:
@@ -49,6 +60,192 @@ def _intent_id(opportunity_decision_id: str) -> str:
 
 def _slot_key(trading_strategy_id: str, underlying_symbol: str) -> str:
     return f"entry:{trading_strategy_id}:{underlying_symbol}"
+
+
+def _entry_candidate_limit(runtime: EntryRuntime) -> int:
+    max_symbols = runtime.strategy.source.max_symbols
+    if max_symbols is not None:
+        return max(int(max_symbols), 1)
+    return 10
+
+
+def _ticker_set_summary(ticker_set: ResolvedTickerSet) -> dict[str, Any]:
+    evidence = dict(ticker_set.evidence or {})
+    summary = evidence.get("summary") if isinstance(evidence.get("summary"), dict) else {}
+    degradation = evidence.get("degradation") if isinstance(evidence.get("degradation"), dict) else {}
+    return {
+        "source_type": ticker_set.source.source_type,
+        "source_ref": ticker_set.source.ref,
+        "source_run_id": ticker_set.source_run_id,
+        "resolved_at": ticker_set.resolved_at.isoformat().replace("+00:00", "Z"),
+        "symbol_count": len(ticker_set.symbols),
+        "symbols": list(ticker_set.symbols),
+        "reason_codes": list(ticker_set.reason_codes),
+        "blockers": list(ticker_set.blockers),
+        "summary": dict(summary),
+        "degradation": dict(degradation),
+    }
+
+
+def _candidate_result_summary(candidate_result: CandidateBuildResult | None) -> dict[str, Any]:
+    if candidate_result is None:
+        return {
+            "status": "not_run",
+            "candidate_count": 0,
+            "symbol_count": 0,
+        }
+    return {
+        "candidate_run_id": candidate_result.candidate_run_id,
+        "candidate_count": len(candidate_result.candidates),
+        **dict(candidate_result.summary or {}),
+    }
+
+
+def _group_candidate_rows(candidates: tuple[Any, ...]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        symbol = str(candidate.get("underlying_symbol") or "").upper().strip()
+        if not symbol:
+            continue
+        grouped.setdefault(symbol, []).append(dict(candidate))
+    return grouped
+
+
+def _record_skipped_strategy_run(
+    *,
+    signal_store: Any,
+    runtime: EntryRuntime,
+    run_key: str,
+    market_date: str,
+    planner_job_run_id: str | None,
+    generated_at: str,
+    reason: str,
+    ticker_set: ResolvedTickerSet,
+) -> None:
+    signal_store.upsert_strategy_run(
+        strategy_run_id=entry_engine_strategy_run_id(run_key, runtime.trading_strategy_id),
+        trading_strategy_id=runtime.trading_strategy_id,
+        trigger_type="trading_strategy_entry",
+        job_run_id=planner_job_run_id,
+        cycle_id=run_key,
+        label=entry_engine_label(runtime),
+        session_date=market_date,
+        started_at=generated_at,
+        completed_at=generated_at,
+        status="skipped",
+        result={
+            "reason": reason,
+            "ticker_set": _ticker_set_summary(ticker_set),
+            "candidate_count": 0,
+            "opportunity_count": 0,
+        },
+        config_hash=runtime.config_hash,
+    )
+
+
+def _refresh_entry_runtime_opportunities(
+    *,
+    db_target: str,
+    storage: Any,
+    runtime: EntryRuntime,
+    market_date: str,
+    run_key: str,
+    planner_job_run_id: str | None,
+) -> dict[str, Any]:
+    generated_at = _utc_now()
+    context = EngineContext(
+        db_target=db_target,
+        storage=storage,
+        job_run_id=planner_job_run_id,
+        metadata={"config_hash": runtime.config_hash},
+    )
+    data_engine = PostgresDataEngine(context)
+    source_spec = ticker_source_spec_from_strategy_source(runtime.strategy.source)
+    ticker_set = data_engine.resolve_tickers(
+        source=source_spec,
+        as_of=datetime.now(UTC),
+    )
+    ticker_summary = _ticker_set_summary(ticker_set)
+    if ticker_set.blockers:
+        _record_skipped_strategy_run(
+            signal_store=storage.signals,
+            runtime=runtime,
+            run_key=run_key,
+            market_date=market_date,
+            planner_job_run_id=planner_job_run_id,
+            generated_at=generated_at,
+            reason="ticker_source_blocked",
+            ticker_set=ticker_set,
+        )
+        return {
+            "status": "skipped",
+            "reason": "ticker_source_blocked",
+            "ticker_set": ticker_summary,
+            "candidate_build": _candidate_result_summary(None),
+            "strategy_sync": {},
+        }
+
+    runtime_with_symbols = entry_runtime_with_symbols(runtime, ticker_set.symbols)
+    candidate_request = CandidateBuildRequest(
+        run_ref=EngineRunRef(
+            role=EngineComponentRole.DATA,
+            run_id=run_key,
+            trading_strategy_id=runtime.trading_strategy_id,
+            job_run_id=planner_job_run_id,
+            source_id=source_spec.ref,
+            config_hash=runtime.config_hash,
+        ),
+        trading_strategy_id=runtime.trading_strategy_id,
+        trade_structure=runtime.trade_structure,
+        symbols=tuple(ticker_set.symbols),
+        build_policy={
+            "entry_runtime": runtime_with_symbols,
+            "top": _entry_candidate_limit(runtime_with_symbols),
+            "per_runtime_limit": _entry_candidate_limit(runtime_with_symbols),
+            "per_symbol_top": 1,
+            "greeks_source": "auto",
+        },
+        source_evidence=ticker_set.evidence,
+    )
+    candidate_result = data_engine.build_entry_trade_candidates(
+        request=candidate_request,
+        runtime=runtime_with_symbols,
+    )
+    symbol_candidates = _group_candidate_rows(candidate_result.candidates)
+    strategy_sync = sync_entry_runtime_opportunities(
+        signal_store=storage.signals,
+        label=entry_engine_label(runtime_with_symbols),
+        session_date=market_date,
+        generated_at=generated_at,
+        cycle_id=run_key,
+        entry_runtimes=[runtime_with_symbols],
+        symbol_candidates=symbol_candidates,
+        runtime_candidate_rows_by_owner=None,
+        persisted_opportunities=[],
+        job_run_id=planner_job_run_id,
+        top_promotable=_entry_candidate_limit(runtime_with_symbols),
+        top_monitor=ENTRY_MONITOR_LIMIT,
+        selection_memory=None,
+        signal_cycle_context={
+            "ticker_set": ticker_summary,
+            "candidate_build": _candidate_result_summary(candidate_result),
+        },
+        trigger_type="trading_strategy_entry",
+    )
+    return {
+        "status": "ok",
+        "reason": None,
+        "ticker_set": ticker_summary,
+        "candidate_build": _candidate_result_summary(candidate_result),
+        "strategy_sync": {
+            "strategy_runs_upserted": int(strategy_sync.get("strategy_runs_upserted") or 0),
+            "runtime_opportunities_upserted": int(strategy_sync.get("runtime_opportunities_upserted") or 0),
+            "runtime_opportunities_expired": int(strategy_sync.get("runtime_opportunities_expired") or 0),
+            "opportunity_count": len(list(strategy_sync.get("opportunities") or [])),
+        },
+    }
 
 
 def _normalized_blockers(value: Any) -> list[str]:
@@ -171,6 +368,8 @@ def run_trading_strategy_entry_decision(
     job_store = storage.jobs
     if not signal_store.schema_ready() or not signal_store.decision_schema_ready():
         return {"status": "skipped", "reason": "signal_decision_schema_unavailable"}
+    if not signal_store.strategy_runtime_schema_ready():
+        return {"status": "skipped", "reason": "strategy_runtime_schema_unavailable"}
     if not execution_store.intent_schema_ready():
         return {"status": "skipped", "reason": "execution_intent_schema_unavailable"}
 
@@ -191,6 +390,23 @@ def run_trading_strategy_entry_decision(
         routine="entry",
         market_date=resolved_market_date,
     )
+    candidate_generation = _refresh_entry_runtime_opportunities(
+        db_target=db_target,
+        storage=storage,
+        runtime=runtime,
+        market_date=resolved_market_date,
+        run_key=run_key,
+        planner_job_run_id=planner_job_run_id,
+    )
+    if str(candidate_generation.get("status") or "") == "skipped":
+        return {
+            "status": "skipped",
+            "reason": candidate_generation.get("reason"),
+            "trading_strategy_id": runtime.trading_strategy_id,
+            "market_date": resolved_market_date,
+            "run_key": run_key,
+            "candidate_generation": candidate_generation,
+        }
     opportunities = _matching_opportunities(
         signal_store=signal_store,
         market_date=resolved_market_date,
@@ -361,6 +577,7 @@ def run_trading_strategy_entry_decision(
         "execution_admission": selected_execution_admission,
         "dispatch_job_run_id": dispatch_job_run_id,
         "runtime_alert": runtime_alert,
+        "candidate_generation": candidate_generation,
     }
 
 

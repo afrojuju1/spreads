@@ -469,6 +469,7 @@ def sync_entry_runtime_opportunities(
     top_monitor: int,
     selection_memory: dict[str, Any] | None = None,
     signal_cycle_context: dict[str, Any] | None = None,
+    trigger_type: str = "discovery_run_cycle",
 ) -> dict[str, Any]:
     if not signal_store.strategy_runtime_schema_ready():
         return {
@@ -537,7 +538,7 @@ def sync_entry_runtime_opportunities(
         signal_store.upsert_strategy_run(
             strategy_run_id=strategy_run_id,
             trading_strategy_id=runtime.trading_strategy_id,
-            trigger_type="discovery_run_cycle",
+            trigger_type=trigger_type,
             job_run_id=job_run_id,
             cycle_id=cycle_id,
             label=label,
