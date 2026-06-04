@@ -2,7 +2,7 @@ trading_strategy_id: momentum_long_calls
 name: Momentum Long Calls
 enabled: true
 source:
-  type: symbol_feed
+  type: dynamic
   ref: finviz_momentum
   max_age_seconds: 300
   max_symbols: 10

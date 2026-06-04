@@ -13,7 +13,7 @@ from core.services.config_inheritance import (
     load_yaml_mapping as _load_yaml_mapping,
     resolve_policy_mapping as _resolve_policy_mapping,
 )
-from core.services.symbol_feeds import VALID_SYMBOL_FEED_RECIPES
+from core.services.ticker_sources import VALID_TICKER_SOURCE_RECIPES
 from core.services.trading_strategies import (
     build_discovery_run_scope,
     build_entry_strategy_symbols,
@@ -76,8 +76,8 @@ class DeclaredJobSpec:
 
 
 @dataclass(frozen=True)
-class SymbolFeedConfig:
-    symbol_feed_id: str
+class TickerSourceConfig:
+    ticker_source_id: str
     job_key: str
     recipe: str
     enabled: bool
@@ -92,8 +92,8 @@ class SymbolFeedConfig:
 
 
 @dataclass(frozen=True)
-class SymbolFeedSpec:
-    config: SymbolFeedConfig
+class TickerSourceSpec:
+    config: TickerSourceConfig
 
     @property
     def job_key(self) -> str:
@@ -101,11 +101,11 @@ class SymbolFeedSpec:
 
     @property
     def job_type(self) -> str:
-        return "symbol_feed"
+        return "ticker_source"
 
     def payload(self) -> dict[str, Any]:
         return {
-            "feed_id": self.config.symbol_feed_id,
+            "source_id": self.config.ticker_source_id,
             "recipe": self.config.recipe,
             "recipe_args": dict(self.config.recipe_args),
             "allow_off_hours": self.config.allow_off_hours,
@@ -115,7 +115,7 @@ class SymbolFeedSpec:
     def as_job_spec(self) -> DeclaredJobSpec:
         return DeclaredJobSpec(
             job_key=self.config.job_key,
-            job_type="symbol_feed",
+            job_type="ticker_source",
             enabled=self.config.enabled,
             schedule_type=self.config.schedule_type,
             schedule=dict(self.config.schedule),
@@ -133,9 +133,9 @@ class DiscoveryRunConfig:
     job_key: str
     label: str
     uoa_only: bool
-    symbol_feed_ref: str | None
-    symbol_feed_job_key: str | None
-    max_feed_age_seconds: int | None
+    ticker_source_ref: str | None
+    ticker_source_job_key: str | None
+    max_source_age_seconds: int | None
     fallback_universe_ref: str | None
     scanner_strategy: str
     scanner_profile: str
@@ -171,7 +171,7 @@ class DiscoveryRunSpec:
     @property
     def enabled(self) -> bool:
         if self.config.uoa_only:
-            if self.config.symbol_feed_ref:
+            if self.config.ticker_source_ref:
                 return self.config.enabled
             return self.config.enabled and bool(self.scope.get("symbols"))
         return self.config.enabled and bool(self.scope.get("enabled"))
@@ -205,9 +205,9 @@ class DiscoveryRunSpec:
             "job_key": self.config.job_key,
             "label": self.config.label,
             "uoa_only": self.config.uoa_only,
-            "symbol_feed_ref": self.config.symbol_feed_ref,
-            "symbol_feed_job_key": self.config.symbol_feed_job_key,
-            "max_feed_age_seconds": self.config.max_feed_age_seconds,
+            "ticker_source_ref": self.config.ticker_source_ref,
+            "ticker_source_job_key": self.config.ticker_source_job_key,
+            "max_source_age_seconds": self.config.max_source_age_seconds,
             "fallback_universe_ref": self.config.fallback_universe_ref,
             "symbols": ",".join(symbols),
             "strategy": self.config.scanner_strategy,
@@ -233,7 +233,7 @@ class DiscoveryRunSpec:
         }
         if universe_ref:
             payload["universe"] = universe_ref
-        elif self.config.symbol_feed_ref:
+        elif self.config.ticker_source_ref:
             payload["universe"] = None
         elif symbols:
             payload["universe"] = None
@@ -299,7 +299,7 @@ def _load_discovery_run_configs(
     root = config_root_path / "discovery_runs"
     if not root.exists():
         return []
-    symbol_feed_specs = {spec.config.symbol_feed_id: spec for spec in load_declared_symbol_feed_specs(config_root)}
+    ticker_source_specs = {spec.config.ticker_source_id: spec for spec in load_declared_ticker_source_specs(config_root)}
     configs: list[DiscoveryRunConfig] = []
     for path in sorted(root.glob("*.yaml")):
         raw = _resolve_policy_mapping(
@@ -332,25 +332,25 @@ def _load_discovery_run_configs(
             config_path=path,
         )
         scanner_args = {} if raw.get("scanner_args") is None else _as_mapping(raw.get("scanner_args"), field_name="scanner_args")
-        symbol_feed_ref = None if raw.get("symbol_feed_ref") in (None, "") else str(raw.get("symbol_feed_ref")).strip()
-        if symbol_feed_ref and not bool(raw.get("uoa_only", False)):
-            raise ValueError("symbol_feed_ref is currently supported only for uoa_only discovery runs")
-        if raw.get("fallback_universe_ref") not in (None, "") and not symbol_feed_ref:
-            raise ValueError("fallback_universe_ref requires symbol_feed_ref")
-        symbol_feed_job_key = None
-        if symbol_feed_ref is not None:
-            symbol_feed_spec = symbol_feed_specs.get(symbol_feed_ref)
-            if symbol_feed_spec is None:
-                raise ValueError(f"Unknown symbol_feed_ref {symbol_feed_ref!r} in {path}")
-            symbol_feed_job_key = symbol_feed_spec.job_key
+        ticker_source_ref = None if raw.get("ticker_source_ref") in (None, "") else str(raw.get("ticker_source_ref")).strip()
+        if ticker_source_ref and not bool(raw.get("uoa_only", False)):
+            raise ValueError("ticker_source_ref is currently supported only for uoa_only discovery runs")
+        if raw.get("fallback_universe_ref") not in (None, "") and not ticker_source_ref:
+            raise ValueError("fallback_universe_ref requires ticker_source_ref")
+        ticker_source_job_key = None
+        if ticker_source_ref is not None:
+            ticker_source_spec = ticker_source_specs.get(ticker_source_ref)
+            if ticker_source_spec is None:
+                raise ValueError(f"Unknown ticker_source_ref {ticker_source_ref!r} in {path}")
+            ticker_source_job_key = ticker_source_spec.job_key
         config = DiscoveryRunConfig(
             discovery_run_id=_as_text(raw.get("discovery_run_id"), field_name="discovery_run_id"),
             job_key=_as_text(raw.get("job_key"), field_name="job_key"),
             label=_as_text(raw.get("label"), field_name="label"),
             uoa_only=bool(raw.get("uoa_only", False)),
-            symbol_feed_ref=symbol_feed_ref,
-            symbol_feed_job_key=symbol_feed_job_key,
-            max_feed_age_seconds=(None if raw.get("max_feed_age_seconds") in (None, "") else max(int(raw.get("max_feed_age_seconds")), 0)),
+            ticker_source_ref=ticker_source_ref,
+            ticker_source_job_key=ticker_source_job_key,
+            max_source_age_seconds=(None if raw.get("max_source_age_seconds") in (None, "") else max(int(raw.get("max_source_age_seconds")), 0)),
             fallback_universe_ref=(None if raw.get("fallback_universe_ref") in (None, "") else str(raw.get("fallback_universe_ref")).strip()),
             scanner_strategy=_as_text(raw.get("scanner_strategy"), field_name="scanner_strategy"),
             scanner_profile=_as_text(raw.get("scanner_profile"), field_name="scanner_profile"),
@@ -381,9 +381,9 @@ def _load_discovery_run_configs(
                     "job_key": raw.get("job_key"),
                     "label": raw.get("label"),
                     "uoa_only": bool(raw.get("uoa_only", False)),
-                    "symbol_feed_ref": symbol_feed_ref,
-                    "symbol_feed_job_key": symbol_feed_job_key,
-                    "max_feed_age_seconds": (None if raw.get("max_feed_age_seconds") in (None, "") else max(int(raw.get("max_feed_age_seconds")), 0)),
+                    "ticker_source_ref": ticker_source_ref,
+                    "ticker_source_job_key": ticker_source_job_key,
+                    "max_source_age_seconds": (None if raw.get("max_source_age_seconds") in (None, "") else max(int(raw.get("max_source_age_seconds")), 0)),
                     "fallback_universe_ref": (
                         None if raw.get("fallback_universe_ref") in (None, "") else str(raw.get("fallback_universe_ref")).strip()
                     ),
@@ -427,7 +427,7 @@ def _build_discovery_run_scope(
             scanner_strategy=config.scanner_strategy,
             scanner_profile=config.scanner_profile,
         )
-    if config.symbol_feed_ref:
+    if config.ticker_source_ref:
         return {
             "enabled": True,
             "symbols": (),
@@ -458,26 +458,26 @@ def load_declared_discovery_run_specs(
     return specs
 
 
-def _load_symbol_feed_configs(
+def _load_ticker_source_configs(
     config_root: str | Path | None = None,
-) -> list[SymbolFeedConfig]:
+) -> list[TickerSourceConfig]:
     config_root_path = default_config_root(config_root)
-    root = config_root_path / "symbol_feeds"
+    root = config_root_path / "ticker_sources"
     if not root.exists():
         return []
-    configs: list[SymbolFeedConfig] = []
+    configs: list[TickerSourceConfig] = []
     for path in sorted(root.glob("*.yaml")):
         raw = _load_yaml_mapping(path)
         schedule_type, schedule = _schedule_payload(raw.get("schedule"), field_name="schedule")
         recipe = _as_text(raw.get("recipe"), field_name="recipe").strip().lower()
-        if recipe not in VALID_SYMBOL_FEED_RECIPES:
-            raise ValueError(f"Unsupported symbol feed recipe {recipe!r} in {path}")
+        if recipe not in VALID_TICKER_SOURCE_RECIPES:
+            raise ValueError(f"Unsupported ticker source recipe {recipe!r} in {path}")
         recipe_args = {} if raw.get("recipe_args") is None else _as_mapping(raw.get("recipe_args"), field_name="recipe_args")
         configs.append(
-            SymbolFeedConfig(
-                symbol_feed_id=_as_text(
-                    raw.get("symbol_feed_id"),
-                    field_name="symbol_feed_id",
+            TickerSourceConfig(
+                ticker_source_id=_as_text(
+                    raw.get("ticker_source_id"),
+                    field_name="ticker_source_id",
                 ),
                 job_key=_as_text(raw.get("job_key"), field_name="job_key"),
                 recipe=recipe,
@@ -491,7 +491,7 @@ def _load_symbol_feed_configs(
                 config_path=path,
                 config_hash=_canonical_hash(
                     {
-                        "symbol_feed_id": raw.get("symbol_feed_id"),
+                        "ticker_source_id": raw.get("ticker_source_id"),
                         "job_key": raw.get("job_key"),
                         "recipe": recipe,
                         "enabled": bool(raw.get("enabled", True)),
@@ -508,22 +508,22 @@ def _load_symbol_feed_configs(
     return configs
 
 
-def load_declared_symbol_feed_specs(
+def load_declared_ticker_source_specs(
     config_root: str | Path | None = None,
-) -> list[SymbolFeedSpec]:
-    return [SymbolFeedSpec(config=config) for config in _load_symbol_feed_configs(config_root)]
+) -> list[TickerSourceSpec]:
+    return [TickerSourceSpec(config=config) for config in _load_ticker_source_configs(config_root)]
 
 
-def get_declared_symbol_feed_spec(
-    feed_id: str,
+def get_declared_ticker_source_spec(
+    source_id: str,
     *,
     config_root: str | Path | None = None,
-) -> SymbolFeedSpec | None:
-    normalized = str(feed_id or "").strip()
+) -> TickerSourceSpec | None:
+    normalized = str(source_id or "").strip()
     if not normalized:
         return None
     return next(
-        (spec for spec in load_declared_symbol_feed_specs(config_root) if spec.config.symbol_feed_id == normalized),
+        (spec for spec in load_declared_ticker_source_specs(config_root) if spec.config.ticker_source_id == normalized),
         None,
     )
 
@@ -568,7 +568,7 @@ def load_declared_job_specs(
     # The declared job surface is assembled from static job YAML plus
     # config-compiled feed, discovery, and trading-strategy definitions.
     specs = list(_load_job_specs(config_root))
-    specs.extend(spec.as_job_spec() for spec in load_declared_symbol_feed_specs(config_root))
+    specs.extend(spec.as_job_spec() for spec in load_declared_ticker_source_specs(config_root))
     specs.extend(spec.as_job_spec() for spec in load_declared_discovery_run_specs(config_root))
     specs.extend(_trading_strategy_job_specs(config_root))
     excluded_job_types = excluded_declared_job_types()
@@ -626,14 +626,14 @@ __all__ = [
     "DiscoveryRunConfig",
     "DiscoveryRunSpec",
     "DeclaredJobSpec",
-    "SymbolFeedConfig",
-    "SymbolFeedSpec",
+    "TickerSourceConfig",
+    "TickerSourceSpec",
     "excluded_declared_job_types",
     "get_declared_discovery_run_spec",
     "get_declared_job_row",
-    "get_declared_symbol_feed_spec",
+    "get_declared_ticker_source_spec",
     "list_declared_job_rows",
     "load_declared_discovery_run_specs",
     "load_declared_job_specs",
-    "load_declared_symbol_feed_specs",
+    "load_declared_ticker_source_specs",
 ]

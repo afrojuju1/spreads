@@ -17,7 +17,7 @@ from core.services.alpaca import create_alpaca_client_from_env
 from core.services.trading_strategies import build_entry_strategy_symbols, load_universe_symbols
 from core.storage.serializers import parse_datetime
 
-VALID_SYMBOL_FEED_RECIPES = frozenset({"strategy_union", "finviz_screener", "stock_prefilter"})
+VALID_TICKER_SOURCE_RECIPES = frozenset({"strategy_union", "finviz_screener", "stock_prefilter"})
 
 
 def _iso_now() -> str:
@@ -158,7 +158,7 @@ def _rank_score(rank: int | None, *, total: int, weight: float) -> float:
 
 def _build_strategy_union_result(
     *,
-    feed_id: str,
+    source_id: str,
     recipe: str,
     recipe_args: Mapping[str, Any],
     config_root: str | None,
@@ -176,7 +176,7 @@ def _build_strategy_union_result(
     generated_at = _iso_now()
     return {
         "status": "completed",
-        "feed_id": str(feed_id),
+        "source_id": str(source_id),
         "recipe": str(recipe),
         "generated_at": generated_at,
         "symbols": list(symbols),
@@ -202,7 +202,7 @@ def _build_strategy_union_result(
 
 def _run_stock_prefilter_feed(
     *,
-    feed_id: str,
+    source_id: str,
     recipe: str,
     recipe_args: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -250,7 +250,7 @@ def _run_stock_prefilter_feed(
         }
     )
     if not candidate_symbols:
-        raise RuntimeError(f"Stock prefilter feed {feed_id} produced no screener candidates")
+        raise RuntimeError(f"Stock prefilter source {source_id} produced no screener candidates")
 
     optionable_symbols: set[str] | None = None
     optionable_assets_by_symbol: dict[str, dict[str, Any]] = {}
@@ -394,7 +394,7 @@ def _run_stock_prefilter_feed(
     selected = ranked[:top]
     symbols = [str(item.get("symbol")) for item in selected if str(item.get("symbol") or "").strip()]
     if not symbols:
-        raise RuntimeError(f"Stock prefilter feed {feed_id} produced no symbols after filters")
+        raise RuntimeError(f"Stock prefilter source {source_id} produced no symbols after filters")
     generated_at = _iso_now()
     degradation_status = "ok" if symbols and not issues else "partial" if symbols else "empty"
     degradation_reason = None
@@ -404,7 +404,7 @@ def _run_stock_prefilter_feed(
         degradation_reason = issues[0]
     return {
         "status": "completed",
-        "feed_id": str(feed_id),
+        "source_id": str(source_id),
         "recipe": str(recipe),
         "generated_at": generated_at,
         "symbols": symbols,
@@ -627,7 +627,7 @@ def _finviz_source_config(
 
 def _run_finviz_screener_feed(
     *,
-    feed_id: str,
+    source_id: str,
     recipe: str,
     recipe_args: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -650,7 +650,7 @@ def _run_finviz_screener_feed(
     if source_kind is None or source_value is None:
         return {
             "status": "skipped",
-            "feed_id": str(feed_id),
+            "source_id": str(source_id),
             "recipe": str(recipe),
             "generated_at": generated_at,
             "symbols": [],
@@ -790,7 +790,7 @@ def _run_finviz_screener_feed(
     symbols = [str(item.get("symbol")) for item in selected if str(item.get("symbol") or "").strip()]
     return {
         "status": "completed",
-        "feed_id": str(feed_id),
+        "source_id": str(source_id),
         "recipe": str(recipe),
         "generated_at": generated_at,
         "symbols": symbols,
@@ -821,7 +821,7 @@ def _run_finviz_screener_feed(
     }
 
 
-def build_symbol_feed_symbols(
+def build_ticker_source_symbols(
     *,
     recipe: str,
     recipe_args: Mapping[str, Any] | None = None,
@@ -832,7 +832,7 @@ def build_symbol_feed_symbols(
     if normalized_recipe == "strategy_union":
         return tuple(
             _build_strategy_union_result(
-                feed_id="symbol_feed",
+                source_id="ticker_source",
                 recipe=normalized_recipe,
                 recipe_args=normalized_args,
                 config_root=config_root,
@@ -842,7 +842,7 @@ def build_symbol_feed_symbols(
     if normalized_recipe == "finviz_screener":
         return tuple(
             _run_finviz_screener_feed(
-                feed_id="symbol_feed",
+                source_id="ticker_source",
                 recipe=normalized_recipe,
                 recipe_args=normalized_args,
             ).get("symbols")
@@ -851,18 +851,18 @@ def build_symbol_feed_symbols(
     if normalized_recipe == "stock_prefilter":
         return tuple(
             _run_stock_prefilter_feed(
-                feed_id="symbol_feed",
+                source_id="ticker_source",
                 recipe=normalized_recipe,
                 recipe_args=normalized_args,
             ).get("symbols")
             or []
         )
-    raise ValueError(f"Unsupported symbol feed recipe: {recipe}")
+    raise ValueError(f"Unsupported ticker source recipe: {recipe}")
 
 
-def run_symbol_feed(
+def run_ticker_source(
     *,
-    feed_id: str,
+    source_id: str,
     recipe: str,
     recipe_args: Mapping[str, Any] | None = None,
     config_root: str | None = None,
@@ -871,24 +871,24 @@ def run_symbol_feed(
     normalized_recipe = str(recipe or "").strip().lower()
     if normalized_recipe == "strategy_union":
         return _build_strategy_union_result(
-            feed_id=feed_id,
+            source_id=source_id,
             recipe=normalized_recipe,
             recipe_args=normalized_args,
             config_root=config_root,
         )
     if normalized_recipe == "finviz_screener":
         return _run_finviz_screener_feed(
-            feed_id=feed_id,
+            source_id=source_id,
             recipe=normalized_recipe,
             recipe_args=normalized_args,
         )
     if normalized_recipe == "stock_prefilter":
         return _run_stock_prefilter_feed(
-            feed_id=feed_id,
+            source_id=source_id,
             recipe=normalized_recipe,
             recipe_args=normalized_args,
         )
-    raise ValueError(f"Unsupported symbol feed recipe: {recipe}")
+    raise ValueError(f"Unsupported ticker source recipe: {recipe}")
 
 
 def _snapshot_generated_at(run_record: Mapping[str, Any]) -> str | None:
@@ -904,10 +904,10 @@ def _snapshot_generated_at(run_record: Mapping[str, Any]) -> str | None:
     return None
 
 
-def get_latest_symbol_feed_snapshot(
+def get_latest_ticker_source_snapshot(
     job_store: Any,
     *,
-    feed_id: str,
+    source_id: str,
     job_key: str,
     max_age_seconds: int | None = None,
 ) -> dict[str, Any]:
@@ -918,7 +918,7 @@ def get_latest_symbol_feed_snapshot(
     if latest_run is None:
         return {
             "status": "missing",
-            "feed_id": str(feed_id),
+            "source_id": str(source_id),
             "job_key": str(job_key),
             "symbols": [],
             "entries": [],
@@ -946,7 +946,7 @@ def get_latest_symbol_feed_snapshot(
         snapshot_status = "stale"
     return {
         "status": snapshot_status,
-        "feed_id": str(feed_id),
+        "source_id": str(source_id),
         "job_key": str(job_key),
         "job_run_id": latest_run.get("job_run_id"),
         "generated_at": generated_at,
@@ -961,27 +961,27 @@ def get_latest_symbol_feed_snapshot(
     }
 
 
-def resolve_symbol_feed_symbols(
+def resolve_ticker_source_symbols(
     job_store: Any,
     *,
-    feed_id: str,
+    source_id: str,
     job_key: str,
     max_age_seconds: int | None = None,
     fallback_universe_ref: str | None = None,
     config_root: str | None = None,
 ) -> dict[str, Any]:
-    snapshot = get_latest_symbol_feed_snapshot(
+    snapshot = get_latest_ticker_source_snapshot(
         job_store,
-        feed_id=feed_id,
+        source_id=source_id,
         job_key=job_key,
         max_age_seconds=max_age_seconds,
     )
     snapshot_status = str(snapshot.get("status") or "").strip().lower()
     if snapshot_status in {"ready", "empty"}:
         return {
-            "kind": "symbol_feed",
+            "kind": "ticker_source",
             "status": snapshot_status,
-            "feed_id": str(feed_id),
+            "source_id": str(source_id),
             "job_key": str(job_key),
             "job_run_id": snapshot.get("job_run_id"),
             "generated_at": snapshot.get("generated_at"),
@@ -999,7 +999,7 @@ def resolve_symbol_feed_symbols(
         return {
             "kind": "fallback_universe",
             "status": "fallback",
-            "feed_id": str(feed_id),
+            "source_id": str(source_id),
             "job_key": str(job_key),
             "fallback_universe_ref": str(fallback_universe_ref),
             "symbols": list(fallback_symbols),
@@ -1011,25 +1011,25 @@ def resolve_symbol_feed_symbols(
                 "status": "fallback",
                 "reason": snapshot_status or "missing",
             },
-            "feed_snapshot": snapshot,
+            "source_snapshot": snapshot,
         }
     return {
-        "kind": "symbol_feed",
+        "kind": "ticker_source",
         "status": snapshot_status or "missing",
-        "feed_id": str(feed_id),
+        "source_id": str(source_id),
         "job_key": str(job_key),
         "symbols": [],
         "entries": [dict(item) for item in list(snapshot.get("entries") or []) if isinstance(item, Mapping)],
         "summary": dict(snapshot.get("summary") or {}),
         "degradation": dict(snapshot.get("degradation") or {}),
-        "feed_snapshot": snapshot,
+        "source_snapshot": snapshot,
     }
 
 
 __all__ = [
-    "VALID_SYMBOL_FEED_RECIPES",
-    "build_symbol_feed_symbols",
-    "get_latest_symbol_feed_snapshot",
-    "resolve_symbol_feed_symbols",
-    "run_symbol_feed",
+    "VALID_TICKER_SOURCE_RECIPES",
+    "build_ticker_source_symbols",
+    "get_latest_ticker_source_snapshot",
+    "resolve_ticker_source_symbols",
+    "run_ticker_source",
 ]

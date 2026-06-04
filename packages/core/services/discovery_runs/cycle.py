@@ -53,7 +53,7 @@ from core.services.live_selection import read_previous_selection, select_live_op
 from core.services.option_structures import payload_display_fields
 from core.services.opportunity_generation import sync_entry_runtime_opportunities
 from core.services.signal_state import sync_discovery_run_signal_layer
-from core.services.symbol_feeds import resolve_symbol_feed_symbols
+from core.services.ticker_sources import resolve_ticker_source_symbols
 from core.services.strategy_builders import build_entry_runtime_candidates
 from core.services.target_planner import refresh_trading_strategy_capture_targets
 from core.storage.alert_repository import AlertRepository
@@ -90,18 +90,18 @@ def _configured_uoa_symbol_source(
                 "reason": None,
             },
         }
-    symbol_feed_ref = str(getattr(args, "symbol_feed_ref", "") or "").strip()
-    symbol_feed_job_key = str(getattr(args, "symbol_feed_job_key", "") or "").strip()
-    if symbol_feed_ref and symbol_feed_job_key:
-        return resolve_symbol_feed_symbols(
+    ticker_source_ref = str(getattr(args, "ticker_source_ref", "") or "").strip()
+    ticker_source_job_key = str(getattr(args, "ticker_source_job_key", "") or "").strip()
+    if ticker_source_ref and ticker_source_job_key:
+        return resolve_ticker_source_symbols(
             job_store,
-            feed_id=symbol_feed_ref,
-            job_key=symbol_feed_job_key,
-            max_age_seconds=getattr(args, "max_feed_age_seconds", None),
+            source_id=ticker_source_ref,
+            job_key=ticker_source_job_key,
+            max_age_seconds=getattr(args, "max_source_age_seconds", None),
             fallback_universe_ref=(str(getattr(args, "fallback_universe_ref", "") or "").strip() or None),
         )
     return {
-        "kind": "symbol_feed",
+        "kind": "ticker_source",
         "status": "missing",
         "symbols": [],
         "summary": {},
@@ -248,8 +248,8 @@ def run_collection_cycle(
         scanner_args.symbols_file = None
         if str(symbol_source.get("kind") or "") == "fallback_universe":
             universe_label = str(symbol_source.get("fallback_universe_ref") or "fallback_universe")
-        elif str(symbol_source.get("feed_id") or "").strip():
-            universe_label = f"symbol_feed:{symbol_source['feed_id']}"
+        elif str(symbol_source.get("source_id") or "").strip():
+            universe_label = f"ticker_source:{symbol_source['source_id']}"
         else:
             universe_label = "uoa_only"
         if symbols:

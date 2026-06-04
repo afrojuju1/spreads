@@ -963,16 +963,16 @@ def _research_color(alert: dict[str, Any], details: dict[str, Any]) -> int:
     return INFO_BLUE
 
 
-def _research_finviz_field(feed_entry: dict[str, Any]) -> str:
+def _research_finviz_field(source_entry: dict[str, Any]) -> str:
     parts = [
-        _metric_part("score", compact_value(feed_entry.get("score"))),
-        _metric_part("price", compact_money(feed_entry.get("price"))),
-        _metric_part("vol", compact_count(feed_entry.get("daily_volume"))),
+        _metric_part("score", compact_value(source_entry.get("score"))),
+        _metric_part("price", compact_money(source_entry.get("price"))),
+        _metric_part("vol", compact_count(source_entry.get("daily_volume"))),
         _metric_part(
             "move",
-            _compact_percent_points(feed_entry.get("move_percent")),
+            _compact_percent_points(source_entry.get("move_percent")),
         ),
-        _metric_part("relvol", compact_ratio(feed_entry.get("relative_volume"))),
+        _metric_part("relvol", compact_ratio(source_entry.get("relative_volume"))),
     ]
     return _join_metric_parts(parts)
 
@@ -982,7 +982,7 @@ def _build_research_actionable_payload(
     details: dict[str, Any],
 ) -> dict[str, Any]:
     tradingagents = details.get("tradingagents") if isinstance(details.get("tradingagents"), dict) else {}
-    feed_entry = details.get("feed_entry") if isinstance(details.get("feed_entry"), dict) else {}
+    source_entry = details.get("source_entry") if isinstance(details.get("source_entry"), dict) else {}
     symbol = str(alert.get("symbol") or tradingagents.get("ticker") or "n/a")
     signal = str(tradingagents.get("validated_signal") or "n/a")
     quality_status = str(tradingagents.get("quality_status") or "n/a")
@@ -1005,7 +1005,7 @@ def _build_research_actionable_payload(
         },
         {
             "name": "Finviz",
-            "value": _discord_value(_research_finviz_field(feed_entry)),
+            "value": _discord_value(_research_finviz_field(source_entry)),
             "inline": False,
         },
         {

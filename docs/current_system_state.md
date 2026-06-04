@@ -13,7 +13,7 @@ Last updated: 2026-06-03
 | Operator interfaces | `packages/web`, `packages/api`, `packages/core/cli` | Web, API, and CLI are adapters over service-owned state. They must not own trading logic. |
 | Trading strategy config | `packages/config/trading_strategies`, `services/trading_strategies.py`, `services/trading_strategy_runtime.py` | A `trading_strategy` is the product/operator owner for source, trade structure, entry routine, management routine, risk, limits, and execution settings. |
 | Scheduling and workers | `packages/config/jobs`, `packages/core/jobs`, `services/runtime_policy.py` | Declared jobs and generated trading-strategy jobs are the scheduler source of truth. Runtime workers execute broker sync, strategy entry/manage, dispatch, recovery, and alert jobs. |
-| Dynamic symbol feeds | `packages/config/symbol_feeds`, `services/symbol_feeds.py` | Symbol feeds materialize reusable underlying lists. `finviz_momentum` feeds `momentum_long_calls`. |
+| Dynamic ticker sources | `packages/config/ticker_sources`, `services/ticker_sources.py` | Ticker sources materialize reusable underlying lists. `finviz_momentum` feeds `momentum_long_calls`. |
 | Market data capture | `services/market_recorder.py`, `services/discovery_runs/capture/`, `services/discovery_recovery/` | `market_recorder.py` is the normal Alpaca option websocket owner. Discovery and runtime services consume persisted recorder-backed state where possible. |
 | Discovery and scanning | `services/scanners/`, `services/discovery_runs/`, `services/live_selection.py`, `services/opportunity_scoring.py`, `services/candidate_policy.py` | Discovery scans strategy scopes, ranks candidates, captures diagnostics, and persists discovery-owned cycle state. |
 | Signal and opportunity state | `services/signal_state.py`, `services/opportunity_generation.py`, `services/opportunities.py`, `storage/signal_repository.py` | Owns signal states, strategy runs, opportunities, and strategy-owned runtime projections. |
@@ -29,7 +29,7 @@ Last updated: 2026-06-03
 - Strategy routines generate jobs named `trading_strategy:<strategy_id>:entry` and `trading_strategy:<strategy_id>:manage`.
 - `execution_intent_dispatch:global` owns the global pending-intent dispatch loop.
 - `trade_structure` names reusable option construction behavior, such as `long_call`, `call_credit_spread`, `iron_condor`, or `short_put`.
-- `source` names the candidate source for a strategy. Current source types are `static_universe` and `symbol_feed`.
+- `source` names the candidate source for a strategy. Current source types are `static` and `dynamic`.
 - Discovery runs are diagnostic/scanning surfaces. They are not the product owner of execution.
 - Strategy-owned opportunities are projections over scan/feed candidates and are persisted with `trading_strategy_id` and `strategy_run_id`.
 - `pipeline_id` remains discovery lineage and compatibility identity, not the primary runtime owner.
@@ -47,7 +47,7 @@ Last updated: 2026-06-03
 | Trading strategy | Operator/product trading unit with source, trade structure, routines, risk, limits, execution settings, and config hash. | `packages/config/trading_strategies`, `services/trading_strategies.py` | Discovery-session identity, broker facts, or dashboard-only state. |
 | Trade structure | Reusable option construction family. | `services/strategy_builders.py`, `services/option_structures.py`, scanner builders | Runtime owner identity. |
 | Routine | Scheduled strategy behavior such as entry or manage. | `services/trading_strategy_runtime.py`, generated job specs | Broker submission facts. |
-| Symbol feed | Reusable dynamic symbol list. | `packages/config/symbol_feeds`, `services/symbol_feeds.py`, `symbol_feed:*` jobs | Execution ownership or position attribution. |
+| Ticker source | Reusable dynamic symbol list. | `packages/config/ticker_sources`, `services/ticker_sources.py`, `ticker_source:*` jobs | Execution ownership or position attribution. |
 | Discovery run | Scanner/capture cycle for a strategy scope. | `packages/config/discovery_runs`, `services/discovery_runs/`, `discovery_runs` tables | Product/runtime ownership. |
 | Strategy run | One persisted strategy-runtime sync pass for a strategy/cycle. | `strategy_runs`, `storage/signal_repository.py` | Broker facts or position PnL. |
 | Signal | Normalized market/setup observation that may become an opportunity. | `signal_states`, `signal_state_transitions`, `services/signal_state.py` | Alerts, broker sync, or frontend state. |
@@ -83,7 +83,7 @@ Scheduler
 ARQ workers
   |
   +--> runtime lane: broker sync, trading strategy entry/manage, intent dispatch, recovery, alerts
-  +--> discovery lane: discovery runs, symbol feeds
+  +--> discovery lane: discovery runs, ticker sources
   +--> valuation lane: company valuation jobs
   +--> research lane: TradingAgents jobs when enabled
 
@@ -99,7 +99,7 @@ Redis = queues, leases, pub/sub
 
 Current main job types:
 
-- `symbol_feed`
+- `ticker_source`
 - `discovery_run`
 - `broker_sync`
 - `discovery_recovery`
@@ -143,7 +143,7 @@ Current active strategies:
 - `short_dated_index_iron_condor`
 - `short_dated_index_put_credit`
 
-`momentum_long_calls` is the Finviz-fed long-call strategy. It consumes `symbol_feed:finviz_momentum`, enters during market hours on a 2-minute cadence, and manages during market hours on a 1-minute cadence.
+`momentum_long_calls` is the Finviz-fed long-call strategy. It consumes `ticker_source:finviz_momentum`, enters during market hours on a 2-minute cadence, and manages during market hours on a 1-minute cadence.
 
 ## Discovery And Opportunity State
 
@@ -158,7 +158,7 @@ Strategy-owned entry state is persisted separately through:
 - `execution_intents.trading_strategy_id`
 - `portfolio_positions.trading_strategy_id`
 
-This removes the old split between direct feed jobs and config-wrapper runtime jobs. Feed-driven and static-universe strategies both flow through the same strategy ownership model.
+This removes the old split between direct source jobs and config-wrapper runtime jobs. Dynamic-source and static strategies both flow through the same strategy ownership model.
 
 ## Execution Domain
 

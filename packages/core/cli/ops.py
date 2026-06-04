@@ -161,10 +161,10 @@ def live_doctor_command(
         "--env",
         help="Run this command against a named deploy target.",
     ),
-    feed_id: str = typer.Option(
+    source_id: str = typer.Option(
         "finviz_momentum",
-        "--feed-id",
-        help="Finviz symbol feed id.",
+        "--source-id",
+        help="Finviz ticker source id.",
     ),
     market_date: str | None = typer.Option(
         None,
@@ -185,7 +185,7 @@ def live_doctor_command(
     _run_visibility_command(
         builder=lambda: build_live_doctor(
             db_target=db,
-            feed_id=feed_id,
+            source_id=source_id,
             market_date=market_date,
             limit=resolved_limit,
         ),
@@ -202,10 +202,10 @@ def market_open_monitor_command(
         "--env",
         help="Run this command against a named deploy target.",
     ),
-    feed_id: str = typer.Option(
+    source_id: str = typer.Option(
         "finviz_momentum",
-        "--feed-id",
-        help="Finviz symbol feed id.",
+        "--source-id",
+        help="Finviz ticker source id.",
     ),
     interval_minutes: int = typer.Option(
         15,
@@ -227,7 +227,7 @@ def market_open_monitor_command(
     _run_visibility_command(
         builder=lambda: build_live_doctor(
             db_target=db,
-            feed_id=feed_id,
+            source_id=source_id,
         ),
         renderer=render_live_doctor,
         json_output=json_output,

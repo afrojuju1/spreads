@@ -21,7 +21,7 @@ from .system import build_system_status
 from .trading import build_trading_health
 
 DEFAULT_RECENT_LIMIT = 5
-DEFAULT_FEED_ID = "finviz_momentum"
+DEFAULT_SOURCE_ID = "finviz_momentum"
 DEFAULT_TRADING_STRATEGY_ID = "momentum_long_calls"
 
 
@@ -90,7 +90,7 @@ def _declared_job(
     return {}
 
 
-def _compact_feed_run(row: Mapping[str, Any] | None) -> dict[str, Any] | None:
+def _compact_source_run(row: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if row is None:
         return None
     return {
@@ -213,7 +213,7 @@ def _latest_closed_position_reason(positions: list[Any]) -> str | None:
 def build_live_doctor(
     *,
     db_target: str | None = None,
-    feed_id: str = DEFAULT_FEED_ID,
+    source_id: str = DEFAULT_SOURCE_ID,
     trading_strategy_id: str = DEFAULT_TRADING_STRATEGY_ID,
     market_date: str | None = None,
     limit: int = DEFAULT_RECENT_LIMIT,
@@ -221,7 +221,7 @@ def build_live_doctor(
 ) -> dict[str, Any]:
     generated_at = _utc_now()
     now = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
-    resolved_feed_id = _as_text(feed_id) or DEFAULT_FEED_ID
+    resolved_source_id = _as_text(source_id) or DEFAULT_SOURCE_ID
     resolved_trading_strategy_id = _as_text(trading_strategy_id) or DEFAULT_TRADING_STRATEGY_ID
     resolved_market_date = _as_text(market_date) or datetime.now(NEW_YORK).date().isoformat()
 
@@ -239,7 +239,7 @@ def build_live_doctor(
     market_open = bool(market_session.get("is_open"))
 
     strategy = resolve_trading_strategy(resolved_trading_strategy_id)
-    max_feed_age_seconds = strategy.source.max_age_seconds or 300
+    max_source_age_seconds = strategy.source.max_age_seconds or 300
     max_open_positions = strategy.max_open_positions or None
     max_daily_entries = strategy.max_new_entries_per_day
 
@@ -391,55 +391,55 @@ def build_live_doctor(
         )
     )
 
-    feed_job_key = f"symbol_feed:{resolved_feed_id}"
+    source_job_key = f"ticker_source:{resolved_source_id}"
     entry_job_key = f"trading_strategy:{resolved_trading_strategy_id}:entry"
     manage_job_key = f"trading_strategy:{resolved_trading_strategy_id}:manage"
     dispatch_job_key = "execution_intent_dispatch:global"
 
-    feed_runs = _runs_for_job_key(jobs_details, feed_job_key, limit=limit)
-    feed_definition = _declared_job(jobs_details, feed_job_key)
-    newest_feed = feed_runs[0] if feed_runs else None
-    latest_feed = newest_feed
-    if newest_feed is not None and str(newest_feed.get("job_status") or newest_feed.get("status") or "").strip().lower() != "succeeded":
-        latest_feed = _latest_completed_run(feed_runs) or newest_feed
-    if latest_feed is None and feed_definition:
-        latest_feed = {
-            "job_run_id": feed_definition.get("latest_run_id"),
-            "job_status": feed_definition.get("latest_run_status"),
-            "scheduled_for": feed_definition.get("latest_run_at") or feed_definition.get("expected_slot_at"),
-            "operator_status": feed_definition.get("operator_status"),
+    source_runs = _runs_for_job_key(jobs_details, source_job_key, limit=limit)
+    source_definition = _declared_job(jobs_details, source_job_key)
+    newest_source = source_runs[0] if source_runs else None
+    latest_source = newest_source
+    if newest_source is not None and str(newest_source.get("job_status") or newest_source.get("status") or "").strip().lower() != "succeeded":
+        latest_source = _latest_completed_run(source_runs) or newest_source
+    if latest_source is None and source_definition:
+        latest_source = {
+            "job_run_id": source_definition.get("latest_run_id"),
+            "job_status": source_definition.get("latest_run_status"),
+            "scheduled_for": source_definition.get("latest_run_at") or source_definition.get("expected_slot_at"),
+            "operator_status": source_definition.get("operator_status"),
         }
-    feed_status = _status_for_job_run(latest_feed, market_open=market_open)
-    feed_scheduled_for = None if latest_feed is None else latest_feed.get("scheduled_for")
-    feed_status, feed_age_seconds = _fresh_job_status(
-        base_status=feed_status,
-        scheduled_for=feed_scheduled_for,
+    source_status = _status_for_job_run(latest_source, market_open=market_open)
+    source_scheduled_for = None if latest_source is None else latest_source.get("scheduled_for")
+    source_status, source_age_seconds = _fresh_job_status(
+        base_status=source_status,
+        scheduled_for=source_scheduled_for,
         now=now,
-        max_age_seconds=max_feed_age_seconds,
+        max_age_seconds=max_source_age_seconds,
         market_open=market_open,
     )
-    feed_symbol_count = _coerce_int(None if latest_feed is None else latest_feed.get("symbol_count")) or 0
-    if market_open and feed_status == "healthy" and feed_symbol_count <= 0:
-        feed_status = "degraded"
+    source_symbol_count = _coerce_int(None if latest_source is None else latest_source.get("symbol_count")) or 0
+    if market_open and source_status == "healthy" and source_symbol_count <= 0:
+        source_status = "degraded"
     checks.append(
         _check(
-            "Finviz Feed",
-            status=feed_status,
+            "Finviz Source",
+            status=source_status,
             message=(
-                f"{feed_symbol_count} symbols; latest={feed_scheduled_for or '-'}; "
-                f"age={feed_age_seconds}; newest_status="
-                f"{None if newest_feed is None else newest_feed.get('job_status')}"
+                f"{source_symbol_count} symbols; latest={source_scheduled_for or '-'}; "
+                f"age={source_age_seconds}; newest_status="
+                f"{None if newest_source is None else newest_source.get('job_status')}"
             ),
             metrics={
-                "feed_id": resolved_feed_id,
-                "job_key": feed_job_key,
-                "job_run_id": None if latest_feed is None else latest_feed.get("job_run_id"),
-                "job_status": None if latest_feed is None else latest_feed.get("job_status") or latest_feed.get("status"),
-                "symbol_count": feed_symbol_count,
-                "candidate_count": None if latest_feed is None else latest_feed.get("candidate_count"),
-                "retained_count": None if latest_feed is None else latest_feed.get("retained_count"),
-                "age_seconds": feed_age_seconds,
-                "max_age_seconds": max_feed_age_seconds,
+                "source_id": resolved_source_id,
+                "job_key": source_job_key,
+                "job_run_id": None if latest_source is None else latest_source.get("job_run_id"),
+                "job_status": None if latest_source is None else latest_source.get("job_status") or latest_source.get("status"),
+                "symbol_count": source_symbol_count,
+                "candidate_count": None if latest_source is None else latest_source.get("candidate_count"),
+                "retained_count": None if latest_source is None else latest_source.get("retained_count"),
+                "age_seconds": source_age_seconds,
+                "max_age_seconds": max_source_age_seconds,
             },
         )
     )
@@ -680,11 +680,11 @@ def build_live_doctor(
             "actionable_failed_job_count": actionable_failed_count,
             "broker_sync_status": broker_sync.get("status"),
             "broker_sync_age_seconds": broker_sync.get("age_seconds"),
-            "feed_id": resolved_feed_id,
+            "source_id": resolved_source_id,
             "trading_strategy_id": resolved_trading_strategy_id,
-            "finviz_feed_status": feed_status,
-            "finviz_feed_symbol_count": feed_symbol_count,
-            "finviz_feed_age_seconds": feed_age_seconds,
+            "finviz_source_status": source_status,
+            "finviz_source_symbol_count": source_symbol_count,
+            "finviz_source_age_seconds": source_age_seconds,
             "strategy_entry_status": entry_status,
             "strategy_entry_opportunity_count": entry_opportunity_count,
             "strategy_entry_age_seconds": entry_age_seconds,
@@ -710,8 +710,8 @@ def build_live_doctor(
             "trading_summary": trading_summary,
             "jobs_summary": jobs_summary,
             "worker_lanes": lanes,
-            "newest_feed_run": _compact_feed_run(newest_feed),
-            "latest_feed_run": _compact_feed_run(latest_feed),
+            "newest_source_run": _compact_source_run(newest_source),
+            "latest_source_run": _compact_source_run(latest_source),
             "newest_entry_run": _compact_strategy_run(newest_entry),
             "latest_entry_run": _compact_strategy_run(latest_entry),
             "newest_manage_run": _compact_strategy_run(newest_manage),

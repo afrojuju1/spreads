@@ -1,5 +1,5 @@
-symbol_feed_id: finviz_momentum
-job_key: symbol_feed:finviz_momentum
+ticker_source_id: finviz_momentum
+job_key: ticker_source:finviz_momentum
 enabled: true
 schedule:
   type: interval_minutes

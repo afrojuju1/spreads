@@ -6,9 +6,9 @@ schedule:
   minutes: 20
 payload:
   label: finviz_tradingagents
-  feed_id: finviz_momentum
-  feed_job_key: symbol_feed:finviz_momentum
-  max_feed_age_seconds: 1800
+  source_id: finviz_momentum
+  source_job_key: ticker_source:finviz_momentum
+  max_source_age_seconds: 1800
   max_tickers: 3
   profile: fast
   output_root: outputs/tradingagents/finviz_momentum

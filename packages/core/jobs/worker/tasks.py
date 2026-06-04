@@ -17,7 +17,7 @@ from core.jobs.registry import (
     EXECUTION_SUBMIT_JOB_TYPE,
     DISCOVERY_RUN_JOB_TYPE,
     POSITION_EXIT_MANAGER_JOB_TYPE,
-    SYMBOL_FEED_JOB_TYPE,
+    TICKER_SOURCE_JOB_TYPE,
     TRADINGAGENTS_SCAN_JOB_TYPE,
     TRADING_STRATEGY_ENTRY_JOB_TYPE,
     TRADING_STRATEGY_MANAGE_JOB_TYPE,
@@ -54,7 +54,7 @@ from core.services.discovery_recovery import (
     build_slot_details_from_cycle_result,
     run_discovery_recovery,
 )
-from core.services.symbol_feeds import run_symbol_feed
+from core.services.ticker_sources import run_ticker_source
 from core.services.tradingagents_scan import run_tradingagents_scan
 from core.storage.company_valuation_repository import CompanyValuationRepository
 from core.storage.serializers import parse_date, parse_datetime, render_value
@@ -518,7 +518,7 @@ async def run_discovery_run_job(
     )
 
 
-async def run_symbol_feed_job(
+async def run_ticker_source_job(
     ctx: dict[str, Any],
     job_key: str,
     job_run_id: str,
@@ -527,14 +527,14 @@ async def run_symbol_feed_job(
 ) -> dict[str, Any]:
     def runner(heartbeat: Any) -> dict[str, Any]:
         heartbeat()
-        return run_symbol_feed(
-            feed_id=str(payload["feed_id"]),
+        return run_ticker_source(
+            source_id=str(payload["source_id"]),
             recipe=str(payload["recipe"]),
             recipe_args=dict(payload.get("recipe_args") or {}),
         )
 
     enriched_payload = dict(payload)
-    enriched_payload["job_type"] = SYMBOL_FEED_JOB_TYPE
+    enriched_payload["job_type"] = TICKER_SOURCE_JOB_TYPE
     return await _execute_managed_job(
         ctx,
         job_key=job_key,

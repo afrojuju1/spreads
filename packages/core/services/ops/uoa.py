@@ -568,7 +568,7 @@ def _build_uoa_payload(
             ),
             "symbol_source_kind": symbol_source.get("kind"),
             "symbol_source_status": symbol_source.get("status"),
-            "symbol_feed_ref": symbol_source.get("feed_id"),
+            "ticker_source_ref": symbol_source.get("source_id"),
             "live_selected_promotable_count": int(
                 live_selection_counts.get(PROMOTABLE_SELECTION_STATE) or 0
             ),

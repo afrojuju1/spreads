@@ -2,7 +2,7 @@ trading_strategy_id: short_dated_index_call_credit
 name: Short-Dated Index Call Credit
 enabled: true
 source:
-  type: static_universe
+  type: static
   ref: liquid_index_etfs
 trade_structure: call_credit_spread
 build:

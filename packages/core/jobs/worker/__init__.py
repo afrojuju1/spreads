@@ -29,7 +29,7 @@ from .tasks import (
     run_discovery_run_job,
     run_execution_intent_dispatch_job,
     run_position_exit_manager_job,
-    run_symbol_feed_job,
+    run_ticker_source_job,
     run_tradingagents_scan_job,
     run_trading_strategy_entry_job,
     run_trading_strategy_manage_job,
@@ -61,7 +61,7 @@ class RuntimeWorkerSettings:
 class DiscoveryWorkerSettings:
     functions = [
         run_discovery_run_job,
-        run_symbol_feed_job,
+        run_ticker_source_job,
     ]
     queue_name = DISCOVERY_QUEUE_NAME
     redis_settings = build_redis_settings(default_redis_url())
@@ -125,7 +125,7 @@ __all__ = [
     "run_discovery_run_job",
     "run_execution_intent_dispatch_job",
     "run_position_exit_manager_job",
-    "run_symbol_feed_job",
+    "run_ticker_source_job",
     "run_tradingagents_scan_job",
     "run_trading_strategy_entry_job",
     "run_trading_strategy_manage_job",

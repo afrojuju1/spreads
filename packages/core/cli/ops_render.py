@@ -1242,7 +1242,7 @@ def render_live_doctor(console: Console, payload: dict[str, Any]) -> None:
     )
     overview.add_row(
         "Finviz",
-        (f"feed {_render_value(summary.get('finviz_feed_status'))} " f"({_render_value(summary.get('finviz_feed_symbol_count'))} symbols)"),
+        (f"source {_render_value(summary.get('finviz_source_status'))} " f"({_render_value(summary.get('finviz_source_symbol_count'))} symbols)"),
     )
     overview.add_row(
         "Strategy",

@@ -29,8 +29,8 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_TRADING_CONFIG_ROOT = REPO_ROOT / "packages" / "config"
 NEW_YORK = ZoneInfo("America/New_York")
 
-STATIC_UNIVERSE_SOURCE = "static_universe"
-SYMBOL_FEED_SOURCE = "symbol_feed"
+STATIC_SOURCE = "static"
+DYNAMIC_SOURCE = "dynamic"
 RANKING_POLICY_ARG_KEYS = (
     "ranking_min_probability_of_profit",
     "ranking_min_expected_value_dollars",
@@ -124,18 +124,18 @@ class StrategySource:
     fallback_universe_ref: str | None = None
 
     @property
-    def is_static_universe(self) -> bool:
-        return self.kind == STATIC_UNIVERSE_SOURCE
+    def is_static(self) -> bool:
+        return self.kind == STATIC_SOURCE
 
     @property
-    def is_symbol_feed(self) -> bool:
-        return self.kind == SYMBOL_FEED_SOURCE
+    def is_dynamic(self) -> bool:
+        return self.kind == DYNAMIC_SOURCE
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any] | None) -> StrategySource:
         mapping = _as_mapping(payload, field_name="source")
         source_type = _as_text(mapping.get("type"), field_name="source.type").strip().lower()
-        if source_type not in {STATIC_UNIVERSE_SOURCE, SYMBOL_FEED_SOURCE}:
+        if source_type not in {STATIC_SOURCE, DYNAMIC_SOURCE}:
             raise ValueError(f"Unsupported source.type: {source_type}")
         return cls(
             kind=source_type,
@@ -334,7 +334,7 @@ def _source_symbols(
     *,
     config_root: str | Path | None,
 ) -> tuple[str, ...]:
-    if source.is_static_universe:
+    if source.is_static:
         return load_universe_symbols(source.ref, config_root=config_root)
     if source.fallback_universe_ref:
         return load_universe_symbols(source.fallback_universe_ref, config_root=config_root)
@@ -560,7 +560,7 @@ def build_discovery_run_scope(
         scanner_strategy=scanner_strategy,
         scanner_profile=scanner_profile,
     )
-    static_strategies = [strategy for strategy in strategies if strategy.source.is_static_universe]
+    static_strategies = [strategy for strategy in strategies if strategy.source.is_static]
     if not static_strategies:
         return {
             "enabled": False,
@@ -648,7 +648,7 @@ def build_discovery_run_scopes(
 ) -> list[dict[str, Any]]:
     groups: dict[tuple[str, str], list[TradingStrategyConfig]] = {}
     for strategy in active_entry_strategies(config_root):
-        if not strategy.source.is_static_universe:
+        if not strategy.source.is_static:
             continue
         key = (strategy.scanner_strategy, strategy.scanner_profile)
         groups.setdefault(key, []).append(strategy)
@@ -666,8 +666,8 @@ def build_discovery_run_scopes(
 
 
 __all__ = [
-    "STATIC_UNIVERSE_SOURCE",
-    "SYMBOL_FEED_SOURCE",
+    "DYNAMIC_SOURCE",
+    "STATIC_SOURCE",
     "StrategyRoutine",
     "StrategySource",
     "TradingStrategyConfig",

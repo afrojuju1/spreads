@@ -12,7 +12,7 @@ EXECUTION_SUBMIT_JOB_TYPE = "execution_submit"
 ALERT_DELIVERY_JOB_TYPE = "alert_delivery"
 ALERT_RECONCILE_JOB_TYPE = "alert_reconcile"
 DISCOVERY_RUN_JOB_TYPE = "discovery_run"
-SYMBOL_FEED_JOB_TYPE = "symbol_feed"
+TICKER_SOURCE_JOB_TYPE = "ticker_source"
 TRADINGAGENTS_SCAN_JOB_TYPE = "tradingagents_scan"
 POSITION_EXIT_MANAGER_JOB_TYPE = "position_exit_manager"
 DISCOVERY_RECOVERY_JOB_TYPE = "discovery_recovery"
@@ -82,8 +82,8 @@ JOB_SPECS = {
             queue_name=DISCOVERY_QUEUE_NAME,
         ),
         JobSpec(
-            job_type=SYMBOL_FEED_JOB_TYPE,
-            task_name="run_symbol_feed_job",
+            job_type=TICKER_SOURCE_JOB_TYPE,
+            task_name="run_ticker_source_job",
             queue_name=DISCOVERY_QUEUE_NAME,
         ),
         JobSpec(
@@ -151,7 +151,7 @@ WORKER_LANES = (
         queue_name=DISCOVERY_QUEUE_NAME,
         task_names=(
             JOB_SPECS[DISCOVERY_RUN_JOB_TYPE].task_name,
-            JOB_SPECS[SYMBOL_FEED_JOB_TYPE].task_name,
+            JOB_SPECS[TICKER_SOURCE_JOB_TYPE].task_name,
         ),
     ),
     WorkerLaneSpec(

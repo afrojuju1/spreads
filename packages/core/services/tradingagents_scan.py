@@ -12,7 +12,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from core.services.alert_delivery import plan_alert_delivery
-from core.services.symbol_feeds import get_latest_symbol_feed_snapshot
+from core.services.ticker_sources import get_latest_ticker_source_snapshot
 from core.storage.serializers import parse_datetime
 
 
@@ -418,8 +418,8 @@ def _plan_actionable_alert(
     session_id: str,
     label: str,
     job_run_id: str,
-    feed_id: str,
-    feed_entry: Mapping[str, Any],
+    source_id: str,
+    source_entry: Mapping[str, Any],
     result: Mapping[str, Any],
 ) -> dict[str, Any]:
     ticker = str(result["ticker"])
@@ -436,18 +436,18 @@ def _plan_actionable_alert(
         "profile": str(result.get("run_profile") or "fast"),
         "description": (
             f"TradingAgents {signal} on {ticker}; "
-            f"quality {quality_status}; source Finviz {feed_id}."
+            f"quality {quality_status}; source Finviz {source_id}."
         ),
         "details": {
             "source": "finviz",
-            "feed_id": feed_id,
-            "feed_entry": dict(feed_entry),
+            "source_id": source_id,
+            "source_entry": dict(source_entry),
             "tradingagents": dict(result),
         },
     }
     dedupe_key = (
         "research_tradingagents_actionable|"
-        f"{session_date}|{feed_id}|{ticker}|{signal}"
+        f"{session_date}|{source_id}|{ticker}|{signal}"
     )
     row, created = plan_alert_delivery(
         alert_store=storage.alerts,
@@ -481,7 +481,7 @@ def _plan_batch_alert(
     session_id: str,
     label: str,
     job_run_id: str,
-    feed_id: str,
+    source_id: str,
     selected_tickers: tuple[str, ...],
     snapshot: Mapping[str, Any],
     ticker_results: list[dict[str, Any]],
@@ -511,9 +511,9 @@ def _plan_batch_alert(
         ),
         "details": {
             "source": "finviz",
-            "feed_id": feed_id,
-            "feed_job_run_id": snapshot.get("job_run_id"),
-            "feed_generated_at": snapshot.get("generated_at"),
+            "source_id": source_id,
+            "source_job_run_id": snapshot.get("job_run_id"),
+            "source_generated_at": snapshot.get("generated_at"),
             "selected_tickers": list(selected_tickers),
             "candidate_count": len(selected_tickers),
             "completed_count": completed_count,
@@ -530,7 +530,7 @@ def _plan_batch_alert(
     ) or "none"
     dedupe_key = (
         "research_tradingagents_batch_summary|"
-        f"{session_date}|{feed_id}|{ticker_scope}"
+        f"{session_date}|{source_id}|{ticker_scope}"
     )
     row, created = plan_alert_delivery(
         alert_store=storage.alerts,
@@ -565,14 +565,14 @@ def run_tradingagents_scan(
     payload: Mapping[str, Any],
     heartbeat: Callable[[], None],
 ) -> dict[str, Any]:
-    feed_id = _as_text(payload.get("feed_id")) or "finviz_momentum"
-    feed_job_key = _as_text(payload.get("feed_job_key")) or f"symbol_feed:{feed_id}"
-    max_feed_age_seconds = _as_optional_int(payload.get("max_feed_age_seconds"))
-    snapshot = get_latest_symbol_feed_snapshot(
+    source_id = _as_text(payload.get("source_id")) or "finviz_momentum"
+    source_job_key = _as_text(payload.get("source_job_key")) or f"ticker_source:{source_id}"
+    max_source_age_seconds = _as_optional_int(payload.get("max_source_age_seconds"))
+    snapshot = get_latest_ticker_source_snapshot(
         job_store,
-        feed_id=feed_id,
-        job_key=feed_job_key,
-        max_age_seconds=max_feed_age_seconds,
+        source_id=source_id,
+        job_key=source_job_key,
+        max_age_seconds=max_source_age_seconds,
     )
     snapshot_status = str(snapshot.get("status") or "").strip().lower()
     session_date = _session_date(payload)
@@ -583,10 +583,10 @@ def run_tradingagents_scan(
     if snapshot_status not in {"ready", "empty"}:
         return {
             "status": "skipped",
-            "reason": f"feed_snapshot_{snapshot_status or 'missing'}",
-            "feed_id": feed_id,
-            "feed_job_key": feed_job_key,
-            "feed_snapshot": snapshot,
+            "reason": f"source_snapshot_{snapshot_status or 'missing'}",
+            "source_id": source_id,
+            "source_job_key": source_job_key,
+            "source_snapshot": snapshot,
         }
 
     max_tickers = max(_as_int(payload.get("max_tickers"), 5), 1)
@@ -642,8 +642,8 @@ def run_tradingagents_scan(
                     session_id=session_id,
                     label=label,
                     job_run_id=job_run_id,
-                    feed_id=feed_id,
-                    feed_entry=entry_by_symbol.get(ticker, {}),
+                    source_id=source_id,
+                    source_entry=entry_by_symbol.get(ticker, {}),
                     result=result,
                 )
             )
@@ -655,7 +655,7 @@ def run_tradingagents_scan(
         session_id=session_id,
         label=label,
         job_run_id=job_run_id,
-        feed_id=feed_id,
+        source_id=source_id,
         selected_tickers=selected_tickers,
         snapshot=snapshot,
         ticker_results=ticker_results,
@@ -672,10 +672,10 @@ def run_tradingagents_scan(
     actionable_count = sum(1 for result in ticker_results if result.get("actionable"))
     return {
         "status": "completed",
-        "feed_id": feed_id,
-        "feed_job_key": feed_job_key,
-        "feed_job_run_id": snapshot.get("job_run_id"),
-        "feed_generated_at": snapshot.get("generated_at"),
+        "source_id": source_id,
+        "source_job_key": source_job_key,
+        "source_job_run_id": snapshot.get("job_run_id"),
+        "source_generated_at": snapshot.get("generated_at"),
         "session_date": session_date,
         "label": label,
         "candidate_count": len(_unique_symbols(snapshot.get("symbols"))),

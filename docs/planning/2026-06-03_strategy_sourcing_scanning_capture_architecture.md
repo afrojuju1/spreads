@@ -59,7 +59,7 @@ The critical refinement is that `SourceRun`, `SourceTicker`, `CandidateRun`, and
 The current system has the right ownership direction but still has old shapes underneath it:
 
 - `trading_strategy` is the intended owner.
-- `symbol_feed` materializes dynamic ticker lists such as `finviz_momentum`.
+- `ticker_source` materializes dynamic ticker lists such as `finviz_momentum`.
 - `discovery_run` still owns scanner cycles, candidate diagnostics, and some operator health.
 - Static-universe strategies are included in generated discovery scopes.
 - Symbol-feed strategies such as `momentum_long_calls` can have fresh tickers but still need a clean candidate-generation path before entry decisions can consume anything.
@@ -367,7 +367,7 @@ Epic `spr-cb5` owns the implementation.
 | --- | --- |
 | `spr-cb5.1` | Refine Nautilus-shaped engine architecture docs. |
 | `spr-cb5.2` | Add `core.services.trading_engine` skeleton and typed contracts. |
-| `spr-cb5.3` | Replace active symbol feeds with ticker sources. |
+| `spr-cb5.3` | Replace active ticker sources with ticker sources. |
 | `spr-cb5.4` | Move candidate build into strategy entry runtime. |
 | `spr-cb5.5` | Persist candidate runs and trade signals. |
 | `spr-cb5.6` | Replace opportunity decisions with trade decisions. |
