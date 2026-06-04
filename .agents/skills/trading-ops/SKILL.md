@@ -1,6 +1,6 @@
 ---
 name: trading-ops
-description: Live operations workflow for Ade's spreads trading system. Use when checking live paper trading health, market-open readiness, Finviz direct trading behavior, worker or scheduler status, rollout verification, or "how is the system doing?" questions in /home/ade/Projects/spreads.
+description: Live operations workflow for Ade's spreads trading system. Use when checking live paper trading health, market-open readiness, momentum-calls behavior, worker or scheduler status, rollout verification, or "how is the system doing?" questions in /home/ade/Projects/spreads.
 ---
 
 # Trading Ops
@@ -14,50 +14,53 @@ Use this skill from `/home/ade/Projects/spreads`.
 - Prefer shipped CLIs and Docker service checks.
 - Use `uv run spreads ...` commands; target the NUC with `--env ade-nucbox-k8-plus` when the question is about the live paper deployment.
 - Do not add or update tests unless Ade explicitly asks. Report live checks and remaining runtime risk instead.
-- Treat Finviz long-call direct trading as the current active paper flow. Its orders submit through `alpaca_direct`, which is the only active Spreads execution runtime.
+- Treat `momentum_long_calls` as the current active paper flow. It sources tickers dynamically, trades option calls through `alpaca_direct`, and reports through `TradingOpsState`.
 - Nautilus host services and support containers are sunset for live operations. They should remain stopped/disabled unless Ade explicitly asks to re-enable Nautilus as a separate experiment.
 - TradingAgents is the external research AI layer linked from Spreads at `external/TradingAgents`. Spreads owns the orchestration, job config, outputs, alerts, and operator visibility around that layer.
 
 ## Quick Check
 
-Run the compact surface first:
+Run the canonical trading state first:
 
 ```bash
-uv run spreads live-doctor --env ade-nucbox-k8-plus
+uv run spreads ops state --env ade-nucbox-k8-plus
 ```
 
 Use JSON when exact fields matter:
 
 ```bash
-uv run spreads live-doctor --env ade-nucbox-k8-plus --json
-```
-
-If `live-doctor` is not available in an older checkout, use:
-
-```bash
-uv run spreads status --env ade-nucbox-k8-plus --json
-uv run spreads trading --env ade-nucbox-k8-plus --json
-uv run spreads finviz-ledger --env ade-nucbox-k8-plus --json --limit 5
-uv run spreads jobs lanes --env ade-nucbox-k8-plus --json
+uv run spreads ops state --env ade-nucbox-k8-plus --json
+uv run spreads ops storage --env ade-nucbox-k8-plus --json
+uv run spreads jobs --env ade-nucbox-k8-plus --json
 uv run spreads jobs --env ade-nucbox-k8-plus --status failed --limit 10 --json
 ```
 
-## Finviz Direct Flow
+## Momentum Calls Flow
 
-Check these signals:
+Read these fields from `TradingOpsState`:
 
-- Feed freshness: latest `symbol_feed:finviz_momentum` run succeeded recently and retained candidates.
-- Direct trading: latest `finviz_direct_trading:finviz_momentum` run succeeded and saw candidates.
-- Decisions: skips have clear reasons, or one or more intents are created only inside current caps.
-- Positions: session positions reconcile as `matched`, broker-sync is fresh, and open position count is within configured caps.
-- Exits: closed positions show a concrete `last_exit_reason` such as `profit_target`, `stop_loss`, or force-close policy.
+- `details.primary_trading_flow.source_state`: source freshness, symbol count, and latest source run.
+- `details.primary_trading_flow.candidate_state`: candidate run freshness and candidate count.
+- `details.primary_trading_flow.intent_state`: active intent count and intent states.
+- `details.primary_trading_flow.position_state`: open/closed positions and latest exit reason.
+- `summary.trading_allowed`: market, control, broker sync, account, and execution gate result.
+- `details.engine.summary`: source runs, candidate runs, candidates, signals, decisions, selected decisions, intents, positions, and capture targets.
 
-Use:
+Check that:
+
+- Ticker source freshness is healthy during the market window.
+- Candidate runs are current and have expected counts.
+- Decisions either skip with clear reasons or create only allowed intents.
+- Positions reconcile as `matched`, broker sync is fresh, and open position count is within configured caps.
+- Exits show concrete `last_exit_reason` values such as `profit_target`, `stop_loss`, or force-close policy.
+
+Useful job checks:
 
 ```bash
-uv run spreads finviz-ledger --env ade-nucbox-k8-plus --limit 10
-uv run spreads jobs --env ade-nucbox-k8-plus --job-type symbol_feed --limit 3
-uv run spreads jobs --env ade-nucbox-k8-plus --job-type finviz_direct_trading --limit 3
+uv run spreads jobs --env ade-nucbox-k8-plus --job-type ticker_source --limit 5 --json
+uv run spreads jobs --env ade-nucbox-k8-plus --job-type trading_strategy_entry --limit 5 --json
+uv run spreads jobs --env ade-nucbox-k8-plus --job-type trading_strategy_manage --limit 5 --json
+uv run spreads jobs --env ade-nucbox-k8-plus --job-type execution_intent_dispatch --limit 5 --json
 ```
 
 ## Rollout Rhythm
@@ -74,24 +77,24 @@ uv run python -m py_compile <touched-python-files>
 2. Restart only affected Docker services:
 
 ```bash
-docker compose restart scheduler worker-runtime worker-discovery
+docker compose restart scheduler worker-runtime worker-data
 ```
 
-3. Verify that the stored config and the next actual job run carry the new payload:
+3. Verify the deployed state and recent job runs:
 
 ```bash
-uv run spreads jobs --env ade-nucbox-k8-plus --job-type symbol_feed --limit 3 --json
-uv run spreads jobs --env ade-nucbox-k8-plus --job-type finviz_direct_trading --limit 3 --json
-uv run spreads live-doctor --env ade-nucbox-k8-plus
+uv run spreads ops state --env ade-nucbox-k8-plus
+uv run spreads jobs --env ade-nucbox-k8-plus --job-type ticker_source --limit 5 --json
+uv run spreads jobs --env ade-nucbox-k8-plus --job-type trading_strategy_entry --limit 5 --json
 ```
 
 ## Interpretation
 
 - A skipped run can be healthy when it is a singleton, off-window, superseded, or stale-slot skip.
-- Historical failed jobs matter only if operator status still says actionable.
+- Historical failed jobs matter only if operator state or jobs health says they are actionable.
 - A disabled lane should be idle, not blocked.
 - `trading_allowed=false` before market open is expected; during market hours it should be explained by market, control, broker-sync, account, execution, or risk state.
-- Separate realized account performance from model, discovery, or audit output.
+- Separate realized account performance from model, source, or decision output.
 
 ## Close-Out
 
@@ -99,7 +102,7 @@ Report:
 
 - exact timestamp and market state
 - concise health summary
-- Finviz feed/direct status
-- open positions, active intents, broker-sync, and PnL if relevant
-- worker/scheduler state and any disabled lanes
+- source/candidate/decision status for `momentum_long_calls`
+- open positions, active intents, broker sync, and PnL if relevant
+- worker/scheduler state and disabled lanes
 - commands used and anything not verified

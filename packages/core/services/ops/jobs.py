@@ -816,6 +816,200 @@ def build_jobs_overview(
 
 
 @with_storage()
+def build_jobs_compact_state(
+    *,
+    db_target: str | None = None,
+    limit: int = 25,
+    storage: Any | None = None,
+) -> dict[str, Any]:
+    generated_at = _utc_now()
+    now = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+    excluded_job_types = excluded_declared_job_types()
+    attention: list[dict[str, str]] = []
+    definitions = [dict(row) for row in list_declared_job_rows(enabled_only=None, job_type=None)]
+
+    job_store = storage.jobs
+    if not job_store.schema_ready():
+        attention.append(
+            _attention(
+                severity="high",
+                code="job_schema_unavailable",
+                message="Job storage is not available yet.",
+            )
+        )
+        return {
+            "status": "blocked",
+            "generated_at": generated_at,
+            "summary": {
+                "view": "compact",
+                "definition_count": len(definitions),
+                "enabled_definition_count": sum(1 for row in definitions if bool(row.get("enabled"))),
+                "run_count": 0,
+                "worker_lane_count": 0,
+                "stale_running_count": 0,
+                "stale_queued_job_count": 0,
+                "actionable_failed_count": 0,
+                "historical_failed_count": 0,
+            },
+            "attention": attention,
+            "details": {
+                "view": "compact",
+                "scheduler": None,
+                "workers": [],
+                "worker_lanes": [],
+                "running_jobs": [],
+                "queued_jobs": [],
+                "job_runs": [],
+            },
+        }
+
+    recent_runs = [
+        _summarize_job_run(dict(row), now=now)
+        for row in job_store.list_job_runs(limit=limit)
+    ]
+    recent_runs = _sorted_by_activity(
+        _filter_excluded_job_runs(
+            recent_runs,
+            excluded_job_types=excluded_job_types,
+        )
+    )
+    queued_runs = _filter_excluded_job_runs(
+        [_summarize_job_run(dict(row), now=now) for row in job_store.list_job_runs(status="queued", limit=200)],
+        excluded_job_types=excluded_job_types,
+    )
+    running_runs = _filter_excluded_job_runs(
+        [_summarize_job_run(dict(row), now=now) for row in job_store.list_job_runs(status="running", limit=200)],
+        excluded_job_types=excluded_job_types,
+    )
+    active_queued_runs, stale_queued_runs = _split_active_queued_jobs(
+        queued_runs,
+        now=now,
+    )
+
+    scheduler_payload = _scheduler_payload(job_store, now=now)
+    workers = [dict(row) for row in job_store.list_active_leases(prefix=WORKER_RUNTIME_LEASE_PREFIX)]
+    lane_rows = _worker_lane_rows(
+        workers=workers,
+        queued_jobs=active_queued_runs,
+        running_jobs=running_runs,
+        definitions=definitions,
+        excluded_job_types=excluded_job_types,
+    )
+
+    statuses = [str(scheduler_payload.get("status") or "unknown"), "healthy" if workers else "blocked"]
+    if scheduler_payload["status"] != "healthy":
+        attention.append(
+            _attention(
+                severity="high" if scheduler_payload["status"] == "blocked" else "medium",
+                code="scheduler_unhealthy",
+                message="Scheduler lease is missing, expired, or close to expiring.",
+            )
+        )
+    if not workers:
+        attention.append(
+            _attention(
+                severity="high",
+                code="workers_missing",
+                message="No active worker leases are present.",
+            )
+        )
+
+    status_counts = Counter(str(row.get("status") or "unknown") for row in recent_runs)
+    operator_status_counts = Counter(str(row.get("operator_status") or "unknown") for row in recent_runs)
+    job_type_counts = Counter(str(row.get("job_type") or "unknown") for row in recent_runs)
+    stale_running_count = sum(
+        1 for row in running_runs if str(row.get("status") or "") == "running" and str(row.get("operator_status") or "") != "healthy"
+    )
+    actionable_failed_count = sum(1 for row in recent_runs if _job_run_is_actionable_failure(row))
+    historical_failed_count = sum(
+        1 for row in recent_runs if str(row.get("status") or "") == "failed" and str(row.get("operator_status") or "") in {"healthy", "idle"}
+    )
+    actionable_skipped_count = sum(
+        1 for row in recent_runs if str(row.get("status") or "") == "skipped" and str(row.get("operator_status") or "") != "healthy"
+    )
+    blocked_lane_count = sum(1 for row in lane_rows if str(row.get("status") or "") == "blocked")
+
+    if actionable_failed_count:
+        attention.append(
+            _attention(
+                severity="high",
+                code="failed_job_runs_present",
+                message=f"{actionable_failed_count} recent job run(s) failed.",
+            )
+        )
+    if actionable_skipped_count:
+        attention.append(
+            _attention(
+                severity="medium",
+                code="skipped_job_runs_present",
+                message=f"{actionable_skipped_count} recent job run(s) were skipped.",
+            )
+        )
+    if stale_running_count:
+        attention.append(
+            _attention(
+                severity="medium",
+                code="stale_running_jobs",
+                message=f"{stale_running_count} running job run(s) have stale heartbeats.",
+            )
+        )
+    if stale_queued_runs:
+        attention.append(
+            _attention(
+                severity="low",
+                code="stale_queued_jobs_present",
+                message=f"{len(stale_queued_runs)} queued job run(s) are stale and no longer count as active backlog.",
+            )
+        )
+    if blocked_lane_count:
+        attention.append(
+            _attention(
+                severity="high",
+                code="worker_lanes_blocked",
+                message=f"{blocked_lane_count} worker lane(s) have no active workers.",
+            )
+        )
+
+    statuses.append(
+        _combine_statuses(
+            "blocked" if actionable_failed_count else "healthy",
+            "degraded" if actionable_skipped_count or stale_running_count or stale_queued_runs else "healthy",
+            "blocked" if blocked_lane_count else "healthy",
+        )
+    )
+
+    return {
+        "status": _combine_statuses(*statuses),
+        "generated_at": generated_at,
+        "summary": {
+            "view": "compact",
+            "definition_count": len(definitions),
+            "enabled_definition_count": sum(1 for row in definitions if bool(row.get("enabled"))),
+            "run_count": len(recent_runs),
+            "status_counts": dict(status_counts),
+            "operator_status_counts": dict(operator_status_counts),
+            "job_type_counts": dict(job_type_counts),
+            "worker_lane_count": len(lane_rows),
+            "stale_running_count": stale_running_count,
+            "stale_queued_job_count": len(stale_queued_runs),
+            "actionable_failed_count": actionable_failed_count,
+            "historical_failed_count": historical_failed_count,
+        },
+        "attention": attention,
+        "details": {
+            "view": "compact",
+            "scheduler": scheduler_payload,
+            "workers": workers,
+            "worker_lanes": lane_rows,
+            "running_jobs": running_runs,
+            "queued_jobs": active_queued_runs,
+            "stale_queued_job_runs": stale_queued_runs,
+            "job_runs": recent_runs,
+        },
+    }
+
+
+@with_storage()
 def build_job_lanes_overview(
     *,
     db_target: str | None = None,

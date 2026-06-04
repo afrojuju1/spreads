@@ -373,9 +373,9 @@ def health_command(
         target = _resolve_target(environment)
         commands: list[tuple[str, list[str]]] = [
             ("Compose Status", ["deploy", "status", "--env", target.name]),
-            ("Live Doctor", ["live-doctor", "--json"]),
+            ("Trading Ops State", ["ops", "state", "--json"]),
             ("Jobs", ["jobs", "--json"]),
-            ("Trading", ["trading", "--json"]),
+            ("Storage Ops State", ["ops", "storage", "--json"]),
         ]
         exit_code = 0
         for title, args in commands:

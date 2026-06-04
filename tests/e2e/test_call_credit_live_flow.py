@@ -419,11 +419,9 @@ class CallCreditLiveFlowE2ETests(unittest.TestCase):
         store = _InMemoryExecutionStore()
         open_attempt = {
             "execution_attempt_id": "attempt-call-credit-open",
-            "opportunity_id": "opp-call-credit-1",
             "session_date": "2026-04-14",
             "market_date": "2026-04-14",
             "label": "explore_10_call_credit_weekly_auto",
-            "pipeline_id": "pipeline:explore_10_call_credit_weekly_auto",
             "underlying_symbol": "SPY",
             "strategy": "call_credit",
             "strategy_family": "call_credit_spread",
@@ -543,7 +541,6 @@ class CallCreditLiveFlowE2ETests(unittest.TestCase):
                 "session_date": "2026-04-14",
                 "market_date": "2026-04-14",
                 "label": "explore_10_call_credit_weekly_auto",
-                "pipeline_id": "pipeline:explore_10_call_credit_weekly_auto",
                 "underlying_symbol": "SPY",
                 "strategy": "call_credit",
                 "strategy_family": "call_credit_spread",
@@ -594,7 +591,6 @@ class CallCreditLiveFlowE2ETests(unittest.TestCase):
         self.assertEqual(position["style_profile"], "active")
         self.assertEqual(position["horizon_intent"], "short_dated")
         self.assertEqual(position["product_class"], "index_etf_options")
-        self.assertEqual(position["pipeline_id"], "pipeline:explore_10_call_credit_weekly_auto")
 
 
 if __name__ == "__main__":

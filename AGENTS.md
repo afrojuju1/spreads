@@ -12,7 +12,7 @@
 - Do not duplicate the domain ownership map in `AGENTS.md`. If ownership, object vocabulary, or runtime topology matters, read or update [docs/current_system_state.md](docs/current_system_state.md).
 - For Alpaca-related research, scanner design, or alerting work, read the canonical capability statement in [docs/research/alpaca_capabilities_statement.md](docs/research/alpaca_capabilities_statement.md) first. Re-check Alpaca's official docs/OpenAPI only when the task depends on current product changes, limits, or newly added endpoints.
 - Current execution direction: `spreads` owns the live paper runtime. The active execution adapter is `alpaca_direct`; Nautilus Trader is retained only as historical context and a source of architectural ideas. Do not route new live Spreads work through Nautilus, Rust bridge paths, or host-managed Nautilus services unless the user explicitly asks to re-enable a separate experiment.
-- Active ops-state cleanup: bead epic `spr-zuy` is replacing fragmented operator surfaces with `TradingOpsState` and `StorageOpsState`. While working that epic, remove old active `live-doctor`, `status`, `trading`, and `finviz-ledger` product surfaces instead of wrapping them.
+- Canonical operator state is split between `TradingOpsState` and `StorageOpsState`. Do not add new active operator surfaces around retired fragmented status, trading-health, ledger, pipeline, discovery, or UOA product names.
 
 ## Code Quality And Architecture
 
@@ -49,43 +49,31 @@
 - Spreads owns the active trading-ops skill and operator guidance. Do not add new active guidance to the retired `trading_operator` hub repo.
 - The external research AI layer is linked at [external/TradingAgents](external/TradingAgents), which resolves to `/home/ade/Projects/TradingAgents`. Spreads owns orchestration, job config, alerts, outputs, and operator visibility around that layer; the external repo owns its own agent internals.
 - For operator visibility or runtime triage, prefer the shipped ops CLI first when it fits the question:
-  - `uv run spreads status`
-  - `uv run spreads trading`
-  - `uv run spreads automations --bot-id <bot-id> --automation-id <automation-id> --date <YYYY-MM-DD> --json`
-  - `uv run spreads pipelines`
+  - `uv run spreads ops state`
+  - `uv run spreads ops storage`
   - `uv run spreads jobs`
-  - `uv run spreads uoa`
-  - `uv run spreads audit <pipeline-id> --date <YYYY-MM-DD>`
-- During the `spr-zuy` ops-state refactor, prefer the new state commands and routes once they exist. Do not add new frontend or API callers to the old fragmented ops surfaces.
+  - `uv run spreads jobs lanes`
+  - `uv run spreads positions --date <YYYY-MM-DD> --json`
+  - `uv run spreads execution-runtimes --json`
+- Do not add frontend or API callers to retired fragmented ops surfaces.
 - The deploy target `ade-nucbox-k8-plus` is the canonical live paper environment. Treat it as live operator infrastructure, not a scratch box.
 - For target-aware operator reads, prefer `--env <target>` over raw connection overrides. Do not use bare `--db postgresql://...` when a named deploy target exists.
 - Canonical live-ops examples:
-  - `uv run spreads status --env ade-nucbox-k8-plus --json`
-  - `uv run spreads trading --env ade-nucbox-k8-plus --json`
+  - `uv run spreads ops state --env ade-nucbox-k8-plus --json`
+  - `uv run spreads ops storage --env ade-nucbox-k8-plus --json`
   - `uv run spreads jobs --env ade-nucbox-k8-plus --json`
-  - `uv run spreads uoa --env ade-nucbox-k8-plus --json`
 - Use `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ...` only when you explicitly need to run on the deployed checkout at `/home/ade/Projects/spreads`.
 - Use `uv run spreads deploy logs --env ade-nucbox-k8-plus ...` and `uv run spreads deploy restart --env ade-nucbox-k8-plus ...` for live box operations before falling back to ad hoc SSH commands.
-- For offline selection research or policy tuning, prefer the canonical backtest CLI before ad hoc scripts or raw SQL:
-  - `uv run spreads backtest run --bot-id <bot-id> --automation-id <automation-id>`
-  - `uv run spreads backtest replay --run-id <run-id> --config-root <config-root>`
-  - `uv run spreads backtest replay-range --bot-id <bot-id> --automation-id <automation-id> --start-date <YYYY-MM-DD> --end-date <YYYY-MM-DD> --source alpaca --config-root <config-root>`
-  - `uv run spreads backtest compare --left-json <path> --right-json <path>`
-- Treat `uv run spreads backtest run` as the canonical historical decision-evaluation path.
-- Treat `uv run spreads backtest compare` as the canonical comparison surface for exported `run`, `replay`, and `replay-range` payloads.
-- For before/after policy studies, prefer isolated config roots over editing active config in place. Canonical recipe:
-  - create `before/` and `after/` config roots
-  - run the same `uv run spreads backtest replay-range ... --source alpaca --config-root <root> --export-json <path>` window against both
-  - compare those exports with `uv run spreads backtest compare --left-json <before.json> --right-json <after.json>`
-- Do not route new work through removed post-close/post-market analysis surfaces. Use `backtest` for historical decision evaluation and `status`, `trading`, `pipelines`, `jobs`, and `audit` for operator investigation.
+- Do not tell operators to run removed or currently unshipped `spreads audit`, `spreads automations`, `spreads backtest`, `spreads research`, `spreads replay`, `spreads analyze`, or `spreads post-market analyze` commands. Use shipped operator surfaces first and create a bead before reintroducing a historical evaluation CLI.
+- For offline selection research or policy tuning, start by validating current strategy config and stored engine facts. If a historical evaluator is needed, design it explicitly against the current ticker-source/candidate/signal/decision model instead of reviving old audit/backtest wrappers.
 - Do not assume `uv run spreads doctor` exists; it is intentionally deferred.
 - For jobs health, prefer operator-health fields such as `operator_status`, `operator_status_counts`, and `actionable_failed_count` over raw historical job status counts.
 - For runtime verification of the API, workers, scheduler, or web app, prefer the existing `docker compose` services when they are already running instead of starting duplicate local processes.
 - Use `docker compose ps`, `docker compose logs`, and `docker compose restart` for stack-level checks before falling back to ad hoc local `uvicorn`, worker, or scheduler runs.
 - Prefer live validation through the running stack and shipped ops CLI before unit/integration test work unless the user explicitly asks for tests.
-- In Docker, the `api` service hot-reloads source changes, but the `worker-runtime`, `worker-discovery`, and `scheduler` processes do not. After changing job, worker, or shared backend runtime code that those services import, restart the affected containers before trusting runtime behavior.
+- In Docker, the `api` service hot-reloads source changes, but the `worker-runtime`, `worker-data`, and `scheduler` processes do not. After changing job, worker, or shared backend runtime code that those services import, restart the affected containers before trusting runtime behavior.
 - When multiple deployments share one Alpaca account, run only one live `market-recorder` against the option websocket at a time. Stop secondary/local recorders before validating capture on another host.
-- Unless the user explicitly asks for local live automation, keep the laptop out of the live plane once the NUC is deployed. Do not restart or run local `scheduler`, `worker-runtime`, `worker-discovery`, or `market-recorder` just to inspect the live environment.
+- Unless the user explicitly asks for local live automation, keep the laptop out of the live plane once the NUC is deployed. Do not restart or run local `scheduler`, `worker-runtime`, `worker-data`, or `market-recorder` just to inspect the live environment.
 - Do not run production build commands such as `npm run build` or `next build` unless the user explicitly asks for a production check or release validation.
 - Do not run repo-wide Python compile checks such as `python -m compileall` unless the user explicitly asks for them.
 - Prefer dev-safe verification during normal work, such as linting, targeted type checks, and narrow runtime checks.
@@ -102,7 +90,7 @@
 
 - For overall architecture, service-boundary, or ownership questions, start with `docs/current_system_state.md`.
 - If a planning document disagrees with `docs/current_system_state.md` about current ownership or runtime topology, `docs/current_system_state.md` wins.
-- Treat older planning-doc references to `replay`, `audit_replay`, `packages/core/cli/replay.py`, or `services/opportunity_replay.py` as pre-2026-04-17 historical context unless the document has been explicitly updated. The current shipped historical-evaluation product is `backtest`, and the current audit builder lives under `services/audit_snapshot.py`.
+- Treat older planning-doc references to `replay`, `audit_replay`, `backtest`, `packages/core/cli/replay.py`, `packages/core/cli/backtest.py`, `services/opportunity_replay.py`, or `services/audit_snapshot.py` as historical context unless the document has been explicitly updated. There is no currently shipped historical-evaluation CLI.
 - If a planning document is being used as an active checkpoint for implementation work, keep its completion status current when a milestone meaningfully changes.
 - For target opportunity-selection architecture, start with `docs/planning/2026-04-11_fresh_spread_system_design.md`.
 - For historical diagnosis of the older selection path, use `docs/planning/2026-04-11_spread_selection_refactor_plan.md`.

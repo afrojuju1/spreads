@@ -13,7 +13,7 @@ if [[ -f .env ]]; then
 fi
 
 target_env="${SPREADS_DEPLOY_ENV:-}"
-health_command=(uv run spreads live-doctor --json)
+health_command=(uv run spreads ops state --json)
 if [[ -n "$target_env" ]]; then
   health_command+=(--env "$target_env")
 fi
@@ -57,6 +57,10 @@ except Exception:
     raise SystemExit(0)
 
 summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+primary_flow = details.get("primary_trading_flow") if isinstance(details.get("primary_trading_flow"), dict) else {}
+source_state = primary_flow.get("source_state") if isinstance(primary_flow.get("source_state"), dict) else {}
+candidate_state = primary_flow.get("candidate_state") if isinstance(primary_flow.get("candidate_state"), dict) else {}
 attention = payload.get("attention") if isinstance(payload.get("attention"), list) else []
 record = {
     "event": "ops_health",
@@ -72,10 +76,13 @@ record = {
     "blocked_worker_lane_count": summary.get("blocked_worker_lane_count"),
     "actionable_failed_job_count": summary.get("actionable_failed_job_count"),
     "broker_sync_status": summary.get("broker_sync_status"),
-    "finviz_feed_status": summary.get("finviz_feed_status"),
-    "finviz_feed_symbol_count": summary.get("finviz_feed_symbol_count"),
-    "finviz_direct_status": summary.get("finviz_direct_status"),
-    "finviz_direct_candidate_count": summary.get("finviz_direct_candidate_count"),
+    "trading_strategy_id": primary_flow.get("trading_strategy_id"),
+    "source_status": source_state.get("status"),
+    "source_symbol_count": source_state.get("symbol_count"),
+    "source_age_seconds": source_state.get("age_seconds"),
+    "candidate_status": candidate_state.get("status"),
+    "candidate_count": candidate_state.get("candidate_count"),
+    "candidate_age_seconds": candidate_state.get("age_seconds"),
     "active_intent_count": summary.get("active_intent_count"),
     "open_position_count": summary.get("open_position_count"),
     "net_pnl": summary.get("net_pnl"),

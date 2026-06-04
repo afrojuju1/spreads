@@ -5,12 +5,11 @@ import { Database, ExternalLink, HardDrive, RefreshCw, Server } from "lucide-rea
 
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { getOpsLiveDoctor, getOpsRetention, getOpsStatus } from "@/lib/api";
+import { getStorageOpsState, getTradingOpsState } from "@/lib/api";
 import { grafanaTradingLogsUrl } from "@/lib/grafana";
 import {
   formatBytes,
   formatCompactNumber,
-  formatQuantity,
   formatTimestamp,
   MetricTile,
   readNumber,
@@ -33,50 +32,43 @@ function firstPresent(...values: unknown[]): unknown {
 }
 
 export function OpsPageContent() {
-  const statusQuery = useQuery({
-    queryKey: ["ops-status"],
-    queryFn: getOpsStatus,
+  const tradingOpsQuery = useQuery({
+    queryKey: ["trading-ops-state", "ops-page"],
+    queryFn: () => getTradingOpsState(),
   });
-  const liveDoctorQuery = useQuery({
-    queryKey: ["ops-live-doctor", "ops-page"],
-    queryFn: () => getOpsLiveDoctor({ feedId: "finviz_momentum", limit: 8 }),
-  });
-  const retentionQuery = useQuery({
-    queryKey: ["ops-retention", "pending-counts"],
-    queryFn: () => getOpsRetention({ includePendingCounts: true }),
+  const storageOpsQuery = useQuery({
+    queryKey: ["storage-ops-state"],
+    queryFn: getStorageOpsState,
   });
 
-  const loading = statusQuery.isLoading || liveDoctorQuery.isLoading || retentionQuery.isLoading;
-  const statusPayload = statusQuery.data;
-  const statusSummary = readRecord(statusPayload?.summary);
-  const statusDetails = readRecord(statusPayload?.details);
-  const liveDoctor = liveDoctorQuery.data;
-  const liveSummary = readRecord(liveDoctor?.summary);
-  const liveDetails = readRecord(liveDoctor?.details);
-  const checks = readRecordList(liveDetails.checks);
-  const retentionPayload = retentionQuery.data;
-  const retentionSummary = readRecord(retentionPayload?.summary);
-  const retentionDetails = readRecord(retentionPayload?.details);
-  const retentionTables = readRecordList(retentionDetails.tables);
-  const workers = readRecordList(statusDetails.workers);
-  const runningJobs = latestJobRows(readRecordList(statusDetails.running_jobs));
-  const queuedJobs = latestJobRows(readRecordList(statusDetails.queued_jobs));
-  const quoteTable = retentionTables.find((row) => readString(row.name, "") === "option_quote_events") ?? {};
-  const eventLogTable = retentionTables.find((row) => readString(row.physical_table, "") === "event_log") ?? {};
-  const hasQueryError = statusQuery.isError || liveDoctorQuery.isError || retentionQuery.isError;
-  const scheduler = readRecord(statusDetails.scheduler);
-  const engine = readRecord(statusDetails.engine);
+  const loading = tradingOpsQuery.isLoading || storageOpsQuery.isLoading;
+  const tradingState = tradingOpsQuery.data;
+  const tradingSummary = readRecord(tradingState?.summary);
+  const tradingDetails = readRecord(tradingState?.details);
+  const storageState = storageOpsQuery.data;
+  const storageSummary = readRecord(storageState?.summary);
+  const storageDetails = readRecord(storageState?.details);
+  const storageTables = readRecordList(storageDetails.tables);
+  const workers = readRecordList(tradingDetails.workers);
+  const workerLanes = readRecordList(tradingDetails.worker_lanes);
+  const runningJobs = latestJobRows(readRecordList(tradingDetails.running_jobs));
+  const queuedJobs = latestJobRows(readRecordList(tradingDetails.queued_jobs));
+  const engine = readRecord(tradingDetails.engine);
   const engineSummary = readRecord(engine.summary);
-  const marketSessionStatus = firstPresent(liveSummary.market_session_status, statusSummary.market_session_status);
-  const schedulerStatus = firstPresent(liveSummary.scheduler_status, scheduler.status);
-  const vacuumFullTables = Array.isArray(retentionSummary.vacuum_full_pending_tables)
-    ? retentionSummary.vacuum_full_pending_tables.map(String).join(", ") || "no pending tables"
-    : readString(retentionSummary.vacuum_full_pending_tables, "no pending tables");
+  const quoteTable = storageTables.find((row) => readString(row.name, "") === "option_quote_events") ?? {};
+  const eventLogTable = storageTables.find((row) => readString(row.physical_table, "") === "event_log") ?? {};
+  const attention = [...readRecordList(tradingState?.attention), ...readRecordList(storageState?.attention)];
+  const hasQueryError = tradingOpsQuery.isError || storageOpsQuery.isError;
+  const scheduler = readRecord(tradingDetails.scheduler);
+  const marketSessionStatus = tradingSummary.market_session_status;
+  const schedulerStatus = firstPresent(tradingSummary.scheduler_status, scheduler.status);
+  const vacuumFullTables = Array.isArray(storageSummary.vacuum_full_pending_tables)
+    ? storageSummary.vacuum_full_pending_tables.map(String).join(", ") || "no pending tables"
+    : readString(storageSummary.vacuum_full_pending_tables, "no pending tables");
 
   const refreshAll = () => {
-    void statusQuery.refetch();
-    void liveDoctorQuery.refetch();
-    void retentionQuery.refetch();
+    void tradingOpsQuery.refetch();
+    void storageOpsQuery.refetch();
   };
 
   return (
@@ -92,13 +84,13 @@ export function OpsPageContent() {
                 <Server data-icon="inline-start" />
                 Ops
               </Badge>
-              <RuntimeStatusBadge value={statusPayload?.status ?? liveDoctor?.status} />
+              <RuntimeStatusBadge value={tradingState?.status ?? storageState?.status ?? (loading ? "loading" : "idle")} />
             </div>
             <div className="mt-4 text-3xl font-semibold tracking-[0.02em]">Engine and runtime</div>
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-foreground/70">
-              <span>{humanizeToken(marketSessionStatus)}</span>
-              <span>scheduler {humanizeToken(schedulerStatus)}</span>
-              <span>updated {formatTimestamp(readString(statusPayload?.generated_at, ""))}</span>
+              <span>{humanizeToken(marketSessionStatus, loading ? "loading" : "unknown")}</span>
+              <span>scheduler {humanizeToken(schedulerStatus, loading ? "loading" : "unknown")}</span>
+              <span>updated {formatTimestamp(readString(tradingState?.generated_at, ""))}</span>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -114,33 +106,27 @@ export function OpsPageContent() {
         </div>
       </div>
 
-      {hasQueryError ? (
-        <div className="app-tone-error rounded-2xl border px-4 py-3 text-sm">
-          One or more ops feeds could not be loaded.
-        </div>
-      ) : null}
+      {hasQueryError ? <div className="app-tone-error rounded-2xl border px-4 py-3 text-sm">One or more ops state feeds could not be loaded.</div> : null}
 
       {loading ? (
-        <div className="rounded-2xl border border-border/70 bg-card/80 px-4 py-3 text-sm text-muted-foreground">
-          Loading live ops feeds.
-        </div>
+        <div className="rounded-2xl border border-border/70 bg-card/80 px-4 py-3 text-sm text-muted-foreground">Loading live ops state.</div>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <MetricTile
           label="Engine"
-          value={humanizeToken(firstPresent(statusSummary.engine_status, engine.status), loading ? "loading" : "idle")}
+          value={humanizeToken(firstPresent(tradingSummary.engine_status, engine.status), loading ? "loading" : "idle")}
           note={`${formatCompactNumber(readNumber(engineSummary.signal_count))} signals · ${formatCompactNumber(readNumber(engineSummary.selected_count))} selected`}
         />
         <MetricTile
           label="Workers"
-          value={String(readNumber(statusSummary.worker_count, workers.length))}
-          note={`${readNumber(liveSummary.worker_lane_count)} lanes · ${readNumber(liveSummary.blocked_worker_lane_count)} blocked`}
+          value={String(readNumber(tradingSummary.worker_lane_count, workerLanes.length))}
+          note={`${readNumber(tradingSummary.blocked_worker_lane_count)} blocked · ${workers.length} leases`}
         />
         <MetricTile
           label="Jobs"
-          value={`${readNumber(statusSummary.running_job_count)} running`}
-          note={`${readNumber(statusSummary.queued_job_count)} queued · ${readNumber(statusSummary.recent_failure_count)} recent failures`}
+          value={`${runningJobs.length} running`}
+          note={`${queuedJobs.length} queued · ${readNumber(tradingSummary.actionable_failed_job_count)} failed`}
         />
         <MetricTile
           label="Quote Events"
@@ -149,8 +135,8 @@ export function OpsPageContent() {
         />
         <MetricTile
           label="Retention"
-          value={humanizeToken(retentionSummary.latest_run_status)}
-          note={`latest ${formatTimestamp(readString(retentionSummary.latest_run_at, ""))}`}
+          value={humanizeToken(storageSummary.latest_run_status, loading ? "loading" : "unknown")}
+          note={`latest ${formatTimestamp(readString(storageSummary.latest_run_at, ""))}`}
         />
       </div>
 
@@ -201,17 +187,23 @@ export function OpsPageContent() {
         <section className="rounded-2xl border border-border/70 bg-card/80 px-4 py-3">
           <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
             <Server className="size-4" />
-            Health Checks
+            Attention
           </div>
-          <div className="divide-y divide-border/60">
-            {checks.map((row) => (
-              <div key={readString(row.name)} className="grid gap-2 py-2 text-sm md:grid-cols-[minmax(120px,0.45fr)_1fr_auto] md:items-center">
-                <div className="font-medium">{readString(row.name)}</div>
-                <div className="min-w-0 truncate text-muted-foreground">{readString(row.message)}</div>
-                <RuntimeStatusBadge value={row.status} />
-              </div>
-            ))}
-          </div>
+          {attention.length ? (
+            <div className="space-y-2">
+              {attention.slice(0, 10).map((row, index) => (
+                <div key={`${readString(row.code, "attention")}-${index}`} className="rounded-lg border border-border/70 px-3 py-2 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-medium">{humanizeToken(row.code ?? row.severity)}</span>
+                    <RuntimeStatusBadge value={row.severity ?? "degraded"} />
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">{readString(row.message)}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-sm text-muted-foreground">No actionable attention items.</div>
+          )}
         </section>
 
         <section className="rounded-2xl border border-border/70 bg-card/80 px-4 py-3">
@@ -226,9 +218,7 @@ export function OpsPageContent() {
                   <span className="truncate font-medium">{humanizeToken(readRecord(row.lease_state).lane)}</span>
                   <Badge variant="outline">{readString(row.owner)}</Badge>
                 </div>
-                <div className="mt-1 truncate text-xs text-muted-foreground">
-                  expires {formatTimestamp(readString(row.expires_at, ""))}
-                </div>
+                <div className="mt-1 truncate text-xs text-muted-foreground">expires {formatTimestamp(readString(row.expires_at, ""))}</div>
               </div>
             ))}
           </div>
@@ -284,11 +274,7 @@ export function OpsPageContent() {
           Storage Retention
         </div>
         <div className="grid gap-4 md:grid-cols-3">
-          <MetricTile
-            label="Vacuum Full"
-            value={retentionSummary.vacuum_full_pending ? "Pending" : "Clear"}
-            note={vacuumFullTables}
-          />
+          <MetricTile label="Vacuum Full" value={storageSummary.vacuum_full_pending ? "Pending" : "Clear"} note={vacuumFullTables} />
           <MetricTile
             label="Event Log"
             value={formatBytes(readNumber(eventLogTable.total_size_bytes))}
@@ -296,8 +282,8 @@ export function OpsPageContent() {
           />
           <MetricTile
             label="Schedule"
-            value={readString(retentionSummary.schedule)}
-            note={retentionSummary.market_hours_safe ? "market-hours safe" : "review timing"}
+            value={readString(storageSummary.schedule)}
+            note={storageSummary.market_hours_safe ? "market-hours safe" : "review timing"}
           />
         </div>
         <div className="mt-4 overflow-hidden rounded-lg border border-border/70">
@@ -305,17 +291,20 @@ export function OpsPageContent() {
             <span>Table</span>
             <span>Rows</span>
             <span>Size</span>
-            <span>Prune</span>
+            <span>Vacuum</span>
           </div>
           <div className="divide-y divide-border/60">
-            {retentionTables.map((row) => (
-              <div key={readString(row.name)} className="grid grid-cols-[1.2fr_0.8fr_0.8fr_0.8fr] gap-3 px-3 py-2 text-sm">
-                <span className="min-w-0 truncate font-medium">{readString(row.name)}</span>
-                <span>{formatCompactNumber(readNumber(row.estimated_live_rows))}</span>
-                <span>{formatBytes(readNumber(row.total_size_bytes))}</span>
-                <span>{formatQuantity(readNumber(row.pending_prune_count))}</span>
-              </div>
-            ))}
+            {storageTables.map((row) => {
+              const vacuumFull = readRecord(row.vacuum_full);
+              return (
+                <div key={readString(row.name)} className="grid grid-cols-[1.2fr_0.8fr_0.8fr_0.8fr] gap-3 px-3 py-2 text-sm">
+                  <span className="min-w-0 truncate font-medium">{readString(row.name)}</span>
+                  <span>{formatCompactNumber(readNumber(row.estimated_live_rows))}</span>
+                  <span>{formatBytes(readNumber(row.total_size_bytes))}</span>
+                  <span>{vacuumFull.pending ? "pending" : "ok"}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
       </section>

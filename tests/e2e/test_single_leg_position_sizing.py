@@ -2,11 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import unittest
-from types import SimpleNamespace
 from unittest.mock import patch
 
-from core.backtest.service import _simulate_entry_execution
-from core.domain.opportunity_models import Opportunity, OpportunityLeg
 from core.integrations.alpaca.client import AlpacaRequestError
 from core.integrations.alpaca.errors import classify_alpaca_request_error
 from core.services.execution import (
@@ -14,7 +11,6 @@ from core.services.execution import (
     normalize_execution_policy,
     run_execution_submit,
 )
-from core.services.opportunity_execution_plan import build_execution_plan
 from core.services.risk_manager import (
     build_execution_admission_snapshot,
     build_candidate_position_sizing,
@@ -53,90 +49,6 @@ class SingleLegPositionSizingTests(unittest.TestCase):
         self.assertEqual(sizing["recommended_quantity"], 2)
         self.assertEqual(sizing["recommended_max_loss"], 360.0)
         self.assertEqual(sizing["limiting_constraint"], "max_risk_per_trade")
-
-    def test_execution_plan_carries_recommended_contracts_for_naked_shorts(
-        self,
-    ) -> None:
-        opportunity = Opportunity(
-            opportunity_id="opp-short-call",
-            cycle_id="cycle-1",
-            session_id="live:test:2026-04-21",
-            candidate_id=1,
-            symbol="TSLA",
-            legacy_strategy="short_call",
-            expiration_date="2026-04-27",
-            structure_identity="short_call|TSLA260427C00420000",
-            style_profile="tactical",
-            strategy_family="short_call",
-            regime_snapshot_id="regime-1",
-            strategy_intent_id="intent-1",
-            horizon_intent_id="horizon-1",
-            discovery_score=78.0,
-            promotion_score=81.0,
-            rank=1,
-            state="promotable",
-            state_reason="selected",
-            expected_edge_value=0.18,
-            max_loss=180.0,
-            capital_usage=180.0,
-            product_class="equity",
-            evidence={},
-            legs=[
-                OpportunityLeg(
-                    leg_index=0,
-                    symbol="TSLA260427C00420000",
-                    side="sell",
-                    role="short",
-                    position_intent="sell_to_open",
-                )
-            ],
-        )
-
-        plan = build_execution_plan([opportunity])
-        decision = plan["allocation_decisions"][0]
-        intent = plan["execution_intents"][0]
-
-        self.assertEqual(decision.allocation_state, "allocated")
-        self.assertEqual(decision.budget_impact["recommended_contracts"], 5)
-        self.assertEqual(decision.budget_impact["max_loss"], 900.0)
-        self.assertEqual(intent.evidence["recommended_quantity"], 5)
-
-    def test_backtest_entry_execution_scales_short_single_leg_quantity(self) -> None:
-        runtime = SimpleNamespace(
-            build_settings=SimpleNamespace(
-                risk_defaults={
-                    "max_risk_per_trade": 500.0,
-                }
-            ),
-            automation=SimpleNamespace(
-                strategy_config=SimpleNamespace(management_recipe_refs=())
-            ),
-        )
-        opportunity = {
-            "underlying_symbol": "TSLA",
-            "strategy_family": "short_put",
-            "economics": {
-                "midpoint_credit": 2.3,
-                "natural_credit": 2.1,
-                "fill_ratio": 0.8,
-                "max_loss": 120.0,
-            },
-        }
-
-        execution = _simulate_entry_execution(
-            runtime=runtime,
-            opportunity=opportunity,
-            session_date="2026-04-21",
-        )
-
-        self.assertIsNotNone(execution)
-        self.assertTrue(execution["filled"])
-        self.assertEqual(execution["position"]["remaining_quantity"], 4.0)
-        self.assertEqual(execution["position"]["max_loss"], 480.0)
-        self.assertEqual(
-            execution["position_sizing"]["recommended_quantity"],
-            4,
-        )
 
     def test_live_submission_quantity_uses_strategy_budget_when_policy_default_is_one(
         self,
@@ -512,9 +424,8 @@ class SingleLegPositionSizingTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.intent = {
                     "execution_intent_id": "intent-1",
-                    "bot_id": "short_dated_etf_short_put_bot",
-                    "automation_id": "etf_short_put_entry",
-                    "opportunity_decision_id": "decision-1",
+                    "trading_strategy_id": "short_dated_etf_short_put",
+                    "trade_decision_id": None,
                     "strategy_position_id": None,
                     "execution_attempt_id": "attempt-1",
                     "action_type": "open",
@@ -688,9 +599,8 @@ class SingleLegPositionSizingTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.intent = {
                     "execution_intent_id": "intent-1",
-                    "bot_id": "short_dated_etf_short_put_bot",
-                    "automation_id": "etf_short_put_entry",
-                    "opportunity_decision_id": "decision-1",
+                    "trading_strategy_id": "short_dated_etf_short_put",
+                    "trade_decision_id": None,
                     "strategy_position_id": None,
                     "execution_attempt_id": "attempt-1",
                     "action_type": "open",

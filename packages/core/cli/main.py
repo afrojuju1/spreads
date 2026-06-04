@@ -11,10 +11,7 @@ from core.cli.deploy import deploy_app
 from core.cli.lifecycle import lifecycle_app
 from core.cli.ops import (
     jobs_app,
-    live_doctor_command,
-    market_open_monitor_command,
-    status_command,
-    trading_command,
+    ops_app,
 )
 from core.cli.market_intel import market_intel_app
 from core.cli.retention import retention_app
@@ -40,10 +37,7 @@ app = typer.Typer(
 )
 
 TARGETABLE_ROOT_COMMANDS = {
-    "status",
-    "trading",
-    "live-doctor",
-    "market-open-monitor",
+    "ops",
     "positions",
     "execution-runtimes",
     "jobs",
@@ -118,10 +112,7 @@ def _run_passthrough(
     raise typer.Exit(code)
 
 
-app.command("status", help="Show system and runtime health.")(status_command)
-app.command("trading", help="Show live trading safety and readiness.")(trading_command)
-app.command("live-doctor", help="Run the compact live trading health doctor.")(live_doctor_command)
-app.command("market-open-monitor", help="Watch the market-open live health doctor.")(market_open_monitor_command)
+app.add_typer(ops_app, name="ops")
 app.command("positions", help="List positions or inspect one position.")(positions_command)
 app.command("execution-runtimes", help="Show execution runtime capabilities.")(execution_runtimes_command)
 app.add_typer(jobs_app, name="jobs")
@@ -144,12 +135,6 @@ def scan_command(ctx: typer.Context) -> None:
 
 
 app.add_typer(market_intel_app, name="market-intel")
-app.add_typer(
-    market_intel_app,
-    name="research",
-    hidden=True,
-    deprecated=True,
-)
 
 
 @app.command(

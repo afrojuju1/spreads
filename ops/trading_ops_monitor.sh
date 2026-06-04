@@ -29,7 +29,7 @@ if (( minutes_since_midnight < start_minutes || minutes_since_midnight > end_min
 fi
 
 if [[ -n "${SPREADS_DEPLOY_ENV:-}" ]]; then
-  uv run spreads live-doctor --env "$SPREADS_DEPLOY_ENV" --no-color
+  uv run spreads ops state --env "$SPREADS_DEPLOY_ENV" --no-color
 else
-  uv run spreads live-doctor --no-color
+  uv run spreads ops state --no-color
 fi

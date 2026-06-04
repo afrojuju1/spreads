@@ -10,19 +10,17 @@ from core.cli.ops_render import (
     build_console,
     render_job_lanes_view,
     render_jobs_view,
-    render_live_doctor,
     render_json_payload,
-    render_system_status,
-    render_trading_health,
+    render_storage_ops_state,
+    render_trading_ops_state,
 )
 from core.services.ops import (
     OpsLookupError,
     build_job_lanes_overview,
     build_job_run_view,
     build_jobs_overview,
-    build_live_doctor,
-    build_system_status,
-    build_trading_health,
+    build_storage_ops_state,
+    build_trading_ops_state,
 )
 
 
@@ -110,123 +108,46 @@ def _run_visibility_command(
         raise typer.Exit(2) from None
 
 
-def status_command(
-    environment: str | None = typer.Option(
-        None,
-        "--env",
-        help="Run this command against a named deploy target.",
-    ),
-    db: str | None = typer.Option(None, "--db", help="Database URL override."),
-    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
-    watch: float | None = typer.Option(None, "--watch", help="Refresh every N seconds."),
-    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
-) -> None:
-    _run_visibility_command(
-        builder=lambda: build_system_status(db_target=db),
-        renderer=render_system_status,
-        json_output=json_output,
-        watch_seconds=watch,
-        no_color=no_color,
-    )
+ops_app = typer.Typer(
+    add_completion=False,
+    help="Inspect canonical operator state.",
+    no_args_is_help=True,
+)
 
 
-def trading_command(
-    environment: str | None = typer.Option(
-        None,
-        "--env",
-        help="Run this command against a named deploy target.",
-    ),
-    db: str | None = typer.Option(None, "--db", help="Database URL override."),
-    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
-    watch: float | None = typer.Option(None, "--watch", help="Refresh every N seconds."),
-    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
-) -> None:
-    _run_visibility_command(
-        builder=lambda: build_trading_health(db_target=db),
-        renderer=render_trading_health,
-        json_output=json_output,
-        watch_seconds=watch,
-        no_color=no_color,
-    )
-
-
-def live_doctor_command(
-    environment: str | None = typer.Option(
-        None,
-        "--env",
-        help="Run this command against a named deploy target.",
-    ),
-    source_id: str = typer.Option(
-        "finviz_momentum",
-        "--source-id",
-        help="Finviz ticker source id.",
-    ),
+@ops_app.command("state", help="Show canonical live trading operator state.")
+def trading_ops_state_command(
     market_date: str | None = typer.Option(
         None,
         "--date",
         help="Market date to inspect. Defaults to today in New York.",
     ),
-    limit: int = typer.Option(5, "--limit", help="Maximum recent rows per section."),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
     watch: float | None = typer.Option(None, "--watch", help="Refresh every N seconds."),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
-    try:
-        resolved_limit = _validate_limit(limit, option_name="--limit")
-    except ValueError as exc:
-        typer.secho(str(exc), err=True, fg=typer.colors.RED)
-        raise typer.Exit(3) from None
     _run_visibility_command(
-        builder=lambda: build_live_doctor(
-            db_target=db,
-            source_id=source_id,
-            market_date=market_date,
-            limit=resolved_limit,
-        ),
-        renderer=render_live_doctor,
+        builder=lambda: build_trading_ops_state(db_target=db, market_date=market_date),
+        renderer=render_trading_ops_state,
         json_output=json_output,
         watch_seconds=watch,
         no_color=no_color,
     )
 
 
-def market_open_monitor_command(
-    environment: str | None = typer.Option(
-        None,
-        "--env",
-        help="Run this command against a named deploy target.",
-    ),
-    source_id: str = typer.Option(
-        "finviz_momentum",
-        "--source-id",
-        help="Finviz ticker source id.",
-    ),
-    interval_minutes: int = typer.Option(
-        15,
-        "--interval-minutes",
-        help="Refresh interval for the monitor loop.",
-    ),
-    once: bool = typer.Option(
-        False,
-        "--once",
-        help="Run one check instead of watching.",
-    ),
+@ops_app.command("storage", help="Show canonical storage and retention operator state.")
+def storage_ops_state_command(
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
+    watch: float | None = typer.Option(None, "--watch", help="Refresh every N seconds."),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
-    if interval_minutes <= 0:
-        typer.secho("--interval-minutes must be greater than 0.", err=True, fg=typer.colors.RED)
-        raise typer.Exit(3) from None
     _run_visibility_command(
-        builder=lambda: build_live_doctor(
-            db_target=db,
-            source_id=source_id,
-        ),
-        renderer=render_live_doctor,
+        builder=lambda: build_storage_ops_state(db_target=db),
+        renderer=render_storage_ops_state,
         json_output=json_output,
-        watch_seconds=None if once else float(interval_minutes * 60),
+        watch_seconds=watch,
         no_color=no_color,
     )
 

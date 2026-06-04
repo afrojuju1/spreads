@@ -635,7 +635,7 @@ def _repo_ops_script_paths() -> tuple[Path, ...]:
         DEPLOY_OPS_ROOT / "compose_up.sh",
         DEPLOY_OPS_ROOT / "backup_postgres.sh",
         DEPLOY_OPS_ROOT / "health_check.sh",
-        DEPLOY_OPS_ROOT / "market_open_monitor.sh",
+        DEPLOY_OPS_ROOT / "trading_ops_monitor.sh",
         DEPLOY_OPS_ROOT / "retention_prune.sh",
         DEPLOY_OPS_ROOT / "rotate_ops_logs.sh",
     )
@@ -791,7 +791,7 @@ def _cron_block_text(target: DeployTarget) -> str:
     compose_up = _ops_root(target) / "compose_up.sh"
     backup = _ops_root(target) / "backup_postgres.sh"
     health = _ops_root(target) / "health_check.sh"
-    market_open_monitor = _ops_root(target) / "market_open_monitor.sh"
+    trading_ops_monitor = _ops_root(target) / "trading_ops_monitor.sh"
     retention = _ops_root(target) / "retention_prune.sh"
     rotate_logs = _ops_root(target) / "rotate_ops_logs.sh"
     log_dir = _ops_log_dir(target)
@@ -801,7 +801,7 @@ def _cron_block_text(target: DeployTarget) -> str:
             f"# BEGIN {marker}",
             f"@reboot {_ops_script_command(target, compose_up)} >> {shlex.quote(str(log_dir / 'compose-up.log'))} 2>&1",
             f"*/{health_minutes} * * * * {_ops_script_command(target, health)} >> {shlex.quote(str(log_dir / 'health.log'))} 2>&1",
-            f"*/15 * * * * {_ops_script_command(target, market_open_monitor)} >> {shlex.quote(str(log_dir / 'market-open-monitor.log'))} 2>&1",
+            f"*/15 * * * * {_ops_script_command(target, trading_ops_monitor)} >> {shlex.quote(str(log_dir / 'trading-ops-monitor.log'))} 2>&1",
             f"17 * * * * {_ops_script_command(target, rotate_logs)} >> {shlex.quote(str(log_dir / 'log-rotate.log'))} 2>&1",
             f"30 22 * * 1-5 {_ops_script_command(target, retention)} >> {shlex.quote(str(log_dir / 'retention.log'))} 2>&1",
             f"0 0 * * * {_ops_script_command(target, backup)} >> {shlex.quote(str(log_dir / 'backup.log'))} 2>&1",
@@ -850,7 +850,7 @@ def install_target_ops_schedule(target: DeployTarget) -> None:
                 f"test -f {shlex.quote(str(ops_root / 'compose_up.sh'))}",
                 f"test -f {shlex.quote(str(ops_root / 'backup_postgres.sh'))}",
                 f"test -f {shlex.quote(str(ops_root / 'health_check.sh'))}",
-                f"test -f {shlex.quote(str(ops_root / 'market_open_monitor.sh'))}",
+                f"test -f {shlex.quote(str(ops_root / 'trading_ops_monitor.sh'))}",
                 f"test -f {shlex.quote(str(ops_root / 'retention_prune.sh'))}",
                 f"test -f {shlex.quote(str(ops_root / 'rotate_ops_logs.sh'))}",
             ]
@@ -863,13 +863,12 @@ def install_target_ops_schedule(target: DeployTarget) -> None:
                 f"chmod +x {shlex.quote(str(ops_root / 'compose_up.sh'))}",
                 f"chmod +x {shlex.quote(str(ops_root / 'backup_postgres.sh'))}",
                 f"chmod +x {shlex.quote(str(ops_root / 'health_check.sh'))}",
-                f"chmod +x {shlex.quote(str(ops_root / 'market_open_monitor.sh'))}",
+                f"chmod +x {shlex.quote(str(ops_root / 'trading_ops_monitor.sh'))}",
                 f"chmod +x {shlex.quote(str(ops_root / 'retention_prune.sh'))}",
                 f"chmod +x {shlex.quote(str(ops_root / 'rotate_ops_logs.sh'))}",
                 f"rm -f {shlex.quote(str(Path(target.deploy_root) / '.ops' / 'compose_up.sh'))}",
                 f"rm -f {shlex.quote(str(Path(target.deploy_root) / '.ops' / 'backup_postgres.sh'))}",
                 f"rm -f {shlex.quote(str(Path(target.deploy_root) / '.ops' / 'health_check.sh'))}",
-                f"rm -f {shlex.quote(str(Path(target.deploy_root) / '.ops' / 'market_open_monitor.sh'))}",
                 f"rm -f {shlex.quote(str(Path(target.deploy_root) / '.ops' / 'retention_prune.sh'))}",
                 f"rm -f {shlex.quote(str(Path(target.deploy_root) / '.ops' / 'rotate_ops_logs.sh'))}",
                 f"rm -f {shlex.quote(str(Path(target.deploy_root) / '.ops' / 'spreads.cron'))}",

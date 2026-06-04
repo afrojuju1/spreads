@@ -615,7 +615,6 @@ class IronCondorLiveFlowE2ETests(unittest.TestCase):
             "session_date": "2026-04-14",
             "market_date": "2026-04-14",
             "label": "explore_10_iron_condor_weekly_auto",
-            "pipeline_id": "pipeline:explore_10_iron_condor_weekly_auto",
             "underlying_symbol": "SPY",
             "strategy": "iron_condor",
             "strategy_family": "iron_condor",

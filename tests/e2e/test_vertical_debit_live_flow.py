@@ -3,15 +3,12 @@ from __future__ import annotations
 import unittest
 from argparse import Namespace
 from dataclasses import asdict
-from datetime import date
 
 from core.domain.models import (
-    DailyBar,
     ExpectedMoveEstimate,
     OptionContract,
     OptionSnapshot,
 )
-from core.backtest import mark_structure_on_date
 from core.services.execution import (
     _build_close_order_request,
     _build_order_request,
@@ -195,103 +192,6 @@ class VerticalDebitLiveFlowE2ETests(unittest.TestCase):
         self.assertEqual(close_request["limit_price"], "-2.85")
         self.assertEqual(close_request["legs"][0]["position_intent"], "buy_to_close")
         self.assertEqual(close_request["legs"][1]["position_intent"], "sell_to_close")
-
-    def test_put_debit_backtest_marking_is_credit_for_gain(self) -> None:
-        expiration = "2026-04-24"
-        candidates = build_vertical_spreads(
-            symbol="MSFT",
-            strategy="put_debit",
-            spot_price=100.0,
-            contracts_by_expiration={
-                expiration: [
-                    OptionContract(
-                        symbol="MSFT260424P95",
-                        expiration_date=expiration,
-                        strike_price=95.0,
-                        open_interest=1500,
-                        close_price=None,
-                    ),
-                    OptionContract(
-                        symbol="MSFT260424P100",
-                        expiration_date=expiration,
-                        strike_price=100.0,
-                        open_interest=1800,
-                        close_price=None,
-                    ),
-                ]
-            },
-            snapshots_by_expiration={
-                expiration: {
-                    "MSFT260424P95": OptionSnapshot(
-                        symbol="MSFT260424P95",
-                        bid=0.80,
-                        ask=1.00,
-                        bid_size=55,
-                        ask_size=60,
-                        midpoint=0.90,
-                        delta=-0.24,
-                        gamma=None,
-                        theta=None,
-                        vega=None,
-                        implied_volatility=0.31,
-                        last_trade_price=None,
-                        daily_volume=700,
-                        greeks_source="alpaca",
-                    ),
-                    "MSFT260424P100": OptionSnapshot(
-                        symbol="MSFT260424P100",
-                        bid=2.90,
-                        ask=3.10,
-                        bid_size=70,
-                        ask_size=75,
-                        midpoint=3.00,
-                        delta=-0.52,
-                        gamma=None,
-                        theta=None,
-                        vega=None,
-                        implied_volatility=0.32,
-                        last_trade_price=None,
-                        daily_volume=820,
-                        greeks_source="alpaca",
-                    ),
-                }
-            },
-            expected_moves_by_expiration={},
-            args=_args(),
-        )
-
-        self.assertEqual(len(candidates), 1)
-        candidate = asdict(candidates[0])
-        backtest_mark = mark_structure_on_date(
-            candidate,
-            option_bars={
-                candidate["short_symbol"]: [
-                    DailyBar(
-                        timestamp="2026-04-15T20:00:00Z",
-                        open=0.90,
-                        high=0.95,
-                        low=0.60,
-                        close=0.70,
-                        volume=1000,
-                    )
-                ],
-                candidate["long_symbol"]: [
-                    DailyBar(
-                        timestamp="2026-04-15T20:00:00Z",
-                        open=3.00,
-                        high=4.80,
-                        low=2.80,
-                        close=4.50,
-                        volume=1200,
-                    )
-                ],
-            },
-            target_date=date(2026, 4, 15),
-        )
-
-        self.assertEqual(backtest_mark["status"], "mark_only")
-        self.assertAlmostEqual(backtest_mark["spread_mark_close"], 3.8, places=4)
-        self.assertGreater(backtest_mark["estimated_pnl"], 0.0)
 
 
 if __name__ == "__main__":

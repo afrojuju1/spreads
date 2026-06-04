@@ -11,7 +11,7 @@ from core.services.positions import enrich_position_row
 from core.services.trading_strategies import load_active_trading_strategies
 from core.services.value_coercion import as_text as _as_text
 from core.storage.capture_models import CaptureSummaryModel
-from core.storage.engine_models import CandidateRunModel, SourceRunModel, TradeCandidateModel
+from core.storage.engine_models import CandidateRunModel, SourceRunModel, SourceTickerModel, TradeCandidateModel
 from core.storage.lifecycle_models import TradeDecisionModel, TradeSignalModel
 from core.storage.serializers import parse_date, parse_datetime
 
@@ -19,6 +19,7 @@ from .shared import _combine_statuses
 
 OPEN_POSITION_STATUSES = ("open", "partial_close")
 ENGINE_RECENT_ROW_LIMIT = 12
+SOURCE_SYMBOL_LIMIT = 25
 
 
 def _window(market_date: str) -> tuple[datetime, datetime]:
@@ -33,6 +34,88 @@ def _in_window(row: Mapping[str, Any], field_name: str, *, start: datetime, end:
 
 def _count_rows(rows: list[Mapping[str, Any]], field_name: str) -> dict[str, int]:
     return dict(sorted(Counter(str(row.get(field_name) or "unknown") for row in rows).items()))
+
+
+def _render_datetime(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _source_run_row(row: SourceRunModel, *, symbols: list[str]) -> dict[str, Any]:
+    return {
+        "source_run_id": row.source_run_id,
+        "source_type": row.source_type,
+        "source_ref": row.source_ref,
+        "source_job_run_id": row.source_job_run_id,
+        "status": row.status,
+        "config_hash": row.config_hash,
+        "generated_at": _render_datetime(row.generated_at),
+        "completed_at": _render_datetime(row.completed_at),
+        "symbol_count": row.symbol_count,
+        "symbols": symbols[:SOURCE_SYMBOL_LIMIT],
+        "summary": dict(row.summary_json or {}),
+        "created_at": _render_datetime(row.created_at),
+        "updated_at": _render_datetime(row.updated_at),
+    }
+
+
+def _candidate_run_row(row: CandidateRunModel) -> dict[str, Any]:
+    return {
+        "candidate_run_id": row.candidate_run_id,
+        "run_key": row.run_key,
+        "trading_strategy_id": row.trading_strategy_id,
+        "trade_structure": row.trade_structure,
+        "routine": row.routine,
+        "source_run_id": row.source_run_id,
+        "source_type": row.source_type,
+        "source_ref": row.source_ref,
+        "status": row.status,
+        "config_hash": row.config_hash,
+        "generated_at": _render_datetime(row.generated_at),
+        "completed_at": _render_datetime(row.completed_at),
+        "symbol_count": row.symbol_count,
+        "candidate_count": row.candidate_count,
+        "summary": dict(row.summary_json or {}),
+        "created_at": _render_datetime(row.created_at),
+        "updated_at": _render_datetime(row.updated_at),
+    }
+
+
+def _decision_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "trade_decision_id": row.get("trade_decision_id"),
+        "trade_signal_id": row.get("trade_signal_id"),
+        "candidate_run_id": row.get("candidate_run_id"),
+        "trading_strategy_id": row.get("trading_strategy_id"),
+        "trade_structure": row.get("trade_structure"),
+        "routine": row.get("routine"),
+        "underlying_symbol": row.get("underlying_symbol"),
+        "decision_state": row.get("decision_state"),
+        "selection_rank": row.get("selection_rank"),
+        "confidence": row.get("confidence"),
+        "reason_codes": row.get("reason_codes"),
+        "blockers": row.get("blockers"),
+        "decided_at": row.get("decided_at"),
+        "expires_at": row.get("expires_at"),
+    }
+
+
+def _signal_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "trade_signal_id": row.get("trade_signal_id"),
+        "candidate_run_id": row.get("candidate_run_id"),
+        "trading_strategy_id": row.get("trading_strategy_id"),
+        "trade_structure": row.get("trade_structure"),
+        "routine": row.get("routine"),
+        "underlying_symbol": row.get("underlying_symbol"),
+        "signal_state": row.get("signal_state"),
+        "confidence": row.get("confidence"),
+        "reason_codes": row.get("reason_codes"),
+        "blockers": row.get("blockers"),
+        "observed_at": row.get("observed_at"),
+        "expires_at": row.get("expires_at"),
+    }
 
 
 def _engine_fact_summary(
@@ -115,22 +198,39 @@ def _engine_fact_summary(
             )
             or 0
         )
+        source_run_ids = [row.source_run_id for row in source_runs]
+        symbols_by_source_run: dict[str, list[str]] = {source_run_id: [] for source_run_id in source_run_ids}
+        if source_run_ids:
+            for source_run_id, symbol in session.execute(
+                select(SourceTickerModel.source_run_id, SourceTickerModel.symbol)
+                .where(SourceTickerModel.source_run_id.in_(source_run_ids))
+                .order_by(SourceTickerModel.source_run_id.asc(), SourceTickerModel.rank.asc().nulls_last(), SourceTickerModel.symbol.asc())
+            ):
+                symbols = symbols_by_source_run.setdefault(str(source_run_id), [])
+                if len(symbols) < SOURCE_SYMBOL_LIMIT:
+                    symbols.append(str(symbol))
 
     now_iso = now.isoformat(timespec="seconds").replace("+00:00", "Z")
-    selected_decisions = engine_facts.list_trade_decisions_with_signals(
-        decision_states=["selected"],
-        routine="entry",
-        as_of=now_iso,
-        limit=ENGINE_RECENT_ROW_LIMIT,
-    )
-    watch_signals = engine_facts.list_trade_signals(
-        signal_states=["ready", "observed"],
-        routine="entry",
-        as_of=now_iso,
-        limit=ENGINE_RECENT_ROW_LIMIT,
-    )
-    source_rows = [engine_facts.row(row) for row in source_runs]
-    candidate_rows = [engine_facts.row(row) for row in candidate_runs]
+    selected_decisions = [
+        _decision_row(row)
+        for row in engine_facts.list_trade_decisions_with_signals(
+            decision_states=["selected"],
+            routine="entry",
+            as_of=now_iso,
+            limit=ENGINE_RECENT_ROW_LIMIT,
+        )
+    ]
+    watch_signals = [
+        _signal_row(row)
+        for row in engine_facts.list_trade_signals(
+            signal_states=["ready", "observed"],
+            routine="entry",
+            as_of=now_iso,
+            limit=ENGINE_RECENT_ROW_LIMIT,
+        )
+    ]
+    source_rows = [_source_run_row(row, symbols=symbols_by_source_run.get(row.source_run_id, [])) for row in source_runs]
+    candidate_rows = [_candidate_run_row(row) for row in candidate_runs]
     source_statuses = {str(row.get("status") or "unknown") for row in source_rows}
     source_status = "idle"
     if source_rows:

@@ -23,7 +23,7 @@ from api.routes.control import router as control_router
 from api.routes.events_ws import router as events_ws_router
 from api.routes.executions import router as executions_router
 from api.routes.health import router as health_router
-from api.routes.internal_ops import router as internal_ops_router
+from api.routes.operator_state import router as operator_state_router
 from api.routes.positions import router as positions_router
 from core.observability.logging import configure_logging, log_event
 
@@ -75,7 +75,7 @@ def create_app() -> FastAPI:
     app.include_router(control_router)
     app.include_router(positions_router)
     app.include_router(executions_router)
-    app.include_router(internal_ops_router)
+    app.include_router(operator_state_router)
     app.include_router(company_valuation_router)
     app.include_router(events_ws_router)
     return app

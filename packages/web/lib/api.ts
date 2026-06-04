@@ -290,17 +290,7 @@ const executionRuntimeCapabilitiesSchema = z
   })
   .passthrough();
 
-const opsTradingHealthSchema = z
-  .object({
-    status: z.string().default("unknown"),
-    generated_at: z.string().nullable().optional(),
-    summary: z.record(z.string(), z.unknown()).default({}),
-    attention: z.array(z.record(z.string(), z.unknown())).default([]),
-    details: z.record(z.string(), z.unknown()).default({}),
-  })
-  .passthrough();
-
-const opsEnvelopeSchema = z
+const operatorStateSchema = z
   .object({
     status: z.string().default("unknown"),
     generated_at: z.string().nullable().optional(),
@@ -334,8 +324,8 @@ export type OwnerRef = z.infer<typeof ownerRefSchema>;
 export type SourceRef = z.infer<typeof sourceRefSchema>;
 export type Position = z.infer<typeof positionSchema>;
 export type ExecutionRuntimeCapabilities = z.infer<typeof executionRuntimeCapabilitiesSchema>;
-export type OpsTradingHealth = z.infer<typeof opsTradingHealthSchema>;
-export type OpsEnvelope = z.infer<typeof opsEnvelopeSchema>;
+export type TradingOpsState = z.infer<typeof operatorStateSchema>;
+export type StorageOpsState = z.infer<typeof operatorStateSchema>;
 export type GlobalRealtimeEvent = z.infer<typeof globalRealtimeEventSchema>;
 export type PositionCloseRequest = {
   quantity?: number;
@@ -437,32 +427,16 @@ export function getExecutionRuntimes() {
   return fetchApi("executions/runtimes", executionRuntimeCapabilitiesSchema);
 }
 
-export function getOpsTradingHealth() {
-  return fetchApi("internal/ops/trading", opsTradingHealthSchema);
-}
-
-export function getOpsLiveDoctor(filters?: {
-  feedId?: string;
+export function getTradingOpsState(filters?: {
   marketDate?: string;
-  limit?: number;
 }) {
-  return fetchApi("internal/ops/live-doctor", opsEnvelopeSchema, {
-    feed_id: filters?.feedId,
+  return fetchApi("internal/trading-ops/state", operatorStateSchema, {
     market_date: filters?.marketDate,
-    limit: filters?.limit,
   });
 }
 
-export function getOpsStatus() {
-  return fetchApi("internal/ops/status", opsEnvelopeSchema);
-}
-
-export function getOpsRetention(filters?: {
-  includePendingCounts?: boolean;
-}) {
-  return fetchApi("internal/ops/retention", opsEnvelopeSchema, {
-    include_pending_counts: filters?.includePendingCounts,
-  });
+export function getStorageOpsState() {
+  return fetchApi("internal/storage-ops/state", operatorStateSchema);
 }
 
 export function submitEquityOrder(payload: EquityOrderRequest) {

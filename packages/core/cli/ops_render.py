@@ -42,6 +42,17 @@ def _render_money(value: Any) -> str:
     return f"${float(value):,.2f}"
 
 
+def _render_bytes(value: Any) -> str:
+    if value is None:
+        return "-"
+    size = float(value)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
 def _render_entry_budget(value: Any, *, fallback_limit: Any = None) -> str:
     if not isinstance(value, dict):
         return "-"
@@ -279,35 +290,100 @@ def render_json_payload(console: Console, payload: dict[str, Any]) -> None:
     console.file.write(json.dumps(payload, indent=2, default=str) + "\n")
 
 
-def render_system_status(console: Console, payload: dict[str, Any]) -> None:
+def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
     summary = dict(payload.get("summary") or {})
     details = dict(payload.get("details") or {})
+    account_snapshot = dict(details.get("account_snapshot") or {})
+    account = dict(account_snapshot.get("account") or {})
+    pnl = dict(account_snapshot.get("pnl") or {})
     scheduler = dict(details.get("scheduler") or {})
     broker_sync = dict(details.get("broker_sync") or {})
     alert_delivery = dict(details.get("alert_delivery") or {})
+    execution_health = dict(details.get("execution_health") or {})
+    mark_health = dict(details.get("mark_health") or {})
     engine = dict(details.get("engine") or {})
     engine_summary = dict(engine.get("summary") or {})
 
     overview = Table.grid(padding=(0, 2))
     overview.add_row("Overall", _status_text(payload.get("status")))
     overview.add_row("Generated", _render_value(payload.get("generated_at")))
+    overview.add_row("Trading Allowed", "yes" if summary.get("trading_allowed") else "no")
+    overview.add_row(
+        "Market",
+        (
+            f"{_render_value(summary.get('market_session_status'))} "
+            f"{_render_value(summary.get('market_open_at'))}"
+            f"..{_render_value(summary.get('market_close_at'))}"
+        ),
+    )
+    overview.add_row("Environment", _render_value(summary.get("environment")))
     overview.add_row("Control", _render_value(summary.get("control_mode")))
     overview.add_row(
         "Scheduler",
         f"{_render_value(scheduler.get('status'))} @ {_render_value(scheduler.get('expires_at'))}",
     )
-    overview.add_row("Workers", _render_value(summary.get("worker_count")))
+    overview.add_row(
+        "Workers",
+        (
+            f"lanes {_render_value(summary.get('worker_lane_count'))} | "
+            f"blocked {_render_value(summary.get('blocked_worker_lane_count'))} | "
+            f"idle {_render_value(summary.get('idle_worker_lane_count'))}"
+        ),
+    )
     overview.add_row(
         "Jobs",
-        f"running {_render_value(summary.get('running_job_count'))} | queued {_render_value(summary.get('queued_job_count'))}",
+        (
+            f"running {_render_value(len(list(details.get('running_jobs') or [])))} | "
+            f"queued {_render_value(len(list(details.get('queued_jobs') or [])))} | "
+            f"failed {_render_value(summary.get('actionable_failed_job_count'))}"
+        ),
+    )
+    overview.add_row("Equity", _render_money(account.get("equity")))
+    overview.add_row("Cash", _render_money(account.get("cash")))
+    overview.add_row("Buying Power", _render_money(account.get("buying_power")))
+    overview.add_row("Day PnL", _render_money(pnl.get("day_change")))
+    overview.add_row("Day PnL %", _render_percent(pnl.get("day_change_percent")))
+    overview.add_row(
+        "Positions",
+        (
+            f"{_render_value(summary.get('open_position_count'))}/"
+            f"{_render_value(summary.get('max_open_positions'))} open | "
+            f"closed {_render_value(summary.get('closed_position_count'))}"
+        ),
+    )
+    overview.add_row(
+        "Entries",
+        (
+            f"{_render_value(summary.get('session_entry_count'))}/"
+            f"{_render_value(summary.get('max_daily_entries'))} filled | "
+            f"remaining {_render_value(summary.get('remaining_daily_entries'))}"
+        ),
+    )
+    overview.add_row(
+        "Execution",
+        (
+            f"{_render_value(summary.get('execution_health_status'))} | "
+            f"open {_render_value(summary.get('open_execution_count'))} | "
+            f"stale {_render_value(execution_health.get('stale_open_execution_count'))} | "
+            f"unknown-submit {_render_value(execution_health.get('submit_unknown_execution_count'))}"
+        ),
+    )
+    overview.add_row(
+        "Marks",
+        (
+            f"{_render_value(summary.get('mark_health_status'))} | "
+            f"missing {_render_value(mark_health.get('missing_mark_count'))} | "
+            f"stale {_render_value(mark_health.get('stale_mark_count'))}"
+        ),
     )
     overview.add_row(
         "Engine",
         (
+            f"sources {_render_value(summary.get('engine_source_run_count'))} | "
+            f"candidates {_render_value(summary.get('engine_trade_candidate_count'))} | "
             f"signals {_render_value(summary.get('engine_signal_count'))} | "
             f"decisions {_render_value(summary.get('engine_decision_count'))} | "
             f"selected {_render_value(summary.get('engine_selected_count'))} | "
-            f"positions {_render_value(summary.get('engine_open_position_count'))} | "
             f"capture {_render_value(summary.get('capture_active_target_count'))}"
         ),
     )
@@ -319,10 +395,12 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
         "Alerts",
         "dead-letter " f"{_render_value(alert_delivery.get('dead_letter_count'))} | retry {_render_value(alert_delivery.get('retry_wait_count'))}",
     )
+    overview.add_row("Latest Exit", _render_value(summary.get("latest_exit_reason")))
+    overview.add_row("Net PnL", _render_money(summary.get("net_pnl")))
     console.print(
         Panel(
             overview,
-            title="System Health",
+            title="Trading Ops State",
             border_style=STATUS_STYLES.get(str(payload.get("status")), "white"),
         )
     )
@@ -335,88 +413,42 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
         value=engine_summary,
     )
 
-    failure_rows = list(details.get("recent_failures") or [])
-    if failure_rows:
-        table = Table(title="Recent Failures", header_style="bold")
-        table.add_column("Job Type")
+    flow_rows = list(details.get("trading_flows") or [])
+    if flow_rows:
+        table = Table(title="Trading Flows", header_style="bold")
+        table.add_column("Strategy")
         table.add_column("Status")
-        table.add_column("When")
-        table.add_column("Error")
-        for row in failure_rows[:8]:
+        table.add_column("Source")
+        table.add_column("Symbols", justify="right")
+        table.add_column("Candidates", justify="right")
+        table.add_column("Active Intents", justify="right")
+        table.add_column("Positions")
+        table.add_column("Capacity")
+        for row in flow_rows:
+            source_state = dict(row.get("source_state") or {})
+            candidate_state = dict(row.get("candidate_state") or {})
+            intent_state = dict(row.get("intent_state") or {})
+            position_state = dict(row.get("position_state") or {})
+            capacity = dict(row.get("capacity") or {})
             table.add_row(
-                str(row.get("job_type") or "-"),
-                str(row.get("status") or "-"),
-                str(row.get("activity_at") or row.get("scheduled_for") or "-"),
-                str(row.get("error_text") or "-"),
+                str(row.get("trading_strategy_id") or row.get("name") or "-"),
+                _status_text(row.get("status")),
+                f"{_render_value(source_state.get('status'))} ({_render_value(source_state.get('age_seconds'))}s)",
+                _render_value(source_state.get("symbol_count")),
+                _render_value(candidate_state.get("candidate_count")),
+                _render_value(intent_state.get("active_intent_count")),
+                (
+                    f"{_render_value(position_state.get('open_position_count'))} open | "
+                    f"{_render_value(position_state.get('closed_position_count'))} closed"
+                ),
+                (
+                    f"{_render_value(capacity.get('session_entry_count'))}/"
+                    f"{_render_value(capacity.get('max_daily_entries'))} entries | "
+                    f"{_render_value(capacity.get('open_position_count'))}/"
+                    f"{_render_value(capacity.get('max_open_positions'))} open"
+                ),
             )
         console.print(table)
-
-
-def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
-    summary = dict(payload.get("summary") or {})
-    details = dict(payload.get("details") or {})
-    account = dict(details.get("account") or {})
-    broker_sync = dict(details.get("broker_sync") or {})
-    market_session = dict(details.get("market_session") or {})
-    engine = dict(details.get("engine") or {})
-    engine_summary = dict(engine.get("summary") or {})
-
-    overview = Table.grid(padding=(0, 2))
-    overview.add_row("Overall", _status_text(payload.get("status")))
-    overview.add_row("Generated", _render_value(payload.get("generated_at")))
-    overview.add_row("Trading Allowed", "yes" if summary.get("trading_allowed") else "no")
-    overview.add_row("Market", _render_value(market_session.get("status")))
-    overview.add_row("Account Source", _render_value(summary.get("account_source")))
-    overview.add_row("Environment", _render_value(summary.get("environment")))
-    overview.add_row("Equity", _render_money(account.get("equity")))
-    overview.add_row("Cash", _render_money(account.get("cash")))
-    overview.add_row("Buying Power", _render_money(account.get("buying_power")))
-    overview.add_row("Day PnL", _render_money(details.get("pnl", {}).get("day_change")))
-    overview.add_row("Day PnL %", _render_percent(details.get("pnl", {}).get("day_change_percent")))
-    overview.add_row("Open Positions", _render_value(summary.get("open_position_count")))
-    overview.add_row("Open Executions", _render_value(summary.get("open_execution_count")))
-    overview.add_row("Stale Open Execs", _render_value(summary.get("stale_open_execution_count")))
-    overview.add_row(
-        "Unknown Submit",
-        _render_value(summary.get("submit_unknown_execution_count")),
-    )
-    overview.add_row(
-        "Blocked Underlyings",
-        _render_value(summary.get("capacity_blocked_underlying_count")),
-    )
-    overview.add_row("Risk Breaches", _render_value(summary.get("risk_breach_count")))
-    overview.add_row("Mismatches", _render_value(summary.get("reconciliation_mismatch_count")))
-    overview.add_row("Execution Health", _render_value(summary.get("execution_health_status")))
-    overview.add_row(
-        "Engine",
-        (
-            f"signals {_render_value(summary.get('engine_signal_count'))} | "
-            f"decisions {_render_value(summary.get('engine_decision_count'))} | "
-            f"selected {_render_value(summary.get('engine_selected_count'))} | "
-            f"entry intents {_render_value(summary.get('engine_entry_intent_count'))} | "
-            f"mgmt intents {_render_value(summary.get('engine_management_intent_count'))} | "
-            f"capture {_render_value(summary.get('capture_active_target_count'))}"
-        ),
-    )
-    overview.add_row(
-        "Broker Sync",
-        f"{_render_value(broker_sync.get('status'))} @ {_render_value(broker_sync.get('updated_at'))}",
-    )
-    console.print(
-        Panel(
-            overview,
-            title="Trading Health",
-            border_style=STATUS_STYLES.get(str(payload.get("status")), "white"),
-        )
-    )
-
-    _render_attention(console, payload)
-
-    _render_engine_summary(
-        console,
-        title="Engine Spine",
-        value=engine_summary,
-    )
 
     top_positions = list(details.get("top_positions") or [])
     if top_positions:
@@ -541,124 +573,91 @@ def render_job_lanes_view(console: Console, payload: dict[str, Any]) -> None:
         console.print(table)
 
 
-def render_live_doctor(console: Console, payload: dict[str, Any]) -> None:
+def render_storage_ops_state(console: Console, payload: dict[str, Any]) -> None:
     summary = dict(payload.get("summary") or {})
     details = dict(payload.get("details") or {})
-    checks = list(details.get("checks") or [])
+    maintenance = dict(details.get("maintenance") or {})
 
     overview = Table.grid(padding=(0, 2))
     overview.add_row("Overall", _status_text(payload.get("status")))
     overview.add_row("Generated", _render_value(payload.get("generated_at")))
     overview.add_row(
-        "Market",
+        "Latest Run",
         (
-            f"{_render_value(summary.get('market_session_status'))} "
-            f"{_render_value(summary.get('market_open_at'))}"
-            f"..{_render_value(summary.get('market_close_at'))}"
-        ),
-    )
-    overview.add_row("Trading", _render_value(summary.get("trading_allowed")))
-    overview.add_row("Environment", _render_value(summary.get("environment")))
-    overview.add_row(
-        "Broker Sync",
-        (f"{_render_value(summary.get('broker_sync_status'))} " f"age={_render_duration(summary.get('broker_sync_age_seconds'))}"),
-    )
-    overview.add_row(
-        "Finviz",
-        (f"source {_render_value(summary.get('finviz_source_status'))} " f"({_render_value(summary.get('finviz_source_symbol_count'))} symbols)"),
-    )
-    overview.add_row(
-        "Strategy",
-        (
-            f"{_render_value(summary.get('trading_strategy_id'))} | "
-            f"entry {_render_value(summary.get('strategy_entry_status'))} "
-            f"({_render_value(summary.get('strategy_entry_signal_count'))} signals) | "
-            f"manage {_render_value(summary.get('strategy_manage_status'))} | "
-            f"dispatch {_render_value(summary.get('intent_dispatch_status'))}"
+            f"{_render_value(summary.get('latest_run_status'))} @ "
+            f"{_render_value(summary.get('latest_run_at'))}"
         ),
     )
     overview.add_row(
-        "Positions",
+        "Latest Prune",
         (
-            f"{_render_value(summary.get('open_position_count'))}/"
-            f"{_render_value(summary.get('max_open_positions'))} open | "
-            f"active intents {_render_value(summary.get('active_intent_count'))}"
+            f"matched {_render_value(summary.get('latest_matching_count'))} | "
+            f"deleted {_render_value(summary.get('latest_deleted_count'))}"
         ),
     )
     overview.add_row(
-        "Entries",
+        "Storage",
         (
-            f"{_render_value(summary.get('session_entry_count'))}/"
-            f"{_render_value(summary.get('max_daily_entries'))} filled | "
-            f"remaining {_render_value(summary.get('remaining_daily_entries'))}"
+            f"{_render_bytes(summary.get('total_size_bytes'))} | "
+            f"live rows {_render_value(summary.get('estimated_live_rows'))} | "
+            f"dead rows {_render_value(summary.get('estimated_dead_rows'))}"
         ),
     )
     overview.add_row(
-        "Latest Exit",
-        _render_value(summary.get("latest_exit_reason")),
-    )
-    overview.add_row("Net PnL", _render_money(summary.get("net_pnl")))
-    overview.add_row(
-        "Workers",
+        "Vacuum Full",
         (
-            f"lanes {_render_value(summary.get('worker_lane_count'))} | "
-            f"blocked {_render_value(summary.get('blocked_worker_lane_count'))} | "
-            f"idle {_render_value(summary.get('idle_worker_lane_count'))}"
+            "pending "
+            f"{_render_value(', '.join(summary.get('vacuum_full_pending_tables') or []))}"
+            if summary.get("vacuum_full_pending")
+            else "not pending"
         ),
     )
+    overview.add_row("Schedule", _render_value(summary.get("schedule")))
+    overview.add_row("Retention Log", _render_value(summary.get("retention_log_path")))
+    overview.add_row("Market Hours Safe", "yes" if summary.get("market_hours_safe") else "no")
     console.print(
         Panel(
             overview,
-            title="Live Doctor",
+            title="Storage Ops State",
             border_style=STATUS_STYLES.get(str(payload.get("status")), "white"),
         )
     )
 
     _render_attention(console, payload)
 
-    if checks:
-        table = Table(title="Checks", header_style="bold")
-        table.add_column("Check")
-        table.add_column("Status")
-        table.add_column("Detail")
-        for row in checks:
+    table_rows = list(details.get("tables") or [])
+    if table_rows:
+        table = Table(title="Storage Tables", header_style="bold")
+        table.add_column("Name")
+        table.add_column("Class")
+        table.add_column("Retention", justify="right")
+        table.add_column("Rows Est.", justify="right")
+        table.add_column("Dead Est.", justify="right")
+        table.add_column("Size", justify="right")
+        table.add_column("Latest Deleted", justify="right")
+        table.add_column("Vacuum")
+        for row in table_rows:
+            latest_prune = dict(row.get("latest_prune") or {})
+            vacuum_full = dict(row.get("vacuum_full") or {})
             table.add_row(
-                str(row.get("name") or "-"),
-                _status_text(row.get("status")),
-                _truncate(row.get("message"), length=96),
+                _render_value(row.get("name")),
+                _render_value(row.get("data_class")),
+                f"{_render_value(row.get('retention_days'))}d",
+                _render_value(row.get("estimated_live_rows")),
+                _render_value(row.get("estimated_dead_rows")),
+                _render_bytes(row.get("total_size_bytes")),
+                _render_value(latest_prune.get("deleted_count")),
+                "pending" if vacuum_full.get("pending") else "ok",
             )
         console.print(table)
 
-    latest_entry = dict(details.get("latest_entry_run") or {})
-    latest_manage = dict(details.get("latest_manage_run") or {})
-    latest_dispatch = dict(details.get("latest_dispatch_run") or {})
-    strategy_runs = [
-        ("Entry", latest_entry),
-        ("Manage", latest_manage),
-        ("Dispatch", latest_dispatch),
-    ]
-    if any(row for _, row in strategy_runs):
-        table = Table(title="Latest Strategy Jobs", header_style="bold")
-        table.add_column("Routine")
-        table.add_column("Job Run")
-        table.add_column("Status")
-        table.add_column("Result")
-        table.add_column("Signals", justify="right")
-        table.add_column("Decisions", justify="right")
-        table.add_column("Intent")
-        for routine, row in strategy_runs:
-            if not row:
-                continue
-            table.add_row(
-                routine,
-                _render_value(row.get("job_run_id")),
-                _job_run_status_text(row.get("job_status")),
-                _render_value(row.get("result_status")),
-                _render_value(row.get("signal_count")),
-                _render_value(row.get("decision_count")),
-                _truncate(row.get("execution_intent_id"), length=36),
+    if maintenance:
+        console.print(
+            Panel(
+                _render_value(maintenance.get("lock_profile")),
+                title=f"Maintenance Runbook: {_render_value(maintenance.get('vacuum_full_runbook'))}",
             )
-        console.print(table)
+        )
 
 
 def _render_jobs_list(console: Console, payload: dict[str, Any]) -> None:

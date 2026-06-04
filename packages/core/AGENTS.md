@@ -28,7 +28,7 @@
 
 - For operator visibility work, reuse these modules with thin adapters instead of introducing parallel API-only logic.
 - For current runtime state, prefer `services/ops/`, `services/positions.py`, `services/execution/runtimes.py`, and engine fact repositories over creating new read-model owners.
-- Active cleanup `spr-zuy` is replacing fragmented operator health surfaces with `TradingOpsState` and `StorageOpsState`. During that work, remove retired fragmented ops product surfaces rather than extending them.
+- `TradingOpsState` and `StorageOpsState` are the canonical operator read models. Remove retired fragmented ops product surfaces rather than extending them.
 - For jobs health, read operator-facing status fields first. Raw historical failed runs can remain visible while `operator_status` and `actionable_failed_count` show whether they still require action.
 - For first-pass ops/runtime checks and live validation workflows, follow the repo-level CLI guidance in [../../AGENTS.md](../../AGENTS.md). Keep the canonical command list there instead of repeating it in backend-specific instructions.
 - Treat `ade-nucbox-k8-plus` as the canonical live paper backend target. Prefer `uv run spreads ... --env ade-nucbox-k8-plus` for operator reads instead of raw `--db` overrides.
@@ -40,7 +40,7 @@
 - For questions about "how did we do today", market-close summaries, or live ops status, prefer the running Docker-backed system state before code inspection.
 - Use the existing stack and narrow live reads first:
   - account and trading health: `services/account_state.py` or `http://localhost:58080/account/overview?history_range=1D`
-- strategy/source/signal/decision health: `services/ops/` or `uv run spreads trading`
+- strategy/source/signal/decision health: `services/ops/` or `uv run spreads ops state`
 - strategy tuning: prefer live/runtime read models and documented strategy-run summaries; add a new strategy-owned evaluation surface only when explicitly requested.
 - After market close, use exact dates in summaries.
 

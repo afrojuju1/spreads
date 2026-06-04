@@ -41,15 +41,15 @@ Before rollout, classify what changed:
 - schema or Alembic files changed
 - job definitions, schedules, or policy payloads changed
 - code imported by `worker-runtime`
-- code imported by `worker-discovery`
+- code imported by `worker-data`
 - scheduler enqueue logic changed
 - `market-recorder` code changed
-- backtest-only or CLI-only code changed
+- CLI-only code changed
 - API-only or web-only code changed
 
 Use imports, touched paths, and the canonical architecture doc to decide the minimum safe rollout. Do not use this skill as an ownership map; read [docs/current_system_state.md](../../../docs/current_system_state.md), which owns the current domain vocabulary and service boundaries.
 
-Active cleanup `spr-zuy` is replacing fragmented operator health surfaces with `TradingOpsState` and `StorageOpsState`; update this rollout playbook when those shipped commands exist.
+`TradingOpsState` and `StorageOpsState` are the canonical operator health surfaces.
 
 ## Validation Before Rollout
 
@@ -69,16 +69,17 @@ Apply only the steps that match the change:
 - schema changed:
   - `uv run alembic upgrade head`
 - job definitions, seeded payloads, schedules, or policies changed:
-  - `uv run spreads jobs seed`
+  - `uv run spreads config validate --json`
+  - restart the scheduler and affected workers so they load the current config/code
 - code imported by `worker-runtime` changed:
   - `docker compose restart worker-runtime`
-- code imported by `worker-discovery` changed:
-  - `docker compose restart worker-discovery`
+- code imported by `worker-data` changed:
+  - `docker compose restart worker-data`
 - scheduler code changed:
   - `docker compose restart scheduler`
 - recorder code changed:
   - `docker compose restart market-recorder`
-- backtest-only or CLI-only code:
+- CLI-only code:
   - no Docker restart; validate through the CLI or targeted tests
 - API runtime only:
   - usually no explicit restart; Docker API hot-reloads
@@ -91,21 +92,10 @@ If multiple backend runtime surfaces changed, restart only the affected services
 
 In practice:
 
-- most changes under `services/scanners/`, `services/discovery_runs/`, `services/live_selection.py`, `services/opportunity_scoring.py`, `services/candidate_policy.py`, `services/opportunity_generation.py`, or shared backend code imported by collector jobs require at least `worker-discovery`
+- most changes under ticker sources, candidate building, scanner math, capture, market data, strategy entry, or shared backend code imported by data jobs require at least `worker-data`
 - most changes under `services/execution/`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, or runtime job logic require at least `worker-runtime`
 - if ownership crosses both lanes, restart both workers and the scheduler only when scheduling logic or job dispatch changed
-- most changes limited to `packages/core/backtest/`, `packages/core/cli/backtest.py`, or exported artifact comparison paths do not require worker or scheduler restarts
-
-## Policy Study Recipe
-
-When the goal is to compare policy variants rather than roll one variant live:
-
-1. keep the active `packages/config` tree untouched
-2. create isolated `before/` and `after/` config roots
-3. run the same `uv run spreads backtest replay-range ... --source alpaca --config-root <root> --export-json <path>` window against both roots
-4. compare those exports with `uv run spreads backtest compare --left-json <before.json> --right-json <after.json>`
-
-Use the live rollout path only after the policy-study evidence is good enough to justify changing the active config tree.
+- changes limited to `packages/core/cli/` do not require worker or scheduler restarts unless the touched module is imported by runtime services
 
 ## Verification After Rollout
 
@@ -113,21 +103,20 @@ Use the ops CLI first:
 
 ```bash
 docker compose ps
-uv run spreads status
-uv run spreads trading
-uv run spreads automations --bot-id <bot-id> --automation-id <automation-id> --date <YYYY-MM-DD> --json
-uv run spreads pipelines
+uv run spreads ops state
+uv run spreads ops storage
+uv run spreads jobs
+uv run spreads jobs lanes
+uv run spreads positions --date <YYYY-MM-DD> --json
 ```
 
-During `spr-zuy`, prefer the canonical state commands once they exist, and do not add new rollout checks around the old fragmented ops product surfaces.
+Do not add new rollout checks around retired fragmented ops, pipeline, discovery, or UOA product names.
 
 Then drill into impacted labels:
 
 ```bash
-uv run spreads pipelines <pipeline-id> --date YYYY-MM-DD
-uv run spreads audit <pipeline-id> --date YYYY-MM-DD
-uv run spreads jobs
-docker compose logs --since 3m scheduler worker-runtime worker-discovery market-recorder
+uv run spreads jobs --job-type <job-type> --limit 10 --json
+docker compose logs --since 3m scheduler worker-runtime worker-data market-recorder
 ```
 
 For policy or seeded job-definition changes, verify both layers:
