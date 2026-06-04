@@ -441,7 +441,7 @@ def _render_candidate_row_table(
     console.print(table)
 
 
-def _render_automation_sync_value(value: Any) -> str:
+def _render_strategy_sync_value(value: Any) -> str:
     payload = value if isinstance(value, dict) else {}
     runtime_selection = payload.get("runtime_selection_summary") if isinstance(payload.get("runtime_selection_summary"), dict) else {}
     has_runtime_selection_detail = (
@@ -453,7 +453,7 @@ def _render_automation_sync_value(value: Any) -> str:
         or bool(runtime_selection.get("runtime_filter_reason_counts"))
     )
     if not payload or (
-        int(payload.get("automation_runs_upserted") or 0) <= 0
+        int(payload.get("strategy_runs_upserted") or 0) <= 0
         and int(payload.get("runtime_opportunities_upserted") or 0) <= 0
         and int(payload.get("runtime_opportunities_expired") or 0) <= 0
         and int(runtime_selection.get("opportunity_count") or 0) <= 0
@@ -461,14 +461,14 @@ def _render_automation_sync_value(value: Any) -> str:
     ):
         return "-"
     return (
-        f"runs {_render_value(payload.get('automation_runs_upserted'))} | "
+        f"runs {_render_value(payload.get('strategy_runs_upserted'))} | "
         f"opps {_render_value(runtime_selection.get('opportunity_count'))} | "
         f"up {_render_value(payload.get('runtime_opportunities_upserted'))} | "
         f"exp {_render_value(payload.get('runtime_opportunities_expired'))}"
     )
 
 
-def _render_automation_sync_summary(
+def _render_strategy_sync_summary(
     console: Console,
     *,
     title: str,
@@ -476,14 +476,14 @@ def _render_automation_sync_summary(
 ) -> None:
     payload = value if isinstance(value, dict) else {}
     runtime_selection = payload.get("runtime_selection_summary") if isinstance(payload.get("runtime_selection_summary"), dict) else {}
-    if _render_automation_sync_value(payload) == "-":
+    if _render_strategy_sync_value(payload) == "-":
         return
     table = Table(title=title, show_edge=False, header_style="bold")
     table.add_column("Metric", style="bold")
     table.add_column("Value")
     table.add_row(
         "Runs Upserted",
-        _render_value(payload.get("automation_runs_upserted")),
+        _render_value(payload.get("strategy_runs_upserted")),
     )
     table.add_row(
         "Runtime Opportunities",
@@ -545,93 +545,6 @@ def _render_automation_sync_summary(
         _render_runtime_candidate_previews(runtime_selection.get("top_candidates")),
     )
     console.print(table)
-
-
-def _render_automations_list(console: Console, payload: dict[str, Any]) -> None:
-    rows = list(payload.get("automations") or [])
-    table = Table(title="Automation Runtimes", header_style="bold")
-    table.add_column("Bot")
-    table.add_column("Automation")
-    table.add_column("Mode")
-    table.add_column("Opps", justify="right")
-    table.add_column("Live", justify="right")
-    table.add_column("Decisions", justify="right")
-    table.add_column("Intents", justify="right")
-    table.add_column("Positions", justify="right")
-    table.add_column("Latest Selection", overflow="fold")
-    for row in rows:
-        latest_selection = row.get("latest_runtime_selection_summary") if isinstance(row.get("latest_runtime_selection_summary"), dict) else {}
-        selection_preview = _render_automation_sync_value(
-            {
-                "runtime_selection_summary": latest_selection,
-                "automation_runs_upserted": 0,
-                "runtime_opportunities_upserted": 0,
-                "runtime_opportunities_expired": 0,
-            }
-        )
-        table.add_row(
-            str(row.get("bot_name") or row.get("bot_id") or "-"),
-            str(row.get("automation_id") or "-"),
-            f"{_render_value(row.get('approval_mode'))}/{_render_value(row.get('execution_mode'))}",
-            _render_value(row.get("opportunity_count")),
-            _render_value(row.get("live_opportunity_count")),
-            _render_value(row.get("decision_count")),
-            _render_value(row.get("intent_count")),
-            _render_value(row.get("open_position_count")),
-            selection_preview,
-        )
-    console.print(table)
-
-
-def _render_automation_detail(console: Console, payload: dict[str, Any]) -> None:
-    summary = dict(payload.get("summary") or {})
-    latest_run = payload.get("latest_automation_run") if isinstance(payload.get("latest_automation_run"), dict) else {}
-    latest_selection = payload.get("latest_runtime_selection_summary") if isinstance(payload.get("latest_runtime_selection_summary"), dict) else {}
-    latest_discovery = payload.get("latest_discovery") if isinstance(payload.get("latest_discovery"), dict) else {}
-
-    overview = Table.grid(padding=(0, 2))
-    overview.add_row(
-        "Automation",
-        f"{_render_value(payload.get('bot_name') or payload.get('bot_id'))} / " f"{_render_value(payload.get('automation_id'))}",
-    )
-    overview.add_row("Market Date", _render_value(payload.get("market_date")))
-    overview.add_row(
-        "Mode",
-        f"{_render_value(payload.get('approval_mode'))} / " f"{_render_value(payload.get('execution_mode'))}",
-    )
-    overview.add_row(
-        "Trigger Policy",
-        f"min score {_render_value((payload.get('trigger_policy') or {}).get('min_opportunity_score'))}",
-    )
-    overview.add_row("Opportunities", _render_value(summary.get("opportunity_count")))
-    overview.add_row("Live Opportunities", _render_value(summary.get("live_opportunity_count")))
-    overview.add_row("Decisions", _render_value(summary.get("decision_count")))
-    overview.add_row("Intents", _render_value(summary.get("intent_count")))
-    overview.add_row("Open Positions", _render_value(summary.get("open_position_count")))
-    overview.add_row("Latest Run", _render_value(latest_run.get("started_at") or latest_run.get("completed_at")))
-    overview.add_row(
-        "Latest Discovery",
-        _render_value(latest_discovery.get("label")) + " @ " + _render_value(latest_discovery.get("cycle_id")),
-    )
-    console.print(Panel(overview, title="Automation Runtime"))
-
-    _render_automation_sync_summary(
-        console,
-        title="Latest Runtime Selection",
-        value={
-            "automation_runs_upserted": 1 if latest_run else 0,
-            "runtime_opportunities_upserted": 0,
-            "runtime_opportunities_expired": 0,
-            "runtime_selection_summary": latest_selection,
-        },
-    )
-
-
-def render_automations_view(console: Console, payload: dict[str, Any]) -> None:
-    if isinstance(payload.get("automations"), list):
-        _render_automations_list(console, payload)
-        return
-    _render_automation_detail(console, payload)
 
 
 def _render_discovery_run_raw_candidates(
@@ -704,7 +617,7 @@ def _render_discovery_run_raw_candidates(
     console.print(table)
 
 
-def _render_automation_runtime_summary(
+def _render_strategy_runtime_summary(
     console: Console,
     *,
     title: str,
@@ -716,11 +629,11 @@ def _render_automation_runtime_summary(
     table = Table(title=title, show_edge=False, header_style="bold")
     table.add_column("Metric", style="bold")
     table.add_column("Value")
-    table.add_row("Bots", _render_value(payload.get("bot_count")))
-    table.add_row("Entry Automations", _render_value(payload.get("entry_automation_count")))
+    table.add_row("Strategies", _render_value(payload.get("strategy_count")))
+    table.add_row("Entry Strategies", _render_value(payload.get("entry_strategy_count")))
     table.add_row(
-        "Mgmt Automations",
-        _render_value(payload.get("management_automation_count")),
+        "Management Strategies",
+        _render_value(payload.get("management_strategy_count")),
     )
     table.add_row("Opportunities", _render_value(payload.get("opportunity_count")))
     table.add_row("Decisions", _render_value(payload.get("decision_count")))
@@ -753,11 +666,11 @@ def _render_automation_runtime_summary(
         _render_count_map(payload.get("entry_intent_state_counts")),
     )
     table.add_row(
-        "Mgmt Intents",
+        "Management Intents",
         _render_value(payload.get("management_intent_count")),
     )
     table.add_row(
-        "Mgmt Intent States",
+        "Management Intent States",
         _render_count_map(payload.get("management_intent_state_counts")),
     )
     table.add_row(
@@ -769,242 +682,6 @@ def _render_automation_runtime_summary(
         _render_count_map(payload.get("open_position_symbols")),
     )
     console.print(table)
-
-
-def _render_automation_performance(
-    console: Console,
-    *,
-    title: str,
-    value: Any,
-) -> None:
-    payload = value if isinstance(value, dict) else {}
-    if not payload:
-        return
-    overview = Table(title=title, show_edge=False, header_style="bold")
-    overview.add_column("Metric", style="bold")
-    overview.add_column("Value")
-    overview.add_row("Bots", _render_value(payload.get("bot_count")))
-    overview.add_row("Daily PnL", _render_money(payload.get("daily_total_pnl")))
-    overview.add_row(
-        "Open Unrealized",
-        _render_money(payload.get("open_unrealized_pnl")),
-    )
-    overview.add_row(
-        "Total Realized",
-        _render_money(payload.get("total_realized_pnl")),
-    )
-    overview.add_row(
-        "Entry Fills Today",
-        _render_value(payload.get("daily_entry_fill_count")),
-    )
-    overview.add_row(
-        "Close Fills Today",
-        _render_value(payload.get("daily_close_fill_count")),
-    )
-    console.print(overview)
-
-    def render_symbol_stats(value: Any) -> str:
-        if not isinstance(value, dict) or not value:
-            return "-"
-        ranked = sorted(
-            (
-                (
-                    str(symbol),
-                    stats if isinstance(stats, dict) else {},
-                )
-                for symbol, stats in value.items()
-            ),
-            key=lambda item: (-int(item[1].get("open_positions") or 0), item[0]),
-        )
-        parts: list[str] = []
-        for symbol, stats in ranked[:4]:
-            parts.append(f"{symbol} open {_render_value(stats.get('open_positions'))} net {_render_money(stats.get('net_pnl'))}")
-        return ", ".join(parts) if parts else "-"
-
-    bot_rows = list(payload.get("bots") or [])
-    if not bot_rows:
-        return
-    table = Table(title="Bot Performance", header_style="bold")
-    table.add_column("Bot")
-    table.add_column("Open", justify="right")
-    table.add_column("Closed", justify="right")
-    table.add_column("Daily PnL", justify="right")
-    table.add_column("Net PnL", justify="right")
-    table.add_column("Entry Fills", justify="right")
-    table.add_column("Win Rate", justify="right")
-    table.add_column("Symbols")
-    for row in bot_rows:
-        table.add_row(
-            str(row.get("bot_name") or row.get("bot_id") or "-"),
-            _render_value(row.get("open_position_count")),
-            _render_value(row.get("closed_position_count")),
-            _render_money(row.get("daily_total_pnl")),
-            _render_money(row.get("net_total_pnl")),
-            _render_value(row.get("daily_entry_fill_count")),
-            _render_percent(row.get("closed_win_rate")),
-            render_symbol_stats(row.get("symbol_stats")),
-        )
-    console.print(table)
-
-    entry_funnel = payload.get("entry_funnel") if isinstance(payload.get("entry_funnel"), dict) else {}
-    overall_funnel = entry_funnel.get("overall") if isinstance(entry_funnel.get("overall"), dict) else {}
-    if overall_funnel:
-        overview = Table(title="Entry Funnel Overview", show_edge=False, header_style="bold")
-        overview.add_column("Metric", style="bold")
-        overview.add_column("Value")
-        overview.add_row("Considered", _render_value(overall_funnel.get("considered")))
-        overview.add_row("Selected", _render_value(overall_funnel.get("selected")))
-        overview.add_row("Blocked", _render_value(overall_funnel.get("blocked")))
-        overview.add_row("Rejected", _render_value(overall_funnel.get("rejected")))
-        overview.add_row("Intents", _render_value(overall_funnel.get("intents_created")))
-        overview.add_row("Submitted", _render_value(overall_funnel.get("submitted")))
-        overview.add_row("Repriced", _render_value(overall_funnel.get("repriced")))
-        overview.add_row("Canceled", _render_value(overall_funnel.get("canceled")))
-        overview.add_row("Failed", _render_value(overall_funnel.get("failed")))
-        overview.add_row("Filled", _render_value(overall_funnel.get("filled")))
-        overview.add_row("Fill Rate", _render_percent(overall_funnel.get("fill_rate")))
-        overview.add_row(
-            "Decision -> Intent",
-            _render_duration(overall_funnel.get("avg_decision_to_intent_seconds")),
-        )
-        overview.add_row(
-            "Intent -> Submit",
-            _render_duration(overall_funnel.get("avg_intent_to_submit_seconds")),
-        )
-        overview.add_row(
-            "Submit -> Fill",
-            _render_duration(overall_funnel.get("avg_submit_to_fill_seconds")),
-        )
-        overview.add_row(
-            "Blockers",
-            _render_count_map(overall_funnel.get("blocker_reasons"), limit=6, item_length=80),
-        )
-        console.print(overview)
-
-    funnel_bots = entry_funnel.get("bots") if isinstance(entry_funnel.get("bots"), list) else []
-    strategy_rows: list[dict[str, Any]] = []
-    for bot_row in funnel_bots:
-        bot_name = str(bot_row.get("bot_name") or bot_row.get("bot_id") or "-")
-        funnel = bot_row.get("strategies") if isinstance(bot_row.get("strategies"), list) else []
-        for strategy in funnel:
-            strategy_rows.append(
-                {
-                    "bot_name": bot_name,
-                    "strategy": strategy.get("name"),
-                    **dict(strategy),
-                }
-            )
-    if strategy_rows:
-        table = Table(title="Entry Funnel By Strategy", header_style="bold")
-        table.add_column("Bot")
-        table.add_column("Strategy")
-        table.add_column("Considered", justify="right")
-        table.add_column("Selected", justify="right")
-        table.add_column("Blocked", justify="right")
-        table.add_column("Intents", justify="right")
-        table.add_column("Submitted", justify="right")
-        table.add_column("Repriced", justify="right")
-        table.add_column("Filled", justify="right")
-        table.add_column("Fill Rate", justify="right")
-        table.add_column("Blockers")
-        for row in strategy_rows:
-            table.add_row(
-                str(row.get("bot_name") or "-"),
-                str(row.get("strategy") or "-"),
-                _render_value(row.get("considered")),
-                _render_value(row.get("selected")),
-                _render_value(row.get("blocked")),
-                _render_value(row.get("intents_created")),
-                _render_value(row.get("submitted")),
-                _render_value(row.get("repriced")),
-                _render_value(row.get("filled")),
-                _render_percent(row.get("fill_rate")),
-                _render_count_map(row.get("blocker_reasons"), limit=3, item_length=48),
-            )
-        console.print(table)
-
-    entry_decision_audit = value.get("entry_decision_audit") if isinstance(value.get("entry_decision_audit"), dict) else {}
-    audit_summary = entry_decision_audit.get("summary") if isinstance(entry_decision_audit.get("summary"), dict) else {}
-    if audit_summary and int(audit_summary.get("row_count") or 0) > 0:
-        overview = Table(title="Selected Decision Audit", show_edge=False, header_style="bold")
-        overview.add_column("Metric", style="bold")
-        overview.add_column("Value")
-        overview.add_row("Selected", _render_value(audit_summary.get("selected_count")))
-        overview.add_row("With Intent", _render_value(audit_summary.get("intent_created_count")))
-        overview.add_row("No Intent", _render_value(audit_summary.get("no_intent_count")))
-        overview.add_row(
-            "Pending Dispatch",
-            _render_value(audit_summary.get("pending_dispatch_count")),
-        )
-        overview.add_row(
-            "Working Submit",
-            _render_value(audit_summary.get("submitted_working_count")),
-        )
-        overview.add_row("Filled", _render_value(audit_summary.get("filled_count")))
-        overview.add_row("Failed", _render_value(audit_summary.get("failed_count")))
-        overview.add_row("Revoked", _render_value(audit_summary.get("revoked_count")))
-        overview.add_row("Expired", _render_value(audit_summary.get("expired_count")))
-        overview.add_row("Canceled", _render_value(audit_summary.get("canceled_count")))
-        overview.add_row("Repriced", _render_value(audit_summary.get("repriced_count")))
-        overview.add_row(
-            "Selected Admissible",
-            _render_value(audit_summary.get("selected_currently_admissible_count")),
-        )
-        overview.add_row(
-            "Selected Blocked",
-            _render_value(audit_summary.get("selected_currently_blocked_count")),
-        )
-        overview.add_row(
-            "Blocked Buying Power",
-            _render_value(audit_summary.get("blocked_by_buying_power_count")),
-        )
-        overview.add_row(
-            "Blocked Policy/Risk",
-            _render_value(audit_summary.get("blocked_by_policy_or_risk_budget_count")),
-        )
-        overview.add_row(
-            "Reasons",
-            _render_count_map(
-                audit_summary.get("terminal_reason_counts"),
-                limit=6,
-                item_length=80,
-            ),
-        )
-        console.print(overview)
-
-    audit_samples = entry_decision_audit.get("samples") if isinstance(entry_decision_audit.get("samples"), list) else []
-    if audit_samples:
-        table = Table(title="Selected Decision Samples", header_style="bold")
-        table.add_column("Bot")
-        table.add_column("Strategy")
-        table.add_column("Symbol")
-        table.add_column("Outcome")
-        table.add_column("Admit")
-        table.add_column("Qty", justify="right")
-        table.add_column("Intent")
-        table.add_column("Attempt")
-        table.add_column("Reprice", justify="right")
-        table.add_column("D->I", justify="right")
-        table.add_column("I->S", justify="right")
-        table.add_column("S->T", justify="right")
-        table.add_column("Reason")
-        for row in audit_samples[:10]:
-            table.add_row(
-                str(row.get("bot_name") or row.get("bot_id") or "-"),
-                str(row.get("strategy") or "-"),
-                str(row.get("underlying_symbol") or "-"),
-                str(row.get("outcome_bucket") or "-"),
-                str(row.get("execution_admission_status") or "-"),
-                _render_value(row.get("admissible_quantity")),
-                str(row.get("intent_state") or "-"),
-                str(row.get("attempt_status") or "-"),
-                _render_value(row.get("reprice_count")),
-                _render_duration(row.get("decision_to_intent_seconds")),
-                _render_duration(row.get("intent_to_submit_seconds")),
-                _render_duration(row.get("submit_to_terminal_seconds")),
-                str(row.get("terminal_reason") or row.get("execution_admission_reason") or "-"),
-            )
-        console.print(table)
 
 
 def _job_run_status_text(status: str | None) -> Text:
@@ -1080,8 +757,7 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
     scheduler = dict(details.get("scheduler") or {})
     broker_sync = dict(details.get("broker_sync") or {})
     alert_delivery = dict(details.get("alert_delivery") or {})
-    automation_runtime = dict(details.get("automation_runtime") or {})
-    automation_performance = dict(details.get("automation_performance") or {})
+    trading_strategy_runtime = dict(details.get("trading_strategy_runtime") or {})
 
     overview = Table.grid(padding=(0, 2))
     overview.add_row("Overall", _status_text(payload.get("status")))
@@ -1097,16 +773,13 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
         f"running {_render_value(summary.get('running_job_count'))} | queued {_render_value(summary.get('queued_job_count'))}",
     )
     overview.add_row(
-        "Automation",
+        "Trading Strategies",
         (
-            f"opps {_render_value(summary.get('automation_opportunity_count'))} | "
-            f"selected {_render_value(summary.get('automation_selected_count'))} | "
-            f"admit {_render_value(summary.get('selected_currently_admissible_count'))} | "
-            f"blocked {_render_value(summary.get('selected_currently_blocked_count'))} | "
-            f"positions {_render_value(summary.get('automation_open_position_count'))} | "
-            f"entry intents {_render_value(summary.get('automation_entry_intent_count'))} | "
-            f"mgmt intents {_render_value(summary.get('automation_management_intent_count'))} | "
-            f"daily pnl {_render_money(summary.get('automation_daily_pnl'))}"
+            f"opps {_render_value(summary.get('trading_strategy_opportunity_count'))} | "
+            f"selected {_render_value(summary.get('trading_strategy_selected_count'))} | "
+            f"positions {_render_value(summary.get('trading_strategy_open_position_count'))} | "
+            f"entry intents {_render_value(summary.get('trading_strategy_entry_intent_count'))} | "
+            f"mgmt intents {_render_value(summary.get('trading_strategy_management_intent_count'))}"
         ),
     )
     overview.add_row(
@@ -1136,7 +809,7 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Capture")
         table.add_column("Auto Exec")
         table.add_column("Opps/Live", justify="right")
-        table.add_column("Automation")
+        table.add_column("Strategy Sync")
         table.add_column("Quote Stream/Base", justify="right")
         table.add_column("Last Slot")
         table.add_column("Expected")
@@ -1149,7 +822,7 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
                 str(row.get("capture_status") or "-"),
                 _render_auto_execution_summary(row.get("auto_execution_summary")),
                 f"{_render_value(selection_summary.get('opportunity_count'))}/{_render_value(selection_summary.get('auto_live_eligible_count'))}",
-                _render_automation_sync_value(row.get("automation_summary")),
+                _render_strategy_sync_value(row.get("strategy_sync_summary")),
                 f"{_render_value(row.get('stream_quote_events_saved'))}/{_render_value(row.get('baseline_quote_events_saved'))}",
                 str(row.get("last_slot_at") or "-"),
                 _render_expected_slot(row.get("session_schedule")),
@@ -1157,15 +830,10 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
         console.print(table)
         _render_discovery_run_raw_candidates(console, discovery_run_rows=discovery_run_rows)
 
-    _render_automation_runtime_summary(
+    _render_strategy_runtime_summary(
         console,
-        title="Automation Runtime",
-        value=automation_runtime,
-    )
-    _render_automation_performance(
-        console,
-        title="Automation Performance",
-        value=automation_performance,
+        title="Trading Strategy Runtime",
+        value=trading_strategy_runtime,
     )
 
     failure_rows = list(details.get("recent_failures") or [])
@@ -1191,8 +859,7 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
     account = dict(details.get("account") or {})
     broker_sync = dict(details.get("broker_sync") or {})
     market_session = dict(details.get("market_session") or {})
-    automation_runtime = dict(details.get("automation_runtime") or {})
-    automation_performance = dict(details.get("automation_performance") or {})
+    trading_strategy_runtime = dict(details.get("trading_strategy_runtime") or {})
     discovery_run_rows = list(details.get("latest_discovery_runs") or [])
 
     overview = Table.grid(padding=(0, 2))
@@ -1223,14 +890,13 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row("Execution Health", _render_value(summary.get("execution_health_status")))
     overview.add_row("Discovery Runs", _render_value(summary.get("discovery_run_count")))
     overview.add_row(
-        "Automation",
+        "Trading Strategies",
         (
-            f"opps {_render_value(summary.get('automation_opportunity_count'))} | "
-            f"selected {_render_value(summary.get('automation_selected_count'))} | "
-            f"positions {_render_value(summary.get('automation_open_position_count'))} | "
-            f"entry intents {_render_value(summary.get('automation_entry_intent_count'))} | "
-            f"mgmt intents {_render_value(summary.get('automation_management_intent_count'))} | "
-            f"daily pnl {_render_money(summary.get('automation_daily_pnl'))}"
+            f"opps {_render_value(summary.get('trading_strategy_opportunity_count'))} | "
+            f"selected {_render_value(summary.get('trading_strategy_selected_count'))} | "
+            f"positions {_render_value(summary.get('trading_strategy_open_position_count'))} | "
+            f"entry intents {_render_value(summary.get('trading_strategy_entry_intent_count'))} | "
+            f"mgmt intents {_render_value(summary.get('trading_strategy_management_intent_count'))}"
         ),
     )
     overview.add_row(
@@ -1247,15 +913,10 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
 
     _render_attention(console, payload)
 
-    _render_automation_runtime_summary(
+    _render_strategy_runtime_summary(
         console,
-        title="Automation Runtime",
-        value=automation_runtime,
-    )
-    _render_automation_performance(
-        console,
-        title="Automation Performance",
-        value=automation_performance,
+        title="Trading Strategy Runtime",
+        value=trading_strategy_runtime,
     )
     _render_discovery_run_raw_candidates(console, discovery_run_rows=discovery_run_rows)
 
@@ -1400,8 +1061,8 @@ def _render_pipeline_detail(console: Console, payload: dict[str, Any]) -> None:
             (f"promotable {_render_value(current_cycle.get('promotable_count'))} | " f"monitor {_render_value(current_cycle.get('monitor_count'))}"),
         )
         table.add_row(
-            "Automation",
-            _render_automation_sync_value(current_cycle.get("automation_summary")),
+            "Strategy Sync",
+            _render_strategy_sync_value(current_cycle.get("strategy_sync_summary")),
         )
         table.add_row(
             "Ranking Policy",
@@ -1476,358 +1137,6 @@ def render_jobs_view(console: Console, payload: dict[str, Any]) -> None:
         _render_job_run_detail(console, payload)
         return
     _render_jobs_list(console, payload)
-
-
-def render_finviz_direct_ledger(console: Console, payload: dict[str, Any]) -> None:
-    summary = dict(payload.get("summary") or {})
-    details = dict(payload.get("details") or {})
-    quality = dict(summary.get("quality") or {})
-
-    overview = Table.grid(padding=(0, 2))
-    overview.add_row("Overall", _status_text(payload.get("status")))
-    overview.add_row("Generated", _render_value(payload.get("generated_at")))
-    overview.add_row("Feed", _render_value(summary.get("feed_id")))
-    overview.add_row("Market Date", _render_value(summary.get("market_date")))
-    overview.add_row("Feed Runs", _render_value(summary.get("feed_run_count")))
-    overview.add_row("Direct Runs", _render_value(summary.get("direct_run_count")))
-    overview.add_row("Attempts", _render_value(summary.get("attempt_count")))
-    overview.add_row("Open Positions", _render_value(summary.get("open_position_count")))
-    overview.add_row("Active Intents", _render_value(summary.get("active_intent_count")))
-    overview.add_row(
-        "Decisions",
-        _render_count_map(summary.get("latest_lifecycle_decision_state_counts")),
-    )
-    overview.add_row(
-        "Closes",
-        (
-            f"{_render_value(summary.get('close_lifecycle_status'))} | "
-            f"active {_render_value(summary.get('active_close_attempt_count'))} | "
-            f"pending intents {_render_value(summary.get('pending_close_intent_count'))} | "
-            f"failed {_render_value(summary.get('failed_close_attempt_count'))}"
-        ),
-    )
-    overview.add_row(
-        "Position States",
-        _render_count_map(summary.get("position_lifecycle_state_counts")),
-    )
-    overview.add_row(
-        "Close Decisions",
-        (
-            f"{_render_count_map(summary.get('close_decision_state_counts'))} | "
-            f"missing {_render_value(summary.get('missing_close_decision_count'))}"
-        ),
-    )
-    overview.add_row(
-        "PnL",
-        (
-            f"realized {_render_money(summary.get('realized_pnl'))} | "
-            f"unrealized {_render_money(summary.get('unrealized_pnl'))} | "
-            f"net {_render_money(summary.get('net_pnl'))}"
-        ),
-    )
-    if quality:
-        overview.add_row(
-            "Quality",
-            (
-                f"entry spread {_render_pct_points(quality.get('avg_entry_spread_pct'))} | "
-                f"entry slip/mid {_render_money(quality.get('avg_entry_slippage_vs_midpoint'))} | "
-                f"exit slip/mid {_render_money(quality.get('avg_exit_slippage_vs_midpoint'))}"
-            ),
-        )
-    console.print(
-        Panel(
-            overview,
-            title="Finviz Direct Ledger",
-            border_style=STATUS_STYLES.get(str(payload.get("status")), "white"),
-        )
-    )
-
-    _render_attention(console, payload)
-
-    quality_rows = list(details.get("quality_by_symbol") or [])
-    if quality_rows:
-        table = Table(title="Finviz Option Fill Quality", header_style="bold")
-        table.add_column("Symbol")
-        table.add_column("Contract")
-        table.add_column("E/X")
-        table.add_column("Spr", justify="right")
-        table.add_column("Age", justify="right")
-        table.add_column("E Slip", justify="right")
-        table.add_column("X Slip", justify="right")
-        table.add_column("Exit")
-        table.add_column("PnL", justify="right")
-        for row in quality_rows[:10]:
-            table.add_row(
-                _render_value(row.get("symbol")),
-                _truncate(
-                    ", ".join(str(item) for item in row.get("selected_contracts") or []),
-                    length=28,
-                ),
-                (f"{_render_value(row.get('entry_attempt_count'))}/" f"{_render_value(row.get('exit_attempt_count'))}"),
-                _render_pct_points(row.get("avg_entry_spread_pct")),
-                _render_duration(row.get("avg_entry_quote_age_seconds")),
-                _render_money(row.get("avg_entry_slippage_vs_midpoint")),
-                _render_money(row.get("avg_exit_slippage_vs_midpoint")),
-                _render_count_map(row.get("exit_reasons"), item_length=38),
-                _render_money(row.get("net_pnl")),
-            )
-        console.print(table)
-
-    feed_runs = list(details.get("recent_feed_runs") or [])
-    if feed_runs:
-        table = Table(title="Recent Feed Runs", header_style="bold")
-        table.add_column("Scheduled")
-        table.add_column("Status")
-        table.add_column("Symbols", justify="right")
-        table.add_column("Retained", justify="right")
-        table.add_column("Excluded", justify="right")
-        table.add_column("Reasons")
-        table.add_column("Tickers")
-        for row in feed_runs[:8]:
-            table.add_row(
-                _render_value(row.get("scheduled_for")),
-                _render_value(row.get("job_status")),
-                _render_value(row.get("symbol_count")),
-                _render_value(row.get("retained_count")),
-                _render_value(row.get("excluded_instrument_count")),
-                _render_count_map(row.get("excluded_instrument_reason_counts")),
-                _truncate(", ".join(str(item) for item in row.get("symbols") or []), length=44),
-            )
-        console.print(table)
-
-    direct_runs = list(details.get("recent_direct_runs") or [])
-    if direct_runs:
-        table = Table(title="Recent Direct Runs", header_style="bold")
-        table.add_column("Scheduled")
-        table.add_column("Status")
-        table.add_column("Feed")
-        table.add_column("Candidates", justify="right")
-        table.add_column("Managed", justify="right")
-        table.add_column("Armed", justify="right")
-        table.add_column("Entry Armed", justify="right")
-        table.add_column("Entry Budget")
-        table.add_column("Lifecycle")
-        table.add_column("Reasons")
-        for row in direct_runs[:8]:
-            table.add_row(
-                _render_value(row.get("scheduled_for")),
-                _render_value(row.get("job_status")),
-                _render_value(row.get("feed_status")),
-                _render_value(row.get("entry_candidates")),
-                _render_value(row.get("managed_positions")),
-                _render_value(row.get("armed")),
-                _render_value(row.get("entry_armed")),
-                _render_entry_budget(
-                    row.get("daily_entry_budget"),
-                    fallback_limit=row.get("max_daily_entries"),
-                ),
-                _render_count_map(row.get("lifecycle_decision_state_counts")),
-                _render_count_map(row.get("reason_counts")),
-            )
-        console.print(table)
-
-    close_lifecycle = dict(details.get("close_lifecycle") or {})
-    if close_lifecycle:
-        overview_table = Table(title="Close Lifecycle", header_style="bold")
-        overview_table.add_column("Status")
-        overview_table.add_column("Attempts", justify="right")
-        overview_table.add_column("Active/Pending")
-        overview_table.add_column("Issues")
-        overview_table.add_column("Lifecycle")
-        overview_table.add_row(
-            _render_value(close_lifecycle.get("status")),
-            _render_value(close_lifecycle.get("recent_close_attempt_count")),
-            (
-                f"active {_render_value(close_lifecycle.get('active_close_attempt_count'))} | "
-                f"pending {_render_value(close_lifecycle.get('pending_close_intent_count'))}"
-            ),
-            (
-                f"failed {_render_value(close_lifecycle.get('failed_close_attempt_count'))} | "
-                f"stale {_render_value(close_lifecycle.get('stale_reconciliation_skip_count'))} | "
-                f"mismatch {_render_value(close_lifecycle.get('intent_mismatch_reject_count'))}"
-            ),
-            (
-                f"attempts {_render_count_map(close_lifecycle.get('close_attempt_status_counts'))} | "
-                f"positions {_render_count_map(close_lifecycle.get('position_lifecycle_state_counts'))} | "
-                f"decisions {_render_count_map(close_lifecycle.get('close_decision_state_counts'))} | "
-                f"missing {_render_value(close_lifecycle.get('missing_close_decision_count'))}"
-            ),
-        )
-        console.print(overview_table)
-
-        latest_failure = dict(close_lifecycle.get("latest_failure") or {})
-        latest_filled_closes = list(close_lifecycle.get("latest_filled_closes") or [])
-        proof_rows = list(close_lifecycle.get("position_close_proof") or [])
-        close_attempt_rows = list(close_lifecycle.get("recent_close_attempts") or [])
-        if close_attempt_rows:
-            table = Table(title="Recent Close Attempts", header_style="bold")
-            table.add_column("Requested")
-            table.add_column("Root")
-            table.add_column("Status")
-            table.add_column("Lifecycle")
-            table.add_column("Next")
-            table.add_column("Reprice", justify="right")
-            table.add_column("Limit", justify="right")
-            table.add_column("Prev Limit", justify="right")
-            table.add_column("Previous Attempt")
-            table.add_column("Broker Order")
-            for row in close_attempt_rows[:8]:
-                table.add_row(
-                    _render_value(row.get("requested_at")),
-                    _render_value(row.get("root_symbol")),
-                    _render_value(row.get("status")),
-                    _render_value(row.get("lifecycle_state")),
-                    _render_value(row.get("next_action")),
-                    _render_value(row.get("reprice_count")),
-                    _render_money(row.get("limit_price")),
-                    _render_money(row.get("previous_limit_price")),
-                    _truncate(row.get("previous_execution_attempt_id"), length=24),
-                    _truncate(row.get("broker_order_id"), length=24),
-                )
-            console.print(table)
-        if latest_failure:
-            table = Table(title="Latest Close Failure", header_style="bold")
-            table.add_column("Requested")
-            table.add_column("Root")
-            table.add_column("Status")
-            table.add_column("Attempt")
-            table.add_column("Error")
-            table.add_row(
-                _render_value(latest_failure.get("requested_at")),
-                _render_value(latest_failure.get("root_symbol")),
-                _render_value(latest_failure.get("status")),
-                _truncate(latest_failure.get("execution_attempt_id"), length=28),
-                _truncate(latest_failure.get("error_text"), length=72),
-            )
-            console.print(table)
-        if latest_filled_closes:
-            table = Table(title="Latest Filled Closes", header_style="bold")
-            table.add_column("Root")
-            table.add_column("Status")
-            table.add_column("Closed")
-            table.add_column("Broker Order")
-            table.add_column("PnL", justify="right")
-            for row in latest_filled_closes[:6]:
-                latest_close = dict(row.get("latest_close") or {})
-                table.add_row(
-                    _render_value(row.get("root_symbol")),
-                    _render_value(row.get("status")),
-                    _render_value(latest_close.get("closed_at")),
-                    _truncate(latest_close.get("broker_order_id"), length=28),
-                    _render_money(latest_close.get("realized_pnl")),
-                )
-            console.print(table)
-        if proof_rows:
-            table = Table(title="Close Proof By Position", header_style="bold")
-            table.add_column("Root")
-            table.add_column("Status")
-            table.add_column("Lifecycle")
-            table.add_column("Next")
-            table.add_column("Reconcile")
-            table.add_column("Exit Reason")
-            table.add_column("Active", justify="right")
-            table.add_column("Allowed")
-            table.add_column("Closes", justify="right")
-            table.add_column("Latest Close")
-            for row in proof_rows[:8]:
-                latest_close = dict(row.get("latest_close") or {})
-                table.add_row(
-                    _render_value(row.get("root_symbol")),
-                    _render_value(row.get("status")),
-                    _render_value(row.get("lifecycle_state")),
-                    _render_value(row.get("next_action")),
-                    _render_value(row.get("reconciliation_status")),
-                    _render_value(row.get("last_exit_reason")),
-                    _render_value(row.get("active_close_count")),
-                    _render_value(row.get("close_allowed")),
-                    _render_value(row.get("close_count")),
-                    _render_value(latest_close.get("closed_at")),
-                )
-            console.print(table)
-
-    positions = list(details.get("positions") or [])
-    if positions:
-        table = Table(title="Finviz Positions", header_style="bold")
-        table.add_column("Root")
-        table.add_column("Long Symbol")
-        table.add_column("Status")
-        table.add_column("Lifecycle")
-        table.add_column("Next")
-        table.add_column("Qty", justify="right")
-        table.add_column("Entry", justify="right")
-        table.add_column("Mark", justify="right")
-        table.add_column("Realized", justify="right")
-        table.add_column("Unrealized", justify="right")
-        table.add_column("Reconcile")
-        for row in positions[:10]:
-            table.add_row(
-                _render_value(row.get("root_symbol")),
-                _truncate(row.get("long_symbol"), length=24),
-                _render_value(row.get("status")),
-                _render_value(row.get("lifecycle_state")),
-                _render_value(row.get("next_action")),
-                _render_value(row.get("remaining_quantity")),
-                _render_money(row.get("entry_value")),
-                _render_money(row.get("close_mark")),
-                _render_money(row.get("realized_pnl")),
-                _render_money(row.get("unrealized_pnl")),
-                _render_value(row.get("reconciliation_status")),
-            )
-        console.print(table)
-
-    attempts = list(details.get("attempts") or [])
-    if attempts:
-        table = Table(title="Finviz Attempts", header_style="bold")
-        table.add_column("Requested")
-        table.add_column("Root")
-        table.add_column("Intent")
-        table.add_column("Status")
-        table.add_column("Lifecycle")
-        table.add_column("Next")
-        table.add_column("Symbol")
-        table.add_column("Limit", justify="right")
-        table.add_column("Filled", justify="right")
-        table.add_column("Avg Fill", justify="right")
-        table.add_column("Orders")
-        for row in attempts[:10]:
-            table.add_row(
-                _render_value(row.get("requested_at")),
-                _render_value(row.get("root_symbol")),
-                _render_value(row.get("trade_intent")),
-                _render_value(row.get("status")),
-                _render_value(row.get("lifecycle_state")),
-                _render_value(row.get("next_action")),
-                _truncate(row.get("long_symbol") or row.get("symbol_path"), length=24),
-                _render_money(row.get("limit_price")),
-                _render_value(row.get("filled_qty")),
-                _render_money(row.get("avg_fill_price")),
-                _render_count_map(row.get("order_statuses")),
-            )
-        console.print(table)
-
-    intents = list(details.get("intents") or [])
-    if intents:
-        table = Table(title="Finviz Intents", header_style="bold")
-        table.add_column("Created")
-        table.add_column("Root")
-        table.add_column("Intent")
-        table.add_column("State")
-        table.add_column("Admission")
-        table.add_column("Reason")
-        table.add_column("Close Decision")
-        table.add_column("Attempt")
-        for row in intents[:10]:
-            table.add_row(
-                _render_value(row.get("created_at")),
-                _render_value(row.get("underlying_symbol") or row.get("symbol")),
-                _render_value(row.get("trade_intent") or row.get("action_type")),
-                _render_value(row.get("state")),
-                _render_value(row.get("admission_state")),
-                _truncate(row.get("admission_reason"), length=42),
-                _render_value(row.get("close_decision_state")),
-                _truncate(row.get("execution_attempt_id"), length=24),
-            )
-        console.print(table)
 
 
 def render_pipelines_view(console: Console, payload: dict[str, Any]) -> None:
@@ -1933,11 +1242,16 @@ def render_live_doctor(console: Console, payload: dict[str, Any]) -> None:
     )
     overview.add_row(
         "Finviz",
+        (f"feed {_render_value(summary.get('finviz_feed_status'))} " f"({_render_value(summary.get('finviz_feed_symbol_count'))} symbols)"),
+    )
+    overview.add_row(
+        "Strategy",
         (
-            f"feed {_render_value(summary.get('finviz_feed_status'))} "
-            f"({_render_value(summary.get('finviz_feed_symbol_count'))} symbols) | "
-            f"direct {_render_value(summary.get('finviz_direct_status'))} "
-            f"({_render_value(summary.get('finviz_direct_candidate_count'))} candidates)"
+            f"{_render_value(summary.get('trading_strategy_id'))} | "
+            f"entry {_render_value(summary.get('strategy_entry_status'))} "
+            f"({_render_value(summary.get('strategy_entry_opportunity_count'))} opps) | "
+            f"manage {_render_value(summary.get('strategy_manage_status'))} | "
+            f"dispatch {_render_value(summary.get('intent_dispatch_status'))}"
         ),
     )
     overview.add_row(
@@ -1957,24 +1271,8 @@ def render_live_doctor(console: Console, payload: dict[str, Any]) -> None:
         ),
     )
     overview.add_row(
-        "Closes",
-        (
-            f"{_render_value(summary.get('close_lifecycle_status'))} | "
-            f"active {_render_value(summary.get('active_close_attempt_count'))} | "
-            f"pending {_render_value(summary.get('pending_close_intent_count'))} | "
-            f"failed {_render_value(summary.get('failed_close_attempt_count'))}"
-        ),
-    )
-    overview.add_row(
-        "Position States",
-        _render_count_map(summary.get("position_lifecycle_state_counts")),
-    )
-    overview.add_row(
-        "Close Decisions",
-        (
-            f"{_render_count_map(summary.get('close_decision_state_counts'))} | "
-            f"missing {_render_value(summary.get('missing_close_decision_count'))}"
-        ),
+        "Latest Exit",
+        _render_value(summary.get("latest_exit_reason")),
     )
     overview.add_row("Net PnL", _render_money(summary.get("net_pnl")))
     overview.add_row(
@@ -2008,55 +1306,35 @@ def render_live_doctor(console: Console, payload: dict[str, Any]) -> None:
             )
         console.print(table)
 
-    latest_direct = dict(details.get("latest_direct_run") or {})
-    if latest_direct:
-        table = Table(title="Latest Finviz Direct Run", header_style="bold")
+    latest_entry = dict(details.get("latest_entry_run") or {})
+    latest_manage = dict(details.get("latest_manage_run") or {})
+    latest_dispatch = dict(details.get("latest_dispatch_run") or {})
+    strategy_runs = [
+        ("Entry", latest_entry),
+        ("Manage", latest_manage),
+        ("Dispatch", latest_dispatch),
+    ]
+    if any(row for _, row in strategy_runs):
+        table = Table(title="Latest Strategy Jobs", header_style="bold")
+        table.add_column("Routine")
         table.add_column("Job Run")
         table.add_column("Status")
-        table.add_column("Candidates", justify="right")
-        table.add_column("Created", justify="right")
-        table.add_column("Entry Budget")
-        table.add_column("Reasons")
-        table.add_row(
-            _render_value(latest_direct.get("job_run_id")),
-            _job_run_status_text(latest_direct.get("job_status")),
-            _render_value(latest_direct.get("entry_candidates")),
-            _render_value(latest_direct.get("created_count")),
-            _render_entry_budget(
-                latest_direct.get("daily_entry_budget"),
-                fallback_limit=latest_direct.get("max_daily_entries"),
-            ),
-            _render_count_map(latest_direct.get("reason_counts"), limit=5),
-        )
-        console.print(table)
-
-    close_lifecycle = dict(details.get("close_lifecycle") or {})
-    if close_lifecycle:
-        table = Table(title="Close Lifecycle", header_style="bold")
-        table.add_column("Status")
-        table.add_column("Attempts", justify="right")
-        table.add_column("Active/Pending")
-        table.add_column("Issues")
-        table.add_column("Lifecycle")
-        table.add_row(
-            _render_value(close_lifecycle.get("status")),
-            _render_value(close_lifecycle.get("recent_close_attempt_count")),
-            (
-                f"active {_render_value(close_lifecycle.get('active_close_attempt_count'))} | "
-                f"pending {_render_value(close_lifecycle.get('pending_close_intent_count'))}"
-            ),
-            (
-                f"failed {_render_value(close_lifecycle.get('failed_close_attempt_count'))} | "
-                f"stale {_render_value(close_lifecycle.get('stale_reconciliation_skip_count'))} | "
-                f"mismatch {_render_value(close_lifecycle.get('intent_mismatch_reject_count'))}"
-            ),
-            (
-                f"attempts {_render_count_map(close_lifecycle.get('close_attempt_status_counts'))} | "
-                f"positions {_render_count_map(close_lifecycle.get('position_lifecycle_state_counts'))} | "
-                f"decisions {_render_count_map(close_lifecycle.get('close_decision_state_counts'))} | "
-                f"missing {_render_value(close_lifecycle.get('missing_close_decision_count'))}"
-            ),
-        )
+        table.add_column("Result")
+        table.add_column("Opportunities", justify="right")
+        table.add_column("Decisions", justify="right")
+        table.add_column("Intent")
+        for routine, row in strategy_runs:
+            if not row:
+                continue
+            table.add_row(
+                routine,
+                _render_value(row.get("job_run_id")),
+                _job_run_status_text(row.get("job_status")),
+                _render_value(row.get("result_status")),
+                _render_value(row.get("opportunity_count")),
+                _render_value(row.get("decision_count")),
+                _truncate(row.get("execution_intent_id"), length=36),
+            )
         console.print(table)
 
 
@@ -2238,8 +1516,8 @@ def _render_job_run_detail(console: Console, payload: dict[str, Any]) -> None:
         _render_value(summary.get("discovery_run_opportunity_count")),
     )
     overview.add_row(
-        "Automation",
-        _render_automation_sync_value(details.get("automation_summary")),
+        "Strategy Sync",
+        _render_strategy_sync_value(details.get("strategy_sync_summary")),
     )
     console.print(
         Panel(
@@ -2283,10 +1561,10 @@ def _render_job_run_detail(console: Console, payload: dict[str, Any]) -> None:
         title="Selection Summary",
         value=details.get("selection_summary") or {},
     )
-    _render_automation_sync_summary(
+    _render_strategy_sync_summary(
         console,
-        title="Automation Sync",
-        value=details.get("automation_summary") or {},
+        title="Strategy Sync",
+        value=details.get("strategy_sync_summary") or {},
     )
 
     error_text = run.get("error_text")
@@ -2626,8 +1904,8 @@ def _render_audit_detail(console: Console, payload: dict[str, Any]) -> None:
             (f"promotable {_render_value(current_cycle.get('promotable_count'))} | " f"monitor {_render_value(current_cycle.get('monitor_count'))}"),
         )
         table.add_row(
-            "Automation",
-            _render_automation_sync_value(current_cycle.get("automation_summary")),
+            "Strategy Sync",
+            _render_strategy_sync_value(current_cycle.get("strategy_sync_summary")),
         )
         table.add_row(
             "Ranking Policy",

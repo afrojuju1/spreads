@@ -20,9 +20,7 @@ def _db_target(db: str | None) -> str:
 def list_opportunities_route(
     pipeline_id: str | None = None,
     label: str | None = None,
-    bot_id: str | None = None,
-    automation_id: str | None = None,
-    strategy_config_id: str | None = None,
+    trading_strategy_id: str | None = None,
     market_date: str | None = None,
     lifecycle_state: str | None = None,
     include_analysis_only: bool = False,
@@ -32,9 +30,7 @@ def list_opportunities_route(
     db: str | None = None,
 ) -> dict[str, object]:
     try:
-        resolved_market_date = (
-            None if market_date is None else resolve_market_date(market_date)
-        )
+        resolved_market_date = None if market_date is None else resolve_market_date(market_date)
     except ValueError as exc:
         raise bad_request_error(exc) from exc
     return list_opportunities(
@@ -43,9 +39,7 @@ def list_opportunities_route(
         label=label,
         market_date=resolved_market_date,
         lifecycle_state=lifecycle_state,
-        bot_id=bot_id,
-        automation_id=automation_id,
-        strategy_config_id=strategy_config_id,
+        trading_strategy_id=trading_strategy_id,
         include_analysis_only=include_analysis_only,
         include_expired=include_expired,
         include_non_live=include_non_live,

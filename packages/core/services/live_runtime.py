@@ -43,10 +43,7 @@ def list_latest_live_sessions(
 
     job_store = storage.jobs
     signal_store = storage.signals
-    pipeline_rows_by_id = {
-        str(row["pipeline_id"]): dict(row)
-        for row in _list_runtime_pipelines(job_store)
-    }
+    pipeline_rows_by_id = {str(row["pipeline_id"]): dict(row) for row in _list_runtime_pipelines(job_store)}
     for row in discovery_store.list_pipelines(limit=max(limit * 5, limit, 1)):
         payload = dict(row)
         pipeline_rows_by_id.setdefault(str(payload["pipeline_id"]), payload)
@@ -56,14 +53,9 @@ def list_latest_live_sessions(
         pipeline_rows=pipeline_rows,
         market_date=market_date,
     )
-    latest_cycle_by_pipeline_id = {
-        str(row["pipeline_id"]): row for row in latest_cycles
-    }
+    latest_cycle_by_pipeline_id = {str(row["pipeline_id"]): row for row in latest_cycles}
     pipeline_by_id = {str(row["pipeline_id"]): dict(row) for row in pipeline_rows}
-    session_ids = [
-        build_live_run_scope_id(str(row["label"]), str(row["market_date"]))
-        for row in latest_cycles
-    ]
+    session_ids = [build_live_run_scope_id(str(row["label"]), str(row["market_date"])) for row in latest_cycles]
     slot_health_by_session_id = list_session_slot_health_by_session_id(
         recovery_store=storage.recovery,
         session_ids=session_ids,
@@ -76,18 +68,14 @@ def list_latest_live_sessions(
             job_type="discovery_run",
         )
     ]
-    latest_runs_by_session_id = {
-        str(row["session_id"]): row for row in latest_runs if row.get("session_id")
-    }
+    latest_runs_by_session_id = {str(row["session_id"]): row for row in latest_runs if row.get("session_id")}
     candidate_counts_by_cycle_id = _candidate_counts_by_cycle_id(
         discovery_store=discovery_store,
         signal_store=signal_store,
         cycle_ids=[
             str(row["cycle_id"])
             for row in latest_cycles
-            if not pipeline_uses_runtime_owned_opportunities(
-                pipeline_by_id.get(str(row["pipeline_id"]))
-            )
+            if not pipeline_uses_runtime_owned_opportunities(pipeline_by_id.get(str(row["pipeline_id"])))
         ],
         runtime_owned=False,
     )
@@ -98,9 +86,7 @@ def list_latest_live_sessions(
             cycle_ids=[
                 str(row["cycle_id"])
                 for row in latest_cycles
-                if pipeline_uses_runtime_owned_opportunities(
-                    pipeline_by_id.get(str(row["pipeline_id"]))
-                )
+                if pipeline_uses_runtime_owned_opportunities(pipeline_by_id.get(str(row["pipeline_id"])))
             ],
             runtime_owned=True,
         )
@@ -122,32 +108,27 @@ def list_latest_live_sessions(
         )
         selection_summary = (
             dict(summary_run.get("selection_summary") or {})
-            if isinstance(summary_run, Mapping)
-            and isinstance(summary_run.get("selection_summary"), Mapping)
+            if isinstance(summary_run, Mapping) and isinstance(summary_run.get("selection_summary"), Mapping)
             else None
         )
         raw_candidate_summary = (
             dict(summary_run.get("raw_candidate_summary") or {})
-            if isinstance(summary_run, Mapping)
-            and isinstance(summary_run.get("raw_candidate_summary"), Mapping)
+            if isinstance(summary_run, Mapping) and isinstance(summary_run.get("raw_candidate_summary"), Mapping)
             else None
         )
-        automation_summary = (
-            dict(summary_run.get("automation_summary") or {})
-            if isinstance(summary_run, Mapping)
-            and isinstance(summary_run.get("automation_summary"), Mapping)
+        strategy_sync_summary = (
+            dict(summary_run.get("strategy_sync_summary") or {})
+            if isinstance(summary_run, Mapping) and isinstance(summary_run.get("strategy_sync_summary"), Mapping)
             else None
         )
         resolved_ranking_policy = (
             dict(summary_run.get("resolved_ranking_policy") or {})
-            if isinstance(summary_run, Mapping)
-            and isinstance(summary_run.get("resolved_ranking_policy"), Mapping)
+            if isinstance(summary_run, Mapping) and isinstance(summary_run.get("resolved_ranking_policy"), Mapping)
             else None
         )
         ranking_policy_gate_summary = (
             dict(summary_run.get("ranking_policy_gate_summary") or {})
-            if isinstance(summary_run, Mapping)
-            and isinstance(summary_run.get("ranking_policy_gate_summary"), Mapping)
+            if isinstance(summary_run, Mapping) and isinstance(summary_run.get("ranking_policy_gate_summary"), Mapping)
             else None
         )
         sessions.append(
@@ -164,26 +145,14 @@ def list_latest_live_sessions(
                 "resolved_ranking_policy": resolved_ranking_policy,
                 "ranking_policy_gate_summary": ranking_policy_gate_summary,
                 "raw_candidate_summary": raw_candidate_summary,
-                "automation_summary": automation_summary,
-                "quote_capture": {}
-                if summary_run is None
-                else dict(summary_run.get("quote_capture") or {}),
-                "trade_capture": {}
-                if summary_run is None
-                else dict(summary_run.get("trade_capture") or {}),
-                "uoa_summary": {}
-                if summary_run is None
-                else dict(summary_run.get("uoa_summary") or {}),
-                "uoa_quote_summary": {}
-                if summary_run is None
-                else dict(summary_run.get("uoa_quote_summary") or {}),
-                "uoa_decisions": normalize_uoa_decisions_payload(
-                    None if summary_run is None else summary_run.get("uoa_decisions")
-                ),
+                "strategy_sync_summary": strategy_sync_summary,
+                "quote_capture": {} if summary_run is None else dict(summary_run.get("quote_capture") or {}),
+                "trade_capture": {} if summary_run is None else dict(summary_run.get("trade_capture") or {}),
+                "uoa_summary": {} if summary_run is None else dict(summary_run.get("uoa_summary") or {}),
+                "uoa_quote_summary": {} if summary_run is None else dict(summary_run.get("uoa_quote_summary") or {}),
+                "uoa_decisions": normalize_uoa_decisions_payload(None if summary_run is None else summary_run.get("uoa_decisions")),
                 "slot_health": dict(slot_health_by_session_id.get(session_id) or {}),
-                "candidate_counts": dict(
-                    candidate_counts_by_cycle_id.get(str(latest_cycle["cycle_id"]), {})
-                ),
+                "candidate_counts": dict(candidate_counts_by_cycle_id.get(str(latest_cycle["cycle_id"]), {})),
             }
         )
     return sessions
@@ -240,9 +209,7 @@ def get_live_session_for_cycle(
     resolved_label = label or str(cycle_payload.get("label") or "")
     if not resolved_label:
         raise ValueError(f"Unknown cycle_id: {cycle_id}")
-    pipeline_id = str(
-        cycle_payload.get("pipeline_id") or build_pipeline_id(resolved_label)
-    )
+    pipeline_id = str(cycle_payload.get("pipeline_id") or build_pipeline_id(resolved_label))
     pipeline = _resolve_runtime_pipeline(
         discovery_store=discovery_store,
         job_store=storage.jobs,
@@ -272,9 +239,7 @@ def _build_live_session_state(
     recovery_store = storage.recovery
     signal_store = storage.signals
 
-    pipeline_id = str(
-        cycle.get("pipeline_id") or pipeline.get("pipeline_id") or ""
-    ) or build_pipeline_id(str(cycle["label"]))
+    pipeline_id = str(cycle.get("pipeline_id") or pipeline.get("pipeline_id") or "") or build_pipeline_id(str(cycle["label"]))
     label = str(cycle["label"])
     market_date = str(cycle.get("market_date") or cycle.get("session_date") or "")
     cycle_id = str(cycle["cycle_id"])
@@ -309,45 +274,27 @@ def _build_live_session_state(
         "promotable": int(selection_counts.get("promotable") or 0),
         "monitor": int(selection_counts.get("monitor") or 0),
     }
-    cycle_events = [
-        dict(row) for row in list(discovery_store.list_cycle_events(cycle_id) or [])
-    ]
+    cycle_events = [dict(row) for row in list(discovery_store.list_cycle_events(cycle_id) or [])]
     run_payload = summary_run
     selection_summary = (
         None
         if run_payload is None
-        else (
-            dict(run_payload.get("selection_summary") or {})
-            if isinstance(run_payload.get("selection_summary"), Mapping)
-            else None
-        )
+        else (dict(run_payload.get("selection_summary") or {}) if isinstance(run_payload.get("selection_summary"), Mapping) else None)
     )
     raw_candidate_summary = (
         None
         if run_payload is None
-        else (
-            dict(run_payload.get("raw_candidate_summary") or {})
-            if isinstance(run_payload.get("raw_candidate_summary"), Mapping)
-            else None
-        )
+        else (dict(run_payload.get("raw_candidate_summary") or {}) if isinstance(run_payload.get("raw_candidate_summary"), Mapping) else None)
     )
-    automation_summary = (
+    strategy_sync_summary = (
         None
         if run_payload is None
-        else (
-            dict(run_payload.get("automation_summary") or {})
-            if isinstance(run_payload.get("automation_summary"), Mapping)
-            else None
-        )
+        else (dict(run_payload.get("strategy_sync_summary") or {}) if isinstance(run_payload.get("strategy_sync_summary"), Mapping) else None)
     )
     resolved_ranking_policy = (
         None
         if run_payload is None
-        else (
-            dict(run_payload.get("resolved_ranking_policy") or {})
-            if isinstance(run_payload.get("resolved_ranking_policy"), Mapping)
-            else None
-        )
+        else (dict(run_payload.get("resolved_ranking_policy") or {}) if isinstance(run_payload.get("resolved_ranking_policy"), Mapping) else None)
     )
     ranking_policy_gate_summary = (
         None
@@ -371,12 +318,8 @@ def _build_live_session_state(
             )
         ]
     )
-    live_opportunities = [
-        row for row in opportunities if str(row.get("eligibility") or "live") == "live"
-    ]
-    analysis_only_opportunities = [
-        row for row in opportunities if str(row.get("eligibility") or "live") != "live"
-    ]
+    live_opportunities = [row for row in opportunities if str(row.get("eligibility") or "live") == "live"]
+    analysis_only_opportunities = [row for row in opportunities if str(row.get("eligibility") or "live") != "live"]
 
     return {
         "pipeline": dict(pipeline),
@@ -402,23 +345,13 @@ def _build_live_session_state(
         "resolved_ranking_policy": resolved_ranking_policy,
         "ranking_policy_gate_summary": ranking_policy_gate_summary,
         "raw_candidate_summary": raw_candidate_summary,
-        "automation_summary": automation_summary,
+        "strategy_sync_summary": strategy_sync_summary,
         "cycle_events": cycle_events,
-        "quote_capture": {}
-        if run_payload is None
-        else dict(run_payload.get("quote_capture") or {}),
-        "trade_capture": {}
-        if run_payload is None
-        else dict(run_payload.get("trade_capture") or {}),
-        "uoa_summary": {}
-        if run_payload is None
-        else dict(run_payload.get("uoa_summary") or {}),
-        "uoa_quote_summary": {}
-        if run_payload is None
-        else dict(run_payload.get("uoa_quote_summary") or {}),
-        "uoa_decisions": normalize_uoa_decisions_payload(
-            None if run_payload is None else run_payload.get("uoa_decisions")
-        ),
+        "quote_capture": {} if run_payload is None else dict(run_payload.get("quote_capture") or {}),
+        "trade_capture": {} if run_payload is None else dict(run_payload.get("trade_capture") or {}),
+        "uoa_summary": {} if run_payload is None else dict(run_payload.get("uoa_summary") or {}),
+        "uoa_quote_summary": {} if run_payload is None else dict(run_payload.get("uoa_quote_summary") or {}),
+        "uoa_decisions": normalize_uoa_decisions_payload(None if run_payload is None else run_payload.get("uoa_decisions")),
     }
 
 
@@ -460,9 +393,7 @@ def _runtime_pipeline_row(catalog_entry: Mapping[str, Any]) -> dict[str, Any]:
             "greeks_source": payload.get("greeks_source"),
             "deployment_mode": execution_policy.get("deployment_mode"),
         },
-        "options_automation_enabled": bool(
-            payload.get("options_automation_enabled", False)
-        ),
+        "trading_strategy_enabled": bool(payload.get("trading_strategy_enabled", False)),
         "session_schedule": dict(catalog_entry.get("session_schedule") or {}),
         "updated_at": None,
     }
@@ -473,10 +404,7 @@ def _list_runtime_pipelines(job_store: Any) -> list[dict[str, Any]]:
         enabled_only=True,
         job_type="discovery_run",
     )
-    return [
-        _runtime_pipeline_row(row)
-        for row in list_enabled_discovery_run_pipelines(definitions)
-    ]
+    return [_runtime_pipeline_row(row) for row in list_enabled_discovery_run_pipelines(definitions)]
 
 
 def _resolve_runtime_pipeline(
@@ -489,11 +417,7 @@ def _resolve_runtime_pipeline(
     if parsed is None:
         return None
     pipeline = next(
-        (
-            row
-            for row in _list_runtime_pipelines(job_store)
-            if str(row["pipeline_id"]) == pipeline_id
-        ),
+        (row for row in _list_runtime_pipelines(job_store) if str(row["pipeline_id"]) == pipeline_id),
         None,
     )
     if pipeline is None and hasattr(discovery_store, "get_pipeline"):
@@ -538,9 +462,7 @@ def _latest_cycles_for_market_date(
         if latest_cycle is None:
             continue
         latest_cycle.setdefault("pipeline_id", str(row["pipeline_id"]))
-        latest_cycle["market_date"] = str(
-            latest_cycle.get("market_date") or latest_cycle.get("session_date") or ""
-        )
+        latest_cycle["market_date"] = str(latest_cycle.get("market_date") or latest_cycle.get("session_date") or "")
         resolved_cycles.append(latest_cycle)
     return resolved_cycles
 
@@ -578,11 +500,7 @@ def _cycle_opportunity_payloads(
     cycle_id: str,
     runtime_owned: bool = False,
 ) -> list[dict[str, Any]]:
-    signal_schema_ready = bool(
-        signal_store is not None
-        and hasattr(signal_store, "schema_ready")
-        and signal_store.schema_ready()
-    )
+    signal_schema_ready = bool(signal_store is not None and hasattr(signal_store, "schema_ready") and signal_store.schema_ready())
     opportunities = list_active_cycle_opportunity_rows(
         signal_store,
         cycle_id=cycle_id,
@@ -592,10 +510,7 @@ def _cycle_opportunity_payloads(
         limit=500,
     )
     if not opportunities and not signal_schema_ready and not runtime_owned:
-        opportunities = [
-            dict(candidate)
-            for candidate in discovery_store.list_cycle_candidates(cycle_id)
-        ]
+        opportunities = [dict(candidate) for candidate in discovery_store.list_cycle_candidates(cycle_id)]
     return opportunities
 
 
@@ -612,11 +527,7 @@ def _load_summary_run(
         label=label,
         status="succeeded",
     )
-    return (
-        None
-        if run_record is None
-        else enrich_discovery_run_job_run_payload(run_record)
-    )
+    return None if run_record is None else enrich_discovery_run_job_run_payload(run_record)
 
 
 def _job_run_payload(run_payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
@@ -646,9 +557,7 @@ def _sort_session_runs(runs: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]
     enriched = [dict(run) for run in runs]
     enriched.sort(
         key=lambda run: _parse_sort_value(
-            None
-            if not (run.get("slot_at") or run.get("scheduled_for"))
-            else str(run.get("slot_at") or run.get("scheduled_for"))
+            None if not (run.get("slot_at") or run.get("scheduled_for")) else str(run.get("slot_at") or run.get("scheduled_for"))
         ),
         reverse=True,
     )

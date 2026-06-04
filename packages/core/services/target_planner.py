@@ -4,14 +4,13 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from core.services.automations import ResolvedAutomation
-from core.services.bots import ResolvedBot
 from core.services.discovery_recovery import build_capture_target_rows_for_candidates
 from core.services.option_structures import normalize_strategy_family, payload_structure_identity
+from core.services.trading_strategy_runtime import EntryRuntime
 
-CAPTURE_OWNER_BOT = "bot"
-CAPTURE_TARGET_REASON_BOT_WARM = "bot_warm"
-CAPTURE_TARGET_REASON_BOT_HOT = "bot_hot"
+CAPTURE_OWNER_TRADING_STRATEGY = "trading_strategy"
+CAPTURE_TARGET_REASON_STRATEGY_WARM = "strategy_warm"
+CAPTURE_TARGET_REASON_STRATEGY_HOT = "strategy_hot"
 HOT_TARGET_THRESHOLD = 70.0
 WARM_TTL_SECONDS = 300
 HOT_DISCOVERY_TTL_SECONDS = 90
@@ -22,11 +21,7 @@ def _utc_now() -> datetime:
 
 
 def _ttl_iso(seconds: int) -> str:
-    return (
-        (_utc_now() + timedelta(seconds=max(int(seconds), 1)))
-        .isoformat(timespec="seconds")
-        .replace("+00:00", "Z")
-    )
+    return (_utc_now() + timedelta(seconds=max(int(seconds), 1))).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _score(opportunity: Mapping[str, Any]) -> float:
@@ -50,34 +45,26 @@ def _candidate_payload(opportunity: Mapping[str, Any]) -> dict[str, Any] | None:
     return None
 
 
-def _runtime_owner_key(bot: ResolvedBot, runtime: ResolvedAutomation) -> str:
-    return f"{bot.bot.bot_id}:{runtime.automation.automation_id}"
+def _runtime_owner_key(runtime: EntryRuntime) -> str:
+    return runtime.trading_strategy_id
 
 
 def _matching_candidates(
     *,
     opportunities: list[dict[str, Any]],
-    bot: ResolvedBot,
-    runtime: ResolvedAutomation,
+    runtime: EntryRuntime,
 ) -> list[dict[str, Any]]:
-    strategy_family = runtime.strategy_config.strategy_family
+    trade_structure = runtime.trade_structure
     symbols = set(runtime.symbols)
     filtered: list[dict[str, Any]] = []
     for opportunity in opportunities:
-        opportunity_bot_id = str(opportunity.get("bot_id") or "")
-        opportunity_automation_id = str(opportunity.get("automation_id") or "")
-        if opportunity_bot_id or opportunity_automation_id:
-            if opportunity_bot_id != bot.bot.bot_id:
-                continue
-            if opportunity_automation_id != runtime.automation.automation_id:
-                continue
+        opportunity_strategy_id = str(opportunity.get("trading_strategy_id") or "")
+        if opportunity_strategy_id and opportunity_strategy_id != runtime.trading_strategy_id:
+            continue
         underlying_symbol = str(opportunity.get("underlying_symbol") or "").upper()
         if symbols and underlying_symbol not in symbols:
             continue
-        if (
-            normalize_strategy_family(opportunity.get("strategy_family"))
-            != strategy_family
-        ):
+        if normalize_strategy_family(opportunity.get("strategy_family")) != trade_structure:
             continue
         candidate = _candidate_payload(opportunity)
         if candidate is None:
@@ -93,12 +80,12 @@ def _matching_candidates(
     return filtered
 
 
-def refresh_options_automation_capture_targets(
+def refresh_trading_strategy_capture_targets(
     *,
     recovery_store: Any,
     session_id: str,
     session_date: str,
-    entry_runtimes: list[tuple[ResolvedBot, ResolvedAutomation]],
+    entry_runtimes: list[EntryRuntime],
     opportunities: list[dict[str, Any]],
     label: str | None = None,
     data_base_url: str | None = None,
@@ -110,25 +97,16 @@ def refresh_options_automation_capture_targets(
     active_owner_keys: list[str] = []
     summary: list[dict[str, Any]] = []
     capture_targets: dict[str, list[dict[str, Any]]] = {
-        CAPTURE_TARGET_REASON_BOT_WARM: [],
-        CAPTURE_TARGET_REASON_BOT_HOT: [],
+        CAPTURE_TARGET_REASON_STRATEGY_WARM: [],
+        CAPTURE_TARGET_REASON_STRATEGY_HOT: [],
     }
-    for bot, automation in entry_runtimes:
-        owner_key = _runtime_owner_key(bot, automation)
+    for runtime in entry_runtimes:
+        owner_key = _runtime_owner_key(runtime)
         active_owner_keys.append(owner_key)
-        candidates = _matching_candidates(
-            opportunities=opportunities, bot=bot, runtime=automation
-        )
+        candidates = _matching_candidates(opportunities=opportunities, runtime=runtime)
         warm_candidates = candidates[:6]
-        hot_threshold = float(
-            automation.automation.trigger_policy.get("min_opportunity_score")
-            or HOT_TARGET_THRESHOLD
-        )
-        hot_candidates = [
-            candidate
-            for candidate in candidates
-            if float(candidate.get("execution_score") or 0.0) >= hot_threshold
-        ][:2]
+        hot_threshold = float(runtime.trigger_policy.get("min_opportunity_score") or HOT_TARGET_THRESHOLD)
+        hot_candidates = [candidate for candidate in candidates if float(candidate.get("execution_score") or 0.0) >= hot_threshold][:2]
 
         warm_rows = build_capture_target_rows_for_candidates(
             candidates=warm_candidates,
@@ -143,18 +121,18 @@ def refresh_options_automation_capture_targets(
             expires_at=_ttl_iso(HOT_DISCOVERY_TTL_SECONDS),
         )
         recovery_store.replace_capture_targets(
-            owner_kind=CAPTURE_OWNER_BOT,
+            owner_kind=CAPTURE_OWNER_TRADING_STRATEGY,
             owner_key=owner_key,
-            reason=CAPTURE_TARGET_REASON_BOT_WARM,
+            reason=CAPTURE_TARGET_REASON_STRATEGY_WARM,
             session_id=session_id,
             session_date=session_date,
             label=label,
             rows=warm_rows,
         )
         recovery_store.replace_capture_targets(
-            owner_kind=CAPTURE_OWNER_BOT,
+            owner_kind=CAPTURE_OWNER_TRADING_STRATEGY,
             owner_key=owner_key,
-            reason=CAPTURE_TARGET_REASON_BOT_HOT,
+            reason=CAPTURE_TARGET_REASON_STRATEGY_HOT,
             session_id=session_id,
             session_date=session_date,
             label=label,
@@ -162,24 +140,23 @@ def refresh_options_automation_capture_targets(
         )
         summary.append(
             {
-                "bot_id": bot.bot.bot_id,
-                "automation_id": automation.automation.automation_id,
+                "trading_strategy_id": runtime.trading_strategy_id,
                 "warm_target_count": len(warm_rows),
                 "hot_target_count": len(hot_rows),
             }
         )
-        capture_targets[CAPTURE_TARGET_REASON_BOT_WARM].extend(warm_rows)
-        capture_targets[CAPTURE_TARGET_REASON_BOT_HOT].extend(hot_rows)
+        capture_targets[CAPTURE_TARGET_REASON_STRATEGY_WARM].extend(warm_rows)
+        capture_targets[CAPTURE_TARGET_REASON_STRATEGY_HOT].extend(hot_rows)
 
     recovery_store.delete_capture_targets_for_absent_owners(
-        owner_kind=CAPTURE_OWNER_BOT,
+        owner_kind=CAPTURE_OWNER_TRADING_STRATEGY,
         active_owner_keys=active_owner_keys,
-        reason=CAPTURE_TARGET_REASON_BOT_WARM,
+        reason=CAPTURE_TARGET_REASON_STRATEGY_WARM,
     )
     recovery_store.delete_capture_targets_for_absent_owners(
-        owner_kind=CAPTURE_OWNER_BOT,
+        owner_kind=CAPTURE_OWNER_TRADING_STRATEGY,
         active_owner_keys=active_owner_keys,
-        reason=CAPTURE_TARGET_REASON_BOT_HOT,
+        reason=CAPTURE_TARGET_REASON_STRATEGY_HOT,
     )
     return {
         "status": "ok",
@@ -189,8 +166,8 @@ def refresh_options_automation_capture_targets(
 
 
 __all__ = [
-    "CAPTURE_OWNER_BOT",
-    "CAPTURE_TARGET_REASON_BOT_HOT",
-    "CAPTURE_TARGET_REASON_BOT_WARM",
-    "refresh_options_automation_capture_targets",
+    "CAPTURE_OWNER_TRADING_STRATEGY",
+    "CAPTURE_TARGET_REASON_STRATEGY_HOT",
+    "CAPTURE_TARGET_REASON_STRATEGY_WARM",
+    "refresh_trading_strategy_capture_targets",
 ]

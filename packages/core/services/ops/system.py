@@ -13,19 +13,17 @@ from core.jobs.orchestration import (
 from core.jobs.registry import get_job_spec
 from core.jobs.specs import get_declared_job_row
 from core.jobs.specs import excluded_declared_job_types
-from core.services.bot_analytics import build_automation_performance_summary
 from core.services.broker_sync import BROKER_SYNC_KEY
 from core.services.selection_summary import aggregate_selection_summaries as _aggregate_selection_summaries
 from core.services.value_coercion import (
     as_text as _as_text,
-    coerce_float as _coerce_float,
     coerce_int as _coerce_int,
     utc_now_iso as _utc_now,
 )
 
 from .discovery_runs import (
-    _bot_runtime_summary,
     _latest_discovery_runs,
+    _trading_strategy_runtime_summary,
 )
 from .jobs import (
     _job_definition_status,
@@ -38,7 +36,6 @@ from .shared import (
     RECENT_FAILURE_LIMIT,
     _activity_at,
     _attention,
-    _automation_dispatch_gap_summary,
     _combine_statuses,
     _control_status,
     _lease_status,
@@ -50,16 +47,9 @@ RECENT_ALERT_LIMIT = 200
 
 
 def _scheduler_payload(job_store: Any, *, now: datetime) -> dict[str, Any]:
-    active_leases = [
-        dict(row)
-        for row in job_store.list_active_leases(prefix=SCHEDULER_RUNTIME_LEASE_KEY)
-    ]
+    active_leases = [dict(row) for row in job_store.list_active_leases(prefix=SCHEDULER_RUNTIME_LEASE_KEY)]
     primary = next(
-        (
-            row
-            for row in active_leases
-            if str(row.get("lease_key") or "") == SCHEDULER_RUNTIME_LEASE_KEY
-        ),
+        (row for row in active_leases if str(row.get("lease_key") or "") == SCHEDULER_RUNTIME_LEASE_KEY),
         None,
     )
     if primary is None and active_leases:
@@ -83,19 +73,11 @@ def _actionable_recent_failures(
     *,
     now: datetime,
 ) -> list[dict[str, Any]]:
-    candidates = [
-        dict(row) for row in recent_failures if _job_run_requires_attention(row, now=now)
-    ]
+    candidates = [dict(row) for row in recent_failures if _job_run_requires_attention(row, now=now)]
     if not candidates:
         return []
 
-    job_keys = sorted(
-        {
-            str(row.get("job_key") or "").strip()
-            for row in candidates
-            if str(row.get("job_key") or "").strip()
-        }
-    )
+    job_keys = sorted({str(row.get("job_key") or "").strip() for row in candidates if str(row.get("job_key") or "").strip()})
     latest_by_key = {
         str(row.get("job_key") or "").strip(): dict(row)
         for row in job_store.list_latest_runs_by_job_keys(
@@ -204,10 +186,7 @@ def build_system_status(
                 )
             )
 
-        workers = [
-            dict(row)
-            for row in job_store.list_active_leases(prefix=WORKER_RUNTIME_LEASE_PREFIX)
-        ]
+        workers = [dict(row) for row in job_store.list_active_leases(prefix=WORKER_RUNTIME_LEASE_PREFIX)]
         worker_status = "healthy" if workers else "blocked"
         if worker_status != "healthy":
             attention.append(
@@ -259,10 +238,7 @@ def build_system_status(
                 _attention(
                     severity="medium",
                     code="recent_job_failures",
-                    message=(
-                        f"{len(actionable_recent_failures)} recent failed or skipped "
-                        "job runs need attention."
-                    ),
+                    message=(f"{len(actionable_recent_failures)} recent failed or skipped " "job runs need attention."),
                 )
             )
 
@@ -275,13 +251,7 @@ def build_system_status(
                     _attention(
                         severity="medium",
                         code="discovery_run_unhealthy",
-                        message=(
-                            schedule_note
-                            or (
-                                "Discovery-run "
-                                f"{job_key} is {str(row.get('status') or 'unknown')}."
-                            )
-                        ),
+                        message=(schedule_note or ("Discovery-run " f"{job_key} is {str(row.get('status') or 'unknown')}.")),
                     )
                 )
 
@@ -290,9 +260,7 @@ def build_system_status(
                 scheduler_payload["status"],
                 worker_status,
                 "degraded" if actionable_recent_failures else "healthy",
-                "degraded"
-                if any(row["needs_attention"] for row in latest_discovery_runs)
-                else "healthy",
+                "degraded" if any(row["needs_attention"] for row in latest_discovery_runs) else "healthy",
             )
         )
 
@@ -332,9 +300,7 @@ def build_system_status(
 
     alert_store = storage.alerts
     if alert_store.schema_ready():
-        recent_alerts = [
-            dict(row) for row in alert_store.list_alert_events(limit=RECENT_ALERT_LIMIT)
-        ]
+        recent_alerts = [dict(row) for row in alert_store.list_alert_events(limit=RECENT_ALERT_LIMIT)]
         alert_delivery = _alert_delivery_payload(recent_alerts, now=now)
         if alert_delivery["status"] != "healthy":
             attention.append(
@@ -371,17 +337,9 @@ def build_system_status(
             ],
             "discovery_sessions": latest_discovery_runs,
             "latest_discovery_runs": latest_discovery_runs,
-            "discovery_selection": _aggregate_selection_summaries(
-                [row.get("selection_summary") for row in latest_discovery_runs]
-            ),
-            "discovery_run_selection": _aggregate_selection_summaries(
-                [row.get("selection_summary") for row in latest_discovery_runs]
-            ),
-            "automation_runtime": _bot_runtime_summary(
-                storage=storage,
-                market_date=market_date,
-            ),
-            "automation_performance": build_automation_performance_summary(
+            "discovery_selection": _aggregate_selection_summaries([row.get("selection_summary") for row in latest_discovery_runs]),
+            "discovery_run_selection": _aggregate_selection_summaries([row.get("selection_summary") for row in latest_discovery_runs]),
+            "trading_strategy_runtime": _trading_strategy_runtime_summary(
                 storage=storage,
                 market_date=market_date,
             ),
@@ -391,96 +349,31 @@ def build_system_status(
     )
 
     discovery_run_selection = dict(details.get("discovery_run_selection") or {})
-    automation_runtime = dict(details.get("automation_runtime") or {})
-    automation_performance = dict(details.get("automation_performance") or {})
-    automation_dispatch_gap = _automation_dispatch_gap_summary(automation_performance)
-    details["automation_dispatch_gap"] = automation_dispatch_gap
-    if automation_dispatch_gap["has_dispatch_gap"]:
-        statuses.append("degraded")
-        attention.append(
-            _attention(
-                severity="medium",
-                code="automation_entry_dispatch_gap",
-                message=(
-                    f"Automation selected {automation_dispatch_gap['selected_count']} entry "
-                    f"opportunity(s) today, but {automation_dispatch_gap['dispatch_window_elapsed_count']} "
-                    "aged out before submission."
-                ),
-            )
-        )
+    trading_strategy_runtime = dict(details.get("trading_strategy_runtime") or {})
     summary = {
         "control_mode": control.get("mode"),
         "worker_count": len(workers),
         "running_job_count": len(running_jobs),
         "queued_job_count": len(queued_jobs),
-        "running_jobs_by_type": dict(
-            Counter(str(row.get("job_type") or "unknown") for row in running_jobs)
-        ),
-        "queued_jobs_by_type": dict(
-            Counter(str(row.get("job_type") or "unknown") for row in queued_jobs)
-        ),
+        "running_jobs_by_type": dict(Counter(str(row.get("job_type") or "unknown") for row in running_jobs)),
+        "queued_jobs_by_type": dict(Counter(str(row.get("job_type") or "unknown") for row in queued_jobs)),
         "recent_failure_count": len(actionable_recent_failures),
-        "automation_opportunity_count": _coerce_int(
-            automation_runtime.get("opportunity_count")
-        )
-        or 0,
-        "automation_selected_count": _coerce_int(
-            (automation_runtime.get("decision_state_counts") or {}).get("selected")
-        )
-        or 0,
-        "automation_intent_count": _coerce_int(automation_runtime.get("intent_count"))
-        or 0,
-        "automation_entry_intent_count": _coerce_int(
-            automation_runtime.get("entry_intent_count")
-        )
-        or 0,
-        "automation_management_intent_count": _coerce_int(
-            automation_runtime.get("management_intent_count")
-        )
-        or 0,
-        "automation_dispatch_gap_count": _coerce_int(
-            automation_dispatch_gap.get("dispatch_window_elapsed_count")
-        )
-        or 0,
-        "automation_open_position_count": _coerce_int(
-            automation_runtime.get("open_position_count")
-        )
-        or 0,
-        "automation_daily_pnl": _coerce_float(
-            automation_performance.get("daily_total_pnl")
-        ),
+        "trading_strategy_opportunity_count": _coerce_int(trading_strategy_runtime.get("opportunity_count")) or 0,
+        "trading_strategy_selected_count": _coerce_int((trading_strategy_runtime.get("decision_state_counts") or {}).get("selected")) or 0,
+        "trading_strategy_intent_count": _coerce_int(trading_strategy_runtime.get("intent_count")) or 0,
+        "trading_strategy_entry_intent_count": _coerce_int(trading_strategy_runtime.get("entry_intent_count")) or 0,
+        "trading_strategy_management_intent_count": _coerce_int(trading_strategy_runtime.get("management_intent_count")) or 0,
+        "trading_strategy_open_position_count": _coerce_int(trading_strategy_runtime.get("open_position_count")) or 0,
         "discovery_session_count": len(latest_discovery_runs),
-        "discovery_session_degraded_count": sum(
-            1 for row in latest_discovery_runs if row["needs_attention"]
-        ),
-        "discovery_opportunity_count": _coerce_int(
-            discovery_run_selection.get("opportunity_count")
-        )
-        or 0,
-        "discovery_shadow_only_count": _coerce_int(
-            discovery_run_selection.get("shadow_only_count")
-        )
-        or 0,
-        "discovery_auto_live_eligible_count": _coerce_int(
-            discovery_run_selection.get("auto_live_eligible_count")
-        )
-        or 0,
+        "discovery_session_degraded_count": sum(1 for row in latest_discovery_runs if row["needs_attention"]),
+        "discovery_opportunity_count": _coerce_int(discovery_run_selection.get("opportunity_count")) or 0,
+        "discovery_shadow_only_count": _coerce_int(discovery_run_selection.get("shadow_only_count")) or 0,
+        "discovery_auto_live_eligible_count": _coerce_int(discovery_run_selection.get("auto_live_eligible_count")) or 0,
         "discovery_run_count": len(latest_discovery_runs),
-        "discovery_run_degraded_count": sum(
-            1 for row in latest_discovery_runs if row["needs_attention"]
-        ),
-        "discovery_run_opportunity_count": _coerce_int(
-            discovery_run_selection.get("opportunity_count")
-        )
-        or 0,
-        "discovery_run_shadow_only_count": _coerce_int(
-            discovery_run_selection.get("shadow_only_count")
-        )
-        or 0,
-        "discovery_run_auto_live_eligible_count": _coerce_int(
-            discovery_run_selection.get("auto_live_eligible_count")
-        )
-        or 0,
+        "discovery_run_degraded_count": sum(1 for row in latest_discovery_runs if row["needs_attention"]),
+        "discovery_run_opportunity_count": _coerce_int(discovery_run_selection.get("opportunity_count")) or 0,
+        "discovery_run_shadow_only_count": _coerce_int(discovery_run_selection.get("shadow_only_count")) or 0,
+        "discovery_run_auto_live_eligible_count": _coerce_int(discovery_run_selection.get("auto_live_eligible_count")) or 0,
         "broker_sync_status": broker_sync.get("status"),
         "alert_delivery_status": alert_delivery.get("status"),
         "market_session_status": market_session.get("status"),

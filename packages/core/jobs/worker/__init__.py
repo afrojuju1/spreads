@@ -26,13 +26,13 @@ from .tasks import (
     run_company_valuation_screen_materialize_job,
     run_discovery_recovery_job,
     run_execution_submit_job,
-    run_finviz_direct_trading_job,
     run_discovery_run_job,
-    run_options_automation_entry_job,
-    run_options_automation_execute_job,
+    run_execution_intent_dispatch_job,
     run_position_exit_manager_job,
     run_symbol_feed_job,
     run_tradingagents_scan_job,
+    run_trading_strategy_entry_job,
+    run_trading_strategy_manage_job,
 )
 
 
@@ -41,12 +41,12 @@ class RuntimeWorkerSettings:
         run_broker_sync_job,
         run_discovery_recovery_job,
         run_execution_submit_job,
-        run_options_automation_entry_job,
-        run_options_automation_execute_job,
+        run_trading_strategy_entry_job,
+        run_trading_strategy_manage_job,
+        run_execution_intent_dispatch_job,
         run_alert_delivery_job,
         run_alert_reconcile_job,
         run_position_exit_manager_job,
-        run_finviz_direct_trading_job,
     ]
     queue_name = RUNTIME_QUEUE_NAME
     redis_settings = build_redis_settings(default_redis_url())
@@ -122,11 +122,11 @@ __all__ = [
     "run_company_valuation_screen_materialize_job",
     "run_discovery_recovery_job",
     "run_execution_submit_job",
-    "run_finviz_direct_trading_job",
     "run_discovery_run_job",
-    "run_options_automation_entry_job",
-    "run_options_automation_execute_job",
+    "run_execution_intent_dispatch_job",
     "run_position_exit_manager_job",
     "run_symbol_feed_job",
     "run_tradingagents_scan_job",
+    "run_trading_strategy_entry_job",
+    "run_trading_strategy_manage_job",
 ]

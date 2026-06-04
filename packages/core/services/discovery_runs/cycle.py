@@ -8,7 +8,7 @@ from typing import Any, Callable
 from core.alerts.dispatcher import dispatch_cycle_alerts
 from core.domain.models import UniverseScanFailure
 from core.integrations.alpaca.client import AlpacaClient
-from core.services.automation_runtime import build_entry_runtime
+from core.services.trading_strategy_runtime import build_entry_runtime
 from core.services.candidate_history_recovery import (
     recover_session_candidates_from_history,
 )
@@ -55,7 +55,7 @@ from core.services.opportunity_generation import sync_entry_runtime_opportunitie
 from core.services.signal_state import sync_discovery_run_signal_layer
 from core.services.symbol_feeds import resolve_symbol_feed_symbols
 from core.services.strategy_builders import build_entry_runtime_candidates
-from core.services.target_planner import refresh_options_automation_capture_targets
+from core.services.target_planner import refresh_trading_strategy_capture_targets
 from core.storage.alert_repository import AlertRepository
 from core.storage.discovery_run_repository import DiscoveryRunRepository
 from core.storage.event_repository import EventRepository
@@ -68,11 +68,7 @@ WATCHLIST_QUOTE_CAPTURE_TOP = 6
 
 
 def _direct_uoa_symbols(args: argparse.Namespace) -> list[str]:
-    return [
-        token.strip().upper()
-        for token in str(getattr(args, "symbols", "") or "").split(",")
-        if token.strip()
-    ]
+    return [token.strip().upper() for token in str(getattr(args, "symbols", "") or "").split(",") if token.strip()]
 
 
 def _configured_uoa_symbol_source(
@@ -102,9 +98,7 @@ def _configured_uoa_symbol_source(
             feed_id=symbol_feed_ref,
             job_key=symbol_feed_job_key,
             max_age_seconds=getattr(args, "max_feed_age_seconds", None),
-            fallback_universe_ref=(
-                str(getattr(args, "fallback_universe_ref", "") or "").strip() or None
-            ),
+            fallback_universe_ref=(str(getattr(args, "fallback_universe_ref", "") or "").strip() or None),
         )
     return {
         "kind": "symbol_feed",
@@ -184,10 +178,7 @@ def print_cycle_summary(
         print("Alerts:")
         for alert in alerts:
             payload = alert.get("payload", {})
-            print(
-                f"- {payload.get('symbol')} {payload.get('alert_type')} "
-                f"status={alert.get('status')} cycle={payload.get('cycle_id')}"
-            )
+            print(f"- {payload.get('symbol')} {payload.get('alert_type')} " f"status={alert.get('status')} cycle={payload.get('cycle_id')}")
     print()
 
 
@@ -209,26 +200,14 @@ def run_collection_cycle(
     emit_output: bool,
     heartbeat: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
-    generated_at = (
-        datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-    )
+    generated_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
     session_date = session_date_for_generated_at(generated_at)
     uoa_only = bool(getattr(args, "uoa_only", False))
-    options_scope = getattr(args, "options_automation_scope", {"enabled": False})
-    automation_mode = bool(options_scope.get("enabled"))
-    entry_runtimes = [
-        build_entry_runtime(bot, automation)
-        for bot, automation in list(options_scope.get("entry_runtimes") or [])
-    ]
+    strategy_scope = getattr(args, "trading_strategy_scope", {"enabled": False})
+    strategy_runtime_mode = bool(strategy_scope.get("enabled"))
+    entry_runtimes = [build_entry_runtime(strategy) for strategy in list(strategy_scope.get("entry_strategies") or [])]
     resolved_symbols, resolved_universe_label = resolve_symbols(scanner_args)
-    scoped_symbols = sorted(
-        {
-            str(symbol).upper()
-            for runtime in entry_runtimes
-            for symbol in list(runtime.symbols)
-            if str(symbol).strip()
-        }
-    )
+    scoped_symbols = sorted({str(symbol).upper() for runtime in entry_runtimes for symbol in list(runtime.symbols) if str(symbol).strip()})
     symbols = scoped_symbols or resolved_symbols
     universe_label = resolved_universe_label
     label = str(getattr(args, "label", "") or "").strip() or build_live_snapshot_label(
@@ -242,9 +221,7 @@ def run_collection_cycle(
     scan_results: list[Any] = []
     failures: list[UniverseScanFailure] = []
     symbol_strategy_candidates: dict[str, list[dict[str, Any]]] = {}
-    runtime_candidate_rows_by_owner: dict[
-        tuple[str, str], dict[str, list[dict[str, Any]]]
-    ] = {}
+    runtime_candidate_rows_by_owner: dict[tuple[str, str], dict[str, list[dict[str, Any]]]] = {}
     uoa_capture_candidates: list[dict[str, Any]] = []
     uoa_watchlist_summary: dict[str, Any] = {}
     symbol_source = {
@@ -270,9 +247,7 @@ def run_collection_cycle(
         scanner_args.universe = None
         scanner_args.symbols_file = None
         if str(symbol_source.get("kind") or "") == "fallback_universe":
-            universe_label = str(
-                symbol_source.get("fallback_universe_ref") or "fallback_universe"
-            )
+            universe_label = str(symbol_source.get("fallback_universe_ref") or "fallback_universe")
         elif str(symbol_source.get("feed_id") or "").strip():
             universe_label = f"symbol_feed:{symbol_source['feed_id']}"
         else:
@@ -294,7 +269,7 @@ def run_collection_cycle(
                 },
             )
             failures.extend(uoa_failures)
-    elif bool(options_scope.get("enabled")) and entry_runtimes:
+    elif bool(strategy_scope.get("enabled")) and entry_runtimes:
         try:
             runtime_candidate_rows_by_owner = build_entry_runtime_candidates(
                 entry_runtimes=entry_runtimes,
@@ -306,9 +281,7 @@ def run_collection_cycle(
                 history_store=history_store,
                 session_label=label,
             )
-            merged_runtime_candidates = _merge_runtime_candidate_rows(
-                runtime_candidate_rows_by_owner
-            )
+            merged_runtime_candidates = _merge_runtime_candidate_rows(runtime_candidate_rows_by_owner)
             symbol_strategy_candidates = merged_runtime_candidates
         except Exception as exc:
             print(f"Exact runtime builder unavailable: {exc}")
@@ -325,10 +298,7 @@ def run_collection_cycle(
                 greeks_provider=greeks_provider,
                 history_store=history_store,
             )
-            run_ids = {
-                (result.symbol, result.args.strategy): result.run_id
-                for result in scan_results
-            }
+            run_ids = {(result.symbol, result.args.strategy): result.run_id for result in scan_results}
             symbol_strategy_candidates = build_symbol_strategy_candidates(
                 scan_results,
                 run_ids,
@@ -336,7 +306,7 @@ def run_collection_cycle(
             )
             symbol_strategy_candidates = _filter_scope_candidates(
                 symbol_strategy_candidates,
-                scope=options_scope,
+                scope=strategy_scope,
             )
     else:
         (
@@ -352,9 +322,7 @@ def run_collection_cycle(
             greeks_provider=greeks_provider,
             history_store=history_store,
         )
-        run_ids = {
-            (result.symbol, result.args.strategy): result.run_id for result in scan_results
-        }
+        run_ids = {(result.symbol, result.args.strategy): result.run_id for result in scan_results}
         symbol_strategy_candidates = build_symbol_strategy_candidates(
             scan_results,
             run_ids,
@@ -362,7 +330,7 @@ def run_collection_cycle(
         )
         symbol_strategy_candidates = _filter_scope_candidates(
             symbol_strategy_candidates,
-            scope=options_scope,
+            scope=strategy_scope,
         )
     capture_snapshot = capture_live_option_market_state(
         args=args,
@@ -376,11 +344,7 @@ def run_collection_cycle(
         generated_at=generated_at,
         session_date=session_date,
         tick_context=tick_context,
-        capture_candidates=(
-            list(uoa_capture_candidates)
-            if uoa_only
-            else build_preselection_capture_candidates(symbol_strategy_candidates)
-        ),
+        capture_candidates=(list(uoa_capture_candidates) if uoa_only else build_preselection_capture_candidates(symbol_strategy_candidates)),
     )
     signal_cycle_context = {
         "uoa_decisions": dict(capture_snapshot.uoa_decisions),
@@ -398,8 +362,8 @@ def run_collection_cycle(
     selection_memory: dict[str, Any] = {}
     events: list[dict[str, Any]] = []
     selection_summary = build_selection_summary([])
-    automation_summary = {
-        "automation_runs_upserted": 0,
+    strategy_sync_summary = {
+        "strategy_runs_upserted": 0,
         "runtime_opportunities_upserted": 0,
         "runtime_opportunities_expired": 0,
         "runtime_selection_summary": build_selection_summary([]),
@@ -410,16 +374,14 @@ def run_collection_cycle(
         "opportunities_upserted": 0,
         "opportunities_expired": 0,
     }
-    automation_sync = {
-        "automation_runs_upserted": 0,
+    strategy_sync = {
+        "strategy_runs_upserted": 0,
         "runtime_opportunities_upserted": 0,
         "runtime_opportunities_expired": 0,
         "opportunities": [],
     }
     if not uoa_only:
-        previous_promotable, previous_selection_memory = read_previous_selection(
-            discovery_store, label
-        )
+        previous_promotable, previous_selection_memory = read_previous_selection(discovery_store, label)
         selection = select_live_opportunities(
             label=label,
             cycle_id=cycle_id,
@@ -434,15 +396,11 @@ def run_collection_cycle(
         )
         symbol_strategy_candidates = _filter_scope_candidates(
             dict(selection.get("symbol_candidates") or {}),
-            scope=options_scope,
+            scope=strategy_scope,
         )
         discovery_run_promotable_payloads = list(selection["promotable_candidates"])
         discovery_run_monitor_payloads = list(selection["monitor_candidates"])
-        if (
-            args.profile == "0dte"
-            and not discovery_run_promotable_payloads
-            and not discovery_run_monitor_payloads
-        ):
+        if args.profile == "0dte" and not discovery_run_promotable_payloads and not discovery_run_monitor_payloads:
             recovered_payloads = recover_session_candidates_from_history(
                 history_store=history_store,
                 session_date=session_date,
@@ -466,26 +424,24 @@ def run_collection_cycle(
             )
             symbol_strategy_candidates = _filter_scope_candidates(
                 dict(selection.get("symbol_candidates") or {}),
-                scope=options_scope,
+                scope=strategy_scope,
             )
-            discovery_run_promotable_payloads = list(
-                selection["promotable_candidates"]
-            )
+            discovery_run_promotable_payloads = list(selection["promotable_candidates"])
             discovery_run_monitor_payloads = list(selection["monitor_candidates"])
         discovery_run_opportunities = _filter_scope_rows(
             list(selection["opportunities"]),
-            scope=options_scope,
+            scope=strategy_scope,
         )
         discovery_run_promotable_payloads = _filter_scope_rows(
             discovery_run_promotable_payloads,
-            scope=options_scope,
+            scope=strategy_scope,
         )
         discovery_run_monitor_payloads = _filter_scope_rows(
             discovery_run_monitor_payloads,
-            scope=options_scope,
+            scope=strategy_scope,
         )
         selection_memory = dict(selection["selection_memory"])
-        events = _filter_scope_rows(list(selection["events"]), scope=options_scope)
+        events = _filter_scope_rows(list(selection["events"]), scope=strategy_scope)
     raw_candidate_summary = build_raw_candidate_summary(
         scan_results,
         symbol_strategy_candidates,
@@ -526,9 +482,9 @@ def run_collection_cycle(
             )
         except Exception as exc:
             print(f"Signal-state sync unavailable: {exc}")
-        if bool(options_scope.get("enabled")):
+        if bool(strategy_scope.get("enabled")):
             try:
-                automation_sync = sync_entry_runtime_opportunities(
+                strategy_sync = sync_entry_runtime_opportunities(
                     signal_store=signal_store,
                     label=label,
                     session_date=session_date,
@@ -545,35 +501,21 @@ def run_collection_cycle(
                     signal_cycle_context=signal_cycle_context,
                 )
             except Exception as exc:
-                print(f"Options automation runtime sync unavailable: {exc}")
-            runtime_opportunities = [
-                dict(row) for row in list(automation_sync.get("opportunities") or [])
-            ]
-            runtime_promotable_payloads = [
-                dict(row)
-                for row in runtime_opportunities
-                if str(row.get("selection_state") or "") == "promotable"
-            ]
-            runtime_monitor_payloads = [
-                dict(row)
-                for row in runtime_opportunities
-                if str(row.get("selection_state") or "") == "monitor"
-            ]
+                print(f"Trading strategy runtime sync unavailable: {exc}")
+            runtime_opportunities = [dict(row) for row in list(strategy_sync.get("opportunities") or [])]
+            runtime_promotable_payloads = [dict(row) for row in runtime_opportunities if str(row.get("selection_state") or "") == "promotable"]
+            runtime_monitor_payloads = [dict(row) for row in runtime_opportunities if str(row.get("selection_state") or "") == "monitor"]
         selection_summary = build_selection_summary(discovery_run_opportunities)
-        automation_summary = {
-            "automation_runs_upserted": int(automation_sync["automation_runs_upserted"]),
-            "runtime_opportunities_upserted": int(
-                automation_sync["runtime_opportunities_upserted"]
-            ),
-            "runtime_opportunities_expired": int(
-                automation_sync["runtime_opportunities_expired"]
-            ),
+        strategy_sync_summary = {
+            "strategy_runs_upserted": int(strategy_sync["strategy_runs_upserted"]),
+            "runtime_opportunities_upserted": int(strategy_sync["runtime_opportunities_upserted"]),
+            "runtime_opportunities_expired": int(strategy_sync["runtime_opportunities_expired"]),
             "runtime_selection_summary": build_selection_summary(runtime_opportunities),
         }
     capture_promotable_payloads = discovery_run_promotable_payloads
     capture_monitor_payloads = discovery_run_monitor_payloads
     capture_opportunities = discovery_run_opportunities
-    if automation_mode:
+    if strategy_runtime_mode:
         capture_promotable_payloads = runtime_promotable_payloads
         capture_monitor_payloads = runtime_monitor_payloads
         capture_opportunities = runtime_opportunities
@@ -596,24 +538,20 @@ def run_collection_cycle(
                     "promotable": [],
                     "monitor": [],
                 }
-            elif bool(options_scope.get("enabled")):
-                runtime_capture_opportunities = list(
-                    automation_sync.get("opportunities") or []
-                )
-                target_refresh = refresh_options_automation_capture_targets(
+            elif bool(strategy_scope.get("enabled")):
+                runtime_capture_opportunities = list(strategy_sync.get("opportunities") or [])
+                target_refresh = refresh_trading_strategy_capture_targets(
                     recovery_store=recovery_store,
                     session_id=tick_context.session_id,
                     session_date=session_date,
-                    entry_runtimes=list(options_scope.get("entry_runtimes") or []),
+                    entry_runtimes=entry_runtimes,
                     opportunities=runtime_capture_opportunities or runtime_opportunities,
                     label=label,
                     data_base_url=getattr(scanner_args, "data_base_url", None),
                 )
                 capture_targets = {
                     str(reason): [dict(row) for row in rows if isinstance(row, dict)]
-                    for reason, rows in dict(
-                        target_refresh.get("capture_targets") or {}
-                    ).items()
+                    for reason, rows in dict(target_refresh.get("capture_targets") or {}).items()
                 }
             else:
                 target_refresh = refresh_live_session_capture_targets(
@@ -626,15 +564,11 @@ def run_collection_cycle(
                     monitor_candidates=capture_monitor_payloads,
                     capture_candidates=quote_candidates,
                     data_base_url=getattr(scanner_args, "data_base_url", None),
-                    session_end_offset_minutes=int(
-                        getattr(args, "session_end_offset_minutes", 0)
-                    ),
+                    session_end_offset_minutes=int(getattr(args, "session_end_offset_minutes", 0)),
                 )
                 capture_targets = {
                     str(reason): [dict(row) for row in rows if isinstance(row, dict)]
-                    for reason, rows in dict(
-                        target_refresh.get("capture_targets") or {}
-                    ).items()
+                    for reason, rows in dict(target_refresh.get("capture_targets") or {}).items()
                 }
         except Exception as exc:
             print(f"Capture target refresh unavailable: {exc}")
@@ -689,14 +623,11 @@ def run_collection_cycle(
                 and str(row.get("capture_status") or "").strip()
             )
             history_gate = build_capture_history_gate(recent_capture_statuses)
-            if (
-                history_gate is not None
-                and str(live_action_gate.get("status") or "") != "blocked"
-            ):
+            if history_gate is not None and str(live_action_gate.get("status") or "") != "blocked":
                 live_action_gate = history_gate
         except Exception as exc:
             print(f"Live capture history gate unavailable: {exc}")
-    options_scope_enabled = bool(options_scope.get("enabled"))
+    strategy_scope_enabled = bool(strategy_scope.get("enabled"))
     gate_allows_alerts = bool(live_action_gate.get("allow_alerts"))
     if uoa_only:
         live_action_gate = {
@@ -710,17 +641,17 @@ def run_collection_cycle(
             "allow_uoa_alerts": gate_allows_alerts,
             "opportunity_alert_owner": "uoa_only",
         }
-    elif options_scope_enabled:
+    elif strategy_scope_enabled:
         live_action_gate = {
             **dict(live_action_gate),
-            "status": "bot_runtime_owned",
-            "reason_code": "bot_runtime_owned",
-            "message": "Discovery run is active, but execution and opportunity alerts are owned by the options automation runtime.",
+            "status": "trading_strategy_runtime_owned",
+            "reason_code": "trading_strategy_runtime_owned",
+            "message": "Discovery run is active, but execution and opportunity alerts are owned by the trading strategy runtime.",
             "allow_auto_execution": False,
             "allow_alerts": gate_allows_alerts,
             "allow_discovery_opportunity_alerts": False,
             "allow_uoa_alerts": gate_allows_alerts,
-            "opportunity_alert_owner": "options_automation_runtime",
+            "opportunity_alert_owner": "trading_strategy_runtime",
         }
     uoa_summary = dict(capture_snapshot.uoa_summary)
     uoa_quote_summary = dict(capture_snapshot.uoa_quote_summary)
@@ -759,12 +690,8 @@ def run_collection_cycle(
         }
     alerts: list[dict[str, Any]] = []
     if bool(live_action_gate.get("allow_alerts")):
-        alert_promotable_payloads = (
-            []
-            if options_scope_enabled or uoa_only
-            else discovery_run_promotable_payloads
-        )
-        alert_events = [] if options_scope_enabled or uoa_only else events
+        alert_promotable_payloads = [] if strategy_scope_enabled or uoa_only else discovery_run_promotable_payloads
+        alert_events = [] if strategy_scope_enabled or uoa_only else events
         try:
             alerts = dispatch_cycle_alerts(
                 discovery_store=discovery_store,
@@ -779,9 +706,7 @@ def run_collection_cycle(
                 events=alert_events,
                 uoa_decisions=uoa_decisions,
                 session_id=None if tick_context is None else tick_context.session_id,
-                planner_job_run_id=None
-                if tick_context is None
-                else tick_context.job_run_id,
+                planner_job_run_id=None if tick_context is None else tick_context.job_run_id,
             )
         except Exception as exc:
             print(f"Alert dispatch unavailable: {exc}")
@@ -824,13 +749,9 @@ def run_collection_cycle(
         "signal_transitions_recorded": int(signal_sync["signal_transitions_recorded"]),
         "opportunities_upserted": int(signal_sync["opportunities_upserted"]),
         "opportunities_expired": int(signal_sync["opportunities_expired"]),
-        "automation_runs_upserted": int(automation_sync["automation_runs_upserted"]),
-        "runtime_opportunities_upserted": int(
-            automation_sync["runtime_opportunities_upserted"]
-        ),
-        "runtime_opportunities_expired": int(
-            automation_sync["runtime_opportunities_expired"]
-        ),
+        "strategy_runs_upserted": int(strategy_sync["strategy_runs_upserted"]),
+        "runtime_opportunities_upserted": int(strategy_sync["runtime_opportunities_upserted"]),
+        "runtime_opportunities_expired": int(strategy_sync["runtime_opportunities_expired"]),
         "quote_capture": quote_capture,
         "trade_capture": trade_capture,
         "live_action_gate": live_action_gate,
@@ -839,17 +760,14 @@ def run_collection_cycle(
         "uoa_summary": uoa_summary,
         "uoa_quote_summary": uoa_quote_summary,
         "uoa_decisions": uoa_decisions,
-        "resolved_ranking_policy": dict(
-            raw_candidate_summary.get("resolved_ranking_policy") or {}
-        ),
-        "ranking_policy_gate_summary": dict(
-            raw_candidate_summary.get("ranking_policy_gate_summary") or {}
-        ),
+        "resolved_ranking_policy": dict(raw_candidate_summary.get("resolved_ranking_policy") or {}),
+        "ranking_policy_gate_summary": dict(raw_candidate_summary.get("ranking_policy_gate_summary") or {}),
         "raw_candidate_summary": raw_candidate_summary,
         "selection_summary": selection_summary,
-        "automation_summary": automation_summary,
+        "strategy_sync_summary": strategy_sync_summary,
         "auto_execution": auto_execution,
         "symbol_source": symbol_source,
     }
+
 
 __all__ = ["run_collection_cycle"]

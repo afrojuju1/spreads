@@ -3,16 +3,16 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas_market_calendars as mcal
 
 from core.db.decorators import with_storage
-from core.services.automation_runtime import (
+from core.services.trading_strategy_runtime import (
     find_management_runtime_for_position,
     resolve_management_runtimes,
 )
-from core.services.automations import automation_should_run_now
-from core.services.bots import bot_time_reached
+from core.services.trading_strategies import routine_should_run_now
 from core.services.execution_portfolio import refresh_session_position_marks
 from core.services.option_structures import net_premium_kind
 from core.services.position_lifecycle import build_close_decision_lifecycle
@@ -50,6 +50,7 @@ DEFAULT_EXIT_POLICY = {
 MANAGED_CLOSE_INTENT_TTL_MINUTES = 5
 BROKER_SYNC_KEY = "broker_sync:alpaca"
 BROKER_SYNC_IN_FLIGHT_STATUSES = {"queued", "running", "leased"}
+NEW_YORK = ZoneInfo("America/New_York")
 
 
 def _utc_now() -> str:
@@ -57,11 +58,7 @@ def _utc_now() -> str:
 
 
 def _expires_in(minutes: int) -> str:
-    return (
-        (datetime.now(UTC) + timedelta(minutes=max(minutes, 1)))
-        .isoformat(timespec="seconds")
-        .replace("+00:00", "Z")
-    )
+    return (datetime.now(UTC) + timedelta(minutes=max(minutes, 1))).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _as_text(value: Any) -> str | None:
@@ -99,6 +96,17 @@ def _coerce_bool(value: Any) -> bool:
     return False
 
 
+def _time_reached(time_value: str | None, *, now: datetime) -> bool:
+    rendered = _as_text(time_value)
+    if rendered is None:
+        return False
+    hour_text, separator, minute_text = rendered.partition(":")
+    if separator != ":":
+        return False
+    current = now.astimezone(NEW_YORK)
+    return (current.hour, current.minute) >= (int(hour_text), int(minute_text))
+
+
 def _latest_broker_sync_run(storage: Any) -> dict[str, Any] | None:
     job_store = getattr(storage, "jobs", None)
     if job_store is None:
@@ -109,18 +117,10 @@ def _latest_broker_sync_run(storage: Any) -> dict[str, Any] | None:
 
 def _broker_sync_snapshot(storage: Any, *, now: datetime) -> dict[str, Any]:
     latest_run = _latest_broker_sync_run(storage)
-    latest_run_status = (
-        None if latest_run is None else str(latest_run.get("status") or "").lower()
-    )
-    latest_run_started_at = (
-        None if latest_run is None else parse_datetime(latest_run.get("started_at"))
-    )
+    latest_run_status = None if latest_run is None else str(latest_run.get("status") or "").lower()
+    latest_run_started_at = None if latest_run is None else parse_datetime(latest_run.get("started_at"))
     latest_run_started_at_text = (
-        None
-        if latest_run_started_at is None
-        else latest_run_started_at.astimezone(UTC)
-        .isoformat(timespec="seconds")
-        .replace("+00:00", "Z")
+        None if latest_run_started_at is None else latest_run_started_at.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
     )
     broker_sync_in_flight = latest_run_status in BROKER_SYNC_IN_FLIGHT_STATUSES
     snapshot: dict[str, Any] = {
@@ -140,18 +140,12 @@ def _broker_sync_snapshot(storage: Any, *, now: datetime) -> dict[str, Any]:
     broker_store = getattr(storage, "broker", None)
     if broker_store is None or not broker_store.schema_ready():
         snapshot["status"] = "in_flight" if broker_sync_in_flight else "missing"
-        snapshot["reason"] = (
-            "broker_sync_in_flight"
-            if broker_sync_in_flight
-            else "broker_sync_schema_unavailable"
-        )
+        snapshot["reason"] = "broker_sync_in_flight" if broker_sync_in_flight else "broker_sync_schema_unavailable"
         return snapshot
     state = broker_store.get_sync_state(BROKER_SYNC_KEY)
     if not isinstance(state, Mapping):
         snapshot["status"] = "in_flight" if broker_sync_in_flight else "missing"
-        snapshot["reason"] = (
-            "broker_sync_in_flight" if broker_sync_in_flight else "broker_sync_missing"
-        )
+        snapshot["reason"] = "broker_sync_in_flight" if broker_sync_in_flight else "broker_sync_missing"
         return snapshot
 
     updated_at = parse_datetime(_as_text(state.get("updated_at")))
@@ -167,11 +161,7 @@ def _broker_sync_snapshot(storage: Any, *, now: datetime) -> dict[str, Any]:
     )
     snapshot.update(
         {
-            "updated_at": None
-            if updated_at is None
-            else updated_at.astimezone(UTC)
-            .isoformat(timespec="seconds")
-            .replace("+00:00", "Z"),
+            "updated_at": None if updated_at is None else updated_at.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
             "age_seconds": None if age_seconds is None else round(age_seconds, 1),
             "state_status": state_status,
             "summary": dict(state.get("summary") or {}),
@@ -198,14 +188,10 @@ def _broker_sync_snapshot(storage: Any, *, now: datetime) -> dict[str, Any]:
     return snapshot
 
 
-def _calendar_close(
-    session_date: str, market_calendar: str = "NYSE"
-) -> datetime | None:
+def _calendar_close(session_date: str, market_calendar: str = "NYSE") -> datetime | None:
     session_day = datetime.fromisoformat(session_date).date()
     calendar = mcal.get_calendar(market_calendar)
-    schedule = calendar.schedule(
-        start_date=session_day.isoformat(), end_date=session_day.isoformat()
-    )
+    schedule = calendar.schedule(start_date=session_day.isoformat(), end_date=session_day.isoformat())
     if schedule.empty:
         return None
     return schedule.iloc[0]["market_close"].to_pydatetime().astimezone(UTC)
@@ -213,11 +199,7 @@ def _calendar_close(
 
 def normalize_exit_policy(payload: dict[str, Any] | None) -> dict[str, Any]:
     source = payload if isinstance(payload, dict) else {}
-    raw_policy = (
-        source.get("exit_policy")
-        if isinstance(source.get("exit_policy"), dict)
-        else source
-    )
+    raw_policy = source.get("exit_policy") if isinstance(source.get("exit_policy"), dict) else source
     policy = dict(DEFAULT_EXIT_POLICY)
     if "enabled" in raw_policy:
         policy["enabled"] = _coerce_bool(raw_policy["enabled"])
@@ -232,22 +214,14 @@ def normalize_exit_policy(payload: dict[str, Any] | None) -> dict[str, Any]:
     return policy
 
 
-def resolve_exit_policy_snapshot(
-    *, session_date: str, payload: dict[str, Any] | None
-) -> dict[str, Any]:
+def resolve_exit_policy_snapshot(*, session_date: str, payload: dict[str, Any] | None) -> dict[str, Any]:
     policy = normalize_exit_policy(payload)
     if policy["force_close_at"] is not None:
         return policy
 
     source = payload if isinstance(payload, dict) else {}
-    raw_policy = (
-        source.get("exit_policy")
-        if isinstance(source.get("exit_policy"), dict)
-        else source
-    )
-    force_close_minutes = _coerce_int(
-        raw_policy.get("force_close_minutes_before_close")
-    )
+    raw_policy = source.get("exit_policy") if isinstance(source.get("exit_policy"), dict) else source
+    force_close_minutes = _coerce_int(raw_policy.get("force_close_minutes_before_close"))
     if force_close_minutes is None:
         force_close_minutes = DEFAULT_FORCE_CLOSE_MINUTES_BEFORE_CLOSE
 
@@ -256,9 +230,7 @@ def resolve_exit_policy_snapshot(
         policy["force_close_at"] = None
         return policy
     force_close_at = market_close - timedelta(minutes=force_close_minutes)
-    policy["force_close_at"] = force_close_at.isoformat(timespec="seconds").replace(
-        "+00:00", "Z"
-    )
+    policy["force_close_at"] = force_close_at.isoformat(timespec="seconds").replace("+00:00", "Z")
     return policy
 
 
@@ -341,9 +313,7 @@ def _resolve_effective_exit_mark(
         return None, "awaiting_mark"
 
     risk_policy = normalize_risk_policy(position.get("risk_policy"))
-    stale_quote_after_seconds = _coerce_float(
-        risk_policy.get("stale_quote_after_seconds")
-    )
+    stale_quote_after_seconds = _coerce_float(risk_policy.get("stale_quote_after_seconds"))
     if stale_quote_after_seconds is None:
         return mark, "mark"
 
@@ -385,12 +355,8 @@ def evaluate_exit_policy(
     force_close_at = parse_datetime(_as_text(policy.get("force_close_at")))
     current_time = now or datetime.now(UTC)
     remaining_quantity = _coerce_float(position.get("remaining_quantity")) or 0.0
-    entry_value = _coerce_float(position.get("entry_credit")) or _coerce_float(
-        position.get("entry_value")
-    )
-    premium_kind = _as_text(position.get("entry_value_kind")) or net_premium_kind(
-        position.get("strategy") or position.get("strategy_family")
-    )
+    entry_value = _coerce_float(position.get("entry_credit")) or _coerce_float(position.get("entry_value"))
+    premium_kind = _as_text(position.get("entry_value_kind")) or net_premium_kind(position.get("strategy") or position.get("strategy_family"))
     effective_mark, mark_state = _resolve_effective_exit_mark(
         position=position,
         mark=mark,
@@ -424,8 +390,7 @@ def evaluate_exit_policy(
         and (
             effective_mark >= entry_value * (1.0 + float(policy["profit_target_pct"]))
             if premium_kind == "debit"
-            else effective_mark
-            <= entry_value * max(1.0 - float(policy["profit_target_pct"]), 0.0)
+            else effective_mark <= entry_value * max(1.0 - float(policy["profit_target_pct"]), 0.0)
         )
     ):
         return {
@@ -440,8 +405,7 @@ def evaluate_exit_policy(
         entry_value is not None
         and effective_mark is not None
         and (
-            effective_mark
-            <= max(entry_value / max(float(policy["stop_multiple"]), 1.0), 0.0)
+            effective_mark <= max(entry_value / max(float(policy["stop_multiple"]), 1.0), 0.0)
             if premium_kind == "debit"
             else effective_mark >= entry_value * float(policy["stop_multiple"])
         )
@@ -491,11 +455,7 @@ def evaluate_exit_policy(
 
 
 def _close_source_payload(*, kind: str, decision: dict[str, Any]) -> dict[str, Any]:
-    details = (
-        dict(decision.get("decision_details") or {})
-        if isinstance(decision.get("decision_details"), dict)
-        else {}
-    )
+    details = dict(decision.get("decision_details") or {}) if isinstance(decision.get("decision_details"), dict) else {}
     exit_context: dict[str, Any] = {}
     for key in (
         "mark",
@@ -585,8 +545,8 @@ def _has_open_close_attempt(execution_store: Any, position_id: str) -> bool:
     )
 
 
-def _close_intent_id(position_id: str, automation_id: str) -> str:
-    return f"execution_intent:manage:{automation_id}:{position_id}"
+def _close_intent_id(position_id: str, trading_strategy_id: str) -> str:
+    return f"execution_intent:manage:{trading_strategy_id}:{position_id}"
 
 
 def _close_slot_key(position_id: str) -> str:
@@ -611,9 +571,7 @@ def _position_status(position: dict[str, Any]) -> str:
     return str(position.get("position_status") or position.get("status") or "").lower()
 
 
-def _position_close_block_reason(
-    position: dict[str, Any], *, now: datetime
-) -> str | None:
+def _position_close_block_reason(position: dict[str, Any], *, now: datetime) -> str | None:
     status = _position_status(position)
     if status and status not in OPEN_POSITION_STATUSES:
         return "position_not_open"
@@ -630,9 +588,7 @@ def _position_close_block_reason(
     if last_reconciled_at is None:
         return "awaiting_broker_reconciliation"
 
-    reconciliation_age_seconds = (
-        now - last_reconciled_at.astimezone(UTC)
-    ).total_seconds()
+    reconciliation_age_seconds = (now - last_reconciled_at.astimezone(UTC)).total_seconds()
     if reconciliation_age_seconds > CLOSE_RECONCILIATION_MAX_AGE_SECONDS:
         return "broker_reconciliation_stale"
 
@@ -705,7 +661,7 @@ def _evaluate_position_close_decision(
             "position_exit_policy",
             None,
         )
-    if not automation_should_run_now(runtime.automation.automation, now=now):
+    if runtime.strategy.management is None or not routine_should_run_now(runtime.strategy.management, now=now):
         return (
             {
                 "should_close": False,
@@ -726,11 +682,7 @@ def _evaluate_position_close_decision(
     decision = plan_position_management(
         runtime=runtime,
         position=position,
-        flatten_due=bot_time_reached(
-            runtime.bot.bot,
-            time_value=runtime.bot.bot.flatten_positions_at_et,
-            now=now,
-        ),
+        flatten_due=_time_reached(runtime.strategy.runtime.flatten_positions_at_et, now=now),
         now=now,
     )
     decision["decision_source"] = "management_runtime"
@@ -745,11 +697,7 @@ def describe_position_exit_state(
     management_runtimes: tuple[Any, ...] | None = None,
 ) -> dict[str, Any]:
     current_time = now or datetime.now(UTC)
-    runtimes = (
-        tuple(resolve_management_runtimes())
-        if management_runtimes is None
-        else tuple(management_runtimes)
-    )
+    runtimes = tuple(resolve_management_runtimes()) if management_runtimes is None else tuple(management_runtimes)
     decision, _decision_source, _runtime = _evaluate_position_close_decision(
         position=position,
         now=current_time,
@@ -761,11 +709,7 @@ def describe_position_exit_state(
         decision_source=_decision_source,
         decided_at=current_time.isoformat(timespec="seconds").replace("+00:00", "Z"),
     )
-    details = (
-        dict(decision.get("decision_details") or {})
-        if isinstance(decision.get("decision_details"), dict)
-        else {}
-    )
+    details = dict(decision.get("decision_details") or {}) if isinstance(decision.get("decision_details"), dict) else {}
     if not details:
         fallback = evaluate_exit_policy(
             position=position,
@@ -790,11 +734,7 @@ def describe_position_exit_state(
         }
     return {
         "decision_source": _as_text(decision.get("decision_source")),
-        "management_recipe_refs": [
-            str(value)
-            for value in list(decision.get("management_recipe_refs") or [])
-            if str(value or "").strip()
-        ],
+        "management_recipe_refs": [str(value) for value in list(decision.get("management_recipe_refs") or []) if str(value or "").strip()],
         "should_close": bool(decision.get("should_close")),
         "reason": str(decision.get("reason") or "unknown"),
         "close_decision_state": close_decision.get("decision_state"),
@@ -832,9 +772,8 @@ def _create_managed_close_intent(
     decision = {**decision, "close_decision": close_decision}
     return issue_pending_execution_intent(
         execution_store,
-        execution_intent_id=_close_intent_id(position_id, runtime.automation_id),
-        bot_id=runtime.bot_id,
-        automation_id=runtime.automation_id,
+        execution_intent_id=_close_intent_id(position_id, runtime.trading_strategy_id),
+        trading_strategy_id=runtime.trading_strategy_id,
         opportunity_decision_id=None,
         strategy_position_id=position_id,
         execution_attempt_id=None,
@@ -842,10 +781,9 @@ def _create_managed_close_intent(
         slot_key=_close_slot_key(position_id),
         claim_token=None,
         policy_ref={
-            "bot_id": runtime.bot_id,
-            "automation_id": runtime.automation_id,
-            "strategy_config_id": runtime.strategy_config_id,
-            "strategy_id": runtime.strategy_id,
+            "trading_strategy_id": runtime.trading_strategy_id,
+            "trade_structure": runtime.trade_structure,
+            "routine": "manage",
         },
         config_hash=runtime.config_hash,
         state="pending",
@@ -864,9 +802,9 @@ def _create_managed_close_intent(
                 kind="management_runtime_exit",
                 decision=decision,
             ),
-            "execution_mode": runtime.automation.automation.execution_mode,
-            "approval_mode": runtime.automation.automation.approval_mode,
-            "execution_runtime": runtime.automation.automation.execution_runtime,
+            "execution_mode": runtime.strategy.execution.mode,
+            "approval_mode": runtime.strategy.execution.approval,
+            "execution_runtime": runtime.strategy.execution.runtime,
         },
         created_event_payload={
             "position_id": position_id,
@@ -875,14 +813,12 @@ def _create_managed_close_intent(
             "close_decision_id": close_decision.get("close_decision_id"),
             "close_decision_state": close_decision.get("decision_state"),
             "limit_price": decision.get("limit_price"),
-            "execution_runtime": runtime.automation.automation.execution_runtime,
+            "execution_runtime": runtime.strategy.execution.runtime,
         },
     )
 
 
-def _refresh_open_position_marks(
-    *, db_target: str, session_ids: list[str], storage: Any | None = None
-) -> None:
+def _refresh_open_position_marks(*, db_target: str, session_ids: list[str], storage: Any | None = None) -> None:
     refresh_session_position_marks(
         db_target=db_target,
         session_ids=session_ids,
@@ -894,6 +830,7 @@ def _refresh_open_position_marks(
 def run_position_exit_manager(
     *,
     db_target: str,
+    trading_strategy_id: str | None = None,
     storage: Any | None = None,
 ) -> dict[str, Any]:
     execution_store = storage.execution
@@ -913,15 +850,14 @@ def run_position_exit_manager(
     open_positions = [
         enrich_position_row(dict(position))
         for position in execution_store.list_positions(
+            trading_strategy_id=trading_strategy_id,
             statuses=OPEN_POSITION_STATUSES,
             limit=200,
         )
     ]
     if not open_positions:
         return {
-            "status": "degraded"
-            if open_attempt_guard.get("status") == "degraded"
-            else "ok",
+            "status": "degraded" if open_attempt_guard.get("status") == "degraded" else "ok",
             "position_count": 0,
             "evaluated": 0,
             "created_intents": 0,
@@ -982,18 +918,13 @@ def run_position_exit_manager(
 
     _refresh_open_position_marks(
         db_target=db_target,
-        session_ids=sorted(
-            {
-                str(position["session_id"])
-                for position in open_positions
-                if position.get("session_id")
-            }
-        ),
+        session_ids=sorted({str(position["session_id"]) for position in open_positions if position.get("session_id")}),
         storage=storage,
     )
     refreshed_positions = [
         enrich_position_row(dict(position))
         for position in execution_store.list_positions(
+            trading_strategy_id=trading_strategy_id,
             statuses=OPEN_POSITION_STATUSES,
             limit=200,
         )
@@ -1203,9 +1134,7 @@ def run_position_exit_manager(
             )
 
     return {
-        "status": "degraded"
-        if failures or open_attempt_guard.get("status") == "degraded"
-        else "ok",
+        "status": "degraded" if failures or open_attempt_guard.get("status") == "degraded" else "ok",
         "position_count": len(refreshed_positions),
         "evaluated": evaluated,
         "created_intents": created_intents,

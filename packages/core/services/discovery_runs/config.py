@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from core.runtime.config import default_database_url
-from core.services.bots import build_discovery_run_scope
 from core.services.live_pipelines import build_live_snapshot_label
 from core.services.market_dates import NEW_YORK
 from core.services.option_structures import normalize_strategy_family
@@ -13,6 +12,7 @@ from core.services.scanners.config import (
     RANKING_POLICY_ARG_KEYS,
     parse_args as parse_scanner_args,
 )
+from core.services.trading_strategies import TradingStrategyConfig, build_discovery_run_scope
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -25,9 +25,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Universe preset to scan. Default: 0dte_core",
     )
     parser.add_argument("--symbols", help="Optional comma-separated symbol list.")
-    parser.add_argument(
-        "--symbols-file", help="Optional file containing one symbol per line."
-    )
+    parser.add_argument("--symbols-file", help="Optional file containing one symbol per line.")
     parser.add_argument(
         "--strategy",
         default="combined",
@@ -131,22 +129,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def build_collection_args(
     overrides: dict[str, Any] | None = None,
     *,
-    options_automation_scope: dict[str, Any] | None = None,
+    trading_strategy_scope: dict[str, Any] | None = None,
 ) -> argparse.Namespace:
     args = parse_args([])
     for key, value in (overrides or {}).items():
         setattr(args, key, value)
     setattr(
         args,
-        "options_automation_scope",
-        {"enabled": False}
-        if options_automation_scope is None
-        else dict(options_automation_scope),
+        "trading_strategy_scope",
+        {"enabled": False} if trading_strategy_scope is None else dict(trading_strategy_scope),
     )
     return args
 
 
-def _options_automation_scope(args: argparse.Namespace) -> dict[str, Any]:
+def _trading_strategy_scope(args: argparse.Namespace) -> dict[str, Any]:
     try:
         strategy = str(getattr(args, "strategy", "") or "").strip() or None
         profile = str(getattr(args, "profile", "") or "").strip() or None
@@ -155,19 +151,19 @@ def _options_automation_scope(args: argparse.Namespace) -> dict[str, Any]:
             scanner_profile=profile,
         )
     except Exception as exc:
-        print(f"Options automation config unavailable: {exc}")
+        print(f"Trading strategy config unavailable: {exc}")
         return {
             "enabled": False,
             "symbols": (),
             "scanner_strategy": None,
             "scanner_profile": None,
-            "entry_runtimes": [],
+            "entry_strategies": [],
         }
 
 
-def _apply_options_automation_overrides(args: argparse.Namespace) -> argparse.Namespace:
-    if not bool(getattr(args, "options_automation_enabled", False)):
-        setattr(args, "options_automation_scope", {"enabled": False})
+def _apply_trading_strategy_overrides(args: argparse.Namespace) -> argparse.Namespace:
+    if not bool(getattr(args, "trading_strategy_enabled", False)):
+        setattr(args, "trading_strategy_scope", {"enabled": False})
         return args
     if not str(getattr(args, "label", "") or "").strip():
         args.label = build_live_snapshot_label(
@@ -176,8 +172,8 @@ def _apply_options_automation_overrides(args: argparse.Namespace) -> argparse.Na
             profile=str(getattr(args, "profile", "0dte") or "0dte"),
             greeks_source=str(getattr(args, "greeks_source", "auto") or "auto"),
         )
-    scope = _options_automation_scope(args)
-    setattr(args, "options_automation_scope", scope)
+    scope = _trading_strategy_scope(args)
+    setattr(args, "trading_strategy_scope", scope)
     if not bool(scope.get("enabled")):
         return args
     symbols = list(scope.get("symbols") or [])
@@ -200,8 +196,9 @@ def _allowed_scope_symbols(scope: dict[str, Any]) -> set[str]:
 
 def _allowed_scope_families(scope: dict[str, Any]) -> set[str]:
     families: set[str] = set()
-    for _bot, automation in list(scope.get("entry_runtimes") or []):
-        families.add(str(automation.strategy_config.strategy_family))
+    for strategy in list(scope.get("entry_strategies") or []):
+        if isinstance(strategy, TradingStrategyConfig):
+            families.add(str(strategy.trade_structure))
     return families
 
 
@@ -221,10 +218,7 @@ def _filter_scope_candidates(
         matching = [
             dict(candidate)
             for candidate in candidates
-            if normalize_strategy_family(
-                candidate.get("strategy_family") or candidate.get("strategy")
-            )
-            in allowed_families
+            if normalize_strategy_family(candidate.get("strategy_family") or candidate.get("strategy")) in allowed_families
         ]
         if matching:
             filtered[str(symbol)] = matching
@@ -242,17 +236,10 @@ def _filter_scope_rows(
     allowed_families = _allowed_scope_families(scope)
     filtered: list[dict[str, Any]] = []
     for row in rows:
-        symbol = str(
-            row.get("underlying_symbol")
-            or row.get("symbol")
-            or row.get("root_symbol")
-            or ""
-        ).upper()
+        symbol = str(row.get("underlying_symbol") or row.get("symbol") or row.get("root_symbol") or "").upper()
         if allowed_symbols and symbol not in allowed_symbols:
             continue
-        family = normalize_strategy_family(
-            row.get("strategy_family") or row.get("strategy")
-        )
+        family = normalize_strategy_family(row.get("strategy_family") or row.get("strategy"))
         if family not in allowed_families:
             continue
         filtered.append(dict(row))
@@ -260,9 +247,7 @@ def _filter_scope_rows(
 
 
 def _merge_runtime_candidate_rows(
-    runtime_candidate_rows_by_owner: dict[
-        tuple[str, str], dict[str, list[dict[str, Any]]]
-    ],
+    runtime_candidate_rows_by_owner: dict[tuple[str, str], dict[str, list[dict[str, Any]]]],
 ) -> dict[str, list[dict[str, Any]]]:
     merged: dict[str, list[dict[str, Any]]] = {}
     for owner_rows in runtime_candidate_rows_by_owner.values():
@@ -289,12 +274,8 @@ def collection_window_is_open(
     current = datetime.now(NEW_YORK) if now is None else now.astimezone(NEW_YORK)
     if current.weekday() >= 5:
         return False
-    session_start = current.replace(
-        hour=9, minute=30, second=0, microsecond=0
-    ) + timedelta(minutes=session_start_offset_minutes)
-    session_end = current.replace(
-        hour=16, minute=0, second=0, microsecond=0
-    ) + timedelta(minutes=session_end_offset_minutes)
+    session_start = current.replace(hour=9, minute=30, second=0, microsecond=0) + timedelta(minutes=session_start_offset_minutes)
+    session_end = current.replace(hour=16, minute=0, second=0, microsecond=0) + timedelta(minutes=session_end_offset_minutes)
     return session_start <= current <= session_end
 
 

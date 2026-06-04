@@ -19,7 +19,7 @@ import {
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
-  buildRuntimeHref,
+  buildOpportunitiesHref,
   buildPipelineHref,
   buildGlobalEventsWebSocketUrl,
   parseGlobalRealtimeEvent,
@@ -106,12 +106,14 @@ function humanizeToken(value: string): string {
 }
 
 function resolveOperatorHrefFromPayload(payload: Record<string, unknown>): string {
-  const botId = readText(payload.bot_id);
-  const automationId = readText(payload.automation_id);
+  const tradingStrategyId = readText(payload.trading_strategy_id);
   const marketDate =
     readText(payload.market_date) ?? readText(payload.session_date);
-  if (botId && automationId) {
-    return buildRuntimeHref(botId, automationId, marketDate);
+  if (tradingStrategyId) {
+    return buildOpportunitiesHref({
+      tradingStrategyId,
+      marketDate,
+    });
   }
   const pipelineId = readText(payload.pipeline_id);
   if (pipelineId) {
@@ -284,72 +286,40 @@ function GlobalRealtimeBridge({
     const realtimeEvent = parseGlobalRealtimeEvent(payload);
     onEvent(realtimeEvent);
     const pipelineId = readText(realtimeEvent.payload.pipeline_id);
-    const botId = readText(realtimeEvent.payload.bot_id);
-    const automationId = readText(realtimeEvent.payload.automation_id);
     switch (realtimeEvent.topic) {
       case "alert.event.created":
       case "alert.event.updated":
         queryClient.invalidateQueries({ queryKey: ["pipelines"] });
-        queryClient.invalidateQueries({ queryKey: ["runtimes"] });
         queryClient.invalidateQueries({ queryKey: ["opportunities"] });
         if (pipelineId) {
           queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
-        }
-        if (botId && automationId) {
-          queryClient.invalidateQueries({
-            queryKey: ["runtimes", botId, automationId],
-          });
         }
         break;
       case "live.cycle.updated":
         queryClient.invalidateQueries({ queryKey: ["pipelines"] });
-        queryClient.invalidateQueries({ queryKey: ["runtimes"] });
         queryClient.invalidateQueries({ queryKey: ["opportunities"] });
         if (pipelineId) {
           queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
         }
-        if (botId && automationId) {
-          queryClient.invalidateQueries({
-            queryKey: ["runtimes", botId, automationId],
-          });
-        }
         break;
       case "job.run.updated":
         queryClient.invalidateQueries({ queryKey: ["pipelines"] });
-        queryClient.invalidateQueries({ queryKey: ["runtimes"] });
         if (pipelineId) {
           queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
-        }
-        if (botId && automationId) {
-          queryClient.invalidateQueries({
-            queryKey: ["runtimes", botId, automationId],
-          });
         }
         break;
       case "live.discovery_run.degraded":
         queryClient.invalidateQueries({ queryKey: ["pipelines"] });
-        queryClient.invalidateQueries({ queryKey: ["runtimes"] });
         if (pipelineId) {
           queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
-        }
-        if (botId && automationId) {
-          queryClient.invalidateQueries({
-            queryKey: ["runtimes", botId, automationId],
-          });
         }
         break;
       case "execution.attempt.updated":
         queryClient.invalidateQueries({ queryKey: ["account-overview"] });
         queryClient.invalidateQueries({ queryKey: ["pipelines"] });
-        queryClient.invalidateQueries({ queryKey: ["runtimes"] });
         queryClient.invalidateQueries({ queryKey: ["positions"] });
         if (pipelineId) {
           queryClient.invalidateQueries({ queryKey: ["pipelines", pipelineId] });
-        }
-        if (botId && automationId) {
-          queryClient.invalidateQueries({
-            queryKey: ["runtimes", botId, automationId],
-          });
         }
         break;
       default:

@@ -113,14 +113,8 @@ def _manual_pipeline_label(
     strategy_mode: str,
     strategy_family: str | None,
 ) -> str:
-    strategy_token = (
-        "auto" if strategy_mode == "auto" else str(strategy_family or "manual")
-    )
-    return (
-        f"{MANUAL_PIPELINE_LABEL_PREFIX}_{symbol.lower()}_{strategy_token.lower()}"
-        .replace("-", "_")
-        .replace(".", "_")
-    )
+    strategy_token = "auto" if strategy_mode == "auto" else str(strategy_family or "manual")
+    return f"{MANUAL_PIPELINE_LABEL_PREFIX}_{symbol.lower()}_{strategy_token.lower()}".replace("-", "_").replace(".", "_")
 
 
 def _discovery_run_event_sort_key(event: Mapping[str, Any]) -> tuple[Any, int]:
@@ -251,8 +245,7 @@ def _reconciliation_snapshot(portfolio: Mapping[str, Any]) -> dict[str, Any]:
     open_positions = [
         position
         for position in positions
-        if isinstance(position, Mapping)
-        and str(position.get("position_status") or "") in {"open", "partial_close"}
+        if isinstance(position, Mapping) and str(position.get("position_status") or "") in {"open", "partial_close"}
     ]
     if not open_positions:
         return {
@@ -260,22 +253,14 @@ def _reconciliation_snapshot(portfolio: Mapping[str, Any]) -> dict[str, Any]:
             "note": "No open positions require reconciliation.",
         }
 
-    mismatch_positions = [
-        position
-        for position in open_positions
-        if str(position.get("reconciliation_status") or "") == "mismatch"
-    ]
+    mismatch_positions = [position for position in open_positions if str(position.get("reconciliation_status") or "") == "mismatch"]
     if mismatch_positions:
         return {
             "status": "mismatch",
             "note": f"{len(mismatch_positions)} open position(s) have broker reconciliation mismatches.",
         }
 
-    pending_positions = [
-        position
-        for position in open_positions
-        if not position.get("last_reconciled_at")
-    ]
+    pending_positions = [position for position in open_positions if not position.get("last_reconciled_at")]
     if pending_positions:
         return {
             "status": "pending",
@@ -357,19 +342,14 @@ def _serialize_pipeline_summary(
         None if latest_run is None else str(latest_run.get("finished_at") or ""),
         None if latest_run is None else str(latest_run.get("heartbeat_at") or ""),
         None if latest_run is None else str(latest_run.get("started_at") or ""),
-        None
-        if latest_run is None
-        else str(latest_run.get("slot_at") or latest_run.get("scheduled_for") or ""),
+        None if latest_run is None else str(latest_run.get("slot_at") or latest_run.get("scheduled_for") or ""),
         str(latest_cycle.get("generated_at") or ""),
         str(pipeline.get("updated_at") or ""),
     )
     tradeability_fields = _tradeability_fields(
         latest_run=latest_run,
         slot_health=slot_health,
-        has_live_opportunities=bool(
-            int(candidate_counts.get("promotable") or 0)
-            or int(candidate_counts.get("monitor") or 0)
-        ),
+        has_live_opportunities=bool(int(candidate_counts.get("promotable") or 0) or int(candidate_counts.get("monitor") or 0)),
     )
     latest_auto_execution = _latest_auto_execution(latest_run)
     return {
@@ -382,17 +362,11 @@ def _serialize_pipeline_summary(
             slot_health=slot_health,
         ),
         "latest_market_date": str(latest_cycle["market_date"]),
-        "latest_slot_at": slot_health.get("latest_slot_at")
-        or (None if latest_run is None else latest_run.get("slot_at")),
-        "latest_slot_status": slot_health.get("latest_slot_status")
-        or (None if latest_run is None else latest_run.get("status")),
-        "latest_capture_status": None
-        if latest_run is None
-        else latest_run.get("capture_status"),
+        "latest_slot_at": slot_health.get("latest_slot_at") or (None if latest_run is None else latest_run.get("slot_at")),
+        "latest_slot_status": slot_health.get("latest_slot_status") or (None if latest_run is None else latest_run.get("status")),
+        "latest_capture_status": None if latest_run is None else latest_run.get("capture_status"),
         "latest_auto_execution": latest_auto_execution,
-        "latest_auto_execution_status": None
-        if latest_auto_execution is None
-        else latest_auto_execution.get("status"),
+        "latest_auto_execution_status": None if latest_auto_execution is None else latest_auto_execution.get("status"),
         "promotable_count": int(candidate_counts.get("promotable") or 0),
         "monitor_count": int(candidate_counts.get("monitor") or 0),
         "alert_count": int(alert_count or 0),
@@ -400,9 +374,7 @@ def _serialize_pipeline_summary(
         "gap_active": bool(slot_health.get("gap_active")),
         "recovery_state": slot_health.get("recovery_state"),
         "missed_slot_count": int(slot_health.get("missed_slot_count") or 0),
-        "unrecoverable_slot_count": int(
-            slot_health.get("unrecoverable_slot_count") or 0
-        ),
+        "unrecoverable_slot_count": int(slot_health.get("unrecoverable_slot_count") or 0),
         "latest_fresh_slot_at": slot_health.get("latest_fresh_slot_at"),
         "latest_resume_slot_at": slot_health.get("latest_resume_slot_at"),
         **tradeability_fields,
@@ -412,16 +384,8 @@ def _serialize_pipeline_summary(
         "product_scope": pipeline.get("product_scope_json"),
         "policy": pipeline.get("policy_json"),
         "session_schedule": dict(pipeline.get("session_schedule") or {}),
-        "resolved_ranking_policy": (
-            dict(resolved_ranking_policy or {})
-            if isinstance(resolved_ranking_policy, Mapping)
-            else None
-        ),
-        "ranking_policy_gate_summary": (
-            dict(ranking_policy_gate_summary or {})
-            if isinstance(ranking_policy_gate_summary, Mapping)
-            else None
-        ),
+        "resolved_ranking_policy": (dict(resolved_ranking_policy or {}) if isinstance(resolved_ranking_policy, Mapping) else None),
+        "ranking_policy_gate_summary": (dict(ranking_policy_gate_summary or {}) if isinstance(ranking_policy_gate_summary, Mapping) else None),
     }
 
 
@@ -439,12 +403,7 @@ def list_pipelines(
         market_date=market_date,
         limit=max(limit * 5, limit),
     )
-    alert_counts = alert_store.count_alert_events_by_session_keys(
-        [
-            (str(session["market_date"]), str(session["label"]))
-            for session in live_sessions
-        ]
-    )
+    alert_counts = alert_store.count_alert_events_by_session_keys([(str(session["market_date"]), str(session["label"])) for session in live_sessions])
 
     summaries: list[dict[str, Any]] = []
     for session in live_sessions:
@@ -455,23 +414,14 @@ def list_pipelines(
                 latest_run=session.get("latest_run"),
                 slot_health=dict(session.get("slot_health") or {}),
                 candidate_counts=dict(session.get("candidate_counts") or {}),
-                alert_count=int(
-                    alert_counts.get(
-                        (str(session["market_date"]), str(session["label"]))
-                    )
-                    or 0
-                ),
+                alert_count=int(alert_counts.get((str(session["market_date"]), str(session["label"]))) or 0),
                 resolved_ranking_policy=session.get("resolved_ranking_policy"),
-                ranking_policy_gate_summary=session.get(
-                    "ranking_policy_gate_summary"
-                ),
+                ranking_policy_gate_summary=session.get("ranking_policy_gate_summary"),
             )
         )
 
     summaries.sort(
-        key=lambda row: _parse_sort_value(
-            None if not row.get("updated_at") else str(row["updated_at"])
-        ),
+        key=lambda row: _parse_sort_value(None if not row.get("updated_at") else str(row["updated_at"])),
         reverse=True,
     )
     return {"pipelines": summaries[:limit]}
@@ -535,7 +485,7 @@ def start_pipeline_run(
         "allow_off_hours": True,
         "session_start_offset_minutes": 0,
         "session_end_offset_minutes": 0,
-        "options_automation_enabled": False,
+        "trading_strategy_enabled": False,
         "singleton_scope": f"manual:{label}",
         "manual_run": True,
     }
@@ -611,20 +561,12 @@ def get_pipeline_detail(
             storage=storage,
             cycle_id=cycle_id,
         )
-        resolved_pipeline_id = str(
-            live_session.get("pipeline", {}).get("pipeline_id")
-            or live_session.get("cycle", {}).get("pipeline_id")
-            or ""
-        )
+        resolved_pipeline_id = str(live_session.get("pipeline", {}).get("pipeline_id") or live_session.get("cycle", {}).get("pipeline_id") or "")
         if resolved_pipeline_id != pipeline_id:
-            raise ValueError(
-                f"cycle_id={cycle_id} does not belong to pipeline_id={pipeline_id}"
-            )
+            raise ValueError(f"cycle_id={cycle_id} does not belong to pipeline_id={pipeline_id}")
         resolved_market_date = str(live_session.get("market_date") or "")
         if market_date is not None and resolved_market_date != market_date:
-            raise ValueError(
-                f"cycle_id={cycle_id} does not belong to market_date={market_date}"
-            )
+            raise ValueError(f"cycle_id={cycle_id} does not belong to market_date={market_date}")
     return _build_pipeline_detail_payload(
         db_target=db_target,
         storage=storage,
@@ -648,31 +590,20 @@ def _build_pipeline_detail_payload(
 
     pipeline = dict(live_session["pipeline"])
     latest_cycle = dict(live_session["cycle"])
-    pipeline_id = str(
-        latest_cycle.get("pipeline_id") or pipeline.get("pipeline_id") or ""
-    ) or build_pipeline_id(str(latest_cycle["label"]))
+    pipeline_id = str(latest_cycle.get("pipeline_id") or pipeline.get("pipeline_id") or "") or build_pipeline_id(str(latest_cycle["label"]))
     label = str(live_session["label"])
     resolved_market_date = str(live_session["market_date"])
     legacy_session_id = str(live_session["session_id"])
     latest_run = live_session.get("latest_run")
     slot_runs = [dict(row) for row in list(live_session.get("slot_runs") or [])]
-    all_opportunities = [
-        dict(row) for row in list(live_session.get("opportunities") or [])
-    ]
-    live_opportunities = [
-        dict(row) for row in list(live_session.get("live_opportunities") or [])
-    ]
-    analysis_only_opportunities = [
-        dict(row)
-        for row in list(live_session.get("analysis_only_opportunities") or [])
-    ]
+    all_opportunities = [dict(row) for row in list(live_session.get("opportunities") or [])]
+    live_opportunities = [dict(row) for row in list(live_session.get("live_opportunities") or [])]
+    analysis_only_opportunities = [dict(row) for row in list(live_session.get("analysis_only_opportunities") or [])]
     selection_counts = dict(live_session.get("selection_counts") or {})
     candidate_counts = dict(live_session.get("candidate_counts") or {})
-    automation_summary = dict(live_session.get("automation_summary") or {})
+    strategy_sync_summary = dict(live_session.get("strategy_sync_summary") or {})
     resolved_ranking_policy = dict(live_session.get("resolved_ranking_policy") or {})
-    ranking_policy_gate_summary = dict(
-        live_session.get("ranking_policy_gate_summary") or {}
-    )
+    ranking_policy_gate_summary = dict(live_session.get("ranking_policy_gate_summary") or {})
     current_cycle = {
         **_build_cycle_payload(
             pipeline_id=pipeline_id,
@@ -686,7 +617,7 @@ def _build_pipeline_detail_payload(
         "promotable_count": int(selection_counts.get("promotable") or 0),
         "monitor_count": int(selection_counts.get("monitor") or 0),
         "legacy_session_id": legacy_session_id,
-        "automation_summary": automation_summary,
+        "strategy_sync_summary": strategy_sync_summary,
         "resolved_ranking_policy": resolved_ranking_policy,
         "ranking_policy_gate_summary": ranking_policy_gate_summary,
         "raw_candidate_summary": dict(live_session.get("raw_candidate_summary") or {}),
@@ -718,9 +649,7 @@ def _build_pipeline_detail_payload(
         None if latest_run is None else str(latest_run.get("finished_at") or ""),
         None if latest_run is None else str(latest_run.get("heartbeat_at") or ""),
         None if latest_run is None else str(latest_run.get("started_at") or ""),
-        None
-        if latest_run is None
-        else str(latest_run.get("slot_at") or latest_run.get("scheduled_for") or ""),
+        None if latest_run is None else str(latest_run.get("slot_at") or latest_run.get("scheduled_for") or ""),
         str(current_cycle.get("generated_at") or ""),
         str(pipeline.get("updated_at") or ""),
     )
@@ -759,9 +688,7 @@ def _build_pipeline_detail_payload(
     control_snapshot = get_control_state_snapshot(storage=storage)
     live_action_gate = _session_live_action_gate(latest_run)
     slot_health = dict(live_session.get("slot_health") or {})
-    recovery_slots = [
-        dict(row) for row in list(live_session.get("recovery_slots") or [])
-    ]
+    recovery_slots = [dict(row) for row in list(live_session.get("recovery_slots") or [])]
     runtime_owned = pipeline_uses_runtime_owned_opportunities(
         pipeline,
         latest_run,
@@ -826,7 +753,7 @@ def _build_pipeline_detail_payload(
         "pipeline": dict(pipeline),
         "current_cycle": current_cycle,
         "raw_candidate_summary": dict(live_session.get("raw_candidate_summary") or {}),
-        "automation_summary": automation_summary,
+        "strategy_sync_summary": strategy_sync_summary,
         "cycles": cycles,
         "opportunities": live_opportunities,
         "analysis_only_opportunities": analysis_only_opportunities,

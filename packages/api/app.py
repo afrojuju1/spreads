@@ -18,7 +18,6 @@ if str(PACKAGES) not in sys.path:
 from api.errors import ApiError, api_error_handler
 from api.lifespan import api_lifespan
 from api.routes.account import router as account_router
-from api.routes.automations import router as automations_router
 from api.routes.company_valuation import router as company_valuation_router
 from api.routes.control import router as control_router
 from api.routes.events_ws import router as events_ws_router
@@ -76,7 +75,6 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(account_router)
-    app.include_router(automations_router)
     app.include_router(control_router)
     app.include_router(pipelines_router)
     app.include_router(opportunities_router)

@@ -5,14 +5,12 @@ from collections.abc import Callable
 
 import typer
 
-from core.cli.backtest import backtest_app
 from core.cli.company_valuation import company_valuation_app
 from core.cli.config import config_app
 from core.cli.deploy import deploy_app
 from core.cli.lifecycle import lifecycle_app
 from core.cli.ops import (
     audit_command,
-    finviz_ledger_command,
     jobs_app,
     live_doctor_command,
     market_open_monitor_command,
@@ -23,7 +21,6 @@ from core.cli.ops import (
 from core.cli.market_intel import market_intel_app
 from core.cli.retention import retention_app
 from core.cli.runtime import (
-    automations_command,
     execution_runtimes_command,
     opportunities_command,
     pipelines_command,
@@ -34,6 +31,7 @@ from core.services.deployments import (
     get_deploy_target,
     run_target_spreads_command,
 )
+
 PASSTHROUGH_CONTEXT_SETTINGS = {
     "allow_extra_args": True,
     "ignore_unknown_options": True,
@@ -50,9 +48,7 @@ TARGETABLE_ROOT_COMMANDS = {
     "trading",
     "live-doctor",
     "market-open-monitor",
-    "finviz-ledger",
     "pipelines",
-    "automations",
     "opportunities",
     "positions",
     "execution-runtimes",
@@ -132,38 +128,17 @@ def _run_passthrough(
 
 app.command("status", help="Show system and runtime health.")(status_command)
 app.command("trading", help="Show live trading safety and readiness.")(trading_command)
-app.command("live-doctor", help="Run the compact live trading health doctor.")(
-    live_doctor_command
-)
-app.command("market-open-monitor", help="Watch the market-open live health doctor.")(
-    market_open_monitor_command
-)
-app.command("finviz-ledger", help="Show Finviz direct trading ledger.")(
-    finviz_ledger_command
-)
+app.command("live-doctor", help="Run the compact live trading health doctor.")(live_doctor_command)
+app.command("market-open-monitor", help="Watch the market-open live health doctor.")(market_open_monitor_command)
 app.command(
     "pipelines",
     help="List discovery sessions or inspect one pipeline compatibility view.",
-)(
-    pipelines_command
-)
-app.command("automations", help="List bot automation runtimes or inspect one.")(
-    automations_command
-)
-app.command("opportunities", help="List opportunities or inspect one opportunity.")(
-    opportunities_command
-)
-app.command("positions", help="List positions or inspect one position.")(
-    positions_command
-)
-app.command("execution-runtimes", help="Show execution runtime capabilities.")(
-    execution_runtimes_command
-)
-app.command("audit", help="Audit one pipeline date for operator investigation.")(
-    audit_command
-)
+)(pipelines_command)
+app.command("opportunities", help="List opportunities or inspect one opportunity.")(opportunities_command)
+app.command("positions", help="List positions or inspect one position.")(positions_command)
+app.command("execution-runtimes", help="Show execution runtime capabilities.")(execution_runtimes_command)
+app.command("audit", help="Audit one pipeline date for operator investigation.")(audit_command)
 app.add_typer(jobs_app, name="jobs")
-app.add_typer(backtest_app, name="backtest")
 app.add_typer(company_valuation_app, name="company-valuation")
 app.add_typer(config_app, name="config")
 app.add_typer(deploy_app, name="deploy")

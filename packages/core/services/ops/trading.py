@@ -7,7 +7,6 @@ from typing import Any
 
 from core.db.decorators import with_storage
 from core.jobs.specs import get_declared_job_row
-from core.services.bot_analytics import build_automation_performance_summary
 from core.services.broker_sync import BROKER_SYNC_KEY
 from core.services.execution import OPEN_STATUSES
 from core.services.exit_manager import describe_position_exit_state
@@ -29,14 +28,13 @@ from core.services.value_coercion import (
 from core.jobs.orchestration import NEW_YORK
 
 from .discovery_runs import (
-    _bot_runtime_summary,
     _latest_discovery_runs,
+    _trading_strategy_runtime_summary,
 )
 from .broker_sync import broker_sync_payload as _broker_sync_payload
 from .market_session import market_session_context as _market_session_context
 from .shared import (
     _attention,
-    _automation_dispatch_gap_summary,
     _combine_statuses,
     _control_status,
     _seconds_since,
@@ -56,10 +54,8 @@ def _alert_delivery_payload(
     recent_rows = [
         row
         for row in rows
-        if _seconds_since(row.get("updated_at") or row.get("created_at"), now=now)
-        is not None
-        and (_seconds_since(row.get("updated_at") or row.get("created_at"), now=now) or 0)
-        <= 24 * 60 * 60
+        if _seconds_since(row.get("updated_at") or row.get("created_at"), now=now) is not None
+        and (_seconds_since(row.get("updated_at") or row.get("created_at"), now=now) or 0) <= 24 * 60 * 60
     ]
     counts = Counter(str(row.get("status") or "unknown") for row in recent_rows)
     status = "healthy"
@@ -74,9 +70,7 @@ def _alert_delivery_payload(
         "retry_wait_count": counts.get("retry_wait", 0),
         "dispatching_count": counts.get("dispatching", 0),
         "pending_count": counts.get("pending", 0),
-        "historical_status_counts": dict(
-            Counter(str(row.get("status") or "unknown") for row in rows)
-        ),
+        "historical_status_counts": dict(Counter(str(row.get("status") or "unknown") for row in rows)),
     }
 
 
@@ -108,9 +102,7 @@ def _load_execution_attempt_job_context(
 ) -> tuple[dict[str, Mapping[str, Any] | None], dict[str, Mapping[str, Any] | None]]:
     submit_jobs: dict[str, Mapping[str, Any] | None] = {}
     source_definitions: dict[str, Mapping[str, Any] | None] = {}
-    if job_store is None or (
-        hasattr(job_store, "schema_ready") and not job_store.schema_ready()
-    ):
+    if job_store is None or (hasattr(job_store, "schema_ready") and not job_store.schema_ready()):
         return submit_jobs, source_definitions
 
     for attempt in attempts:
@@ -118,9 +110,7 @@ def _load_execution_attempt_job_context(
         if execution_attempt_id is None:
             continue
         try:
-            submit_jobs[execution_attempt_id] = job_store.get_job_run(
-                resolve_execution_submit_job_run_id(execution_attempt_id)
-            )
+            submit_jobs[execution_attempt_id] = job_store.get_job_run(resolve_execution_submit_job_run_id(execution_attempt_id))
         except Exception:
             submit_jobs[execution_attempt_id] = None
 
@@ -145,9 +135,7 @@ def _execution_attempt_lifecycle(
     source_job = resolve_execution_attempt_source_job(attempt)
     source_job_key = _as_text(source_job.get("job_key"))
     submit_job = submit_jobs.get(execution_attempt_id)
-    source_definition = (
-        None if source_job_key is None else source_definitions.get(source_job_key)
-    )
+    source_definition = None if source_job_key is None else source_definitions.get(source_job_key)
     attached_lifecycle = attempt.get("execution_attempt_lifecycle")
     if isinstance(attached_lifecycle, Mapping):
         return dict(attached_lifecycle)
@@ -190,9 +178,7 @@ def _summarize_execution_attempt(
         "submission_grace_seconds": lifecycle_payload.get("submission_grace_seconds"),
         "submit_job_status": lifecycle_payload.get("submit_job_status"),
         "submit_job_age_seconds": lifecycle_payload.get("submit_job_age_seconds"),
-        "submit_job_heartbeat_age_seconds": lifecycle_payload.get(
-            "submit_job_heartbeat_age_seconds"
-        ),
+        "submit_job_heartbeat_age_seconds": lifecycle_payload.get("submit_job_heartbeat_age_seconds"),
         "stale": bool(lifecycle_payload.get("stale")),
         "next_action": lifecycle_payload.get("next_action"),
         "blocks_capacity": bool(lifecycle_payload.get("blocks_capacity")),
@@ -229,8 +215,7 @@ def build_trading_health(
             _attention(
                 severity="high" if control_status == "halted" else "medium",
                 code=f"control_mode_{control.get('mode')}",
-                message=_as_text(control.get("note"))
-                or f"Control mode is {control.get('mode')}.",
+                message=_as_text(control.get("note")) or f"Control mode is {control.get('mode')}.",
             )
         )
 
@@ -324,60 +309,19 @@ def build_trading_health(
 
     execution_store = storage.execution
     job_store = getattr(storage, "jobs", None)
-    if (
-        job_store is not None
-        and hasattr(job_store, "schema_ready")
-        and job_store.schema_ready()
-    ):
+    if job_store is not None and hasattr(job_store, "schema_ready") and job_store.schema_ready():
         latest_discovery_runs = _latest_discovery_runs(storage=storage, now=now)
     else:
         latest_discovery_runs = []
-    discovery_run_selection = _aggregate_selection_summaries(
-        [row.get("selection_summary") for row in latest_discovery_runs]
-    )
+    discovery_run_selection = _aggregate_selection_summaries([row.get("selection_summary") for row in latest_discovery_runs])
     details["latest_discovery_runs"] = latest_discovery_runs
     details["discovery_run_selection"] = discovery_run_selection
-    details["automation_runtime"] = _bot_runtime_summary(
-        storage=storage,
-        market_date=market_date,
-    )
-    details["automation_performance"] = build_automation_performance_summary(
+    details["trading_strategy_runtime"] = _trading_strategy_runtime_summary(
         storage=storage,
         market_date=market_date,
     )
     execution_runtimes = resolve_execution_runtime_capabilities()
     details["execution_runtimes"] = execution_runtimes
-    automation_execution_admission = (
-        (
-            (details["automation_performance"].get("entry_decision_audit") or {}).get(
-                "summary"
-            )
-        )
-        if isinstance(details["automation_performance"], Mapping)
-        else {}
-    )
-    details["automation_execution_admission"] = (
-        dict(automation_execution_admission)
-        if isinstance(automation_execution_admission, Mapping)
-        else {}
-    )
-    automation_dispatch_gap = _automation_dispatch_gap_summary(
-        details["automation_performance"]
-    )
-    details["automation_dispatch_gap"] = automation_dispatch_gap
-    if automation_dispatch_gap["has_dispatch_gap"]:
-        statuses.append("degraded")
-        attention.append(
-            _attention(
-                severity="medium",
-                code="automation_entry_dispatch_gap",
-                message=(
-                    f"Automation selected {automation_dispatch_gap['selected_count']} entry "
-                    f"opportunity(s) today, but {automation_dispatch_gap['dispatch_window_elapsed_count']} "
-                    "aged out before submission."
-                ),
-            )
-        )
     if execution_store.schema_ready():
         open_execution_attempts = [
             dict(row)
@@ -413,38 +357,24 @@ def build_trading_health(
         )
         for row in _sorted_by_activity(open_execution_attempts)
     ]
-    stale_open_execution_count = sum(
-        1 for row in summarized_open_execution_attempts if bool(row.get("stale"))
-    )
-    submit_unknown_execution_count = sum(
-        1
-        for row in summarized_open_execution_attempts
-        if str(row.get("lifecycle_phase") or "") == "submit_unknown"
-    )
+    stale_open_execution_count = sum(1 for row in summarized_open_execution_attempts if bool(row.get("stale")))
+    submit_unknown_execution_count = sum(1 for row in summarized_open_execution_attempts if str(row.get("lifecycle_phase") or "") == "submit_unknown")
     capacity_blocked_underlyings = sorted(
         {
             str(row.get("underlying_symbol") or "")
             for row in summarized_open_execution_attempts
-            if bool(row.get("blocks_capacity"))
-            and _as_text(row.get("underlying_symbol"))
+            if bool(row.get("blocks_capacity")) and _as_text(row.get("underlying_symbol"))
         }
     )
     capacity_blocked_underlying_count = len(capacity_blocked_underlyings)
-    execution_health_status = (
-        "degraded"
-        if stale_open_execution_count or submit_unknown_execution_count
-        else "healthy"
-    )
+    execution_health_status = "degraded" if stale_open_execution_count or submit_unknown_execution_count else "healthy"
     if submit_unknown_execution_count:
         statuses.append("degraded")
         attention.append(
             _attention(
                 severity="high",
                 code="execution_submit_unknown",
-                message=(
-                    f"{submit_unknown_execution_count} open execution attempt(s) have uncertain submit "
-                    "outcomes and still block capacity."
-                ),
+                message=(f"{submit_unknown_execution_count} open execution attempt(s) have uncertain submit " "outcomes and still block capacity."),
             )
         )
     elif stale_open_execution_count:
@@ -454,8 +384,7 @@ def build_trading_health(
                 severity="medium",
                 code="stale_open_executions_present",
                 message=(
-                    f"{stale_open_execution_count} open execution attempt(s) are stale and need "
-                    "reconciliation, cancellation, or operator review."
+                    f"{stale_open_execution_count} open execution attempt(s) are stale and need " "reconciliation, cancellation, or operator review."
                 ),
             )
         )
@@ -464,10 +393,7 @@ def build_trading_health(
             _attention(
                 severity="low",
                 code="open_execution_capacity_reserved",
-                message=(
-                    "Open execution attempts currently reserve capacity for "
-                    f"{', '.join(capacity_blocked_underlyings[:5])}."
-                ),
+                message=("Open execution attempts currently reserve capacity for " f"{', '.join(capacity_blocked_underlyings[:5])}."),
             )
         )
 
@@ -493,10 +419,7 @@ def build_trading_health(
             mark_age_seconds = _seconds_since(position.get("close_marked_at"), now=now)
             if close_mark is None:
                 missing_mark_count += 1
-            elif (
-                mark_age_seconds is not None
-                and mark_age_seconds > MARK_STALE_AFTER_SECONDS
-            ):
+            elif mark_age_seconds is not None and mark_age_seconds > MARK_STALE_AFTER_SECONDS:
                 stale_mark_count += 1
             if str(position.get("reconciliation_status") or "") == "mismatch":
                 reconciliation_mismatch_count += 1
@@ -511,9 +434,7 @@ def build_trading_health(
                     "session_id": position.get("session_id"),
                     "risk_status": risk.get("status"),
                     "risk_note": risk.get("note"),
-                    "mark_age_seconds": None
-                    if mark_age_seconds is None
-                    else round(mark_age_seconds, 2),
+                    "mark_age_seconds": None if mark_age_seconds is None else round(mark_age_seconds, 2),
                     "net_pnl": round(realized_pnl + unrealized_pnl, 2),
                     "exit_status": describe_position_exit_state(
                         position=position,
@@ -533,17 +454,9 @@ def build_trading_health(
         )
 
     mark_error = _as_text((broker_sync.get("summary") or {}).get("mark_error"))
-    broker_unquoted_positions = (
-        _coerce_int((broker_sync.get("summary") or {}).get("unquoted_position_count"))
-        or 0
-    )
+    broker_unquoted_positions = _coerce_int((broker_sync.get("summary") or {}).get("unquoted_position_count")) or 0
     mark_health_status = "healthy"
-    if (
-        missing_mark_count
-        or stale_mark_count
-        or broker_unquoted_positions
-        or mark_error
-    ):
+    if missing_mark_count or stale_mark_count or broker_unquoted_positions or mark_error:
         mark_health_status = "degraded"
         statuses.append("degraded")
         attention.append(
@@ -608,76 +521,18 @@ def build_trading_health(
         "reconciliation_mismatch_count": reconciliation_mismatch_count,
         "mark_health_status": mark_health_status,
         "discovery_run_count": len(latest_discovery_runs),
-        "discovery_run_opportunity_count": _coerce_int(
-            discovery_run_selection.get("opportunity_count")
+        "discovery_run_opportunity_count": _coerce_int(discovery_run_selection.get("opportunity_count")) or 0,
+        "discovery_run_shadow_only_count": _coerce_int(discovery_run_selection.get("shadow_only_count")) or 0,
+        "discovery_run_auto_live_eligible_count": _coerce_int(discovery_run_selection.get("auto_live_eligible_count")) or 0,
+        "trading_strategy_opportunity_count": _coerce_int((details.get("trading_strategy_runtime") or {}).get("opportunity_count")) or 0,
+        "trading_strategy_selected_count": _coerce_int(
+            ((details.get("trading_strategy_runtime") or {}).get("decision_state_counts") or {}).get("selected")
         )
         or 0,
-        "discovery_run_shadow_only_count": _coerce_int(
-            discovery_run_selection.get("shadow_only_count")
-        )
-        or 0,
-        "discovery_run_auto_live_eligible_count": _coerce_int(
-            discovery_run_selection.get("auto_live_eligible_count")
-        )
-        or 0,
-        "automation_opportunity_count": _coerce_int(
-            (details.get("automation_runtime") or {}).get("opportunity_count")
-        )
-        or 0,
-        "automation_selected_count": _coerce_int(
-            (
-                (details.get("automation_runtime") or {}).get("decision_state_counts")
-                or {}
-            ).get("selected")
-        )
-        or 0,
-        "automation_intent_count": _coerce_int(
-            (details.get("automation_runtime") or {}).get("intent_count")
-        )
-        or 0,
-        "automation_entry_intent_count": _coerce_int(
-            (details.get("automation_runtime") or {}).get("entry_intent_count")
-        )
-        or 0,
-        "automation_management_intent_count": _coerce_int(
-            (details.get("automation_runtime") or {}).get("management_intent_count")
-        )
-        or 0,
-        "automation_dispatch_gap_count": _coerce_int(
-            automation_dispatch_gap.get("dispatch_window_elapsed_count")
-        )
-        or 0,
-        "automation_open_position_count": _coerce_int(
-            (details.get("automation_runtime") or {}).get("open_position_count")
-        )
-        or 0,
-        "automation_daily_pnl": _coerce_float(
-            (details.get("automation_performance") or {}).get("daily_total_pnl")
-        ),
-        "selected_currently_admissible_count": _coerce_int(
-            (details.get("automation_execution_admission") or {}).get(
-                "selected_currently_admissible_count"
-            )
-        )
-        or 0,
-        "selected_currently_blocked_count": _coerce_int(
-            (details.get("automation_execution_admission") or {}).get(
-                "selected_currently_blocked_count"
-            )
-        )
-        or 0,
-        "blocked_by_buying_power_count": _coerce_int(
-            (details.get("automation_execution_admission") or {}).get(
-                "blocked_by_buying_power_count"
-            )
-        )
-        or 0,
-        "blocked_by_policy_or_risk_budget_count": _coerce_int(
-            (details.get("automation_execution_admission") or {}).get(
-                "blocked_by_policy_or_risk_budget_count"
-            )
-        )
-        or 0,
+        "trading_strategy_intent_count": _coerce_int((details.get("trading_strategy_runtime") or {}).get("intent_count")) or 0,
+        "trading_strategy_entry_intent_count": _coerce_int((details.get("trading_strategy_runtime") or {}).get("entry_intent_count")) or 0,
+        "trading_strategy_management_intent_count": _coerce_int((details.get("trading_strategy_runtime") or {}).get("management_intent_count")) or 0,
+        "trading_strategy_open_position_count": _coerce_int((details.get("trading_strategy_runtime") or {}).get("open_position_count")) or 0,
         "account_error": account_error,
     }
 

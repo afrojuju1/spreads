@@ -6,7 +6,8 @@ from typing import Any
 
 from core.db.decorators import with_storage
 from core.jobs.orchestration import NEW_YORK
-from core.jobs.specs import get_declared_job_row
+from core.services.execution_intents.shared import ACTIVE_INTENT_STATES, OPEN_POSITION_STATES
+from core.services.trading_strategies import resolve_trading_strategy
 from core.services.value_coercion import (
     as_text as _as_text,
     coerce_float as _coerce_float,
@@ -14,14 +15,14 @@ from core.services.value_coercion import (
     utc_now_iso as _utc_now,
 )
 
-from .finviz import DEFAULT_FEED_ID, build_finviz_direct_ledger
 from .jobs import build_jobs_overview
 from .shared import _attention, _combine_statuses, _seconds_since
 from .system import build_system_status
 from .trading import build_trading_health
 
-
 DEFAULT_RECENT_LIMIT = 5
+DEFAULT_FEED_ID = "finviz_momentum"
+DEFAULT_TRADING_STRATEGY_ID = "momentum_long_calls"
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -54,7 +55,7 @@ def _status_for_job_run(
 ) -> str:
     if row is None:
         return "blocked" if market_open else "idle"
-    status = str(row.get("job_status") or "unknown").strip().lower()
+    status = str(row.get("job_status") or row.get("status") or "unknown").strip().lower()
     if status == "succeeded":
         return "healthy"
     if status in {"queued", "running", "leased"}:
@@ -64,13 +65,29 @@ def _status_for_job_run(
 
 def _latest_completed_run(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     return next(
-        (
-            row
-            for row in rows
-            if str(row.get("job_status") or "").strip().lower() == "succeeded"
-        ),
+        (row for row in rows if str(row.get("job_status") or row.get("status") or "").strip().lower() == "succeeded"),
         None,
     )
+
+
+def _runs_for_job_key(
+    jobs_details: Mapping[str, Any],
+    job_key: str,
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    rows = [dict(item) for item in _list(jobs_details.get("runs")) if isinstance(item, Mapping) and str(item.get("job_key") or "") == job_key]
+    return rows[:limit]
+
+
+def _declared_job(
+    jobs_details: Mapping[str, Any],
+    job_key: str,
+) -> dict[str, Any]:
+    for item in _list(jobs_details.get("declared_jobs")):
+        if isinstance(item, Mapping) and str(item.get("job_key") or "") == job_key:
+            return dict(item)
+    return {}
 
 
 def _compact_feed_run(row: Mapping[str, Any] | None) -> dict[str, Any] | None:
@@ -78,7 +95,8 @@ def _compact_feed_run(row: Mapping[str, Any] | None) -> dict[str, Any] | None:
         return None
     return {
         "job_run_id": row.get("job_run_id"),
-        "job_status": row.get("job_status"),
+        "job_status": row.get("job_status") or row.get("status"),
+        "job_key": row.get("job_key"),
         "scheduled_for": row.get("scheduled_for"),
         "worker_name": row.get("worker_name"),
         "result_status": row.get("result_status"),
@@ -90,29 +108,21 @@ def _compact_feed_run(row: Mapping[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
-def _compact_direct_run(row: Mapping[str, Any] | None) -> dict[str, Any] | None:
+def _compact_strategy_run(row: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if row is None:
         return None
     return {
         "job_run_id": row.get("job_run_id"),
-        "job_status": row.get("job_status"),
+        "job_status": row.get("job_status") or row.get("status"),
+        "job_key": row.get("job_key"),
         "scheduled_for": row.get("scheduled_for"),
         "worker_name": row.get("worker_name"),
         "result_status": row.get("result_status"),
-        "feed_status": row.get("feed_status"),
-        "feed_job_run_id": row.get("feed_job_run_id"),
-        "entry_candidates": row.get("entry_candidates"),
-        "managed_positions": row.get("managed_positions"),
-        "active_entry_intents": row.get("active_entry_intents"),
-        "max_daily_entries": row.get("max_daily_entries"),
-        "daily_entry_budget": row.get("daily_entry_budget"),
-        "armed": row.get("armed"),
-        "entry_armed": row.get("entry_armed"),
+        "opportunity_count": row.get("opportunity_count"),
         "decision_count": row.get("decision_count"),
-        "created_count": row.get("created_count"),
-        "triggered_count": row.get("triggered_count"),
-        "reason_counts": row.get("reason_counts"),
-        "decisions": list(row.get("decisions") or [])[:8],
+        "execution_intent_id": row.get("execution_intent_id"),
+        "selected_opportunity_id": row.get("selected_opportunity_id"),
+        "reason": row.get("result_reason") or row.get("reason"),
     }
 
 
@@ -141,12 +151,7 @@ def _fresh_job_status(
     market_open: bool,
 ) -> tuple[str, float | None]:
     age_seconds = _age_seconds(scheduled_for, now=now)
-    if (
-        market_open
-        and base_status == "healthy"
-        and age_seconds is not None
-        and age_seconds > max_age_seconds
-    ):
+    if market_open and base_status == "healthy" and age_seconds is not None and age_seconds > max_age_seconds:
         return "degraded", age_seconds
     return base_status, age_seconds
 
@@ -158,14 +163,7 @@ def _checks_attention(checks: list[dict[str, Any]]) -> list[dict[str, str]]:
         if status in {"healthy", "idle"}:
             continue
         severity = "high" if status in {"blocked", "halted"} else "medium"
-        code = (
-            "live_doctor_"
-            + str(row.get("name") or "check")
-            .strip()
-            .lower()
-            .replace("/", "_")
-            .replace(" ", "_")
-        )
+        code = "live_doctor_" + str(row.get("name") or "check").strip().lower().replace("/", "_").replace(" ", "_")
         attention.append(
             _attention(
                 severity=severity,
@@ -179,10 +177,7 @@ def _checks_attention(checks: list[dict[str, Any]]) -> list[dict[str, str]]:
 def _lane_status_message(lanes: list[dict[str, Any]]) -> str:
     if not lanes:
         return "No worker lanes were reported."
-    return ", ".join(
-        f"{row.get('lane') or row.get('settings_name')}: {row.get('status')}"
-        for row in lanes
-    )
+    return ", ".join(f"{row.get('lane') or row.get('settings_name')}: {row.get('status')}" for row in lanes)
 
 
 def _position_sync_counts(positions: list[Any]) -> dict[str, int]:
@@ -207,12 +202,7 @@ def _position_sync_counts(positions: list[Any]) -> dict[str, int]:
 
 
 def _latest_closed_position_reason(positions: list[Any]) -> str | None:
-    closed = [
-        item
-        for item in positions
-        if isinstance(item, Mapping)
-        and str(item.get("status") or "").strip().lower() == "closed"
-    ]
+    closed = [item for item in positions if isinstance(item, Mapping) and str(item.get("status") or "").strip().lower() == "closed"]
     if not closed:
         return None
     closed.sort(key=lambda item: str(item.get("closed_at") or ""), reverse=True)
@@ -224,6 +214,7 @@ def build_live_doctor(
     *,
     db_target: str | None = None,
     feed_id: str = DEFAULT_FEED_ID,
+    trading_strategy_id: str = DEFAULT_TRADING_STRATEGY_ID,
     market_date: str | None = None,
     limit: int = DEFAULT_RECENT_LIMIT,
     storage: Any | None = None,
@@ -231,45 +222,26 @@ def build_live_doctor(
     generated_at = _utc_now()
     now = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
     resolved_feed_id = _as_text(feed_id) or DEFAULT_FEED_ID
-    resolved_market_date = (
-        _as_text(market_date) or datetime.now(NEW_YORK).date().isoformat()
-    )
+    resolved_trading_strategy_id = _as_text(trading_strategy_id) or DEFAULT_TRADING_STRATEGY_ID
+    resolved_market_date = _as_text(market_date) or datetime.now(NEW_YORK).date().isoformat()
 
     system = build_system_status(db_target=db_target, storage=storage)
     trading = build_trading_health(db_target=db_target, storage=storage)
     jobs = build_jobs_overview(db_target=db_target, limit=max(limit * 5, 25), storage=storage)
-    finviz = build_finviz_direct_ledger(
-        db_target=db_target,
-        feed_id=resolved_feed_id,
-        market_date=resolved_market_date,
-        limit=limit,
-        storage=storage,
-    )
 
     system_summary = _mapping(system.get("summary"))
     trading_summary = _mapping(trading.get("summary"))
     jobs_summary = _mapping(jobs.get("summary"))
-    finviz_summary = _mapping(finviz.get("summary"))
     system_details = _mapping(system.get("details"))
     trading_details = _mapping(trading.get("details"))
     jobs_details = _mapping(jobs.get("details"))
-    finviz_details = _mapping(finviz.get("details"))
     market_session = _mapping(system_details.get("market_session"))
     market_open = bool(market_session.get("is_open"))
 
-    direct_job_key = f"finviz_direct_trading:{resolved_feed_id}"
-    direct_definition = get_declared_job_row(direct_job_key) or {}
-    direct_payload = _mapping(direct_definition.get("payload"))
-    max_feed_age_seconds = _coerce_int(direct_payload.get("max_feed_age_seconds")) or 300
-    max_open_positions = _coerce_int(direct_payload.get("max_open_positions"))
-    max_new_positions_per_run = _coerce_int(
-        direct_payload.get("max_new_positions_per_run")
-    )
-    max_daily_entries = _coerce_int(
-        direct_payload.get("max_daily_entries", direct_payload.get("max_session_entries"))
-    )
-    if max_daily_entries is not None and max_daily_entries <= 0:
-        max_daily_entries = None
+    strategy = resolve_trading_strategy(resolved_trading_strategy_id)
+    max_feed_age_seconds = strategy.source.max_age_seconds or 300
+    max_open_positions = strategy.max_open_positions or None
+    max_daily_entries = strategy.max_new_entries_per_day
 
     checks: list[dict[str, Any]] = []
     market_status = "healthy" if market_open else "idle"
@@ -315,14 +287,8 @@ def build_live_doctor(
         )
     )
 
-    lanes = [
-        dict(item)
-        for item in _list(jobs_details.get("worker_lanes"))
-        if isinstance(item, Mapping)
-    ]
-    lane_status = _combine_statuses(
-        *(str(row.get("status") or "unknown") for row in lanes)
-    )
+    lanes = [dict(item) for item in _list(jobs_details.get("worker_lanes")) if isinstance(item, Mapping)]
+    lane_status = _combine_statuses(*(str(row.get("status") or "unknown") for row in lanes))
     checks.append(
         _check(
             "Worker Lanes",
@@ -330,12 +296,8 @@ def build_live_doctor(
             message=_lane_status_message(lanes),
             metrics={
                 "lane_count": len(lanes),
-                "blocked_lane_count": sum(
-                    1 for row in lanes if str(row.get("status") or "") == "blocked"
-                ),
-                "idle_lane_count": sum(
-                    1 for row in lanes if str(row.get("status") or "") == "idle"
-                ),
+                "blocked_lane_count": sum(1 for row in lanes if str(row.get("status") or "") == "blocked"),
+                "idle_lane_count": sum(1 for row in lanes if str(row.get("status") or "") == "idle"),
             },
         )
     )
@@ -352,10 +314,7 @@ def build_live_doctor(
         _check(
             "Job Runs",
             status=jobs_status,
-            message=(
-                f"failed={actionable_failed_count}, stale_running={stale_running_count}, "
-                f"stale_queued={stale_queued_job_count}"
-            ),
+            message=(f"failed={actionable_failed_count}, stale_running={stale_running_count}, " f"stale_queued={stale_queued_job_count}"),
             metrics={
                 "actionable_failed_count": actionable_failed_count,
                 "stale_running_count": stale_running_count,
@@ -389,20 +348,13 @@ def build_live_doctor(
         _check(
             "Broker Sync",
             status=broker_status,
-            message=(
-                f"broker_sync={broker_sync.get('status') or 'unknown'}, "
-                f"freshness={broker_freshness}, age={broker_sync.get('age_seconds')}"
-            ),
+            message=(f"broker_sync={broker_sync.get('status') or 'unknown'}, " f"freshness={broker_freshness}, age={broker_sync.get('age_seconds')}"),
             metrics={
                 "updated_at": broker_sync.get("updated_at"),
                 "age_seconds": broker_sync.get("age_seconds"),
                 "freshness": broker_freshness,
-                "mismatch_position_count": _mapping(broker_sync.get("summary")).get(
-                    "mismatch_position_count"
-                ),
-                "orphan_broker_position_count": _mapping(broker_sync.get("summary")).get(
-                    "orphan_broker_position_count"
-                ),
+                "mismatch_position_count": _mapping(broker_sync.get("summary")).get("mismatch_position_count"),
+                "orphan_broker_position_count": _mapping(broker_sync.get("summary")).get("orphan_broker_position_count"),
             },
         )
     )
@@ -439,22 +391,26 @@ def build_live_doctor(
         )
     )
 
-    feed_runs = [
-        dict(item)
-        for item in _list(finviz_details.get("recent_feed_runs"))
-        if isinstance(item, Mapping)
-    ]
+    feed_job_key = f"symbol_feed:{resolved_feed_id}"
+    entry_job_key = f"trading_strategy:{resolved_trading_strategy_id}:entry"
+    manage_job_key = f"trading_strategy:{resolved_trading_strategy_id}:manage"
+    dispatch_job_key = "execution_intent_dispatch:global"
+
+    feed_runs = _runs_for_job_key(jobs_details, feed_job_key, limit=limit)
+    feed_definition = _declared_job(jobs_details, feed_job_key)
     newest_feed = feed_runs[0] if feed_runs else None
     latest_feed = newest_feed
-    if (
-        newest_feed is not None
-        and str(newest_feed.get("job_status") or "").strip().lower() != "succeeded"
-    ):
+    if newest_feed is not None and str(newest_feed.get("job_status") or newest_feed.get("status") or "").strip().lower() != "succeeded":
         latest_feed = _latest_completed_run(feed_runs) or newest_feed
+    if latest_feed is None and feed_definition:
+        latest_feed = {
+            "job_run_id": feed_definition.get("latest_run_id"),
+            "job_status": feed_definition.get("latest_run_status"),
+            "scheduled_for": feed_definition.get("latest_run_at") or feed_definition.get("expected_slot_at"),
+            "operator_status": feed_definition.get("operator_status"),
+        }
     feed_status = _status_for_job_run(latest_feed, market_open=market_open)
-    feed_scheduled_for = (
-        None if latest_feed is None else latest_feed.get("scheduled_for")
-    )
+    feed_scheduled_for = None if latest_feed is None else latest_feed.get("scheduled_for")
     feed_status, feed_age_seconds = _fresh_job_status(
         base_status=feed_status,
         scheduled_for=feed_scheduled_for,
@@ -476,8 +432,9 @@ def build_live_doctor(
             ),
             metrics={
                 "feed_id": resolved_feed_id,
+                "job_key": feed_job_key,
                 "job_run_id": None if latest_feed is None else latest_feed.get("job_run_id"),
-                "job_status": None if latest_feed is None else latest_feed.get("job_status"),
+                "job_status": None if latest_feed is None else latest_feed.get("job_status") or latest_feed.get("status"),
                 "symbol_count": feed_symbol_count,
                 "candidate_count": None if latest_feed is None else latest_feed.get("candidate_count"),
                 "retained_count": None if latest_feed is None else latest_feed.get("retained_count"),
@@ -487,92 +444,166 @@ def build_live_doctor(
         )
     )
 
-    direct_runs = [
-        dict(item)
-        for item in _list(finviz_details.get("recent_direct_runs"))
-        if isinstance(item, Mapping)
-    ]
-    newest_direct = direct_runs[0] if direct_runs else None
-    latest_direct = newest_direct
-    if (
-        newest_direct is not None
-        and str(newest_direct.get("job_status") or "").strip().lower() != "succeeded"
-    ):
-        latest_direct = _latest_completed_run(direct_runs) or newest_direct
-    direct_status = _status_for_job_run(latest_direct, market_open=market_open)
-    direct_scheduled_for = (
-        None if latest_direct is None else latest_direct.get("scheduled_for")
+    entry_runs = _runs_for_job_key(jobs_details, entry_job_key, limit=limit)
+    entry_definition = _declared_job(jobs_details, entry_job_key)
+    newest_entry = entry_runs[0] if entry_runs else None
+    latest_entry = newest_entry
+    if newest_entry is not None and str(newest_entry.get("job_status") or newest_entry.get("status") or "").strip().lower() != "succeeded":
+        latest_entry = _latest_completed_run(entry_runs) or newest_entry
+    if latest_entry is None and entry_definition:
+        latest_entry = {
+            "job_run_id": entry_definition.get("latest_run_id"),
+            "job_status": entry_definition.get("latest_run_status"),
+            "scheduled_for": entry_definition.get("latest_run_at") or entry_definition.get("expected_slot_at"),
+            "operator_status": entry_definition.get("operator_status"),
+        }
+    entry_status = _status_for_job_run(latest_entry, market_open=market_open)
+    entry_scheduled_for = None if latest_entry is None else latest_entry.get("scheduled_for")
+    entry_max_age_seconds = max(
+        int((strategy.entry.schedule.cadence_minutes if strategy.entry else 2) * 60 * 2),
+        60,
     )
-    direct_status, direct_age_seconds = _fresh_job_status(
-        base_status=direct_status,
-        scheduled_for=direct_scheduled_for,
+    entry_status, entry_age_seconds = _fresh_job_status(
+        base_status=entry_status,
+        scheduled_for=entry_scheduled_for,
         now=now,
-        max_age_seconds=max_feed_age_seconds,
+        max_age_seconds=entry_max_age_seconds,
         market_open=market_open,
     )
-    direct_candidate_count = _coerce_int(
-        None if latest_direct is None else latest_direct.get("entry_candidates")
-    )
-    direct_entry_budget = _mapping(
-        None if latest_direct is None else latest_direct.get("daily_entry_budget")
-    )
-    direct_entry_used = _coerce_int(direct_entry_budget.get("used_entry_count"))
-    direct_entry_remaining = _coerce_int(
-        direct_entry_budget.get("remaining_entry_count")
-    )
-    if market_open and direct_status == "healthy" and (direct_candidate_count or 0) <= 0:
-        direct_status = "degraded"
+    entry_opportunity_count = _coerce_int(None if latest_entry is None else latest_entry.get("opportunity_count"))
     checks.append(
         _check(
-            "Finviz Direct",
-            status=direct_status,
+            "Strategy Entry",
+            status=entry_status,
             message=(
-                f"candidates={direct_candidate_count if direct_candidate_count is not None else '-'}; "
-                f"created={None if latest_direct is None else latest_direct.get('created_count')}; "
-                f"entries={direct_entry_used if direct_entry_used is not None else '-'}"
-                f"/{max_daily_entries if max_daily_entries is not None else '-'}; "
-                f"latest={direct_scheduled_for or '-'}"
+                f"strategy={resolved_trading_strategy_id}; "
+                f"opportunities={entry_opportunity_count if entry_opportunity_count is not None else '-'}; "
+                f"latest={entry_scheduled_for or '-'}"
             ),
             metrics={
-                "feed_id": resolved_feed_id,
-                "job_run_id": None if latest_direct is None else latest_direct.get("job_run_id"),
-                "job_status": None if latest_direct is None else latest_direct.get("job_status"),
-                "result_status": None if latest_direct is None else latest_direct.get("result_status"),
-                "entry_candidates": direct_candidate_count,
-                "active_entry_intents": None if latest_direct is None else latest_direct.get("active_entry_intents"),
-                "created_count": None if latest_direct is None else latest_direct.get("created_count"),
-                "reason_counts": None if latest_direct is None else latest_direct.get("reason_counts"),
-                "max_daily_entries": max_daily_entries,
-                "daily_entry_budget": direct_entry_budget,
-                "entry_budget_remaining": direct_entry_remaining,
-                "age_seconds": direct_age_seconds,
-                "max_age_seconds": max_feed_age_seconds,
+                "trading_strategy_id": resolved_trading_strategy_id,
+                "job_key": entry_job_key,
+                "job_run_id": None if latest_entry is None else latest_entry.get("job_run_id"),
+                "job_status": None if latest_entry is None else latest_entry.get("job_status") or latest_entry.get("status"),
+                "result_status": None if latest_entry is None else latest_entry.get("result_status"),
+                "opportunity_count": entry_opportunity_count,
+                "decision_count": None if latest_entry is None else latest_entry.get("decision_count"),
+                "selected_opportunity_id": None if latest_entry is None else latest_entry.get("selected_opportunity_id"),
+                "execution_intent_id": None if latest_entry is None else latest_entry.get("execution_intent_id"),
+                "age_seconds": entry_age_seconds,
+                "max_age_seconds": entry_max_age_seconds,
             },
         )
     )
 
-    active_intent_count = _coerce_int(finviz_summary.get("active_intent_count")) or 0
+    manage_runs = _runs_for_job_key(jobs_details, manage_job_key, limit=limit)
+    manage_definition = _declared_job(jobs_details, manage_job_key)
+    newest_manage = manage_runs[0] if manage_runs else None
+    latest_manage = newest_manage
+    if newest_manage is not None and str(newest_manage.get("job_status") or newest_manage.get("status") or "").strip().lower() != "succeeded":
+        latest_manage = _latest_completed_run(manage_runs) or newest_manage
+    if latest_manage is None and manage_definition:
+        latest_manage = {
+            "job_run_id": manage_definition.get("latest_run_id"),
+            "job_status": manage_definition.get("latest_run_status"),
+            "scheduled_for": manage_definition.get("latest_run_at") or manage_definition.get("expected_slot_at"),
+            "operator_status": manage_definition.get("operator_status"),
+        }
+    manage_status = _status_for_job_run(latest_manage, market_open=market_open)
+    manage_scheduled_for = None if latest_manage is None else latest_manage.get("scheduled_for")
+    manage_max_age_seconds = max(
+        int((strategy.management.schedule.cadence_minutes if strategy.management else 1) * 60 * 2),
+        60,
+    )
+    manage_status, manage_age_seconds = _fresh_job_status(
+        base_status=manage_status,
+        scheduled_for=manage_scheduled_for,
+        now=now,
+        max_age_seconds=manage_max_age_seconds,
+        market_open=market_open,
+    )
     checks.append(
         _check(
-            "Finviz Intents",
+            "Strategy Manage",
+            status=manage_status,
+            message=(f"strategy={resolved_trading_strategy_id}; " f"latest={manage_scheduled_for or '-'}; age={manage_age_seconds}"),
+            metrics={
+                "trading_strategy_id": resolved_trading_strategy_id,
+                "job_key": manage_job_key,
+                "job_run_id": None if latest_manage is None else latest_manage.get("job_run_id"),
+                "job_status": None if latest_manage is None else latest_manage.get("job_status") or latest_manage.get("status"),
+                "result_status": None if latest_manage is None else latest_manage.get("result_status"),
+                "age_seconds": manage_age_seconds,
+                "max_age_seconds": manage_max_age_seconds,
+            },
+        )
+    )
+
+    dispatch_runs = _runs_for_job_key(jobs_details, dispatch_job_key, limit=limit)
+    latest_dispatch = dispatch_runs[0] if dispatch_runs else _declared_job(jobs_details, dispatch_job_key)
+    dispatch_status = _status_for_job_run(latest_dispatch, market_open=market_open)
+    checks.append(
+        _check(
+            "Intent Dispatch",
+            status=dispatch_status,
+            message=(
+                f"latest={latest_dispatch.get('scheduled_for') or latest_dispatch.get('latest_run_at') or '-'}; "
+                f"status={latest_dispatch.get('job_status') or latest_dispatch.get('status') or latest_dispatch.get('latest_run_status') or '-'}"
+            ),
+            metrics={
+                "job_key": dispatch_job_key,
+                "job_run_id": latest_dispatch.get("job_run_id") or latest_dispatch.get("latest_run_id"),
+                "job_status": latest_dispatch.get("job_status") or latest_dispatch.get("status") or latest_dispatch.get("latest_run_status"),
+                "result_status": latest_dispatch.get("result_status"),
+            },
+        )
+    )
+
+    execution_store = storage.execution
+    intents = (
+        [
+            dict(row)
+            for row in execution_store.list_execution_intents(
+                trading_strategy_id=resolved_trading_strategy_id,
+                limit=500,
+            )
+        ]
+        if execution_store.intent_schema_ready()
+        else []
+    )
+    active_intent_count = sum(1 for row in intents if str(row.get("state") or "") in ACTIVE_INTENT_STATES)
+    checks.append(
+        _check(
+            "Strategy Intents",
             status="healthy" if active_intent_count == 0 else "degraded",
             message=f"active_intents={active_intent_count}",
             metrics={
-                "intent_count": finviz_summary.get("intent_count"),
+                "trading_strategy_id": resolved_trading_strategy_id,
+                "intent_count": len(intents),
                 "active_intent_count": active_intent_count,
             },
         )
     )
 
-    positions = _list(finviz_details.get("positions"))
-    position_sync = _position_sync_counts(positions)
-    open_position_count = _coerce_int(finviz_summary.get("open_position_count")) or 0
-    session_entry_count = _coerce_int(finviz_summary.get("session_entry_count")) or 0
-    active_entry_intent_count = (
-        _coerce_int(finviz_summary.get("active_entry_intent_count")) or 0
+    positions = (
+        [
+            dict(row)
+            for row in execution_store.list_positions(
+                trading_strategy_id=resolved_trading_strategy_id,
+                limit=500,
+            )
+        ]
+        if execution_store.portfolio_schema_ready()
+        else []
     )
-    remaining_daily_entries = direct_entry_remaining
-    if remaining_daily_entries is None and max_daily_entries is not None:
+    position_sync = _position_sync_counts(positions)
+    open_position_count = sum(1 for row in positions if str(row.get("status") or "") in OPEN_POSITION_STATES)
+    session_entry_count = sum(1 for row in positions if row.get("market_date_opened") == resolved_market_date)
+    active_entry_intent_count = sum(
+        1 for row in intents if str(row.get("action_type") or "") == "open" and str(row.get("state") or "") in ACTIVE_INTENT_STATES
+    )
+    remaining_daily_entries = None
+    if max_daily_entries is not None:
         remaining_daily_entries = max(
             max_daily_entries - session_entry_count - active_entry_intent_count,
             0,
@@ -586,7 +617,7 @@ def build_live_doctor(
     latest_exit_reason = _latest_closed_position_reason(positions)
     checks.append(
         _check(
-            "Finviz Positions",
+            "Strategy Positions",
             status=_combine_statuses(cap_status, sync_status),
             message=(
                 f"open={open_position_count}/{max_open_positions if max_open_positions is not None else '-'}, "
@@ -596,81 +627,37 @@ def build_live_doctor(
                 f"latest_exit={latest_exit_reason or '-'}"
             ),
             metrics={
+                "trading_strategy_id": resolved_trading_strategy_id,
                 **position_sync,
                 "max_open_positions": max_open_positions,
-                "max_new_positions_per_run": max_new_positions_per_run,
                 "max_daily_entries": max_daily_entries,
-                "filled_entry_count": finviz_summary.get("filled_entry_count"),
-                "position_entry_count": finviz_summary.get("position_entry_count"),
                 "session_entry_count": session_entry_count,
                 "active_entry_intent_count": active_entry_intent_count,
                 "remaining_daily_entries": remaining_daily_entries,
-                "closed_position_count": finviz_summary.get("closed_position_count"),
+                "closed_position_count": sum(1 for row in positions if str(row.get("status") or "") not in OPEN_POSITION_STATES),
                 "latest_exit_reason": latest_exit_reason,
-                "realized_pnl": finviz_summary.get("realized_pnl"),
-                "unrealized_pnl": finviz_summary.get("unrealized_pnl"),
-                "net_pnl": finviz_summary.get("net_pnl"),
+                "realized_pnl": round(
+                    sum(_coerce_float(row.get("realized_pnl")) or 0.0 for row in positions),
+                    2,
+                ),
+                "unrealized_pnl": round(
+                    sum(_coerce_float(row.get("unrealized_pnl")) or 0.0 for row in positions),
+                    2,
+                ),
             },
         )
     )
 
-    close_lifecycle = _mapping(finviz_details.get("close_lifecycle"))
-    latest_failure = _mapping(close_lifecycle.get("latest_failure"))
-    close_status = str(close_lifecycle.get("status") or "unknown")
-    position_lifecycle_counts = close_lifecycle.get("position_lifecycle_state_counts")
-    close_decision_counts = close_lifecycle.get("close_decision_state_counts")
-    checks.append(
-        _check(
-            "Close Lifecycle",
-            status=close_status,
-            message=(
-                "attempts="
-                f"{close_lifecycle.get('recent_close_attempt_count') or 0}, "
-                "active="
-                f"{close_lifecycle.get('active_close_attempt_count') or 0}, "
-                "pending_intents="
-                f"{close_lifecycle.get('pending_close_intent_count') or 0}, "
-                "failed="
-                f"{close_lifecycle.get('failed_close_attempt_count') or 0}, "
-                "stale_reconcile="
-                f"{close_lifecycle.get('stale_reconciliation_skip_count') or 0}, "
-                "intent_mismatch="
-                f"{close_lifecycle.get('intent_mismatch_reject_count') or 0}"
-            ),
-            metrics={
-                "recent_close_attempt_count": close_lifecycle.get(
-                    "recent_close_attempt_count"
-                ),
-                "close_attempt_status_counts": close_lifecycle.get(
-                    "close_attempt_status_counts"
-                ),
-                "position_lifecycle_state_counts": position_lifecycle_counts,
-                "close_decision_state_counts": close_decision_counts,
-                "missing_close_decision_count": close_lifecycle.get(
-                    "missing_close_decision_count"
-                ),
-                "active_close_attempt_count": close_lifecycle.get(
-                    "active_close_attempt_count"
-                ),
-                "pending_close_intent_count": close_lifecycle.get(
-                    "pending_close_intent_count"
-                ),
-                "failed_close_attempt_count": close_lifecycle.get(
-                    "failed_close_attempt_count"
-                ),
-                "stale_reconciliation_skip_count": close_lifecycle.get(
-                    "stale_reconciliation_skip_count"
-                ),
-                "intent_mismatch_reject_count": close_lifecycle.get(
-                    "intent_mismatch_reject_count"
-                ),
-                "latest_failure": latest_failure or None,
-                "latest_filled_closes": list(
-                    close_lifecycle.get("latest_filled_closes") or []
-                )[:3],
-            },
-        )
+    closed_position_count = sum(1 for row in positions if str(row.get("status") or "") not in OPEN_POSITION_STATES)
+    realized_pnl = round(
+        sum(_coerce_float(row.get("realized_pnl")) or 0.0 for row in positions),
+        2,
     )
+    unrealized_pnl = round(
+        sum(_coerce_float(row.get("unrealized_pnl")) or 0.0 for row in positions),
+        2,
+    )
+    net_pnl = round(realized_pnl + unrealized_pnl, 2)
 
     status = _combine_statuses(*(str(row.get("status") or "unknown") for row in checks))
     attention = _checks_attention(checks)
@@ -688,54 +675,33 @@ def build_live_doctor(
             "control_mode": control_mode,
             "scheduler_status": scheduler.get("status"),
             "worker_lane_count": len(lanes),
-            "blocked_worker_lane_count": sum(
-                1 for row in lanes if str(row.get("status") or "") == "blocked"
-            ),
-            "idle_worker_lane_count": sum(
-                1 for row in lanes if str(row.get("status") or "") == "idle"
-            ),
+            "blocked_worker_lane_count": sum(1 for row in lanes if str(row.get("status") or "") == "blocked"),
+            "idle_worker_lane_count": sum(1 for row in lanes if str(row.get("status") or "") == "idle"),
             "actionable_failed_job_count": actionable_failed_count,
             "broker_sync_status": broker_sync.get("status"),
             "broker_sync_age_seconds": broker_sync.get("age_seconds"),
             "feed_id": resolved_feed_id,
+            "trading_strategy_id": resolved_trading_strategy_id,
             "finviz_feed_status": feed_status,
             "finviz_feed_symbol_count": feed_symbol_count,
             "finviz_feed_age_seconds": feed_age_seconds,
-            "finviz_direct_status": direct_status,
-            "finviz_direct_candidate_count": direct_candidate_count,
-            "finviz_direct_age_seconds": direct_age_seconds,
+            "strategy_entry_status": entry_status,
+            "strategy_entry_opportunity_count": entry_opportunity_count,
+            "strategy_entry_age_seconds": entry_age_seconds,
+            "strategy_manage_status": manage_status,
+            "strategy_manage_age_seconds": manage_age_seconds,
+            "intent_dispatch_status": dispatch_status,
             "active_intent_count": active_intent_count,
             "open_position_count": open_position_count,
             "max_open_positions": max_open_positions,
             "max_daily_entries": max_daily_entries,
-            "filled_entry_count": finviz_summary.get("filled_entry_count"),
-            "position_entry_count": finviz_summary.get("position_entry_count"),
             "session_entry_count": session_entry_count,
             "remaining_daily_entries": remaining_daily_entries,
-            "close_lifecycle_status": close_status,
-            "position_lifecycle_state_counts": position_lifecycle_counts,
-            "close_decision_state_counts": close_decision_counts,
-            "missing_close_decision_count": close_lifecycle.get(
-                "missing_close_decision_count"
-            ),
-            "active_close_attempt_count": close_lifecycle.get(
-                "active_close_attempt_count"
-            ),
-            "pending_close_intent_count": close_lifecycle.get(
-                "pending_close_intent_count"
-            ),
-            "failed_close_attempt_count": close_lifecycle.get(
-                "failed_close_attempt_count"
-            ),
-            "stale_reconciliation_skip_count": close_lifecycle.get(
-                "stale_reconciliation_skip_count"
-            ),
-            "intent_mismatch_reject_count": close_lifecycle.get(
-                "intent_mismatch_reject_count"
-            ),
-            "realized_pnl": _coerce_float(finviz_summary.get("realized_pnl")),
-            "unrealized_pnl": _coerce_float(finviz_summary.get("unrealized_pnl")),
-            "net_pnl": _coerce_float(finviz_summary.get("net_pnl")),
+            "closed_position_count": closed_position_count,
+            "latest_exit_reason": latest_exit_reason,
+            "realized_pnl": realized_pnl,
+            "unrealized_pnl": unrealized_pnl,
+            "net_pnl": net_pnl,
         },
         "attention": attention,
         "details": {
@@ -743,14 +709,16 @@ def build_live_doctor(
             "system_summary": system_summary,
             "trading_summary": trading_summary,
             "jobs_summary": jobs_summary,
-            "finviz_summary": finviz_summary,
             "worker_lanes": lanes,
             "newest_feed_run": _compact_feed_run(newest_feed),
             "latest_feed_run": _compact_feed_run(latest_feed),
-            "newest_direct_run": _compact_direct_run(newest_direct),
-            "latest_direct_run": _compact_direct_run(latest_direct),
+            "newest_entry_run": _compact_strategy_run(newest_entry),
+            "latest_entry_run": _compact_strategy_run(latest_entry),
+            "newest_manage_run": _compact_strategy_run(newest_manage),
+            "latest_manage_run": _compact_strategy_run(latest_manage),
+            "latest_dispatch_run": _compact_strategy_run(latest_dispatch),
+            "intents": intents[:limit],
             "positions": positions[:limit],
-            "close_lifecycle": close_lifecycle,
         },
     }
 

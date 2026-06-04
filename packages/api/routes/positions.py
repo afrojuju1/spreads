@@ -20,17 +20,13 @@ def _db_target(db: str | None) -> str:
 def list_positions_route(
     pipeline_id: str | None = None,
     label: str | None = None,
-    bot_id: str | None = None,
-    automation_id: str | None = None,
-    strategy_config_id: str | None = None,
+    trading_strategy_id: str | None = None,
     market_date: str | None = None,
     limit: int = Query(default=200, ge=1, le=500),
     db: str | None = None,
 ) -> dict[str, object]:
     try:
-        resolved_market_date = (
-            None if market_date is None else resolve_market_date(market_date)
-        )
+        resolved_market_date = None if market_date is None else resolve_market_date(market_date)
     except ValueError as exc:
         raise bad_request_error(exc) from exc
     return list_positions(
@@ -38,9 +34,7 @@ def list_positions_route(
         pipeline_id=pipeline_id,
         label=label,
         market_date=resolved_market_date,
-        bot_id=bot_id,
-        automation_id=automation_id,
-        strategy_config_id=strategy_config_id,
+        trading_strategy_id=trading_strategy_id,
         limit=limit,
     )
 
@@ -71,11 +65,13 @@ def close_position_route(
             position_id=position_id,
             quantity=payload.quantity,
             limit_price=payload.limit_price,
-            request_metadata={
-                "execution_runtime": payload.execution_runtime,
-            }
-            if payload.execution_runtime is not None
-            else None,
+            request_metadata=(
+                {
+                    "execution_runtime": payload.execution_runtime,
+                }
+                if payload.execution_runtime is not None
+                else None
+            ),
         )
     except ValueError as exc:
         raise bad_request_error(exc) from exc

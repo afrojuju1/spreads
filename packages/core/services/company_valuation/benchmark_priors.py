@@ -17,7 +17,11 @@ from core.services.company_valuation.evaluation import recompute_company_valuati
 from core.services.company_valuation.taxonomy import (
     resolve_company_valuation_taxonomy_context,
 )
-from core.services.strategy_configs import _load_yaml_file, _yaml_file_signature, default_config_root
+from core.services.trading_strategies import (
+    _load_yaml_file,
+    _yaml_file_signature,
+    default_config_root,
+)
 from core.storage.company_valuation_repository import CompanyValuationRepository
 from core.storage.serializers import parse_datetime
 
@@ -119,9 +123,7 @@ def _load_company_valuation_benchmark_priors_cached(
                         field_name="analyst_count",
                     ),
                     consensus_rating=(
-                        str(entry_mapping.get("consensus_rating")).strip()
-                        if entry_mapping.get("consensus_rating") not in (None, "")
-                        else None
+                        str(entry_mapping.get("consensus_rating")).strip() if entry_mapping.get("consensus_rating") not in (None, "") else None
                     ),
                     average_target=_as_float(
                         entry_mapping.get("average_target"),
@@ -139,11 +141,7 @@ def _load_company_valuation_benchmark_priors_cached(
                         entry_mapping.get("high_target"),
                         field_name="high_target",
                     ),
-                    source_url=(
-                        str(entry_mapping.get("source_url")).strip()
-                        if entry_mapping.get("source_url") not in (None, "")
-                        else None
-                    ),
+                    source_url=(str(entry_mapping.get("source_url")).strip() if entry_mapping.get("source_url") not in (None, "") else None),
                     active=bool(entry_mapping.get("active", True)),
                 )
             )
@@ -166,9 +164,7 @@ def _load_company_valuation_benchmark_priors_cached(
                 target_field=_as_target_field(mapping.get("target_field", "average_target")),
                 supported_only_default=bool(mapping.get("supported_only_default", True)),
                 minimum_coverage=max(int(mapping.get("minimum_coverage", 1)), 1),
-                trigger_mean_abs_gap_delta=float(
-                    mapping.get("trigger_mean_abs_gap_delta", 0.2)
-                ),
+                trigger_mean_abs_gap_delta=float(mapping.get("trigger_mean_abs_gap_delta", 0.2)),
                 trigger_sign_mismatch_count=max(
                     int(mapping.get("trigger_sign_mismatch_count", 1)),
                     0,
@@ -201,9 +197,7 @@ def resolve_company_valuation_benchmark_prior_set(
     try:
         return prior_sets[prior_set_id]
     except KeyError as exc:
-        raise ValueError(
-            f"Unknown company valuation benchmark prior set: {prior_set_id}"
-        ) from exc
+        raise ValueError(f"Unknown company valuation benchmark prior set: {prior_set_id}") from exc
 
 
 def _benchmark_target_for_entry(
@@ -342,11 +336,7 @@ def report_company_valuation_benchmark_priors(
         request.prior_set_id,
         request.config_root,
     )
-    supported_only = (
-        prior_set.supported_only_default
-        if request.supported_only is None
-        else bool(request.supported_only)
-    )
+    supported_only = prior_set.supported_only_default if request.supported_only is None else bool(request.supported_only)
     as_of_dt = _normalized_as_of(request.as_of)
     rows: list[CompanyValuationBenchmarkPriorReportRow] = []
     errors: list[str] = []
@@ -410,13 +400,7 @@ def report_company_valuation_benchmark_priors(
                 support_reason=resolution.support.reason,
                 support_tier=resolution.support.support_tier,
                 base_template_id=str(issuer_row.get("template_id") or ""),
-                effective_template_id=str(
-                    (document.get("source_summary") or {}).get(
-                        "effective_template_id"
-                    )
-                    or issuer_row.get("template_id")
-                    or ""
-                ),
+                effective_template_id=str((document.get("source_summary") or {}).get("effective_template_id") or issuer_row.get("template_id") or ""),
                 current_price=round(current_price, 4),
                 intrinsic_value_mid=round(intrinsic_value_mid, 4),
                 valuation_gap=round(valuation_gap, 6),
@@ -448,10 +432,7 @@ def report_company_valuation_benchmark_priors(
         benchmark_gaps = [row.benchmark_gap for row in rows]
         gap_deltas = [row.gap_delta for row in rows]
         abs_gap_deltas = [row.absolute_gap_delta for row in rows]
-        sign_mismatch_count = sum(
-            (row.valuation_gap >= 0.0) != (row.benchmark_gap >= 0.0)
-            for row in rows
-        )
+        sign_mismatch_count = sum((row.valuation_gap >= 0.0) != (row.benchmark_gap >= 0.0) for row in rows)
         under_benchmark_count = sum(row.gap_delta < 0.0 for row in rows)
         over_benchmark_count = sum(row.gap_delta > 0.0 for row in rows)
         mean_valuation_gap = round(statistics.mean(valuation_gaps), 6)
@@ -460,18 +441,12 @@ def report_company_valuation_benchmark_priors(
         mean_abs_gap_delta = round(statistics.mean(abs_gap_deltas), 6)
         median_abs_gap_delta = round(statistics.median(abs_gap_deltas), 6)
         calibration_gate_triggered = len(rows) >= prior_set.minimum_coverage and (
-            mean_abs_gap_delta >= prior_set.trigger_mean_abs_gap_delta
-            or sign_mismatch_count >= prior_set.trigger_sign_mismatch_count
+            mean_abs_gap_delta >= prior_set.trigger_mean_abs_gap_delta or sign_mismatch_count >= prior_set.trigger_sign_mismatch_count
         )
         if calibration_gate_triggered:
-            calibration_gate_reason = (
-                f"rows={len(rows)} mean_abs_gap_delta={mean_abs_gap_delta} "
-                f"sign_mismatch_count={sign_mismatch_count}"
-            )
+            calibration_gate_reason = f"rows={len(rows)} mean_abs_gap_delta={mean_abs_gap_delta} " f"sign_mismatch_count={sign_mismatch_count}"
         else:
-            calibration_gate_reason = (
-                f"rows={len(rows)} below trigger thresholds"
-            )
+            calibration_gate_reason = f"rows={len(rows)} below trigger thresholds"
 
     output_root = None if request.output_root is None else str(Path(request.output_root))
     manifest_path = None
@@ -504,9 +479,7 @@ def report_company_valuation_benchmark_priors(
         manifest_path=manifest_path,
         summary_path=summary_path,
         rows_path=rows_path,
-        rows=tuple(
-            sorted(rows, key=lambda item: item.absolute_gap_delta, reverse=True)
-        ),
+        rows=tuple(sorted(rows, key=lambda item: item.absolute_gap_delta, reverse=True)),
         errors=tuple(errors),
     )
 
@@ -519,10 +492,7 @@ def report_company_valuation_benchmark_priors(
     summary_path = str(output_dir / "summary.md")
     manifest_path = str(output_dir / "manifest.json")
     Path(rows_path).write_text(
-        "".join(
-            json.dumps(row.to_payload(), sort_keys=True, default=_json_default) + "\n"
-            for row in result.rows
-        ),
+        "".join(json.dumps(row.to_payload(), sort_keys=True, default=_json_default) + "\n" for row in result.rows),
         encoding="utf-8",
     )
     Path(summary_path).write_text(
@@ -538,8 +508,7 @@ def report_company_valuation_benchmark_priors(
         }
     )
     Path(manifest_path).write_text(
-        json.dumps(updated_result.to_payload(), sort_keys=True, default=_json_default, indent=2)
-        + "\n",
+        json.dumps(updated_result.to_payload(), sort_keys=True, default=_json_default, indent=2) + "\n",
         encoding="utf-8",
     )
     return updated_result

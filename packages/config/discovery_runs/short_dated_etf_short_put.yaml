@@ -1,9 +1,9 @@
 extends: short_dated_weekly
 discovery_run_id: short_dated_etf_short_put
-job_key: discovery_run:options_automation_short_dated_etf_short_put
+job_key: discovery_run:trading_strategy_short_dated_etf_short_put
 label: explore_5_short_put_weekly_auto
 scanner_strategy: short_put
-singleton_scope: options_automation_short_dated_etf_short_put
+singleton_scope: trading_strategy_short_dated_etf_short_put
 execution_policy:
   extends: shadow_midpoint
   quantity: 5

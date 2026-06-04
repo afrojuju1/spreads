@@ -522,12 +522,9 @@ const pipelineRunResponseSchema = z
 const ownerRefSchema = z
   .object({
     owner_kind: z.string().nullable().optional(),
-    bot_id: z.string().nullable().optional(),
-    automation_id: z.string().nullable().optional(),
-    strategy_config_id: z.string().nullable().optional(),
-    strategy_id: z.string().nullable().optional(),
+    trading_strategy_id: z.string().nullable().optional(),
     config_hash: z.string().nullable().optional(),
-    automation_run_id: z.string().nullable().optional(),
+    strategy_run_id: z.string().nullable().optional(),
   })
   .passthrough();
 
@@ -547,6 +544,7 @@ const opportunitySchema = z
   .object({
     opportunity_id: z.string(),
     pipeline_id: z.string().nullable().optional(),
+    trading_strategy_id: z.string().nullable().optional(),
     market_date: z.string(),
     label: z.string(),
     root_symbol: z.string().nullable().optional(),
@@ -582,7 +580,7 @@ const pipelineCurrentCycleSchema = liveResponseSchema
     opportunities: z.array(opportunitySchema).default([]),
     live_opportunities: z.array(opportunitySchema).default([]),
     analysis_only_opportunities: z.array(opportunitySchema).default([]),
-    automation_summary: z.record(z.string(), z.unknown()).default({}),
+    strategy_sync_summary: z.record(z.string(), z.unknown()).default({}),
     resolved_ranking_policy: z.record(z.string(), z.unknown()).default({}),
     ranking_policy_gate_summary: z.record(z.string(), z.unknown()).default({}),
     raw_candidate_summary: z.record(z.string(), z.unknown()).default({}),
@@ -607,6 +605,7 @@ const positionSchema = z
   .object({
     position_id: z.string(),
     pipeline_id: z.string().nullable().optional(),
+    trading_strategy_id: z.string().nullable().optional(),
     market_date: z.string().nullable().optional(),
     position_status: z.string(),
     root_symbol: z.string(),
@@ -638,53 +637,6 @@ const positionListResponseSchema = z.object({
   positions: z.array(positionSchema),
 });
 
-const automationRuntimeListItemSchema = z
-  .object({
-    bot_id: z.string(),
-    bot_name: z.string(),
-    automation_id: z.string(),
-    automation_type: z.string(),
-    strategy_config_id: z.string().nullable().optional(),
-    strategy_id: z.string().nullable().optional(),
-    strategy_family: z.string().nullable().optional(),
-    config_hash: z.string().nullable().optional(),
-    symbols: z.array(z.string()).default([]),
-    schedule: z.record(z.string(), z.unknown()).default({}),
-    trigger_policy: z.record(z.string(), z.unknown()).default({}),
-    approval_mode: z.string().nullable().optional(),
-    execution_mode: z.string().nullable().optional(),
-    execution_runtime: z.string().nullable().optional(),
-    live_enabled: z.boolean().optional(),
-    max_open_positions: z.number().nullable().optional(),
-    max_daily_actions: z.number().nullable().optional(),
-    max_new_entries_per_day: z.number().nullable().optional(),
-    daily_loss_limit: z.number().nullable().optional(),
-    market_date: z.string().nullable().optional(),
-    opportunity_count: z.number().default(0),
-    live_opportunity_count: z.number().default(0),
-    decision_count: z.number().default(0),
-    decision_state_counts: z.record(z.string(), z.number()).default({}),
-    intent_count: z.number().default(0),
-    entry_intent_count: z.number().default(0),
-    management_intent_count: z.number().default(0),
-    other_intent_count: z.number().default(0),
-    position_count: z.number().default(0),
-    open_position_count: z.number().default(0),
-    closed_position_count: z.number().default(0),
-    daily_realized_pnl: z.number().default(0),
-    open_unrealized_pnl: z.number().default(0),
-    daily_total_pnl: z.number().default(0),
-    total_realized_pnl: z.number().default(0),
-    latest_automation_run: z.record(z.string(), z.unknown()).nullable().optional(),
-    latest_discovery: discoveryRefSchema.nullable().optional(),
-    bot_metrics: z.record(z.string(), z.unknown()).nullable().optional(),
-  })
-  .passthrough();
-
-const automationRuntimeListResponseSchema = z.object({
-  automations: z.array(automationRuntimeListItemSchema),
-});
-
 const executionRuntimeCapabilityItemSchema = z
   .object({
     name: z.string(),
@@ -698,7 +650,7 @@ const executionRuntimeItemSchema = z
     status: z.string(),
     ready: z.boolean(),
     reason: z.string().nullable().optional(),
-    entry_automation_count: z.number().default(0),
+    entry_strategy_count: z.number().default(0),
     strategy_families: z.record(z.string(), z.number()).default({}),
     capabilities: z.array(executionRuntimeCapabilityItemSchema).default([]),
   })
@@ -729,18 +681,6 @@ const opsEnvelopeSchema = z
     summary: z.record(z.string(), z.unknown()).default({}),
     attention: z.array(z.record(z.string(), z.unknown())).default([]),
     details: z.record(z.string(), z.unknown()).default({}),
-  })
-  .passthrough();
-
-const automationRuntimeDetailSchema = automationRuntimeListItemSchema
-  .extend({
-    summary: z.record(z.string(), z.unknown()).default({}),
-    config: z.record(z.string(), z.unknown()).default({}),
-    automation_runs: z.array(z.record(z.string(), z.unknown())).default([]),
-    opportunities: z.array(opportunitySchema).default([]),
-    positions: z.array(positionSchema).default([]),
-    decisions: z.array(z.record(z.string(), z.unknown())).default([]),
-    intents: z.array(z.record(z.string(), z.unknown())).default([]),
   })
   .passthrough();
 
@@ -779,8 +719,6 @@ export type OwnerRef = z.infer<typeof ownerRefSchema>;
 export type DiscoveryRef = z.infer<typeof discoveryRefSchema>;
 export type Opportunity = z.infer<typeof opportunitySchema>;
 export type Position = z.infer<typeof positionSchema>;
-export type AutomationRuntimeListItem = z.infer<typeof automationRuntimeListItemSchema>;
-export type AutomationRuntimeDetail = z.infer<typeof automationRuntimeDetailSchema>;
 export type ExecutionRuntimeCapabilities = z.infer<typeof executionRuntimeCapabilitiesSchema>;
 export type OpsTradingHealth = z.infer<typeof opsTradingHealthSchema>;
 export type OpsEnvelope = z.infer<typeof opsEnvelopeSchema>;
@@ -921,34 +859,6 @@ export function startPipelineRun(payload: {
   return postApi("pipelines/run", pipelineRunResponseSchema, payload);
 }
 
-export function getRuntimes(filters?: {
-  marketDate?: string;
-  limit?: number;
-}) {
-  return fetchApi("automations", automationRuntimeListResponseSchema, {
-    market_date: filters?.marketDate,
-    limit: filters?.limit,
-  });
-}
-
-export function getRuntimeDetail(
-  botId: string,
-  automationId: string,
-  filters?: {
-    marketDate?: string;
-    limit?: number;
-  },
-) {
-  return fetchApi(
-    `automations/${encodeURIComponent(botId)}/${encodeURIComponent(automationId)}`,
-    automationRuntimeDetailSchema,
-    {
-      market_date: filters?.marketDate,
-      limit: filters?.limit,
-    },
-  );
-}
-
 export function getExecutionRuntimes() {
   return fetchApi("executions/runtimes", executionRuntimeCapabilitiesSchema);
 }
@@ -973,18 +883,6 @@ export function getOpsStatus() {
   return fetchApi("internal/ops/status", opsEnvelopeSchema);
 }
 
-export function getOpsFinvizLedger(filters?: {
-  feedId?: string;
-  marketDate?: string;
-  limit?: number;
-}) {
-  return fetchApi("internal/ops/finviz-ledger", opsEnvelopeSchema, {
-    feed_id: filters?.feedId,
-    market_date: filters?.marketDate,
-    limit: filters?.limit,
-  });
-}
-
 export function getOpsRetention(filters?: {
   includePendingCounts?: boolean;
 }) {
@@ -1006,9 +904,7 @@ export function getOpportunities(filters?: {
   label?: string;
   marketDate?: string;
   lifecycleState?: string;
-  botId?: string;
-  automationId?: string;
-  strategyConfigId?: string;
+  tradingStrategyId?: string;
   includeAnalysisOnly?: boolean;
   includeNonLive?: boolean;
   limit?: number;
@@ -1018,9 +914,7 @@ export function getOpportunities(filters?: {
     label: filters?.label,
     market_date: filters?.marketDate,
     lifecycle_state: filters?.lifecycleState,
-    bot_id: filters?.botId,
-    automation_id: filters?.automationId,
-    strategy_config_id: filters?.strategyConfigId,
+    trading_strategy_id: filters?.tradingStrategyId,
     include_analysis_only: filters?.includeAnalysisOnly,
     include_non_live: filters?.includeNonLive,
     limit: filters?.limit,
@@ -1049,18 +943,14 @@ export function getPositions(filters?: {
   pipelineId?: string;
   label?: string;
   marketDate?: string;
-  botId?: string;
-  automationId?: string;
-  strategyConfigId?: string;
+  tradingStrategyId?: string;
   limit?: number;
 }) {
   return fetchApi("positions", positionListResponseSchema, {
     pipeline_id: filters?.pipelineId,
     label: filters?.label,
     market_date: filters?.marketDate,
-    bot_id: filters?.botId,
-    automation_id: filters?.automationId,
-    strategy_config_id: filters?.strategyConfigId,
+    trading_strategy_id: filters?.tradingStrategyId,
     limit: filters?.limit,
   });
 }
@@ -1122,41 +1012,19 @@ export function buildPipelineHref(
   return `/pipelines/${encodeURIComponent(pipelineId)}?${query}`;
 }
 
-export function buildRuntimeHref(
-  botId?: string | null,
-  automationId?: string | null,
-  marketDate?: string | null,
-) {
-  if (!botId || !automationId) {
-    return "/automations";
-  }
-  const basePath = `/automations/${encodeURIComponent(botId)}/${encodeURIComponent(automationId)}`;
-  if (!marketDate) {
-    return basePath;
-  }
-  return `${basePath}?marketDate=${encodeURIComponent(marketDate)}`;
-}
-
 export function buildOpportunitiesHref(filters?: {
   marketDate?: string | null;
-  botId?: string | null;
-  automationId?: string | null;
-  strategyConfigId?: string | null;
+  tradingStrategyId?: string | null;
   label?: string | null;
   showNonLive?: boolean | null;
+  [key: string]: unknown;
 }) {
   const params = new URLSearchParams();
   if (filters?.marketDate) {
     params.set("marketDate", filters.marketDate);
   }
-  if (filters?.botId) {
-    params.set("botId", filters.botId);
-  }
-  if (filters?.automationId) {
-    params.set("automationId", filters.automationId);
-  }
-  if (filters?.strategyConfigId) {
-    params.set("strategyConfigId", filters.strategyConfigId);
+  if (filters?.tradingStrategyId) {
+    params.set("tradingStrategyId", filters.tradingStrategyId);
   }
   if (filters?.label) {
     params.set("label", filters.label);
@@ -1170,23 +1038,16 @@ export function buildOpportunitiesHref(filters?: {
 
 export function buildPositionsHref(filters?: {
   marketDate?: string | null;
-  botId?: string | null;
-  automationId?: string | null;
-  strategyConfigId?: string | null;
+  tradingStrategyId?: string | null;
   label?: string | null;
+  [key: string]: unknown;
 }) {
   const params = new URLSearchParams();
   if (filters?.marketDate) {
     params.set("marketDate", filters.marketDate);
   }
-  if (filters?.botId) {
-    params.set("botId", filters.botId);
-  }
-  if (filters?.automationId) {
-    params.set("automationId", filters.automationId);
-  }
-  if (filters?.strategyConfigId) {
-    params.set("strategyConfigId", filters.strategyConfigId);
+  if (filters?.tradingStrategyId) {
+    params.set("tradingStrategyId", filters.tradingStrategyId);
   }
   if (filters?.label) {
     params.set("label", filters.label);

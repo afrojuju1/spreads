@@ -5,7 +5,7 @@ from dataclasses import asdict
 from typing import Any
 
 from core.integrations.alpaca.client import AlpacaClient
-from core.services.automation_runtime import EntryRuntime, StrategyBuildSettings
+from core.services.trading_strategy_runtime import EntryRuntime, StrategyBuildSettings
 from core.services.option_structures import candidate_legs, payload_structure_identity
 from core.services.runtime_candidate_filters import (
     build_runtime_candidate_filter,
@@ -26,7 +26,7 @@ from core.storage.run_history_repository import RunHistoryRepository
 
 
 def runtime_owner_key(runtime: EntryRuntime) -> tuple[str, str]:
-    return runtime.bot_id, runtime.automation_id
+    return runtime.trading_strategy_id, "entry"
 
 
 def _apply_build_settings(
@@ -49,24 +49,14 @@ def _apply_build_settings(
         and settings.short_delta_max is not None
         and settings.short_delta_min <= settings.short_delta_max
     ):
-        args.short_delta_target = (
-            float(settings.short_delta_min) + float(settings.short_delta_max)
-        ) / 2.0
+        args.short_delta_target = (float(settings.short_delta_min) + float(settings.short_delta_max)) / 2.0
     if settings.width_points:
         args.min_width = min(settings.width_points)
         args.max_width = max(settings.width_points)
-    args.min_open_interest = resolve_profile_value(
-        settings.min_open_interest, getattr(args, "min_open_interest", None)
-    )
-    args.max_relative_spread = resolve_profile_value(
-        settings.max_leg_spread_pct_mid, getattr(args, "max_relative_spread", None)
-    )
-    args.min_return_on_risk = resolve_profile_value(
-        settings.min_return_on_risk, getattr(args, "min_return_on_risk", None)
-    )
-    args.min_fill_ratio = resolve_profile_value(
-        settings.min_fill_ratio, getattr(args, "min_fill_ratio", None)
-    )
+    args.min_open_interest = resolve_profile_value(settings.min_open_interest, getattr(args, "min_open_interest", None))
+    args.max_relative_spread = resolve_profile_value(settings.max_leg_spread_pct_mid, getattr(args, "max_relative_spread", None))
+    args.min_return_on_risk = resolve_profile_value(settings.min_return_on_risk, getattr(args, "min_return_on_risk", None))
+    args.min_fill_ratio = resolve_profile_value(settings.min_fill_ratio, getattr(args, "min_fill_ratio", None))
     args.min_short_vs_expected_move_ratio = resolve_profile_value(
         settings.min_short_vs_expected_move_ratio,
         getattr(args, "min_short_vs_expected_move_ratio", None),
@@ -119,22 +109,10 @@ def build_market_slice_args(
     raw_args.symbols = symbol
     raw_args.symbols_file = None
     raw_args.universe = None
-    dte_mins = [
-        int(runtime.build_settings.dte_min)
-        for runtime in runtimes
-        if runtime.build_settings.dte_min is not None
-    ]
-    dte_maxes = [
-        int(runtime.build_settings.dte_max)
-        for runtime in runtimes
-        if runtime.build_settings.dte_max is not None
-    ]
-    raw_args.min_dte = (
-        min(dte_mins) if dte_mins else int(getattr(raw_args, "min_dte", 0) or 0)
-    )
-    raw_args.max_dte = (
-        max(dte_maxes) if dte_maxes else int(getattr(raw_args, "max_dte", 30) or 30)
-    )
+    dte_mins = [int(runtime.build_settings.dte_min) for runtime in runtimes if runtime.build_settings.dte_min is not None]
+    dte_maxes = [int(runtime.build_settings.dte_max) for runtime in runtimes if runtime.build_settings.dte_max is not None]
+    raw_args.min_dte = min(dte_mins) if dte_mins else int(getattr(raw_args, "min_dte", 0) or 0)
+    raw_args.max_dte = max(dte_maxes) if dte_maxes else int(getattr(raw_args, "max_dte", 30) or 30)
     return raw_args
 
 
@@ -144,11 +122,7 @@ def _serialize_candidate(
     short_delta_target: float | None = None,
 ) -> dict[str, Any]:
     if hasattr(candidate, "__dataclass_fields__"):
-        row = (
-            dict(candidate.to_payload())
-            if hasattr(candidate, "to_payload")
-            else dict(asdict(candidate))
-        )
+        row = dict(candidate.to_payload()) if hasattr(candidate, "to_payload") else dict(asdict(candidate))
         row["legs"] = candidate_legs(row)
         row["structure_identity"] = payload_structure_identity(row)
         if short_delta_target is not None:
@@ -212,9 +186,7 @@ def build_entry_runtime_symbol_candidates_from_market_slice(
             setup_context=setup_context,
             candidates=matched_candidates,
             candidate_filter=candidate_filter,
-            calendar_decisions_by_expiration=replay_details.get(
-                "calendar_decisions_by_expiration"
-            ),
+            calendar_decisions_by_expiration=replay_details.get("calendar_decisions_by_expiration"),
             session_label=session_label,
         )
 

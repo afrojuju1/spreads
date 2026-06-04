@@ -4,7 +4,7 @@ Date: 2026-06-03
 
 Bead: `spr-g9s.3`
 
-Status: target schema implemented; live writers are not cut over yet.
+Status: target schema implemented; 0043 strategy ownership cleanup applied; live writers are not cut over yet.
 
 ## Purpose
 
@@ -33,6 +33,17 @@ Projection tables:
 - `trade_positions`
 
 `trade_positions` is the operator-facing position projection. It should be rebuilt from fills, closes, and broker reconciliation rather than treated as the sole source of historical truth.
+
+## Strategy Ownership
+
+Target lifecycle ownership uses durable trading-strategy vocabulary instead of bot, automation, or strategy-config identifiers. Strategy-owned lifecycle rows carry:
+
+- `trading_strategy_id`
+- `trade_structure`
+- `routine`
+- `config_hash`
+
+`trade_structure` is the target lifecycle name for the old strategy-family concept. The target lifecycle schema does not keep compatibility aliases for `bot_id`, `automation_id`, `strategy_config_id`, or `strategy_family`.
 
 ## State Storage
 
@@ -74,6 +85,8 @@ This bead defines the target storage and schema inspection surface only. Live Fi
 ## Validation
 
 Validation for this bead is schema and runtime-smoke oriented, not automated-test oriented.
+
+Additional 0043 cleanup validation was run with targeted Python compilation, Alembic `heads`/`upgrade head`/`current`, direct lifecycle summary assertions, direct database column inspection for the target lifecycle tables, and `git diff --check`. The full `uv run spreads lifecycle schema --json` CLI import is currently blocked by an unrelated indentation error in `packages/core/services/scanners/config.py`.
 
 Formatter note: at bead close, `ruff` and `black` were not installed yet. A follow-up tooling setup added both formatters and ran Black against the lifecycle schema files.
 

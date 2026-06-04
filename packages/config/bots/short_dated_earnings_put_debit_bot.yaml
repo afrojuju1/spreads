@@ -1,9 +1,0 @@
-bot_id: short_dated_earnings_put_debit_bot
-name: Short-Dated Earnings Put Debit Bot
-limits:
-  extends: baseline
-runtime:
-  extends: short_dated_default
-automations:
-  - earnings_put_debit_entry
-  - earnings_put_debit_manage

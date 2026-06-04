@@ -3,14 +3,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, TypeAlias
 
-
 StorageRow: TypeAlias = dict[str, Any]
 RecordMapping: TypeAlias = Mapping[str, Any]
 
 
-def make_storage_row(
-    values: Mapping[str, Any] | None = None, /, **kwargs: Any
-) -> StorageRow:
+def make_storage_row(values: Mapping[str, Any] | None = None, /, **kwargs: Any) -> StorageRow:
     payload = {} if values is None else dict(values)
     if kwargs:
         payload.update(kwargs)
@@ -38,7 +35,7 @@ OperatorActionRecord = StorageRow
 PolicyRolloutRecord = StorageRow
 SignalStateRecord = StorageRow
 SignalStateTransitionRecord = StorageRow
-AutomationRunRecord = StorageRow
+StrategyRunRecord = StorageRow
 OpportunityRecord = StorageRow
 OpportunityDecisionRecord = StorageRow
 RiskDecisionRecord = StorageRow
@@ -79,7 +76,7 @@ __all__ = [
     "PolicyRolloutRecord",
     "SignalStateRecord",
     "SignalStateTransitionRecord",
-    "AutomationRunRecord",
+    "StrategyRunRecord",
     "OpportunityRecord",
     "OpportunityDecisionRecord",
     "RiskDecisionRecord",

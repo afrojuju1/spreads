@@ -42,22 +42,16 @@ def _optional_date(value: str | None) -> Any:
 
 class ExecutionRepository(RepositoryBase):
     def schema_ready(self) -> bool:
-        return self.schema_has_tables(
-            "execution_attempts", "execution_orders", "execution_fills"
-        )
+        return self.schema_has_tables("execution_attempts", "execution_orders", "execution_fills")
 
     def intent_schema_ready(self) -> bool:
-        return self.schema_has_tables(
-            "execution_intents", "execution_intent_events", "execution_attempts"
-        )
+        return self.schema_has_tables("execution_intents", "execution_intent_events", "execution_attempts")
 
     def positions_schema_ready(self) -> bool:
         return self.portfolio_schema_ready()
 
     def portfolio_schema_ready(self) -> bool:
-        return self.schema_has_tables(
-            "execution_attempts", "portfolio_positions", "position_closes"
-        )
+        return self.schema_has_tables("execution_attempts", "portfolio_positions", "position_closes")
 
     def _attempt_extra(self, row: ExecutionAttemptModel | None) -> dict[str, Any]:
         if row is None:
@@ -91,9 +85,7 @@ class ExecutionRepository(RepositoryBase):
         session_date: str,
         label: str,
         pipeline_id: str | None = None,
-        bot_id: str | None = None,
-        automation_id: str | None = None,
-        strategy_config_id: str | None = None,
+        trading_strategy_id: str | None = None,
         market_date: str | None = None,
         cycle_id: str | None,
         opportunity_id: str | None,
@@ -150,9 +142,7 @@ class ExecutionRepository(RepositoryBase):
                 session_date=parse_date(session_date),
                 label=label,
                 pipeline_id=pipeline_id,
-                bot_id=bot_id,
-                automation_id=automation_id,
-                strategy_config_id=strategy_config_id,
+                trading_strategy_id=trading_strategy_id,
                 market_date=parse_date(market_date or session_date),
                 cycle_id=cycle_id,
                 opportunity_id=opportunity_id,
@@ -229,13 +219,9 @@ class ExecutionRepository(RepositoryBase):
         market_date: str | None = None,
         limit: int = 50,
     ) -> list[ExecutionAttemptRecord]:
-        statement = select(ExecutionAttemptModel).where(
-            ExecutionAttemptModel.pipeline_id == pipeline_id
-        )
+        statement = select(ExecutionAttemptModel).where(ExecutionAttemptModel.pipeline_id == pipeline_id)
         if market_date is not None:
-            statement = statement.where(
-                ExecutionAttemptModel.market_date == parse_date(market_date)
-            )
+            statement = statement.where(ExecutionAttemptModel.market_date == parse_date(market_date))
         statement = statement.order_by(
             ExecutionAttemptModel.requested_at.desc(),
             ExecutionAttemptModel.execution_attempt_id.desc(),
@@ -272,14 +258,10 @@ class ExecutionRepository(RepositoryBase):
         limit: int = 200,
     ) -> list[ExecutionAttemptRecord]:
         statement = (
-            select(ExecutionAttemptModel)
-            .where(ExecutionAttemptModel.session_id == session_id)
-            .where(ExecutionAttemptModel.status.in_(statuses))
+            select(ExecutionAttemptModel).where(ExecutionAttemptModel.session_id == session_id).where(ExecutionAttemptModel.status.in_(statuses))
         )
         if trade_intent is not None:
-            statement = statement.where(
-                ExecutionAttemptModel.trade_intent == trade_intent
-            )
+            statement = statement.where(ExecutionAttemptModel.trade_intent == trade_intent)
         statement = statement.order_by(
             ExecutionAttemptModel.requested_at.desc(),
             ExecutionAttemptModel.execution_attempt_id.desc(),
@@ -295,13 +277,9 @@ class ExecutionRepository(RepositoryBase):
         trade_intent: str | None = None,
         limit: int = 200,
     ) -> list[ExecutionAttemptRecord]:
-        statement = select(ExecutionAttemptModel).where(
-            ExecutionAttemptModel.status.in_(statuses)
-        )
+        statement = select(ExecutionAttemptModel).where(ExecutionAttemptModel.status.in_(statuses))
         if trade_intent is not None:
-            statement = statement.where(
-                ExecutionAttemptModel.trade_intent == trade_intent
-            )
+            statement = statement.where(ExecutionAttemptModel.trade_intent == trade_intent)
         statement = statement.order_by(
             ExecutionAttemptModel.requested_at.desc(),
             ExecutionAttemptModel.execution_attempt_id.desc(),
@@ -348,9 +326,7 @@ class ExecutionRepository(RepositoryBase):
             rows = session.scalars(statement).all()
         return self._attempt_rows(rows)
 
-    def get_execution_intent(
-        self, execution_intent_id: str
-    ) -> ExecutionIntentRecord | None:
+    def get_execution_intent(self, execution_intent_id: str) -> ExecutionIntentRecord | None:
         with self.session_factory() as session:
             row = session.get(ExecutionIntentModel, execution_intent_id)
         if row is None:
@@ -369,8 +345,7 @@ class ExecutionRepository(RepositoryBase):
         self,
         *,
         execution_intent_id: str,
-        bot_id: str,
-        automation_id: str,
+        trading_strategy_id: str,
         opportunity_decision_id: str | None,
         strategy_position_id: str | None,
         execution_attempt_id: str | None,
@@ -397,8 +372,7 @@ class ExecutionRepository(RepositoryBase):
                 row = ExecutionIntentModel(
                     execution_intent_id=execution_intent_id,
                     created_at=created_at_dt,
-                    bot_id=bot_id,
-                    automation_id=automation_id,
+                    trading_strategy_id=trading_strategy_id,
                     opportunity_decision_id=opportunity_decision_id,
                     strategy_position_id=strategy_position_id,
                     execution_attempt_id=execution_attempt_id,
@@ -415,8 +389,7 @@ class ExecutionRepository(RepositoryBase):
                 )
                 session.add(row)
             else:
-                row.bot_id = bot_id
-                row.automation_id = automation_id
+                row.trading_strategy_id = trading_strategy_id
                 row.opportunity_decision_id = opportunity_decision_id
                 row.strategy_position_id = strategy_position_id
                 row.execution_attempt_id = execution_attempt_id
@@ -437,8 +410,7 @@ class ExecutionRepository(RepositoryBase):
     def list_execution_intents(
         self,
         *,
-        bot_id: str | None = None,
-        automation_id: str | None = None,
+        trading_strategy_id: str | None = None,
         opportunity_decision_id: str | None = None,
         strategy_position_id: str | None = None,
         slot_key: str | None = None,
@@ -447,28 +419,18 @@ class ExecutionRepository(RepositoryBase):
         limit: int = 200,
     ) -> list[ExecutionIntentRecord]:
         statement = select(ExecutionIntentModel)
-        if bot_id:
-            statement = statement.where(ExecutionIntentModel.bot_id == bot_id)
-        if automation_id:
-            statement = statement.where(
-                ExecutionIntentModel.automation_id == automation_id
-            )
+        if trading_strategy_id:
+            statement = statement.where(ExecutionIntentModel.trading_strategy_id == trading_strategy_id)
         if opportunity_decision_id:
-            statement = statement.where(
-                ExecutionIntentModel.opportunity_decision_id == opportunity_decision_id
-            )
+            statement = statement.where(ExecutionIntentModel.opportunity_decision_id == opportunity_decision_id)
         if strategy_position_id:
-            statement = statement.where(
-                ExecutionIntentModel.strategy_position_id == strategy_position_id
-            )
+            statement = statement.where(ExecutionIntentModel.strategy_position_id == strategy_position_id)
         if slot_key:
             statement = statement.where(ExecutionIntentModel.slot_key == slot_key)
         if states:
             statement = statement.where(ExecutionIntentModel.state.in_(states))
         if execution_attempt_id:
-            statement = statement.where(
-                ExecutionIntentModel.execution_attempt_id == execution_attempt_id
-            )
+            statement = statement.where(ExecutionIntentModel.execution_attempt_id == execution_attempt_id)
         statement = statement.order_by(
             ExecutionIntentModel.created_at.desc(),
             ExecutionIntentModel.execution_intent_id.asc(),
@@ -515,9 +477,7 @@ class ExecutionRepository(RepositoryBase):
         with self.session_scope() as session:
             row = session.get(ExecutionAttemptModel, execution_attempt_id)
             if row is None:
-                raise ValueError(
-                    f"Unknown execution_attempt_id: {execution_attempt_id}"
-                )
+                raise ValueError(f"Unknown execution_attempt_id: {execution_attempt_id}")
             if status is not None:
                 row.status = status
             if broker_order_id is not None:
@@ -546,13 +506,9 @@ class ExecutionRepository(RepositoryBase):
     ) -> list[ExecutionOrderRecord]:
         statement = select(ExecutionOrderModel)
         if execution_attempt_id is not None:
-            statement = statement.where(
-                ExecutionOrderModel.execution_attempt_id == execution_attempt_id
-            )
+            statement = statement.where(ExecutionOrderModel.execution_attempt_id == execution_attempt_id)
         elif execution_attempt_ids:
-            statement = statement.where(
-                ExecutionOrderModel.execution_attempt_id.in_(execution_attempt_ids)
-            )
+            statement = statement.where(ExecutionOrderModel.execution_attempt_id.in_(execution_attempt_ids))
         statement = statement.order_by(
             ExecutionOrderModel.updated_at.desc(),
             ExecutionOrderModel.execution_order_id.desc(),
@@ -589,11 +545,7 @@ class ExecutionRepository(RepositoryBase):
             return []
         broker_order_ids = [str(row["broker_order_id"]) for row in rows]
         with self.session_scope() as session:
-            existing_rows = session.scalars(
-                select(ExecutionOrderModel).where(
-                    ExecutionOrderModel.broker_order_id.in_(broker_order_ids)
-                )
-            ).all()
+            existing_rows = session.scalars(select(ExecutionOrderModel).where(ExecutionOrderModel.broker_order_id.in_(broker_order_ids))).all()
             existing_by_order_id = {row.broker_order_id: row for row in existing_rows}
             persisted: list[ExecutionOrderModel] = []
             for payload in rows:
@@ -639,13 +591,9 @@ class ExecutionRepository(RepositoryBase):
     ) -> list[ExecutionFillRecord]:
         statement = select(ExecutionFillModel)
         if execution_attempt_id is not None:
-            statement = statement.where(
-                ExecutionFillModel.execution_attempt_id == execution_attempt_id
-            )
+            statement = statement.where(ExecutionFillModel.execution_attempt_id == execution_attempt_id)
         elif execution_attempt_ids:
-            statement = statement.where(
-                ExecutionFillModel.execution_attempt_id.in_(execution_attempt_ids)
-            )
+            statement = statement.where(ExecutionFillModel.execution_attempt_id.in_(execution_attempt_ids))
         statement = statement.order_by(
             ExecutionFillModel.filled_at.desc(),
             ExecutionFillModel.execution_fill_id.desc(),
@@ -664,11 +612,7 @@ class ExecutionRepository(RepositoryBase):
             return []
         broker_fill_ids = [str(row["broker_fill_id"]) for row in rows]
         with self.session_scope() as session:
-            existing_rows = session.scalars(
-                select(ExecutionFillModel).where(
-                    ExecutionFillModel.broker_fill_id.in_(broker_fill_ids)
-                )
-            ).all()
+            existing_rows = session.scalars(select(ExecutionFillModel).where(ExecutionFillModel.broker_fill_id.in_(broker_fill_ids))).all()
             existing_by_fill_id = {row.broker_fill_id: row for row in existing_rows}
             persisted: list[ExecutionFillModel] = []
             for payload in rows:
@@ -706,13 +650,8 @@ class ExecutionRepository(RepositoryBase):
             return None
         return self.row(row)
 
-    def get_position_by_open_attempt(
-        self, open_execution_attempt_id: str
-    ) -> PortfolioPositionRecord | None:
-        statement = select(PortfolioPositionModel).where(
-            PortfolioPositionModel.open_execution_attempt_id
-            == open_execution_attempt_id
-        )
+    def get_position_by_open_attempt(self, open_execution_attempt_id: str) -> PortfolioPositionRecord | None:
+        statement = select(PortfolioPositionModel).where(PortfolioPositionModel.open_execution_attempt_id == open_execution_attempt_id)
         with self.session_factory() as session:
             row = session.scalars(statement).first()
         if row is None:
@@ -724,32 +663,18 @@ class ExecutionRepository(RepositoryBase):
         *,
         pipeline_id: str | None = None,
         market_date: str | None = None,
-        bot_id: str | None = None,
-        automation_id: str | None = None,
-        strategy_config_id: str | None = None,
+        trading_strategy_id: str | None = None,
         statuses: list[str] | None = None,
         limit: int | None = None,
     ) -> list[PortfolioPositionRecord]:
         statement = select(PortfolioPositionModel)
         if pipeline_id is not None:
-            statement = statement.where(
-                PortfolioPositionModel.pipeline_id == pipeline_id
-            )
+            statement = statement.where(PortfolioPositionModel.pipeline_id == pipeline_id)
         if market_date is not None:
             market_date_value = parse_date(market_date)
-            statement = statement.where(
-                PortfolioPositionModel.market_date_opened == market_date_value
-            )
-        if bot_id is not None:
-            statement = statement.where(PortfolioPositionModel.bot_id == bot_id)
-        if automation_id is not None:
-            statement = statement.where(
-                PortfolioPositionModel.automation_id == automation_id
-            )
-        if strategy_config_id is not None:
-            statement = statement.where(
-                PortfolioPositionModel.strategy_config_id == strategy_config_id
-            )
+            statement = statement.where(PortfolioPositionModel.market_date_opened == market_date_value)
+        if trading_strategy_id is not None:
+            statement = statement.where(PortfolioPositionModel.trading_strategy_id == trading_strategy_id)
         if statuses:
             statement = statement.where(PortfolioPositionModel.status.in_(statuses))
         statement = statement.order_by(
@@ -767,10 +692,7 @@ class ExecutionRepository(RepositoryBase):
         *,
         position_id: str,
         pipeline_id: str,
-        bot_id: str | None,
-        automation_id: str | None,
-        strategy_config_id: str | None,
-        strategy_id: str | None,
+        trading_strategy_id: str | None,
         source_opportunity_id: str | None,
         opening_execution_intent_id: str | None,
         open_execution_attempt_id: str,
@@ -815,10 +737,7 @@ class ExecutionRepository(RepositoryBase):
             row = PortfolioPositionModel(
                 position_id=position_id,
                 pipeline_id=pipeline_id,
-                bot_id=bot_id,
-                automation_id=automation_id,
-                strategy_config_id=strategy_config_id,
-                strategy_id=strategy_id,
+                trading_strategy_id=trading_strategy_id,
                 source_opportunity_id=source_opportunity_id,
                 opening_execution_intent_id=opening_execution_intent_id,
                 open_execution_attempt_id=open_execution_attempt_id,
@@ -869,10 +788,7 @@ class ExecutionRepository(RepositoryBase):
         *,
         position_id: str,
         pipeline_id: str | None = None,
-        bot_id: str | None = None,
-        automation_id: str | None = None,
-        strategy_config_id: str | None = None,
-        strategy_id: str | None = None,
+        trading_strategy_id: str | None = None,
         source_opportunity_id: str | None = None,
         opening_execution_intent_id: str | None = None,
         root_symbol: str | None = None,
@@ -917,14 +833,8 @@ class ExecutionRepository(RepositoryBase):
                 raise ValueError(f"Unknown position_id: {position_id}")
             if pipeline_id is not None:
                 row.pipeline_id = pipeline_id
-            if bot_id is not None:
-                row.bot_id = bot_id
-            if automation_id is not None:
-                row.automation_id = automation_id
-            if strategy_config_id is not None:
-                row.strategy_config_id = strategy_config_id
-            if strategy_id is not None:
-                row.strategy_id = strategy_id
+            if trading_strategy_id is not None:
+                row.trading_strategy_id = trading_strategy_id
             if source_opportunity_id is not None:
                 row.source_opportunity_id = source_opportunity_id
             if opening_execution_intent_id is not None:
@@ -961,12 +871,7 @@ class ExecutionRepository(RepositoryBase):
                 row.entry_value = entry_value
             if realized_pnl is not None:
                 row.realized_pnl = float(realized_pnl)
-            if (
-                unrealized_pnl is not None
-                or close_mark is not None
-                or close_mark_source is not None
-                or close_marked_at is not None
-            ):
+            if unrealized_pnl is not None or close_mark is not None or close_mark_source is not None or close_marked_at is not None:
                 row.unrealized_pnl = unrealized_pnl
             if close_mark is not None:
                 row.close_mark = close_mark
@@ -1003,9 +908,7 @@ class ExecutionRepository(RepositoryBase):
                 row.opened_at = parse_datetime(opened_at)
             if closed_at is not None:
                 row.closed_at = parse_datetime(closed_at)
-            row.updated_at = (
-                parse_datetime(updated_at) if updated_at is not None else row.updated_at
-            )
+            row.updated_at = parse_datetime(updated_at) if updated_at is not None else row.updated_at
             session.flush()
             session.refresh(row)
             return self.row(row)
@@ -1020,9 +923,7 @@ class ExecutionRepository(RepositoryBase):
         if position_id is not None:
             statement = statement.where(PositionCloseModel.position_id == position_id)
         elif position_ids:
-            statement = statement.where(
-                PositionCloseModel.position_id.in_(position_ids)
-            )
+            statement = statement.where(PositionCloseModel.position_id.in_(position_ids))
         statement = statement.order_by(
             PositionCloseModel.closed_at.desc(),
             PositionCloseModel.position_close_id.desc(),
@@ -1045,9 +946,7 @@ class ExecutionRepository(RepositoryBase):
         updated_at: str,
     ) -> PositionCloseRecord:
         with self.session_scope() as session:
-            statement = select(PositionCloseModel).where(
-                PositionCloseModel.execution_attempt_id == execution_attempt_id
-            )
+            statement = select(PositionCloseModel).where(PositionCloseModel.execution_attempt_id == execution_attempt_id)
             row = session.scalars(statement).first()
             if row is None:
                 row = PositionCloseModel(

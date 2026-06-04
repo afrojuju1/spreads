@@ -76,21 +76,13 @@ def _derive_live_exposure(
             "max_loss": 0.0,
         }
 
-    entry_notional = (
-        None
-        if entry_value is None
-        else round(entry_value * 100.0 * normalized_quantity, 2)
-    )
+    entry_notional = None if entry_value is None else round(entry_value * 100.0 * normalized_quantity, 2)
     normalized_family = str(strategy_family or "").strip().lower()
     if normalized_family.startswith("equity_"):
         return {
-            "entry_notional": None
-            if entry_value is None
-            else round(entry_value * normalized_quantity, 2),
+            "entry_notional": None if entry_value is None else round(entry_value * normalized_quantity, 2),
             "max_profit": None,
-            "max_loss": None
-            if entry_value is None
-            else round(entry_value * normalized_quantity, 2),
+            "max_loss": None if entry_value is None else round(entry_value * normalized_quantity, 2),
         }
     if normalized_family in {"long_call", "long_put", "long_straddle", "long_strangle"}:
         return {
@@ -103,15 +95,11 @@ def _derive_live_exposure(
     max_loss = None
     if entry_value is not None and width is not None:
         if premium_kind == "debit":
-            max_profit = round(
-                max(width - entry_value, 0.0) * 100.0 * normalized_quantity, 2
-            )
+            max_profit = round(max(width - entry_value, 0.0) * 100.0 * normalized_quantity, 2)
             max_loss = entry_notional
         else:
             max_profit = entry_notional
-            max_loss = round(
-                max(width - entry_value, 0.0) * 100.0 * normalized_quantity, 2
-            )
+            max_loss = round(max(width - entry_value, 0.0) * 100.0 * normalized_quantity, 2)
     return {
         "entry_notional": entry_notional,
         "max_profit": max_profit,
@@ -130,12 +118,8 @@ def _explicit_candidate_exposure(
     max_profit = _coerce_float(candidate.get("max_profit"))
     max_loss = _coerce_float(candidate.get("max_loss"))
     return {
-        "max_profit": None
-        if max_profit is None
-        else round(max_profit * normalized_quantity, 2),
-        "max_loss": None
-        if max_loss is None
-        else round(max_loss * normalized_quantity, 2),
+        "max_profit": None if max_profit is None else round(max_profit * normalized_quantity, 2),
+        "max_loss": None if max_loss is None else round(max_loss * normalized_quantity, 2),
     }
 
 
@@ -155,9 +139,7 @@ def resolve_attempt_trade_intent(attempt: Mapping[str, Any]) -> str:
 
 def resolve_attempt_session_position_id(attempt: Mapping[str, Any]) -> str | None:
     request = attempt.get("request")
-    request_value = (
-        request.get("session_position_id") if isinstance(request, Mapping) else None
-    )
+    request_value = request.get("session_position_id") if isinstance(request, Mapping) else None
     return _as_text(attempt.get("session_position_id")) or _as_text(request_value)
 
 
@@ -199,9 +181,7 @@ def _resolve_primary_order(attempt: Mapping[str, Any]) -> Mapping[str, Any] | No
     return resolve_execution_attempt_primary_order(attempt)
 
 
-def _resolve_filled_quantity(
-    attempt: Mapping[str, Any], primary_order: Mapping[str, Any] | None
-) -> float:
+def _resolve_filled_quantity(attempt: Mapping[str, Any], primary_order: Mapping[str, Any] | None) -> float:
     return resolve_execution_attempt_filled_quantity(
         attempt,
         primary_order=primary_order,
@@ -241,9 +221,7 @@ def _resolve_leg_average_price(attempt: Mapping[str, Any], symbol: str) -> float
     for order in attempt.get("orders") or []:
         if not isinstance(order, Mapping):
             continue
-        order_symbol = _as_text(order.get("leg_symbol")) or _as_text(
-            order.get("symbol")
-        )
+        order_symbol = _as_text(order.get("leg_symbol")) or _as_text(order.get("symbol"))
         if order_symbol != symbol:
             continue
         price = _coerce_float(order.get("filled_avg_price"))
@@ -316,17 +294,11 @@ def _resolve_position_status(broker_status: str, filled_quantity: float) -> str:
 
 
 def _resolve_opened_at(attempt: Mapping[str, Any]) -> str | None:
-    fill_times = [
-        _as_text(fill.get("filled_at"))
-        for fill in attempt.get("fills") or []
-        if isinstance(fill, Mapping)
-    ]
+    fill_times = [_as_text(fill.get("filled_at")) for fill in attempt.get("fills") or [] if isinstance(fill, Mapping)]
     filtered = [value for value in fill_times if value]
     if filtered:
         return min(filtered)
-    return _as_text(attempt.get("submitted_at")) or _as_text(
-        attempt.get("requested_at")
-    )
+    return _as_text(attempt.get("submitted_at")) or _as_text(attempt.get("requested_at"))
 
 
 def _close_state_for_open_sync(
@@ -337,13 +309,9 @@ def _close_state_for_open_sync(
     broker_status: str,
 ) -> dict[str, Any]:
     closes = execution_store.list_position_closes(position_id=position_id)
-    total_closed_quantity = sum(
-        _coerce_float(close.get("closed_quantity")) or 0.0 for close in closes
-    )
+    total_closed_quantity = sum(_coerce_float(close.get("closed_quantity")) or 0.0 for close in closes)
     remaining_quantity = max(opened_quantity - total_closed_quantity, 0.0)
-    realized_pnl = round(
-        sum(_coerce_float(close.get("realized_pnl")) or 0.0 for close in closes), 2
-    )
+    realized_pnl = round(sum(_coerce_float(close.get("realized_pnl")) or 0.0 for close in closes), 2)
 
     if total_closed_quantity <= 0:
         return {
@@ -397,17 +365,11 @@ def _sync_linked_execution_intent_position(
 
 
 def _resolve_closed_at(attempt: Mapping[str, Any]) -> str | None:
-    fill_times = [
-        _as_text(fill.get("filled_at"))
-        for fill in attempt.get("fills") or []
-        if isinstance(fill, Mapping)
-    ]
+    fill_times = [_as_text(fill.get("filled_at")) for fill in attempt.get("fills") or [] if isinstance(fill, Mapping)]
     filtered = [value for value in fill_times if value]
     if filtered:
         return max(filtered)
-    return _as_text(attempt.get("completed_at")) or _as_text(
-        attempt.get("submitted_at")
-    )
+    return _as_text(attempt.get("completed_at")) or _as_text(attempt.get("submitted_at"))
 
 
 def _resolve_width(attempt: Mapping[str, Any]) -> float | None:
@@ -430,8 +392,7 @@ def _position_legs(position: Mapping[str, Any]) -> list[dict[str, Any]]:
 def _position_economics(position: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "entry_credit": _coerce_float(position.get("entry_credit")),
-        "entry_value": _coerce_float(position.get("entry_value"))
-        or _coerce_float(position.get("entry_credit")),
+        "entry_value": _coerce_float(position.get("entry_value")) or _coerce_float(position.get("entry_credit")),
         "entry_notional": _coerce_float(position.get("entry_notional")),
         "max_profit": _coerce_float(position.get("max_profit")),
         "max_loss": _coerce_float(position.get("max_loss")),
@@ -490,27 +451,13 @@ def _new_position_id() -> str:
 
 
 def _position_width(position: Mapping[str, Any]) -> float | None:
-    strategy_metrics = (
-        position.get("strategy_metrics")
-        if isinstance(position.get("strategy_metrics"), Mapping)
-        else {}
-    )
-    return _coerce_float(strategy_metrics.get("width")) or _coerce_float(
-        position.get("width")
-    )
+    strategy_metrics = position.get("strategy_metrics") if isinstance(position.get("strategy_metrics"), Mapping) else {}
+    return _coerce_float(strategy_metrics.get("width")) or _coerce_float(position.get("width"))
 
 
 def _position_entry_value(position: Mapping[str, Any]) -> float | None:
-    economics = (
-        position.get("economics")
-        if isinstance(position.get("economics"), Mapping)
-        else {}
-    )
-    return (
-        _coerce_float(position.get("entry_value"))
-        or _coerce_float(economics.get("entry_value"))
-        or _coerce_float(economics.get("entry_credit"))
-    )
+    economics = position.get("economics") if isinstance(position.get("economics"), Mapping) else {}
+    return _coerce_float(position.get("entry_value")) or _coerce_float(economics.get("entry_value")) or _coerce_float(economics.get("entry_credit"))
 
 
 def _realized_close_pnl(
@@ -553,35 +500,21 @@ def _position_common_payload(
     reconciliation_status: str | None,
     reconciliation_note: str | None,
 ) -> dict[str, Any]:
-    candidate = (
-        attempt.get("candidate")
-        if isinstance(attempt.get("candidate"), Mapping)
-        else {}
-    )
+    candidate = attempt.get("candidate") if isinstance(attempt.get("candidate"), Mapping) else {}
     existing_payload = existing if isinstance(existing, Mapping) else {}
-    root_symbol = str(
-        attempt.get("underlying_symbol") or existing_payload.get("root_symbol") or ""
-    )
+    root_symbol = str(attempt.get("underlying_symbol") or existing_payload.get("root_symbol") or "")
     pipeline_id = (
-        _as_text(attempt.get("pipeline_id"))
-        or _as_text(existing_payload.get("pipeline_id"))
-        or build_pipeline_id(str(attempt.get("label") or ""))
+        _as_text(attempt.get("pipeline_id")) or _as_text(existing_payload.get("pipeline_id")) or build_pipeline_id(str(attempt.get("label") or ""))
     )
     market_date = (
-        _as_text(attempt.get("market_date"))
-        or _as_text(attempt.get("session_date"))
-        or _as_text(existing_payload.get("market_date_opened"))
+        _as_text(attempt.get("market_date")) or _as_text(attempt.get("session_date")) or _as_text(existing_payload.get("market_date_opened"))
     )
     policy_fields = resolve_pipeline_policy_fields(
-        profile=candidate.get("profile")
-        or _as_text(attempt.get("style_profile"))
-        or _as_text(existing_payload.get("style_profile")),
+        profile=candidate.get("profile") or _as_text(attempt.get("style_profile")) or _as_text(existing_payload.get("style_profile")),
         root_symbol=root_symbol,
     )
     width = _resolve_width(attempt) or _position_width(existing or {})
-    strategy_family = _as_text(attempt.get("strategy_family")) or _as_text(
-        existing.get("strategy_family") if isinstance(existing, Mapping) else None
-    )
+    strategy_family = _as_text(attempt.get("strategy_family")) or _as_text(existing.get("strategy_family") if isinstance(existing, Mapping) else None)
     exposure = _resolved_position_exposure(
         candidate=candidate,
         existing=existing,
@@ -591,17 +524,11 @@ def _position_common_payload(
         strategy_family=strategy_family,
     )
     exit_policy = (
-        dict(existing.get("exit_policy") or {})
-        if isinstance(existing, Mapping)
-        and isinstance(existing.get("exit_policy"), Mapping)
-        else {}
+        dict(existing.get("exit_policy") or {}) if isinstance(existing, Mapping) and isinstance(existing.get("exit_policy"), Mapping) else {}
     )
     exit_policy.update(_attempt_exit_policy(attempt))
     risk_policy = (
-        dict(existing.get("risk_policy") or {})
-        if isinstance(existing, Mapping)
-        and isinstance(existing.get("risk_policy"), Mapping)
-        else {}
+        dict(existing.get("risk_policy") or {}) if isinstance(existing, Mapping) and isinstance(existing.get("risk_policy"), Mapping) else {}
     )
     risk_policy.update(_attempt_risk_policy(attempt))
     request = _attempt_request(attempt)
@@ -615,60 +542,32 @@ def _position_common_payload(
     existing_legs = canonical_position_legs(existing or {})
     persisted_legs = attempt_legs or existing_legs
     source_job = _attempt_source_job(attempt)
-    bot_id = _as_text(request.get("bot_id")) or _as_text(
-        existing.get("bot_id") if isinstance(existing, Mapping) else None
+    trading_strategy_id = _as_text(request.get("trading_strategy_id")) or _as_text(
+        existing.get("trading_strategy_id") if isinstance(existing, Mapping) else None
     )
-    automation_id = _as_text(request.get("automation_id")) or _as_text(
-        existing.get("automation_id") if isinstance(existing, Mapping) else None
-    )
-    strategy_config_id = _as_text(request.get("strategy_config_id")) or _as_text(
-        existing.get("strategy_config_id") if isinstance(existing, Mapping) else None
-    )
-    strategy_id = _as_text(request.get("strategy_id")) or _as_text(
-        existing.get("strategy_id") if isinstance(existing, Mapping) else None
-    )
-    config_hash = _as_text(request.get("config_hash")) or _as_text(
-        existing.get("config_hash") if isinstance(existing, Mapping) else None
-    )
+    config_hash = _as_text(request.get("config_hash")) or _as_text(existing.get("config_hash") if isinstance(existing, Mapping) else None)
     opening_execution_intent_id = _attempt_execution_intent_id(attempt) or _as_text(
-        existing.get("opening_execution_intent_id")
-        if isinstance(existing, Mapping)
-        else None
+        existing.get("opening_execution_intent_id") if isinstance(existing, Mapping) else None
     )
     return {
         "pipeline_id": pipeline_id,
-        "bot_id": bot_id,
-        "automation_id": automation_id,
-        "strategy_config_id": strategy_config_id,
-        "strategy_id": strategy_id,
+        "trading_strategy_id": trading_strategy_id,
         "source_opportunity_id": _as_text(attempt.get("opportunity_id"))
-        or _as_text(
-            existing.get("source_opportunity_id")
-            if isinstance(existing, Mapping)
-            else None
-        ),
+        or _as_text(existing.get("source_opportunity_id") if isinstance(existing, Mapping) else None),
         "opening_execution_intent_id": opening_execution_intent_id,
         "root_symbol": root_symbol,
         "strategy_family": strategy_family or str(attempt.get("strategy") or "unknown"),
         "style_profile": _as_text(attempt.get("style_profile"))
-        or _as_text(
-            existing.get("style_profile") if isinstance(existing, Mapping) else None
-        )
+        or _as_text(existing.get("style_profile") if isinstance(existing, Mapping) else None)
         or str(policy_fields["style_profile"]),
         "horizon_intent": _as_text(attempt.get("horizon_intent"))
-        or _as_text(
-            existing.get("horizon_intent") if isinstance(existing, Mapping) else None
-        )
+        or _as_text(existing.get("horizon_intent") if isinstance(existing, Mapping) else None)
         or str(policy_fields["horizon_intent"]),
         "product_class": _as_text(attempt.get("product_class"))
-        or _as_text(
-            existing.get("product_class") if isinstance(existing, Mapping) else None
-        )
+        or _as_text(existing.get("product_class") if isinstance(existing, Mapping) else None)
         or str(policy_fields["product_class"]),
         "market_date_opened": market_date,
-        "market_date_closed": None
-        if closed_at is None or market_date is None
-        else market_date,
+        "market_date_closed": None if closed_at is None or market_date is None else market_date,
         "status": status,
         "legs": persisted_legs,
         "economics": {
@@ -681,12 +580,7 @@ def _position_common_payload(
         },
         "strategy_metrics": {
             "width": width,
-            "strategy": _as_text(attempt.get("strategy"))
-            or _as_text(
-                existing.get("strategy_family")
-                if isinstance(existing, Mapping)
-                else None
-            ),
+            "strategy": _as_text(attempt.get("strategy")) or _as_text(existing.get("strategy_family") if isinstance(existing, Mapping) else None),
         },
         "requested_quantity": requested_quantity,
         "opened_quantity": opened_quantity,
@@ -702,17 +596,10 @@ def _position_common_payload(
         "risk_policy": risk_policy,
         "config_hash": config_hash,
         "source_job_type": _as_text(source_job.get("job_type"))
-        or _as_text(
-            existing.get("source_job_type") if isinstance(existing, Mapping) else None
-        ),
-        "source_job_key": _as_text(source_job.get("job_key"))
-        or _as_text(
-            existing.get("source_job_key") if isinstance(existing, Mapping) else None
-        ),
+        or _as_text(existing.get("source_job_type") if isinstance(existing, Mapping) else None),
+        "source_job_key": _as_text(source_job.get("job_key")) or _as_text(existing.get("source_job_key") if isinstance(existing, Mapping) else None),
         "source_job_run_id": _as_text(source_job.get("job_run_id"))
-        or _as_text(
-            existing.get("source_job_run_id") if isinstance(existing, Mapping) else None
-        ),
+        or _as_text(existing.get("source_job_run_id") if isinstance(existing, Mapping) else None),
         "last_exit_evaluated_at": last_exit_evaluated_at,
         "last_exit_reason": last_exit_reason,
         "last_reconciled_at": last_reconciled_at,
@@ -735,18 +622,12 @@ def _recalculate_position(
         raise ValueError(f"Unknown position_id: {position_id}")
     closes = execution_store.list_position_closes(position_id=position_id)
     opened_quantity = _coerce_float(position.get("opened_quantity")) or 0.0
-    total_closed_quantity = sum(
-        _coerce_float(close.get("closed_quantity")) or 0.0 for close in closes
-    )
+    total_closed_quantity = sum(_coerce_float(close.get("closed_quantity")) or 0.0 for close in closes)
     remaining_quantity = max(opened_quantity - total_closed_quantity, 0.0)
-    realized_pnl = round(
-        sum(_coerce_float(close.get("realized_pnl")) or 0.0 for close in closes), 2
-    )
+    realized_pnl = round(sum(_coerce_float(close.get("realized_pnl")) or 0.0 for close in closes), 2)
     entry_credit = _position_entry_value(position)
     width = _position_width(position)
-    strategy_family = _as_text(position.get("strategy_family")) or _as_text(
-        position.get("strategy")
-    )
+    strategy_family = _as_text(position.get("strategy_family")) or _as_text(position.get("strategy"))
     exposure = _derive_live_exposure(
         entry_value=entry_credit,
         width=width,
@@ -803,19 +684,13 @@ def _sync_open_position(
     if filled_quantity <= 0:
         return None
 
-    requested_quantity = _coerce_int(attempt.get("quantity")) or max(
-        int(round(filled_quantity)), 1
-    )
+    requested_quantity = _coerce_int(attempt.get("quantity")) or max(int(round(filled_quantity)), 1)
     entry_credit = _resolve_spread_amount(attempt, primary_order, filled_quantity)
     broker_status = (_as_text(attempt.get("status")) or "unknown").lower()
     position_id = resolve_attempt_position_id(attempt)
-    existing = (
-        None if position_id is None else execution_store.get_position(position_id)
-    )
+    existing = None if position_id is None else execution_store.get_position(position_id)
     if existing is None:
-        existing = execution_store.get_position_by_open_attempt(
-            str(attempt["execution_attempt_id"])
-        )
+        existing = execution_store.get_position_by_open_attempt(str(attempt["execution_attempt_id"]))
     if existing is None:
         position_id = position_id or _new_position_id()
         created = execution_store.create_position(
@@ -855,11 +730,7 @@ def _sync_open_position(
             broker_status=broker_status,
         )
         position_status = str(close_state["status"])
-        unrealized_pnl = (
-            0.0
-            if position_status == "closed"
-            else _coerce_float(existing.get("unrealized_pnl"))
-        )
+        unrealized_pnl = 0.0 if position_status == "closed" else _coerce_float(existing.get("unrealized_pnl"))
         existing = execution_store.update_position(
             position_id=position_id,
             **_position_common_payload(
@@ -903,9 +774,7 @@ def _sync_close_position(
     execution_store: Any,
     attempt: Mapping[str, Any],
 ) -> dict[str, Any]:
-    position_id = resolve_attempt_position_id(attempt) or _as_text(
-        attempt.get("position_id")
-    )
+    position_id = resolve_attempt_position_id(attempt) or _as_text(attempt.get("position_id"))
     if position_id is None:
         legacy_session_position_id = resolve_attempt_session_position_id(attempt)
         if legacy_session_position_id is not None:
@@ -949,8 +818,7 @@ def _sync_close_position(
         entry_value=entry_credit,
         exit_value=exit_value,
         quantity=filled_quantity,
-        strategy_family=_as_text(position.get("strategy_family"))
-        or _as_text(position.get("strategy")),
+        strategy_family=_as_text(position.get("strategy_family")) or _as_text(position.get("strategy")),
     )
 
     now = _utc_now()

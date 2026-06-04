@@ -21,9 +21,8 @@ from core.integrations.calendar_events.models import (
 )
 from core.services.scanners.config import parse_args
 
-
 REPO_ROOT = Path(__file__).resolve().parents[4]
-REPLAY_ARTIFACT_ROOT = REPO_ROOT / "outputs" / "backtests" / "replay" / "artifacts"
+REPLAY_ARTIFACT_ROOT = REPO_ROOT / "outputs" / "scanner_replays" / "artifacts"
 
 _SYMBOL_ARG_KEYS = (
     "strategy",
@@ -106,22 +105,14 @@ def serialize_market_slice(market_slice: SymbolMarketSlice) -> dict[str, Any]:
 def _deserialize_contracts_by_expiration(
     payload: dict[str, list[dict[str, Any]]] | None,
 ) -> dict[str, list[OptionContract]]:
-    return {
-        str(expiration_date): [
-            OptionContract(**dict(row)) for row in list(rows or [])
-        ]
-        for expiration_date, rows in dict(payload or {}).items()
-    }
+    return {str(expiration_date): [OptionContract(**dict(row)) for row in list(rows or [])] for expiration_date, rows in dict(payload or {}).items()}
 
 
 def _deserialize_snapshots_by_expiration(
     payload: dict[str, dict[str, dict[str, Any]]] | None,
 ) -> dict[str, dict[str, OptionSnapshot]]:
     return {
-        str(expiration_date): {
-            str(symbol): OptionSnapshot(**dict(snapshot_payload))
-            for symbol, snapshot_payload in dict(snapshot_map or {}).items()
-        }
+        str(expiration_date): {str(symbol): OptionSnapshot(**dict(snapshot_payload)) for symbol, snapshot_payload in dict(snapshot_map or {}).items()}
         for expiration_date, snapshot_map in dict(payload or {}).items()
     }
 
@@ -129,10 +120,7 @@ def _deserialize_snapshots_by_expiration(
 def _deserialize_expected_moves(
     payload: dict[str, dict[str, Any]] | None,
 ) -> dict[str, ExpectedMoveEstimate]:
-    return {
-        str(expiration_date): ExpectedMoveEstimate(**dict(row))
-        for expiration_date, row in dict(payload or {}).items()
-    }
+    return {str(expiration_date): ExpectedMoveEstimate(**dict(row)) for expiration_date, row in dict(payload or {}).items()}
 
 
 def deserialize_market_slice(payload: dict[str, Any]) -> SymbolMarketSlice:
@@ -142,24 +130,12 @@ def deserialize_market_slice(payload: dict[str, Any]) -> SymbolMarketSlice:
         underlying_type=str(row["underlying_type"]),
         spot_price=float(row["spot_price"]),
         daily_bars=tuple(DailyBar(**dict(bar)) for bar in list(row.get("daily_bars") or [])),
-        intraday_bars=tuple(
-            IntradayBar(**dict(bar)) for bar in list(row.get("intraday_bars") or [])
-        ),
-        call_contracts_by_expiration=_deserialize_contracts_by_expiration(
-            row.get("call_contracts_by_expiration")
-        ),
-        put_contracts_by_expiration=_deserialize_contracts_by_expiration(
-            row.get("put_contracts_by_expiration")
-        ),
-        call_snapshots_by_expiration=_deserialize_snapshots_by_expiration(
-            row.get("call_snapshots_by_expiration")
-        ),
-        put_snapshots_by_expiration=_deserialize_snapshots_by_expiration(
-            row.get("put_snapshots_by_expiration")
-        ),
-        expected_moves_by_expiration=_deserialize_expected_moves(
-            row.get("expected_moves_by_expiration")
-        ),
+        intraday_bars=tuple(IntradayBar(**dict(bar)) for bar in list(row.get("intraday_bars") or [])),
+        call_contracts_by_expiration=_deserialize_contracts_by_expiration(row.get("call_contracts_by_expiration")),
+        put_contracts_by_expiration=_deserialize_contracts_by_expiration(row.get("put_contracts_by_expiration")),
+        call_snapshots_by_expiration=_deserialize_snapshots_by_expiration(row.get("call_snapshots_by_expiration")),
+        put_snapshots_by_expiration=_deserialize_snapshots_by_expiration(row.get("put_snapshots_by_expiration")),
+        expected_moves_by_expiration=_deserialize_expected_moves(row.get("expected_moves_by_expiration")),
     )
 
 
@@ -198,10 +174,7 @@ def deserialize_setup_context(
 def serialize_calendar_decisions_by_expiration(
     decisions_by_expiration: dict[str, CalendarPolicyDecision] | None,
 ) -> dict[str, dict[str, Any]]:
-    return {
-        str(expiration_date): dict(asdict(decision))
-        for expiration_date, decision in dict(decisions_by_expiration or {}).items()
-    }
+    return {str(expiration_date): dict(asdict(decision)) for expiration_date, decision in dict(decisions_by_expiration or {}).items()}
 
 
 def _deserialize_calendar_reason(payload: dict[str, Any]) -> CalendarEventReason:
@@ -223,48 +196,26 @@ def deserialize_calendar_decisions_by_expiration(
         decision_payload = dict(row)
         decisions[str(expiration_date)] = CalendarPolicyDecision(
             status=str(decision_payload["status"]),
-            reasons=tuple(
-                _deserialize_calendar_reason(dict(reason))
-                for reason in list(decision_payload.get("reasons") or [])
-            ),
+            reasons=tuple(_deserialize_calendar_reason(dict(reason)) for reason in list(decision_payload.get("reasons") or [])),
             days_to_nearest_event=decision_payload.get("days_to_nearest_event"),
             events_before_expiry=int(decision_payload.get("events_before_expiry") or 0),
             assignment_risk=bool(decision_payload.get("assignment_risk")),
             macro_regime=decision_payload.get("macro_regime"),
-            source_confidence=str(
-                decision_payload.get("source_confidence") or "unknown"
-            ),
-            sources=tuple(
-                str(value) for value in list(decision_payload.get("sources") or [])
-            ),
+            source_confidence=str(decision_payload.get("source_confidence") or "unknown"),
+            sources=tuple(str(value) for value in list(decision_payload.get("sources") or [])),
             last_updated=decision_payload.get("last_updated"),
             earnings_phase=str(decision_payload.get("earnings_phase") or "clean"),
             earnings_event_date=decision_payload.get("earnings_event_date"),
-            earnings_session_timing=str(
-                decision_payload.get("earnings_session_timing") or "unknown"
-            ),
+            earnings_session_timing=str(decision_payload.get("earnings_session_timing") or "unknown"),
             earnings_cohort_key=decision_payload.get("earnings_cohort_key"),
             earnings_days_to_event=decision_payload.get("earnings_days_to_event"),
             earnings_days_since_event=decision_payload.get("earnings_days_since_event"),
-            earnings_timing_confidence=str(
-                decision_payload.get("earnings_timing_confidence") or "unknown"
-            ),
-            earnings_horizon_crosses_report=bool(
-                decision_payload.get("earnings_horizon_crosses_report")
-            ),
+            earnings_timing_confidence=str(decision_payload.get("earnings_timing_confidence") or "unknown"),
+            earnings_horizon_crosses_report=bool(decision_payload.get("earnings_horizon_crosses_report")),
             earnings_primary_source=decision_payload.get("earnings_primary_source"),
-            earnings_supporting_sources=tuple(
-                str(value)
-                for value in list(
-                    decision_payload.get("earnings_supporting_sources") or []
-                )
-            ),
-            earnings_consensus_status=str(
-                decision_payload.get("earnings_consensus_status") or "missing"
-            ),
-            earnings_enrichment=dict(
-                decision_payload.get("earnings_enrichment") or {}
-            ),
+            earnings_supporting_sources=tuple(str(value) for value in list(decision_payload.get("earnings_supporting_sources") or [])),
+            earnings_consensus_status=str(decision_payload.get("earnings_consensus_status") or "missing"),
+            earnings_enrichment=dict(decision_payload.get("earnings_enrichment") or {}),
         )
     return decisions
 
@@ -290,9 +241,7 @@ def write_scan_replay_artifact(
         "market_slice": serialize_market_slice(market_slice),
         "setup_context": None if setup_context is None else dict(asdict(setup_context)),
         "candidate_filter": dict(candidate_filter or {}),
-        "calendar_decisions_by_expiration": serialize_calendar_decisions_by_expiration(
-            calendar_decisions_by_expiration
-        ),
+        "calendar_decisions_by_expiration": serialize_calendar_decisions_by_expiration(calendar_decisions_by_expiration),
     }
     output_path.write_text(json.dumps(payload, indent=2, default=str) + "\n")
     return _relative_repo_path(output_path)

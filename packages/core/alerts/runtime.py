@@ -27,14 +27,10 @@ def _as_float(value: Any) -> float | None:
 def runtime_entry_selected_key(
     *,
     market_date: str,
-    bot_id: str,
-    automation_id: str,
+    trading_strategy_id: str,
     opportunity_id: str,
 ) -> str:
-    return (
-        f"{RUNTIME_ENTRY_SELECTED_ALERT_TYPE}|{market_date}|{bot_id}|"
-        f"{automation_id}|{opportunity_id}"
-    )
+    return f"{RUNTIME_ENTRY_SELECTED_ALERT_TYPE}|{market_date}|{trading_strategy_id}|" f"{opportunity_id}"
 
 
 def _selected_score(
@@ -66,12 +62,8 @@ def _candidate_payload(
     candidate_source = opportunity.get("candidate")
     candidate = dict(candidate_source) if isinstance(candidate_source, Mapping) else {}
     score = _selected_score(opportunity=opportunity, decision=decision)
-    symbol = _as_text(opportunity.get("underlying_symbol")) or _as_text(
-        candidate.get("underlying_symbol")
-    )
-    strategy = _as_text(candidate.get("strategy")) or _as_text(
-        opportunity.get("strategy_family")
-    )
+    symbol = _as_text(opportunity.get("underlying_symbol")) or _as_text(candidate.get("underlying_symbol"))
+    strategy = _as_text(candidate.get("strategy")) or _as_text(opportunity.get("strategy_family"))
     candidate.setdefault("underlying_symbol", symbol or "UNKNOWN")
     candidate.setdefault("strategy", strategy or "unknown")
     candidate.setdefault("quality_score", score)
@@ -100,16 +92,10 @@ def _execution_admission_payload(
         "reason": _as_text(raw.get("reason")),
         "message": _as_text(raw.get("message")),
         "evaluated_at": _as_text(raw.get("evaluated_at")),
-        "admissible_quantity": (
-            None
-            if raw.get("admissible_quantity") in (None, "")
-            else int(raw.get("admissible_quantity"))
-        ),
+        "admissible_quantity": (None if raw.get("admissible_quantity") in (None, "") else int(raw.get("admissible_quantity"))),
         "required_buying_power": _as_float(raw.get("required_buying_power")),
         "available_buying_power": _as_float(raw.get("available_buying_power")),
-        "account_available_buying_power": _as_float(
-            raw.get("account_available_buying_power")
-        ),
+        "account_available_buying_power": _as_float(raw.get("account_available_buying_power")),
         "reserved_buying_power": _as_float(raw.get("reserved_buying_power")),
         "buying_power_basis": _as_text(raw.get("buying_power_basis")),
         "buying_power_source_field": _as_text(raw.get("buying_power_source_field")),
@@ -124,8 +110,7 @@ def _execution_admission_payload(
 
 def _alert_description(
     *,
-    bot_id: str,
-    automation_id: str,
+    trading_strategy_id: str,
     decision: Mapping[str, Any],
     execution_intent: Mapping[str, Any] | None,
     execution_admission: Mapping[str, Any] | None,
@@ -134,13 +119,9 @@ def _alert_description(
 ) -> str:
     score = _as_float(decision.get("score"))
     score_text = "n/a" if score is None else f"{score:.1f}"
-    intent_id = (
-        None
-        if execution_intent is None
-        else _as_text(execution_intent.get("execution_intent_id"))
-    )
+    intent_id = None if execution_intent is None else _as_text(execution_intent.get("execution_intent_id"))
     details = [
-        f"{bot_id}/{automation_id} selected this opportunity for entry",
+        f"{trading_strategy_id} selected this opportunity for entry",
         f"score {score_text}",
     ]
     if execution_mode:
@@ -167,8 +148,7 @@ def plan_runtime_entry_selected_alert(
     *,
     alert_store: Any,
     job_store: Any,
-    bot_id: str,
-    automation_id: str,
+    trading_strategy_id: str,
     market_date: str,
     run_key: str,
     opportunity: Mapping[str, Any],
@@ -189,27 +169,18 @@ def plan_runtime_entry_selected_alert(
     opportunity_id = str(opportunity["opportunity_id"])
     candidate_source = opportunity.get("candidate")
     candidate_mapping = candidate_source if isinstance(candidate_source, Mapping) else {}
-    symbol = (
-        _as_text(opportunity.get("underlying_symbol"))
-        or _as_text(candidate_mapping.get("underlying_symbol"))
-        or "UNKNOWN"
-    )
-    label = _as_text(opportunity.get("label")) or f"{bot_id}:{automation_id}"
+    symbol = _as_text(opportunity.get("underlying_symbol")) or _as_text(candidate_mapping.get("underlying_symbol")) or "UNKNOWN"
+    label = _as_text(opportunity.get("label")) or trading_strategy_id
     session_id = build_live_run_scope_id(label, market_date)
     cycle_id = _as_text(opportunity.get("cycle_id")) or run_key
     candidate = _candidate_payload(opportunity=opportunity, decision=decision)
-    execution_intent_id = (
-        None
-        if execution_intent is None
-        else _as_text(execution_intent.get("execution_intent_id"))
-    )
+    execution_intent_id = None if execution_intent is None else _as_text(execution_intent.get("execution_intent_id"))
     decision_id = _as_text(decision.get("opportunity_decision_id"))
     score = _selected_score(opportunity=opportunity, decision=decision)
     reason_codes = [str(value) for value in list(decision.get("reason_codes") or [])]
     execution_admission = _execution_admission_payload(execution_intent)
     details = {
-        "bot_id": bot_id,
-        "automation_id": automation_id,
+        "trading_strategy_id": trading_strategy_id,
         "opportunity_id": opportunity_id,
         "opportunity_decision_id": decision_id,
         "execution_intent_id": execution_intent_id,
@@ -219,17 +190,11 @@ def plan_runtime_entry_selected_alert(
         "reason_codes": reason_codes,
         "execution_mode": execution_mode,
         "approval_mode": approval_mode,
-        "execution_admission_status": None
-        if execution_admission is None
-        else execution_admission.get("status"),
-        "execution_admission_reason": None
-        if execution_admission is None
-        else execution_admission.get("reason"),
+        "execution_admission_status": None if execution_admission is None else execution_admission.get("status"),
+        "execution_admission_reason": None if execution_admission is None else execution_admission.get("reason"),
     }
     payload = {
-        "created_at": _as_text(decision.get("decided_at")) or _as_text(
-            opportunity.get("updated_at")
-        ),
+        "created_at": _as_text(decision.get("decided_at")) or _as_text(opportunity.get("updated_at")),
         "session_date": market_date,
         "label": label,
         "cycle_id": cycle_id,
@@ -240,8 +205,7 @@ def plan_runtime_entry_selected_alert(
         "candidate": candidate,
         "execution_admission": execution_admission,
         "description": _alert_description(
-            bot_id=bot_id,
-            automation_id=automation_id,
+            trading_strategy_id=trading_strategy_id,
             decision=decision,
             execution_intent=execution_intent,
             execution_admission=execution_admission,
@@ -261,8 +225,7 @@ def plan_runtime_entry_selected_alert(
         payload=payload,
         dedupe_key=runtime_entry_selected_key(
             market_date=market_date,
-            bot_id=bot_id,
-            automation_id=automation_id,
+            trading_strategy_id=trading_strategy_id,
             opportunity_id=opportunity_id,
         ),
         dedupe_state=details,

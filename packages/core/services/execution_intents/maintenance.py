@@ -4,7 +4,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from core.jobs.specs import list_declared_job_rows
-from core.services.bots import bot_time_reached, load_bots
 from core.services.deployment_policy import (
     DEPLOYMENT_MODE_LIVE_AUTO,
     DEPLOYMENT_MODE_PAPER_AUTO,
@@ -19,7 +18,6 @@ from .shared import (
     TERMINAL_INTENT_STATES,
     _append_event,
     _as_text,
-    _intent_action_type,
     _intent_payload,
     _update_intent,
     _utc_now,
@@ -36,21 +34,10 @@ def _auto_execution_gate(
     payload = _intent_payload(intent)
     approval_mode = str(payload.get("approval_mode") or "manual").strip().lower()
     execution_mode = str(payload.get("execution_mode") or "paper").strip().lower()
-    action_type = _intent_action_type(intent)
-    bot_id = _as_text(intent.get("bot_id"))
-    bot = None if bot_id is None else load_bots().get(bot_id)
     if approval_mode != "auto":
         return False, "manual_approval_required"
     if execution_mode not in AUTO_EXECUTION_MODES:
         return False, "unsupported_execution_mode"
-    if action_type == "open" and bot is not None:
-        if bot.cancel_pending_entries_after_et and bot_time_reached(
-            bot,
-            time_value=bot.cancel_pending_entries_after_et,
-        ):
-            return False, "bot_entry_cutoff_reached"
-        if execution_mode == "live" and not bot.live_enabled:
-            return False, "bot_live_disabled"
     if execution_mode == "paper" and trading_environment != "paper":
         return False, "paper_execution_requires_paper_environment"
     return True, None
@@ -116,9 +103,7 @@ def _position_is_active_for_intent(
     intent: dict[str, Any],
 ) -> tuple[bool, str | None]:
     payload = _intent_payload(intent)
-    strategy_position_id = _as_text(intent.get("strategy_position_id")) or _as_text(
-        payload.get("position_id")
-    )
+    strategy_position_id = _as_text(intent.get("strategy_position_id")) or _as_text(payload.get("position_id"))
     if strategy_position_id is None:
         return False, "position_missing"
     position = execution_store.get_position(strategy_position_id)
@@ -152,8 +137,7 @@ def _cleanup_slot_conflicts(
     results: list[dict[str, Any]] = []
     for slot_key, intents in slots.items():
         intents.sort(
-            key=lambda row: parse_datetime(_as_text(row.get("created_at")))
-            or datetime.min.replace(tzinfo=UTC),
+            key=lambda row: parse_datetime(_as_text(row.get("created_at"))) or datetime.min.replace(tzinfo=UTC),
             reverse=True,
         )
         anchor_id: str | None = None
@@ -202,15 +186,10 @@ def _cleanup_slot_conflicts(
     return {"revoked": revoked, "results": results[:25]}
 
 
-def _backfill_strategy_position_links(
-    execution_store: Any, *, limit: int
-) -> dict[str, Any]:
+def _backfill_strategy_position_links(execution_store: Any, *, limit: int) -> dict[str, Any]:
     linked = 0
     results: list[dict[str, Any]] = []
-    positions = [
-        dict(row)
-        for row in execution_store.list_positions(limit=max(int(limit), 1) * 10)
-    ]
+    positions = [dict(row) for row in execution_store.list_positions(limit=max(int(limit), 1) * 10)]
     for position in positions:
         position_id = str(position.get("position_id") or "")
         open_execution_attempt_id = _as_text(position.get("open_execution_attempt_id"))
@@ -246,13 +225,11 @@ def _backfill_strategy_position_links(
     return {"linked": linked, "results": results[:25]}
 
 
-def _active_options_automation_labels(job_store: Any) -> set[str]:
+def _active_trading_strategy_labels(job_store: Any) -> set[str]:
     labels: set[str] = set()
-    for definition in list_declared_job_rows(
-        enabled_only=True, job_type="discovery_run"
-    ):
+    for definition in list_declared_job_rows(enabled_only=True, job_type="discovery_run"):
         payload = dict(definition.get("payload") or {})
-        if not bool(payload.get("options_automation_enabled", False)):
+        if not bool(payload.get("trading_strategy_enabled", False)):
             continue
         labels.add(resolve_discovery_run_label(payload))
     return labels
@@ -267,10 +244,7 @@ def _cleanup_terminal_intent_history(
     threshold = datetime.now(UTC) - timedelta(minutes=max(older_than_minutes, 1))
     retained = 0
     results: list[dict[str, Any]] = []
-    intents = [
-        dict(row)
-        for row in execution_store.list_execution_intents(limit=max(int(limit), 1) * 25)
-    ]
+    intents = [dict(row) for row in execution_store.list_execution_intents(limit=max(int(limit), 1) * 25)]
     for intent in intents:
         if retained >= max(int(limit), 1):
             break
@@ -292,7 +266,7 @@ def _cleanup_terminal_intent_history(
     return {"deleted": 0, "retained": retained, "results": results[:25]}
 
 
-def _cleanup_stale_automation_opportunities(
+def _cleanup_stale_strategy_opportunities(
     *,
     signal_store: Any,
     job_store: Any,
@@ -302,7 +276,7 @@ def _cleanup_stale_automation_opportunities(
 ) -> dict[str, Any]:
     if not signal_store.schema_ready():
         return {"deleted": 0, "terminalized": 0, "results": []}
-    active_labels = _active_options_automation_labels(job_store)
+    active_labels = _active_trading_strategy_labels(job_store)
     threshold = datetime.now(UTC) - timedelta(minutes=max(older_than_minutes, 1))
     terminalized = 0
     results: list[dict[str, Any]] = []
@@ -332,7 +306,7 @@ def _cleanup_stale_automation_opportunities(
         expired = signal_store.expire_opportunity(
             opportunity_id,
             expired_at=_utc_now(),
-            reason_code="expired_inactive_automation_label",
+            reason_code="expired_inactive_strategy_label",
         )
         if expired is None:
             continue

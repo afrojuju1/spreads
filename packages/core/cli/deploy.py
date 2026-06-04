@@ -13,7 +13,7 @@ from core.services.deployments import (
     exec_spreads_command,
     get_deploy_target,
     install_systemd_service,
-    install_target_ops_automation,
+    install_target_ops_schedule,
     list_deploy_targets,
     logs_deploy_target,
     render_deploy_env_file,
@@ -71,9 +71,7 @@ def list_targets_command(
 ) -> None:
     targets = list_deploy_targets()
     if json_output:
-        typer.echo(
-            json.dumps([deploy_target_payload(target) for target in targets], indent=2)
-        )
+        typer.echo(json.dumps([deploy_target_payload(target) for target in targets], indent=2))
         return
     for target in targets:
         location = target.ssh_host if target.ssh_host else "local"
@@ -378,7 +376,6 @@ def health_command(
             ("Live Doctor", ["live-doctor", "--json"]),
             ("Jobs", ["jobs", "--json"]),
             ("Trading", ["trading", "--json"]),
-            ("Finviz Ledger", ["finviz-ledger", "--json", "--limit", "5"]),
         ]
         exit_code = 0
         for title, args in commands:
@@ -427,7 +424,7 @@ def install_service_command(
 
 @deploy_app.command(
     "install-ops",
-    help="Install user-level reboot, backup, and health automation for one target.",
+    help="Install user-level reboot, backup, and health schedule for one target.",
 )
 def install_ops_command(
     environment: str = typer.Option(
@@ -444,13 +441,13 @@ def install_ops_command(
 ) -> None:
     if not yes:
         typer.secho(
-            "Refusing to install ops automation without --yes.",
+            "Refusing to install ops schedule without --yes.",
             err=True,
             fg=typer.colors.RED,
         )
         raise typer.Exit(3)
     try:
-        install_target_ops_automation(_resolve_target(environment))
+        install_target_ops_schedule(_resolve_target(environment))
     except (DeploymentConfigError, OSError, RuntimeError) as exc:
         _handle_deploy_error(exc)
 

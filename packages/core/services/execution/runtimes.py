@@ -4,13 +4,11 @@ from collections import Counter
 from collections.abc import Mapping
 from typing import Any
 
-from core.services.bots import load_active_bots
+from core.services.trading_strategies import load_active_trading_strategies
 
 ALPACA_DIRECT_RUNTIME = "alpaca_direct"
 SUPPORTED_EXECUTION_RUNTIMES = {ALPACA_DIRECT_RUNTIME}
-EXECUTION_RUNTIME_CAPABILITIES_SCHEMA_VERSION = (
-    "spreads.execution_runtime_capabilities.v1"
-)
+EXECUTION_RUNTIME_CAPABILITIES_SCHEMA_VERSION = "spreads.execution_runtime_capabilities.v1"
 
 
 def normalize_execution_runtime(value: Any) -> str:
@@ -28,20 +26,17 @@ def _runtime_usage_summary(config_root: Any = None) -> dict[str, dict[str, Any]]
     counts: dict[str, Counter[str]] = {
         ALPACA_DIRECT_RUNTIME: Counter(),
     }
-    automation_counts: Counter[str] = Counter()
-    for bot in load_active_bots(config_root).values():
-        for runtime in bot.automations:
-            if not runtime.automation.is_entry:
-                continue
-            execution_runtime = normalize_execution_runtime(
-                runtime.automation.execution_runtime
-            )
-            automation_counts[execution_runtime] += 1
-            counts[execution_runtime][runtime.strategy_config.strategy_family] += 1
+    strategy_counts: Counter[str] = Counter()
+    for strategy in load_active_trading_strategies(config_root).values():
+        if strategy.entry is None or not strategy.entry.enabled:
+            continue
+        execution_runtime = normalize_execution_runtime(strategy.execution.runtime)
+        strategy_counts[execution_runtime] += 1
+        counts[execution_runtime][strategy.trade_structure] += 1
 
     return {
         runtime: {
-            "entry_automation_count": int(automation_counts.get(runtime, 0)),
+            "entry_strategy_count": int(strategy_counts.get(runtime, 0)),
             "strategy_families": dict(sorted(counts[runtime].items())),
         }
         for runtime in sorted(SUPPORTED_EXECUTION_RUNTIMES)

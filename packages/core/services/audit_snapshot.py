@@ -55,9 +55,7 @@ def _timeline_sort_key(item: Mapping[str, Any]) -> tuple[Any, str, str, str]:
 
 
 def _event_log_sort_key(event: Mapping[str, Any]) -> tuple[Any, str]:
-    timestamp = parse_datetime(
-        _as_text(event.get("occurred_at")) or "1970-01-01T00:00:00Z"
-    )
+    timestamp = parse_datetime(_as_text(event.get("occurred_at")) or "1970-01-01T00:00:00Z")
     return (
         timestamp,
         str(event.get("event_id") or ""),
@@ -141,17 +139,9 @@ def _event_summary(event: Mapping[str, Any]) -> str:
     if topic == "control.execution.blocked" or topic == "control.execution.skipped":
         return _as_text(payload.get("message")) or topic
     if topic == "control.mode.updated":
-        control = (
-            payload.get("control")
-            if isinstance(payload.get("control"), Mapping)
-            else {}
-        )
-        mode = (
-            _as_text(control.get("mode")) or _as_text(payload.get("mode")) or "updated"
-        )
-        reason_code = _as_text(control.get("reason_code")) or _as_text(
-            payload.get("reason_code")
-        )
+        control = payload.get("control") if isinstance(payload.get("control"), Mapping) else {}
+        mode = _as_text(control.get("mode")) or _as_text(payload.get("mode")) or "updated"
+        reason_code = _as_text(control.get("reason_code")) or _as_text(payload.get("reason_code"))
         return f"Control mode set to {mode}{'' if reason_code is None else f' ({reason_code})'}."
     if topic == "job.run.updated":
         job_type = _as_text(payload.get("job_type")) or "job"
@@ -161,45 +151,20 @@ def _event_summary(event: Mapping[str, Any]) -> str:
     if topic == "broker.sync.updated":
         return f"Broker sync is {status or 'updated'}."
     if topic == "market.quote.captured":
-        symbol = (
-            _as_text(payload.get("option_symbol"))
-            or _as_text(payload.get("symbol"))
-            or entity_key
-            or "quote"
-        )
+        symbol = _as_text(payload.get("option_symbol")) or _as_text(payload.get("symbol")) or entity_key or "quote"
         return f"{symbol} quote captured."
     if topic == "market.trade.captured":
-        symbol = (
-            _as_text(payload.get("option_symbol"))
-            or _as_text(payload.get("symbol"))
-            or entity_key
-            or "trade"
-        )
+        symbol = _as_text(payload.get("option_symbol")) or _as_text(payload.get("symbol")) or entity_key or "trade"
         return f"{symbol} trade captured."
     if topic == MARKET_CAPTURE_SUMMARY_TOPIC:
-        quote_capture = (
-            payload.get("quote_capture")
-            if isinstance(payload.get("quote_capture"), Mapping)
-            else {}
-        )
-        trade_capture = (
-            payload.get("trade_capture")
-            if isinstance(payload.get("trade_capture"), Mapping)
-            else {}
-        )
+        quote_capture = payload.get("quote_capture") if isinstance(payload.get("quote_capture"), Mapping) else {}
+        trade_capture = payload.get("trade_capture") if isinstance(payload.get("trade_capture"), Mapping) else {}
         cycle_id = _as_text(payload.get("cycle_id")) or entity_key or "unknown_cycle"
         quote_count = int(quote_capture.get("total_quote_events_saved") or 0)
         trade_count = int(trade_capture.get("total_trade_events_saved") or 0)
-        return (
-            f"Market capture summary for cycle {cycle_id}: "
-            f"{quote_count} quote rows / {trade_count} trade rows."
-        )
+        return f"Market capture summary for cycle {cycle_id}: " f"{quote_count} quote rows / {trade_count} trade rows."
     if topic == "uoa.summary.updated":
-        overview = (
-            payload.get("overview")
-            if isinstance(payload.get("overview"), Mapping)
-            else {}
-        )
+        overview = payload.get("overview") if isinstance(payload.get("overview"), Mapping) else {}
         cycle_id = _as_text(payload.get("cycle_id")) or entity_key or "unknown_cycle"
         scoreable_trades = int(overview.get("scoreable_trade_count") or 0)
         scoreable_contracts = int(overview.get("scoreable_contract_count") or 0)
@@ -210,23 +175,12 @@ def _event_summary(event: Mapping[str, Any]) -> str:
             f"{scoreable_contracts} contracts / {scoreable_roots} roots."
         )
     if topic == "uoa.decision.updated":
-        overview = (
-            payload.get("overview")
-            if isinstance(payload.get("overview"), Mapping)
-            else {}
-        )
+        overview = payload.get("overview") if isinstance(payload.get("overview"), Mapping) else {}
         cycle_id = _as_text(payload.get("cycle_id")) or entity_key or "unknown_cycle"
-        monitor_count = int(
-            overview.get("monitor_count", overview.get("watchlist_count")) or 0
-        )
-        promotable_count = int(
-            overview.get("promotable_count", overview.get("board_count")) or 0
-        )
+        monitor_count = int(overview.get("monitor_count", overview.get("watchlist_count")) or 0)
+        promotable_count = int(overview.get("promotable_count", overview.get("board_count")) or 0)
         high_count = int(overview.get("high_count") or 0)
-        return (
-            f"UOA decisions updated for cycle {cycle_id}: "
-            f"{monitor_count} monitor / {promotable_count} promotable / {high_count} high."
-        )
+        return f"UOA decisions updated for cycle {cycle_id}: " f"{monitor_count} monitor / {promotable_count} promotable / {high_count} high."
     return _as_text(payload.get("message")) or topic or "event recorded"
 
 
@@ -266,11 +220,7 @@ def _collapse_market_quote_events(
             _as_text(payload.get("session_id")),
         )
         entry = grouped.get(group_key)
-        symbol = (
-            _as_text(payload.get("option_symbol"))
-            or _as_text(payload.get("symbol"))
-            or _as_text(event.get("entity_key"))
-        )
+        symbol = _as_text(payload.get("option_symbol")) or _as_text(payload.get("symbol")) or _as_text(event.get("entity_key"))
         if entry is None:
             entry = {
                 "at": _as_text(event.get("occurred_at")),
@@ -278,8 +228,7 @@ def _collapse_market_quote_events(
                 "topic": MARKET_QUOTE_CAPTURE_TOPIC,
                 "source": _as_text(event.get("source")),
                 "entity_type": "option_quote_batch",
-                "entity_id": _as_text(payload.get("cycle_id"))
-                or str(event.get("entity_key") or ""),
+                "entity_id": _as_text(payload.get("cycle_id")) or str(event.get("entity_key") or ""),
                 "correlation_id": _as_text(event.get("correlation_id")),
                 "causation_id": _as_text(event.get("causation_id")),
                 "details": {
@@ -294,11 +243,7 @@ def _collapse_market_quote_events(
             grouped[group_key] = entry
             ordered_groups.append(group_key)
         entry["details"]["quote_count"] += 1
-        if (
-            symbol
-            and symbol not in entry["details"]["symbols_sample"]
-            and len(entry["details"]["symbols_sample"]) < 5
-        ):
+        if symbol and symbol not in entry["details"]["symbols_sample"] and len(entry["details"]["symbols_sample"]) < 5:
             entry["details"]["symbols_sample"].append(symbol)
         collapsed_count += 1
 
@@ -309,15 +254,9 @@ def _collapse_market_quote_events(
         symbol_preview = list(entry["details"]["symbols_sample"])
         preview_text = ", ".join(symbol_preview)
         if quote_count == 1:
-            entry["summary"] = (
-                f"Captured 1 option quote for cycle {cycle_id}"
-                f"{'' if not preview_text else f' ({preview_text})'}."
-            )
+            entry["summary"] = f"Captured 1 option quote for cycle {cycle_id}" f"{'' if not preview_text else f' ({preview_text})'}."
         else:
-            entry["summary"] = (
-                f"Captured {quote_count} option quotes for cycle {cycle_id}"
-                f"{'' if not preview_text else f' ({preview_text})'}."
-            )
+            entry["summary"] = f"Captured {quote_count} option quotes for cycle {cycle_id}" f"{'' if not preview_text else f' ({preview_text})'}."
         normalized_items.append(entry)
     return normalized_items, collapsed_count
 
@@ -398,12 +337,8 @@ def _current_cycle_summary(
         "promotable_count": int(selection_counts.get("promotable") or 0),
         "monitor_count": int(selection_counts.get("monitor") or 0),
         "opportunity_count": len(opportunities),
-        "resolved_ranking_policy": dict(
-            current_cycle.get("resolved_ranking_policy") or {}
-        ),
-        "ranking_policy_gate_summary": dict(
-            current_cycle.get("ranking_policy_gate_summary") or {}
-        ),
+        "resolved_ranking_policy": dict(current_cycle.get("resolved_ranking_policy") or {}),
+        "ranking_policy_gate_summary": dict(current_cycle.get("ranking_policy_gate_summary") or {}),
         "raw_candidate_summary": dict(current_cycle.get("raw_candidate_summary") or {}),
     }
 
@@ -411,6 +346,7 @@ def _current_cycle_summary(
 def _summarize_opportunity(opportunity: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "opportunity_id": str(opportunity.get("opportunity_id") or ""),
+        "trading_strategy_id": _as_text(opportunity.get("trading_strategy_id")),
         "underlying_symbol": _as_text(opportunity.get("underlying_symbol")),
         "selection_state": _as_text(opportunity.get("selection_state")),
         "selection_rank": opportunity.get("selection_rank"),
@@ -418,9 +354,7 @@ def _summarize_opportunity(opportunity: Mapping[str, Any]) -> dict[str, Any]:
         "confidence": opportunity.get("confidence"),
         "reason_codes": list(opportunity.get("reason_codes") or []),
         "blockers": list(opportunity.get("blockers") or []),
-        "consumed_by_execution_attempt_id": _as_text(
-            opportunity.get("consumed_by_execution_attempt_id")
-        ),
+        "consumed_by_execution_attempt_id": _as_text(opportunity.get("consumed_by_execution_attempt_id")),
         "updated_at": _as_text(opportunity.get("updated_at")),
     }
 
@@ -431,42 +365,24 @@ def _selected_opportunities_for_explanation(
     opportunities: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     if isinstance(current_cycle, Mapping):
-        current_rows = [
-            dict(row)
-            for row in list(current_cycle.get("opportunities") or [])
-            if isinstance(row, Mapping)
-        ]
+        current_rows = [dict(row) for row in list(current_cycle.get("opportunities") or []) if isinstance(row, Mapping)]
         if current_rows:
             ledger_by_candidate_id = {
-                int(row["source_candidate_id"]): row
-                for row in opportunities
-                if row.get("source_candidate_id") not in (None, "")
+                int(row["source_candidate_id"]): row for row in opportunities if row.get("source_candidate_id") not in (None, "")
             }
             merged_rows = []
             for row in current_rows:
                 candidate_id = row.get("candidate_id")
-                ledger_row = (
-                    {}
-                    if candidate_id in (None, "")
-                    else dict(ledger_by_candidate_id.get(int(candidate_id)) or {})
-                )
+                ledger_row = {} if candidate_id in (None, "") else dict(ledger_by_candidate_id.get(int(candidate_id)) or {})
                 merged_row = {
                     **ledger_row,
                     **row,
                 }
                 if merged_row.get("lifecycle_state") in (None, ""):
-                    merged_row["lifecycle_state"] = (
-                        "ready"
-                        if str(merged_row.get("selection_state") or "") == "promotable"
-                        else "candidate"
-                    )
+                    merged_row["lifecycle_state"] = "ready" if str(merged_row.get("selection_state") or "") == "promotable" else "candidate"
                 if merged_row.get("confidence") in (None, ""):
-                    merged_row["confidence"] = _confidence_from_quality_score(
-                        merged_row.get("quality_score")
-                    )
-                if not merged_row.get("reason_codes") and merged_row.get(
-                    "state_reason"
-                ):
+                    merged_row["confidence"] = _confidence_from_quality_score(merged_row.get("quality_score"))
+                if not merged_row.get("reason_codes") and merged_row.get("state_reason"):
                     merged_row["reason_codes"] = [str(merged_row["state_reason"])]
                 merged_rows.append(merged_row)
             selection_priority = {
@@ -512,6 +428,7 @@ def _summarize_risk_decision(decision: Mapping[str, Any]) -> dict[str, Any]:
 def _summarize_execution(attempt: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "execution_attempt_id": str(attempt.get("execution_attempt_id") or ""),
+        "trading_strategy_id": _as_text(attempt.get("trading_strategy_id")),
         "trade_intent": _as_text(attempt.get("trade_intent")),
         "status": _as_text(attempt.get("status")),
         "underlying_symbol": _as_text(attempt.get("underlying_symbol")),
@@ -529,16 +446,8 @@ def _summarize_execution(attempt: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _summarize_slot_run(run: Mapping[str, Any]) -> dict[str, Any]:
-    quote_capture = (
-        run.get("quote_capture")
-        if isinstance(run.get("quote_capture"), Mapping)
-        else {}
-    )
-    trade_capture = (
-        run.get("trade_capture")
-        if isinstance(run.get("trade_capture"), Mapping)
-        else {}
-    )
+    quote_capture = run.get("quote_capture") if isinstance(run.get("quote_capture"), Mapping) else {}
+    trade_capture = run.get("trade_capture") if isinstance(run.get("trade_capture"), Mapping) else {}
     stream_quote_events_saved = quote_capture.get(
         "stream_quote_events_saved",
         quote_capture.get("websocket_quote_events_saved"),
@@ -559,12 +468,8 @@ def _summarize_slot_run(run: Mapping[str, Any]) -> dict[str, Any]:
             "capture_status": _as_text(quote_capture.get("capture_status")),
             "stream_quote_events_saved": stream_quote_events_saved,
             "websocket_quote_events_saved": stream_quote_events_saved,
-            "baseline_quote_events_saved": quote_capture.get(
-                "baseline_quote_events_saved"
-            ),
-            "recovery_quote_events_saved": quote_capture.get(
-                "recovery_quote_events_saved"
-            ),
+            "baseline_quote_events_saved": quote_capture.get("baseline_quote_events_saved"),
+            "recovery_quote_events_saved": quote_capture.get("recovery_quote_events_saved"),
         },
         "trade_capture": {
             "capture_status": _as_text(trade_capture.get("capture_status")),
@@ -595,9 +500,7 @@ def _resolve_audit_scope(
 ) -> dict[str, str]:
     resolved = parse_pipeline_id(pipeline_id)
     label = str(pipeline_id if resolved is None else resolved["label"])
-    normalized_pipeline_id = str(
-        build_pipeline_id(label) if resolved is None else resolved["pipeline_id"]
-    )
+    normalized_pipeline_id = str(build_pipeline_id(label) if resolved is None else resolved["pipeline_id"])
     return {
         "pipeline_id": normalized_pipeline_id,
         "label": label,
@@ -628,12 +531,8 @@ def build_audit_snapshot(
     event_store = storage.events
     signal_store = storage.signals
     runtime_owned_opportunities = pipeline_uses_runtime_owned_opportunities(
-        pipeline_run.get("pipeline")
-        if isinstance(pipeline_run.get("pipeline"), Mapping)
-        else None,
-        pipeline_run.get("latest_slot")
-        if isinstance(pipeline_run.get("latest_slot"), Mapping)
-        else None,
+        pipeline_run.get("pipeline") if isinstance(pipeline_run.get("pipeline"), Mapping) else None,
+        pipeline_run.get("latest_slot") if isinstance(pipeline_run.get("latest_slot"), Mapping) else None,
     )
 
     raw_events: list[dict[str, Any]] = []
@@ -686,21 +585,14 @@ def build_audit_snapshot(
         )
 
     timeline_items, collapsed_quote_count = _collapse_market_quote_events(raw_events)
-    timeline_items.extend(
-        _normalize_discovery_run_event(dict(event))
-        for event in pipeline_run.get("events") or []
-    )
+    timeline_items.extend(_normalize_discovery_run_event(dict(event)) for event in pipeline_run.get("events") or [])
     timeline_items.sort(key=_timeline_sort_key)
     limited_timeline, timeline_truncated, hidden_count = _apply_timeline_limit(
         timeline_items,
         timeline_limit=timeline_limit,
     )
 
-    control_items = [
-        item
-        for item in timeline_items
-        if str(item.get("topic") or "").startswith("control.")
-    ]
+    control_items = [item for item in timeline_items if str(item.get("topic") or "").startswith("control.")]
     prioritized_opportunities = _selected_opportunities_for_explanation(
         current_cycle=pipeline_run.get("current_cycle"),
         opportunities=opportunities,
@@ -711,12 +603,8 @@ def build_audit_snapshot(
         "updated_at": pipeline_run.get("updated_at"),
         "control_snapshot": dict(pipeline_run.get("control") or {}),
         "current_cycle": _current_cycle_summary(pipeline_run.get("current_cycle")),
-        "resolved_ranking_policy": dict(
-            pipeline_run.get("resolved_ranking_policy") or {}
-        ),
-        "ranking_policy_gate_summary": dict(
-            pipeline_run.get("ranking_policy_gate_summary") or {}
-        ),
+        "resolved_ranking_policy": dict(pipeline_run.get("resolved_ranking_policy") or {}),
+        "ranking_policy_gate_summary": dict(pipeline_run.get("ranking_policy_gate_summary") or {}),
         "raw_candidate_summary": dict(pipeline_run.get("raw_candidate_summary") or {}),
         "counts": {
             "timeline_items": len(timeline_items),
@@ -735,16 +623,8 @@ def build_audit_snapshot(
         "executions": list(pipeline_run.get("executions") or []),
         "portfolio": dict(pipeline_run.get("portfolio") or {}),
     }
-    slot_runs = [
-        _summarize_slot_run(dict(row))
-        for row in list(pipeline_run.get("slot_runs") or [])[:10]
-        if isinstance(row, Mapping)
-    ]
-    alerts = [
-        _summarize_alert(dict(row))
-        for row in list(pipeline_run.get("alerts") or [])[:25]
-        if isinstance(row, Mapping)
-    ]
+    slot_runs = [_summarize_slot_run(dict(row)) for row in list(pipeline_run.get("slot_runs") or [])[:10] if isinstance(row, Mapping)]
+    alerts = [_summarize_alert(dict(row)) for row in list(pipeline_run.get("alerts") or [])[:25] if isinstance(row, Mapping)]
 
     return {
         "target": {
@@ -757,12 +637,8 @@ def build_audit_snapshot(
             "risk_note": pipeline_run.get("risk_note"),
             "reconciliation_status": pipeline_run.get("reconciliation_status"),
             "reconciliation_note": pipeline_run.get("reconciliation_note"),
-            "resolved_ranking_policy": dict(
-                pipeline_run.get("resolved_ranking_policy") or {}
-            ),
-            "ranking_policy_gate_summary": dict(
-                pipeline_run.get("ranking_policy_gate_summary") or {}
-            ),
+            "resolved_ranking_policy": dict(pipeline_run.get("resolved_ranking_policy") or {}),
+            "ranking_policy_gate_summary": dict(pipeline_run.get("ranking_policy_gate_summary") or {}),
         },
         "timeline": limited_timeline,
         "timeline_stats": {
@@ -775,12 +651,8 @@ def build_audit_snapshot(
             "event_scan_limit_hit": event_scan_limit_hit,
             "collapsed_market_quote_event_count": collapsed_quote_count,
             "timeline_window": {
-                "started_at": None
-                if not timeline_items
-                else timeline_items[0].get("at"),
-                "ended_at": None
-                if not timeline_items
-                else timeline_items[-1].get("at"),
+                "started_at": None if not timeline_items else timeline_items[0].get("at"),
+                "ended_at": None if not timeline_items else timeline_items[-1].get("at"),
             },
         },
         "state_summary": state_summary,
@@ -788,17 +660,9 @@ def build_audit_snapshot(
         "slot_runs": slot_runs,
         "alerts": alerts,
         "explanations": {
-            "selected_opportunities": [
-                _summarize_opportunity(row) for row in prioritized_opportunities[:10]
-            ],
-            "risk_decisions": [
-                _summarize_risk_decision(dict(row))
-                for row in list(pipeline_run.get("risk_decisions") or [])[:10]
-            ],
-            "execution_outcomes": [
-                _summarize_execution(dict(row))
-                for row in list(pipeline_run.get("executions") or [])[:10]
-            ],
+            "selected_opportunities": [_summarize_opportunity(row) for row in prioritized_opportunities[:10]],
+            "risk_decisions": [_summarize_risk_decision(dict(row)) for row in list(pipeline_run.get("risk_decisions") or [])[:10]],
+            "execution_outcomes": [_summarize_execution(dict(row)) for row in list(pipeline_run.get("executions") or [])[:10]],
             "control_actions": [
                 {
                     "at": item.get("at"),

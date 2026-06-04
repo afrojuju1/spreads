@@ -8,7 +8,6 @@ from rich.table import Table
 
 from core.cli.ops_render import (
     build_console,
-    render_automations_view,
     render_json_payload,
     render_pipelines_view,
 )
@@ -16,10 +15,6 @@ from core.services.execution.runtimes import resolve_execution_runtime_capabilit
 from core.services.discovery_sessions import (
     get_discovery_session_detail,
     list_discovery_sessions,
-)
-from core.services.automation_runtimes import (
-    get_automation_runtime_detail,
-    list_automation_runtimes,
 )
 from core.services.opportunities import (
     get_opportunity_detail,
@@ -49,18 +44,14 @@ def _render_execution_runtimes(payload: dict[str, Any], *, no_color: bool) -> No
         families = row.get("strategy_families")
         family_text = "-"
         if isinstance(families, dict) and families:
-            family_text = ", ".join(
-                f"{name} {count}" for name, count in sorted(families.items())
-            )
+            family_text = ", ".join(f"{name} {count}" for name, count in sorted(families.items()))
         capabilities = [
-            str(item.get("name"))
-            for item in row.get("capabilities") or []
-            if isinstance(item, dict) and item.get("status") != "unsupported"
+            str(item.get("name")) for item in row.get("capabilities") or [] if isinstance(item, dict) and item.get("status") != "unsupported"
         ]
         table.add_row(
             str(row.get("runtime") or "-"),
             str(row.get("status") or "-"),
-            str(row.get("entry_automation_count") or 0),
+            str(row.get("entry_strategy_count") or 0),
             family_text,
             ", ".join(capabilities) or "-",
         )
@@ -113,46 +104,6 @@ def pipelines_command(
     render_pipelines_view(console, payload)
 
 
-def automations_command(
-    environment: str | None = typer.Option(
-        None,
-        "--env",
-        help="Run this command against a named deploy target.",
-    ),
-    bot_id: str | None = typer.Option(None, "--bot-id", help="Target bot id."),
-    automation_id: str | None = typer.Option(
-        None,
-        "--automation-id",
-        help="Target automation id.",
-    ),
-    date: str | None = typer.Option(None, "--date", help="Optional market date."),
-    limit: int = typer.Option(50, "--limit", help="Maximum runtimes to list."),
-    db: str | None = typer.Option(None, "--db", help="Database URL override."),
-    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
-    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
-) -> None:
-    if (bot_id is None) ^ (automation_id is None):
-        raise typer.BadParameter(
-            "--bot-id and --automation-id must be supplied together for detail view."
-        )
-    payload = (
-        list_automation_runtimes(db_target=db, limit=limit, market_date=date)
-        if bot_id is None or automation_id is None
-        else get_automation_runtime_detail(
-            db_target=db,
-            bot_id=bot_id,
-            automation_id=automation_id,
-            market_date=date,
-            limit=limit,
-        )
-    )
-    console = build_console(no_color=no_color)
-    if json_output:
-        render_json_payload(console, payload)
-        return
-    render_automations_view(console, payload)
-
-
 def opportunities_command(
     opportunity_id: str | None = typer.Argument(None, help="Opportunity id to inspect."),
     environment: str | None = typer.Option(
@@ -162,16 +113,10 @@ def opportunities_command(
     ),
     pipeline_id: str | None = typer.Option(None, "--pipeline-id", help="Optional pipeline filter."),
     label: str | None = typer.Option(None, "--label", help="Optional discovery label filter."),
-    bot_id: str | None = typer.Option(None, "--bot-id", help="Optional bot owner filter."),
-    automation_id: str | None = typer.Option(
+    trading_strategy_id: str | None = typer.Option(
         None,
-        "--automation-id",
-        help="Optional automation owner filter.",
-    ),
-    strategy_config_id: str | None = typer.Option(
-        None,
-        "--strategy-config-id",
-        help="Optional strategy-config owner filter.",
+        "--trading-strategy-id",
+        help="Optional trading strategy owner filter.",
     ),
     date: str | None = typer.Option(None, "--date", help="Optional market date."),
     include_expired: bool = typer.Option(
@@ -189,9 +134,7 @@ def opportunities_command(
             pipeline_id=pipeline_id,
             label=label,
             market_date=date,
-            bot_id=bot_id,
-            automation_id=automation_id,
-            strategy_config_id=strategy_config_id,
+            trading_strategy_id=trading_strategy_id,
             include_expired=include_expired,
             limit=limit,
         )
@@ -210,16 +153,10 @@ def positions_command(
     ),
     pipeline_id: str | None = typer.Option(None, "--pipeline-id", help="Optional pipeline filter."),
     label: str | None = typer.Option(None, "--label", help="Optional discovery label filter."),
-    bot_id: str | None = typer.Option(None, "--bot-id", help="Optional bot owner filter."),
-    automation_id: str | None = typer.Option(
+    trading_strategy_id: str | None = typer.Option(
         None,
-        "--automation-id",
-        help="Optional automation owner filter.",
-    ),
-    strategy_config_id: str | None = typer.Option(
-        None,
-        "--strategy-config-id",
-        help="Optional strategy-config owner filter.",
+        "--trading-strategy-id",
+        help="Optional trading strategy owner filter.",
     ),
     date: str | None = typer.Option(None, "--date", help="Optional market date."),
     limit: int = typer.Option(50, "--limit", help="Maximum positions to list."),
@@ -232,9 +169,7 @@ def positions_command(
             pipeline_id=pipeline_id,
             label=label,
             market_date=date,
-            bot_id=bot_id,
-            automation_id=automation_id,
-            strategy_config_id=strategy_config_id,
+            trading_strategy_id=trading_strategy_id,
             limit=limit,
         )
         if position_id is None

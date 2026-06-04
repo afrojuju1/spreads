@@ -56,15 +56,12 @@ def _create_replacement_intent(
     payload = _intent_payload(intent)
     original_limit_price = payload.get("original_limit_price")
     if original_limit_price in (None, ""):
-        original_limit_price = (
-            attempt.get("requested_limit_price") or attempt.get("limit_price")
-        )
+        original_limit_price = attempt.get("requested_limit_price") or attempt.get("limit_price")
     payload.update(
         {
             "limit_price": next_limit,
             "original_limit_price": original_limit_price,
-            "previous_limit_price": attempt.get("requested_limit_price")
-            or attempt.get("limit_price"),
+            "previous_limit_price": attempt.get("requested_limit_price") or attempt.get("limit_price"),
             "reprice_count": _reprice_count(intent) + 1,
             "dispatch_status": "pending",
             "supersedes_execution_intent_id": str(intent["execution_intent_id"]),
@@ -74,8 +71,7 @@ def _create_replacement_intent(
     issue_pending_execution_intent(
         execution_store,
         execution_intent_id=replacement_id,
-        bot_id=str(intent["bot_id"]),
-        automation_id=str(intent["automation_id"]),
+        trading_strategy_id=str(intent["trading_strategy_id"]),
         opportunity_decision_id=_as_text(intent.get("opportunity_decision_id")),
         strategy_position_id=_as_text(intent.get("strategy_position_id")),
         execution_attempt_id=None,
@@ -125,9 +121,7 @@ def _stale_after_seconds(
     default_seconds: int,
 ) -> int:
     policy = _repricing_policy(intent, attempt)
-    configured = _coerce_int(
-        policy.get("stale_after_seconds", policy.get("ttl_seconds"))
-    )
+    configured = _coerce_int(policy.get("stale_after_seconds", policy.get("ttl_seconds")))
     if configured is None:
         return max(int(default_seconds), 1)
     return max(configured, 1)
@@ -167,11 +161,7 @@ def _manage_submitted_open_intents(
             execution_attempt_id=execution_attempt_id,
             storage=storage,
         )
-        refreshed_attempt = (
-            refreshed_result.get("attempt")
-            if isinstance(refreshed_result.get("attempt"), dict)
-            else None
-        )
+        refreshed_attempt = refreshed_result.get("attempt") if isinstance(refreshed_result.get("attempt"), dict) else None
         if refreshed_attempt is None:
             continue
         refreshed += 1
@@ -196,9 +186,7 @@ def _manage_submitted_open_intents(
                         {
                             "execution_intent_id": str(intent["execution_intent_id"]),
                             "status": "replaced",
-                            "replacement_execution_intent_id": replacement.get(
-                                "superseded_by_id"
-                            ),
+                            "replacement_execution_intent_id": replacement.get("superseded_by_id"),
                         }
                     )
             continue
@@ -255,11 +243,7 @@ def _manage_submitted_open_intents(
             execution_attempt_id=execution_attempt_id,
             storage=storage,
         )
-        post_cancel_attempt = (
-            post_cancel.get("attempt")
-            if isinstance(post_cancel.get("attempt"), dict)
-            else refreshed_attempt
-        )
+        post_cancel_attempt = post_cancel.get("attempt") if isinstance(post_cancel.get("attempt"), dict) else refreshed_attempt
         post_cancel_status = str(post_cancel_attempt.get("status") or "").strip().lower()
         if not active and post_cancel_status in {"canceled", "cancelled"}:
             updated = _update_intent(
@@ -302,9 +286,7 @@ def _manage_submitted_open_intents(
                     {
                         "execution_intent_id": str(intent["execution_intent_id"]),
                         "status": "replaced",
-                        "replacement_execution_intent_id": replacement.get(
-                            "superseded_by_id"
-                        ),
+                        "replacement_execution_intent_id": replacement.get("superseded_by_id"),
                     }
                 )
                 continue

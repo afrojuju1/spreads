@@ -56,9 +56,7 @@ from .shared import (
     _stream_trade_events_saved,
 )
 
-_JOB_TYPE_BY_TASK_NAME = {
-    spec.task_name: job_type for job_type, spec in JOB_SPECS.items()
-}
+_JOB_TYPE_BY_TASK_NAME = {spec.task_name: job_type for job_type, spec in JOB_SPECS.items()}
 POSITION_EXIT_MANAGER_BROKER_SYNC_SKIP_REASONS = {
     "broker_sync_in_flight",
     "broker_sync_missing",
@@ -70,16 +68,9 @@ POSITION_EXIT_MANAGER_BROKER_SYNC_SKIP_REASONS = {
 
 
 def _scheduler_payload(job_store: Any, *, now: datetime) -> dict[str, Any]:
-    active_leases = [
-        dict(row)
-        for row in job_store.list_active_leases(prefix=SCHEDULER_RUNTIME_LEASE_KEY)
-    ]
+    active_leases = [dict(row) for row in job_store.list_active_leases(prefix=SCHEDULER_RUNTIME_LEASE_KEY)]
     primary = next(
-        (
-            row
-            for row in active_leases
-            if str(row.get("lease_key") or "") == SCHEDULER_RUNTIME_LEASE_KEY
-        ),
+        (row for row in active_leases if str(row.get("lease_key") or "") == SCHEDULER_RUNTIME_LEASE_KEY),
         None,
     )
     if primary is None and active_leases:
@@ -111,19 +102,12 @@ def _broker_sync_state_supersedes_run(
         return False
     state_updated_at = parse_datetime(broker_sync.get("updated_at"))
     run_activity_at = parse_datetime(run.get("activity_at") or _activity_at(run))
-    return (
-        state_updated_at is not None
-        and run_activity_at is not None
-        and state_updated_at > run_activity_at
-    )
+    return state_updated_at is not None and run_activity_at is not None and state_updated_at > run_activity_at
 
 
 def _broker_sync_recovered_note(broker_sync: Mapping[str, Any]) -> str:
     updated_at = _as_text(broker_sync.get("updated_at")) or "a later sync"
-    return (
-        f"Broker sync state recovered at {updated_at}; this failed scheduled run "
-        "is historical."
-    )
+    return f"Broker sync state recovered at {updated_at}; this failed scheduled run " "is historical."
 
 
 def _apply_broker_sync_run_overrides(
@@ -194,23 +178,14 @@ def _run_is_superseded_by_later_success(
     if str(run.get("job_run_id") or "") == str(latest_run.get("job_run_id") or ""):
         return False
     run_activity_at = parse_datetime(run.get("activity_at") or _activity_at(run))
-    latest_activity_at = parse_datetime(
-        latest_run.get("activity_at") or _activity_at(latest_run)
-    )
-    return (
-        run_activity_at is not None
-        and latest_activity_at is not None
-        and latest_activity_at > run_activity_at
-    )
+    latest_activity_at = parse_datetime(latest_run.get("activity_at") or _activity_at(latest_run))
+    return run_activity_at is not None and latest_activity_at is not None and latest_activity_at > run_activity_at
 
 
 def _superseded_run_note(latest_run: Mapping[str, Any]) -> str:
     latest_at = _as_text(latest_run.get("finished_at") or _activity_at(latest_run))
     latest_id = _as_text(latest_run.get("job_run_id")) or "a later run"
-    return (
-        f"Later successful run {latest_id} completed at {latest_at or 'a later time'}; "
-        "this failed run is historical."
-    )
+    return f"Later successful run {latest_id} completed at {latest_at or 'a later time'}; " "this failed run is historical."
 
 
 def _apply_superseded_run_overrides(
@@ -227,9 +202,7 @@ def _apply_superseded_run_overrides(
                     **row,
                     "operator_status": "healthy",
                     "operator_note": _superseded_run_note(latest_run or {}),
-                    "superseded_by_job_run_id": None
-                    if latest_run is None
-                    else latest_run.get("job_run_id"),
+                    "superseded_by_job_run_id": None if latest_run is None else latest_run.get("job_run_id"),
                 }
             )
         else:
@@ -250,10 +223,7 @@ def _skip_reason_text(run: Mapping[str, Any]) -> str | None:
 
 def _skip_is_benign(run: Mapping[str, Any]) -> bool:
     reason = str(_skip_reason_text(run) or "").strip().lower()
-    if (
-        str(run.get("job_type") or "") == "position_exit_manager"
-        and reason in POSITION_EXIT_MANAGER_BROKER_SYNC_SKIP_REASONS
-    ):
+    if str(run.get("job_type") or "") == "position_exit_manager" and reason in POSITION_EXIT_MANAGER_BROKER_SYNC_SKIP_REASONS:
         return True
     if reason == "singleton_lease_unavailable":
         return True
@@ -307,11 +277,7 @@ def _filter_excluded_job_runs(
 ) -> list[dict[str, Any]]:
     if not excluded_job_types:
         return rows
-    return [
-        dict(row)
-        for row in rows
-        if str(row.get("job_type") or "").strip() not in excluded_job_types
-    ]
+    return [dict(row) for row in rows if str(row.get("job_type") or "").strip() not in excluded_job_types]
 
 
 def _job_run_operator_status(
@@ -320,11 +286,7 @@ def _job_run_operator_status(
     now: datetime,
 ) -> tuple[str, str | None]:
     status = str(run.get("status") or "unknown").strip().lower()
-    live_action_gate = (
-        run.get("live_action_gate")
-        if isinstance(run.get("live_action_gate"), Mapping)
-        else {}
-    )
+    live_action_gate = run.get("live_action_gate") if isinstance(run.get("live_action_gate"), Mapping) else {}
     if status == "failed":
         error_text = _as_text(run.get("error_text"))
         return "blocked", error_text or "Job run failed."
@@ -352,10 +314,7 @@ def _job_run_operator_status(
                     "healthy",
                     "Older scheduled job run was superseded by a newer run for the same job key.",
                 )
-            if (
-                str(run.get("job_type") or "") == "position_exit_manager"
-                and reason in POSITION_EXIT_MANAGER_BROKER_SYNC_SKIP_REASONS
-            ):
+            if str(run.get("job_type") or "") == "position_exit_manager" and reason in POSITION_EXIT_MANAGER_BROKER_SYNC_SKIP_REASONS:
                 return (
                     "healthy",
                     "Exit manager skipped until broker sync is current.",
@@ -364,10 +323,7 @@ def _job_run_operator_status(
         return "degraded", reason or "Job run was skipped."
     if status == "queued":
         queue_age_seconds = _seconds_since(run.get("scheduled_for"), now=now)
-        if (
-            queue_age_seconds is not None
-            and queue_age_seconds > JOB_RUN_QUEUE_STALE_AFTER_SECONDS
-        ):
+        if queue_age_seconds is not None and queue_age_seconds > JOB_RUN_QUEUE_STALE_AFTER_SECONDS:
             return "degraded", "Queued job run is older than 15 minutes."
         return "healthy", None
     if status == "running":
@@ -378,9 +334,7 @@ def _job_run_operator_status(
             JOB_RUN_HEARTBEAT_STALE_AFTER_SECONDS,
         )
         heartbeat_age_seconds = _seconds_since(
-            run.get("heartbeat_at")
-            or run.get("started_at")
-            or run.get("scheduled_for"),
+            run.get("heartbeat_at") or run.get("started_at") or run.get("scheduled_for"),
             now=now,
         )
         if heartbeat_age_seconds is None or heartbeat_age_seconds > stale_after_seconds:
@@ -391,8 +345,7 @@ def _job_run_operator_status(
             if str(live_action_gate.get("status") or "") == "blocked":
                 return (
                     "blocked",
-                    _as_text(live_action_gate.get("message"))
-                    or "Discovery-run actions are blocked.",
+                    _as_text(live_action_gate.get("message")) or "Discovery-run actions are blocked.",
                 )
             capture_status = str(run.get("capture_status") or "").strip().lower()
             if is_non_healthy_capture_status(capture_status):
@@ -426,27 +379,11 @@ def _summarize_job_run(
 ) -> dict[str, Any]:
     enriched = enrich_discovery_run_job_run_payload(run)
     operator_status, operator_note = _job_run_operator_status(enriched, now=now)
-    quote_capture = (
-        enriched.get("quote_capture")
-        if isinstance(enriched.get("quote_capture"), Mapping)
-        else {}
-    )
-    trade_capture = (
-        enriched.get("trade_capture")
-        if isinstance(enriched.get("trade_capture"), Mapping)
-        else {}
-    )
-    payload = (
-        enriched.get("payload") if isinstance(enriched.get("payload"), Mapping) else {}
-    )
-    result = (
-        enriched.get("result") if isinstance(enriched.get("result"), Mapping) else {}
-    )
-    live_action_gate = (
-        enriched.get("live_action_gate")
-        if isinstance(enriched.get("live_action_gate"), Mapping)
-        else {}
-    )
+    quote_capture = enriched.get("quote_capture") if isinstance(enriched.get("quote_capture"), Mapping) else {}
+    trade_capture = enriched.get("trade_capture") if isinstance(enriched.get("trade_capture"), Mapping) else {}
+    payload = enriched.get("payload") if isinstance(enriched.get("payload"), Mapping) else {}
+    result = enriched.get("result") if isinstance(enriched.get("result"), Mapping) else {}
+    live_action_gate = enriched.get("live_action_gate") if isinstance(enriched.get("live_action_gate"), Mapping) else {}
     stream_quote_events_saved = _stream_quote_events_saved(quote_capture)
     stream_trade_events_saved = _stream_trade_events_saved(trade_capture)
     return {
@@ -475,18 +412,9 @@ def _summarize_job_run(
         "live_action_gate": dict(live_action_gate),
         "stream_quote_events_saved": stream_quote_events_saved,
         "websocket_quote_events_saved": stream_quote_events_saved,
-        "baseline_quote_events_saved": _coerce_int(
-            quote_capture.get("baseline_quote_events_saved")
-        )
-        or 0,
-        "recovery_quote_events_saved": _coerce_int(
-            quote_capture.get("recovery_quote_events_saved")
-        )
-        or 0,
-        "total_trade_events_saved": _coerce_int(
-            trade_capture.get("total_trade_events_saved")
-        )
-        or 0,
+        "baseline_quote_events_saved": _coerce_int(quote_capture.get("baseline_quote_events_saved")) or 0,
+        "recovery_quote_events_saved": _coerce_int(quote_capture.get("recovery_quote_events_saved")) or 0,
+        "total_trade_events_saved": _coerce_int(trade_capture.get("total_trade_events_saved")) or 0,
         "stream_trade_events_saved": stream_trade_events_saved,
         "websocket_trade_events_saved": stream_trade_events_saved,
     }
@@ -536,19 +464,9 @@ def _summarize_job_definition(
     *,
     now: datetime,
 ) -> dict[str, Any]:
-    enriched_latest_run = (
-        None if latest_run is None else enrich_discovery_run_job_run_payload(latest_run)
-    )
-    latest_summary = (
-        None
-        if enriched_latest_run is None
-        else _summarize_job_run(enriched_latest_run, now=now)
-    )
-    session_schedule = (
-        build_discovery_run_session_schedule(definition, now=now)
-        if str(definition.get("job_type") or "") == "discovery_run"
-        else {}
-    )
+    enriched_latest_run = None if latest_run is None else enrich_discovery_run_job_run_payload(latest_run)
+    latest_summary = None if enriched_latest_run is None else _summarize_job_run(enriched_latest_run, now=now)
+    session_schedule = build_discovery_run_session_schedule(definition, now=now) if str(definition.get("job_type") or "") == "discovery_run" else {}
     schedule_health = evaluate_discovery_run_schedule_health(
         schedule_summary=session_schedule,
         latest_run=enriched_latest_run,
@@ -571,13 +489,9 @@ def _summarize_job_definition(
         ),
         "latest_run_id": None if latest_summary is None else latest_summary.get("job_run_id"),
         "latest_run_status": None if latest_summary is None else latest_summary.get("status"),
-        "latest_run_operator_status": None
-        if latest_summary is None
-        else latest_summary.get("operator_status"),
+        "latest_run_operator_status": None if latest_summary is None else latest_summary.get("operator_status"),
         "latest_run_at": None if latest_summary is None else latest_summary.get("activity_at"),
-        "latest_capture_status": None
-        if latest_summary is None
-        else latest_summary.get("capture_status"),
+        "latest_capture_status": None if latest_summary is None else latest_summary.get("capture_status"),
         "schedule_state": session_schedule.get("state"),
         "expected_slot_at": session_schedule.get("expected_current_slot_at"),
         "schedule_note": schedule_health.get("message"),
@@ -596,59 +510,31 @@ def _worker_lane_rows(
     definitions: list[dict[str, Any]],
     excluded_job_types: set[str] | None = None,
 ) -> list[dict[str, Any]]:
-    excluded = {
-        str(value).strip() for value in (excluded_job_types or set()) if str(value).strip()
-    }
+    excluded = {str(value).strip() for value in (excluded_job_types or set()) if str(value).strip()}
     enabled_job_types = {
-        str(row.get("job_type") or "").strip()
-        for row in definitions
-        if bool(row.get("enabled")) and str(row.get("job_type") or "").strip()
+        str(row.get("job_type") or "").strip() for row in definitions if bool(row.get("enabled")) and str(row.get("job_type") or "").strip()
     }
     workers_by_settings: dict[str, list[dict[str, Any]]] = {}
     for worker in workers:
-        lease_state = (
-            worker.get("lease_state")
-            if isinstance(worker.get("lease_state"), Mapping)
-            else {}
-        )
-        settings_name = str(
-            lease_state.get("settings_name") or lease_state.get("lane") or "unknown"
-        )
+        lease_state = worker.get("lease_state") if isinstance(worker.get("lease_state"), Mapping) else {}
+        settings_name = str(lease_state.get("settings_name") or lease_state.get("lane") or "unknown")
         workers_by_settings.setdefault(settings_name, []).append(dict(worker))
 
-    queued_by_queue = Counter(
-        get_queue_name_for_job_type(str(row.get("job_type") or "unknown")) or "unknown"
-        for row in queued_jobs
-    )
-    running_by_queue = Counter(
-        get_queue_name_for_job_type(str(row.get("job_type") or "unknown")) or "unknown"
-        for row in running_jobs
-    )
+    queued_by_queue = Counter(get_queue_name_for_job_type(str(row.get("job_type") or "unknown")) or "unknown" for row in queued_jobs)
+    running_by_queue = Counter(get_queue_name_for_job_type(str(row.get("job_type") or "unknown")) or "unknown" for row in running_jobs)
 
     rows: list[dict[str, Any]] = []
     for lane in WORKER_LANES:
-        task_names = [
-            task_name
-            for task_name in lane.task_names
-            if _JOB_TYPE_BY_TASK_NAME.get(task_name, "") not in excluded
-        ]
+        task_names = [task_name for task_name in lane.task_names if _JOB_TYPE_BY_TASK_NAME.get(task_name, "") not in excluded]
         if not task_names:
             continue
-        enabled_task_names = [
-            task_name
-            for task_name in task_names
-            if _JOB_TYPE_BY_TASK_NAME.get(task_name, "") in enabled_job_types
-        ]
+        enabled_task_names = [task_name for task_name in task_names if _JOB_TYPE_BY_TASK_NAME.get(task_name, "") in enabled_job_types]
         lane_workers = workers_by_settings.get(str(lane.settings_name), [])
         active_worker_count = len(lane_workers)
         queued_job_count = int(queued_by_queue.get(str(lane.queue_name), 0))
         running_job_count = int(running_by_queue.get(str(lane.queue_name), 0))
         if not enabled_task_names:
-            status = (
-                "degraded"
-                if queued_job_count > 0 or running_job_count > 0
-                else "idle"
-            )
+            status = "degraded" if queued_job_count > 0 or running_job_count > 0 else "idle"
         else:
             status = "healthy" if active_worker_count > 0 else "blocked"
         rows.append(
@@ -662,9 +548,7 @@ def _worker_lane_rows(
                 "enabled_task_count": len(enabled_task_names),
                 "max_jobs": lane.max_jobs,
                 "active_worker_count": active_worker_count,
-                "active_workers": [
-                    str(worker.get("owner") or "-") for worker in lane_workers
-                ],
+                "active_workers": [str(worker.get("owner") or "-") for worker in lane_workers],
                 "queued_job_count": queued_job_count,
                 "running_job_count": running_job_count,
                 "status": status,
@@ -702,9 +586,7 @@ def build_jobs_overview(
     now = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
     excluded_job_types = excluded_declared_job_types()
     attention: list[dict[str, str]] = []
-    definitions = [
-        dict(row) for row in list_declared_job_rows(enabled_only=None, job_type=job_type)
-    ]
+    definitions = [dict(row) for row in list_declared_job_rows(enabled_only=None, job_type=job_type)]
     definition_rows = [
         _summarize_job_definition(
             definition,
@@ -732,9 +614,7 @@ def build_jobs_overview(
                 "status_filter": status,
                 "limit": limit,
                 "definition_count": len(definition_rows),
-                "enabled_definition_count": sum(
-                    1 for row in definition_rows if bool(row.get("enabled"))
-                ),
+                "enabled_definition_count": sum(1 for row in definition_rows if bool(row.get("enabled"))),
                 "run_count": 0,
                 "singleton_lease_count": 0,
             },
@@ -757,10 +637,7 @@ def build_jobs_overview(
         )
     }
     broker_sync: dict[str, Any] | None = None
-    if (
-        any(str(row.get("job_key") or "") == BROKER_SYNC_KEY for row in definitions)
-        and storage.broker.schema_ready()
-    ):
+    if any(str(row.get("job_key") or "") == BROKER_SYNC_KEY for row in definitions) and storage.broker.schema_ready():
         _, broker_sync = _broker_sync_payload(
             storage.broker.get_sync_state(BROKER_SYNC_KEY),
             now=now,
@@ -790,13 +667,7 @@ def build_jobs_overview(
     latest_success_run_by_key = {
         str(row["job_key"]): dict(row)
         for row in job_store.list_latest_runs_by_job_keys(
-            job_keys=sorted(
-                {
-                    str(row.get("job_key") or "")
-                    for row in [*definitions, *run_records]
-                    if str(row.get("job_key") or "")
-                }
-            ),
+            job_keys=sorted({str(row.get("job_key") or "") for row in [*definitions, *run_records] if str(row.get("job_key") or "")}),
             statuses=["succeeded"],
         )
     }
@@ -814,9 +685,7 @@ def build_jobs_overview(
         run_rows,
         broker_sync=broker_sync,
     )
-    queued_run_rows = [
-        dict(row) for row in job_store.list_job_runs(status="queued", limit=200)
-    ]
+    queued_run_rows = [dict(row) for row in job_store.list_job_runs(status="queued", limit=200)]
     queued_run_rows = _filter_excluded_job_runs(
         queued_run_rows,
         excluded_job_types=excluded_job_types,
@@ -827,13 +696,8 @@ def build_jobs_overview(
     )
 
     scheduler_payload = _scheduler_payload(job_store, now=now)
-    workers = [
-        dict(row)
-        for row in job_store.list_active_leases(prefix=WORKER_RUNTIME_LEASE_PREFIX)
-    ]
-    singleton_leases = [
-        dict(row) for row in job_store.list_active_leases(prefix=SINGLETON_LEASE_PREFIX)
-    ]
+    workers = [dict(row) for row in job_store.list_active_leases(prefix=WORKER_RUNTIME_LEASE_PREFIX)]
+    singleton_leases = [dict(row) for row in job_store.list_active_leases(prefix=SINGLETON_LEASE_PREFIX)]
 
     statuses = [scheduler_payload["status"]]
     if scheduler_payload["status"] != "healthy":
@@ -857,30 +721,17 @@ def build_jobs_overview(
         )
 
     status_counts = Counter(str(row.get("status") or "unknown") for row in run_rows)
-    operator_status_counts = Counter(
-        str(row.get("operator_status") or "unknown") for row in run_rows
-    )
+    operator_status_counts = Counter(str(row.get("operator_status") or "unknown") for row in run_rows)
     job_type_counts = Counter(str(row.get("job_type") or "unknown") for row in run_rows)
     stale_running_count = sum(
-        1
-        for row in run_rows
-        if str(row.get("status") or "") == "running"
-        and str(row.get("operator_status") or "") != "healthy"
+        1 for row in run_rows if str(row.get("status") or "") == "running" and str(row.get("operator_status") or "") != "healthy"
     )
     degraded_capture_count = sum(
-        1
-        for row in run_rows
-        if str(row.get("job_type") or "") == "discovery_run"
-        and is_non_healthy_capture_status(row.get("capture_status"))
+        1 for row in run_rows if str(row.get("job_type") or "") == "discovery_run" and is_non_healthy_capture_status(row.get("capture_status"))
     )
-    actionable_failed_count = sum(
-        1 for row in run_rows if _job_run_is_actionable_failure(row)
-    )
+    actionable_failed_count = sum(1 for row in run_rows if _job_run_is_actionable_failure(row))
     historical_failed_count = sum(
-        1
-        for row in run_rows
-        if str(row.get("status") or "") == "failed"
-        and str(row.get("operator_status") or "") in {"healthy", "idle"}
+        1 for row in run_rows if str(row.get("status") or "") == "failed" and str(row.get("operator_status") or "") in {"healthy", "idle"}
     )
     if actionable_failed_count:
         attention.append(
@@ -891,10 +742,7 @@ def build_jobs_overview(
             )
         )
     actionable_skipped_count = sum(
-        1
-        for row in run_rows
-        if str(row.get("status") or "") == "skipped"
-        and str(row.get("operator_status") or "") != "healthy"
+        1 for row in run_rows if str(row.get("status") or "") == "skipped" and str(row.get("operator_status") or "") != "healthy"
     )
     if actionable_skipped_count:
         attention.append(
@@ -925,20 +773,12 @@ def build_jobs_overview(
             _attention(
                 severity="low",
                 code="stale_queued_jobs_present",
-                message=(
-                    f"{len(stale_queued_run_rows)} queued job run(s) are stale and no longer "
-                    "count as active backlog."
-                ),
+                message=(f"{len(stale_queued_run_rows)} queued job run(s) are stale and no longer " "count as active backlog."),
             )
         )
 
-    actionable_definition_rows = [
-        row for row in definition_rows if _definition_requires_attention(row, now=now)
-    ]
-    actionable_definition_status_counts = Counter(
-        str(row.get("operator_status") or "unknown")
-        for row in actionable_definition_rows
-    )
+    actionable_definition_rows = [row for row in definition_rows if _definition_requires_attention(row, now=now)]
+    actionable_definition_status_counts = Counter(str(row.get("operator_status") or "unknown") for row in actionable_definition_rows)
     if actionable_definition_status_counts.get("degraded", 0) or actionable_definition_status_counts.get("blocked", 0):
         attention.append(
             _attention(
@@ -955,18 +795,13 @@ def build_jobs_overview(
         workers=workers,
         queued_jobs=active_queued_run_rows,
         running_jobs=_filter_excluded_job_runs(
-            [
-                dict(row)
-                for row in job_store.list_job_runs(status="running", limit=200)
-            ],
+            [dict(row) for row in job_store.list_job_runs(status="running", limit=200)],
             excluded_job_types=excluded_job_types,
         ),
         definitions=definition_rows,
         excluded_job_types=excluded_job_types,
     )
-    blocked_lane_count = sum(
-        1 for row in lane_rows if str(row.get("status") or "") == "blocked"
-    )
+    blocked_lane_count = sum(1 for row in lane_rows if str(row.get("status") or "") == "blocked")
     if blocked_lane_count:
         attention.append(
             _attention(
@@ -999,15 +834,12 @@ def build_jobs_overview(
     statuses.append(
         _combine_statuses(
             "blocked" if actionable_failed_count else "healthy",
-            "degraded"
-            if actionable_skipped_count
-            or stale_running_count
-            or degraded_capture_count
-            else "healthy",
-            "degraded"
-            if actionable_definition_status_counts.get("degraded", 0)
-            or actionable_definition_status_counts.get("blocked", 0)
-            else "healthy",
+            "degraded" if actionable_skipped_count or stale_running_count or degraded_capture_count else "healthy",
+            (
+                "degraded"
+                if actionable_definition_status_counts.get("degraded", 0) or actionable_definition_status_counts.get("blocked", 0)
+                else "healthy"
+            ),
             "degraded" if stale_singleton_leases else "healthy",
         )
     )
@@ -1021,9 +853,7 @@ def build_jobs_overview(
             "status_filter": status,
             "limit": limit,
             "definition_count": len(definition_rows),
-            "enabled_definition_count": sum(
-                1 for row in definition_rows if bool(row.get("enabled"))
-            ),
+            "enabled_definition_count": sum(1 for row in definition_rows if bool(row.get("enabled"))),
             "run_count": len(run_rows),
             "status_counts": dict(status_counts),
             "operator_status_counts": dict(operator_status_counts),
@@ -1067,15 +897,9 @@ def build_job_lanes_overview(
         "summary": {
             "view": "lanes",
             "worker_lane_count": len(lane_rows),
-            "active_worker_count": sum(
-                int(row.get("active_worker_count") or 0) for row in lane_rows
-            ),
-            "running_job_count": sum(
-                int(row.get("running_job_count") or 0) for row in lane_rows
-            ),
-            "queued_job_count": sum(
-                int(row.get("queued_job_count") or 0) for row in lane_rows
-            ),
+            "active_worker_count": sum(int(row.get("active_worker_count") or 0) for row in lane_rows),
+            "running_job_count": sum(int(row.get("running_job_count") or 0) for row in lane_rows),
+            "queued_job_count": sum(int(row.get("queued_job_count") or 0) for row in lane_rows),
             "singleton_lease_count": summary.get("singleton_lease_count"),
         },
         "attention": list(payload.get("attention") or []),
@@ -1145,10 +969,7 @@ def build_job_run_view(
             latest_definition_run,
             now=now,
         )
-        if (
-            latest_definition_run is not None
-            and latest_definition_run.get("job_run_id") != run_summary["job_run_id"]
-        ):
+        if latest_definition_run is not None and latest_definition_run.get("job_run_id") != run_summary["job_run_id"]:
             attention.append(
                 _attention(
                     severity="medium",
@@ -1163,40 +984,27 @@ def build_job_run_view(
     singleton_scope = _as_text((run.get("payload") or {}).get("singleton_scope"))
     singleton_lease = None
     if singleton_scope is not None and _as_text(run.get("job_type")) is not None:
-        singleton_lease = job_store.get_lease(
-            singleton_lease_key(str(run["job_type"]), singleton_scope)
-        )
-        if (
-            singleton_lease is not None
-            and singleton_lease.get("job_run_id") != run_summary["job_run_id"]
-        ):
+        singleton_lease = job_store.get_lease(singleton_lease_key(str(run["job_type"]), singleton_scope))
+        if singleton_lease is not None and singleton_lease.get("job_run_id") != run_summary["job_run_id"]:
             statuses.append("degraded")
             attention.append(
                 _attention(
                     severity="medium",
                     code="singleton_lease_held_elsewhere",
                     message=(
-                        f"Singleton lease for {run.get('job_type')}:{singleton_scope} is currently held by "
-                        f"{singleton_lease.get('job_run_id')}."
+                        f"Singleton lease for {run.get('job_type')}:{singleton_scope} is currently held by " f"{singleton_lease.get('job_run_id')}."
                     ),
                 )
             )
 
     result = run.get("result") if isinstance(run.get("result"), Mapping) else {}
-    automation_summary = (
-        dict(run.get("automation_summary") or {})
-        if isinstance(run.get("automation_summary"), Mapping)
-        else {}
-    )
+    strategy_sync_summary = dict(run.get("strategy_sync_summary") or {}) if isinstance(run.get("strategy_sync_summary"), Mapping) else {}
     runtime_selection_summary = (
-        dict(automation_summary.get("runtime_selection_summary") or {})
-        if isinstance(automation_summary.get("runtime_selection_summary"), Mapping)
+        dict(strategy_sync_summary.get("runtime_selection_summary") or {})
+        if isinstance(strategy_sync_summary.get("runtime_selection_summary"), Mapping)
         else {}
     )
-    if (
-        str(run.get("status") or "") == "failed"
-        and _as_text(run.get("error_text")) is None
-    ):
+    if str(run.get("status") or "") == "failed" and _as_text(run.get("error_text")) is None:
         result_reason = _as_text(result.get("reason"))
         if result_reason is not None:
             attention.append(
@@ -1223,26 +1031,11 @@ def build_job_run_view(
             "worker_name": run_summary.get("worker_name"),
             "retry_count": run_summary.get("retry_count"),
             "capture_status": run_summary.get("capture_status"),
-            "discovery_run_opportunity_count": _coerce_int(
-                (run.get("selection_summary") or {}).get("opportunity_count")
-            )
-            or 0,
-            "automation_runs_upserted": _coerce_int(
-                automation_summary.get("automation_runs_upserted")
-            )
-            or 0,
-            "runtime_opportunities_upserted": _coerce_int(
-                automation_summary.get("runtime_opportunities_upserted")
-            )
-            or 0,
-            "runtime_opportunities_expired": _coerce_int(
-                automation_summary.get("runtime_opportunities_expired")
-            )
-            or 0,
-            "runtime_opportunity_count": _coerce_int(
-                runtime_selection_summary.get("opportunity_count")
-            )
-            or 0,
+            "discovery_run_opportunity_count": _coerce_int((run.get("selection_summary") or {}).get("opportunity_count")) or 0,
+            "strategy_runs_upserted": _coerce_int(strategy_sync_summary.get("strategy_runs_upserted")) or 0,
+            "runtime_opportunities_upserted": _coerce_int(strategy_sync_summary.get("runtime_opportunities_upserted")) or 0,
+            "runtime_opportunities_expired": _coerce_int(strategy_sync_summary.get("runtime_opportunities_expired")) or 0,
+            "runtime_opportunity_count": _coerce_int(runtime_selection_summary.get("opportunity_count")) or 0,
         },
         "attention": attention,
         "details": {
@@ -1257,7 +1050,7 @@ def build_job_run_view(
             "uoa_quote_summary": dict(run.get("uoa_quote_summary") or {}),
             "uoa_decisions": dict(run.get("uoa_decisions") or {}),
             "selection_summary": _selection_summary_payload(run.get("selection_summary")),
-            "automation_summary": automation_summary,
+            "strategy_sync_summary": strategy_sync_summary,
             "singleton_lease": None if singleton_lease is None else dict(singleton_lease),
         },
     }

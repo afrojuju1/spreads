@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 from core.domain.models import SpreadCandidate, SymbolMarketSlice
 from core.services.option_structures import normalize_strategy_family
-from core.services.options_automation_models import (
+from core.services.trading_strategy_models import (
     IronCondorBuildConfig,
     LongVolBuildConfig,
     StrategyBuildConfig,
@@ -31,14 +31,8 @@ def _single_side_coverage(
     market_slice: SymbolMarketSlice,
     option_type: str,
 ) -> tuple[int, int, int, int]:
-    snapshots_by_expiration = (
-        market_slice.call_snapshots_by_expiration
-        if option_type == "call"
-        else market_slice.put_snapshots_by_expiration
-    )
-    quoted_contract_count, delta_contract_count = count_snapshot_delta_coverage(
-        snapshots_by_expiration
-    )
+    snapshots_by_expiration = market_slice.call_snapshots_by_expiration if option_type == "call" else market_slice.put_snapshots_by_expiration
+    quoted_contract_count, delta_contract_count = count_snapshot_delta_coverage(snapshots_by_expiration)
     return (
         quoted_contract_count,
         count_alpaca_greeks_coverage(snapshots_by_expiration),
@@ -50,12 +44,8 @@ def _single_side_coverage(
 def _dual_side_coverage(
     market_slice: SymbolMarketSlice,
 ) -> tuple[int, int, int, int]:
-    call_quoted_count, call_delta_count = count_snapshot_delta_coverage(
-        market_slice.call_snapshots_by_expiration
-    )
-    put_quoted_count, put_delta_count = count_snapshot_delta_coverage(
-        market_slice.put_snapshots_by_expiration
-    )
+    call_quoted_count, call_delta_count = count_snapshot_delta_coverage(market_slice.call_snapshots_by_expiration)
+    put_quoted_count, put_delta_count = count_snapshot_delta_coverage(market_slice.put_snapshots_by_expiration)
     return (
         call_quoted_count + put_quoted_count,
         count_alpaca_greeks_coverage(market_slice.call_snapshots_by_expiration)
@@ -74,9 +64,7 @@ def _build_call_verticals(
 
     return build_vertical_spreads(
         symbol=market_slice.symbol,
-        strategy="call_credit"
-        if normalize_strategy_family(symbol_args.strategy) == "call_credit_spread"
-        else "call_debit",
+        strategy="call_credit" if normalize_strategy_family(symbol_args.strategy) == "call_credit_spread" else "call_debit",
         spot_price=market_slice.spot_price,
         contracts_by_expiration=market_slice.call_contracts_by_expiration,
         snapshots_by_expiration=market_slice.call_snapshots_by_expiration,
@@ -93,9 +81,7 @@ def _build_put_verticals(
 
     return build_vertical_spreads(
         symbol=market_slice.symbol,
-        strategy="put_credit"
-        if normalize_strategy_family(symbol_args.strategy) == "put_credit_spread"
-        else "put_debit",
+        strategy="put_credit" if normalize_strategy_family(symbol_args.strategy) == "put_credit_spread" else "put_debit",
         spot_price=market_slice.spot_price,
         contracts_by_expiration=market_slice.put_contracts_by_expiration,
         snapshots_by_expiration=market_slice.put_snapshots_by_expiration,
@@ -235,9 +221,7 @@ class StrategySpec:
     coverage_counter: CoverageCounter
 
     def matches_candidate(self, candidate: Mapping[str, Any]) -> bool:
-        return normalize_strategy_family(
-            candidate.get("strategy_family") or candidate.get("strategy")
-        ) == self.strategy_family
+        return normalize_strategy_family(candidate.get("strategy_family") or candidate.get("strategy")) == self.strategy_family
 
     def validate_build(
         self,
@@ -434,11 +418,7 @@ _SPEC_LIST = (
     ),
 )
 
-_SPECS_BY_ID = {
-    identifier: spec
-    for spec in _SPEC_LIST
-    for identifier in spec.aliases
-}
+_SPECS_BY_ID = {identifier: spec for spec in _SPEC_LIST for identifier in spec.aliases}
 
 
 def resolve_strategy_spec(strategy_id: Any) -> StrategySpec:

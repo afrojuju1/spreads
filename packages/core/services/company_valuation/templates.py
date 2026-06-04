@@ -9,7 +9,11 @@ from core.services.company_valuation.contracts import (
     CompanyValuationTemplate,
     CompanyValuationTemplateOverride,
 )
-from core.services.strategy_configs import _load_yaml_file, _yaml_directory_signature, default_config_root
+from core.services.trading_strategies import (
+    _load_yaml_file,
+    _yaml_directory_signature,
+    default_config_root,
+)
 
 
 def _yaml_file_signature(path: Path) -> tuple[str, int, int] | None:
@@ -85,9 +89,7 @@ def resolve_company_valuation_effective_template(
     config_root: str | Path | None = None,
 ) -> CompanyValuationTemplate:
     template_id = str(issuer_row["template_id"])
-    if template_id == "energy_asset_heavy" and bool(
-        issuer_row.get("stressed_operator_flag")
-    ):
+    if template_id == "energy_asset_heavy" and bool(issuer_row.get("stressed_operator_flag")):
         return resolve_company_valuation_template("stressed_operator", config_root)
     return resolve_company_valuation_template(template_id, config_root)
 
@@ -158,9 +160,7 @@ def _load_company_valuation_templates_cached(
             ),
         )
         if sum(template.ownership_weight_map.values()) > 15:
-            raise ValueError(
-                f"ownership_weight_map exceeds V1 cap for template {template.template_id}"
-            )
+            raise ValueError(f"ownership_weight_map exceeds V1 cap for template {template.template_id}")
         if template.template_id in templates:
             raise ValueError(f"Duplicate template_id {template.template_id}")
         templates[template.template_id] = template
@@ -217,9 +217,7 @@ def _load_company_valuation_issuer_overrides_cached(
                 template_id=_as_text(item.get("template_id"), field_name="template_id"),
                 reason=_as_text(item.get("reason"), field_name="reason"),
                 active=bool(item.get("active", True)),
-                stressed_operator_flag=bool(
-                    item.get("stressed_operator_flag", False)
-                ),
+                stressed_operator_flag=bool(item.get("stressed_operator_flag", False)),
             )
         )
     return tuple(overrides)
@@ -251,22 +249,13 @@ def resolve_company_valuation_template_assignment(
     overrides = load_company_valuation_issuer_overrides(config_root)
     override = overrides.get(str(cik).zfill(10))
     if override is not None and override.active:
-        stressed_operator_flag = bool(
-            override.stressed_operator_flag
-            or override.template_id == "stressed_operator"
-        )
+        stressed_operator_flag = bool(override.stressed_operator_flag or override.template_id == "stressed_operator")
         if stressed_operator_flag and override.template_id not in {
             "energy_asset_heavy",
             "stressed_operator",
         }:
-            raise ValueError(
-                "stressed_operator_flag requires energy_asset_heavy as the base template"
-            )
-        resolved_template_id = (
-            "energy_asset_heavy"
-            if override.template_id == "stressed_operator"
-            else override.template_id
-        )
+            raise ValueError("stressed_operator_flag requires energy_asset_heavy as the base template")
+        resolved_template_id = "energy_asset_heavy" if override.template_id == "stressed_operator" else override.template_id
         template = resolve_company_valuation_template(resolved_template_id, config_root)
         reason = override.reason
         if stressed_operator_flag:
@@ -295,9 +284,7 @@ def resolve_company_valuation_template_assignment(
         if isinstance(keyword_rules, list):
             for keyword in keyword_rules:
                 normalized_keyword = _normalized_text(str(keyword))
-                if normalized_keyword and (
-                    normalized_keyword in name_text or normalized_keyword in sic_text
-                ):
+                if normalized_keyword and (normalized_keyword in name_text or normalized_keyword in sic_text):
                     score += 1
                     reasons.append(f"keyword:{normalized_keyword}")
         sic_prefixes = rules.get("sic_prefixes")
@@ -321,9 +308,7 @@ def resolve_company_valuation_template_assignment(
     source = "rule_match" if best_score > 0 else "default"
     reason = best_reason or "default:general_operating"
     limited_coverage_keywords = ("bank", "insurance", "reit", "real estate investment trust")
-    limited_coverage_flag = any(
-        keyword in name_text or keyword in sic_text for keyword in limited_coverage_keywords
-    )
+    limited_coverage_flag = any(keyword in name_text or keyword in sic_text for keyword in limited_coverage_keywords)
     if limited_coverage_flag:
         reason = f"{reason};limited_coverage"
     return CompanyValuationTemplateAssignment(

@@ -16,7 +16,7 @@ from core.services.admission_lifecycle import (
     admission_allows_attempt,
     normalize_lifecycle_admission,
 )
-from core.services.automation_runtime import resolve_entry_runtime
+from core.services.trading_strategy_runtime import resolve_entry_runtime
 from core.services.candidate_policy import (
     candidate_has_intraday_setup_context,
     resolve_candidate_profile,
@@ -79,7 +79,6 @@ from core.services.value_coercion import (
     coerce_int as _coerce_int,
     utc_now_iso as _utc_now,
 )
-from core.services.strategy_configs import load_strategy_configs
 from core.storage.serializers import parse_datetime
 
 from .alpaca_adapter import create_alpaca_order_adapter
@@ -148,16 +147,8 @@ def _execution_admission_payload_from_risk_evaluation(
     requested_notional: float | None = None,
     max_loss: float | None = None,
 ) -> dict[str, Any]:
-    metrics = (
-        risk_evaluation.get("metrics")
-        if isinstance(risk_evaluation.get("metrics"), Mapping)
-        else {}
-    )
-    position_sizing = (
-        metrics.get("position_sizing")
-        if isinstance(metrics.get("position_sizing"), Mapping)
-        else {}
-    )
+    metrics = risk_evaluation.get("metrics") if isinstance(risk_evaluation.get("metrics"), Mapping) else {}
+    position_sizing = metrics.get("position_sizing") if isinstance(metrics.get("position_sizing"), Mapping) else {}
     requested_quantity = max(_coerce_float(metrics.get("requested_quantity")) or 0.0, 0.0)
     required_buying_power = _coerce_float(metrics.get("required_buying_power"))
     available_buying_power = _coerce_float(metrics.get("available_broker_buying_power"))
@@ -168,15 +159,9 @@ def _execution_admission_payload_from_risk_evaluation(
             available_buying_power + max(reserved_buying_power or 0.0, 0.0),
             2,
         )
-    reason_codes = [
-        str(value).strip()
-        for value in risk_evaluation.get("reason_codes") or []
-        if str(value).strip()
-    ]
+    reason_codes = [str(value).strip() for value in risk_evaluation.get("reason_codes") or [] if str(value).strip()]
     resolved_status = str(risk_evaluation.get("status") or "unknown").strip().lower()
-    resolved_reason = (
-        None if reason_codes[:1] == ["approved"] else reason_codes[0] if reason_codes else None
-    )
+    resolved_reason = None if reason_codes[:1] == ["approved"] else reason_codes[0] if reason_codes else None
     admissible_quantity = _coerce_int(metrics.get("recommended_quantity"))
     if resolved_status == "blocked" and admissible_quantity is None:
         admissible_quantity = 0
@@ -191,20 +176,12 @@ def _execution_admission_payload_from_risk_evaluation(
         "account_available_buying_power": account_available_buying_power,
         "reserved_buying_power": reserved_buying_power,
         "buying_power_basis": _as_text(metrics.get("buying_power_basis")),
-        "buying_power_source_field": _as_text(
-            metrics.get("broker_buying_power_source_field")
-        ),
-        "broker_buying_power_status": _as_text(
-            metrics.get("broker_buying_power_status")
-        ),
+        "buying_power_source_field": _as_text(metrics.get("broker_buying_power_source_field")),
+        "broker_buying_power_status": _as_text(metrics.get("broker_buying_power_status")),
         "limiting_constraint": _as_text(position_sizing.get("limiting_constraint")),
         "strategy_risk_budget": _coerce_float(metrics.get("strategy_risk_budget")),
-        "position_size_pct_of_available_balance": _coerce_float(
-            position_sizing.get("position_size_pct_of_available_balance")
-        ),
-        "position_size_budget": _coerce_float(
-            position_sizing.get("position_size_budget")
-        ),
+        "position_size_pct_of_available_balance": _coerce_float(position_sizing.get("position_size_pct_of_available_balance")),
+        "position_size_budget": _coerce_float(position_sizing.get("position_size_budget")),
         "requested_quantity": None if requested_quantity <= 0 else int(requested_quantity),
     }
     return normalize_lifecycle_admission(
@@ -235,12 +212,7 @@ def _execution_admission_payload_from_account_capacity(
     reserved_buying_power = _coerce_float(account_capacity.get("reserved_buying_power"))
     requested_quantity = max(_coerce_float(attempt.get("quantity")) or 0.0, 0.0)
     admissible_quantity = 0
-    if (
-        requested_quantity > 0
-        and required_buying_power is not None
-        and required_buying_power > 0
-        and available_buying_power is not None
-    ):
+    if requested_quantity > 0 and required_buying_power is not None and required_buying_power > 0 and available_buying_power is not None:
         admissible_quantity = max(
             int(available_buying_power // (required_buying_power / requested_quantity)),
             0,
@@ -386,9 +358,11 @@ def _direct_order_execution_policy(
     raw_policy.setdefault("mode", "top_promotable")
     raw_policy.setdefault("quantity", quantity)
     if _as_text(raw_policy.get("deployment_mode")) is None:
-        raw_policy["deployment_mode"] = _as_text(metadata.get("deployment_mode")) or _as_text(
-            metadata.get("execution_deployment_mode")
-        ) or ("live_auto" if _as_text(metadata.get("execution_mode")) == "live" else "paper_auto")
+        raw_policy["deployment_mode"] = (
+            _as_text(metadata.get("deployment_mode"))
+            or _as_text(metadata.get("execution_deployment_mode"))
+            or ("live_auto" if _as_text(metadata.get("execution_mode")) == "live" else "paper_auto")
+        )
     return normalize_execution_policy(
         {
             "execution_policy": raw_policy,
@@ -415,11 +389,7 @@ def _admission_source_from_metadata(
 def _raise_if_admission_blocks(admission: Mapping[str, Any]) -> None:
     if admission_allows_attempt(admission):
         return
-    message = (
-        _as_text(admission.get("message"))
-        or _as_text(admission.get("reason"))
-        or "Execution admission blocked."
-    )
+    message = _as_text(admission.get("message")) or _as_text(admission.get("reason")) or "Execution admission blocked."
     raise ExecutionAdmissionError(message, admission=admission)
 
 
@@ -498,9 +468,7 @@ def _opportunity_execution_blockers_from_row(
         if isinstance(score_evidence, Mapping):
             blockers = score_evidence.get("execution_blockers")
             if isinstance(blockers, list):
-                rendered = [
-                    str(value) for value in blockers if str(value or "").strip()
-                ]
+                rendered = [str(value) for value in blockers if str(value or "").strip()]
                 if rendered:
                     return rendered
     evidence = opportunity.get("evidence")
@@ -515,35 +483,17 @@ def _plan_opportunity_from_signal_row(
     opportunity: Mapping[str, Any],
 ) -> Opportunity | None:
     opportunity_id = _as_text(opportunity.get("opportunity_id"))
-    cycle_id = _as_text(opportunity.get("cycle_id")) or _as_text(
-        opportunity.get("source_cycle_id")
-    )
+    cycle_id = _as_text(opportunity.get("cycle_id")) or _as_text(opportunity.get("source_cycle_id"))
     label = _as_text(opportunity.get("label"))
-    market_date = _as_text(opportunity.get("market_date")) or _as_text(
-        opportunity.get("session_date")
-    )
+    market_date = _as_text(opportunity.get("market_date")) or _as_text(opportunity.get("session_date"))
     candidate_id = _coerce_int(opportunity.get("source_candidate_id"))
-    if (
-        opportunity_id is None
-        or cycle_id is None
-        or label is None
-        or market_date is None
-        or candidate_id is None
-    ):
+    if opportunity_id is None or cycle_id is None or label is None or market_date is None or candidate_id is None:
         return None
 
-    candidate = (
-        dict(opportunity.get("candidate") or {})
-        if isinstance(opportunity.get("candidate"), Mapping)
-        else {}
-    )
+    candidate = dict(opportunity.get("candidate") or {}) if isinstance(opportunity.get("candidate"), Mapping) else {}
     policy_fields = resolve_pipeline_policy_fields(
         profile=candidate.get("profile") or opportunity.get("profile"),
-        root_symbol=str(
-            candidate.get("underlying_symbol")
-            or opportunity.get("underlying_symbol")
-            or ""
-        ),
+        root_symbol=str(candidate.get("underlying_symbol") or opportunity.get("underlying_symbol") or ""),
     )
     execution_blockers = _opportunity_execution_blockers_from_row(opportunity)
     scoring_state = _as_text(candidate.get("scoring_state"))
@@ -552,25 +502,15 @@ def _plan_opportunity_from_signal_row(
         state_reason = "Execution blockers are present on the live opportunity."
     elif scoring_state in {"promotable", "monitor", "blocked"}:
         state = str(scoring_state)
-        state_reason = (
-            _as_text(candidate.get("scoring_state_reason"))
-            or _as_text(opportunity.get("state_reason"))
-            or "selected"
-        )
+        state_reason = _as_text(candidate.get("scoring_state_reason")) or _as_text(opportunity.get("state_reason")) or "selected"
     elif _as_text(opportunity.get("selection_state")) == "promotable":
         state = "promotable"
-        state_reason = (
-            _as_text(opportunity.get("state_reason")) or "selected_promotable"
-        )
+        state_reason = _as_text(opportunity.get("state_reason")) or "selected_promotable"
     else:
         state = "monitor"
         state_reason = _as_text(opportunity.get("state_reason")) or "selected_monitor"
 
-    evidence = (
-        dict(opportunity.get("evidence") or {})
-        if isinstance(opportunity.get("evidence"), Mapping)
-        else {}
-    )
+    evidence = dict(opportunity.get("evidence") or {}) if isinstance(opportunity.get("evidence"), Mapping) else {}
     score_evidence = candidate.get("score_evidence")
     if isinstance(score_evidence, Mapping):
         profile_score_evidence = score_evidence.get("profile_score_evidence")
@@ -585,15 +525,9 @@ def _plan_opportunity_from_signal_row(
     evidence["selection_state"] = opportunity.get("selection_state")
     evidence["candidate_id"] = candidate_id
 
-    risk_hints = (
-        dict(opportunity.get("risk_hints") or {})
-        if isinstance(opportunity.get("risk_hints"), Mapping)
-        else {}
-    )
+    risk_hints = dict(opportunity.get("risk_hints") or {}) if isinstance(opportunity.get("risk_hints"), Mapping) else {}
     style_profile = (
-        _as_text(candidate.get("score_style_profile"))
-        or _as_text(opportunity.get("style_profile"))
-        or str(policy_fields["style_profile"])
+        _as_text(candidate.get("score_style_profile")) or _as_text(opportunity.get("style_profile")) or str(policy_fields["style_profile"])
     )
     if style_profile not in {"reactive", "tactical", "carry"}:
         style_profile = str(policy_fields["style_profile"])
@@ -607,8 +541,7 @@ def _plan_opportunity_from_signal_row(
             "position_intent": leg.position_intent,
             "ratio_qty": leg.ratio_qty,
             "role": leg.role,
-            "expiration_date": opportunity.get("expiration_date")
-            or candidate.get("expiration_date"),
+            "expiration_date": opportunity.get("expiration_date") or candidate.get("expiration_date"),
         }
         for leg in opportunity_legs
     ]
@@ -625,22 +558,12 @@ def _plan_opportunity_from_signal_row(
         cycle_id=cycle_id,
         session_id=build_live_run_scope_id(label, market_date),
         candidate_id=candidate_id,
-        symbol=str(
-            opportunity.get("underlying_symbol")
-            or candidate.get("underlying_symbol")
-            or ""
-        ),
-        legacy_strategy=str(
-            candidate.get("strategy") or opportunity.get("strategy_family") or "unknown"
-        ),
-        expiration_date=str(
-            opportunity.get("expiration_date") or candidate.get("expiration_date") or ""
-        ),
+        symbol=str(opportunity.get("underlying_symbol") or candidate.get("underlying_symbol") or ""),
+        legacy_strategy=str(candidate.get("strategy") or opportunity.get("strategy_family") or "unknown"),
+        expiration_date=str(opportunity.get("expiration_date") or candidate.get("expiration_date") or ""),
         structure_identity=opportunity_structure_identity,
         style_profile=style_profile,
-        strategy_family=str(
-            opportunity.get("strategy_family") or candidate.get("strategy") or "unknown"
-        ),
+        strategy_family=str(opportunity.get("strategy_family") or candidate.get("strategy") or "unknown"),
         regime_snapshot_id=f"live_regime:{opportunity_id}",
         strategy_intent_id=f"live_strategy_intent:{opportunity_id}",
         horizon_intent_id=f"live_horizon_intent:{opportunity_id}",
@@ -655,15 +578,11 @@ def _plan_opportunity_from_signal_row(
         rank=_coerce_int(opportunity.get("selection_rank")) or 0,
         state=state,
         state_reason=state_reason,
-        expected_edge_value=_coerce_float(risk_hints.get("return_on_risk"))
-        or _coerce_float(candidate.get("return_on_risk")),
-        max_loss=_coerce_float(risk_hints.get("max_loss"))
-        or _coerce_float(candidate.get("max_loss")),
-        capital_usage=_coerce_float(risk_hints.get("max_loss"))
-        or _coerce_float(candidate.get("max_loss")),
+        expected_edge_value=_coerce_float(risk_hints.get("return_on_risk")) or _coerce_float(candidate.get("return_on_risk")),
+        max_loss=_coerce_float(risk_hints.get("max_loss")) or _coerce_float(candidate.get("max_loss")),
+        capital_usage=_coerce_float(risk_hints.get("max_loss")) or _coerce_float(candidate.get("max_loss")),
         execution_complexity=None,
-        product_class=_as_text(opportunity.get("product_class"))
-        or str(policy_fields["product_class"]),
+        product_class=_as_text(opportunity.get("product_class")) or str(policy_fields["product_class"]),
         baseline_selection_state=_as_text(opportunity.get("selection_state")),
         evidence=evidence,
         legs=opportunity_legs,
@@ -732,14 +651,8 @@ def _validate_auto_execution_candidate(
 def _resolve_candidate_entry_prices(
     candidate_payload: dict[str, Any],
 ) -> tuple[float | None, float | None]:
-    midpoint_value = _normalize_limit_value(
-        candidate_payload.get(
-            "midpoint_value", candidate_payload.get("midpoint_credit")
-        )
-    )
-    natural_value = _normalize_limit_value(
-        candidate_payload.get("natural_value", candidate_payload.get("natural_credit"))
-    )
+    midpoint_value = _normalize_limit_value(candidate_payload.get("midpoint_value", candidate_payload.get("midpoint_credit")))
+    natural_value = _normalize_limit_value(candidate_payload.get("natural_value", candidate_payload.get("natural_credit")))
     return midpoint_value, natural_value
 
 
@@ -800,8 +713,7 @@ def _resolve_reactive_quote_snapshot(
     sources = {
         str(record.get("option_symbol")): str(record.get("source"))
         for record in quote_records
-        if str(record.get("option_symbol") or "").strip()
-        and str(record.get("source") or "").strip()
+        if str(record.get("option_symbol") or "").strip() and str(record.get("source") or "").strip()
     }
     return structure_quote_snapshot(
         legs=legs,
@@ -837,12 +749,7 @@ def _resolve_reactive_auto_execution(
     premium_kind = net_premium_kind(strategy_family)
     live_midpoint_value = _normalize_limit_value(live_snapshot.get("midpoint_value"))
     live_natural_value = _normalize_limit_value(live_snapshot.get("natural_value"))
-    if (
-        live_midpoint_value is None
-        or live_natural_value is None
-        or live_midpoint_value <= 0
-        or live_natural_value <= 0
-    ):
+    if live_midpoint_value is None or live_natural_value is None or live_midpoint_value <= 0 or live_natural_value <= 0:
         return {
             "ok": False,
             "reason": "live_quotes_not_executable",
@@ -850,9 +757,7 @@ def _resolve_reactive_auto_execution(
             "reactive_quote": live_snapshot,
         }
 
-    scanned_midpoint_value = _normalize_limit_value(
-        candidate_payload.get("midpoint_credit")
-    )
+    scanned_midpoint_value = _normalize_limit_value(candidate_payload.get("midpoint_credit"))
     if scanned_midpoint_value is not None:
         retention_bound = _execution_retention_bound(
             midpoint_value=scanned_midpoint_value,
@@ -863,9 +768,7 @@ def _resolve_reactive_auto_execution(
             return {
                 "ok": False,
                 "reason": "live_debit_above_ceiling",
-                "message": (
-                    "Automatic 0DTE execution skipped because the live spread debit rose above the concession ceiling."
-                ),
+                "message": ("Automatic 0DTE execution skipped because the live spread debit rose above the concession ceiling."),
                 "reactive_quote": {
                     **live_snapshot,
                     "debit_ceiling": retention_bound,
@@ -875,9 +778,7 @@ def _resolve_reactive_auto_execution(
             return {
                 "ok": False,
                 "reason": "live_credit_below_floor",
-                "message": (
-                    "Automatic 0DTE execution skipped because the live spread credit fell below the retention floor."
-                ),
+                "message": ("Automatic 0DTE execution skipped because the live spread credit fell below the retention floor."),
                 "reactive_quote": {
                     **live_snapshot,
                     "credit_floor": retention_bound,
@@ -916,13 +817,7 @@ def _capped_structure_return_on_risk(
     span_value: float | None,
     premium_kind: str | None,
 ) -> float | None:
-    if (
-        midpoint_value is None
-        or span_value is None
-        or midpoint_value <= 0
-        or span_value <= 0
-        or midpoint_value >= span_value
-    ):
+    if midpoint_value is None or span_value is None or midpoint_value <= 0 or span_value <= 0 or midpoint_value >= span_value:
         return None
     if premium_kind == "debit":
         return round((span_value - midpoint_value) / midpoint_value, 4)
@@ -953,9 +848,7 @@ def _validate_live_deployment_quality(
 ) -> dict[str, Any]:
     profile = resolve_candidate_profile(candidate_payload)
     thresholds = resolve_deployment_quality_thresholds(profile)
-    minimum_return_on_risk = _coerce_float(
-        thresholds.get("min_execution_return_on_risk")
-    )
+    minimum_return_on_risk = _coerce_float(thresholds.get("min_execution_return_on_risk"))
     if minimum_return_on_risk is None:
         return {
             "ok": True,
@@ -968,10 +861,7 @@ def _validate_live_deployment_quality(
         return {
             "ok": False,
             "reason": "long_vol_live_execution_disabled",
-            "message": (
-                "Open execution is blocked because long-vol earnings structures "
-                "are still shadow-only in the live path."
-            ),
+            "message": ("Open execution is blocked because long-vol earnings structures " "are still shadow-only in the live path."),
             "profile": profile,
         }
     legs = candidate_legs(candidate_payload)
@@ -981,8 +871,7 @@ def _validate_live_deployment_quality(
             "ok": False,
             "reason": "live_deployment_quality_unavailable",
             "message": (
-                "Open execution is blocked because the candidate is missing capped-risk "
-                "structure geometry for live deployment validation."
+                "Open execution is blocked because the candidate is missing capped-risk " "structure geometry for live deployment validation."
             ),
             "profile": profile,
         }
@@ -996,10 +885,7 @@ def _validate_live_deployment_quality(
         return {
             "ok": False,
             "reason": "live_quotes_unavailable",
-            "message": (
-                "Open execution is blocked because a current live multi-leg structure "
-                "snapshot is unavailable."
-            ),
+            "message": ("Open execution is blocked because a current live multi-leg structure " "snapshot is unavailable."),
             "profile": profile,
             "quote_error": error_text,
         }
@@ -1014,9 +900,7 @@ def _validate_live_deployment_quality(
         return {
             "ok": False,
             "reason": "live_quotes_not_executable",
-            "message": (
-                "Open execution is blocked because the live structure quotes were not executable."
-            ),
+            "message": ("Open execution is blocked because the live structure quotes were not executable."),
             "profile": profile,
             "live_quote": live_snapshot,
         }
@@ -1067,11 +951,7 @@ def _pending_open_attempt_buying_power(
     reserved_buying_power = 0.0
     for row in rows:
         attempt = dict(row)
-        if (
-            exclude_execution_attempt_id is not None
-            and _as_text(attempt.get("execution_attempt_id"))
-            == exclude_execution_attempt_id
-        ):
+        if exclude_execution_attempt_id is not None and _as_text(attempt.get("execution_attempt_id")) == exclude_execution_attempt_id:
             continue
         requested_quantity = max(_coerce_float(attempt.get("quantity")) or 0.0, 0.0)
         if requested_quantity <= 0:
@@ -1088,9 +968,7 @@ def _pending_open_attempt_buying_power(
             pending_quantity,
             limit_price=_coerce_float(attempt.get("limit_price")),
         )
-        required_buying_power = _coerce_float(
-            requirement.get("required_buying_power")
-        )
+        required_buying_power = _coerce_float(requirement.get("required_buying_power"))
         if required_buying_power is None:
             continue
         reserved_buying_power += required_buying_power
@@ -1122,9 +1000,7 @@ def _validate_submit_account_capacity(
         }
 
     available_snapshot = resolve_available_buying_power(account_payload)
-    available_buying_power = _coerce_float(
-        available_snapshot.get("available_buying_power")
-    )
+    available_buying_power = _coerce_float(available_snapshot.get("available_buying_power"))
     if available_buying_power is None:
         return {
             "ok": True,
@@ -1185,24 +1061,18 @@ def _resolve_open_limit_price(
     if midpoint_value is None or midpoint_value <= 0:
         raise ValueError("Execution limit price must be positive")
 
-    pricing_mode = str(
-        execution_policy.get("pricing_mode") or DEFAULT_ENTRY_PRICING_MODE
-    )
+    pricing_mode = str(execution_policy.get("pricing_mode") or DEFAULT_ENTRY_PRICING_MODE)
     if pricing_mode == "midpoint" or natural_value is None or natural_value <= 0:
         return round(max(midpoint_value, 0.01), 2)
 
-    fill_ratio = _clamp_fraction(
-        _coerce_float(candidate_payload.get("fill_ratio")) or 0.0, maximum=1.0
-    )
+    fill_ratio = _clamp_fraction(_coerce_float(candidate_payload.get("fill_ratio")) or 0.0, maximum=1.0)
     min_credit_retention_pct = _clamp_fraction(
-        _coerce_float(execution_policy.get("min_credit_retention_pct"))
-        or DEFAULT_MIN_CREDIT_RETENTION_PCT,
+        _coerce_float(execution_policy.get("min_credit_retention_pct")) or DEFAULT_MIN_CREDIT_RETENTION_PCT,
         minimum=0.5,
         maximum=1.0,
     )
     max_credit_concession = max(
-        _coerce_float(execution_policy.get("max_credit_concession"))
-        or DEFAULT_MAX_CREDIT_CONCESSION,
+        _coerce_float(execution_policy.get("max_credit_concession")) or DEFAULT_MAX_CREDIT_CONCESSION,
         0.0,
     )
     if premium_kind == "debit":
@@ -1212,12 +1082,8 @@ def _resolve_open_limit_price(
             min_retention_pct=min_credit_retention_pct,
         )
         max_concession_to_ceiling = max(debit_ceiling - midpoint_value, 0.0)
-        fill_ratio_concession = max(natural_value - midpoint_value, 0.0) * max(
-            1.0 - fill_ratio, 0.0
-        )
-        concession = min(
-            fill_ratio_concession, max_credit_concession, max_concession_to_ceiling
-        )
+        fill_ratio_concession = max(natural_value - midpoint_value, 0.0) * max(1.0 - fill_ratio, 0.0)
+        concession = min(fill_ratio_concession, max_credit_concession, max_concession_to_ceiling)
         return round(
             min(
                 max(midpoint_value + concession, 0.01),
@@ -1229,12 +1095,8 @@ def _resolve_open_limit_price(
 
     credit_floor = max(natural_value, midpoint_value * min_credit_retention_pct, 0.01)
     max_concession_to_floor = max(midpoint_value - credit_floor, 0.0)
-    fill_ratio_concession = max(midpoint_value - natural_value, 0.0) * max(
-        1.0 - fill_ratio, 0.0
-    )
-    concession = min(
-        fill_ratio_concession, max_credit_concession, max_concession_to_floor
-    )
+    fill_ratio_concession = max(midpoint_value - natural_value, 0.0) * max(1.0 - fill_ratio, 0.0)
+    concession = min(fill_ratio_concession, max_credit_concession, max_concession_to_floor)
     return round(max(midpoint_value - concession, credit_floor, 0.01), 2)
 
 
@@ -1258,10 +1120,7 @@ def _classify_auto_execution_block(exc: Exception) -> dict[str, Any] | None:
             "message": message,
             "block_category": "quote_freshness",
         }
-    if (
-        message
-        == "Open execution is blocked because the exit force-close window has already started."
-    ):
+    if message == "Open execution is blocked because the exit force-close window has already started.":
         return {
             "reason": "force_close_window_started",
             "message": message,
@@ -1330,44 +1189,29 @@ def _resolve_session_candidate(
     cycle = discovery_store.get_cycle(str(candidate["cycle_id"]))
     if cycle is None:
         raise ValueError(f"Missing cycle for candidate_id: {candidate_id}")
-    candidate_session_id = cycle.get("session_id") or build_live_run_scope_id(
-        cycle["label"], cycle["session_date"]
-    )
+    candidate_session_id = cycle.get("session_id") or build_live_run_scope_id(cycle["label"], cycle["session_date"])
     if str(candidate_session_id) != session_id:
-        raise ValueError(
-            f"Candidate {candidate_id} does not belong to session {session_id}"
-        )
+        raise ValueError(f"Candidate {candidate_id} does not belong to session {session_id}")
     return dict(candidate), dict(cycle)
 
 
 def _strategy_position_size_policy(
     *,
-    bot_id: str | None,
-    automation_id: str | None,
-    strategy_config_id: str | None,
+    trading_strategy_id: str | None,
 ) -> dict[str, float | None]:
-    if bot_id is not None and automation_id is not None:
-        try:
-            runtime = resolve_entry_runtime(
-                bot_id=bot_id,
-                automation_id=automation_id,
-            )
-        except ValueError:
-            runtime = None
-        if runtime is not None:
-            return resolve_position_size_policy(runtime.build_settings.risk_defaults)
-    if strategy_config_id is None:
+    if trading_strategy_id is None:
         return {
             "max_risk_per_trade": None,
             "position_size_pct_of_available_balance": None,
         }
-    strategy_config = load_strategy_configs().get(strategy_config_id)
-    if strategy_config is None:
+    try:
+        runtime = resolve_entry_runtime(trading_strategy_id=trading_strategy_id)
+    except ValueError:
         return {
             "max_risk_per_trade": None,
             "position_size_pct_of_available_balance": None,
         }
-    return resolve_position_size_policy(strategy_config.risk_defaults)
+    return resolve_position_size_policy(runtime.build_settings.risk_defaults)
 
 
 def _request_recommended_quantity(
@@ -1417,14 +1261,10 @@ def _resolve_open_submission_quantity(
     request_metadata: Mapping[str, Any] | dict[str, Any] | None,
     risk_policy: dict[str, Any] | None,
     execution_policy: dict[str, Any],
-    bot_id: str | None,
-    automation_id: str | None,
-    strategy_config_id: str | None,
+    trading_strategy_id: str | None,
 ) -> tuple[int, dict[str, float | None]]:
     position_size_policy = _strategy_position_size_policy(
-        bot_id=bot_id,
-        automation_id=automation_id,
-        strategy_config_id=strategy_config_id,
+        trading_strategy_id=trading_strategy_id,
     )
     if explicit_quantity is not None:
         return explicit_quantity, position_size_policy
@@ -1440,16 +1280,10 @@ def _resolve_open_submission_quantity(
         limit_price=limit_price,
         risk_policy=risk_policy,
         strategy_risk_budget=position_size_policy["max_risk_per_trade"],
-        position_size_pct_of_available_balance=position_size_policy[
-            "position_size_pct_of_available_balance"
-        ],
+        position_size_pct_of_available_balance=position_size_policy["position_size_pct_of_available_balance"],
     )
     risk_quantity = _coerce_int(risk_sizing.get("recommended_quantity"))
-    if (
-        bool(risk_sizing.get("applies"))
-        and risk_quantity is not None
-        and risk_quantity > 0
-    ):
+    if bool(risk_sizing.get("applies")) and risk_quantity is not None and risk_quantity > 0:
         quantity_hints.append(risk_quantity)
     if bool(execution_policy.get("quantity_configured")):
         policy_cap = _coerce_int(execution_policy.get("quantity"))
@@ -1478,16 +1312,10 @@ def _build_order_request(
     resolved_legs = order_payload_legs(
         order_payload,
         expiration_date=_as_text(candidate_payload.get("expiration_date")),
-    ) or candidate_legs(
-        candidate_payload
-    )
+    ) or candidate_legs(candidate_payload)
     if not resolved_legs:
-        raise ValueError(
-            "Selected live candidate does not include an executable order payload"
-        )
-    resolved_quantity = (
-        quantity if quantity is not None else _coerce_int(order_payload.get("qty")) or 1
-    )
+        raise ValueError("Selected live candidate does not include an executable order payload")
+    resolved_quantity = quantity if quantity is not None else _coerce_int(order_payload.get("qty")) or 1
     if resolved_quantity <= 0:
         raise ValueError("Execution quantity must be positive")
     resolved_limit_price = _resolve_open_limit_price(
@@ -1516,26 +1344,16 @@ def _build_close_order_request(
     remaining_quantity = _coerce_float(position.get("remaining_quantity"))
     if remaining_quantity is None or remaining_quantity <= 0:
         raise ValueError("Session position does not have remaining quantity to close")
-    resolved_quantity = (
-        quantity if quantity is not None else int(round(remaining_quantity))
-    )
+    resolved_quantity = quantity if quantity is not None else int(round(remaining_quantity))
     if resolved_quantity <= 0:
         raise ValueError("Close quantity must be positive")
     if resolved_quantity > remaining_quantity:
-        raise ValueError(
-            "Close quantity exceeds the remaining session position quantity"
-        )
+        raise ValueError("Close quantity exceeds the remaining session position quantity")
 
-    resolved_limit_price = (
-        limit_price
-        if limit_price is not None
-        else _coerce_float(position.get("close_mark"))
-    )
+    resolved_limit_price = limit_price if limit_price is not None else _coerce_float(position.get("close_mark"))
     resolved_limit_price = _normalize_limit_value(resolved_limit_price)
     if resolved_limit_price is None or resolved_limit_price <= 0:
-        raise ValueError(
-            "Close execution requires a positive limit price or a quoted close mark"
-        )
+        raise ValueError("Close execution requires a positive limit price or a quoted close mark")
 
     strategy_family = _strategy_family_from_payload(position)
     resolved_legs = normalize_legs(position.get("legs"))
@@ -1566,16 +1384,10 @@ def _normalize_submit_order_request(
     ) or normalize_legs(payload.get("legs"))
     if not request_legs or len(request_legs) != 1:
         return request
-    requires_single_leg_rebuild = (
-        str(request.get("order_class") or "").strip().lower() == "mleg"
-        or "symbol" not in request
-        or "side" not in request
-    )
+    requires_single_leg_rebuild = str(request.get("order_class") or "").strip().lower() == "mleg" or "symbol" not in request or "side" not in request
     if not requires_single_leg_rebuild:
         return request
-    limit_price = _coerce_float(request.get("limit_price")) or _coerce_float(
-        payload.get("limit_price")
-    )
+    limit_price = _coerce_float(request.get("limit_price")) or _coerce_float(payload.get("limit_price"))
     if limit_price is None:
         return request
     quantity = _coerce_int(request.get("qty")) or _coerce_int(payload.get("quantity")) or 1
@@ -1632,28 +1444,16 @@ def submit_live_session_execution(
         )
         active_policy_rollouts = get_active_policy_rollout_map(storage=storage)
         opportunity = None
-        if (
-            signal_store is not None
-            and hasattr(signal_store, "schema_ready")
-            and signal_store.schema_ready()
-        ):
+        if signal_store is not None and hasattr(signal_store, "schema_ready") and signal_store.schema_ready():
             requested_opportunity_id = None
             if isinstance(request_metadata, Mapping):
-                requested_opportunity_id = _as_text(
-                    request_metadata.get("opportunity_id")
-                )
+                requested_opportunity_id = _as_text(request_metadata.get("opportunity_id"))
             if requested_opportunity_id is not None:
-                requested_opportunity = signal_store.get_opportunity(
-                    requested_opportunity_id
-                )
-                if requested_opportunity is not None and str(
-                    requested_opportunity.get("lifecycle_state") or ""
-                ) in {"candidate", "ready", "blocked"}:
+                requested_opportunity = signal_store.get_opportunity(requested_opportunity_id)
+                if requested_opportunity is not None and str(requested_opportunity.get("lifecycle_state") or "") in {"candidate", "ready", "blocked"}:
                     opportunity = requested_opportunity
             if opportunity is None:
-                opportunity = signal_store.find_active_opportunity_by_candidate_id(
-                    candidate_id
-                )
+                opportunity = signal_store.find_active_opportunity_by_candidate_id(candidate_id)
         opportunity_ref = (
             None
             if opportunity is None
@@ -1664,32 +1464,8 @@ def submit_live_session_execution(
                 "selection_state": opportunity.get("selection_state"),
             }
         )
-        owner_bot_id = (
-            None
-            if opportunity is None
-            else _as_text(opportunity.get("bot_id"))
-        ) or (
-            None
-            if not isinstance(request_metadata, Mapping)
-            else _as_text(request_metadata.get("bot_id"))
-        )
-        owner_automation_id = (
-            None
-            if opportunity is None
-            else _as_text(opportunity.get("automation_id"))
-        ) or (
-            None
-            if not isinstance(request_metadata, Mapping)
-            else _as_text(request_metadata.get("automation_id"))
-        )
-        owner_strategy_config_id = (
-            None
-            if opportunity is None
-            else _as_text(opportunity.get("strategy_config_id"))
-        ) or (
-            None
-            if not isinstance(request_metadata, Mapping)
-            else _as_text(request_metadata.get("strategy_config_id"))
+        owner_trading_strategy_id = (None if opportunity is None else _as_text(opportunity.get("trading_strategy_id"))) or (
+            None if not isinstance(request_metadata, Mapping) else _as_text(request_metadata.get("trading_strategy_id"))
         )
 
         list_open_attempts = getattr(
@@ -1723,10 +1499,7 @@ def submit_live_session_execution(
             return {
                 "action": "submit",
                 "changed": False,
-                "message": (
-                    f"An active execution already exists for "
-                    f"{payload['symbol_path']} in this session."
-                ),
+                "message": (f"An active execution already exists for " f"{payload['symbol_path']} in this session."),
                 "attempt": payload,
             }
 
@@ -1766,24 +1539,18 @@ def submit_live_session_execution(
             }
         )
         execution_runtime = normalize_execution_runtime(
-            None
-            if not isinstance(request_metadata, Mapping)
-            else request_metadata.get("execution_runtime")
+            None if not isinstance(request_metadata, Mapping) else request_metadata.get("execution_runtime")
         )
-        resolved_requested_quantity, position_size_policy = (
-            _resolve_open_submission_quantity(
-                execution_store=execution_store,
-                session_id=session_id,
-                candidate=candidate,
-                explicit_quantity=quantity,
-                limit_price=limit_price,
-                request_metadata=request_metadata,
-                risk_policy=requested_risk_policy,
-                execution_policy=resolved_execution_policy,
-                bot_id=owner_bot_id,
-                automation_id=owner_automation_id,
-                strategy_config_id=owner_strategy_config_id,
-            )
+        resolved_requested_quantity, position_size_policy = _resolve_open_submission_quantity(
+            execution_store=execution_store,
+            session_id=session_id,
+            candidate=candidate,
+            explicit_quantity=quantity,
+            limit_price=limit_price,
+            request_metadata=request_metadata,
+            risk_policy=requested_risk_policy,
+            execution_policy=resolved_execution_policy,
+            trading_strategy_id=owner_trading_strategy_id,
         )
         order_request, resolved_quantity, resolved_limit_price = _build_order_request(
             candidate=candidate,
@@ -1826,17 +1593,11 @@ def submit_live_session_execution(
             risk_policy=requested_risk_policy,
             execution_policy=resolved_execution_policy,
             strategy_risk_budget=position_size_policy["max_risk_per_trade"],
-            position_size_pct_of_available_balance=position_size_policy[
-                "position_size_pct_of_available_balance"
-            ],
+            position_size_pct_of_available_balance=position_size_policy["position_size_pct_of_available_balance"],
         )
         risk_metrics = risk_evaluation.get("metrics") if isinstance(risk_evaluation.get("metrics"), Mapping) else {}
         admission_source_type = "opportunity" if opportunity_ref is not None else "candidate"
-        admission_source_id = (
-            str(opportunity_ref["opportunity_id"])
-            if opportunity_ref is not None
-            else _as_text(candidate.get("candidate_id"))
-        )
+        admission_source_id = str(opportunity_ref["opportunity_id"]) if opportunity_ref is not None else _as_text(candidate.get("candidate_id"))
         execution_admission = _execution_admission_payload_from_risk_evaluation(
             risk_evaluation,
             admission_kind="open_execution",
@@ -1855,11 +1616,7 @@ def submit_live_session_execution(
             resolved_execution_policy=resolved_execution_policy,
             resolved_exit_policy=resolved_exit_policy,
         )
-        if (
-            risk_store is not None
-            and hasattr(risk_store, "schema_ready")
-            and risk_store.schema_ready()
-        ):
+        if risk_store is not None and hasattr(risk_store, "schema_ready") and risk_store.schema_ready():
             risk_decision = risk_store.create_risk_decision(
                 risk_decision_id=_risk_decision_id(),
                 decision_kind="open_execution",
@@ -1870,9 +1627,7 @@ def submit_live_session_execution(
                 label=str(cycle["label"]),
                 cycle_id=_as_text(cycle.get("cycle_id")),
                 candidate_id=_coerce_int(candidate.get("candidate_id")),
-                opportunity_id=None
-                if opportunity_ref is None
-                else str(opportunity_ref["opportunity_id"]),
+                opportunity_id=None if opportunity_ref is None else str(opportunity_ref["opportunity_id"]),
                 execution_attempt_id=None,
                 trade_intent=OPEN_TRADE_INTENT,
                 entity_type="signal_subject",
@@ -1885,12 +1640,8 @@ def submit_live_session_execution(
                 strategy=str(candidate["strategy"]),
                 quantity=resolved_quantity,
                 limit_price=resolved_limit_price,
-                reason_codes=[
-                    str(value) for value in risk_evaluation.get("reason_codes") or []
-                ],
-                blockers=[
-                    str(value) for value in risk_evaluation.get("blockers") or []
-                ],
+                reason_codes=[str(value) for value in risk_evaluation.get("reason_codes") or []],
+                blockers=[str(value) for value in risk_evaluation.get("blockers") or []],
                 metrics=dict(risk_evaluation.get("metrics") or {}),
                 evidence={
                     "candidate_generated_at": _as_text(candidate.get("generated_at")),
@@ -1919,9 +1670,7 @@ def submit_live_session_execution(
             profile=candidate_payload.get("profile"),
             root_symbol=str(candidate["underlying_symbol"]),
         )
-        attempt_legs = normalize_legs(order_request.get("legs")) or candidate_legs(
-            candidate_payload
-        )
+        attempt_legs = normalize_legs(order_request.get("legs")) or candidate_legs(candidate_payload)
         attempt_id = _execution_attempt_id()
         attempt = execution_store.create_attempt(
             execution_attempt_id=attempt_id,
@@ -1929,21 +1678,13 @@ def submit_live_session_execution(
             session_date=str(cycle["session_date"]),
             label=str(cycle["label"]),
             pipeline_id=build_pipeline_id(str(cycle["label"])),
-            bot_id=owner_bot_id,
-            automation_id=owner_automation_id,
-            strategy_config_id=owner_strategy_config_id,
+            trading_strategy_id=owner_trading_strategy_id,
             market_date=str(cycle["session_date"]),
             cycle_id=_as_text(cycle.get("cycle_id")),
-            opportunity_id=None
-            if opportunity_ref is None
-            else str(opportunity_ref["opportunity_id"]),
-            risk_decision_id=None
-            if risk_decision is None
-            else str(risk_decision["risk_decision_id"]),
+            opportunity_id=None if opportunity_ref is None else str(opportunity_ref["opportunity_id"]),
+            risk_decision_id=None if risk_decision is None else str(risk_decision["risk_decision_id"]),
             candidate_id=_coerce_int(candidate.get("candidate_id")),
-            attempt_context=_normalize_attempt_context(
-                candidate.get("selection_state")
-            ),
+            attempt_context=_normalize_attempt_context(candidate.get("selection_state")),
             candidate_generated_at=_as_text(candidate.get("generated_at")),
             run_id=_as_text(candidate.get("run_id")),
             job_run_id=_as_text(cycle.get("job_run_id")),
@@ -2019,12 +1760,10 @@ def submit_live_session_execution(
                 pass
         if opportunity_ref is not None and signal_store is not None:
             try:
-                consumed_opportunity, consumed_changed = (
-                    signal_store.mark_opportunity_consumed(
-                        opportunity_id=str(opportunity_ref["opportunity_id"]),
-                        execution_attempt_id=attempt_id,
-                        consumed_at=requested_at,
-                    )
+                consumed_opportunity, consumed_changed = signal_store.mark_opportunity_consumed(
+                    opportunity_id=str(opportunity_ref["opportunity_id"]),
+                    execution_attempt_id=attempt_id,
+                    consumed_at=requested_at,
                 )
                 if consumed_opportunity is not None and consumed_changed:
                     publish_opportunity_event(
@@ -2049,11 +1788,7 @@ def submit_live_session_execution(
     except Exception as exc:
         if attempt_id is not None:
             current_attempt = execution_store.get_attempt(attempt_id)
-            if (
-                current_attempt is not None
-                and str(current_attempt.get("status") or "")
-                == PENDING_SUBMISSION_STATUS
-            ):
+            if current_attempt is not None and str(current_attempt.get("status") or "") == PENDING_SUBMISSION_STATUS:
                 execution_store.update_attempt(
                     execution_attempt_id=attempt_id,
                     status="failed",
@@ -2083,13 +1818,8 @@ def refresh_live_session_execution(
     if attempt is None:
         raise ValueError(f"Unknown execution_attempt_id: {execution_attempt_id}")
     if str(attempt["session_id"]) != session_id:
-        raise ValueError(
-            f"Execution {execution_attempt_id} does not belong to session {session_id}"
-        )
-    if (
-        _as_text(attempt.get("broker_order_id")) is None
-        and str(attempt.get("status") or "") == PENDING_SUBMISSION_STATUS
-    ):
+        raise ValueError(f"Execution {execution_attempt_id} does not belong to session {session_id}")
+    if _as_text(attempt.get("broker_order_id")) is None and str(attempt.get("status") or "") == PENDING_SUBMISSION_STATUS:
         payload = _get_attempt_payload(execution_store, execution_attempt_id)
         return {
             "action": "refresh",
@@ -2097,17 +1827,11 @@ def refresh_live_session_execution(
             "message": "Execution is still queued for broker submission.",
             "attempt": payload,
         }
-    if (
-        _as_text(attempt.get("broker_order_id")) is None
-        and str(attempt.get("status") or "") == SUBMIT_UNKNOWN_STATUS
-    ):
+    if _as_text(attempt.get("broker_order_id")) is None and str(attempt.get("status") or "") == SUBMIT_UNKNOWN_STATUS:
         client_order_id = _as_text(attempt.get("client_order_id"))
         if client_order_id is None:
             payload = _get_attempt_payload(execution_store, execution_attempt_id)
-            message = (
-                "Execution submit outcome is uncertain and cannot be reconciled "
-                "because the client order id is missing."
-            )
+            message = "Execution submit outcome is uncertain and cannot be reconciled " "because the client order id is missing."
             _sync_linked_execution_intent(
                 execution_store=execution_store,
                 attempt=payload,
@@ -2128,10 +1852,7 @@ def refresh_live_session_execution(
         )
         if reconciled_attempt is None:
             payload = _get_attempt_payload(execution_store, execution_attempt_id)
-            message = (
-                "Execution submit outcome is uncertain and no broker order has been "
-                f"found yet for client_order_id {client_order_id}."
-            )
+            message = "Execution submit outcome is uncertain and no broker order has been " f"found yet for client_order_id {client_order_id}."
             _sync_linked_execution_intent(
                 execution_store=execution_store,
                 attempt=payload,
@@ -2144,10 +1865,7 @@ def refresh_live_session_execution(
                 "message": message,
                 "attempt": payload,
             }
-        message = (
-            f"Reconciled execution {execution_attempt_id} via client_order_id "
-            f"{client_order_id}: {reconciled_attempt['status']}."
-        )
+        message = f"Reconciled execution {execution_attempt_id} via client_order_id " f"{client_order_id}: {reconciled_attempt['status']}."
         _publish_execution_attempt_event(reconciled_attempt, message=message)
         _sync_linked_execution_intent(
             execution_store=execution_store,
@@ -2206,18 +1924,14 @@ def submit_opportunity_execution(
     lifecycle_state = _as_text(opportunity.get("lifecycle_state")) or ""
     if lifecycle_state not in {"candidate", "ready", "blocked"}:
         raise ValueError("Opportunity is no longer active for execution")
-    eligibility_state = _as_text(opportunity.get("eligibility_state")) or _as_text(
-        opportunity.get("eligibility")
-    )
+    eligibility_state = _as_text(opportunity.get("eligibility_state")) or _as_text(opportunity.get("eligibility"))
     if eligibility_state not in {None, "live"}:
         raise ValueError("Opportunity is not live-executable")
     candidate_id = _coerce_int(opportunity.get("source_candidate_id"))
     if candidate_id is None:
         raise ValueError("Opportunity is missing a source candidate id")
     label = _as_text(opportunity.get("label"))
-    market_date = _as_text(opportunity.get("market_date")) or _as_text(
-        opportunity.get("session_date")
-    )
+    market_date = _as_text(opportunity.get("market_date")) or _as_text(opportunity.get("session_date"))
     if label is None or market_date is None:
         raise ValueError("Opportunity is missing label or market_date")
     return submit_live_session_execution(
@@ -2231,9 +1945,7 @@ def submit_opportunity_execution(
             "opportunity_id": opportunity_id,
             "pipeline_id": opportunity.get("pipeline_id"),
             "market_date": market_date,
-            "bot_id": opportunity.get("bot_id"),
-            "automation_id": opportunity.get("automation_id"),
-            "strategy_config_id": opportunity.get("strategy_config_id"),
+            "trading_strategy_id": opportunity.get("trading_strategy_id"),
         },
         storage=storage,
     )
@@ -2257,10 +1969,7 @@ def submit_position_close_by_id(
     if stored_position is None:
         raise ValueError(f"Unknown position_id: {position_id}")
     position = enrich_position_row(dict(stored_position))
-    if (
-        str(position.get("position_status") or position.get("status") or "open")
-        == "closed"
-    ):
+    if str(position.get("position_status") or position.get("status") or "open") == "closed":
         raise ValueError("Position is already closed")
 
     existing_attempts = execution_store.list_open_attempts_for_position(
@@ -2284,13 +1993,11 @@ def submit_position_close_by_id(
     trade_intent = resolve_trade_intent(CLOSE_TRADE_INTENT)
     attempt_id: str | None = None
     try:
-        order_request, resolved_quantity, resolved_limit_price = (
-            _build_close_order_request(
-                position=position,
-                quantity=quantity,
-                limit_price=limit_price,
-                client_order_id=client_order_id,
-            )
+        order_request, resolved_quantity, resolved_limit_price = _build_close_order_request(
+            position=position,
+            quantity=quantity,
+            limit_price=limit_price,
+            client_order_id=client_order_id,
         )
         validate_close_execution(
             position=position,
@@ -2307,9 +2014,7 @@ def submit_position_close_by_id(
             profile=(position.get("risk_policy") or {}).get("profile"),
             root_symbol=str(position["underlying_symbol"]),
         )
-        attempt_legs = normalize_legs(order_request.get("legs")) or normalize_legs(
-            position.get("legs")
-        )
+        attempt_legs = normalize_legs(order_request.get("legs")) or normalize_legs(position.get("legs"))
         attempt_id = _execution_attempt_id()
         attempt_structure_identity = (
             legs_identity_key(
@@ -2336,7 +2041,11 @@ def submit_position_close_by_id(
             ),
             reason="close_validation_passed",
             message="Close order passed position and order validation.",
-            policy_snapshot=request_metadata.get("risk_policy") if isinstance(request_metadata, Mapping) and isinstance(request_metadata.get("risk_policy"), Mapping) else {},
+            policy_snapshot=(
+                request_metadata.get("risk_policy")
+                if isinstance(request_metadata, Mapping) and isinstance(request_metadata.get("risk_policy"), Mapping)
+                else {}
+            ),
             evidence={
                 "position_id": position_id,
                 "trade_intent": trade_intent,
@@ -2350,9 +2059,7 @@ def submit_position_close_by_id(
             session_date=market_date,
             label=label,
             pipeline_id=pipeline_id,
-            bot_id=_as_text(position.get("bot_id")),
-            automation_id=_as_text(position.get("automation_id")),
-            strategy_config_id=_as_text(position.get("strategy_config_id")),
+            trading_strategy_id=_as_text(position.get("trading_strategy_id")),
             market_date=market_date,
             cycle_id=None,
             opportunity_id=_as_text(position.get("source_opportunity_id")),
@@ -2373,15 +2080,9 @@ def submit_position_close_by_id(
             position_id=position_id,
             root_symbol=str(position["underlying_symbol"]),
             strategy_family=_strategy_family_from_payload(position),
-            style_profile=str(
-                position.get("style_profile") or policy_fields["style_profile"]
-            ),
-            horizon_intent=str(
-                position.get("horizon_intent") or policy_fields["horizon_intent"]
-            ),
-            product_class=str(
-                position.get("product_class") or policy_fields["product_class"]
-            ),
+            style_profile=str(position.get("style_profile") or policy_fields["style_profile"]),
+            horizon_intent=str(position.get("horizon_intent") or policy_fields["horizon_intent"]),
+            product_class=str(position.get("product_class") or policy_fields["product_class"]),
             quantity=resolved_quantity,
             limit_price=resolved_limit_price,
             requested_at=requested_at,
@@ -2412,11 +2113,7 @@ def submit_position_close_by_id(
     except Exception as exc:
         if attempt_id is not None:
             current_attempt = execution_store.get_attempt(attempt_id)
-            if (
-                current_attempt is not None
-                and str(current_attempt.get("status") or "")
-                == PENDING_SUBMISSION_STATUS
-            ):
+            if current_attempt is not None and str(current_attempt.get("status") or "") == PENDING_SUBMISSION_STATUS:
                 execution_store.update_attempt(
                     execution_attempt_id=attempt_id,
                     status="failed",
@@ -2470,24 +2167,13 @@ def submit_equity_order(
         raise ValueError("Equity order time_in_force must be day or gtc")
 
     resolved_trade_intent = resolve_trade_intent(
-        _as_text(metadata.get("trade_intent"))
-        or (OPEN_TRADE_INTENT if normalized_side == "buy" else CLOSE_TRADE_INTENT)
+        _as_text(metadata.get("trade_intent")) or (OPEN_TRADE_INTENT if normalized_side == "buy" else CLOSE_TRADE_INTENT)
     )
     if normalized_side == "buy":
-        position_intent = (
-            "buy_to_open"
-            if resolved_trade_intent == OPEN_TRADE_INTENT
-            else "buy_to_close"
-        )
+        position_intent = "buy_to_open" if resolved_trade_intent == OPEN_TRADE_INTENT else "buy_to_close"
     else:
-        position_intent = (
-            "sell_to_open"
-            if resolved_trade_intent == OPEN_TRADE_INTENT
-            else "sell_to_close"
-        )
-    leg_role = (
-        "short" if position_intent in {"sell_to_open", "buy_to_close"} else "long"
-    )
+        position_intent = "sell_to_open" if resolved_trade_intent == OPEN_TRADE_INTENT else "sell_to_close"
+    leg_role = "short" if position_intent in {"sell_to_open", "buy_to_close"} else "long"
     position_id = _as_text(metadata.get("position_id"))
     requested_at = _utc_now()
     resolved_market_date = market_date or datetime.now(UTC).date().isoformat()
@@ -2560,9 +2246,7 @@ def submit_equity_order(
             session_date=resolved_market_date,
             label=resolved_label,
             pipeline_id=pipeline_id,
-            bot_id=_as_text(metadata.get("bot_id")),
-            automation_id=_as_text(metadata.get("automation_id")),
-            strategy_config_id=_as_text(metadata.get("strategy_config_id")),
+            trading_strategy_id=_as_text(metadata.get("trading_strategy_id")),
             market_date=resolved_market_date,
             cycle_id=None,
             opportunity_id=_as_text(metadata.get("opportunity_id")),
@@ -2598,57 +2282,22 @@ def submit_equity_order(
                 "execution_policy": equity_execution_policy,
                 "asset_class": "equity",
                 "position_intent": position_intent,
+                **({} if position_id is None else {"position_id": position_id}),
                 **(
                     {}
-                    if position_id is None
-                    else {"position_id": position_id}
+                    if _as_text(metadata.get("trading_strategy_id")) is None
+                    else {"trading_strategy_id": _as_text(metadata.get("trading_strategy_id"))}
                 ),
-                **(
-                    {}
-                    if _as_text(metadata.get("bot_id")) is None
-                    else {"bot_id": _as_text(metadata.get("bot_id"))}
-                ),
-                **(
-                    {}
-                    if _as_text(metadata.get("automation_id")) is None
-                    else {"automation_id": _as_text(metadata.get("automation_id"))}
-                ),
-                **(
-                    {}
-                    if _as_text(metadata.get("strategy_config_id")) is None
-                    else {"strategy_config_id": _as_text(metadata.get("strategy_config_id"))}
-                ),
-                **(
-                    {}
-                    if _as_text(metadata.get("strategy_id")) is None
-                    else {"strategy_id": _as_text(metadata.get("strategy_id"))}
-                ),
-                **(
-                    {}
-                    if _as_text(metadata.get("config_hash")) is None
-                    else {"config_hash": _as_text(metadata.get("config_hash"))}
-                ),
+                **({} if _as_text(metadata.get("config_hash")) is None else {"config_hash": _as_text(metadata.get("config_hash"))}),
                 **(
                     {}
                     if _as_text(metadata.get("execution_intent_id")) is None
                     else {"execution_intent_id": _as_text(metadata.get("execution_intent_id"))}
                 ),
-                **(
-                    {}
-                    if not isinstance(metadata.get("exit_policy"), Mapping)
-                    else {"exit_policy": dict(metadata["exit_policy"])}
-                ),
-                **(
-                    {}
-                    if not isinstance(metadata.get("risk_policy"), Mapping)
-                    else {"risk_policy": dict(metadata["risk_policy"])}
-                ),
+                **({} if not isinstance(metadata.get("exit_policy"), Mapping) else {"exit_policy": dict(metadata["exit_policy"])}),
+                **({} if not isinstance(metadata.get("risk_policy"), Mapping) else {"risk_policy": dict(metadata["risk_policy"])}),
                 "execution_admission": execution_admission,
-                **(
-                    {}
-                    if not isinstance(metadata.get("source"), Mapping)
-                    else {"source": dict(metadata["source"])}
-                ),
+                **({} if not isinstance(metadata.get("source"), Mapping) else {"source": dict(metadata["source"])}),
                 "order": order_request,
             },
             candidate={},
@@ -2663,10 +2312,7 @@ def submit_equity_order(
             client=adapter.client,
             order_snapshot=submission.order_snapshot,
         )
-        message = (
-            f"Submitted equity {normalized_side} for "
-            f"{resolved_quantity} {normalized_symbol}."
-        )
+        message = f"Submitted equity {normalized_side} for " f"{resolved_quantity} {normalized_symbol}."
         _publish_execution_attempt_event(synced_attempt, message=message)
         return {
             "action": "submit",
@@ -2687,10 +2333,7 @@ def submit_equity_order(
             failed_attempt = _get_attempt_payload(execution_store, attempt_id)
             _publish_execution_attempt_event(
                 failed_attempt,
-                message=(
-                    "Equity execution failed before submission: "
-                    f"{classified_error['message']}"
-                ),
+                message=("Equity execution failed before submission: " f"{classified_error['message']}"),
             )
             if bool(classified_error.get("terminal")):
                 return {
@@ -2749,9 +2392,7 @@ def submit_option_order(
     normalized_symbol = str(symbol or "").strip().upper()
     if not normalized_symbol:
         raise ValueError("Option order requires a contract symbol")
-    normalized_underlying = str(
-        underlying_symbol or metadata.get("underlying_symbol") or ""
-    ).strip().upper()
+    normalized_underlying = str(underlying_symbol or metadata.get("underlying_symbol") or "").strip().upper()
     if not normalized_underlying:
         raise ValueError("Option order requires an underlying symbol")
     normalized_side = str(side or "").strip().lower()
@@ -2771,22 +2412,14 @@ def submit_option_order(
     if resolved_strategy_family not in {"long_call", "long_put"}:
         raise ValueError("Direct option orders currently support long_call and long_put")
     resolved_trade_intent = resolve_trade_intent(
-        _as_text(metadata.get("trade_intent"))
-        or (OPEN_TRADE_INTENT if normalized_side == "buy" else CLOSE_TRADE_INTENT)
+        _as_text(metadata.get("trade_intent")) or (OPEN_TRADE_INTENT if normalized_side == "buy" else CLOSE_TRADE_INTENT)
     )
     if resolved_trade_intent == OPEN_TRADE_INTENT and normalized_side != "buy":
         raise ValueError("Long option opens must buy to open")
     if resolved_trade_intent == CLOSE_TRADE_INTENT and normalized_side != "sell":
         raise ValueError("Long option closes must sell to close")
-    position_intent = (
-        "buy_to_open"
-        if resolved_trade_intent == OPEN_TRADE_INTENT
-        else "sell_to_close"
-    )
-    resolved_option_type = (
-        _as_text(option_type)
-        or ("call" if resolved_strategy_family == "long_call" else "put")
-    ).lower()
+    position_intent = "buy_to_open" if resolved_trade_intent == OPEN_TRADE_INTENT else "sell_to_close"
+    resolved_option_type = (_as_text(option_type) or ("call" if resolved_strategy_family == "long_call" else "put")).lower()
     if resolved_option_type not in {"call", "put"}:
         raise ValueError("Option order option_type must be call or put")
 
@@ -2822,11 +2455,7 @@ def submit_option_order(
         profile=profile,
         root_symbol=normalized_underlying,
     )
-    option_selection = (
-        dict(metadata.get("option_selection"))
-        if isinstance(metadata.get("option_selection"), Mapping)
-        else {}
-    )
+    option_selection = dict(metadata.get("option_selection")) if isinstance(metadata.get("option_selection"), Mapping) else {}
     option_quote_metrics = _metadata_policy(option_selection, "quote_metrics")
     candidate_generated_at = _as_text(option_quote_metrics.get("timestamp")) or requested_at
     candidate_payload = {
@@ -2867,9 +2496,7 @@ def submit_option_order(
     )
     if resolved_trade_intent == OPEN_TRADE_INTENT:
         position_size_policy = _strategy_position_size_policy(
-            bot_id=_as_text(metadata.get("bot_id")),
-            automation_id=_as_text(metadata.get("automation_id")),
-            strategy_config_id=_as_text(metadata.get("strategy_config_id")),
+            trading_strategy_id=_as_text(metadata.get("trading_strategy_id")),
         )
         risk_evaluation = evaluate_open_execution(
             execution_store=execution_store,
@@ -2925,9 +2552,7 @@ def submit_option_order(
             session_date=resolved_market_date,
             label=resolved_label,
             pipeline_id=build_pipeline_id(resolved_label),
-            bot_id=_as_text(metadata.get("bot_id")),
-            automation_id=_as_text(metadata.get("automation_id")),
-            strategy_config_id=_as_text(metadata.get("strategy_config_id")),
+            trading_strategy_id=_as_text(metadata.get("trading_strategy_id")),
             market_date=resolved_market_date,
             cycle_id=None,
             opportunity_id=_as_text(metadata.get("opportunity_id")),
@@ -2953,12 +2578,9 @@ def submit_option_order(
             position_id=position_id,
             root_symbol=normalized_underlying,
             strategy_family=resolved_strategy_family,
-            style_profile=_as_text(metadata.get("style_profile"))
-            or str(policy_fields["style_profile"]),
-            horizon_intent=_as_text(metadata.get("horizon_intent"))
-            or str(policy_fields["horizon_intent"]),
-            product_class=_as_text(metadata.get("product_class"))
-            or str(policy_fields["product_class"]),
+            style_profile=_as_text(metadata.get("style_profile")) or str(policy_fields["style_profile"]),
+            horizon_intent=_as_text(metadata.get("horizon_intent")) or str(policy_fields["horizon_intent"]),
+            product_class=_as_text(metadata.get("product_class")) or str(policy_fields["product_class"]),
             quantity=resolved_quantity,
             limit_price=resolved_limit_price,
             requested_at=requested_at,
@@ -2974,96 +2596,41 @@ def submit_option_order(
                 **({} if position_id is None else {"position_id": position_id}),
                 **(
                     {}
-                    if _as_text(metadata.get("bot_id")) is None
-                    else {"bot_id": _as_text(metadata.get("bot_id"))}
+                    if _as_text(metadata.get("trading_strategy_id")) is None
+                    else {"trading_strategy_id": _as_text(metadata.get("trading_strategy_id"))}
                 ),
-                **(
-                    {}
-                    if _as_text(metadata.get("automation_id")) is None
-                    else {"automation_id": _as_text(metadata.get("automation_id"))}
-                ),
-                **(
-                    {}
-                    if _as_text(metadata.get("strategy_config_id")) is None
-                    else {"strategy_config_id": _as_text(metadata.get("strategy_config_id"))}
-                ),
-                **(
-                    {}
-                    if _as_text(metadata.get("strategy_id")) is None
-                    else {"strategy_id": _as_text(metadata.get("strategy_id"))}
-                ),
-                **(
-                    {}
-                    if _as_text(metadata.get("config_hash")) is None
-                    else {"config_hash": _as_text(metadata.get("config_hash"))}
-                ),
+                **({} if _as_text(metadata.get("config_hash")) is None else {"config_hash": _as_text(metadata.get("config_hash"))}),
                 **(
                     {}
                     if _as_text(metadata.get("execution_intent_id")) is None
                     else {"execution_intent_id": _as_text(metadata.get("execution_intent_id"))}
                 ),
-                **(
-                    {}
-                    if not isinstance(metadata.get("exit_policy"), Mapping)
-                    else {"exit_policy": dict(metadata["exit_policy"])}
-                ),
-                **(
-                    {}
-                    if not isinstance(metadata.get("risk_policy"), Mapping)
-                    else {"risk_policy": dict(metadata["risk_policy"])}
-                ),
+                **({} if not isinstance(metadata.get("exit_policy"), Mapping) else {"exit_policy": dict(metadata["exit_policy"])}),
+                **({} if not isinstance(metadata.get("risk_policy"), Mapping) else {"risk_policy": dict(metadata["risk_policy"])}),
                 "execution_admission": execution_admission,
-                **(
-                    {}
-                    if not isinstance(metadata.get("source"), Mapping)
-                    else {"source": dict(metadata["source"])}
-                ),
+                **({} if not isinstance(metadata.get("source"), Mapping) else {"source": dict(metadata["source"])}),
                 **(
                     {}
                     if _as_text(metadata.get("original_limit_price")) is None
-                    else {
-                        "original_limit_price": _coerce_float(
-                            metadata.get("original_limit_price")
-                        )
-                    }
+                    else {"original_limit_price": _coerce_float(metadata.get("original_limit_price"))}
                 ),
                 **(
                     {}
                     if _as_text(metadata.get("previous_limit_price")) is None
-                    else {
-                        "previous_limit_price": _coerce_float(
-                            metadata.get("previous_limit_price")
-                        )
-                    }
+                    else {"previous_limit_price": _coerce_float(metadata.get("previous_limit_price"))}
                 ),
                 **(
                     {}
                     if _as_text(metadata.get("previous_execution_attempt_id")) is None
-                    else {
-                        "previous_execution_attempt_id": _as_text(
-                            metadata.get("previous_execution_attempt_id")
-                        )
-                    }
+                    else {"previous_execution_attempt_id": _as_text(metadata.get("previous_execution_attempt_id"))}
                 ),
                 **(
                     {}
                     if _as_text(metadata.get("supersedes_execution_intent_id")) is None
-                    else {
-                        "supersedes_execution_intent_id": _as_text(
-                            metadata.get("supersedes_execution_intent_id")
-                        )
-                    }
+                    else {"supersedes_execution_intent_id": _as_text(metadata.get("supersedes_execution_intent_id"))}
                 ),
-                **(
-                    {}
-                    if _coerce_int(metadata.get("reprice_count")) is None
-                    else {"reprice_count": _coerce_int(metadata.get("reprice_count"))}
-                ),
-                **(
-                    {}
-                    if not isinstance(metadata.get("repricing_policy"), Mapping)
-                    else {"repricing_policy": dict(metadata["repricing_policy"])}
-                ),
+                **({} if _coerce_int(metadata.get("reprice_count")) is None else {"reprice_count": _coerce_int(metadata.get("reprice_count"))}),
+                **({} if not isinstance(metadata.get("repricing_policy"), Mapping) else {"repricing_policy": dict(metadata["repricing_policy"])}),
                 **({} if not option_selection else {"option_selection": option_selection}),
                 "order": order_request,
             },
@@ -3079,10 +2646,7 @@ def submit_option_order(
             client=adapter.client,
             order_snapshot=submission.order_snapshot,
         )
-        message = (
-            f"Submitted option {normalized_side} for "
-            f"{resolved_quantity} {normalized_symbol}."
-        )
+        message = f"Submitted option {normalized_side} for " f"{resolved_quantity} {normalized_symbol}."
         _publish_execution_attempt_event(synced_attempt, message=message)
         return {
             "action": "submit",
@@ -3104,10 +2668,7 @@ def submit_option_order(
             failed_attempt = _get_attempt_payload(execution_store, attempt_id)
             _publish_execution_attempt_event(
                 failed_attempt,
-                message=(
-                    "Option execution failed before submission: "
-                    f"{classified_error['message']}"
-                ),
+                message=("Option execution failed before submission: " f"{classified_error['message']}"),
             )
             if bool(classified_error.get("terminal")):
                 return {
@@ -3152,13 +2713,9 @@ def refresh_execution_attempt(
     session_id = _as_text(attempt.get("session_id"))
     if session_id is None:
         label = _as_text(attempt.get("label"))
-        market_date = _as_text(attempt.get("market_date")) or _as_text(
-            attempt.get("session_date")
-        )
+        market_date = _as_text(attempt.get("market_date")) or _as_text(attempt.get("session_date"))
         if label is None or market_date is None:
-            raise ValueError(
-                "Execution attempt is missing session compatibility fields"
-            )
+            raise ValueError("Execution attempt is missing session compatibility fields")
         session_id = build_live_run_scope_id(label, market_date)
     return refresh_live_session_execution(
         db_target=db_target,
@@ -3279,19 +2836,14 @@ def _sync_equity_attempt_state(
             rows=fill_rows,
         )
 
-    status = str(
-        order_snapshot.get("status") or attempt.get("status") or "unknown"
-    ).lower()
-    completed_at = (
-        _resolve_completed_at(order_snapshot) if _is_terminal_status(status) else None
-    )
+    status = str(order_snapshot.get("status") or attempt.get("status") or "unknown").lower()
+    completed_at = _resolve_completed_at(order_snapshot) if _is_terminal_status(status) else None
     execution_store.update_attempt(
         execution_attempt_id=str(attempt["execution_attempt_id"]),
         status=status,
         broker_order_id=_as_text(order_snapshot.get("id")),
         client_order_id=_as_text(order_snapshot.get("client_order_id")),
-        submitted_at=_as_text(order_snapshot.get("submitted_at"))
-        or str(attempt["requested_at"]),
+        submitted_at=_as_text(order_snapshot.get("submitted_at")) or str(attempt["requested_at"]),
         completed_at=completed_at,
         error_text=None,
     )
@@ -3307,9 +2859,7 @@ def _sync_equity_attempt_state(
                 execution_store=execution_store,
                 attempt=payload,
             )
-            payload = _get_attempt_payload(
-                execution_store, str(attempt["execution_attempt_id"])
-            )
+            payload = _get_attempt_payload(execution_store, str(attempt["execution_attempt_id"]))
         except Exception:
             pass
     return payload
@@ -3370,11 +2920,7 @@ def run_execution_submit(
     client_order_id = _as_text(payload.get("client_order_id"))
 
     if str(payload.get("trade_intent") or OPEN_TRADE_INTENT) == OPEN_TRADE_INTENT:
-        request_execution_policy = (
-            request.get("execution_policy")
-            if isinstance(request.get("execution_policy"), Mapping)
-            else {}
-        )
+        request_execution_policy = request.get("execution_policy") if isinstance(request.get("execution_policy"), Mapping) else {}
         timing_gate = _validate_open_timing_window(
             exit_policy=request.get("exit_policy"),
             current_time=datetime.now(UTC),
@@ -3414,16 +2960,8 @@ def run_execution_submit(
     adapter = create_alpaca_order_adapter()
     client = adapter.client
     if str(payload.get("trade_intent") or OPEN_TRADE_INTENT) == OPEN_TRADE_INTENT:
-        request_payload = (
-            payload.get("request")
-            if isinstance(payload.get("request"), Mapping)
-            else {}
-        )
-        request_execution_policy = (
-            request_payload.get("execution_policy")
-            if isinstance(request_payload.get("execution_policy"), Mapping)
-            else {}
-        )
+        request_payload = payload.get("request") if isinstance(payload.get("request"), Mapping) else {}
+        request_execution_policy = request_payload.get("execution_policy") if isinstance(request_payload.get("execution_policy"), Mapping) else {}
         live_deployment_quality = _validate_live_deployment_quality(
             candidate_payload=dict(payload.get("candidate") or {}),
             deployment_mode=str(request_execution_policy.get("deployment_mode") or ""),
@@ -3440,20 +2978,14 @@ def run_execution_submit(
             failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
             _publish_execution_attempt_event(
                 failed_attempt,
-                message=(
-                    "Execution failed before submission: "
-                    f"{live_deployment_quality['message']}"
-                ),
+                message=("Execution failed before submission: " f"{live_deployment_quality['message']}"),
             )
             _sync_linked_execution_intent(
                 execution_store=execution_store,
                 attempt=failed_attempt,
                 state="failed",
                 event_type="failed",
-                message=(
-                    "Execution failed before submission: "
-                    f"{live_deployment_quality['message']}"
-                ),
+                message=("Execution failed before submission: " f"{live_deployment_quality['message']}"),
             )
             return {
                 "status": "blocked",
@@ -3461,11 +2993,7 @@ def run_execution_submit(
                 "execution_attempt_id": execution_attempt_id,
                 "message": str(live_deployment_quality["message"]),
                 "attempt": failed_attempt,
-                **(
-                    {}
-                    if live_deployment_quality.get("live_quote") is None
-                    else {"live_quote": dict(live_deployment_quality["live_quote"])}
-                ),
+                **({} if live_deployment_quality.get("live_quote") is None else {"live_quote": dict(live_deployment_quality["live_quote"])}),
             }
         account_capacity = _validate_submit_account_capacity(
             execution_store=execution_store,
@@ -3483,20 +3011,14 @@ def run_execution_submit(
             failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
             _publish_execution_attempt_event(
                 failed_attempt,
-                message=(
-                    "Execution failed before submission: "
-                    f"{account_capacity['message']}"
-                ),
+                message=("Execution failed before submission: " f"{account_capacity['message']}"),
             )
             _sync_linked_execution_intent(
                 execution_store=execution_store,
                 attempt=failed_attempt,
                 state="failed",
                 event_type="failed",
-                message=(
-                    "Execution failed before submission: "
-                    f"{account_capacity['message']}"
-                ),
+                message=("Execution failed before submission: " f"{account_capacity['message']}"),
                 payload_updates={
                     "execution_admission": _execution_admission_payload_from_account_capacity(
                         attempt=payload,
@@ -3524,8 +3046,7 @@ def run_execution_submit(
             execution_attempt_id=execution_attempt_id,
             status=str(submitted_order.get("status") or "submitted").lower(),
             broker_order_id=_as_text(submitted_order.get("id")),
-            client_order_id=_as_text(submitted_order.get("client_order_id"))
-            or client_order_id,
+            client_order_id=_as_text(submitted_order.get("client_order_id")) or client_order_id,
             submitted_at=_as_text(submitted_order.get("submitted_at")) or requested_at,
             position_id=_as_text(payload.get("position_id")),
         )
@@ -3565,20 +3086,14 @@ def run_execution_submit(
             failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
             _publish_execution_attempt_event(
                 failed_attempt,
-                message=(
-                    "Execution failed before submission: "
-                    f"{classified_error['message']}"
-                ),
+                message=("Execution failed before submission: " f"{classified_error['message']}"),
             )
             _sync_linked_execution_intent(
                 execution_store=execution_store,
                 attempt=failed_attempt,
                 state="failed",
                 event_type="failed",
-                message=(
-                    "Execution failed before submission: "
-                    f"{classified_error['message']}"
-                ),
+                message=("Execution failed before submission: " f"{classified_error['message']}"),
                 payload_updates=(
                     {
                         "execution_admission": _execution_admission_payload_from_broker_rejection(
@@ -3605,31 +3120,22 @@ def run_execution_submit(
             execution_attempt_id=execution_attempt_id,
             status=submitted_status,
             broker_order_id=broker_order_id,
-            client_order_id=_as_text(submitted_order.get("client_order_id"))
-            or client_order_id,
+            client_order_id=_as_text(submitted_order.get("client_order_id")) or client_order_id,
             submitted_at=_as_text(submitted_order.get("submitted_at")) or requested_at,
-            completed_at=_resolve_completed_at(submitted_order)
-            if _is_terminal_status(submitted_status)
-            else None,
+            completed_at=_resolve_completed_at(submitted_order) if _is_terminal_status(submitted_status) else None,
             error_text=str(exc),
             position_id=_as_text(payload.get("position_id")),
         )
         failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
         _publish_execution_attempt_event(
             failed_attempt,
-            message=(
-                f"Order {broker_order_id or execution_attempt_id} was submitted, "
-                f"but local execution sync failed: {exc}"
-            ),
+            message=(f"Order {broker_order_id or execution_attempt_id} was submitted, " f"but local execution sync failed: {exc}"),
         )
         _sync_linked_execution_intent(
             execution_store=execution_store,
             attempt=failed_attempt,
             event_type="submit_unknown",
-            message=(
-                f"Order {broker_order_id or execution_attempt_id} was submitted, "
-                f"but local execution sync failed: {exc}"
-            ),
+            message=(f"Order {broker_order_id or execution_attempt_id} was submitted, " f"but local execution sync failed: {exc}"),
         )
         raise
     except Exception as exc:
@@ -3661,31 +3167,22 @@ def run_execution_submit(
             execution_attempt_id=execution_attempt_id,
             status=submitted_status,
             broker_order_id=broker_order_id,
-            client_order_id=_as_text(submitted_order.get("client_order_id"))
-            or client_order_id,
+            client_order_id=_as_text(submitted_order.get("client_order_id")) or client_order_id,
             submitted_at=_as_text(submitted_order.get("submitted_at")) or requested_at,
-            completed_at=_resolve_completed_at(submitted_order)
-            if _is_terminal_status(submitted_status)
-            else None,
+            completed_at=_resolve_completed_at(submitted_order) if _is_terminal_status(submitted_status) else None,
             error_text=str(exc),
             position_id=_as_text(payload.get("position_id")),
         )
         failed_attempt = _get_attempt_payload(execution_store, execution_attempt_id)
         _publish_execution_attempt_event(
             failed_attempt,
-            message=(
-                f"Order {broker_order_id or execution_attempt_id} was submitted, "
-                f"but local execution sync failed: {exc}"
-            ),
+            message=(f"Order {broker_order_id or execution_attempt_id} was submitted, " f"but local execution sync failed: {exc}"),
         )
         _sync_linked_execution_intent(
             execution_store=execution_store,
             attempt=failed_attempt,
             event_type="submit_unknown",
-            message=(
-                f"Order {broker_order_id or execution_attempt_id} was submitted, "
-                f"but local execution sync failed: {exc}"
-            ),
+            message=(f"Order {broker_order_id or execution_attempt_id} was submitted, " f"but local execution sync failed: {exc}"),
         )
         raise
 
@@ -3714,10 +3211,7 @@ def submit_auto_session_execution(
         else _resolve_source_policies(cycle=dict(cycle), job_store=storage.jobs)
     )
     requested_policy = (
-        dict(execution_rollout["policy"])
-        if execution_rollout is not None
-        and isinstance(execution_rollout.get("policy"), dict)
-        else policy
+        dict(execution_rollout["policy"]) if execution_rollout is not None and isinstance(execution_rollout.get("policy"), dict) else policy
     )
     requested_risk_policy = _requested_policy_payload(
         request_metadata=None,
@@ -3788,15 +3282,9 @@ def submit_auto_session_execution(
         "candidate_count": len(ranked_opportunities),
         "allocation_count": len(allocation_decisions),
         "execution_intent_count": len(execution_intents),
-        "top_opportunity_id": (
-            None if not ranked_opportunities else ranked_opportunities[0].opportunity_id
-        ),
-        "top_symbol": None
-        if not ranked_opportunities
-        else ranked_opportunities[0].symbol,
-        "top_strategy_family": None
-        if not ranked_opportunities
-        else ranked_opportunities[0].strategy_family,
+        "top_opportunity_id": (None if not ranked_opportunities else ranked_opportunities[0].opportunity_id),
+        "top_symbol": None if not ranked_opportunities else ranked_opportunities[0].symbol,
+        "top_strategy_family": None if not ranked_opportunities else ranked_opportunities[0].strategy_family,
     }
     if not ranked_opportunities:
         return {
@@ -3813,50 +3301,33 @@ def submit_auto_session_execution(
         None
         if selected_intent is None
         else next(
-            (
-                decision
-                for decision in allocation_decisions
-                if decision.opportunity_id == selected_intent.opportunity_id
-            ),
+            (decision for decision in allocation_decisions if decision.opportunity_id == selected_intent.opportunity_id),
             None,
         )
     )
     if selected_intent is None:
         top_decision = allocation_decisions[0] if allocation_decisions else None
         top_opportunity = ranked_opportunities[0] if ranked_opportunities else None
-        top_row = (
-            None
-            if top_opportunity is None
-            else opportunity_rows_by_id.get(top_opportunity.opportunity_id)
-        )
+        top_row = None if top_opportunity is None else opportunity_rows_by_id.get(top_opportunity.opportunity_id)
         selected_candidate_id = None
         if isinstance(top_row, Mapping):
             selected_candidate_id = _coerce_int(top_row.get("source_candidate_id"))
-        reason_code = (
-            None
-            if top_decision is None or not top_decision.rejection_codes
-            else str(top_decision.rejection_codes[0])
-        )
+        reason_code = None if top_decision is None or not top_decision.rejection_codes else str(top_decision.rejection_codes[0])
         return {
             "action": "auto_submit",
             "changed": False,
             "reason": reason_code or "no_allocated_opportunity",
             "message": (
-                "Automatic execution skipped because no live opportunity cleared the "
-                "execution planner."
+                "Automatic execution skipped because no live opportunity cleared the " "execution planner."
                 if top_decision is None
                 else top_decision.allocation_reason
             ),
             "policy": normalized_policy,
             "selected_candidate_id": selected_candidate_id,
-            "selected_opportunity_id": None
-            if top_opportunity is None
-            else top_opportunity.opportunity_id,
+            "selected_opportunity_id": None if top_opportunity is None else top_opportunity.opportunity_id,
             "execution_plan": {
                 **plan_summary,
-                "top_allocation_decision": (
-                    None if top_decision is None else top_decision.to_payload()
-                ),
+                "top_allocation_decision": (None if top_decision is None else top_decision.to_payload()),
             },
         }
 
@@ -3883,9 +3354,7 @@ def submit_auto_session_execution(
             "execution_plan": plan_summary,
         }
     selected_candidate = _candidate_with_payload(dict(selected_opportunity))
-    blocked_reason, blocked_message = _validate_auto_execution_candidate(
-        selected_candidate
-    )
+    blocked_reason, blocked_message = _validate_auto_execution_candidate(selected_candidate)
     if blocked_reason is not None:
         return {
             "action": "auto_submit",
@@ -3898,11 +3367,7 @@ def submit_auto_session_execution(
             "execution_plan": {
                 **plan_summary,
                 "selected_execution_intent": selected_intent.to_payload(),
-                "selected_allocation_decision": (
-                    None
-                    if selected_decision is None
-                    else selected_decision.to_payload()
-                ),
+                "selected_allocation_decision": (None if selected_decision is None else selected_decision.to_payload()),
             },
         }
 
@@ -3927,19 +3392,11 @@ def submit_auto_session_execution(
                 "execution_plan": {
                     **plan_summary,
                     "selected_execution_intent": selected_intent.to_payload(),
-                    "selected_allocation_decision": (
-                        None
-                        if selected_decision is None
-                        else selected_decision.to_payload()
-                    ),
+                    "selected_allocation_decision": (None if selected_decision is None else selected_decision.to_payload()),
                 },
             }
         limit_price = _coerce_float(reactive_resolution.get("limit_price"))
-        reactive_quote = (
-            dict(reactive_resolution["reactive_quote"])
-            if isinstance(reactive_resolution.get("reactive_quote"), dict)
-            else None
-        )
+        reactive_quote = dict(reactive_resolution["reactive_quote"]) if isinstance(reactive_resolution.get("reactive_quote"), dict) else None
 
     try:
         result = submit_opportunity_execution(
@@ -3958,20 +3415,14 @@ def submit_auto_session_execution(
                     "reason": "allocator_selected",
                 },
                 "opportunity_id": selected_intent.opportunity_id,
-                "allocation_decision": (
-                    None
-                    if selected_decision is None
-                    else selected_decision.to_payload()
-                ),
+                "allocation_decision": (None if selected_decision is None else selected_decision.to_payload()),
                 "execution_intent": selected_intent.to_payload(),
                 "auto_execution_plan": {
                     **plan_summary,
                     "selected_execution_intent": selected_intent.to_payload(),
                 },
                 "execution_policy": normalized_policy,
-                **(
-                    {} if reactive_quote is None else {"reactive_quote": reactive_quote}
-                ),
+                **({} if reactive_quote is None else {"reactive_quote": reactive_quote}),
             },
         )
     except Exception as exc:
@@ -3989,11 +3440,7 @@ def submit_auto_session_execution(
             "execution_plan": {
                 **plan_summary,
                 "selected_execution_intent": selected_intent.to_payload(),
-                "selected_allocation_decision": (
-                    None
-                    if selected_decision is None
-                    else selected_decision.to_payload()
-                ),
+                "selected_allocation_decision": (None if selected_decision is None else selected_decision.to_payload()),
             },
         }
     return {
@@ -4007,8 +3454,6 @@ def submit_auto_session_execution(
         "execution_plan": {
             **plan_summary,
             "selected_execution_intent": selected_intent.to_payload(),
-            "selected_allocation_decision": (
-                None if selected_decision is None else selected_decision.to_payload()
-            ),
+            "selected_allocation_decision": (None if selected_decision is None else selected_decision.to_payload()),
         },
     }

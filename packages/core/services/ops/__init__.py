@@ -7,7 +7,6 @@ from core.services.control_plane import (
 )
 
 from .audit import build_audit_view
-from .finviz import build_finviz_direct_ledger
 from .jobs import (
     build_job_lanes_overview,
     build_job_run_view,
@@ -22,7 +21,6 @@ from .uoa import build_uoa_cycle_view, build_uoa_overview
 __all__ = [
     "OpsLookupError",
     "build_audit_view",
-    "build_finviz_direct_ledger",
     "build_job_lanes_overview",
     "build_job_run_view",
     "build_jobs_overview",

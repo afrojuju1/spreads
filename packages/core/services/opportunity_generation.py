@@ -22,12 +22,12 @@ from core.services.runtime_policy import (
     build_runtime_policy_ref,
     resolve_runtime_policy_fields,
 )
-from core.services.automation_runtime import EntryRuntime
+from core.services.trading_strategy_runtime import EntryRuntime
 from core.services.strategy_builders import runtime_owner_key
 
 
-def build_automation_run_id(cycle_id: str, bot_id: str, automation_id: str) -> str:
-    return f"automation_run:{cycle_id}:{bot_id}:{automation_id}"
+def build_trading_strategy_run_id(cycle_id: str, trading_strategy_id: str) -> str:
+    return f"strategy_run:{cycle_id}:{trading_strategy_id}:entry"
 
 
 def build_runtime_opportunity_id(
@@ -40,10 +40,7 @@ def build_runtime_opportunity_id(
         candidate,
         strategy=candidate.get("strategy"),
     )
-    return (
-        f"opportunity:{runtime.bot_id}:{runtime.automation_id}:{session_date}:"
-        f"{candidate['underlying_symbol']}:{candidate_identity}"
-    )
+    return f"opportunity:{runtime.trading_strategy_id}:{session_date}:" f"{candidate['underlying_symbol']}:{candidate_identity}"
 
 
 def _coerce_float(value: Any) -> float | None:
@@ -70,9 +67,7 @@ def _normalized_blockers(value: Any) -> list[str]:
     return blockers
 
 
-def _opportunity_blockers(
-    candidate: dict[str, Any], *, eligibility: str | None = None
-) -> list[str]:
+def _opportunity_blockers(candidate: dict[str, Any], *, eligibility: str | None = None) -> list[str]:
     blockers: list[str] = []
     if str(eligibility or "live").strip().lower() != "live":
         blockers.append("analysis_only")
@@ -91,7 +86,7 @@ def _runtime_opportunity_eligibility(
     row: dict[str, Any],
 ) -> str:
     eligibility = str(row.get("eligibility") or "live").strip().lower() or "live"
-    if runtime.automation.automation.execution_mode == "shadow" and eligibility == "live":
+    if runtime.strategy.execution.mode == "shadow" and eligibility == "live":
         return "analysis_only"
     return eligibility
 
@@ -110,9 +105,7 @@ def _opportunity_source_index(
 ) -> dict[tuple[str, str], dict[str, Any]]:
     index: dict[tuple[str, str], dict[str, Any]] = {}
     for row in persisted_opportunities:
-        payload = (
-            row.get("candidate") if isinstance(row.get("candidate"), dict) else row
-        )
+        payload = row.get("candidate") if isinstance(row.get("candidate"), dict) else row
         candidate = dict(payload)
         symbol = str(candidate.get("underlying_symbol") or "").upper()
         candidate_identity = _candidate_identity(candidate)
@@ -128,9 +121,8 @@ def _read_previous_runtime_selection(
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     previous_runs = [
         dict(row)
-        for row in signal_store.list_automation_runs(
-            bot_id=runtime.bot_id,
-            automation_id=runtime.automation_id,
+        for row in signal_store.list_strategy_runs(
+            trading_strategy_id=runtime.trading_strategy_id,
             session_date=session_date,
             limit=1,
         )
@@ -139,40 +131,25 @@ def _read_previous_runtime_selection(
         return {}, {}
     previous_run = previous_runs[0]
     selection_memory = {}
-    result_payload = (
-        previous_run.get("result")
-        if isinstance(previous_run.get("result"), dict)
-        else previous_run.get("result_json")
-    )
-    if isinstance(result_payload, dict) and isinstance(
-        result_payload.get("selection_memory"), dict
-    ):
+    result_payload = previous_run.get("result") if isinstance(previous_run.get("result"), dict) else previous_run.get("result_json")
+    if isinstance(result_payload, dict) and isinstance(result_payload.get("selection_memory"), dict):
         selection_memory = {
             str(symbol): dict(state)
-            for symbol, state in dict(
-                result_payload.get("selection_memory") or {}
-            ).items()
+            for symbol, state in dict(result_payload.get("selection_memory") or {}).items()
             if isinstance(symbol, str) and isinstance(state, dict)
         }
     previous_promotable: dict[str, dict[str, Any]] = {}
     for row in signal_store.list_opportunities(
-        bot_id=runtime.bot_id,
-        automation_id=runtime.automation_id,
-        automation_run_id=str(previous_run["automation_run_id"]),
+        trading_strategy_id=runtime.trading_strategy_id,
+        strategy_run_id=str(previous_run["strategy_run_id"]),
         runtime_owned=True,
         limit=500,
     ):
         payload = dict(row)
         if str(payload.get("selection_state") or "") != "promotable":
             continue
-        candidate = (
-            payload.get("candidate")
-            if isinstance(payload.get("candidate"), dict)
-            else payload
-        )
-        symbol = str(
-            payload.get("underlying_symbol") or candidate.get("underlying_symbol") or ""
-        ).upper()
+        candidate = payload.get("candidate") if isinstance(payload.get("candidate"), dict) else payload
+        symbol = str(payload.get("underlying_symbol") or candidate.get("underlying_symbol") or "").upper()
         if not symbol:
             continue
         previous_promotable[symbol] = dict(candidate)
@@ -227,17 +204,9 @@ def _runtime_candidate_reason_codes(candidate: Mapping[str, Any]) -> list[str]:
             if blocker not in reason_codes:
                 reason_codes.append(blocker)
     scoring_state = str(candidate.get("scoring_state") or "").strip().lower()
-    score_thresholds = (
-        candidate.get("score_thresholds")
-        if isinstance(candidate.get("score_thresholds"), Mapping)
-        else {}
-    )
+    score_thresholds = candidate.get("score_thresholds") if isinstance(candidate.get("score_thresholds"), Mapping) else {}
     monitor_floor = _coerce_float(score_thresholds.get("monitor_floor"))
-    if (
-        monitor_floor is not None
-        and _selection_score(candidate) < monitor_floor
-        and "score_below_monitor_floor" not in reason_codes
-    ):
+    if monitor_floor is not None and _selection_score(candidate) < monitor_floor and "score_below_monitor_floor" not in reason_codes:
         reason_codes.append("score_below_monitor_floor")
     if scoring_state == "blocked" and not reason_codes:
         reason_codes.append("scoring_state_blocked")
@@ -251,11 +220,7 @@ def _runtime_candidate_preview(
     *,
     min_opportunity_score: float | None,
 ) -> dict[str, Any]:
-    score_thresholds = (
-        candidate.get("score_thresholds")
-        if isinstance(candidate.get("score_thresholds"), Mapping)
-        else {}
-    )
+    score_thresholds = candidate.get("score_thresholds") if isinstance(candidate.get("score_thresholds"), Mapping) else {}
     selection_score = _selection_score(candidate)
     min_score = None if min_opportunity_score is None else float(min_opportunity_score)
     return {
@@ -274,9 +239,7 @@ def _runtime_candidate_preview(
         "monitor_floor": _coerce_float(score_thresholds.get("monitor_floor")),
         "promotion_floor": _coerce_float(score_thresholds.get("promotion_floor")),
         "min_opportunity_score": min_score,
-        "min_opportunity_score_delta": None
-        if min_score is None
-        else round(selection_score - min_score, 1),
+        "min_opportunity_score_delta": None if min_score is None else round(selection_score - min_score, 1),
         "reason_codes": _runtime_candidate_reason_codes(candidate),
     }
 
@@ -314,13 +277,9 @@ def _build_runtime_selection_summary(
                 _candidate_identity(dict(candidate)),
             )
             if candidate_key not in selected_ids:
-                rejection_reason_counts.update(
-                    _runtime_candidate_reason_codes(candidate)
-                )
+                rejection_reason_counts.update(_runtime_candidate_reason_codes(candidate))
 
-    min_score = _coerce_float(
-        runtime.automation.automation.trigger_policy.get("min_opportunity_score")
-    )
+    min_score = _coerce_float(runtime.trigger_policy.get("min_opportunity_score"))
     for candidate in _sorted_runtime_candidates(flattened_candidates)[:3]:
         top_candidates.append(
             _runtime_candidate_preview(
@@ -342,35 +301,23 @@ def _build_runtime_selection_summary(
         )
     elif candidate_count <= 0:
         status = "no_runtime_candidates"
-        message = "No runtime candidates matched this automation in the current cycle."
+        message = "No runtime candidates matched this strategy in the current cycle."
     elif projected_from_discovery:
         status = "no_discovery_opportunity_match"
-        message = (
-            "Runtime candidates existed, but discovery did not persist any matching "
-            "live opportunities for this cycle."
-        )
+        message = "Runtime candidates existed, but discovery did not persist any matching " "live opportunities for this cycle."
     else:
         status = "no_runtime_opportunities"
-        message = (
-            "Runtime candidates existed, but none cleared live selection for this cycle."
-        )
+        message = "Runtime candidates existed, but none cleared live selection for this cycle."
 
     return {
-        "selection_source": (
-            "discovery_projection" if projected_from_discovery else "live_selection"
-        ),
+        "selection_source": ("discovery_projection" if projected_from_discovery else "live_selection"),
         "status": status,
         "message": message,
         "candidate_symbol_count": candidate_symbol_count,
         "candidate_count": candidate_count,
         "opportunity_count": opportunity_count,
-        "matched_discovery_opportunity_count": opportunity_count
-        if projected_from_discovery
-        else None,
-        "runtime_filter_reason_counts": {
-            str(key): int(value)
-            for key, value in dict(runtime_filter_reason_counts or {}).items()
-        },
+        "matched_discovery_opportunity_count": opportunity_count if projected_from_discovery else None,
+        "runtime_filter_reason_counts": {str(key): int(value) for key, value in dict(runtime_filter_reason_counts or {}).items()},
         "scoring_state_counts": dict(scoring_state_counts),
         "rejection_reason_counts": dict(rejection_reason_counts),
         "selection_memory": dict(selection_memory or {}),
@@ -385,19 +332,13 @@ def _project_runtime_rows_from_persisted(
 ) -> list[dict[str, Any]]:
     allowed_candidates_by_symbol: dict[str, set[str]] = {}
     for symbol, rows in filtered_candidates.items():
-        candidate_ids = {
-            _candidate_identity(dict(candidate))
-            for candidate in list(rows or [])
-            if _candidate_identity(dict(candidate))
-        }
+        candidate_ids = {_candidate_identity(dict(candidate)) for candidate in list(rows or []) if _candidate_identity(dict(candidate))}
         if candidate_ids:
             allowed_candidates_by_symbol[str(symbol).upper()] = candidate_ids
 
     projected_rows: list[dict[str, Any]] = []
     for row in persisted_opportunities:
-        payload = (
-            row.get("candidate") if isinstance(row.get("candidate"), dict) else row
-        )
+        payload = row.get("candidate") if isinstance(row.get("candidate"), dict) else row
         candidate = dict(payload)
         symbol = str(candidate.get("underlying_symbol") or "").upper()
         if not symbol:
@@ -412,9 +353,7 @@ def _project_runtime_rows_from_persisted(
 
     projected_rows.sort(
         key=lambda row: (
-            0
-            if row.get("selection_rank") not in (None, "")
-            else 1,
+            0 if row.get("selection_rank") not in (None, "") else 1,
             int(row.get("selection_rank") or 0),
             str(row.get("underlying_symbol") or ""),
         )
@@ -429,15 +368,11 @@ def build_runtime_opportunity_payload(
     session_date: str,
     generated_at: str,
     cycle_id: str,
-    automation_run_id: str,
+    strategy_run_id: str,
     row: dict[str, Any],
     source_row: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    candidate = (
-        dict(row.get("candidate"))
-        if isinstance(row.get("candidate"), dict)
-        else dict(row)
-    )
+    candidate = dict(row.get("candidate")) if isinstance(row.get("candidate"), dict) else dict(row)
     eligibility = _runtime_opportunity_eligibility(runtime, row)
     blockers = _opportunity_blockers(candidate, eligibility=eligibility)
     policy_fields = resolve_runtime_policy_fields(
@@ -445,50 +380,35 @@ def build_runtime_opportunity_payload(
         root_symbol=str(candidate.get("underlying_symbol") or ""),
     )
     return {
-        "opportunity_id": build_runtime_opportunity_id(
-            runtime, session_date=session_date, candidate=candidate
-        ),
+        "opportunity_id": build_runtime_opportunity_id(runtime, session_date=session_date, candidate=candidate),
         "pipeline_id": build_pipeline_id(label),
         "label": label,
         "market_date": session_date,
         "session_date": session_date,
         "cycle_id": cycle_id,
         "root_symbol": str(candidate.get("underlying_symbol") or ""),
-        "bot_id": runtime.bot_id,
-        "automation_id": runtime.automation_id,
-        "automation_run_id": automation_run_id,
-        "strategy_config_id": runtime.strategy_config_id,
-        "strategy_id": runtime.strategy_id,
+        "trading_strategy_id": runtime.trading_strategy_id,
+        "strategy_run_id": strategy_run_id,
         "config_hash": runtime.config_hash,
         "policy_ref": build_runtime_policy_ref(
-            bot_id=runtime.bot_id,
-            automation_id=runtime.automation_id,
-            strategy_config_id=runtime.strategy_config_id,
-            strategy_id=runtime.strategy_id,
+            trading_strategy_id=runtime.trading_strategy_id,
+            trade_structure=runtime.trade_structure,
+            routine="entry",
             market_date=session_date,
         ),
-        "strategy_family": runtime.strategy_family,
+        "strategy_family": runtime.trade_structure,
         "profile": runtime.build_settings.scanner_profile,
         "style_profile": str(policy_fields["style_profile"]),
         "horizon_intent": str(policy_fields["horizon_intent"]),
         "product_class": str(policy_fields["product_class"]),
         "expiration_date": candidate.get("expiration_date"),
-        "entity_type": "automation_signal_subject",
-        "entity_key": (
-            f"automation_signal_subject:{runtime.bot_id}:{runtime.automation_id}:"
-            f"{candidate.get('underlying_symbol')}"
-        ),
+        "entity_type": "trading_strategy_signal_subject",
+        "entity_key": (f"trading_strategy_signal_subject:{runtime.trading_strategy_id}:" f"{candidate.get('underlying_symbol')}"),
         "underlying_symbol": str(candidate.get("underlying_symbol") or ""),
         "side": row.get("side") or source_row.get("side") if source_row else None,
-        "side_bias": row.get("side_bias") or source_row.get("side_bias")
-        if source_row
-        else None,
+        "side_bias": row.get("side_bias") or source_row.get("side_bias") if source_row else None,
         "selection_state": str(row.get("selection_state") or "monitor"),
-        "selection_rank": (
-            None
-            if row.get("selection_rank") in (None, "")
-            else int(row["selection_rank"])
-        ),
+        "selection_rank": (None if row.get("selection_rank") in (None, "") else int(row["selection_rank"])),
         "state_reason": str(row.get("state_reason") or "selected_runtime_candidate"),
         "origin": "config_runtime",
         "eligibility": eligibility,
@@ -497,11 +417,7 @@ def build_runtime_opportunity_payload(
         "execution_score": _coerce_float(candidate.get("execution_score")),
         "confidence": _coerce_float(candidate.get("confidence")),
         "signal_state_ref": None,
-        "lifecycle_state": (
-            "ready"
-            if str(row.get("selection_state") or "") == "promotable"
-            else "candidate"
-        ),
+        "lifecycle_state": ("ready" if str(row.get("selection_state") or "") == "promotable" else "candidate"),
         "created_at": generated_at,
         "updated_at": generated_at,
         "expires_at": source_row.get("expires_at") if source_row else None,
@@ -513,29 +429,25 @@ def build_runtime_opportunity_payload(
         "order_payload": dict(candidate.get("order_payload") or {}),
         "evidence": {
             "runtime_kind": "entry",
+            "trading_strategy_id": runtime.trading_strategy_id,
+            "trade_structure": runtime.trade_structure,
             "entry_recipe_refs": list(runtime.entry_recipe_refs),
             "trigger_policy": dict(runtime.trigger_policy),
-            "execution_mode": runtime.automation.automation.execution_mode,
-            "approval_mode": runtime.automation.automation.approval_mode,
+            "execution_mode": runtime.strategy.execution.mode,
+            "approval_mode": runtime.strategy.execution.approval,
             "selection_state": row.get("selection_state"),
             "selection_rank": row.get("selection_rank"),
             "generated_at": generated_at,
             "last_present_at": generated_at,
             **candidate_evidence_metrics(candidate),
             **candidate_policy_context(candidate),
-            "source_opportunity_id": None
-            if source_row is None
-            else source_row.get("opportunity_id"),
+            "source_opportunity_id": None if source_row is None else source_row.get("opportunity_id"),
         },
         "execution_shape": _execution_shape(candidate),
         "risk_hints": risk_hints(candidate),
         "source_cycle_id": cycle_id,
-        "source_candidate_id": None
-        if source_row is None or source_row.get("candidate_id") in (None, "")
-        else int(source_row["candidate_id"]),
-        "source_selection_state": None
-        if source_row is None
-        else source_row.get("selection_state"),
+        "source_candidate_id": None if source_row is None or source_row.get("candidate_id") in (None, "") else int(source_row["candidate_id"]),
+        "source_selection_state": None if source_row is None else source_row.get("selection_state"),
         "candidate_identity": _candidate_identity(candidate),
         "candidate": candidate,
     }
@@ -550,10 +462,7 @@ def sync_entry_runtime_opportunities(
     cycle_id: str,
     entry_runtimes: list[EntryRuntime],
     symbol_candidates: dict[str, list[dict[str, Any]]],
-    runtime_candidate_rows_by_owner: dict[
-        tuple[str, str], dict[str, list[dict[str, Any]]]
-    ]
-    | None,
+    runtime_candidate_rows_by_owner: dict[tuple[str, str], dict[str, list[dict[str, Any]]]] | None,
     persisted_opportunities: list[dict[str, Any]],
     job_run_id: str | None,
     top_promotable: int,
@@ -561,49 +470,37 @@ def sync_entry_runtime_opportunities(
     selection_memory: dict[str, Any] | None = None,
     signal_cycle_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if not signal_store.automation_runtime_schema_ready():
+    if not signal_store.strategy_runtime_schema_ready():
         return {
-            "automation_runs_upserted": 0,
+            "strategy_runs_upserted": 0,
             "runtime_opportunities_upserted": 0,
             "runtime_opportunities_expired": 0,
             "opportunities": [],
         }
 
     source_index = _opportunity_source_index(persisted_opportunities)
-    automation_runs_upserted = 0
+    strategy_runs_upserted = 0
     runtime_opportunities_upserted = 0
     runtime_opportunities_expired = 0
     scoped_opportunities: list[dict[str, Any]] = []
 
     for runtime in entry_runtimes:
-        previous_promotable, previous_selection_memory = (
-            _read_previous_runtime_selection(
-                signal_store=signal_store,
-                runtime=runtime,
-                session_date=session_date,
-            )
+        previous_promotable, previous_selection_memory = _read_previous_runtime_selection(
+            signal_store=signal_store,
+            runtime=runtime,
+            session_date=session_date,
         )
         owner_candidates = None
         if runtime_candidate_rows_by_owner:
-            owner_candidates = runtime_candidate_rows_by_owner.get(
-                runtime_owner_key(runtime)
-            )
+            owner_candidates = runtime_candidate_rows_by_owner.get(runtime_owner_key(runtime))
         source_candidates = (
-            {
-                str(symbol): [dict(candidate) for candidate in rows]
-                for symbol, rows in owner_candidates.items()
-            }
+            {str(symbol): [dict(candidate) for candidate in rows] for symbol, rows in owner_candidates.items()}
             if owner_candidates
-            else {
-                str(symbol): [dict(candidate) for candidate in rows]
-                for symbol, rows in symbol_candidates.items()
-            }
+            else {str(symbol): [dict(candidate) for candidate in rows] for symbol, rows in symbol_candidates.items()}
         )
-        filtered_candidates, runtime_filter_reason_counts = (
-            filter_runtime_symbol_candidates(
-                symbol_candidates=source_candidates,
-                runtime=runtime,
-            )
+        filtered_candidates, runtime_filter_reason_counts = filter_runtime_symbol_candidates(
+            symbol_candidates=source_candidates,
+            runtime=runtime,
         )
         selected_rows: list[dict[str, Any]]
         runtime_selection_memory: dict[str, Any]
@@ -636,14 +533,10 @@ def sync_entry_runtime_opportunities(
             selection_memory=runtime_selection_memory,
             projected_from_discovery=owner_candidates is not None,
         )
-        automation_run_id = build_automation_run_id(
-            cycle_id, runtime.bot_id, runtime.automation_id
-        )
-        signal_store.upsert_automation_run(
-            automation_run_id=automation_run_id,
-            bot_id=runtime.bot_id,
-            automation_id=runtime.automation_id,
-            strategy_config_id=runtime.strategy_config_id,
+        strategy_run_id = build_trading_strategy_run_id(cycle_id, runtime.trading_strategy_id)
+        signal_store.upsert_strategy_run(
+            strategy_run_id=strategy_run_id,
+            trading_strategy_id=runtime.trading_strategy_id,
             trigger_type="discovery_run_cycle",
             job_run_id=job_run_id,
             cycle_id=cycle_id,
@@ -654,24 +547,18 @@ def sync_entry_runtime_opportunities(
             status="completed",
             result={
                 "candidate_symbol_count": len(filtered_candidates),
-                "candidate_count": sum(
-                    len(list(rows or [])) for rows in filtered_candidates.values()
-                ),
+                "candidate_count": sum(len(list(rows or [])) for rows in filtered_candidates.values()),
                 "opportunity_count": len(selected_rows),
                 "selection_memory": runtime_selection_memory,
                 "runtime_selection_summary": runtime_selection_summary,
             },
             config_hash=runtime.config_hash,
         )
-        automation_runs_upserted += 1
+        strategy_runs_upserted += 1
 
         active_runtime_opportunity_ids: list[str] = []
         for row in selected_rows:
-            candidate = (
-                dict(row.get("candidate"))
-                if isinstance(row.get("candidate"), dict)
-                else dict(row)
-            )
+            candidate = dict(row.get("candidate")) if isinstance(row.get("candidate"), dict) else dict(row)
             source_row = source_index.get(
                 (
                     str(candidate.get("underlying_symbol") or "").upper(),
@@ -684,7 +571,7 @@ def sync_entry_runtime_opportunities(
                 session_date=session_date,
                 generated_at=generated_at,
                 cycle_id=cycle_id,
-                automation_run_id=automation_run_id,
+                strategy_run_id=strategy_run_id,
                 row=dict(row),
                 source_row=source_row,
             )
@@ -698,14 +585,13 @@ def sync_entry_runtime_opportunities(
             session_date=session_date,
             active_opportunity_ids=active_runtime_opportunity_ids,
             expired_at=generated_at,
-            bot_id=runtime.bot_id,
-            automation_id=runtime.automation_id,
+            trading_strategy_id=runtime.trading_strategy_id,
             runtime_owned=True,
         )
         runtime_opportunities_expired += len(expired_rows)
 
     return {
-        "automation_runs_upserted": automation_runs_upserted,
+        "strategy_runs_upserted": strategy_runs_upserted,
         "runtime_opportunities_upserted": runtime_opportunities_upserted,
         "runtime_opportunities_expired": runtime_opportunities_expired,
         "opportunities": scoped_opportunities,
@@ -713,7 +599,7 @@ def sync_entry_runtime_opportunities(
 
 
 __all__ = [
-    "build_automation_run_id",
+    "build_trading_strategy_run_id",
     "build_runtime_opportunity_id",
     "build_runtime_opportunity_payload",
     "sync_entry_runtime_opportunities",

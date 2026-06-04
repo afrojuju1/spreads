@@ -8,7 +8,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   getExecutionRuntimes,
-  getOpsFinvizLedger,
   getOpsLiveDoctor,
   getOpsTradingHealth,
 } from "@/lib/api";
@@ -46,13 +45,6 @@ function formatAge(seconds: unknown): string {
 
 function findCheck(checks: Record<string, unknown>[], name: string): Record<string, unknown> {
   return checks.find((row) => readString(row.name, "").toLowerCase() === name.toLowerCase()) ?? {};
-}
-
-function reasonRows(value: unknown): { reason: string; count: number }[] {
-  return Object.entries(readRecord(value))
-    .map(([reason, count]) => ({ reason, count: readNumber(count) }))
-    .filter((row) => row.count > 0)
-    .sort((left, right) => right.count - left.count);
 }
 
 function hasMetricValue(value: unknown): boolean {
@@ -96,10 +88,6 @@ export function TodayCommandCenter() {
     queryKey: ["ops-trading-health"],
     queryFn: getOpsTradingHealth,
   });
-  const finvizLedgerQuery = useQuery({
-    queryKey: ["ops-finviz-ledger", "finviz_momentum"],
-    queryFn: () => getOpsFinvizLedger({ feedId: "finviz_momentum", limit: 8 }),
-  });
   const executionRuntimesQuery = useQuery({
     queryKey: ["execution-runtimes"],
     queryFn: getExecutionRuntimes,
@@ -108,7 +96,6 @@ export function TodayCommandCenter() {
   const loading =
     liveDoctorQuery.isLoading ||
     tradingHealthQuery.isLoading ||
-    finvizLedgerQuery.isLoading ||
     executionRuntimesQuery.isLoading;
 
   const liveDoctor = liveDoctorQuery.data;
@@ -117,11 +104,10 @@ export function TodayCommandCenter() {
   const checks = readRecordList(liveDetails.checks);
   const trading = tradingHealthQuery.data;
   const tradingSummary = readRecord(trading?.summary);
-  const finvizSummary = readRecord(finvizLedgerQuery.data?.summary);
   const finvizFeedCheck = findCheck(checks, "Finviz Feed");
-  const finvizDirectCheck = findCheck(checks, "Finviz Direct");
-  const finvizDirectMetrics = readRecord(finvizDirectCheck.metrics);
-  const directReasonRows = reasonRows(finvizDirectMetrics.reason_counts ?? finvizSummary.latest_lifecycle_decision_state_counts);
+  const strategyEntryCheck = findCheck(checks, "Strategy Entry");
+  const strategyEntryMetrics = readRecord(strategyEntryCheck.metrics);
+  const strategyManageCheck = findCheck(checks, "Strategy Manage");
   const runtimeRows = executionRuntimesQuery.data?.runtimes ?? [];
   const attention = [
     ...readRecordList(liveDoctor?.attention),
@@ -130,38 +116,32 @@ export function TodayCommandCenter() {
   const hasQueryError =
     liveDoctorQuery.isError ||
     tradingHealthQuery.isError ||
-    finvizLedgerQuery.isError ||
     executionRuntimesQuery.isError;
 
   const pendingLabel = loading ? "Loading" : "—";
-  const generatedAt = firstPresent(liveDoctor?.generated_at, trading?.generated_at, finvizLedgerQuery.data?.generated_at);
+  const generatedAt = firstPresent(liveDoctor?.generated_at, trading?.generated_at);
   const marketSessionStatus = firstPresent(liveSummary.market_session_status, tradingSummary.market_session_status);
   const tradingAllowed = firstPresent(liveSummary.trading_allowed, tradingSummary.trading_allowed);
   const environment = firstPresent(liveSummary.environment, tradingSummary.environment);
   const controlMode = firstPresent(liveSummary.control_mode, tradingSummary.control_mode);
-  const directCandidateTotal = directReasonRows.reduce((total, row) => total + row.count, 0);
-  const directCandidateValue = firstPresent(
-    liveSummary.finviz_direct_candidate_count,
-    directCandidateTotal > 0 ? directCandidateTotal : undefined,
+  const strategyOpportunityValue = firstPresent(
+    liveSummary.strategy_entry_opportunity_count,
+    strategyEntryMetrics.opportunity_count,
   );
-  const marketDate = readString(liveSummary.market_date, readString(finvizSummary.market_date, ""));
+  const marketDate = readString(liveSummary.market_date, "");
   const openPositions = formatNumberMetric(
-    firstPresent(liveSummary.open_position_count, tradingSummary.open_position_count, finvizSummary.open_position_count),
+    firstPresent(liveSummary.open_position_count, tradingSummary.open_position_count),
     pendingLabel,
   );
   const maxOpenPositions = formatNumberMetric(liveSummary.max_open_positions, pendingLabel);
   const activeIntents = formatNumberMetric(
-    firstPresent(liveSummary.active_intent_count, tradingSummary.automation_intent_count, finvizSummary.active_intent_count),
+    firstPresent(liveSummary.active_intent_count, tradingSummary.trading_strategy_intent_count),
     pendingLabel,
   );
   const remainingEntries = formatNumberMetric(liveSummary.remaining_daily_entries, pendingLabel);
   const maxDailyEntries = formatNumberMetric(liveSummary.max_daily_entries, pendingLabel);
-  const directCandidateCount = formatNumberMetric(directCandidateValue, pendingLabel);
-  const netPnl = hasMetricValue(liveSummary.net_pnl)
-    ? readNumber(liveSummary.net_pnl)
-    : hasMetricValue(finvizSummary.net_pnl)
-      ? readNumber(finvizSummary.net_pnl)
-      : null;
+  const strategyOpportunityCount = formatNumberMetric(strategyOpportunityValue, pendingLabel);
+  const netPnl = hasMetricValue(liveSummary.net_pnl) ? readNumber(liveSummary.net_pnl) : null;
   const realizedPnl = hasMetricValue(liveSummary.realized_pnl)
     ? readNumber(liveSummary.realized_pnl)
     : null;
@@ -169,7 +149,6 @@ export function TodayCommandCenter() {
   const refreshAll = () => {
     void liveDoctorQuery.refetch();
     void tradingHealthQuery.refetch();
-    void finvizLedgerQuery.refetch();
     void executionRuntimesQuery.refetch();
   };
 
@@ -186,7 +165,7 @@ export function TodayCommandCenter() {
                 <Activity data-icon="inline-start" />
                 Today
               </Badge>
-              <RuntimeStatusBadge value={liveDoctor?.status ?? trading?.status ?? finvizLedgerQuery.data?.status ?? (loading ? "loading" : "idle")} />
+              <RuntimeStatusBadge value={liveDoctor?.status ?? trading?.status ?? (loading ? "loading" : "idle")} />
               <Badge variant="outline">{readString(environment, "paper")}</Badge>
             </div>
             <div className="mt-4 text-3xl font-semibold tracking-[0.02em]">Command center</div>
@@ -239,9 +218,9 @@ export function TodayCommandCenter() {
           note={`${humanizeToken(controlMode, pendingLabel)} control · ${humanizeToken(marketSessionStatus, pendingLabel)}`}
         />
         <MetricTile
-          label="Finviz"
-          value={directCandidateCount === pendingLabel ? pendingLabel : `${directCandidateCount} candidates`}
-          note={`feed ${formatAge(liveSummary.finviz_feed_age_seconds)} · direct ${formatAge(liveSummary.finviz_direct_age_seconds)}`}
+          label="Finviz Strategy"
+          value={strategyOpportunityCount === pendingLabel ? pendingLabel : `${strategyOpportunityCount} opportunities`}
+          note={`feed ${formatAge(liveSummary.finviz_feed_age_seconds)} · entry ${formatAge(liveSummary.strategy_entry_age_seconds)}`}
         />
         <MetricTile
           label="Capacity"
@@ -275,12 +254,7 @@ export function TodayCommandCenter() {
             <StatusLine
               label="Execution"
               value={tradingSummary.execution_health_status ?? "healthy"}
-              note={`${readNumber(liveSummary.active_close_attempt_count)} active closes`}
-            />
-            <StatusLine
-              label="Close Lifecycle"
-              value={liveSummary.close_lifecycle_status ?? (loading ? "loading" : "idle")}
-              note={`${formatNumberMetric(liveSummary.failed_close_attempt_count, pendingLabel)} failed closes`}
+              note={`${activeIntents} active intents`}
             />
           </div>
 
@@ -295,13 +269,23 @@ export function TodayCommandCenter() {
               note={`${formatNumberMetric(liveSummary.finviz_feed_symbol_count, pendingLabel)} symbols · ${readString(readRecord(finvizFeedCheck.metrics).job_run_id)}`}
             />
             <StatusLine
-              label="Direct Job"
-              value={liveSummary.finviz_direct_status ?? (loading ? "loading" : "idle")}
-              note={`${formatNumberMetric(finvizDirectMetrics.created_count, pendingLabel)} created · ${formatNumberMetric(finvizDirectMetrics.entry_candidates, pendingLabel)} candidates`}
+              label="Strategy Entry"
+              value={liveSummary.strategy_entry_status ?? (loading ? "loading" : "idle")}
+              note={`${strategyOpportunityCount} opportunities · ${readString(strategyEntryMetrics.job_run_id)}`}
+            />
+            <StatusLine
+              label="Strategy Manage"
+              value={liveSummary.strategy_manage_status ?? (loading ? "loading" : "idle")}
+              note={`${formatAge(liveSummary.strategy_manage_age_seconds)} old · ${readString(readRecord(strategyManageCheck.metrics).job_run_id)}`}
+            />
+            <StatusLine
+              label="Intent Dispatch"
+              value={liveSummary.intent_dispatch_status ?? (loading ? "loading" : "idle")}
+              note={`${activeIntents} active intents`}
             />
             <div className="mt-3 flex flex-wrap gap-2">
               <Link
-                href={`/opportunities?marketDate=${encodeURIComponent(marketDate)}`}
+                href={`/opportunities?marketDate=${encodeURIComponent(marketDate)}&tradingStrategyId=momentum_long_calls`}
                 className={buttonVariants({ variant: "outline", size: "sm" })}
               >
                 Opportunities
@@ -309,27 +293,26 @@ export function TodayCommandCenter() {
               <Link href="/positions" className={buttonVariants({ variant: "outline", size: "sm" })}>
                 Positions
               </Link>
-              <Link href="/automations" className={buttonVariants({ variant: "outline", size: "sm" })}>
-                Automations
-              </Link>
             </div>
           </div>
         </section>
 
         <section className="rounded-2xl border border-border/70 bg-card/80 px-4 py-3">
-          <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Decision Reasons</div>
-          {directReasonRows.length ? (
-            <div className="space-y-2">
-              {directReasonRows.slice(0, 6).map((row) => (
-                <div key={row.reason} className="flex items-center justify-between gap-3 text-sm">
-                  <div className="min-w-0 truncate">{humanizeToken(row.reason)}</div>
-                  <Badge variant="outline">{formatQuantity(row.count)}</Badge>
-                </div>
-              ))}
+          <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Strategy Runtime</div>
+          <div className="space-y-2 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <span>Selected today</span>
+              <Badge variant="outline">{formatNumberMetric(tradingSummary.trading_strategy_selected_count, pendingLabel)}</Badge>
             </div>
-          ) : (
-            <div className="text-sm text-muted-foreground">No decision reasons reported.</div>
-          )}
+            <div className="flex items-center justify-between gap-3">
+              <span>Entry intents</span>
+              <Badge variant="outline">{formatNumberMetric(tradingSummary.trading_strategy_entry_intent_count, pendingLabel)}</Badge>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span>Management intents</span>
+              <Badge variant="outline">{formatNumberMetric(tradingSummary.trading_strategy_management_intent_count, pendingLabel)}</Badge>
+            </div>
+          </div>
           <div className="mt-4 border-t border-border/60 pt-3">
             <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Execution Runtime</div>
             {runtimeRows.map((row) => (

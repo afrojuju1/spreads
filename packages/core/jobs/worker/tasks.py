@@ -13,14 +13,14 @@ from core.jobs.registry import (
     COMPANY_VALUATION_RESOLVE_UNRESOLVED_JOB_TYPE,
     COMPANY_VALUATION_SCREEN_MATERIALIZE_JOB_TYPE,
     DISCOVERY_RECOVERY_JOB_TYPE,
+    EXECUTION_INTENT_DISPATCH_JOB_TYPE,
     EXECUTION_SUBMIT_JOB_TYPE,
     DISCOVERY_RUN_JOB_TYPE,
-    FINVIZ_DIRECT_TRADING_JOB_TYPE,
-    OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE,
-    OPTIONS_AUTOMATION_ENTRY_JOB_TYPE,
     POSITION_EXIT_MANAGER_JOB_TYPE,
     SYMBOL_FEED_JOB_TYPE,
     TRADINGAGENTS_SCAN_JOB_TYPE,
+    TRADING_STRATEGY_ENTRY_JOB_TYPE,
+    TRADING_STRATEGY_MANAGE_JOB_TYPE,
 )
 from core.jobs.specs import get_declared_discovery_run_spec
 from core.services.alert_delivery import (
@@ -43,11 +43,10 @@ from core.services.company_valuation.unresolved import (
 from core.services.discovery_runs.config import build_collection_args
 from core.services.discovery_runs.models import LiveTickContext
 from core.services.discovery_runs.runtime import run_collection_tick
-from core.services.decision_engine import run_entry_automation_decision
+from core.services.decision_engine import run_trading_strategy_entry_decision
 from core.services.execution import run_execution_submit
 from core.services.execution_intents import dispatch_pending_execution_intents
 from core.services.exit_manager import run_position_exit_manager
-from core.services.finviz_direct_trading import run_finviz_direct_trading
 from core.services.discovery_recovery import (
     LIVE_SLOT_STATUS_MISSED,
     LIVE_SLOT_STATUS_RUNNING,
@@ -67,13 +66,7 @@ def _normalized_tickers(payload: Mapping[str, Any]) -> tuple[str, ...]:
     values = payload.get("tickers")
     if not isinstance(values, list):
         return ()
-    return tuple(
-        dict.fromkeys(
-            str(value or "").upper().strip()
-            for value in values
-            if str(value or "").strip()
-        )
-    )
+    return tuple(dict.fromkeys(str(value or "").upper().strip() for value in values if str(value or "").strip()))
 
 
 def _compact_company_valuation_bootstrap_result(
@@ -85,39 +78,27 @@ def _compact_company_valuation_bootstrap_result(
         {
             "ticker": row.get("ticker"),
             "error": row.get("error"),
-            "quality_score": (
-                (row.get("recompute") or {}).get("quality_score")
-                if isinstance(row, Mapping)
-                else None
-            ),
-            "intrinsic_value_mid": (
-                (row.get("recompute") or {}).get("intrinsic_value_mid")
-                if isinstance(row, Mapping)
-                else None
-            ),
-            "valuation_gap": (
-                (row.get("recompute") or {}).get("valuation_gap")
-                if isinstance(row, Mapping)
-                else None
-            ),
+            "quality_score": ((row.get("recompute") or {}).get("quality_score") if isinstance(row, Mapping) else None),
+            "intrinsic_value_mid": ((row.get("recompute") or {}).get("intrinsic_value_mid") if isinstance(row, Mapping) else None),
+            "valuation_gap": ((row.get("recompute") or {}).get("valuation_gap") if isinstance(row, Mapping) else None),
         }
         for row in ticker_rows[:25]
         if isinstance(row, Mapping)
     ]
     return render_value(
         {
-        "status": result.get("status"),
-        "started_at": result.get("started_at"),
-        "completed_at": result.get("completed_at"),
-        "tickers": list(result.get("tickers") or []),
-        "ticker_count": len(list(result.get("tickers") or [])),
-        "ticker_results": compact_rows,
-        "ticker_result_count": len(ticker_rows),
-        "screening": result.get("screening"),
-        "universe_bootstrap": result.get("universe_bootstrap"),
-        "treasury_curve": result.get("treasury_curve"),
-        "errors": errors[:25],
-        "error_count": len(errors),
+            "status": result.get("status"),
+            "started_at": result.get("started_at"),
+            "completed_at": result.get("completed_at"),
+            "tickers": list(result.get("tickers") or []),
+            "ticker_count": len(list(result.get("tickers") or [])),
+            "ticker_results": compact_rows,
+            "ticker_result_count": len(ticker_rows),
+            "screening": result.get("screening"),
+            "universe_bootstrap": result.get("universe_bootstrap"),
+            "treasury_curve": result.get("treasury_curve"),
+            "errors": errors[:25],
+            "error_count": len(errors),
         }
     )
 
@@ -149,10 +130,7 @@ async def _update_live_slot_status(
     label = payload.get("label")
     slot_at = payload.get("slot_at")
     job_key = payload.get("job_key")
-    if not all(
-        isinstance(value, str) and value
-        for value in (session_id, session_date, label, slot_at, job_key)
-    ):
+    if not all(isinstance(value, str) and value for value in (session_id, session_date, label, slot_at, job_key)):
         return
     await asyncio.to_thread(
         recovery_store.upsert_live_session_slot,
@@ -291,7 +269,7 @@ async def run_position_exit_manager_job(
     )
 
 
-async def run_options_automation_entry_job(
+async def run_trading_strategy_entry_job(
     ctx: dict[str, Any],
     job_key: str,
     job_run_id: str,
@@ -302,16 +280,15 @@ async def run_options_automation_entry_job(
 
     def runner(heartbeat: Any) -> dict[str, Any]:
         heartbeat()
-        return run_entry_automation_decision(
+        return run_trading_strategy_entry_decision(
             db_target=database_url,
-            bot_id=str(payload["bot_id"]),
-            automation_id=str(payload["automation_id"]),
+            trading_strategy_id=str(payload["trading_strategy_id"]),
             market_date=payload.get("market_date"),
             planner_job_run_id=job_run_id,
         )
 
     enriched_payload = dict(payload)
-    enriched_payload["job_type"] = OPTIONS_AUTOMATION_ENTRY_JOB_TYPE
+    enriched_payload["job_type"] = TRADING_STRATEGY_ENTRY_JOB_TYPE
     return await _execute_managed_job(
         ctx,
         job_key=job_key,
@@ -323,7 +300,37 @@ async def run_options_automation_entry_job(
     )
 
 
-async def run_options_automation_execute_job(
+async def run_trading_strategy_manage_job(
+    ctx: dict[str, Any],
+    job_key: str,
+    job_run_id: str,
+    payload: dict[str, Any],
+    arq_job_id: str,
+) -> dict[str, Any]:
+    database_url = ctx["database_url"]
+
+    def runner(heartbeat: Any) -> dict[str, Any]:
+        heartbeat()
+        return run_position_exit_manager(
+            db_target=database_url,
+            storage=ctx["storage"],
+            trading_strategy_id=str(payload["trading_strategy_id"]),
+        )
+
+    enriched_payload = dict(payload)
+    enriched_payload["job_type"] = TRADING_STRATEGY_MANAGE_JOB_TYPE
+    return await _execute_managed_job(
+        ctx,
+        job_key=job_key,
+        job_run_id=job_run_id,
+        arq_job_id=arq_job_id,
+        payload=enriched_payload,
+        runner=runner,
+        compact_result=render_value,
+    )
+
+
+async def run_execution_intent_dispatch_job(
     ctx: dict[str, Any],
     job_key: str,
     job_run_id: str,
@@ -340,7 +347,7 @@ async def run_options_automation_execute_job(
         )
 
     enriched_payload = dict(payload)
-    enriched_payload["job_type"] = OPTIONS_AUTOMATION_EXECUTE_JOB_TYPE
+    enriched_payload["job_type"] = EXECUTION_INTENT_DISPATCH_JOB_TYPE
     return await _execute_managed_job(
         ctx,
         job_key=job_key,
@@ -394,9 +401,7 @@ async def run_alert_reconcile_job(
             alert_store=ctx["storage"].alerts,
             job_store=ctx["job_store"],
             limit=int(payload.get("limit", 200)),
-            stale_after_seconds=int(
-                payload.get("stale_after_seconds", ALERT_DELIVERY_STALE_SECONDS)
-            ),
+            stale_after_seconds=int(payload.get("stale_after_seconds", ALERT_DELIVERY_STALE_SECONDS)),
         )
 
     enriched_payload = dict(payload)
@@ -429,30 +434,20 @@ async def run_discovery_run_job(
             started_at=run_record.get("started_at"),
         )
 
-    async def on_completed(
-        run_record: Mapping[str, Any], result: Mapping[str, Any]
-    ) -> None:
+    async def on_completed(run_record: Mapping[str, Any], result: Mapping[str, Any]) -> None:
         slot_status = LIVE_SLOT_STATUS_SUCCEEDED
         recovery_note = None
         capture_status = None
         slot_details = None
         if str(result.get("status") or "") == "completed":
-            capture_status = str(
-                (result.get("quote_capture") or {}).get("capture_status") or ""
-            )
+            capture_status = str((result.get("quote_capture") or {}).get("capture_status") or "")
             slot_details = build_slot_details_from_cycle_result(result)
         elif str(result.get("slot_status") or "") == LIVE_SLOT_STATUS_MISSED:
             slot_status = LIVE_SLOT_STATUS_MISSED
-            recovery_note = str(
-                result.get("message")
-                or result.get("reason")
-                or "Live slot was skipped as stale."
-            )
+            recovery_note = str(result.get("message") or result.get("reason") or "Live slot was skipped as stale.")
         else:
             slot_status = LIVE_SLOT_STATUS_MISSED
-            recovery_note = str(
-                result.get("reason") or "Live slot did not complete successfully."
-            )
+            recovery_note = str(result.get("reason") or "Live slot did not complete successfully.")
         await _update_live_slot_status(
             ctx,
             payload=payload,
@@ -465,27 +460,17 @@ async def run_discovery_run_job(
             finished_at=run_record.get("finished_at"),
         )
 
-    async def on_failed(
-        run_record: Mapping[str, Any], partial_result: Mapping[str, Any] | None
-    ) -> None:
+    async def on_failed(run_record: Mapping[str, Any], partial_result: Mapping[str, Any] | None) -> None:
         await _update_live_slot_status(
             ctx,
             payload=payload,
             job_run_id=str(run_record["job_run_id"]),
             status=LIVE_SLOT_STATUS_MISSED,
             recovery_note=(
-                None
-                if partial_result is None
-                else str(
-                    partial_result.get("reason")
-                    or partial_result.get("message")
-                    or "Live slot failed."
-                )
+                None if partial_result is None else str(partial_result.get("reason") or partial_result.get("message") or "Live slot failed.")
             )
             or "Live slot failed before it could complete.",
-            slot_details=None
-            if partial_result is None
-            else build_slot_details_from_cycle_result(partial_result),
+            slot_details=None if partial_result is None else build_slot_details_from_cycle_result(partial_result),
             started_at=run_record.get("started_at"),
             finished_at=run_record.get("finished_at"),
         )
@@ -493,11 +478,10 @@ async def run_discovery_run_job(
     def runner(heartbeat: Any) -> dict[str, Any]:
         args = build_collection_args(
             payload,
-            options_automation_scope=(
+            trading_strategy_scope=(
                 {"enabled": False}
-                if (discovery_run_spec := get_declared_discovery_run_spec(job_key))
-                is None
-                else discovery_run_spec.options_automation_scope
+                if (discovery_run_spec := get_declared_discovery_run_spec(job_key)) is None
+                else discovery_run_spec.trading_strategy_scope
             ),
         )
         session_id = payload.get("session_id")
@@ -592,39 +576,6 @@ async def run_tradingagents_scan_job(
     )
 
 
-async def run_finviz_direct_trading_job(
-    ctx: dict[str, Any],
-    job_key: str,
-    job_run_id: str,
-    payload: dict[str, Any],
-    arq_job_id: str,
-) -> dict[str, Any]:
-    database_url = str(payload.get("db") or ctx["database_url"])
-
-    def runner(heartbeat: Any) -> dict[str, Any]:
-        heartbeat()
-        return run_finviz_direct_trading(
-            db_target=database_url,
-            storage=ctx["storage"],
-            job_store=ctx["job_store"],
-            job_run_id=job_run_id,
-            payload=payload,
-            heartbeat=heartbeat,
-        )
-
-    enriched_payload = dict(payload)
-    enriched_payload["job_type"] = FINVIZ_DIRECT_TRADING_JOB_TYPE
-    return await _execute_managed_job(
-        ctx,
-        job_key=job_key,
-        job_run_id=job_run_id,
-        arq_job_id=arq_job_id,
-        payload=enriched_payload,
-        runner=runner,
-        compact_result=render_value,
-    )
-
-
 async def run_company_valuation_bootstrap_job(
     ctx: dict[str, Any],
     job_key: str,
@@ -643,29 +594,19 @@ async def run_company_valuation_bootstrap_job(
                 bootstrap_universe=bool(payload.get("bootstrap_universe", False)),
                 universe_limit=_optional_int(payload.get("universe_limit")),
                 refresh_treasury=bool(payload.get("refresh_treasury", True)),
-                treasury_curve_date=(
-                    None
-                    if payload.get("treasury_curve_date") in (None, "")
-                    else parse_date(str(payload["treasury_curve_date"]))
-                ),
+                treasury_curve_date=(None if payload.get("treasury_curve_date") in (None, "") else parse_date(str(payload["treasury_curve_date"]))),
                 refresh_filings=bool(payload.get("refresh_filings", True)),
                 filings_since=parse_datetime(payload.get("filings_since")),
                 filings_until=parse_datetime(payload.get("filings_until")),
                 refresh_insiders=bool(payload.get("refresh_insiders", True)),
-                refresh_beneficial_ownership=bool(
-                    payload.get("refresh_beneficial_ownership", True)
-                ),
+                refresh_beneficial_ownership=bool(payload.get("refresh_beneficial_ownership", True)),
                 ownership_since=parse_datetime(payload.get("ownership_since")),
                 ownership_until=parse_datetime(payload.get("ownership_until")),
                 refresh_market_inputs=bool(payload.get("refresh_market_inputs", True)),
                 recompute=bool(payload.get("recompute", True)),
                 materialize_screen=bool(payload.get("materialize_screen", True)),
                 continue_on_error=bool(payload.get("continue_on_error", True)),
-                config_root=(
-                    None
-                    if payload.get("config_root") in (None, "")
-                    else str(payload["config_root"])
-                ),
+                config_root=(None if payload.get("config_root") in (None, "") else str(payload["config_root"])),
             ),
             repository=CompanyValuationRepository(database_url),
             heartbeat=heartbeat,
@@ -698,23 +639,13 @@ async def run_company_valuation_screen_materialize_job(
         heartbeat()
         result = materialize_company_valuation_screen(
             as_of=parse_datetime(payload.get("as_of")),
-            template_id=(
-                None
-                if payload.get("template_id") in (None, "")
-                else str(payload["template_id"])
-            ),
+            template_id=(None if payload.get("template_id") in (None, "") else str(payload["template_id"])),
             tickers=_normalized_tickers(payload) or None,
             issuer_limit=_optional_int(payload.get("issuer_limit")),
             supported_only=bool(payload.get("supported_only", True)),
-            stressed_operator_only=bool(
-                payload.get("stressed_operator_only", False)
-            ),
+            stressed_operator_only=bool(payload.get("stressed_operator_only", False)),
             repository=CompanyValuationRepository(database_url),
-            config_root=(
-                None
-                if payload.get("config_root") in (None, "")
-                else str(payload["config_root"])
-            ),
+            config_root=(None if payload.get("config_root") in (None, "") else str(payload["config_root"])),
             heartbeat=heartbeat,
         )
         return result.to_payload()
@@ -745,11 +676,7 @@ async def run_company_valuation_resolve_unresolved_job(
         heartbeat()
         result = resolve_unresolved_institutional_positions(
             ResolveUnresolvedInstitutionalPositionsRequest(
-                report_period=(
-                    None
-                    if payload.get("report_period") in (None, "")
-                    else parse_date(str(payload["report_period"]))
-                ),
+                report_period=(None if payload.get("report_period") in (None, "") else parse_date(str(payload["report_period"]))),
                 limit_rows=int(payload.get("limit_rows", 20000) or 20000),
                 batch_cusips=int(payload.get("batch_cusips", 50) or 50),
                 max_attempts=int(payload.get("max_attempts", 5) or 5),

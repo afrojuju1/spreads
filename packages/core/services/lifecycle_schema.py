@@ -3,7 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from core.services.trading_lifecycle import STATE_ENUM_BY_OBJECT
-from core.storage.lifecycle_models import TARGET_LIFECYCLE_TABLES
+from core.storage.lifecycle_models import (
+    TARGET_LIFECYCLE_OWNERSHIP_FIELDS,
+    TARGET_LIFECYCLE_TABLES,
+)
 
 
 def build_lifecycle_schema_summary() -> dict[str, Any]:
@@ -11,6 +14,9 @@ def build_lifecycle_schema_summary() -> dict[str, Any]:
         "status": "target_schema_defined",
         "posture": "breaking_rewrite",
         "tables": [dict(row) for row in TARGET_LIFECYCLE_TABLES],
+        "ownership": {
+            "strategy_fields": list(TARGET_LIFECYCLE_OWNERSHIP_FIELDS),
+        },
         "states": [
             {
                 "object_type": object_type.value,

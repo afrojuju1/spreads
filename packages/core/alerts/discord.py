@@ -12,7 +12,6 @@ from core.services.option_structures import (
     payload_display_fields,
 )
 
-
 SUCCESS_GREEN = 0x2ECC71
 BEARISH_RED = 0xE74C3C
 NEUTRAL_YELLOW = 0xF1C40F
@@ -247,24 +246,14 @@ def _structure_summary(candidate: dict[str, Any]) -> str:
             elif option_type == "call" and role == "long" and call_long is None:
                 call_long = leg
         if None not in (put_long, put_short, call_short, call_long):
-            return (
-                f"{_leg_token(put_long)} / {_leg_token(put_short)} + "
-                f"{_leg_token(call_short)} / {_leg_token(call_long)}"
-            )
-    return " / ".join(
-        f"{str(leg.get('role') or 'leg').lower()} {_leg_qty_text(leg)} {_leg_token(leg)}"
-        for leg in legs[:4]
-    )
+            return f"{_leg_token(put_long)} / {_leg_token(put_short)} + " f"{_leg_token(call_short)} / {_leg_token(call_long)}"
+    return " / ".join(f"{str(leg.get('role') or 'leg').lower()} {_leg_qty_text(leg)} {_leg_token(leg)}" for leg in legs[:4])
 
 
 def _oi_floor(candidate: dict[str, Any]) -> str | None:
     short_oi = candidate.get("short_open_interest")
     long_oi = candidate.get("long_open_interest")
-    values = [
-        int(round(float(value)))
-        for value in (short_oi, long_oi)
-        if value not in (None, "")
-    ]
+    values = [int(round(float(value))) for value in (short_oi, long_oi) if value not in (None, "")]
     if not values:
         return None
     return compact_integer(min(values))
@@ -319,9 +308,7 @@ def _ticket_lines(candidate: dict[str, Any]) -> list[str]:
 def _contract_lines(candidate: dict[str, Any]) -> list[str]:
     lines: list[str] = []
     for leg in candidate_legs(candidate):
-        lines.append(
-            f"{_leg_intent_abbrev(leg)} {_leg_qty_text(leg)} {str(leg.get('symbol') or 'n/a')}"
-        )
+        lines.append(f"{_leg_intent_abbrev(leg)} {_leg_qty_text(leg)} {str(leg.get('symbol') or 'n/a')}")
     return lines
 
 
@@ -419,9 +406,7 @@ def _execution_field(alert: dict[str, Any]) -> dict[str, Any] | None:
 def _single_leg_sections(candidate: dict[str, Any]) -> list[dict[str, Any]]:
     legs = candidate_legs(candidate)
     risk_parts = [
-        _metric_part("strike", _leg_token(legs[0]))
-        if legs
-        else _metric_part("strike", compact_strike(candidate.get("short_strike"))),
+        _metric_part("strike", _leg_token(legs[0])) if legs else _metric_part("strike", compact_strike(candidate.get("short_strike"))),
         _metric_part("BE", compact_strike(candidate.get("breakeven"))),
         _metric_part("EM", compact_money(candidate.get("expected_move"))),
         _metric_part("BE/EM", compact_signed_money(candidate.get("breakeven_vs_expected_move"))),
@@ -454,9 +439,7 @@ def _single_leg_sections(candidate: dict[str, Any]) -> list[dict[str, Any]]:
         {"name": "Risk", "value": _join_metric_parts(risk_parts), "inline": False},
         {
             "name": "Liquidity",
-            "value": _join_metric_parts(
-                [_metric_part("spot", _underlying_spot_text(candidate)), *liquidity_parts]
-            ),
+            "value": _join_metric_parts([_metric_part("spot", _underlying_spot_text(candidate)), *liquidity_parts]),
             "inline": False,
         },
     ]
@@ -502,9 +485,7 @@ def _vertical_sections(candidate: dict[str, Any]) -> list[dict[str, Any]]:
         {"name": "Risk", "value": _join_metric_parts(risk_parts), "inline": False},
         {
             "name": "Liquidity",
-            "value": _join_metric_parts(
-                [_metric_part("spot", _underlying_spot_text(candidate)), *liquidity_parts]
-            ),
+            "value": _join_metric_parts([_metric_part("spot", _underlying_spot_text(candidate)), *liquidity_parts]),
             "inline": False,
         },
     ]
@@ -521,12 +502,10 @@ def _iron_condor_sections(candidate: dict[str, Any]) -> list[dict[str, Any]]:
         _metric_part(
             "BE",
             (
-                f"{compact_strike(candidate.get('lower_breakeven'))} - "
-                f"{compact_strike(candidate.get('upper_breakeven'))}"
-            )
-            if candidate.get("lower_breakeven") is not None
-            and candidate.get("upper_breakeven") is not None
-            else None
+                (f"{compact_strike(candidate.get('lower_breakeven'))} - " f"{compact_strike(candidate.get('upper_breakeven'))}")
+                if candidate.get("lower_breakeven") is not None and candidate.get("upper_breakeven") is not None
+                else None
+            ),
         ),
         _metric_part("EM", compact_money(candidate.get("expected_move"))),
     ]
@@ -569,9 +548,7 @@ def _iron_condor_sections(candidate: dict[str, Any]) -> list[dict[str, Any]]:
         },
         {
             "name": "Liquidity",
-            "value": _join_metric_parts(
-                [_metric_part("spot", _underlying_spot_text(candidate)), *liquidity_parts]
-            ),
+            "value": _join_metric_parts([_metric_part("spot", _underlying_spot_text(candidate)), *liquidity_parts]),
             "inline": False,
         },
     ]
@@ -659,23 +636,16 @@ def _spread_expected_move_line(candidate: dict[str, Any]) -> str | None:
     if candidate.get("expected_move_pct") is not None:
         parts.append(compact_pct(candidate.get("expected_move_pct")))
     if candidate.get("short_vs_expected_move") is not None:
-        parts.append(
-            f"strike {compact_signed_money(candidate.get('short_vs_expected_move'))}"
-        )
+        parts.append(f"strike {compact_signed_money(candidate.get('short_vs_expected_move'))}")
     if candidate.get("breakeven_vs_expected_move") is not None:
-        parts.append(
-            f"BE {compact_signed_money(candidate.get('breakeven_vs_expected_move'))}"
-        )
+        parts.append(f"BE {compact_signed_money(candidate.get('breakeven_vs_expected_move'))}")
     return " | ".join(parts)
 
 
 def _build_spread_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
     candidate = alert["candidate"]
     strategy = str(candidate["strategy"])
-    title = (
-        f"{alert['symbol']} {_expiration_text(candidate)} "
-        f"{_strategy_title(strategy)} | {_alert_status_title(alert.get('alert_type'))}"
-    )
+    title = f"{alert['symbol']} {_expiration_text(candidate)} " f"{_strategy_title(strategy)} | {_alert_status_title(alert.get('alert_type'))}"
     description = _spread_description(alert)
     fields = _spread_fields(candidate)
     if str(alert.get("alert_type") or "").strip().lower() in _RUNTIME_READY_ALERTS:
@@ -706,13 +676,7 @@ def _uoa_color(*, dominant_flow: str, decision_state: str) -> int:
 
 
 def _uoa_dte_preview(contracts: list[dict[str, Any]]) -> str:
-    values = sorted(
-        {
-            int(contract["dte"])
-            for contract in contracts
-            if contract.get("dte") is not None
-        }
-    )
+    values = sorted({int(contract["dte"]) for contract in contracts if contract.get("dte") is not None})
     if not values:
         return "n/a"
     return ", ".join(f"{value}DTE" for value in values[:3])
@@ -797,8 +761,7 @@ def _uoa_contract_line(contract: dict[str, Any]) -> str:
     premium = compact_money(contract.get("scoreable_premium"))
     net_premium = _uoa_signed_money(contract.get("signed_premium"))
     return (
-        f"{option_type} {strike_text} | {expiry_text} | "
-        f"{trade_count} prints | size {compact_count(total_size)} | {premium} | net {net_premium}"
+        f"{option_type} {strike_text} | {expiry_text} | " f"{trade_count} prints | size {compact_count(total_size)} | {premium} | net {net_premium}"
     )
 
 
@@ -839,9 +802,7 @@ def _build_uoa_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
     flow_shape = _uoa_flow_shape(candidate, current)
     directional_bias = _uoa_directional_bias(candidate, current)
     title = (
-        f"{alert['symbol']} "
-        f"{_uoa_title_descriptor(flow_shape=flow_shape, directional_bias=directional_bias)} "
-        f"UOA {decision_state.upper()}"
+        f"{alert['symbol']} " f"{_uoa_title_descriptor(flow_shape=flow_shape, directional_bias=directional_bias)} " f"UOA {decision_state.upper()}"
     )
     expiry_text = _uoa_root_expiry_text(quote_context=quote_context, contracts=contracts)
     score_text = f"{float(candidate.get('decision_score') or 0.0):.1f}"
@@ -893,10 +854,7 @@ def _build_uoa_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
             0,
         )
         if additional_contract_count > 0:
-            contract_lines.append(
-                f"+{additional_contract_count} more active contract"
-                f"{'' if additional_contract_count == 1 else 's'} not shown"
-            )
+            contract_lines.append(f"+{additional_contract_count} more active contract" f"{'' if additional_contract_count == 1 else 's'} not shown")
         fields.append(
             {
                 "name": "Contract Ladder",
@@ -924,16 +882,16 @@ def _build_uoa_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
 
 def _build_ops_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
     details = alert.get("details") if isinstance(alert.get("details"), dict) else {}
-    bot_name = str(
-        details.get("bot_name") or details.get("bot_id") or alert.get("symbol") or "ops"
+    ops_scope = str(
+        details.get("trading_strategy_id")
+        or details.get("strategy_id")
+        or details.get("job_key")
+        or details.get("scope")
+        or alert.get("symbol")
+        or "ops"
     )
-    automation_ids = [
-        str(value)
-        for value in list(details.get("automation_ids") or [])
-        if str(value).strip()
-    ]
     fields = [
-        {"name": "Bot", "value": bot_name, "inline": False},
+        {"name": "Scope", "value": ops_scope, "inline": False},
         {
             "name": "Market Date",
             "value": str(details.get("market_date") or alert.get("session_date") or "n/a"),
@@ -965,16 +923,8 @@ def _build_ops_discord_payload(alert: dict[str, Any]) -> dict[str, Any]:
             "inline": True,
         },
     ]
-    if automation_ids:
-        fields.append(
-            {
-                "name": "Automations",
-                "value": "\n".join(automation_ids[:5]),
-                "inline": False,
-            }
-        )
     embed = {
-        "title": f"Automation Dispatch Gap | {bot_name}",
+        "title": f"Ops Alert | {ops_scope}",
         "description": alert["description"],
         "color": NEUTRAL_YELLOW,
         "fields": fields,
@@ -999,15 +949,9 @@ def _compact_percent_points(value: Any, *, fallback: str = "n/a") -> str:
 
 def _research_color(alert: dict[str, Any], details: dict[str, Any]) -> int:
     if str(alert.get("alert_type") or "") == "research_tradingagents_batch_summary":
-        incomplete_count = int(details.get("failed_count") or 0) + int(
-            details.get("timed_out_count") or 0
-        )
+        incomplete_count = int(details.get("failed_count") or 0) + int(details.get("timed_out_count") or 0)
         return NEUTRAL_YELLOW if incomplete_count else INFO_BLUE
-    tradingagents = (
-        details.get("tradingagents")
-        if isinstance(details.get("tradingagents"), dict)
-        else {}
-    )
+    tradingagents = details.get("tradingagents") if isinstance(details.get("tradingagents"), dict) else {}
     signal = str(tradingagents.get("validated_signal") or "").strip().lower()
     quality_status = str(tradingagents.get("quality_status") or "").strip().lower()
     if quality_status == "fail":
@@ -1037,16 +981,8 @@ def _build_research_actionable_payload(
     alert: dict[str, Any],
     details: dict[str, Any],
 ) -> dict[str, Any]:
-    tradingagents = (
-        details.get("tradingagents")
-        if isinstance(details.get("tradingagents"), dict)
-        else {}
-    )
-    feed_entry = (
-        details.get("feed_entry")
-        if isinstance(details.get("feed_entry"), dict)
-        else {}
-    )
+    tradingagents = details.get("tradingagents") if isinstance(details.get("tradingagents"), dict) else {}
+    feed_entry = details.get("feed_entry") if isinstance(details.get("feed_entry"), dict) else {}
     symbol = str(alert.get("symbol") or tradingagents.get("ticker") or "n/a")
     signal = str(tradingagents.get("validated_signal") or "n/a")
     quality_status = str(tradingagents.get("quality_status") or "n/a")
@@ -1128,11 +1064,7 @@ def _build_research_summary_payload(
     alert: dict[str, Any],
     details: dict[str, Any],
 ) -> dict[str, Any]:
-    ticker_results = [
-        item
-        for item in list(details.get("ticker_results") or [])
-        if isinstance(item, dict)
-    ]
+    ticker_results = [item for item in list(details.get("ticker_results") or []) if isinstance(item, dict)]
     result_lines = []
     for item in ticker_results[:8]:
         result_lines.append(
@@ -1163,9 +1095,7 @@ def _build_research_summary_payload(
         },
         {
             "name": "Tickers",
-            "value": _discord_value(
-                ", ".join(list(details.get("selected_tickers") or []))
-            ),
+            "value": _discord_value(", ".join(list(details.get("selected_tickers") or []))),
             "inline": False,
         },
     ]

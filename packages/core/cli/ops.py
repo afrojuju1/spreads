@@ -9,7 +9,6 @@ import typer
 from core.cli.ops_render import (
     build_console,
     render_audit_view,
-    render_finviz_direct_ledger,
     render_job_lanes_view,
     render_jobs_view,
     render_live_doctor,
@@ -21,7 +20,6 @@ from core.cli.ops_render import (
 from core.services.ops import (
     OpsLookupError,
     build_audit_view,
-    build_finviz_direct_ledger,
     build_job_lanes_overview,
     build_job_run_view,
     build_jobs_overview,
@@ -83,11 +81,7 @@ def _render_loop(
         try:
             time.sleep(watch_interval)
         except KeyboardInterrupt:
-            raise typer.Exit(
-                _exit_code_for_status(
-                    None if payload is None else payload.get("status")
-                )
-            ) from None
+            raise typer.Exit(_exit_code_for_status(None if payload is None else payload.get("status"))) from None
 
 
 def _run_visibility_command(
@@ -129,9 +123,7 @@ def status_command(
     ),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
-    watch: float | None = typer.Option(
-        None, "--watch", help="Refresh every N seconds."
-    ),
+    watch: float | None = typer.Option(None, "--watch", help="Refresh every N seconds."),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
     _run_visibility_command(
@@ -151,57 +143,12 @@ def trading_command(
     ),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
-    watch: float | None = typer.Option(
-        None, "--watch", help="Refresh every N seconds."
-    ),
+    watch: float | None = typer.Option(None, "--watch", help="Refresh every N seconds."),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
     _run_visibility_command(
         builder=lambda: build_trading_health(db_target=db),
         renderer=render_trading_health,
-        json_output=json_output,
-        watch_seconds=watch,
-        no_color=no_color,
-    )
-
-
-def finviz_ledger_command(
-    environment: str | None = typer.Option(
-        None,
-        "--env",
-        help="Run this command against a named deploy target.",
-    ),
-    feed_id: str = typer.Option(
-        "finviz_momentum",
-        "--feed-id",
-        help="Finviz symbol feed id.",
-    ),
-    market_date: str | None = typer.Option(
-        None,
-        "--date",
-        help="Market date to inspect. Defaults to today in New York.",
-    ),
-    limit: int = typer.Option(10, "--limit", help="Maximum recent rows per section."),
-    db: str | None = typer.Option(None, "--db", help="Database URL override."),
-    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
-    watch: float | None = typer.Option(
-        None, "--watch", help="Refresh every N seconds."
-    ),
-    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
-) -> None:
-    try:
-        resolved_limit = _validate_limit(limit, option_name="--limit")
-    except ValueError as exc:
-        typer.secho(str(exc), err=True, fg=typer.colors.RED)
-        raise typer.Exit(3) from None
-    _run_visibility_command(
-        builder=lambda: build_finviz_direct_ledger(
-            db_target=db,
-            feed_id=feed_id,
-            market_date=market_date,
-            limit=resolved_limit,
-        ),
-        renderer=render_finviz_direct_ledger,
         json_output=json_output,
         watch_seconds=watch,
         no_color=no_color,
@@ -227,9 +174,7 @@ def live_doctor_command(
     limit: int = typer.Option(5, "--limit", help="Maximum recent rows per section."),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
-    watch: float | None = typer.Option(
-        None, "--watch", help="Refresh every N seconds."
-    ),
+    watch: float | None = typer.Option(None, "--watch", help="Refresh every N seconds."),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
     try:
@@ -311,9 +256,7 @@ def audit_command(
     ),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
-    watch: float | None = typer.Option(
-        None, "--watch", help="Refresh every N seconds."
-    ),
+    watch: float | None = typer.Option(None, "--watch", help="Refresh every N seconds."),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
     try:
@@ -359,16 +302,12 @@ def jobs_command(
         "--env",
         help="Run this command against a named deploy target.",
     ),
-    job_type: str | None = typer.Option(
-        None, "--job-type", help="Filter runs and definitions by job type."
-    ),
+    job_type: str | None = typer.Option(None, "--job-type", help="Filter runs and definitions by job type."),
     status: str | None = typer.Option(None, "--status", help="Filter runs by status."),
     limit: int = typer.Option(25, "--limit", help="Maximum job runs to list."),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
-    watch: float | None = typer.Option(
-        None, "--watch", help="Refresh every N seconds."
-    ),
+    watch: float | None = typer.Option(None, "--watch", help="Refresh every N seconds."),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
     if ctx.invoked_subcommand is not None:
@@ -402,9 +341,7 @@ def jobs_run_command(
     ),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
-    watch: float | None = typer.Option(
-        None, "--watch", help="Refresh every N seconds."
-    ),
+    watch: float | None = typer.Option(None, "--watch", help="Refresh every N seconds."),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
     _run_visibility_command(
@@ -428,9 +365,7 @@ def jobs_lanes_command(
     ),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
-    watch: float | None = typer.Option(
-        None, "--watch", help="Refresh every N seconds."
-    ),
+    watch: float | None = typer.Option(None, "--watch", help="Refresh every N seconds."),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
     _run_visibility_command(
@@ -458,14 +393,10 @@ def uoa_command(
         "--env",
         help="Run this command against a named deploy target.",
     ),
-    label: str | None = typer.Option(
-        None, "--label", help="Filter to one discovery-run label."
-    ),
+    label: str | None = typer.Option(None, "--label", help="Filter to one discovery-run label."),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
-    watch: float | None = typer.Option(
-        None, "--watch", help="Refresh every N seconds."
-    ),
+    watch: float | None = typer.Option(None, "--watch", help="Refresh every N seconds."),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
     if ctx.invoked_subcommand is not None:
@@ -490,14 +421,10 @@ def uoa_cycle_command(
         "--env",
         help="Run this command against a named deploy target.",
     ),
-    label: str | None = typer.Option(
-        None, "--label", help="Filter to one discovery-run label."
-    ),
+    label: str | None = typer.Option(None, "--label", help="Filter to one discovery-run label."),
     db: str | None = typer.Option(None, "--db", help="Database URL override."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
-    watch: float | None = typer.Option(
-        None, "--watch", help="Refresh every N seconds."
-    ),
+    watch: float | None = typer.Option(None, "--watch", help="Refresh every N seconds."),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
     _run_visibility_command(

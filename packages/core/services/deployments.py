@@ -157,11 +157,9 @@ def _load_target(path: Path) -> DeployTarget:
         mode=mode,
         description=_normalize_text(payload.get("description")) or "",
         deploy_root=_normalize_text(payload.get("deploy_root")) or ".",
-        compose_file=_normalize_text(payload.get("compose_file"))
-        or "docker-compose.prod.yml",
+        compose_file=_normalize_text(payload.get("compose_file")) or "docker-compose.prod.yml",
         env_file=_normalize_text(payload.get("env_file")) or f".env.deploy.{name}",
-        compose_project_name=_normalize_text(payload.get("compose_project_name"))
-        or f"spreads-{name}",
+        compose_project_name=_normalize_text(payload.get("compose_project_name")) or f"spreads-{name}",
         bind_host=_normalize_text(payload.get("bind_host")) or "127.0.0.1",
         api_port=_coerce_positive_int(
             payload.get("api_port", 58080),
@@ -192,8 +190,7 @@ def _load_target(path: Path) -> DeployTarget:
             field_name="worker_research_replicas",
         ),
         web_enabled=bool(payload.get("web_enabled", True)),
-        postgres_volume_name=_normalize_text(payload.get("postgres_volume_name"))
-        or f"spreads_{name.replace('-', '_')}_postgres_data",
+        postgres_volume_name=_normalize_text(payload.get("postgres_volume_name")) or f"spreads_{name.replace('-', '_')}_postgres_data",
         docker_log_driver=_normalize_text(payload.get("docker_log_driver")) or "local",
         docker_log_max_size=_normalize_text(payload.get("docker_log_max_size")) or "10m",
         docker_log_max_file=_coerce_positive_int(
@@ -212,9 +209,7 @@ def _load_target(path: Path) -> DeployTarget:
             payload.get("excluded_job_types"),
             field_name="excluded_job_types",
         ),
-        market_recorder_owner_env=_normalize_text(
-            payload.get("market_recorder_owner_env")
-        ),
+        market_recorder_owner_env=_normalize_text(payload.get("market_recorder_owner_env")),
         ssh_host=ssh_host,
     )
 
@@ -230,9 +225,7 @@ def get_deploy_target(name: str) -> DeployTarget:
         if target.name.lower() == normalized:
             return target
     available = ", ".join(target.name for target in list_deploy_targets()) or "<none>"
-    raise DeploymentConfigError(
-        f"Unknown deploy target {name!r}. Available targets: {available}."
-    )
+    raise DeploymentConfigError(f"Unknown deploy target {name!r}. Available targets: {available}.")
 
 
 def _load_env_file(path: Path) -> dict[str, str]:
@@ -359,9 +352,7 @@ def build_deploy_env_values(
         "POSTGRES_DB": "spreads",
         "POSTGRES_USER": "spreads",
         "POSTGRES_PASSWORD": str(postgres_password),
-        "SPREADS_DATABASE_URL": (
-            f"postgresql://spreads:{postgres_password}@postgres:5432/spreads"
-        ),
+        "SPREADS_DATABASE_URL": (f"postgresql://spreads:{postgres_password}@postgres:5432/spreads"),
         "REDIS_URL": "redis://redis:6379/0",
         "SPREADS_INTERNAL_API_BASE_URL": "http://api:8000",
         "SPREADS_API_BASE_URL": "http://api:8000",
@@ -373,21 +364,13 @@ def build_deploy_env_values(
         "SPREADS_TRADINGAGENTS_DIR": str(tradingagents_container_dir),
         "SPREADS_TRADINGAGENTS_UV_ENVIRONMENT": str(tradingagents_uv_environment),
         "OLLAMA_BASE_URL": str(ollama_base_url),
-        "SPREADS_MARKET_RECORDER_OWNER_ENV": str(
-            _normalize_text(target.market_recorder_owner_env) or ""
-        ),
+        "SPREADS_MARKET_RECORDER_OWNER_ENV": str(_normalize_text(target.market_recorder_owner_env) or ""),
     }
 
     if require_secrets:
-        missing = [
-            key
-            for key in REQUIRED_SECRET_KEYS
-            if _normalize_text(env_values.get(key)) in {None, "replace-me"}
-        ]
+        missing = [key for key in REQUIRED_SECRET_KEYS if _normalize_text(env_values.get(key)) in {None, "replace-me"}]
         if missing:
-            raise DeploymentConfigError(
-                "Missing required deployment secrets: " + ", ".join(sorted(missing))
-            )
+            raise DeploymentConfigError("Missing required deployment secrets: " + ", ".join(sorted(missing)))
     return env_values
 
 
@@ -433,12 +416,8 @@ def build_host_env_values(
         "SPREADS_COMPOSE_FILE": values["SPREADS_COMPOSE_FILE"],
         "SPREADS_WEB_ENABLED": values["SPREADS_WEB_ENABLED"],
         "SPREADS_WORKER_RUNTIME_REPLICAS": values["SPREADS_WORKER_RUNTIME_REPLICAS"],
-        "SPREADS_WORKER_DISCOVERY_REPLICAS": values[
-            "SPREADS_WORKER_DISCOVERY_REPLICAS"
-        ],
-        "SPREADS_WORKER_RESEARCH_REPLICAS": values[
-            "SPREADS_WORKER_RESEARCH_REPLICAS"
-        ],
+        "SPREADS_WORKER_DISCOVERY_REPLICAS": values["SPREADS_WORKER_DISCOVERY_REPLICAS"],
+        "SPREADS_WORKER_RESEARCH_REPLICAS": values["SPREADS_WORKER_RESEARCH_REPLICAS"],
         "SPREADS_BACKUP_RETENTION_DAYS": values["SPREADS_BACKUP_RETENTION_DAYS"],
         "SPREADS_HEALTH_CHECK_MINUTES": values["SPREADS_HEALTH_CHECK_MINUTES"],
         "SPREADS_DATABASE_URL": host_database_url,
@@ -452,13 +431,9 @@ def build_host_env_values(
         "SPREADS_DISCORD_WEBHOOK_URL": values["SPREADS_DISCORD_WEBHOOK_URL"],
         "SPREADS_TRADINGAGENTS_HOST_DIR": values["SPREADS_TRADINGAGENTS_HOST_DIR"],
         "SPREADS_TRADINGAGENTS_DIR": values["SPREADS_TRADINGAGENTS_HOST_DIR"],
-        "SPREADS_TRADINGAGENTS_UV_ENVIRONMENT": str(
-            Path(values["SPREADS_TRADINGAGENTS_HOST_DIR"]) / ".venv"
-        ),
+        "SPREADS_TRADINGAGENTS_UV_ENVIRONMENT": str(Path(values["SPREADS_TRADINGAGENTS_HOST_DIR"]) / ".venv"),
         "OLLAMA_BASE_URL": "http://localhost:11434/v1",
-        "SPREADS_MARKET_RECORDER_OWNER_ENV": values[
-            "SPREADS_MARKET_RECORDER_OWNER_ENV"
-        ],
+        "SPREADS_MARKET_RECORDER_OWNER_ENV": values["SPREADS_MARKET_RECORDER_OWNER_ENV"],
     }
 
 
@@ -528,9 +503,7 @@ def render_prod_compose(target: DeployTarget) -> str:
     def replace(match: re.Match[str]) -> str:
         key = match.group(1)
         if key not in values:
-            raise DeploymentConfigError(
-                f"Compose template references missing deployment key {key!r}."
-            )
+            raise DeploymentConfigError(f"Compose template references missing deployment key {key!r}.")
         return values[key]
 
     return ENV_PATTERN.sub(replace, template)
@@ -541,9 +514,7 @@ def _run_command(command: list[str], *, cwd: Path | None = None) -> None:
         subprocess.run(command, cwd=cwd, check=True)
     except subprocess.CalledProcessError as exc:
         rendered = " ".join(shlex.quote(part) for part in exc.cmd)
-        raise RuntimeError(
-            f"Command failed with exit {exc.returncode}: {rendered}"
-        ) from exc
+        raise RuntimeError(f"Command failed with exit {exc.returncode}: {rendered}") from exc
 
 
 def _run_passthrough_command(
@@ -642,9 +613,7 @@ def _run_target_compose_command(
     ensure_env_file: bool = False,
 ) -> int:
     if target.is_remote and not _can_run_target_locally(target):
-        return _run_passthrough_command(
-            _remote_shell_command(target, _render_shell_command(args))
-        )
+        return _run_passthrough_command(_remote_shell_command(target, _render_shell_command(args)))
     if ensure_env_file and not target.is_remote:
         _ensure_local_env_file(target, require_secrets=False)
     return _run_passthrough_command(args, cwd=target.deploy_path)
@@ -687,10 +656,7 @@ def sync_deploy_target(
     if not target.is_remote:
         raise DeploymentConfigError("sync only applies to ssh deployment targets.")
     if _can_run_target_locally(target):
-        raise DeploymentConfigError(
-            f"Deploy target {target.name!r} already resolves locally at "
-            f"{target.deploy_root}; sync is not needed."
-        )
+        raise DeploymentConfigError(f"Deploy target {target.name!r} already resolves locally at " f"{target.deploy_root}; sync is not needed.")
     _run_command(_ssh_command(target, f"mkdir -p {shlex.quote(target.deploy_root)}"))
     rsync_command = [
         "rsync",
@@ -719,8 +685,7 @@ def bootstrap_remote_target(target: DeployTarget) -> None:
     if not target.is_remote:
         raise DeploymentConfigError("bootstrap only applies to ssh deployment targets.")
     root_parent = str(target.remote_parent)
-    script = textwrap.dedent(
-        f"""
+    script = textwrap.dedent(f"""
         set -euo pipefail
         export DEBIAN_FRONTEND=noninteractive
         sudo apt-get update
@@ -752,16 +717,14 @@ def bootstrap_remote_target(target: DeployTarget) -> None:
         sudo mkdir -p {shlex.quote(root_parent)}/backups/postgres
         sudo chown -R "$(id -un)":"$(id -gn)" {shlex.quote(root_parent)}
         mkdir -p {shlex.quote(target.deploy_root)}
-        """
-    ).strip()
+        """).strip()
     _run_command(_ssh_command(target, script))
 
 
 def _systemd_unit_text(target: DeployTarget) -> str:
     up_args = " ".join(shlex.quote(part) for part in _compose_up_args(target, build=False))
     down_args = " ".join(shlex.quote(part) for part in _compose_down_args(target))
-    return textwrap.dedent(
-        f"""
+    return textwrap.dedent(f"""
         [Unit]
         Description=Spreads Docker Compose stack ({target.name})
         Requires=docker.service
@@ -778,8 +741,7 @@ def _systemd_unit_text(target: DeployTarget) -> str:
 
         [Install]
         WantedBy=multi-user.target
-        """
-    ).strip() + "\n"
+        """).strip() + "\n"
 
 
 def _ops_root(target: DeployTarget) -> Path:
@@ -855,18 +817,16 @@ def install_systemd_service(target: DeployTarget) -> None:
     unit_text = _systemd_unit_text(target)
     unit_path = f"/tmp/{target.service_name}"
     _write_remote_text_file(target, remote_path=unit_path, text=unit_text)
-    command = textwrap.dedent(
-        f"""
+    command = textwrap.dedent(f"""
         set -euo pipefail
         sudo mv {shlex.quote(unit_path)} /etc/systemd/system/{shlex.quote(target.service_name)}
         sudo systemctl daemon-reload
         sudo systemctl enable --now {shlex.quote(target.service_name)}
-        """
-    ).strip()
+        """).strip()
     _run_command(_ssh_command(target, command))
 
 
-def install_target_ops_automation(target: DeployTarget) -> None:
+def install_target_ops_schedule(target: DeployTarget) -> None:
     _ensure_repo_ops_scripts_exist()
     ops_root = _ops_root(target)
     log_dir = _ops_log_dir(target)
@@ -926,8 +886,7 @@ def install_target_ops_automation(target: DeployTarget) -> None:
             remote_path=cron_block_remote,
             text=_cron_block_text(target),
         )
-    command = textwrap.dedent(
-        f"""
+    command = textwrap.dedent(f"""
         set -euo pipefail
         marker_begin="# BEGIN {marker}"
         marker_end="# END {marker}"
@@ -936,8 +895,7 @@ def install_target_ops_automation(target: DeployTarget) -> None:
         cat {shlex.quote(cron_block_remote)} >> "$tmp_file"
         crontab "$tmp_file"
         rm -f "$tmp_file"
-        """
-    ).strip()
+        """).strip()
     run_shell(command)
 
 
@@ -984,9 +942,7 @@ def status_deploy_target(target: DeployTarget) -> None:
 def run_target_spreads_command(target: DeployTarget, cli_args: list[str]) -> int:
     command = ["uv", "run", "spreads", *cli_args]
     if target.is_remote and not _can_run_target_locally(target):
-        return _run_passthrough_command(
-            _remote_shell_command(target, _render_shell_command(command))
-        )
+        return _run_passthrough_command(_remote_shell_command(target, _render_shell_command(command)))
     cwd = target.deploy_path
     return _run_passthrough_command(
         command,
@@ -998,9 +954,7 @@ def run_target_spreads_command(target: DeployTarget, cli_args: list[str]) -> int
 def exec_spreads_command(target: DeployTarget, cli_args: list[str]) -> int:
     command = ["uv", "run", "spreads", *cli_args]
     if target.is_remote and not _can_run_target_locally(target):
-        return _run_passthrough_command(
-            _remote_shell_command(target, _render_shell_command(command))
-        )
+        return _run_passthrough_command(_remote_shell_command(target, _render_shell_command(command)))
     return _run_passthrough_command(
         command,
         cwd=target.deploy_path,
@@ -1079,7 +1033,7 @@ __all__ = [
     "exec_spreads_command",
     "get_deploy_target",
     "install_systemd_service",
-    "install_target_ops_automation",
+    "install_target_ops_schedule",
     "list_deploy_targets",
     "logs_deploy_target",
     "run_target_spreads_command",

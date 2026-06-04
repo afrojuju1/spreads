@@ -19,7 +19,6 @@ from core.domain.profiles import (
 from core.integrations.alpaca.client import DEFAULT_DATA_BASE_URL
 from core.integrations.calendar_events import classify_underlying_type
 from core.runtime.config import default_database_url
-from core.services.automations import load_universe_symbols
 from core.services.market_dates import NEW_YORK
 from core.services.option_structures import normalize_strategy_family
 from core.services.strategy_specs import (
@@ -28,7 +27,7 @@ from core.services.strategy_specs import (
     strategy_display_label,
     strategy_option_type,
 )
-from core.services.strategy_configs import default_config_root, load_strategy_configs
+from core.services.trading_strategies import default_config_root, load_trading_strategies, load_universe_symbols
 
 DIRECTIONAL_LONG_DELTA_DEFAULTS: dict[str, tuple[float, float, float]] = {
     "0dte": (0.18, 0.35, 0.25),
@@ -71,7 +70,7 @@ CALENDAR_CONFIDENCE_POLICIES = ("strict", "consensus", "off")
 
 @lru_cache(maxsize=4)
 def _cached_strategy_configs(config_root: str) -> tuple[Any, ...]:
-    return tuple(load_strategy_configs(config_root).values())
+    return tuple(load_trading_strategies(config_root).values())
 
 
 def _normalized_strategy_config_root(config_root: str | Path | None = None) -> str:
@@ -109,12 +108,8 @@ def _config_backed_ranking_builder_params(
 ) -> dict[str, float]:
     configs = tuple(
         strategy_config
-        for strategy_config in _cached_strategy_configs(
-            _normalized_strategy_config_root(config_root)
-        )
-        if strategy_config.enabled
-        and strategy_config.scanner_profile == profile_name
-        and strategy_config.strategy_family == strategy_family
+        for strategy_config in _cached_strategy_configs(_normalized_strategy_config_root(config_root))
+        if strategy_config.enabled and strategy_config.scanner_profile == profile_name and strategy_config.strategy_family == strategy_family
     )
     return _aggregate_ranking_builder_params(configs)
 
@@ -132,12 +127,9 @@ def resolve_ranking_builder_params(
         config_root=config_root,
     )
     if config_backed_params:
-        return "strategy_config", config_backed_params
+        return "trading_strategy", config_backed_params
     if normalized_strategy_family not in PROFILE_FALLBACK_RANKING_STRATEGY_FAMILIES:
-        raise ValueError(
-            "No config-backed ranking defaults exist for "
-            f"{normalized_strategy_family} on profile {profile_name}."
-        )
+        raise ValueError("No config-backed ranking defaults exist for " f"{normalized_strategy_family} on profile {profile_name}.")
     return (
         "profile_fallback",
         resolve_ranking_policy(
@@ -173,9 +165,7 @@ def normalize_calendar_confidence_policy(value: str | None) -> str:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Find vertical spread candidates for one symbol or a ranked multi-symbol universe using Alpaca."
-    )
+    parser = argparse.ArgumentParser(description="Find vertical spread candidates for one symbol or a ranked multi-symbol universe using Alpaca.")
     parser.add_argument("--symbol", help="Scan a single underlying.")
     parser.add_argument(
         "--symbols",
@@ -454,27 +444,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
-        "--backtest-latest",
-        action="store_true",
-        help="Backtest the most recent stored run for the selected symbol instead of scanning live.",
-    )
-    parser.add_argument(
-        "--backtest-run-id",
-        help="Backtest a specific stored run id instead of scanning live.",
-    )
-    parser.add_argument(
-        "--backtest-profit-target",
-        type=float,
-        default=0.50,
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--backtest-stop-multiple",
-        type=float,
-        default=2.0,
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
         "--stream-seconds",
         type=float,
         default=8.0,
@@ -504,22 +473,16 @@ def resolve_symbols(args: argparse.Namespace) -> tuple[list[str], str]:
         symbols.extend(universe_symbols)
         label = args.universe
     if args.symbols:
-        explicit_symbols = [
-            token.strip().upper() for token in args.symbols.split(",") if token.strip()
-        ]
+        explicit_symbols = [token.strip().upper() for token in args.symbols.split(",") if token.strip()]
         symbols.extend(explicit_symbols)
         if explicit_symbols and (
-            not args.universe
-            or {symbol.upper() for symbol in explicit_symbols}
-            != {symbol.upper() for symbol in universe_symbols}
+            not args.universe or {symbol.upper() for symbol in explicit_symbols} != {symbol.upper() for symbol in universe_symbols}
         ):
             label = "custom_symbols"
     if args.symbols_file:
         file_symbols = load_symbols_file(args.symbols_file)
         symbols.extend(file_symbols)
-        if not args.universe or {symbol.upper() for symbol in file_symbols} != {
-            symbol.upper() for symbol in universe_symbols
-        }:
+        if not args.universe or {symbol.upper() for symbol in file_symbols} != {symbol.upper() for symbol in universe_symbols}:
             label = Path(args.symbols_file).stem.lower()
 
     if args.symbol:
@@ -538,12 +501,9 @@ def resolve_symbols(args: argparse.Namespace) -> tuple[list[str], str]:
         deduped.append(symbol)
     return deduped, label
 
+
 def infer_underlying_key(underlying_type: str) -> str:
-    return (
-        "etf_index_proxy"
-        if underlying_type == "etf_index_proxy"
-        else "single_name_equity"
-    )
+    return "etf_index_proxy" if underlying_type == "etf_index_proxy" else "single_name_equity"
 
 
 def resolve_profile_value(override: Any, preset: Any) -> Any:
@@ -602,11 +562,7 @@ def apply_scan_evaluation_context(
         if resolved_timestamp is not None:
             args.evaluation_timestamp = resolved_timestamp.isoformat()
     if evaluation_date is not None:
-        args.evaluation_date = (
-            evaluation_date.isoformat()
-            if isinstance(evaluation_date, date)
-            else str(evaluation_date)
-        )
+        args.evaluation_date = evaluation_date.isoformat() if isinstance(evaluation_date, date) else str(evaluation_date)
     if session_bucket is not None:
         args.session_bucket_override = str(session_bucket)
     return args
@@ -621,11 +577,7 @@ def apply_profile_defaults(
     profile = PROFILE_CONFIGS[args.profile]
     underlying_key = infer_underlying_key(underlying_type)
     normalized_strategy = normalize_strategy_family(args.strategy)
-    effective_config_root = (
-        config_root
-        if config_root is not None
-        else getattr(args, "config_root", None)
-    )
+    effective_config_root = config_root if config_root is not None else getattr(args, "config_root", None)
     if effective_config_root not in (None, ""):
         args.config_root = _normalized_strategy_config_root(effective_config_root)
     _ranking_source, ranking_builder_params = resolve_ranking_builder_params(
@@ -637,11 +589,7 @@ def apply_profile_defaults(
         profile_name=args.profile,
         strategy=normalized_strategy,
     )
-    directional_long_defaults = (
-        DIRECTIONAL_LONG_DELTA_DEFAULTS.get(args.profile)
-        if normalized_strategy in {"long_call", "long_put"}
-        else None
-    )
+    directional_long_defaults = DIRECTIONAL_LONG_DELTA_DEFAULTS.get(args.profile) if normalized_strategy in {"long_call", "long_put"} else None
 
     args.min_dte = resolve_profile_value(args.min_dte, profile.min_dte)
     args.max_dte = resolve_profile_value(args.max_dte, profile.max_dte)
@@ -650,11 +598,7 @@ def apply_profile_defaults(
         (
             directional_long_defaults[0]
             if directional_long_defaults is not None
-            else (
-                profile.short_delta_min
-                if strategy_profile_override.short_delta_min is None
-                else strategy_profile_override.short_delta_min
-            )
+            else (profile.short_delta_min if strategy_profile_override.short_delta_min is None else strategy_profile_override.short_delta_min)
         ),
     )
     args.short_delta_max = resolve_profile_value(
@@ -662,11 +606,7 @@ def apply_profile_defaults(
         (
             directional_long_defaults[1]
             if directional_long_defaults is not None
-            else (
-                profile.short_delta_max
-                if strategy_profile_override.short_delta_max is None
-                else strategy_profile_override.short_delta_max
-            )
+            else (profile.short_delta_max if strategy_profile_override.short_delta_max is None else strategy_profile_override.short_delta_max)
         ),
     )
     args.short_delta_target = resolve_profile_value(
@@ -675,23 +615,17 @@ def apply_profile_defaults(
             directional_long_defaults[2]
             if directional_long_defaults is not None
             else (
-                profile.short_delta_target
-                if strategy_profile_override.short_delta_target is None
-                else strategy_profile_override.short_delta_target
+                profile.short_delta_target if strategy_profile_override.short_delta_target is None else strategy_profile_override.short_delta_target
             )
         ),
     )
     args.min_width = resolve_profile_value(
         args.min_width,
-        0.0
-        if normalized_strategy in {"long_call", "long_put", "short_call", "short_put"}
-        else profile.min_width,
+        0.0 if normalized_strategy in {"long_call", "long_put", "short_call", "short_put"} else profile.min_width,
     )
     args.max_width = resolve_profile_value(
         args.max_width,
-        0.0
-        if normalized_strategy in {"long_call", "long_put", "short_call", "short_put"}
-        else profile.max_width_by_underlying[underlying_key],
+        0.0 if normalized_strategy in {"long_call", "long_put", "short_call", "short_put"} else profile.max_width_by_underlying[underlying_key],
     )
     args.min_credit = resolve_profile_value(args.min_credit, profile.min_credit)
     args.min_open_interest = resolve_profile_value(
@@ -702,12 +636,8 @@ def apply_profile_defaults(
         args.max_relative_spread,
         profile.max_relative_spread_by_underlying[underlying_key],
     )
-    args.min_return_on_risk = resolve_profile_value(
-        args.min_return_on_risk, profile.min_return_on_risk
-    )
-    args.min_fill_ratio = resolve_profile_value(
-        args.min_fill_ratio, profile.min_fill_ratio
-    )
+    args.min_return_on_risk = resolve_profile_value(args.min_return_on_risk, profile.min_return_on_risk)
+    args.min_fill_ratio = resolve_profile_value(args.min_fill_ratio, profile.min_fill_ratio)
     args.min_short_vs_expected_move_ratio = resolve_profile_value(
         args.min_short_vs_expected_move_ratio,
         (
@@ -732,9 +662,7 @@ def apply_profile_defaults(
         )
 
 
-def validate_profile_scope(
-    symbol: str, args: argparse.Namespace, underlying_type: str
-) -> None:
+def validate_profile_scope(symbol: str, args: argparse.Namespace, underlying_type: str) -> None:
     if args.profile != "0dte":
         return
     if underlying_type != "etf_index_proxy":
@@ -750,9 +678,7 @@ def build_filter_payload(args: argparse.Namespace) -> dict[str, Any]:
         "profile": args.profile,
         "session_label": getattr(args, "session_label", None),
         "greeks_source": args.greeks_source,
-        "session_bucket": (
-            resolve_scan_session_bucket(args) if args.profile == "0dte" else None
-        ),
+        "session_bucket": (resolve_scan_session_bucket(args) if args.profile == "0dte" else None),
         "evaluation_date": getattr(args, "evaluation_date", None),
         "evaluation_timestamp": getattr(args, "evaluation_timestamp", None),
         "min_dte": args.min_dte,
@@ -778,31 +704,15 @@ def build_filter_payload(args: argparse.Namespace) -> dict[str, Any]:
         "min_breakeven_vs_expected_move_ratio": args.min_breakeven_vs_expected_move_ratio,
         "ranking_min_probability_of_profit": args.ranking_min_probability_of_profit,
         "ranking_min_expected_value_dollars": args.ranking_min_expected_value_dollars,
-        "ranking_min_slippage_adjusted_expected_value_dollars": (
-            args.ranking_min_slippage_adjusted_expected_value_dollars
-        ),
+        "ranking_min_slippage_adjusted_expected_value_dollars": (args.ranking_min_slippage_adjusted_expected_value_dollars),
         "ranking_max_entry_slippage_dollars": args.ranking_max_entry_slippage_dollars,
-        "ranking_min_model_implied_volatility": (
-            args.ranking_min_model_implied_volatility
-        ),
-        "ranking_max_model_implied_volatility": (
-            args.ranking_max_model_implied_volatility
-        ),
-        "ranking_weight_probability_of_profit": (
-            args.ranking_weight_probability_of_profit
-        ),
-        "ranking_weight_expected_value_dollars": (
-            args.ranking_weight_expected_value_dollars
-        ),
-        "ranking_weight_slippage_adjusted_expected_value_dollars": (
-            args.ranking_weight_slippage_adjusted_expected_value_dollars
-        ),
-        "ranking_weight_entry_slippage_dollars": (
-            args.ranking_weight_entry_slippage_dollars
-        ),
-        "ranking_weight_model_implied_volatility": (
-            args.ranking_weight_model_implied_volatility
-        ),
+        "ranking_min_model_implied_volatility": (args.ranking_min_model_implied_volatility),
+        "ranking_max_model_implied_volatility": (args.ranking_max_model_implied_volatility),
+        "ranking_weight_probability_of_profit": (args.ranking_weight_probability_of_profit),
+        "ranking_weight_expected_value_dollars": (args.ranking_weight_expected_value_dollars),
+        "ranking_weight_slippage_adjusted_expected_value_dollars": (args.ranking_weight_slippage_adjusted_expected_value_dollars),
+        "ranking_weight_entry_slippage_dollars": (args.ranking_weight_entry_slippage_dollars),
+        "ranking_weight_model_implied_volatility": (args.ranking_weight_model_implied_volatility),
     }
 
 
@@ -814,19 +724,10 @@ def validate_resolved_args(args: argparse.Namespace) -> None:
     normalized_strategy = normalize_strategy_family(args.strategy)
     if args.min_dte < 0 or args.max_dte < args.min_dte:
         raise SystemExit("Expected 0 <= min-dte <= max-dte")
-    if (
-        args.short_delta_min < 0
-        or args.short_delta_max > 1
-        or args.short_delta_min > args.short_delta_max
-    ):
+    if args.short_delta_min < 0 or args.short_delta_max > 1 or args.short_delta_min > args.short_delta_max:
         raise SystemExit("Expected 0 <= short-delta-min <= short-delta-max <= 1")
-    if (
-        args.short_delta_target < args.short_delta_min
-        or args.short_delta_target > args.short_delta_max
-    ):
-        raise SystemExit(
-            "Expected short-delta-target to fall inside the selected delta band"
-        )
+    if args.short_delta_target < args.short_delta_min or args.short_delta_target > args.short_delta_max:
+        raise SystemExit("Expected short-delta-target to fall inside the selected delta band")
     if normalized_strategy in {"long_call", "long_put", "short_call", "short_put"}:
         if args.min_width < 0:
             raise SystemExit("Expected min-width >= 0")
@@ -844,26 +745,12 @@ def validate_resolved_args(args: argparse.Namespace) -> None:
         raise SystemExit("Expected per-symbol-top > 0")
     if args.min_fill_ratio <= 0 or args.min_fill_ratio > 1.25:
         raise SystemExit("Expected min-fill-ratio to be in (0, 1.25]")
-    if (
-        args.min_short_vs_expected_move_ratio < -1
-        or args.min_short_vs_expected_move_ratio > 1
-    ):
-        raise SystemExit(
-            "Expected min-short-vs-expected-move-ratio to be between -1 and 1"
-        )
-    if (
-        args.min_breakeven_vs_expected_move_ratio < -1
-        or args.min_breakeven_vs_expected_move_ratio > 1
-    ):
-        raise SystemExit(
-            "Expected min-breakeven-vs-expected-move-ratio to be between -1 and 1"
-        )
-    if (
-        args.ranking_min_probability_of_profit is not None
-        and (
-            args.ranking_min_probability_of_profit < 0
-            or args.ranking_min_probability_of_profit > 1
-        )
+    if args.min_short_vs_expected_move_ratio < -1 or args.min_short_vs_expected_move_ratio > 1:
+        raise SystemExit("Expected min-short-vs-expected-move-ratio to be between -1 and 1")
+    if args.min_breakeven_vs_expected_move_ratio < -1 or args.min_breakeven_vs_expected_move_ratio > 1:
+        raise SystemExit("Expected min-breakeven-vs-expected-move-ratio to be between -1 and 1")
+    if args.ranking_min_probability_of_profit is not None and (
+        args.ranking_min_probability_of_profit < 0 or args.ranking_min_probability_of_profit > 1
     ):
         raise SystemExit("Expected ranking-min-probability-of-profit in [0, 1]")
     for key in (
@@ -884,12 +771,9 @@ def validate_resolved_args(args: argparse.Namespace) -> None:
     if (
         args.ranking_min_model_implied_volatility is not None
         and args.ranking_max_model_implied_volatility is not None
-        and args.ranking_max_model_implied_volatility
-        < args.ranking_min_model_implied_volatility
+        and args.ranking_max_model_implied_volatility < args.ranking_min_model_implied_volatility
     ):
-        raise SystemExit(
-            "Expected ranking-max-model-implied-volatility >= ranking-min-model-implied-volatility"
-        )
+        raise SystemExit("Expected ranking-max-model-implied-volatility >= ranking-min-model-implied-volatility")
 
 
 def resolve_symbol_scan_args(

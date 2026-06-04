@@ -1,9 +1,0 @@
-bot_id: short_dated_index_call_credit_bot
-name: Short-Dated Index Call Credit Bot
-limits:
-  extends: baseline
-runtime:
-  extends: short_dated_default
-automations:
-  - index_call_credit_entry
-  - index_call_credit_manage

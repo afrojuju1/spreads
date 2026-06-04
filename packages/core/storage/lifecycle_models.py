@@ -27,6 +27,13 @@ TARGET_LIFECYCLE_TABLES: tuple[dict[str, str], ...] = (
     {"name": "trade_lifecycle_events", "role": "lifecycle event fact"},
 )
 
+TARGET_LIFECYCLE_OWNERSHIP_FIELDS: tuple[str, ...] = (
+    "trading_strategy_id",
+    "trade_structure",
+    "routine",
+    "config_hash",
+)
+
 
 class TradeSignalModel(Base):
     __tablename__ = "trade_signals"
@@ -49,7 +56,7 @@ class TradeSignalModel(Base):
     underlying_symbol: Mapped[str] = mapped_column(Text, nullable=False)
     root_symbol: Mapped[str | None] = mapped_column(Text, nullable=True)
     asset_class: Mapped[str | None] = mapped_column(Text, nullable=True)
-    strategy_family: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trade_structure: Mapped[str | None] = mapped_column(Text, nullable=True)
     product_class: Mapped[str | None] = mapped_column(Text, nullable=True)
     horizon: Mapped[str | None] = mapped_column(Text, nullable=True)
     style_profile: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -72,7 +79,12 @@ class TradeDecisionModel(Base):
     __tablename__ = "trade_decisions"
     __table_args__ = (
         Index("ux_trade_decisions_run_signal", "run_key", "trade_signal_id", unique=True),
-        Index("idx_trade_decisions_bot_decided", "bot_id", "automation_id", "decided_at"),
+        Index(
+            "idx_trade_decisions_strategy_decided",
+            "trading_strategy_id",
+            "routine",
+            "decided_at",
+        ),
         Index("idx_trade_decisions_state_decided", "decision_state", "decided_at"),
     )
 
@@ -82,10 +94,10 @@ class TradeDecisionModel(Base):
         ForeignKey("trade_signals.trade_signal_id", ondelete="CASCADE"),
         nullable=False,
     )
-    bot_id: Mapped[str] = mapped_column(Text, nullable=False)
-    automation_id: Mapped[str] = mapped_column(Text, nullable=False)
-    strategy_config_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    config_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trading_strategy_id: Mapped[str] = mapped_column(Text, nullable=False)
+    trade_structure: Mapped[str] = mapped_column(Text, nullable=False)
+    routine: Mapped[str] = mapped_column(Text, nullable=False)
+    config_hash: Mapped[str] = mapped_column(Text, nullable=False)
     run_key: Mapped[str] = mapped_column(Text, nullable=False)
     scope_key: Mapped[str] = mapped_column(Text, nullable=False)
     decision_state: Mapped[str] = mapped_column(Text, nullable=False)
@@ -126,8 +138,9 @@ class TradeExecutionIntentModel(Base):
         nullable=True,
     )
     position_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    bot_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    automation_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trading_strategy_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trade_structure: Mapped[str | None] = mapped_column(Text, nullable=True)
+    routine: Mapped[str | None] = mapped_column(Text, nullable=True)
     account_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     slot_key: Mapped[str] = mapped_column(Text, nullable=False)
     idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
@@ -317,7 +330,10 @@ class TradePositionModel(Base):
     position_state: Mapped[str] = mapped_column(Text, nullable=False)
     underlying_symbol: Mapped[str] = mapped_column(Text, nullable=False)
     root_symbol: Mapped[str | None] = mapped_column(Text, nullable=True)
-    strategy_family: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trading_strategy_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trade_structure: Mapped[str | None] = mapped_column(Text, nullable=True)
+    routine: Mapped[str | None] = mapped_column(Text, nullable=True)
+    config_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     product_class: Mapped[str | None] = mapped_column(Text, nullable=True)
     canonical_legs_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
     opened_quantity: Mapped[float] = mapped_column(Float, nullable=False)

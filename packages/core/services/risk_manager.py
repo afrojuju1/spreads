@@ -33,7 +33,7 @@ from core.services.option_structures import (
 )
 from core.services.positions import enrich_position_row
 from core.services.runtime_identity import parse_live_run_scope_id
-from core.services.strategy_configs import default_config_root
+from core.services.trading_strategies import default_config_root
 from core.services.value_coercion import (
     as_text as _as_text,
     coerce_float as _coerce_float,
@@ -78,19 +78,12 @@ INT_POLICY_KEYS = {
 }
 FLOAT_POLICY_KEYS = OPTIONAL_FLOAT_POLICY_KEYS
 BOOL_POLICY_KEYS = {"enabled", "allow_live"}
-REQUIRED_BASELINE_RISK_POLICY_KEYS = (
-    BOOL_POLICY_KEYS | INT_POLICY_KEYS | FLOAT_POLICY_KEYS
-)
+REQUIRED_BASELINE_RISK_POLICY_KEYS = BOOL_POLICY_KEYS | INT_POLICY_KEYS | FLOAT_POLICY_KEYS
 
 
 @lru_cache(maxsize=1)
 def _baseline_risk_policy() -> dict[str, Any]:
-    path = (
-        default_config_root()
-        / "policies"
-        / "risk"
-        / f"{BASELINE_RISK_POLICY_NAME}.yaml"
-    )
+    path = default_config_root() / "policies" / "risk" / f"{BASELINE_RISK_POLICY_NAME}.yaml"
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError(f"Expected mapping payload in {path}")
@@ -143,22 +136,12 @@ def _candidate_with_payload(candidate: dict[str, Any]) -> dict[str, Any]:
 
 def normalize_risk_policy(payload: dict[str, Any] | None) -> dict[str, Any]:
     source = payload if isinstance(payload, dict) else {}
-    raw_policy = (
-        source.get("risk_policy")
-        if isinstance(source.get("risk_policy"), dict)
-        else source
-    )
+    raw_policy = source.get("risk_policy") if isinstance(source.get("risk_policy"), dict) else source
 
     policy = dict(_baseline_risk_policy())
     policy.update(RISK_POLICY_DERIVED_FLAGS)
-    policy["max_contracts_per_position_configured"] = (
-        "max_contracts_per_position" in policy
-    )
-    stale_quote_after_seconds = _coerce_float(
-        raw_policy.get(
-            "stale_quote_after_seconds", raw_policy.get("max_candidate_age_seconds")
-        )
-    )
+    policy["max_contracts_per_position_configured"] = "max_contracts_per_position" in policy
+    stale_quote_after_seconds = _coerce_float(raw_policy.get("stale_quote_after_seconds", raw_policy.get("max_candidate_age_seconds")))
     if stale_quote_after_seconds is not None:
         policy["stale_quote_after_seconds"] = stale_quote_after_seconds
 
@@ -169,9 +152,7 @@ def normalize_risk_policy(payload: dict[str, Any] | None) -> dict[str, Any]:
         )
     )
     if duplicate_underlying_strategy_limit is not None:
-        policy["max_open_positions_per_underlying_strategy"] = (
-            duplicate_underlying_strategy_limit
-        )
+        policy["max_open_positions_per_underlying_strategy"] = duplicate_underlying_strategy_limit
 
     for key in BOOL_POLICY_KEYS:
         if key in raw_policy:
@@ -205,17 +186,11 @@ def _current_trading_environment() -> str:
     return resolve_trading_environment(client.trading_base_url)
 
 
-def _candidate_entry_notional(
-    candidate: dict[str, Any], quantity: float, price: float | None
-) -> float | None:
+def _candidate_entry_notional(candidate: dict[str, Any], quantity: float, price: float | None) -> float | None:
     entry_price = price
     if entry_price is None or entry_price <= 0:
         payload = _candidate_payload(candidate)
-        entry_price = _coerce_float(
-            payload.get("midpoint_credit")
-            or payload.get("midpoint_debit")
-            or payload.get("midpoint_value")
-        )
+        entry_price = _coerce_float(payload.get("midpoint_credit") or payload.get("midpoint_debit") or payload.get("midpoint_value"))
     if entry_price is None or entry_price <= 0:
         return None
     return round(entry_price * 100.0 * quantity, 2)
@@ -227,9 +202,7 @@ def _candidate_max_loss(candidate: dict[str, Any], quantity: float) -> float | N
     if max_loss is None:
         width = _coerce_float(candidate_payload.get("width"))
         midpoint_value = _coerce_float(
-            candidate_payload.get("midpoint_credit")
-            or candidate_payload.get("midpoint_debit")
-            or candidate_payload.get("midpoint_value")
+            candidate_payload.get("midpoint_credit") or candidate_payload.get("midpoint_debit") or candidate_payload.get("midpoint_value")
         )
         premium_kind = net_premium_kind(candidate_payload.get("strategy"))
         if width is not None and midpoint_value is not None:
@@ -246,12 +219,7 @@ def _max_contracts_for_budget(
     unit_exposure: float | None,
     budget: float | None,
 ) -> int | None:
-    if (
-        unit_exposure is None
-        or unit_exposure <= 0
-        or budget is None
-        or budget < 0
-    ):
+    if unit_exposure is None or unit_exposure <= 0 or budget is None or budget < 0:
         return None
     return max(int(budget // unit_exposure), 0)
 
@@ -262,9 +230,7 @@ def resolve_position_size_policy(
     defaults = risk_defaults if isinstance(risk_defaults, Mapping) else {}
     return {
         "max_risk_per_trade": _coerce_float(defaults.get("max_risk_per_trade")),
-        "position_size_pct_of_available_balance": _coerce_float(
-            defaults.get("position_size_pct_of_available_balance")
-        ),
+        "position_size_pct_of_available_balance": _coerce_float(defaults.get("position_size_pct_of_available_balance")),
     }
 
 
@@ -281,8 +247,7 @@ def _position_size_budget(
     ):
         return None
     return round(
-        max(available_broker_buying_power, 0.0)
-        * float(position_size_pct_of_available_balance),
+        max(available_broker_buying_power, 0.0) * float(position_size_pct_of_available_balance),
         2,
     )
 
@@ -307,11 +272,7 @@ def build_candidate_position_sizing(
     available_broker_buying_power: float | None = None,
 ) -> dict[str, Any]:
     candidate_payload = _candidate_payload(candidate)
-    strategy_family = normalize_strategy_family(
-        candidate_payload.get("strategy")
-        or candidate.get("strategy")
-        or candidate.get("strategy_family")
-    )
+    strategy_family = normalize_strategy_family(candidate_payload.get("strategy") or candidate.get("strategy") or candidate.get("strategy_family"))
     applies = strategy_supports_position_sizing(strategy_family)
     per_contract_entry_notional = _candidate_entry_notional(candidate, 1.0, limit_price)
     per_contract_max_loss = _candidate_max_loss(candidate, 1.0)
@@ -320,18 +281,13 @@ def build_candidate_position_sizing(
         1.0,
         limit_price=limit_price,
     )
-    per_contract_required_buying_power = _coerce_float(
-        buying_power_requirement.get("required_buying_power")
-    )
+    per_contract_required_buying_power = _coerce_float(buying_power_requirement.get("required_buying_power"))
     position_size_budget = _position_size_budget(
         available_broker_buying_power=available_broker_buying_power,
         position_size_pct_of_available_balance=position_size_pct_of_available_balance,
     )
     effective_strategy_risk_budget = strategy_risk_budget
-    if (
-        position_size_pct_of_available_balance is not None
-        and available_broker_buying_power is not None
-    ):
+    if position_size_pct_of_available_balance is not None and available_broker_buying_power is not None:
         effective_strategy_risk_budget = None
     constraints: list[tuple[str, int]] = []
 
@@ -390,25 +346,15 @@ def build_candidate_position_sizing(
     limiting_constraint = None
     effective_constraints = constraints
     if not applies:
-        effective_constraints = [
-            item for item in constraints if item[0] == "available_broker_buying_power"
-        ]
+        effective_constraints = [item for item in constraints if item[0] == "available_broker_buying_power"]
     if effective_constraints:
         limiting_constraint, recommended_quantity = min(
             effective_constraints,
             key=lambda item: (item[1], item[0]),
         )
 
-    recommended_entry_notional = (
-        None
-        if per_contract_entry_notional is None
-        else round(per_contract_entry_notional * recommended_quantity, 2)
-    )
-    recommended_max_loss = (
-        None
-        if per_contract_max_loss is None
-        else round(per_contract_max_loss * recommended_quantity, 2)
-    )
+    recommended_entry_notional = None if per_contract_entry_notional is None else round(per_contract_entry_notional * recommended_quantity, 2)
+    recommended_max_loss = None if per_contract_max_loss is None else round(per_contract_max_loss * recommended_quantity, 2)
     return {
         "applies": applies,
         "strategy_family": strategy_family or None,
@@ -417,16 +363,12 @@ def build_candidate_position_sizing(
         "per_contract_required_buying_power": per_contract_required_buying_power,
         "buying_power_basis": _as_text(buying_power_requirement.get("basis")),
         "position_size_pct_of_available_balance": (
-            None
-            if position_size_pct_of_available_balance is None
-            else float(position_size_pct_of_available_balance)
+            None if position_size_pct_of_available_balance is None else float(position_size_pct_of_available_balance)
         ),
         "position_size_budget": position_size_budget,
         "available_broker_buying_power": available_broker_buying_power,
         "constraints": {name: value for name, value in constraints},
-        "effective_constraints": {
-            name: value for name, value in effective_constraints
-        },
+        "effective_constraints": {name: value for name, value in effective_constraints},
         "limiting_constraint": limiting_constraint,
         "recommended_quantity": int(recommended_quantity),
         "recommended_entry_notional": recommended_entry_notional,
@@ -439,18 +381,12 @@ def _effective_max_contracts_per_position(
     candidate: dict[str, Any],
     normalized_policy: dict[str, Any],
 ) -> int | None:
-    max_contracts_per_position = _coerce_int(
-        normalized_policy.get("max_contracts_per_position")
-    )
+    max_contracts_per_position = _coerce_int(normalized_policy.get("max_contracts_per_position"))
     if max_contracts_per_position is None:
         return None
     if bool(normalized_policy.get("max_contracts_per_position_configured")):
         return max_contracts_per_position
-    strategy_family = (
-        _candidate_payload(candidate).get("strategy")
-        or candidate.get("strategy")
-        or candidate.get("strategy_family")
-    )
+    strategy_family = _candidate_payload(candidate).get("strategy") or candidate.get("strategy") or candidate.get("strategy_family")
     if strategy_supports_position_sizing(strategy_family):
         return None
     return max_contracts_per_position
@@ -486,57 +422,37 @@ def build_open_candidate_position_sizing(
             int(normalized_policy["max_contracts_per_session"] - open_contracts),
             0,
         ),
-        max_position_notional=_coerce_float(
-            normalized_policy.get("max_position_notional")
-        ),
+        max_position_notional=_coerce_float(normalized_policy.get("max_position_notional")),
         remaining_session_notional=(
             None
             if _coerce_float(normalized_policy.get("max_session_notional")) is None
             else max(
-                float(_coerce_float(normalized_policy.get("max_session_notional")) or 0.0)
-                - session_notional,
+                float(_coerce_float(normalized_policy.get("max_session_notional")) or 0.0) - session_notional,
                 0.0,
             )
         ),
-        max_position_max_loss=_coerce_float(
-            normalized_policy.get("max_position_max_loss")
-        ),
+        max_position_max_loss=_coerce_float(normalized_policy.get("max_position_max_loss")),
         remaining_session_max_loss=(
             None
             if _coerce_float(normalized_policy.get("max_session_max_loss")) is None
             else max(
-                float(_coerce_float(normalized_policy.get("max_session_max_loss")) or 0.0)
-                - session_max_loss,
+                float(_coerce_float(normalized_policy.get("max_session_max_loss")) or 0.0) - session_max_loss,
                 0.0,
             )
         ),
         strategy_risk_budget=strategy_risk_budget,
         position_size_pct_of_available_balance=position_size_pct_of_available_balance,
-        available_broker_buying_power=_coerce_float(
-            broker_buying_power.get("remaining_buying_power")
-        ),
+        available_broker_buying_power=_coerce_float(broker_buying_power.get("remaining_buying_power")),
     )
     return {
         **sizing,
         "broker_buying_power_status": _as_text(broker_buying_power.get("status")),
-        "broker_buying_power_source_field": _as_text(
-            broker_buying_power.get("source_field")
-        ),
-        "broker_account_available_buying_power": _coerce_float(
-            broker_buying_power.get("available_buying_power")
-        ),
-        "broker_reserved_buying_power": _coerce_float(
-            broker_buying_power.get("reserved_buying_power")
-        ),
-        "broker_capacity_error_text": _as_text(
-            broker_buying_power.get("error_text")
-        ),
-        "broker_reservation_count": _coerce_int(
-            broker_buying_power.get("reservation_count")
-        ),
-        "broker_unsupported_reservation_count": _coerce_int(
-            broker_buying_power.get("unsupported_reservation_count")
-        ),
+        "broker_buying_power_source_field": _as_text(broker_buying_power.get("source_field")),
+        "broker_account_available_buying_power": _coerce_float(broker_buying_power.get("available_buying_power")),
+        "broker_reserved_buying_power": _coerce_float(broker_buying_power.get("reserved_buying_power")),
+        "broker_capacity_error_text": _as_text(broker_buying_power.get("error_text")),
+        "broker_reservation_count": _coerce_int(broker_buying_power.get("reservation_count")),
+        "broker_unsupported_reservation_count": _coerce_int(broker_buying_power.get("unsupported_reservation_count")),
     }
 
 
@@ -636,9 +552,7 @@ def _pending_open_attempt_exposures(
                 # A partially filled attempt already consumes a slot through its
                 # linked/open canonical position, so only count unfilled attempts
                 # with no fills toward additional position capacity.
-                "occupies_position_slot": (
-                    linked_position_id is None and filled_quantity <= 0
-                ),
+                "occupies_position_slot": (linked_position_id is None and filled_quantity <= 0),
             }
         )
     return exposures
@@ -656,9 +570,7 @@ def live_broker_buying_power_snapshot(execution_store: Any) -> dict[str, Any]:
             _coerce_float(attempt.get("pending_quantity")) or 0.0,
             limit_price=_coerce_float(attempt.get("limit_price")),
         )
-        required_buying_power = _coerce_float(
-            requirement.get("required_buying_power")
-        )
+        required_buying_power = _coerce_float(requirement.get("required_buying_power"))
         if required_buying_power is None:
             unsupported_reservation_count += 1
             continue
@@ -682,9 +594,7 @@ def live_broker_buying_power_snapshot(execution_store: Any) -> dict[str, Any]:
         }
 
     available_snapshot = resolve_available_buying_power(account_payload)
-    available_buying_power = _coerce_float(
-        available_snapshot.get("available_buying_power")
-    )
+    available_buying_power = _coerce_float(available_snapshot.get("available_buying_power"))
     if available_buying_power is None:
         return {
             "status": "unavailable",
@@ -726,12 +636,8 @@ def build_execution_admission_snapshot(
         1.0,
         limit_price=limit_price,
     )
-    required_buying_power = _coerce_float(
-        buying_power_requirement.get("required_buying_power")
-    )
-    available_buying_power = _coerce_float(
-        broker_buying_power.get("remaining_buying_power")
-    )
+    required_buying_power = _coerce_float(buying_power_requirement.get("required_buying_power"))
+    available_buying_power = _coerce_float(broker_buying_power.get("remaining_buying_power"))
     sizing = build_candidate_position_sizing(
         candidate=candidate,
         limit_price=limit_price,
@@ -749,28 +655,21 @@ def build_execution_admission_snapshot(
         "admissible_quantity": None,
         "required_buying_power": required_buying_power,
         "available_buying_power": available_buying_power,
-        "account_available_buying_power": _coerce_float(
-            broker_buying_power.get("available_buying_power")
-        ),
-        "reserved_buying_power": _coerce_float(
-            broker_buying_power.get("reserved_buying_power")
-        ),
+        "account_available_buying_power": _coerce_float(broker_buying_power.get("available_buying_power")),
+        "reserved_buying_power": _coerce_float(broker_buying_power.get("reserved_buying_power")),
         "buying_power_basis": _as_text(buying_power_requirement.get("basis")),
         "buying_power_source_field": _as_text(broker_buying_power.get("source_field")),
         "broker_buying_power_status": _as_text(broker_buying_power.get("status")),
         "limiting_constraint": limiting_constraint,
         "strategy_risk_budget": strategy_risk_budget,
-        "position_size_pct_of_available_balance": _coerce_float(
-            sizing.get("position_size_pct_of_available_balance")
-        ),
+        "position_size_pct_of_available_balance": _coerce_float(sizing.get("position_size_pct_of_available_balance")),
         "position_size_budget": _coerce_float(sizing.get("position_size_budget")),
     }
     if str(broker_buying_power.get("status") or "") != "ok":
         return {
             **snapshot,
             "reason": "broker_buying_power_unavailable",
-            "message": _as_text(broker_buying_power.get("error_text"))
-            or "Broker buying power is unavailable.",
+            "message": _as_text(broker_buying_power.get("error_text")) or "Broker buying power is unavailable.",
         }
     if required_buying_power is None:
         return {
@@ -792,11 +691,7 @@ def build_execution_admission_snapshot(
         elif limiting_constraint not in {None, "", "available_broker_buying_power"}:
             reason = "execution_capacity_unavailable"
             message = "Current execution capacity does not allow one contract."
-        if (
-            available_buying_power is not None
-            and required_buying_power is not None
-            and reason == "insufficient_broker_buying_power"
-        ):
+        if available_buying_power is not None and required_buying_power is not None and reason == "insufficient_broker_buying_power":
             message = (
                 "Current account buying power cannot carry one contract "
                 f"(requires {required_buying_power:.2f}, "
@@ -871,9 +766,7 @@ def _candidate_broker_position_conflicts(
                 "symbol": symbol,
                 "broker_side": broker_side,
                 "requested_role": role,
-                "requested_position_intent": (
-                    "sell_to_open" if role == "short" else "buy_to_open"
-                ),
+                "requested_position_intent": ("sell_to_open" if role == "short" else "buy_to_open"),
             }
         )
     return conflicts
@@ -882,17 +775,9 @@ def _candidate_broker_position_conflicts(
 def _session_position_metrics(positions: list[dict[str, Any]]) -> dict[str, float]:
     return {
         "open_position_count": float(len(positions)),
-        "open_contract_count": sum(
-            _coerce_float(position.get("remaining_quantity")) or 0.0
-            for position in positions
-        ),
-        "entry_notional_total": sum(
-            _coerce_float(position.get("entry_notional")) or 0.0
-            for position in positions
-        ),
-        "max_loss_total": sum(
-            _coerce_float(position.get("max_loss")) or 0.0 for position in positions
-        ),
+        "open_contract_count": sum(_coerce_float(position.get("remaining_quantity")) or 0.0 for position in positions),
+        "entry_notional_total": sum(_coerce_float(position.get("entry_notional")) or 0.0 for position in positions),
+        "max_loss_total": sum(_coerce_float(position.get("max_loss")) or 0.0 for position in positions),
     }
 
 
@@ -901,23 +786,10 @@ def _session_pending_open_attempt_metrics(
 ) -> dict[str, float]:
     return {
         "pending_open_attempt_count": float(len(pending_attempts)),
-        "pending_open_position_slot_count": sum(
-            1.0
-            for attempt in pending_attempts
-            if bool(attempt.get("occupies_position_slot"))
-        ),
-        "pending_open_contract_count": sum(
-            _coerce_float(attempt.get("pending_quantity")) or 0.0
-            for attempt in pending_attempts
-        ),
-        "pending_entry_notional_total": sum(
-            _coerce_float(attempt.get("pending_entry_notional")) or 0.0
-            for attempt in pending_attempts
-        ),
-        "pending_max_loss_total": sum(
-            _coerce_float(attempt.get("pending_max_loss")) or 0.0
-            for attempt in pending_attempts
-        ),
+        "pending_open_position_slot_count": sum(1.0 for attempt in pending_attempts if bool(attempt.get("occupies_position_slot"))),
+        "pending_open_contract_count": sum(_coerce_float(attempt.get("pending_quantity")) or 0.0 for attempt in pending_attempts),
+        "pending_entry_notional_total": sum(_coerce_float(attempt.get("pending_entry_notional")) or 0.0 for attempt in pending_attempts),
+        "pending_max_loss_total": sum(_coerce_float(attempt.get("pending_max_loss")) or 0.0 for attempt in pending_attempts),
     }
 
 
@@ -930,22 +802,10 @@ def _session_open_metrics(
     return {
         **position_metrics,
         **pending_metrics,
-        "active_open_position_count": (
-            position_metrics["open_position_count"]
-            + pending_metrics["pending_open_position_slot_count"]
-        ),
-        "active_open_contract_count": (
-            position_metrics["open_contract_count"]
-            + pending_metrics["pending_open_contract_count"]
-        ),
-        "active_entry_notional_total": (
-            position_metrics["entry_notional_total"]
-            + pending_metrics["pending_entry_notional_total"]
-        ),
-        "active_max_loss_total": (
-            position_metrics["max_loss_total"]
-            + pending_metrics["pending_max_loss_total"]
-        ),
+        "active_open_position_count": (position_metrics["open_position_count"] + pending_metrics["pending_open_position_slot_count"]),
+        "active_open_contract_count": (position_metrics["open_contract_count"] + pending_metrics["pending_open_contract_count"]),
+        "active_entry_notional_total": (position_metrics["entry_notional_total"] + pending_metrics["pending_entry_notional_total"]),
+        "active_max_loss_total": (position_metrics["max_loss_total"] + pending_metrics["pending_max_loss_total"]),
     }
 
 
@@ -976,12 +836,8 @@ def _environment_reason(
     )
 
 
-def _candidate_timestamp(
-    candidate: dict[str, Any], cycle: dict[str, Any]
-) -> datetime | None:
-    candidate_generated_at = parse_datetime(
-        _as_text(candidate.get("generated_at")) or _as_text(cycle.get("generated_at"))
-    )
+def _candidate_timestamp(candidate: dict[str, Any], cycle: dict[str, Any]) -> datetime | None:
+    candidate_generated_at = parse_datetime(_as_text(candidate.get("generated_at")) or _as_text(cycle.get("generated_at")))
     return candidate_generated_at
 
 
@@ -990,9 +846,7 @@ def assess_position_risk(
     position: dict[str, Any],
     risk_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    normalized_policy = normalize_risk_policy(
-        risk_policy or position.get("risk_policy")
-    )
+    normalized_policy = normalize_risk_policy(risk_policy or position.get("risk_policy"))
     remaining_quantity = _coerce_float(position.get("remaining_quantity")) or 0.0
     if str(position.get("status") or "") == "closed" or remaining_quantity <= 0:
         return {
@@ -1008,35 +862,18 @@ def assess_position_risk(
         }
 
     reasons: list[str] = []
-    max_contracts_per_position = _coerce_int(
-        normalized_policy.get("max_contracts_per_position")
-    )
-    if (
-        max_contracts_per_position is not None
-        and remaining_quantity > max_contracts_per_position
-    ):
+    max_contracts_per_position = _coerce_int(normalized_policy.get("max_contracts_per_position"))
+    if max_contracts_per_position is not None and remaining_quantity > max_contracts_per_position:
         reasons.append("remaining quantity exceeds max_contracts_per_position")
 
     entry_notional = _coerce_float(position.get("entry_notional"))
-    max_position_notional = _coerce_float(
-        normalized_policy.get("max_position_notional")
-    )
-    if (
-        entry_notional is not None
-        and max_position_notional is not None
-        and entry_notional > max_position_notional
-    ):
+    max_position_notional = _coerce_float(normalized_policy.get("max_position_notional"))
+    if entry_notional is not None and max_position_notional is not None and entry_notional > max_position_notional:
         reasons.append("entry notional exceeds max_position_notional")
 
     max_loss = _coerce_float(position.get("max_loss"))
-    max_position_max_loss = _coerce_float(
-        normalized_policy.get("max_position_max_loss")
-    )
-    if (
-        max_loss is not None
-        and max_position_max_loss is not None
-        and max_loss > max_position_max_loss
-    ):
+    max_position_max_loss = _coerce_float(normalized_policy.get("max_position_max_loss"))
+    if max_loss is not None and max_position_max_loss is not None and max_loss > max_position_max_loss:
         reasons.append("max loss exceeds max_position_max_loss")
 
     if reasons:
@@ -1061,10 +898,7 @@ def build_session_risk_snapshot(
 ) -> dict[str, Any]:
     normalized_policy = normalize_risk_policy(risk_policy)
 
-    if (
-        hasattr(execution_store, "portfolio_schema_ready")
-        and not execution_store.portfolio_schema_ready()
-    ):
+    if hasattr(execution_store, "portfolio_schema_ready") and not execution_store.portfolio_schema_ready():
         return {
             "status": "unknown",
             "note": "Portfolio position storage is not available yet.",
@@ -1110,27 +944,17 @@ def build_session_risk_snapshot(
     metrics = _session_open_metrics(open_positions, pending_attempts)
     reasons: list[str] = []
 
-    if metrics["active_open_position_count"] >= float(
-        normalized_policy["max_open_positions_per_session"]
-    ):
+    if metrics["active_open_position_count"] >= float(normalized_policy["max_open_positions_per_session"]):
         reasons.append("max_open_positions_per_session reached")
-    if metrics["active_open_contract_count"] >= float(
-        normalized_policy["max_contracts_per_session"]
-    ):
+    if metrics["active_open_contract_count"] >= float(normalized_policy["max_contracts_per_session"]):
         reasons.append("max_contracts_per_session reached")
 
     max_session_notional = _coerce_float(normalized_policy.get("max_session_notional"))
-    if (
-        max_session_notional is not None
-        and metrics["active_entry_notional_total"] >= max_session_notional
-    ):
+    if max_session_notional is not None and metrics["active_entry_notional_total"] >= max_session_notional:
         reasons.append("max_session_notional reached")
 
     max_session_max_loss = _coerce_float(normalized_policy.get("max_session_max_loss"))
-    if (
-        max_session_max_loss is not None
-        and metrics["active_max_loss_total"] >= max_session_max_loss
-    ):
+    if max_session_max_loss is not None and metrics["active_max_loss_total"] >= max_session_max_loss:
         reasons.append("max_session_max_loss reached")
 
     if reasons:
@@ -1171,32 +995,17 @@ def evaluate_open_execution(
     candidate_timestamp = _candidate_timestamp(candidate, cycle)
     candidate_age_seconds = None
     if candidate_timestamp is not None:
-        candidate_age_seconds = round(
-            (datetime.now(UTC) - candidate_timestamp).total_seconds(), 3
-        )
+        candidate_age_seconds = round((datetime.now(UTC) - candidate_timestamp).total_seconds(), 3)
     underlying_symbol = str(candidate["underlying_symbol"])
     strategy = str(candidate["strategy"])
-    matching_underlyings = [
-        position
-        for position in open_positions
-        if str(position.get("underlying_symbol")) == underlying_symbol
-    ]
+    matching_underlyings = [position for position in open_positions if str(position.get("underlying_symbol")) == underlying_symbol]
     matching_pending_underlyings = [
         attempt
         for attempt in pending_attempts
-        if bool(attempt.get("occupies_position_slot"))
-        and str(attempt.get("underlying_symbol")) == underlying_symbol
+        if bool(attempt.get("occupies_position_slot")) and str(attempt.get("underlying_symbol")) == underlying_symbol
     ]
-    matching_strategy = [
-        position
-        for position in matching_underlyings
-        if str(position.get("strategy")) == strategy
-    ]
-    matching_pending_strategy = [
-        attempt
-        for attempt in matching_pending_underlyings
-        if str(attempt.get("strategy")) == strategy
-    ]
+    matching_strategy = [position for position in matching_underlyings if str(position.get("strategy")) == strategy]
+    matching_pending_strategy = [attempt for attempt in matching_pending_underlyings if str(attempt.get("strategy")) == strategy]
     session_notional = session_metrics["active_entry_notional_total"]
     session_max_loss = session_metrics["active_max_loss_total"]
     open_contracts = session_metrics["active_open_contract_count"]
@@ -1205,9 +1014,7 @@ def evaluate_open_execution(
         quantity,
         limit_price=limit_price,
     )
-    required_buying_power = _coerce_float(
-        buying_power_requirement.get("required_buying_power")
-    )
+    required_buying_power = _coerce_float(buying_power_requirement.get("required_buying_power"))
     metrics = {
         **session_metrics,
         "requested_quantity": int(quantity),
@@ -1216,23 +1023,11 @@ def evaluate_open_execution(
         "position_notional": position_notional,
         "position_max_loss": position_max_loss,
         "session_notional_before": round(session_notional, 2),
-        "session_notional_after": (
-            None
-            if position_notional is None
-            else round(session_notional + position_notional, 2)
-        ),
+        "session_notional_after": (None if position_notional is None else round(session_notional + position_notional, 2)),
         "session_max_loss_before": round(session_max_loss, 2),
-        "session_max_loss_after": (
-            None
-            if position_max_loss is None
-            else round(session_max_loss + position_max_loss, 2)
-        ),
-        "matching_underlying_count": (
-            len(matching_underlyings) + len(matching_pending_underlyings)
-        ),
-        "matching_underlying_strategy_count": (
-            len(matching_strategy) + len(matching_pending_strategy)
-        ),
+        "session_max_loss_after": (None if position_max_loss is None else round(session_max_loss + position_max_loss, 2)),
+        "matching_underlying_count": (len(matching_underlyings) + len(matching_pending_underlyings)),
+        "matching_underlying_strategy_count": (len(matching_strategy) + len(matching_pending_strategy)),
         "strategy_risk_budget": strategy_risk_budget,
         "position_size_pct_of_available_balance": position_size_pct_of_available_balance,
         "required_buying_power": required_buying_power,
@@ -1251,18 +1046,10 @@ def evaluate_open_execution(
     metrics["recommended_quantity"] = int(sizing["recommended_quantity"])
     metrics["recommended_position_max_loss"] = sizing["recommended_max_loss"]
     metrics["recommended_position_notional"] = sizing["recommended_entry_notional"]
-    metrics["available_broker_buying_power"] = _coerce_float(
-        sizing.get("available_broker_buying_power")
-    )
-    metrics["broker_buying_power_status"] = _as_text(
-        sizing.get("broker_buying_power_status")
-    )
-    metrics["broker_reserved_buying_power"] = _coerce_float(
-        sizing.get("broker_reserved_buying_power")
-    )
-    metrics["broker_buying_power_source_field"] = _as_text(
-        sizing.get("broker_buying_power_source_field")
-    )
+    metrics["available_broker_buying_power"] = _coerce_float(sizing.get("available_broker_buying_power"))
+    metrics["broker_buying_power_status"] = _as_text(sizing.get("broker_buying_power_status"))
+    metrics["broker_reserved_buying_power"] = _coerce_float(sizing.get("broker_reserved_buying_power"))
+    metrics["broker_buying_power_source_field"] = _as_text(sizing.get("broker_buying_power_source_field"))
 
     kill_switch_reason = _kill_switch_reason()
     if kill_switch_reason is not None:
@@ -1301,25 +1088,17 @@ def evaluate_open_execution(
 
     broker_position_conflicts = _candidate_broker_position_conflicts(candidate)
     metrics["broker_position_conflict_count"] = len(broker_position_conflicts)
-    metrics["broker_position_conflict_symbols"] = [
-        conflict["symbol"] for conflict in broker_position_conflicts
-    ]
+    metrics["broker_position_conflict_symbols"] = [conflict["symbol"] for conflict in broker_position_conflicts]
     if broker_position_conflicts:
         conflict_summary = ", ".join(
-            (
-                f"{conflict['symbol']} "
-                f"(broker {conflict['broker_side']}, request {conflict['requested_position_intent']})"
-            )
+            (f"{conflict['symbol']} " f"(broker {conflict['broker_side']}, request {conflict['requested_position_intent']})")
             for conflict in broker_position_conflicts[:4]
         )
         if len(broker_position_conflicts) > 4:
             conflict_summary += ", …"
         return {
             "status": "blocked",
-            "note": (
-                "Open execution conflicts with existing broker-held option legs: "
-                f"{conflict_summary}."
-            ),
+            "note": ("Open execution conflicts with existing broker-held option legs: " f"{conflict_summary}."),
             "reason_codes": ["broker_position_intent_conflict"],
             "blockers": ["broker_position_intent_conflict"],
             "policy": normalized_policy,
@@ -1340,10 +1119,7 @@ def evaluate_open_execution(
         candidate=candidate,
         normalized_policy=normalized_policy,
     )
-    if (
-        max_contracts_per_position is not None
-        and quantity > max_contracts_per_position
-    ):
+    if max_contracts_per_position is not None and quantity > max_contracts_per_position:
         return {
             "status": "blocked",
             "note": "Open execution exceeds max_contracts_per_position.",
@@ -1353,14 +1129,8 @@ def evaluate_open_execution(
             "metrics": metrics,
         }
 
-    stale_quote_after_seconds = _coerce_float(
-        normalized_policy.get("stale_quote_after_seconds")
-    )
-    if (
-        candidate_age_seconds is not None
-        and stale_quote_after_seconds is not None
-        and candidate_age_seconds > stale_quote_after_seconds
-    ):
+    stale_quote_after_seconds = _coerce_float(normalized_policy.get("stale_quote_after_seconds"))
+    if candidate_age_seconds is not None and stale_quote_after_seconds is not None and candidate_age_seconds > stale_quote_after_seconds:
         return {
             "status": "blocked",
             "note": "Open execution is blocked because the quote snapshot is stale.",
@@ -1370,9 +1140,7 @@ def evaluate_open_execution(
             "metrics": metrics,
         }
 
-    if session_metrics["active_open_position_count"] >= int(
-        normalized_policy["max_open_positions_per_session"]
-    ):
+    if session_metrics["active_open_position_count"] >= int(normalized_policy["max_open_positions_per_session"]):
         return {
             "status": "blocked",
             "note": "Open execution exceeds max_open_positions_per_session.",
@@ -1382,9 +1150,7 @@ def evaluate_open_execution(
             "metrics": metrics,
         }
 
-    if len(matching_underlyings) + len(matching_pending_underlyings) >= int(
-        normalized_policy["max_open_positions_per_underlying"]
-    ):
+    if len(matching_underlyings) + len(matching_pending_underlyings) >= int(normalized_policy["max_open_positions_per_underlying"]):
         return {
             "status": "blocked",
             "note": "Open execution exceeds max_open_positions_per_underlying.",
@@ -1394,9 +1160,7 @@ def evaluate_open_execution(
             "metrics": metrics,
         }
 
-    if len(matching_strategy) + len(matching_pending_strategy) >= int(
-        normalized_policy["max_open_positions_per_underlying_strategy"]
-    ):
+    if len(matching_strategy) + len(matching_pending_strategy) >= int(normalized_policy["max_open_positions_per_underlying_strategy"]):
         return {
             "status": "blocked",
             "note": "Open execution exceeds max_open_positions_per_underlying_strategy.",
@@ -1406,9 +1170,7 @@ def evaluate_open_execution(
             "metrics": metrics,
         }
 
-    if open_contracts + quantity > float(
-        normalized_policy["max_contracts_per_session"]
-    ):
+    if open_contracts + quantity > float(normalized_policy["max_contracts_per_session"]):
         return {
             "status": "blocked",
             "note": "Open execution exceeds max_contracts_per_session.",
@@ -1418,14 +1180,8 @@ def evaluate_open_execution(
             "metrics": metrics,
         }
 
-    max_position_notional = _coerce_float(
-        normalized_policy.get("max_position_notional")
-    )
-    if (
-        position_notional is not None
-        and max_position_notional is not None
-        and position_notional > max_position_notional
-    ):
+    max_position_notional = _coerce_float(normalized_policy.get("max_position_notional"))
+    if position_notional is not None and max_position_notional is not None and position_notional > max_position_notional:
         return {
             "status": "blocked",
             "note": "Open execution exceeds max_position_notional.",
@@ -1436,11 +1192,7 @@ def evaluate_open_execution(
         }
 
     max_session_notional = _coerce_float(normalized_policy.get("max_session_notional"))
-    if (
-        position_notional is not None
-        and max_session_notional is not None
-        and session_notional + position_notional > max_session_notional
-    ):
+    if position_notional is not None and max_session_notional is not None and session_notional + position_notional > max_session_notional:
         return {
             "status": "blocked",
             "note": "Open execution exceeds max_session_notional.",
@@ -1450,14 +1202,8 @@ def evaluate_open_execution(
             "metrics": metrics,
         }
 
-    max_position_max_loss = _coerce_float(
-        normalized_policy.get("max_position_max_loss")
-    )
-    if (
-        position_max_loss is not None
-        and max_position_max_loss is not None
-        and position_max_loss > max_position_max_loss
-    ):
+    max_position_max_loss = _coerce_float(normalized_policy.get("max_position_max_loss"))
+    if position_max_loss is not None and max_position_max_loss is not None and position_max_loss > max_position_max_loss:
         return {
             "status": "blocked",
             "note": "Open execution exceeds max_position_max_loss.",
@@ -1485,18 +1231,11 @@ def evaluate_open_execution(
 
     recommended_quantity = _coerce_int(sizing.get("recommended_quantity"))
     limiting_constraint = _as_text(sizing.get("limiting_constraint"))
-    if (
-        recommended_quantity is not None
-        and recommended_quantity >= 0
-        and quantity > recommended_quantity
-    ):
+    if recommended_quantity is not None and recommended_quantity >= 0 and quantity > recommended_quantity:
         if limiting_constraint == "position_size_pct_of_available_balance":
             return {
                 "status": "blocked",
-                "note": (
-                    "Open execution exceeds the configured position-size budget "
-                    "derived from available broker buying power."
-                ),
+                "note": ("Open execution exceeds the configured position-size budget " "derived from available broker buying power."),
                 "reason_codes": ["position_size_budget_exceeded"],
                 "blockers": ["position_size_budget_exceeded"],
                 "policy": normalized_policy,
@@ -1512,14 +1251,8 @@ def evaluate_open_execution(
                 "metrics": metrics,
             }
 
-    available_broker_buying_power = _coerce_float(
-        sizing.get("available_broker_buying_power")
-    )
-    if (
-        required_buying_power is not None
-        and available_broker_buying_power is not None
-        and required_buying_power > available_broker_buying_power
-    ):
+    available_broker_buying_power = _coerce_float(sizing.get("available_broker_buying_power"))
+    if required_buying_power is not None and available_broker_buying_power is not None and required_buying_power > available_broker_buying_power:
         source_field = _as_text(sizing.get("broker_buying_power_source_field"))
         source_note = "" if source_field is None else f" from {source_field}"
         return {
@@ -1536,11 +1269,7 @@ def evaluate_open_execution(
         }
 
     max_session_max_loss = _coerce_float(normalized_policy.get("max_session_max_loss"))
-    if (
-        position_max_loss is not None
-        and max_session_max_loss is not None
-        and session_max_loss + position_max_loss > max_session_max_loss
-    ):
+    if position_max_loss is not None and max_session_max_loss is not None and session_max_loss + position_max_loss > max_session_max_loss:
         return {
             "status": "blocked",
             "note": "Open execution exceeds max_session_max_loss.",
@@ -1598,9 +1327,7 @@ def validate_close_execution(
     now: datetime | None = None,
     max_reconciliation_age_seconds: float | None = None,
 ) -> dict[str, Any]:
-    position_status = str(
-        position.get("position_status") or position.get("status") or ""
-    ).lower()
+    position_status = str(position.get("position_status") or position.get("status") or "").lower()
     if position_status and position_status not in OPEN_POSITION_STATUSES:
         raise ValueError("Position is already closed.")
     remaining_quantity = _coerce_float(position.get("remaining_quantity"))
@@ -1617,26 +1344,13 @@ def validate_close_execution(
     if max_reconciliation_age_seconds is not None:
         reconciliation_status = _as_text(position.get("reconciliation_status"))
         if reconciliation_status != "matched":
-            raise ValueError(
-                "Position broker reconciliation is not matched; "
-                "wait for broker sync before closing."
-            )
-        last_reconciled_at = parse_datetime(
-            _as_text(position.get("last_reconciled_at"))
-        )
+            raise ValueError("Position broker reconciliation is not matched; " "wait for broker sync before closing.")
+        last_reconciled_at = parse_datetime(_as_text(position.get("last_reconciled_at")))
         if last_reconciled_at is None:
-            raise ValueError(
-                "Position broker reconciliation is missing; "
-                "wait for broker sync before closing."
-            )
-        reconciliation_age = (
-            (now or datetime.now(UTC)) - last_reconciled_at.astimezone(UTC)
-        ).total_seconds()
+            raise ValueError("Position broker reconciliation is missing; " "wait for broker sync before closing.")
+        reconciliation_age = ((now or datetime.now(UTC)) - last_reconciled_at.astimezone(UTC)).total_seconds()
         if reconciliation_age > max_reconciliation_age_seconds:
-            raise ValueError(
-                "Position broker reconciliation is stale; "
-                "wait for broker sync before closing."
-            )
+            raise ValueError("Position broker reconciliation is stale; " "wait for broker sync before closing.")
     return {
         "status": "ok",
     }

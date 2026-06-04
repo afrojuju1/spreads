@@ -49,16 +49,8 @@ def _derive_position_legs(
 
 def enrich_position_row(row: Mapping[str, Any]) -> dict[str, Any]:
     payload = dict(row)
-    economics = (
-        payload.get("economics")
-        if isinstance(payload.get("economics"), Mapping)
-        else {}
-    )
-    strategy_metrics = (
-        payload.get("strategy_metrics")
-        if isinstance(payload.get("strategy_metrics"), Mapping)
-        else {}
-    )
+    economics = payload.get("economics") if isinstance(payload.get("economics"), Mapping) else {}
+    strategy_metrics = payload.get("strategy_metrics") if isinstance(payload.get("strategy_metrics"), Mapping) else {}
     short_symbol, long_symbol, expiration_date = _derive_position_legs(payload)
     pipeline_id = _as_text(payload.get("pipeline_id"))
     label = _as_text(payload.get("label"))
@@ -70,9 +62,7 @@ def enrich_position_row(row: Mapping[str, Any]) -> dict[str, Any]:
             "market_date": market_date,
             "session_date": market_date,
             "label": label,
-            "session_id": None
-            if label is None or market_date is None
-            else build_live_run_scope_id(label, market_date),
+            "session_id": None if label is None or market_date is None else build_live_run_scope_id(label, market_date),
             "position_status": payload.get("status"),
             "underlying_symbol": payload.get("root_symbol"),
             "strategy": payload.get("strategy_family"),
@@ -85,23 +75,14 @@ def enrich_position_row(row: Mapping[str, Any]) -> dict[str, Any]:
             "max_loss": _coerce_float(economics.get("max_loss")),
             "width": _coerce_float(strategy_metrics.get("width")),
             "owner": {
-                "owner_kind": (
-                    "automation"
-                    if payload.get("bot_id") or payload.get("automation_id")
-                    else "discovery"
-                ),
-                "bot_id": payload.get("bot_id"),
-                "automation_id": payload.get("automation_id"),
-                "strategy_config_id": payload.get("strategy_config_id"),
-                "strategy_id": payload.get("strategy_id"),
+                "owner_kind": ("trading_strategy" if payload.get("trading_strategy_id") else "discovery"),
+                "trading_strategy_id": payload.get("trading_strategy_id"),
                 "config_hash": payload.get("config_hash"),
             },
             "discovery": {
                 "label": label,
                 "pipeline_id": pipeline_id,
-                "session_id": None
-                if label is None or market_date is None
-                else build_live_run_scope_id(label, market_date),
+                "session_id": None if label is None or market_date is None else build_live_run_scope_id(label, market_date),
                 "source_opportunity_id": payload.get("source_opportunity_id"),
             },
         }
@@ -124,9 +105,7 @@ def _serialize_position(
         }
     }
     closes = execution_store.list_position_closes(position_id=str(row["position_id"]))
-    total_closed_quantity = sum(
-        _coerce_float(close.get("closed_quantity")) or 0.0 for close in closes
-    )
+    total_closed_quantity = sum(_coerce_float(close.get("closed_quantity")) or 0.0 for close in closes)
     realized_pnl = _coerce_float(row.get("realized_pnl")) or 0.0
     unrealized_pnl = _coerce_float(row.get("unrealized_pnl"))
     return {
@@ -135,9 +114,7 @@ def _serialize_position(
         "position_status": row.get("status"),
         "closed_quantity": _round_money(total_closed_quantity),
         "net_pnl": _round_money(realized_pnl + (unrealized_pnl or 0.0)),
-        "open_execution_attempt": execution_store.get_attempt(
-            str(row["open_execution_attempt_id"])
-        ),
+        "open_execution_attempt": execution_store.get_attempt(str(row["open_execution_attempt_id"])),
         "closes": closes,
     }
 
@@ -149,16 +126,10 @@ def _matches_optional(value: Any, expected: str | None) -> bool:
 def _attempt_matches_scope(
     row: Mapping[str, Any],
     *,
-    bot_id: str | None,
-    automation_id: str | None,
-    strategy_config_id: str | None,
+    trading_strategy_id: str | None,
     position_ids: set[str],
 ) -> bool:
-    if not _matches_optional(row.get("bot_id"), bot_id):
-        return False
-    if not _matches_optional(row.get("automation_id"), automation_id):
-        return False
-    if not _matches_optional(row.get("strategy_config_id"), strategy_config_id):
+    if not _matches_optional(row.get("trading_strategy_id"), trading_strategy_id):
         return False
     position_id = _as_text(row.get("position_id"))
     return not position_ids or position_id is None or position_id in position_ids
@@ -167,17 +138,10 @@ def _attempt_matches_scope(
 def _intent_matches_scope(
     row: Mapping[str, Any],
     *,
-    bot_id: str | None,
-    automation_id: str | None,
-    strategy_config_id: str | None,
+    trading_strategy_id: str | None,
     position_ids: set[str],
 ) -> bool:
-    if not _matches_optional(row.get("bot_id"), bot_id):
-        return False
-    if not _matches_optional(row.get("automation_id"), automation_id):
-        return False
-    policy_ref = row.get("policy_ref") if isinstance(row.get("policy_ref"), Mapping) else {}
-    if not _matches_optional(policy_ref.get("strategy_config_id"), strategy_config_id):
+    if not _matches_optional(row.get("trading_strategy_id"), trading_strategy_id):
         return False
     position_id = _as_text(row.get("strategy_position_id"))
     return not position_ids or position_id is None or position_id in position_ids
@@ -197,16 +161,12 @@ def list_positions(
     pipeline_id: str | None = None,
     label: str | None = None,
     market_date: str | None = None,
-    bot_id: str | None = None,
-    automation_id: str | None = None,
-    strategy_config_id: str | None = None,
+    trading_strategy_id: str | None = None,
     limit: int = 200,
     storage: Any | None = None,
 ) -> dict[str, Any]:
     execution_store = storage.execution
-    resolved_pipeline_id = pipeline_id or (
-        None if label is None else build_pipeline_id(label)
-    )
+    resolved_pipeline_id = pipeline_id or (None if label is None else build_pipeline_id(label))
     if not execution_store.portfolio_schema_ready():
         return {
             "summary": {
@@ -216,9 +176,7 @@ def list_positions(
                 "pipeline_id": resolved_pipeline_id,
                 "label": label,
                 "market_date": market_date,
-                "bot_id": bot_id,
-                "automation_id": automation_id,
-                "strategy_config_id": strategy_config_id,
+                "trading_strategy_id": trading_strategy_id,
             },
             "positions": [],
         }
@@ -228,17 +186,11 @@ def list_positions(
         for row in execution_store.list_positions(
             pipeline_id=resolved_pipeline_id,
             market_date=market_date,
-            bot_id=bot_id,
-            automation_id=automation_id,
-            strategy_config_id=strategy_config_id,
+            trading_strategy_id=trading_strategy_id,
             limit=limit,
         )
     ]
-    position_ids = {
-        str(row["position_id"])
-        for row in rows
-        if _as_text(row.get("position_id")) is not None
-    }
+    position_ids = {str(row["position_id"]) for row in rows if _as_text(row.get("position_id")) is not None}
     lifecycle_market_date = market_date or datetime.now(NEW_YORK).date().isoformat()
     close_attempts = [
         dict(row)
@@ -248,9 +200,7 @@ def list_positions(
         )
         if _attempt_matches_scope(
             row,
-            bot_id=bot_id,
-            automation_id=automation_id,
-            strategy_config_id=strategy_config_id,
+            trading_strategy_id=trading_strategy_id,
             position_ids=position_ids,
         )
     ]
@@ -259,31 +209,22 @@ def list_positions(
         close_intents = [
             dict(row)
             for row in execution_store.list_execution_intents(
-                bot_id=bot_id,
-                automation_id=automation_id,
+                trading_strategy_id=trading_strategy_id,
                 limit=200,
             )
             if _intent_matches_scope(
                 row,
-                bot_id=bot_id,
-                automation_id=automation_id,
-                strategy_config_id=strategy_config_id,
+                trading_strategy_id=trading_strategy_id,
                 position_ids=position_ids,
             )
         ]
     close_lifecycle = build_close_lifecycle_summary(
         attempts=close_attempts,
         intents=close_intents,
-        positions=[
-            row
-            for row in rows
-            if _position_in_lifecycle_scope(row, market_date=lifecycle_market_date)
-        ],
+        positions=[row for row in rows if _position_in_lifecycle_scope(row, market_date=lifecycle_market_date)],
         limit=8,
     )
-    open_count = sum(
-        1 for row in rows if str(row.get("position_status")) in OPEN_POSITION_STATUSES
-    )
+    open_count = sum(1 for row in rows if str(row.get("position_status")) in OPEN_POSITION_STATUSES)
     closed_count = sum(1 for row in rows if str(row.get("position_status")) == "closed")
     return {
         "summary": {
@@ -293,9 +234,7 @@ def list_positions(
             "pipeline_id": resolved_pipeline_id,
             "label": label,
             "market_date": market_date,
-            "bot_id": bot_id,
-            "automation_id": automation_id,
-            "strategy_config_id": strategy_config_id,
+            "trading_strategy_id": trading_strategy_id,
             "close_lifecycle_market_date": lifecycle_market_date,
             "close_lifecycle": close_lifecycle,
         },

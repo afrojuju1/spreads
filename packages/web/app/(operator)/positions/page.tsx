@@ -3,9 +3,7 @@ import { PositionsIndexPageContent } from "@/components/positions/positions-inde
 type PositionsPageProps = {
   searchParams: Promise<{
     marketDate?: string;
-    botId?: string;
-    automationId?: string;
-    strategyConfigId?: string;
+    tradingStrategyId?: string;
     label?: string;
   }>;
 };
@@ -13,14 +11,11 @@ type PositionsPageProps = {
 export default async function PositionsPage({
   searchParams,
 }: PositionsPageProps) {
-  const { marketDate, botId, automationId, strategyConfigId, label } =
-    await searchParams;
+  const { marketDate, tradingStrategyId, label } = await searchParams;
   return (
     <PositionsIndexPageContent
       marketDate={marketDate}
-      botId={botId}
-      automationId={automationId}
-      strategyConfigId={strategyConfigId}
+      tradingStrategyId={tradingStrategyId}
       label={label}
     />
   );

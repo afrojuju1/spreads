@@ -27,7 +27,7 @@ from core.services.company_valuation.templates import (
     default_company_valuation_config_root,
     resolve_company_valuation_template,
 )
-from core.services.strategy_configs import (
+from core.services.trading_strategies import (
     _load_yaml_file,
     _yaml_file_signature,
 )
@@ -64,9 +64,7 @@ def _as_text_tuple(value: Any, *, field_name: str) -> tuple[str, ...]:
 def _as_taxonomy_level(value: Any, *, field_name: str) -> TaxonomyLevel:
     rendered = _as_text(value, field_name=field_name)
     if rendered not in {"sector", "industry_group", "industry", "subindustry"}:
-        raise ValueError(
-            f"{field_name} must be one of sector, industry_group, industry, subindustry"
-        )
+        raise ValueError(f"{field_name} must be one of sector, industry_group, industry, subindustry")
     return rendered  # type: ignore[return-value]
 
 
@@ -114,10 +112,7 @@ def _taxonomy_mappings_path(config_root: str | Path | None = None) -> Path:
 
 
 def _template_mappings_path(config_root: str | Path | None = None) -> Path:
-    return (
-        default_company_valuation_taxonomy_root(config_root)
-        / "template_mappings.yaml"
-    )
+    return default_company_valuation_taxonomy_root(config_root) / "template_mappings.yaml"
 
 
 def _overlay_rules_path(config_root: str | Path | None = None) -> Path:
@@ -125,10 +120,7 @@ def _overlay_rules_path(config_root: str | Path | None = None) -> Path:
 
 
 def _taxonomy_overrides_path(config_root: str | Path | None = None) -> Path:
-    return (
-        default_company_valuation_taxonomy_root(config_root)
-        / "issuer_taxonomy_overrides.yaml"
-    )
+    return default_company_valuation_taxonomy_root(config_root) / "issuer_taxonomy_overrides.yaml"
 
 
 def _support_policy_path(config_root: str | Path | None = None) -> Path:
@@ -179,9 +171,7 @@ def _load_company_valuation_taxonomy_nodes_cached(
                     item.get("taxonomy_name"),
                     field_name="taxonomy_name",
                 ),
-                parent_taxonomy_node_id=_as_optional_text(
-                    item.get("parent_taxonomy_node_id")
-                ),
+                parent_taxonomy_node_id=_as_optional_text(item.get("parent_taxonomy_node_id")),
                 active=bool(item.get("active", True)),
             )
         )
@@ -189,13 +179,8 @@ def _load_company_valuation_taxonomy_nodes_cached(
     if len(by_id) != len(nodes):
         raise ValueError(f"Duplicate taxonomy_node_id in {path}")
     for node in nodes:
-        if (
-            node.parent_taxonomy_node_id is not None
-            and node.parent_taxonomy_node_id not in by_id
-        ):
-            raise ValueError(
-                f"Unknown parent_taxonomy_node_id {node.parent_taxonomy_node_id}"
-            )
+        if node.parent_taxonomy_node_id is not None and node.parent_taxonomy_node_id not in by_id:
+            raise ValueError(f"Unknown parent_taxonomy_node_id {node.parent_taxonomy_node_id}")
     return tuple(nodes)
 
 
@@ -252,15 +237,9 @@ def _load_company_valuation_taxonomy_mappings_cached(
                     field_name="match_mode",
                 ),
                 canonical_sector_id=_as_optional_text(item.get("canonical_sector_id")),
-                canonical_industry_group_id=_as_optional_text(
-                    item.get("canonical_industry_group_id")
-                ),
-                canonical_industry_id=_as_optional_text(
-                    item.get("canonical_industry_id")
-                ),
-                canonical_subindustry_id=_as_optional_text(
-                    item.get("canonical_subindustry_id")
-                ),
+                canonical_industry_group_id=_as_optional_text(item.get("canonical_industry_group_id")),
+                canonical_industry_id=_as_optional_text(item.get("canonical_industry_id")),
+                canonical_subindustry_id=_as_optional_text(item.get("canonical_subindustry_id")),
                 priority=int(item.get("priority", 100)),
                 active=bool(item.get("active", True)),
                 notes=_as_optional_text(item.get("notes")),
@@ -335,11 +314,7 @@ def _load_company_valuation_template_mappings_cached(
                 notes=_as_optional_text(item.get("notes")),
             )
         )
-    by_node_id = {
-        mapping.taxonomy_node_id: mapping
-        for mapping in mappings
-        if mapping.active
-    }
+    by_node_id = {mapping.taxonomy_node_id: mapping for mapping in mappings if mapping.active}
     if len(by_node_id) != len([mapping for mapping in mappings if mapping.active]):
         raise ValueError(f"Duplicate active taxonomy_node_id in {path}")
     return tuple(mappings)
@@ -356,9 +331,7 @@ def load_company_valuation_template_mappings(
     nodes = load_company_valuation_taxonomy_nodes(config_root)
     for mapping in mappings:
         if mapping.taxonomy_node_id not in nodes:
-            raise ValueError(
-                f"Unknown taxonomy node reference {mapping.taxonomy_node_id} in {path}"
-            )
+            raise ValueError(f"Unknown taxonomy node reference {mapping.taxonomy_node_id} in {path}")
     return mappings
 
 
@@ -454,15 +427,9 @@ def _load_company_valuation_taxonomy_overrides_cached(
                     item.get("canonical_sector_id"),
                     field_name="canonical_sector_id",
                 ),
-                canonical_industry_group_id=_as_optional_text(
-                    item.get("canonical_industry_group_id")
-                ),
-                canonical_industry_id=_as_optional_text(
-                    item.get("canonical_industry_id")
-                ),
-                canonical_subindustry_id=_as_optional_text(
-                    item.get("canonical_subindustry_id")
-                ),
+                canonical_industry_group_id=_as_optional_text(item.get("canonical_industry_group_id")),
+                canonical_industry_id=_as_optional_text(item.get("canonical_industry_id")),
+                canonical_subindustry_id=_as_optional_text(item.get("canonical_subindustry_id")),
                 reason=_as_text(item.get("reason"), field_name="reason"),
                 active=bool(item.get("active", True)),
             )
@@ -516,12 +483,8 @@ def _load_company_valuation_support_policy_cached(
                 raise ValueError("supported_issuer entries must be mappings")
             supported_issuers.append(
                 CompanyValuationSupportedIssuer(
-                    ticker=normalize_ticker(
-                        _as_text(item.get("ticker"), field_name="ticker")
-                    ),
-                    expected_template_id=_as_optional_text(
-                        item.get("expected_template_id")
-                    ),
+                    ticker=normalize_ticker(_as_text(item.get("ticker"), field_name="ticker")),
+                    expected_template_id=_as_optional_text(item.get("expected_template_id")),
                     support_tier=_as_support_tier(
                         item.get("support_tier", "core"),
                         field_name="support_tier",
@@ -530,11 +493,7 @@ def _load_company_valuation_support_policy_cached(
                     active=bool(item.get("active", True)),
                 )
             )
-    by_ticker = {
-        issuer.ticker: issuer
-        for issuer in supported_issuers
-        if issuer.active
-    }
+    by_ticker = {issuer.ticker: issuer for issuer in supported_issuers if issuer.active}
     if len(by_ticker) != len([issuer for issuer in supported_issuers if issuer.active]):
         raise ValueError(f"Duplicate active supported issuer ticker in {path}")
     return CompanyValuationSupportPolicy(
@@ -559,11 +518,7 @@ def supported_company_valuation_tickers(
     config_root: str | Path | None = None,
 ) -> tuple[str, ...]:
     policy = load_company_valuation_support_policy(config_root)
-    return tuple(
-        issuer.ticker
-        for issuer in policy.supported_issuers
-        if issuer.active
-    )
+    return tuple(issuer.ticker for issuer in policy.supported_issuers if issuer.active)
 
 
 def resolve_company_valuation_raw_classification(
@@ -596,9 +551,7 @@ def _mapping_matches(
 ) -> bool:
     if not mapping.active:
         return False
-    candidate_code = (
-        raw.sic_code if mapping.source_standard == "sic" else raw.naics_code
-    )
+    candidate_code = raw.sic_code if mapping.source_standard == "sic" else raw.naics_code
     if not candidate_code:
         return False
     if mapping.match_mode == "exact":
@@ -627,9 +580,7 @@ def resolve_company_valuation_canonical_taxonomy(
     config_root: str | Path | None = None,
 ) -> CompanyValuationCanonicalTaxonomy:
     taxonomy_version = _active_taxonomy_version(config_root)
-    override = load_company_valuation_taxonomy_overrides(config_root).get(
-        normalize_cik(cik)
-    )
+    override = load_company_valuation_taxonomy_overrides(config_root).get(normalize_cik(cik))
     if override is not None and override.active:
         return CompanyValuationCanonicalTaxonomy(
             taxonomy_version=taxonomy_version,
@@ -673,11 +624,7 @@ def resolve_company_valuation_default_template(
     canonical_taxonomy: CompanyValuationCanonicalTaxonomy,
     config_root: str | Path | None = None,
 ) -> CompanyValuationDefaultTemplateResolution:
-    mappings = {
-        mapping.taxonomy_node_id: mapping
-        for mapping in load_company_valuation_template_mappings(config_root)
-        if mapping.active
-    }
+    mappings = {mapping.taxonomy_node_id: mapping for mapping in load_company_valuation_template_mappings(config_root) if mapping.active}
     candidate_node_ids = (
         canonical_taxonomy.canonical_subindustry_id,
         canonical_taxonomy.canonical_industry_id,
@@ -719,20 +666,10 @@ def resolve_company_valuation_support(
     policy = load_company_valuation_support_policy(config_root)
     supported_template_ids = set(policy.supported_template_ids)
     normalized_ticker = normalize_ticker(ticker) if str(ticker or "").strip() else None
-    supported_issuer_by_ticker = {
-        issuer.ticker: issuer
-        for issuer in policy.supported_issuers
-        if issuer.active
-    }
-    supported_issuer = (
-        supported_issuer_by_ticker.get(normalized_ticker)
-        if normalized_ticker is not None
-        else None
-    )
+    supported_issuer_by_ticker = {issuer.ticker: issuer for issuer in policy.supported_issuers if issuer.active}
+    supported_issuer = supported_issuer_by_ticker.get(normalized_ticker) if normalized_ticker is not None else None
     in_curated_universe = supported_issuer is not None
-    expected_template_id = (
-        supported_issuer.expected_template_id if supported_issuer is not None else None
-    )
+    expected_template_id = supported_issuer.expected_template_id if supported_issuer is not None else None
     support_tier = supported_issuer.support_tier if supported_issuer is not None else None
 
     if policy.allowlist_required and supported_issuer is None:
@@ -755,25 +692,14 @@ def resolve_company_valuation_support(
     if default_template.template_id not in supported_template_ids:
         return CompanyValuationSupportResolution(
             status="unsupported",
-            reason=(
-                "issuer is in scope but taxonomy resolved to an unsupported valuation "
-                f"template `{default_template.template_id}`"
-            ),
+            reason=("issuer is in scope but taxonomy resolved to an unsupported valuation " f"template `{default_template.template_id}`"),
             in_curated_universe=in_curated_universe,
             support_tier=support_tier,
             expected_template_id=expected_template_id,
-            expected_template_match=(
-                None
-                if expected_template_id is None
-                else expected_template_id == default_template.template_id
-            ),
+            expected_template_match=(None if expected_template_id is None else expected_template_id == default_template.template_id),
         )
 
-    expected_template_match = (
-        None
-        if expected_template_id is None
-        else expected_template_id == default_template.template_id
-    )
+    expected_template_match = None if expected_template_id is None else expected_template_id == default_template.template_id
     if expected_template_match is False:
         reason = (
             "issuer is in the curated universe and resolved to a supported template, "
@@ -804,27 +730,13 @@ def _overlay_rule_matches(
         return True
     company_name_text = _normalized_text(company_name)
     sic_title_text = _normalized_text(raw_classification.sic_title)
-    if any(
-        keyword in company_name_text
-        for keyword in (_normalized_text(value) for value in rule.company_name_keywords)
-        if keyword
-    ):
+    if any(keyword in company_name_text for keyword in (_normalized_text(value) for value in rule.company_name_keywords) if keyword):
         return True
-    if any(
-        keyword in sic_title_text
-        for keyword in (_normalized_text(value) for value in rule.sic_title_keywords)
-        if keyword
-    ):
+    if any(keyword in sic_title_text for keyword in (_normalized_text(value) for value in rule.sic_title_keywords) if keyword):
         return True
-    if any(
-        str(raw_classification.sic_code or "").startswith(prefix)
-        for prefix in rule.sic_prefixes
-    ):
+    if any(str(raw_classification.sic_code or "").startswith(prefix) for prefix in rule.sic_prefixes):
         return True
-    if any(
-        str(raw_classification.naics_code or "").startswith(prefix)
-        for prefix in rule.naics_prefixes
-    ):
+    if any(str(raw_classification.naics_code or "").startswith(prefix) for prefix in rule.naics_prefixes):
         return True
     return False
 

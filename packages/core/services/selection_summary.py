@@ -28,40 +28,23 @@ def live_selection_counts(
 
 def selection_summary_payload(value: Any) -> dict[str, Any]:
     payload = value if isinstance(value, Mapping) else {}
-    blocker_counts = (
-        payload.get("blocker_counts")
-        if isinstance(payload.get("blocker_counts"), Mapping)
-        else {}
-    )
+    blocker_counts = payload.get("blocker_counts") if isinstance(payload.get("blocker_counts"), Mapping) else {}
     top_candidates = _candidate_preview_list(payload.get("top_candidates"))
     return {
         "opportunity_count": coerce_int(payload.get("opportunity_count")) or 0,
-        "candidate_symbol_count": coerce_int(payload.get("candidate_symbol_count"))
-        or 0,
+        "candidate_symbol_count": coerce_int(payload.get("candidate_symbol_count")) or 0,
         "candidate_count": coerce_int(payload.get("candidate_count")) or 0,
-        "matched_discovery_opportunity_count": (
-            coerce_int(payload.get("matched_discovery_opportunity_count")) or 0
-        ),
+        "matched_discovery_opportunity_count": (coerce_int(payload.get("matched_discovery_opportunity_count")) or 0),
         "strategy_family_counts": _counter_map(payload.get("strategy_family_counts")),
         "earnings_phase_counts": _counter_map(payload.get("earnings_phase_counts")),
         "selection_state_counts": _counter_map(payload.get("selection_state_counts")),
         "scoring_state_counts": _counter_map(payload.get("scoring_state_counts")),
-        "runtime_filter_reason_counts": _counter_map(
-            payload.get("runtime_filter_reason_counts")
-        ),
-        "rejection_reason_counts": _counter_map(
-            payload.get("rejection_reason_counts")
-        ),
-        "blocker_counts": {
-            str(category): _counter_map(counts)
-            for category, counts in blocker_counts.items()
-            if as_text(category) is not None
-        },
+        "runtime_filter_reason_counts": _counter_map(payload.get("runtime_filter_reason_counts")),
+        "rejection_reason_counts": _counter_map(payload.get("rejection_reason_counts")),
+        "blocker_counts": {str(category): _counter_map(counts) for category, counts in blocker_counts.items() if as_text(category) is not None},
         "timing_confidence_counts": _counter_map(payload.get("timing_confidence_counts")),
         "shadow_only_count": coerce_int(payload.get("shadow_only_count")) or 0,
-        "auto_live_eligible_count": (
-            coerce_int(payload.get("auto_live_eligible_count")) or 0
-        ),
+        "auto_live_eligible_count": (coerce_int(payload.get("auto_live_eligible_count")) or 0),
         "selection_source": as_text(payload.get("selection_source")),
         "status": as_text(payload.get("status")),
         "message": as_text(payload.get("message")),
@@ -69,21 +52,13 @@ def selection_summary_payload(value: Any) -> dict[str, Any]:
     }
 
 
-def automation_summary_payload(value: Any) -> dict[str, Any]:
+def strategy_sync_summary_payload(value: Any) -> dict[str, Any]:
     payload = value if isinstance(value, Mapping) else {}
     return {
-        "automation_runs_upserted": (
-            coerce_int(payload.get("automation_runs_upserted")) or 0
-        ),
-        "runtime_opportunities_upserted": (
-            coerce_int(payload.get("runtime_opportunities_upserted")) or 0
-        ),
-        "runtime_opportunities_expired": (
-            coerce_int(payload.get("runtime_opportunities_expired")) or 0
-        ),
-        "runtime_selection_summary": selection_summary_payload(
-            payload.get("runtime_selection_summary")
-        ),
+        "strategy_runs_upserted": (coerce_int(payload.get("strategy_runs_upserted")) or 0),
+        "runtime_opportunities_upserted": (coerce_int(payload.get("runtime_opportunities_upserted")) or 0),
+        "runtime_opportunities_expired": (coerce_int(payload.get("runtime_opportunities_expired")) or 0),
+        "runtime_selection_summary": selection_summary_payload(payload.get("runtime_selection_summary")),
     }
 
 
@@ -114,9 +89,7 @@ def aggregate_selection_summaries(
         opportunity_count += int(payload["opportunity_count"])
         candidate_symbol_count += int(payload["candidate_symbol_count"])
         candidate_count += int(payload["candidate_count"])
-        matched_discovery_opportunity_count += int(
-            payload["matched_discovery_opportunity_count"]
-        )
+        matched_discovery_opportunity_count += int(payload["matched_discovery_opportunity_count"])
         shadow_only_count += int(payload["shadow_only_count"])
         auto_live_eligible_count += int(payload["auto_live_eligible_count"])
         strategy_family_counts.update(payload["strategy_family_counts"])
@@ -139,9 +112,7 @@ def aggregate_selection_summaries(
         "scoring_state_counts": dict(scoring_state_counts),
         "runtime_filter_reason_counts": dict(runtime_filter_reason_counts),
         "rejection_reason_counts": dict(rejection_reason_counts),
-        "blocker_counts": {
-            category: dict(counter) for category, counter in blocker_counts.items()
-        },
+        "blocker_counts": {category: dict(counter) for category, counter in blocker_counts.items()},
         "timing_confidence_counts": dict(timing_confidence_counts),
         "shadow_only_count": shadow_only_count,
         "auto_live_eligible_count": auto_live_eligible_count,
@@ -151,11 +122,7 @@ def aggregate_selection_summaries(
 def _counter_map(value: Any) -> dict[str, int]:
     if not isinstance(value, Mapping):
         return {}
-    return {
-        str(key): coerce_int(raw_value) or 0
-        for key, raw_value in value.items()
-        if as_text(key) is not None
-    }
+    return {str(key): coerce_int(raw_value) or 0 for key, raw_value in value.items() if as_text(key) is not None}
 
 
 def _candidate_preview_list(value: Any) -> list[dict[str, Any]]:
@@ -165,11 +132,7 @@ def _candidate_preview_list(value: Any) -> list[dict[str, Any]]:
     for item in list(value)[:5]:
         if not isinstance(item, Mapping):
             continue
-        score_thresholds = (
-            item.get("score_thresholds")
-            if isinstance(item.get("score_thresholds"), Mapping)
-            else {}
-        )
+        score_thresholds = item.get("score_thresholds") if isinstance(item.get("score_thresholds"), Mapping) else {}
         previews.append(
             {
                 "underlying_symbol": as_text(item.get("underlying_symbol")),
@@ -184,31 +147,18 @@ def _candidate_preview_list(value: Any) -> list[dict[str, Any]]:
                 "scoring_state_reason": as_text(item.get("scoring_state_reason")),
                 "setup_status": as_text(item.get("setup_status")),
                 "ranking_policy_status": as_text(item.get("ranking_policy_status")),
-                "monitor_floor": coerce_float(
-                    item.get("monitor_floor") or score_thresholds.get("monitor_floor")
-                ),
-                "promotion_floor": coerce_float(
-                    item.get("promotion_floor")
-                    or score_thresholds.get("promotion_floor")
-                ),
-                "min_opportunity_score": coerce_float(
-                    item.get("min_opportunity_score")
-                ),
-                "min_opportunity_score_delta": coerce_float(
-                    item.get("min_opportunity_score_delta")
-                ),
-                "reason_codes": [
-                    str(code)
-                    for code in list(item.get("reason_codes") or [])
-                    if as_text(code) is not None
-                ],
+                "monitor_floor": coerce_float(item.get("monitor_floor") or score_thresholds.get("monitor_floor")),
+                "promotion_floor": coerce_float(item.get("promotion_floor") or score_thresholds.get("promotion_floor")),
+                "min_opportunity_score": coerce_float(item.get("min_opportunity_score")),
+                "min_opportunity_score_delta": coerce_float(item.get("min_opportunity_score_delta")),
+                "reason_codes": [str(code) for code in list(item.get("reason_codes") or []) if as_text(code) is not None],
             }
         )
     return previews
 
 
 __all__ = [
-    "automation_summary_payload",
+    "strategy_sync_summary_payload",
     "aggregate_selection_summaries",
     "live_selection_counts",
     "selection_summary_payload",

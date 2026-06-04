@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any, Mapping
 
-from core.services.automation_runtime import EntryRuntime
+from core.services.trading_strategy_runtime import EntryRuntime
 from core.services.replay_filters import build_candidate_filter, candidate_filter_reasons
 
 
@@ -24,7 +24,7 @@ def build_runtime_candidate_filter(runtime: EntryRuntime) -> dict[str, Any]:
 
 def _runtime_match_filter(runtime: EntryRuntime) -> dict[str, Any]:
     return build_candidate_filter(
-        strategy_id=runtime.strategy_id,
+        strategy_id=runtime.trade_structure,
         symbols=runtime.symbols,
         dte_min=runtime.build_settings.dte_min,
         dte_max=runtime.build_settings.dte_max,

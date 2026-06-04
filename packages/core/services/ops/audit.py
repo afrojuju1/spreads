@@ -17,62 +17,41 @@ from .shared import (
 )
 
 
-def _linked_automation_outcomes(
+def _linked_strategy_outcomes(
     *,
     selected_opportunities: list[dict[str, Any]],
     execution_outcomes: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    linked: dict[tuple[str, str], dict[str, Any]] = {}
+    linked: dict[str, dict[str, Any]] = {}
     for row in selected_opportunities:
-        owner = row.get("owner") if isinstance(row.get("owner"), Mapping) else {}
-        bot_id = _as_text(owner.get("bot_id")) or _as_text(row.get("bot_id"))
-        automation_id = _as_text(owner.get("automation_id")) or _as_text(
-            row.get("automation_id")
-        )
-        if bot_id is None or automation_id is None:
+        trading_strategy_id = _as_text(row.get("trading_strategy_id"))
+        if trading_strategy_id is None:
             continue
-        payload = linked.setdefault(
-            (bot_id, automation_id),
-            {
-                "bot_id": bot_id,
-                "automation_id": automation_id,
-                "selected_opportunity_count": 0,
-                "execution_count": 0,
-                "open_execution_count": 0,
-                "failed_execution_count": 0,
-            },
-        )
+        payload = linked.setdefault(trading_strategy_id, _empty_strategy_link(trading_strategy_id))
         payload["selected_opportunity_count"] += 1
 
     for row in execution_outcomes:
-        bot_id = _as_text(row.get("bot_id"))
-        automation_id = _as_text(row.get("automation_id"))
-        if bot_id is None or automation_id is None:
+        trading_strategy_id = _as_text(row.get("trading_strategy_id"))
+        if trading_strategy_id is None:
             continue
-        payload = linked.setdefault(
-            (bot_id, automation_id),
-            {
-                "bot_id": bot_id,
-                "automation_id": automation_id,
-                "selected_opportunity_count": 0,
-                "execution_count": 0,
-                "open_execution_count": 0,
-                "failed_execution_count": 0,
-            },
-        )
+        payload = linked.setdefault(trading_strategy_id, _empty_strategy_link(trading_strategy_id))
         payload["execution_count"] += 1
         status = str(row.get("status") or "").strip().lower()
         if status in OPEN_STATUSES:
             payload["open_execution_count"] += 1
         if _as_text(row.get("error_text")) is not None or status in {"failed", "rejected"}:
             payload["failed_execution_count"] += 1
-    return sorted(
-        linked.values(),
-        key=lambda row: (
-            str(row.get("bot_id") or ""),
-            str(row.get("automation_id") or ""),
-        ),
-    )
+    return sorted(linked.values(), key=lambda row: str(row.get("trading_strategy_id") or ""))
+
+
+def _empty_strategy_link(trading_strategy_id: str) -> dict[str, Any]:
+    return {
+        "trading_strategy_id": trading_strategy_id,
+        "selected_opportunity_count": 0,
+        "execution_count": 0,
+        "open_execution_count": 0,
+        "failed_execution_count": 0,
+    }
 
 
 @with_storage()
@@ -98,72 +77,20 @@ def build_audit_view(
     except ValueError as exc:
         raise OpsLookupError(str(exc)) from exc
 
-    target = (
-        audit_snapshot.get("target")
-        if isinstance(audit_snapshot.get("target"), Mapping)
-        else {}
-    )
-    timeline_stats = (
-        audit_snapshot.get("timeline_stats")
-        if isinstance(audit_snapshot.get("timeline_stats"), Mapping)
-        else {}
-    )
-    state_summary = (
-        audit_snapshot.get("state_summary")
-        if isinstance(audit_snapshot.get("state_summary"), Mapping)
-        else {}
-    )
-    explanations = (
-        audit_snapshot.get("explanations")
-        if isinstance(audit_snapshot.get("explanations"), Mapping)
-        else {}
-    )
-    control = (
-        state_summary.get("control_snapshot")
-        if isinstance(state_summary.get("control_snapshot"), Mapping)
-        else {}
-    )
-    current_cycle = (
-        state_summary.get("current_cycle")
-        if isinstance(state_summary.get("current_cycle"), Mapping)
-        else {}
-    )
-    counts = (
-        state_summary.get("counts")
-        if isinstance(state_summary.get("counts"), Mapping)
-        else {}
-    )
-    portfolio = (
-        state_summary.get("portfolio")
-        if isinstance(state_summary.get("portfolio"), Mapping)
-        else {}
-    )
-    portfolio_summary = (
-        portfolio.get("summary")
-        if isinstance(portfolio.get("summary"), Mapping)
-        else {}
-    )
-    selected_opportunities = [
-        dict(row)
-        for row in list(explanations.get("selected_opportunities") or [])
-        if isinstance(row, Mapping)
-    ]
-    risk_decisions = [
-        dict(row)
-        for row in list(explanations.get("risk_decisions") or [])
-        if isinstance(row, Mapping)
-    ]
-    execution_outcomes = [
-        dict(row)
-        for row in list(explanations.get("execution_outcomes") or [])
-        if isinstance(row, Mapping)
-    ]
-    control_actions = [
-        dict(row)
-        for row in list(explanations.get("control_actions") or [])
-        if isinstance(row, Mapping)
-    ]
-    linked_automations = _linked_automation_outcomes(
+    target = audit_snapshot.get("target") if isinstance(audit_snapshot.get("target"), Mapping) else {}
+    timeline_stats = audit_snapshot.get("timeline_stats") if isinstance(audit_snapshot.get("timeline_stats"), Mapping) else {}
+    state_summary = audit_snapshot.get("state_summary") if isinstance(audit_snapshot.get("state_summary"), Mapping) else {}
+    explanations = audit_snapshot.get("explanations") if isinstance(audit_snapshot.get("explanations"), Mapping) else {}
+    control = state_summary.get("control_snapshot") if isinstance(state_summary.get("control_snapshot"), Mapping) else {}
+    current_cycle = state_summary.get("current_cycle") if isinstance(state_summary.get("current_cycle"), Mapping) else {}
+    counts = state_summary.get("counts") if isinstance(state_summary.get("counts"), Mapping) else {}
+    portfolio = state_summary.get("portfolio") if isinstance(state_summary.get("portfolio"), Mapping) else {}
+    portfolio_summary = portfolio.get("summary") if isinstance(portfolio.get("summary"), Mapping) else {}
+    selected_opportunities = [dict(row) for row in list(explanations.get("selected_opportunities") or []) if isinstance(row, Mapping)]
+    risk_decisions = [dict(row) for row in list(explanations.get("risk_decisions") or []) if isinstance(row, Mapping)]
+    execution_outcomes = [dict(row) for row in list(explanations.get("execution_outcomes") or []) if isinstance(row, Mapping)]
+    control_actions = [dict(row) for row in list(explanations.get("control_actions") or []) if isinstance(row, Mapping)]
+    linked_strategies = _linked_strategy_outcomes(
         selected_opportunities=selected_opportunities,
         execution_outcomes=execution_outcomes,
     )
@@ -193,9 +120,7 @@ def build_audit_view(
                 severity="medium",
                 code="audit_pipeline_run_degraded",
                 message=(
-                    "Discovery session "
-                    f"{target.get('pipeline_id') or pipeline_id} on "
-                    f"{target.get('market_date') or market_date} is degraded."
+                    "Discovery session " f"{target.get('pipeline_id') or pipeline_id} on " f"{target.get('market_date') or market_date} is degraded."
                 ),
             )
         )
@@ -225,33 +150,24 @@ def build_audit_view(
             _attention(
                 severity="high",
                 code="audit_risk_blocked",
-                message=_as_text(target.get("risk_note"))
-                or "Discovery session risk state was blocked.",
+                message=_as_text(target.get("risk_note")) or "Discovery session risk state was blocked.",
             )
         )
     elif risk_status not in {"", "ok", "disabled"}:
         statuses.append("degraded")
 
-    reconciliation_status = (
-        str(target.get("reconciliation_status") or "").strip().lower()
-    )
+    reconciliation_status = str(target.get("reconciliation_status") or "").strip().lower()
     if reconciliation_status == "mismatch":
         statuses.append("degraded")
         attention.append(
             _attention(
                 severity="medium",
                 code="audit_reconciliation_mismatch",
-                message=_as_text(target.get("reconciliation_note"))
-                or "Discovery-session reconciliation had mismatches.",
+                message=_as_text(target.get("reconciliation_note")) or "Discovery-session reconciliation had mismatches.",
             )
         )
 
-    blocked_risk_count = sum(
-        1
-        for row in risk_decisions
-        if str(row.get("status") or "").strip().lower()
-        in {"blocked", "rejected", "denied"}
-    )
+    blocked_risk_count = sum(1 for row in risk_decisions if str(row.get("status") or "").strip().lower() in {"blocked", "rejected", "denied"})
     if blocked_risk_count:
         statuses.append("degraded")
         attention.append(
@@ -265,8 +181,7 @@ def build_audit_view(
     failed_execution_count = sum(
         1
         for row in execution_outcomes
-        if _as_text(row.get("error_text")) is not None
-        or str(row.get("status") or "").strip().lower() in {"failed", "rejected"}
+        if _as_text(row.get("error_text")) is not None or str(row.get("status") or "").strip().lower() in {"failed", "rejected"}
     )
     if failed_execution_count:
         statuses.append("degraded")
@@ -278,11 +193,7 @@ def build_audit_view(
             )
         )
 
-    open_execution_count = sum(
-        1
-        for row in execution_outcomes
-        if str(row.get("status") or "").strip().lower() in OPEN_STATUSES
-    )
+    open_execution_count = sum(1 for row in execution_outcomes if str(row.get("status") or "").strip().lower() in OPEN_STATUSES)
     if open_execution_count:
         statuses.append("degraded")
         attention.append(
@@ -310,10 +221,7 @@ def build_audit_view(
             _attention(
                 severity="low",
                 code="audit_event_scan_limited",
-                message=(
-                    f"Audit hit the event scan limit of {timeline_stats.get('event_scan_limit')}; "
-                    "older events may be omitted."
-                ),
+                message=(f"Audit hit the event scan limit of {timeline_stats.get('event_scan_limit')}; " "older events may be omitted."),
             )
         )
 
@@ -334,11 +242,9 @@ def build_audit_view(
             "risk_decision_count": counts.get("risk_decisions"),
             "execution_count": counts.get("executions"),
             "timeline_item_count": timeline_stats.get("timeline_item_count"),
-            "returned_timeline_item_count": timeline_stats.get(
-                "returned_timeline_item_count"
-            ),
+            "returned_timeline_item_count": timeline_stats.get("returned_timeline_item_count"),
             "net_pnl_total": portfolio_summary.get("net_pnl_total"),
-            "linked_automation_count": len(linked_automations),
+            "linked_strategy_count": len(linked_strategies),
         },
         "attention": attention[:10],
         "details": {
@@ -348,26 +254,14 @@ def build_audit_view(
             "current_cycle": dict(current_cycle),
             "counts": dict(counts),
             "portfolio_summary": dict(portfolio_summary),
-            "linked_automations": linked_automations,
-            "slot_runs": [
-                dict(row)
-                for row in list(audit_snapshot.get("slot_runs") or [])
-                if isinstance(row, Mapping)
-            ],
-            "alerts": [
-                dict(row)
-                for row in list(audit_snapshot.get("alerts") or [])
-                if isinstance(row, Mapping)
-            ],
+            "linked_strategies": linked_strategies,
+            "slot_runs": [dict(row) for row in list(audit_snapshot.get("slot_runs") or []) if isinstance(row, Mapping)],
+            "alerts": [dict(row) for row in list(audit_snapshot.get("alerts") or []) if isinstance(row, Mapping)],
             "selected_opportunities": selected_opportunities,
             "risk_decisions": risk_decisions,
             "execution_outcomes": execution_outcomes,
             "control_actions": control_actions,
             "timeline_stats": dict(timeline_stats),
-            "timeline": [
-                dict(row)
-                for row in list(audit_snapshot.get("timeline") or [])
-                if isinstance(row, Mapping)
-            ],
+            "timeline": [dict(row) for row in list(audit_snapshot.get("timeline") or []) if isinstance(row, Mapping)],
         },
     }

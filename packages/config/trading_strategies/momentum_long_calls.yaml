@@ -1,0 +1,85 @@
+trading_strategy_id: momentum_long_calls
+name: Momentum Long Calls
+enabled: true
+source:
+  type: symbol_feed
+  ref: finviz_momentum
+  max_age_seconds: 300
+  max_symbols: 10
+trade_structure: long_call
+build:
+  dte:
+    min: 7
+    max: 21
+  entry_delta:
+    min: 0.45
+    max: 0.75
+    target: 0.55
+entry:
+  schedule:
+    cadence_minutes: 2
+    market_hours_only: true
+    window:
+      start_et: "10:00"
+      end_et: "15:45"
+  policy:
+    signal:
+      type: vwap_reclaim
+      min_price: 10
+      min_market_cap: 1000000000
+      min_daily_volume: 1000000
+      min_move_percent: 0
+      require_positive_momentum: true
+      max_spread_pct: 1.0
+      max_quote_age_seconds: 180
+      min_intraday_bars: 30
+      recent_lookback_bars: 5
+      confirmation_bars: 2
+      breakout_tolerance_bps: 5
+management:
+  schedule:
+    cadence_minutes: 1
+    market_hours_only: true
+    window:
+      start_et: "10:00"
+      end_et: "15:45"
+  policy:
+    profit_target_pct: 0.40
+    stop_loss_pct: 0.30
+    force_close_minutes_before_close: 15
+    max_spread_pct: 20
+    max_quote_age_seconds: 180
+    repricing:
+      stale_after_seconds: 75
+      max_reprices: 3
+      price_step: 0.01
+      max_concession: 0.03
+    underlying_invalidation:
+      enabled: true
+      min_intraday_bars: 30
+      recent_lookback_bars: 5
+      confirmation_bars: 2
+      breakdown_tolerance_bps: 5
+      max_spread_pct: 1.0
+      max_quote_age_seconds: 180
+liquidity:
+  min_open_interest: 500
+  max_leg_spread_pct_mid: 0.10
+  max_quote_age_seconds: 180
+risk:
+  limits:
+    max_open_positions: 10
+    max_daily_actions: 15
+    max_new_entries_per_day: 15
+    daily_loss_limit: 500
+  sizing:
+    max_risk_per_trade: 500
+runtime:
+  live_enabled: false
+  cancel_pending_entries_after_et: "15:30"
+  flatten_positions_at_et: "15:45"
+  paused: false
+execution:
+  approval: auto
+  mode: paper
+  runtime: alpaca_direct

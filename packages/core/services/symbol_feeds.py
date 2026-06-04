@@ -14,14 +14,10 @@ import urllib.request
 from core.common import parse_float, parse_int, pick
 from core.integrations.alpaca.client import AlpacaRequestError
 from core.services.alpaca import create_alpaca_client_from_env
-from core.services.automations import load_universe_symbols
-from core.services.bots import build_entry_automation_symbols
+from core.services.trading_strategies import build_entry_strategy_symbols, load_universe_symbols
 from core.storage.serializers import parse_datetime
 
-
-VALID_SYMBOL_FEED_RECIPES = frozenset(
-    {"automation_union", "finviz_screener", "stock_prefilter"}
-)
+VALID_SYMBOL_FEED_RECIPES = frozenset({"strategy_union", "finviz_screener", "stock_prefilter"})
 
 
 def _iso_now() -> str:
@@ -100,9 +96,7 @@ def _normalize_symbol(value: Any) -> str | None:
 
 _LEVERAGE_REGEX = re.compile(r"\b(?:[2-9](?:\.\d+)?x|ultra|ultrapro|leveraged|leverage)\b")
 _INVERSE_REGEX = re.compile(r"\b(?:inverse|short|bear|ultrashort)\b")
-_ETF_NAME_REGEX = re.compile(
-    r"\b(?:etf|trust|fund|shares|direxion|proshares|graniteshares|yieldmax)\b"
-)
+_ETF_NAME_REGEX = re.compile(r"\b(?:etf|trust|fund|shares|direxion|proshares|graniteshares|yieldmax)\b")
 
 
 def _looks_like_leveraged_or_inverse_etf(asset: Mapping[str, Any] | None) -> bool:
@@ -148,11 +142,7 @@ def _stock_snapshot_daily_volume(snapshot: Mapping[str, Any]) -> int:
 
 def _stock_snapshot_daily_percent_change(snapshot: Mapping[str, Any]) -> float | None:
     daily_bar = snapshot.get("dailyBar") if isinstance(snapshot.get("dailyBar"), Mapping) else {}
-    prev_daily_bar = (
-        snapshot.get("prevDailyBar")
-        if isinstance(snapshot.get("prevDailyBar"), Mapping)
-        else {}
-    )
+    prev_daily_bar = snapshot.get("prevDailyBar") if isinstance(snapshot.get("prevDailyBar"), Mapping) else {}
     current_close = parse_float(pick(daily_bar, "c", "close"))
     previous_close = parse_float(pick(prev_daily_bar, "c", "close"))
     if current_close is None or previous_close is None or previous_close <= 0:
@@ -166,14 +156,14 @@ def _rank_score(rank: int | None, *, total: int, weight: float) -> float:
     return max(weight * float(total - rank) / float(total), 0.0)
 
 
-def _build_automation_union_result(
+def _build_strategy_union_result(
     *,
     feed_id: str,
     recipe: str,
     recipe_args: Mapping[str, Any],
     config_root: str | None,
 ) -> dict[str, Any]:
-    symbols = build_entry_automation_symbols(
+    symbols = build_entry_strategy_symbols(
         config_root=config_root,
         scanner_strategy=_as_optional_text(recipe_args.get("scanner_strategy")),
         scanner_profile=_as_optional_text(recipe_args.get("scanner_profile")),
@@ -260,9 +250,7 @@ def _run_stock_prefilter_feed(
         }
     )
     if not candidate_symbols:
-        raise RuntimeError(
-            f"Stock prefilter feed {feed_id} produced no screener candidates"
-        )
+        raise RuntimeError(f"Stock prefilter feed {feed_id} produced no screener candidates")
 
     optionable_symbols: set[str] | None = None
     optionable_assets_by_symbol: dict[str, dict[str, Any]] = {}
@@ -294,35 +282,16 @@ def _run_stock_prefilter_feed(
         issues.append("news_unavailable")
 
     most_active_rank_by_symbol = {
-        symbol: rank
-        for rank, item in enumerate(most_actives)
-        for symbol in [_normalize_symbol(item.get("symbol"))]
-        if symbol is not None
+        symbol: rank for rank, item in enumerate(most_actives) for symbol in [_normalize_symbol(item.get("symbol"))] if symbol is not None
     }
-    most_active_item_by_symbol = {
-        symbol: item
-        for item in most_actives
-        for symbol in [_normalize_symbol(item.get("symbol"))]
-        if symbol is not None
-    }
+    most_active_item_by_symbol = {symbol: item for item in most_actives for symbol in [_normalize_symbol(item.get("symbol"))] if symbol is not None}
     gainer_rank_by_symbol = {
-        symbol: rank
-        for rank, item in enumerate(gainers)
-        for symbol in [_normalize_symbol(item.get("symbol"))]
-        if symbol is not None
+        symbol: rank for rank, item in enumerate(gainers) for symbol in [_normalize_symbol(item.get("symbol"))] if symbol is not None
     }
     loser_rank_by_symbol = {
-        symbol: rank
-        for rank, item in enumerate(losers)
-        for symbol in [_normalize_symbol(item.get("symbol"))]
-        if symbol is not None
+        symbol: rank for rank, item in enumerate(losers) for symbol in [_normalize_symbol(item.get("symbol"))] if symbol is not None
     }
-    mover_item_by_symbol = {
-        symbol: item
-        for item in [*gainers, *losers]
-        for symbol in [_normalize_symbol(item.get("symbol"))]
-        if symbol is not None
-    }
+    mover_item_by_symbol = {symbol: item for item in [*gainers, *losers] for symbol in [_normalize_symbol(item.get("symbol"))] if symbol is not None}
 
     candidates: list[dict[str, Any]] = []
     excluded_leveraged_inverse_count = 0
@@ -331,10 +300,7 @@ def _run_stock_prefilter_feed(
         if optionable_symbols is not None and symbol not in optionable_symbols:
             continue
         asset = optionable_assets_by_symbol.get(symbol)
-        if (
-            exclude_leveraged_and_inverse_etfs
-            and _looks_like_leveraged_or_inverse_etf(asset)
-        ):
+        if exclude_leveraged_and_inverse_etfs and _looks_like_leveraged_or_inverse_etf(asset):
             excluded_leveraged_inverse_count += 1
             continue
         snapshot = snapshots.get(symbol)
@@ -348,14 +314,8 @@ def _run_stock_prefilter_feed(
             below_min_daily_volume_count += 1
             continue
         snapshot_move_percent = _stock_snapshot_daily_percent_change(snapshot)
-        mover_percent = parse_float(
-            (mover_item_by_symbol.get(symbol) or {}).get("percent_change")
-        )
-        move_percent = (
-            mover_percent
-            if mover_percent is not None
-            else snapshot_move_percent
-        )
+        mover_percent = parse_float((mover_item_by_symbol.get(symbol) or {}).get("percent_change"))
+        move_percent = mover_percent if mover_percent is not None else snapshot_move_percent
         reason_codes: list[str] = []
         source_tags = [f"recipe:{str(recipe or '').strip().lower()}", "source:alpaca"]
         if symbol in most_active_rank_by_symbol:
@@ -383,12 +343,8 @@ def _run_stock_prefilter_feed(
                 "most_active_rank": most_active_rank_by_symbol.get(symbol),
                 "gainer_rank": gainer_rank_by_symbol.get(symbol),
                 "loser_rank": loser_rank_by_symbol.get(symbol),
-                "trade_count": parse_int(
-                    (most_active_item_by_symbol.get(symbol) or {}).get("trade_count")
-                ),
-                "most_active_volume": parse_int(
-                    (most_active_item_by_symbol.get(symbol) or {}).get("volume")
-                ),
+                "trade_count": parse_int((most_active_item_by_symbol.get(symbol) or {}).get("trade_count")),
+                "most_active_volume": parse_int((most_active_item_by_symbol.get(symbol) or {}).get("volume")),
                 "reason_codes": reason_codes,
                 "source_tags": sorted(set(source_tags)),
             }
@@ -418,17 +374,9 @@ def _run_stock_prefilter_feed(
             weight=25.0,
         )
         move_percent = abs(float(item.get("move_percent") or 0.0))
-        move_score = (
-            20.0 * move_percent / max_abs_move
-            if max_abs_move > 0.0
-            else 0.0
-        )
+        move_score = 20.0 * move_percent / max_abs_move if max_abs_move > 0.0 else 0.0
         daily_volume = max(int(item.get("daily_volume") or 0), 0)
-        volume_score = (
-            10.0 * math.log1p(daily_volume) / max_log_volume
-            if max_log_volume > 0.0
-            else 0.0
-        )
+        volume_score = 10.0 * math.log1p(daily_volume) / max_log_volume if max_log_volume > 0.0 else 0.0
         news_score = min(int(item.get("news_count") or 0), 3) * (5.0 / 3.0)
         item["score"] = round(
             activity_score + mover_score + move_score + volume_score + news_score,
@@ -446,9 +394,7 @@ def _run_stock_prefilter_feed(
     selected = ranked[:top]
     symbols = [str(item.get("symbol")) for item in selected if str(item.get("symbol") or "").strip()]
     if not symbols:
-        raise RuntimeError(
-            f"Stock prefilter feed {feed_id} produced no symbols after filters"
-        )
+        raise RuntimeError(f"Stock prefilter feed {feed_id} produced no symbols after filters")
     generated_at = _iso_now()
     degradation_status = "ok" if symbols and not issues else "partial" if symbols else "empty"
     degradation_reason = None
@@ -615,16 +561,10 @@ def _parse_finviz_html_rows(source_text: str) -> list[dict[str, Any]]:
         flags=re.S | re.I,
     )
     for row_chunk in row_chunks:
-        cells = [
-            _strip_finviz_html(item)
-            for item in re.findall(r"<td\b[^>]*>(.*?)</td>", row_chunk, flags=re.S | re.I)
-        ]
+        cells = [_strip_finviz_html(item) for item in re.findall(r"<td\b[^>]*>(.*?)</td>", row_chunk, flags=re.S | re.I)]
         if not cells:
             continue
-        row = {
-            headers[index] if index < len(headers) else f"column_{index}": value
-            for index, value in enumerate(cells)
-        }
+        row = {headers[index] if index < len(headers) else f"column_{index}": value for index, value in enumerate(cells)}
         rows.append(row)
     return rows
 
@@ -634,11 +574,7 @@ def _parse_finviz_source_rows(source_text: str) -> tuple[list[dict[str, Any]], s
     if stripped.startswith("<!DOCTYPE") or stripped.startswith("<html"):
         return _parse_finviz_html_rows(source_text), "html"
     rows = [
-        {
-            _normalize_finviz_header(key): value
-            for key, value in dict(row).items()
-            if key is not None
-        }
+        {_normalize_finviz_header(key): value for key, value in dict(row).items() if key is not None}
         for row in csv.DictReader(source_text.splitlines())
     ]
     return rows, "csv"
@@ -676,9 +612,8 @@ def _finviz_source_config(
         or _recipe_text_arg(recipe_args, "csv_url", env_field_name="csv_url_env")
         or _recipe_text_arg(recipe_args, "url", env_field_name="url_env")
     )
-    csv_path = (
-        _recipe_text_arg(recipe_args, "csv_path", env_field_name="csv_path_env")
-        or _recipe_text_arg(recipe_args, "path", env_field_name="path_env")
+    csv_path = _recipe_text_arg(recipe_args, "csv_path", env_field_name="csv_path_env") or _recipe_text_arg(
+        recipe_args, "path", env_field_name="path_env"
     )
 
     if source in {"auto", "csv_export", "csv_url", "url"} and scanner_url:
@@ -707,9 +642,7 @@ def _run_finviz_screener_feed(
         0,
     )
     exclude_industries = _finviz_text_list_arg(recipe_args.get("exclude_industries"))
-    exclude_company_keywords = _finviz_text_list_arg(
-        recipe_args.get("exclude_company_keywords")
-    )
+    exclude_company_keywords = _finviz_text_list_arg(recipe_args.get("exclude_company_keywords"))
     timeout_seconds = max(_as_int(recipe_args.get("timeout_seconds"), 20), 1)
     cookie_env = _as_optional_text(recipe_args.get("cookie_env")) or "FINVIZ_COOKIE"
     source_kind, source_value = _finviz_source_config(recipe_args)
@@ -760,17 +693,13 @@ def _run_finviz_screener_feed(
             exclude_company_keywords=exclude_company_keywords,
         )
         if exclusion_reason is not None:
-            excluded_instrument_reason_counts[exclusion_reason] = (
-                excluded_instrument_reason_counts.get(exclusion_reason, 0) + 1
-            )
+            excluded_instrument_reason_counts[exclusion_reason] = excluded_instrument_reason_counts.get(exclusion_reason, 0) + 1
             continue
         price = _parse_finviz_float(pick(row, "price", "last", "close"))
         if price is not None and price < min_price:
             below_min_price_count += 1
             continue
-        market_cap = _parse_finviz_float(
-            pick(row, "market_cap", "market_capitalization", "mkt_cap")
-        )
+        market_cap = _parse_finviz_float(pick(row, "market_cap", "market_capitalization", "mkt_cap"))
         if min_market_cap > 0:
             if market_cap is None:
                 missing_market_cap_count += 1
@@ -782,12 +711,8 @@ def _run_finviz_screener_feed(
         if volume is not None and volume < min_volume:
             below_min_volume_count += 1
             continue
-        change_percent = _parse_finviz_float(
-            pick(row, "change", "change_percent", "change_pct")
-        )
-        relative_volume = _parse_finviz_float(
-            pick(row, "rel_volume", "relative_volume", "rel_vol")
-        )
+        change_percent = _parse_finviz_float(pick(row, "change", "change_percent", "change_pct"))
+        relative_volume = _parse_finviz_float(pick(row, "rel_volume", "relative_volume", "rel_vol"))
         raw_rank = parse_int(pick(row, "no", "rank"))
         rank_index = max(raw_rank - 1, 0) if raw_rank is not None else index
         reason_codes = ["finviz_screen"]
@@ -810,12 +735,8 @@ def _run_finviz_screener_feed(
                 "price": None if price is None else round(price, 4),
                 "market_cap": None if market_cap is None else int(round(market_cap)),
                 "daily_volume": volume,
-                "move_percent": (
-                    None if change_percent is None else round(change_percent, 4)
-                ),
-                "relative_volume": (
-                    None if relative_volume is None else round(relative_volume, 4)
-                ),
+                "move_percent": (None if change_percent is None else round(change_percent, 4)),
+                "relative_volume": (None if relative_volume is None else round(relative_volume, 4)),
                 "finviz_rank": None if raw_rank is None else int(raw_rank),
                 "finviz_rank_index": rank_index,
                 "reason_codes": reason_codes,
@@ -846,23 +767,11 @@ def _run_finviz_screener_feed(
             weight=40.0,
         )
         move_percent = abs(float(item.get("move_percent") or 0.0))
-        move_score = (
-            25.0 * move_percent / max_abs_move
-            if max_abs_move > 0.0
-            else 0.0
-        )
+        move_score = 25.0 * move_percent / max_abs_move if max_abs_move > 0.0 else 0.0
         relative_volume = float(item.get("relative_volume") or 0.0)
-        relative_volume_score = (
-            20.0 * relative_volume / max_relative_volume
-            if max_relative_volume > 0.0
-            else 0.0
-        )
+        relative_volume_score = 20.0 * relative_volume / max_relative_volume if max_relative_volume > 0.0 else 0.0
         daily_volume = max(int(item.get("daily_volume") or 0), 0)
-        volume_score = (
-            15.0 * math.log1p(daily_volume) / max_log_volume
-            if max_log_volume > 0.0
-            else 0.0
-        )
+        volume_score = 15.0 * math.log1p(daily_volume) / max_log_volume if max_log_volume > 0.0 else 0.0
         item["score"] = round(
             rank_score + move_score + relative_volume_score + volume_score,
             2,
@@ -878,11 +787,7 @@ def _run_finviz_screener_feed(
         ),
     )
     selected = ranked[:top]
-    symbols = [
-        str(item.get("symbol"))
-        for item in selected
-        if str(item.get("symbol") or "").strip()
-    ]
+    symbols = [str(item.get("symbol")) for item in selected if str(item.get("symbol") or "").strip()]
     return {
         "status": "completed",
         "feed_id": str(feed_id),
@@ -906,12 +811,8 @@ def _run_finviz_screener_feed(
             "missing_market_cap_count": missing_market_cap_count,
             "below_min_market_cap_count": below_min_market_cap_count,
             "below_min_volume_count": below_min_volume_count,
-            "excluded_instrument_count": sum(
-                excluded_instrument_reason_counts.values()
-            ),
-            "excluded_instrument_reason_counts": dict(
-                sorted(excluded_instrument_reason_counts.items())
-            ),
+            "excluded_instrument_count": sum(excluded_instrument_reason_counts.values()),
+            "excluded_instrument_reason_counts": dict(sorted(excluded_instrument_reason_counts.items())),
         },
         "degradation": {
             "status": "ok" if symbols else "empty",
@@ -928,9 +829,9 @@ def build_symbol_feed_symbols(
 ) -> tuple[str, ...]:
     normalized_recipe = str(recipe or "").strip().lower()
     normalized_args = _recipe_args(recipe_args)
-    if normalized_recipe == "automation_union":
+    if normalized_recipe == "strategy_union":
         return tuple(
-            _build_automation_union_result(
+            _build_strategy_union_result(
                 feed_id="symbol_feed",
                 recipe=normalized_recipe,
                 recipe_args=normalized_args,
@@ -968,8 +869,8 @@ def run_symbol_feed(
 ) -> dict[str, Any]:
     normalized_args = _recipe_args(recipe_args)
     normalized_recipe = str(recipe or "").strip().lower()
-    if normalized_recipe == "automation_union":
-        return _build_automation_union_result(
+    if normalized_recipe == "strategy_union":
+        return _build_strategy_union_result(
             feed_id=feed_id,
             recipe=normalized_recipe,
             recipe_args=normalized_args,
@@ -1039,18 +940,9 @@ def get_latest_symbol_feed_snapshot(
             (datetime.now(UTC) - generated_dt.astimezone(UTC)).total_seconds(),
             0.0,
         )
-    symbols = [
-        str(symbol).upper()
-        for symbol in list(result.get("symbols") or [])
-        if str(symbol).strip()
-    ]
+    symbols = [str(symbol).upper() for symbol in list(result.get("symbols") or []) if str(symbol).strip()]
     snapshot_status = "ready" if symbols else "empty"
-    if (
-        max_age_seconds is not None
-        and generated_dt is not None
-        and age_seconds is not None
-        and age_seconds > max(int(max_age_seconds), 0)
-    ):
+    if max_age_seconds is not None and generated_dt is not None and age_seconds is not None and age_seconds > max(int(max_age_seconds), 0):
         snapshot_status = "stale"
     return {
         "status": snapshot_status,
@@ -1064,9 +956,7 @@ def get_latest_symbol_feed_snapshot(
         "summary": dict(result.get("summary") or {}),
         "degradation": {
             "status": snapshot_status,
-            "reason": None
-            if snapshot_status in {"ready", "empty"}
-            else "snapshot_stale",
+            "reason": None if snapshot_status in {"ready", "empty"} else "snapshot_stale",
         },
     }
 
@@ -1097,11 +987,7 @@ def resolve_symbol_feed_symbols(
             "generated_at": snapshot.get("generated_at"),
             "age_seconds": snapshot.get("age_seconds"),
             "symbols": list(snapshot.get("symbols") or []),
-            "entries": [
-                dict(item)
-                for item in list(snapshot.get("entries") or [])
-                if isinstance(item, Mapping)
-            ],
+            "entries": [dict(item) for item in list(snapshot.get("entries") or []) if isinstance(item, Mapping)],
             "summary": dict(snapshot.get("summary") or {}),
             "degradation": dict(snapshot.get("degradation") or {}),
         }
@@ -1133,11 +1019,7 @@ def resolve_symbol_feed_symbols(
         "feed_id": str(feed_id),
         "job_key": str(job_key),
         "symbols": [],
-        "entries": [
-            dict(item)
-            for item in list(snapshot.get("entries") or [])
-            if isinstance(item, Mapping)
-        ],
+        "entries": [dict(item) for item in list(snapshot.get("entries") or []) if isinstance(item, Mapping)],
         "summary": dict(snapshot.get("summary") or {}),
         "degradation": dict(snapshot.get("degradation") or {}),
         "feed_snapshot": snapshot,

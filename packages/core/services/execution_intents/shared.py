@@ -122,19 +122,12 @@ def _attempt_request(attempt: dict[str, Any]) -> dict[str, Any]:
     return dict(payload) if isinstance(payload, dict) else {}
 
 
-def _intent_action_type(
-    intent: dict[str, Any], attempt: dict[str, Any] | None = None
-) -> str:
+def _intent_action_type(intent: dict[str, Any], attempt: dict[str, Any] | None = None) -> str:
     action_type = str(intent.get("action_type") or "").strip().lower()
     request = {} if attempt is None else _attempt_request(attempt)
     payload = _intent_payload(intent)
     trade_intent = (
-        str(
-            request.get("trade_intent")
-            or payload.get("trade_intent")
-            or (None if attempt is None else attempt.get("trade_intent"))
-            or "open"
-        )
+        str(request.get("trade_intent") or payload.get("trade_intent") or (None if attempt is None else attempt.get("trade_intent")) or "open")
         .strip()
         .lower()
     )
@@ -164,11 +157,7 @@ def _update_intent(
     superseded_by_id: str | None | object = _UNCHANGED,
     updated_at: str | None = None,
 ) -> dict[str, Any]:
-    resolved_payload = (
-        _intent_payload(intent)
-        if payload is _UNCHANGED
-        else dict(payload or {})
-    )
+    resolved_payload = _intent_payload(intent) if payload is _UNCHANGED else dict(payload or {})
     if payload_updates:
         resolved_payload.update(payload_updates)
     current_state = _as_text(intent.get("state"))
@@ -180,43 +169,20 @@ def _update_intent(
         resolved_state = require_execution_intent_transition(current_state, state)
     return execution_store.upsert_execution_intent(
         execution_intent_id=str(intent["execution_intent_id"]),
-        bot_id=str(intent["bot_id"]),
-        automation_id=str(intent["automation_id"]),
+        trading_strategy_id=str(intent["trading_strategy_id"]),
         opportunity_decision_id=(
-            _as_text(intent.get("opportunity_decision_id"))
-            if opportunity_decision_id is _UNCHANGED
-            else opportunity_decision_id
+            _as_text(intent.get("opportunity_decision_id")) if opportunity_decision_id is _UNCHANGED else opportunity_decision_id
         ),
-        strategy_position_id=(
-            _as_text(intent.get("strategy_position_id"))
-            if strategy_position_id is _UNCHANGED
-            else strategy_position_id
-        ),
-        execution_attempt_id=(
-            _as_text(intent.get("execution_attempt_id"))
-            if execution_attempt_id is _UNCHANGED
-            else execution_attempt_id
-        ),
+        strategy_position_id=(_as_text(intent.get("strategy_position_id")) if strategy_position_id is _UNCHANGED else strategy_position_id),
+        execution_attempt_id=(_as_text(intent.get("execution_attempt_id")) if execution_attempt_id is _UNCHANGED else execution_attempt_id),
         action_type=str(intent["action_type"]),
         slot_key=str(intent["slot_key"]),
-        claim_token=(
-            _as_text(intent.get("claim_token"))
-            if claim_token is _UNCHANGED
-            else claim_token
-        ),
+        claim_token=(_as_text(intent.get("claim_token")) if claim_token is _UNCHANGED else claim_token),
         policy_ref=dict(intent.get("policy_ref") or {}),
         config_hash=str(intent.get("config_hash") or ""),
         state=resolved_state,
-        expires_at=(
-            _as_text(intent.get("expires_at"))
-            if expires_at is _UNCHANGED
-            else expires_at
-        ),
-        superseded_by_id=(
-            _as_text(intent.get("superseded_by_id"))
-            if superseded_by_id is _UNCHANGED
-            else superseded_by_id
-        ),
+        expires_at=(_as_text(intent.get("expires_at")) if expires_at is _UNCHANGED else expires_at),
+        superseded_by_id=(_as_text(intent.get("superseded_by_id")) if superseded_by_id is _UNCHANGED else superseded_by_id),
         payload=resolved_payload,
         created_at=str(intent["created_at"]),
         updated_at=updated_at or _utc_now(),
@@ -242,8 +208,7 @@ def issue_pending_execution_intent(
     execution_store: Any,
     *,
     execution_intent_id: str,
-    bot_id: str,
-    automation_id: str,
+    trading_strategy_id: str,
     opportunity_decision_id: str | None,
     strategy_position_id: str | None,
     action_type: str,
@@ -262,8 +227,7 @@ def issue_pending_execution_intent(
     resolved_state = require_execution_intent_transition(None, state)
     intent = execution_store.upsert_execution_intent(
         execution_intent_id=execution_intent_id,
-        bot_id=bot_id,
-        automation_id=automation_id,
+        trading_strategy_id=trading_strategy_id,
         opportunity_decision_id=opportunity_decision_id,
         strategy_position_id=strategy_position_id,
         execution_attempt_id=execution_attempt_id,
@@ -300,9 +264,7 @@ def link_execution_intent_position(
         execution_store,
         intent,
         strategy_position_id=position_id,
-        execution_attempt_id=(
-            _UNCHANGED if execution_attempt_id is None else execution_attempt_id
-        ),
+        execution_attempt_id=(_UNCHANGED if execution_attempt_id is None else execution_attempt_id),
         payload_updates={"strategy_position_id": position_id},
         updated_at=updated_at,
     )
@@ -319,29 +281,19 @@ def sync_execution_intent_from_attempt(
     payload_updates: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     execution_attempt_id = _as_text(attempt.get("execution_attempt_id"))
-    strategy_position_id = _as_text(attempt.get("position_id")) or _as_text(
-        intent.get("strategy_position_id")
-    )
+    strategy_position_id = _as_text(attempt.get("position_id")) or _as_text(intent.get("strategy_position_id"))
     updated_at = _utc_now()
     updated = _update_intent(
         execution_store,
         intent,
         state=state,
-        strategy_position_id=(
-            _UNCHANGED if strategy_position_id is None else strategy_position_id
-        ),
-        execution_attempt_id=(
-            _UNCHANGED if execution_attempt_id is None else execution_attempt_id
-        ),
+        strategy_position_id=(_UNCHANGED if strategy_position_id is None else strategy_position_id),
+        execution_attempt_id=(_UNCHANGED if execution_attempt_id is None else execution_attempt_id),
         payload_updates={
             "dispatch_status": state,
             "execution_attempt_id": execution_attempt_id,
             "attempt_status": str(attempt.get("status") or ""),
-            **(
-                {}
-                if strategy_position_id is None
-                else {"strategy_position_id": strategy_position_id}
-            ),
+            **({} if strategy_position_id is None else {"strategy_position_id": strategy_position_id}),
             **({} if payload_updates is None else dict(payload_updates)),
         },
         updated_at=updated_at,
@@ -394,9 +346,7 @@ def _submitted_age_seconds(attempt: dict[str, Any]) -> float | None:
 def _repricing_policy(intent: dict[str, Any], attempt: dict[str, Any]) -> dict[str, Any]:
     payload = _intent_payload(intent)
     request = _attempt_request(attempt)
-    exit_policy = _mapping(request.get("exit_policy")) or _mapping(
-        payload.get("exit_policy")
-    )
+    exit_policy = _mapping(request.get("exit_policy")) or _mapping(payload.get("exit_policy"))
     policy = (
         _mapping(request.get("repricing_policy"))
         or _mapping(payload.get("repricing_policy"))
@@ -415,18 +365,10 @@ def _policy_enabled(policy: dict[str, Any]) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
-def _next_reprice_limit(
-    intent: dict[str, Any], attempt: dict[str, Any]
-) -> float | None:
+def _next_reprice_limit(intent: dict[str, Any], attempt: dict[str, Any]) -> float | None:
     request = _attempt_request(attempt)
-    candidate = (
-        request.get("candidate") if isinstance(request.get("candidate"), dict) else {}
-    )
-    execution_policy = (
-        request.get("execution_policy")
-        if isinstance(request.get("execution_policy"), dict)
-        else {}
-    )
+    candidate = request.get("candidate") if isinstance(request.get("candidate"), dict) else {}
+    execution_policy = request.get("execution_policy") if isinstance(request.get("execution_policy"), dict) else {}
     current_limit = _coerce_float(attempt.get("requested_limit_price"))
     if current_limit is None:
         current_limit = _coerce_float(attempt.get("limit_price"))
@@ -437,18 +379,12 @@ def _next_reprice_limit(
     if action_type == "close":
         if not policy or not _policy_enabled(policy):
             return None
-        max_reprices = _coerce_int(
-            policy.get("max_reprices", policy.get("max_reprice_count"))
-        )
+        max_reprices = _coerce_int(policy.get("max_reprices", policy.get("max_reprice_count")))
         if max_reprices is None:
             max_reprices = 3
         if _reprice_count(intent) >= max(max_reprices, 0):
             return None
-    natural_value = _coerce_float(
-        candidate.get("natural_credit")
-        or candidate.get("natural_debit")
-        or candidate.get("natural_value")
-    )
+    natural_value = _coerce_float(candidate.get("natural_credit") or candidate.get("natural_debit") or candidate.get("natural_value"))
     max_credit_concession = max(
         _coerce_float(
             policy.get(
@@ -474,11 +410,7 @@ def _next_reprice_limit(
     )
     if original_limit is None:
         original_limit = current_limit
-    premium_kind = net_premium_kind(
-        normalize_strategy_family(
-            attempt.get("strategy_family") or attempt.get("strategy")
-        )
-    )
+    premium_kind = net_premium_kind(normalize_strategy_family(attempt.get("strategy_family") or attempt.get("strategy")))
     if action_type == "close":
         if premium_kind == "credit":
             premium_kind = "debit"

@@ -11,9 +11,7 @@ from core.storage.signal_repository import VISIBLE_OPPORTUNITY_LIFECYCLE_STATES
 LIVE_OPPORTUNITY_ELIGIBILITY_STATES = ("live",)
 LIVE_AND_EXPIRED_OPPORTUNITY_ELIGIBILITY_STATES = ("live", "expired")
 BOARD_OPPORTUNITY_ELIGIBILITY_STATES = ("live", "stale", "expired")
-BOARD_OPPORTUNITY_LIFECYCLE_STATES = VISIBLE_OPPORTUNITY_LIFECYCLE_STATES + (
-    "expired",
-)
+BOARD_OPPORTUNITY_LIFECYCLE_STATES = VISIBLE_OPPORTUNITY_LIFECYCLE_STATES + ("expired",)
 
 
 def _resolve_opportunity_eligibility_states(
@@ -56,11 +54,7 @@ def serialize_opportunity_row(row: Mapping[str, Any]) -> dict[str, Any]:
     if not label and pipeline_id:
         label = str(pipeline_id).partition(":")[2]
     candidate = payload.get("candidate")
-    candidate_payload = (
-        dict(candidate)
-        if isinstance(candidate, Mapping)
-        else dict(payload.get("candidate_json") or {})
-    )
+    candidate_payload = dict(candidate) if isinstance(candidate, Mapping) else dict(payload.get("candidate_json") or {})
     execution_shape = payload.get("execution_shape_json")
     if not isinstance(execution_shape, Mapping):
         execution_shape = payload.get("execution_shape")
@@ -82,45 +76,29 @@ def serialize_opportunity_row(row: Mapping[str, Any]) -> dict[str, Any]:
         "style_profile": row.get("style_profile"),
         "horizon_intent": row.get("horizon_intent"),
         "product_class": row.get("product_class"),
-        "legacy_session_id": build_live_run_scope_id(label, market_date)
-        if label and market_date
-        else None,
+        "legacy_session_id": build_live_run_scope_id(label, market_date) if label and market_date else None,
         "owner": {
-            "owner_kind": (
-                "automation"
-                if row.get("bot_id") or row.get("automation_id")
-                else "discovery"
-            ),
-            "bot_id": row.get("bot_id"),
-            "automation_id": row.get("automation_id"),
-            "strategy_config_id": row.get("strategy_config_id"),
-            "strategy_id": row.get("strategy_id"),
+            "owner_kind": ("trading_strategy" if row.get("trading_strategy_id") else "discovery"),
+            "trading_strategy_id": row.get("trading_strategy_id"),
             "config_hash": row.get("config_hash"),
-            "automation_run_id": row.get("automation_run_id"),
+            "strategy_run_id": row.get("strategy_run_id"),
         },
         "discovery": {
             "label": label or None,
             "pipeline_id": pipeline_id,
             "cycle_id": row.get("cycle_id") or row.get("source_cycle_id"),
-            "session_id": (
-                build_live_run_scope_id(label, market_date)
-                if label and market_date
-                else None
-            ),
+            "session_id": (build_live_run_scope_id(label, market_date) if label and market_date else None),
             "candidate_id": row.get("source_candidate_id"),
         },
         "candidate": candidate_payload,
         "candidate_id": row.get("source_candidate_id"),
         **display,
-        "structure_identity": row.get("candidate_identity")
-        or payload_structure_identity(candidate_payload),
+        "structure_identity": row.get("candidate_identity") or payload_structure_identity(candidate_payload),
         "eligibility": row.get("eligibility_state") or row.get("eligibility"),
         "order_payload": order_payload,
         "legs": row.get("legs_json") or row.get("legs") or [],
         "economics": row.get("economics_json") or row.get("economics") or {},
-        "strategy_metrics": row.get("strategy_metrics_json")
-        or row.get("strategy_metrics")
-        or {},
+        "strategy_metrics": row.get("strategy_metrics_json") or row.get("strategy_metrics") or {},
         "evidence": row.get("evidence_json") or row.get("evidence") or {},
     }
 
@@ -148,11 +126,7 @@ def list_active_cycle_opportunity_rows(
         row
         for row in rows
         if (pipeline_id is None or str(row.get("pipeline_id") or "") == pipeline_id)
-        and (
-            market_date is None
-            or str(row.get("market_date") or row.get("session_date") or "")
-            == market_date
-        )
+        and (market_date is None or str(row.get("market_date") or row.get("session_date") or "") == market_date)
     ]
     filtered.sort(
         key=lambda row: (
@@ -193,9 +167,7 @@ def list_opportunities(
     label: str | None = None,
     market_date: str | None = None,
     lifecycle_state: str | None = None,
-    bot_id: str | None = None,
-    automation_id: str | None = None,
-    strategy_config_id: str | None = None,
+    trading_strategy_id: str | None = None,
     include_analysis_only: bool = False,
     include_expired: bool = False,
     include_non_live: bool = False,
@@ -222,15 +194,9 @@ def list_opportunities(
             market_date=market_date,
             lifecycle_state=lifecycle_state,
             lifecycle_states=lifecycle_states,
-            bot_id=bot_id,
-            automation_id=automation_id,
-            strategy_config_id=strategy_config_id,
+            trading_strategy_id=trading_strategy_id,
             eligibility_states=eligibility_states,
-            active_only=(
-                lifecycle_state is None
-                and not include_expired
-                and not include_non_live
-            ),
+            active_only=(lifecycle_state is None and not include_expired and not include_non_live),
             limit=limit,
         )
     ]

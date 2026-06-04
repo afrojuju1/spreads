@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { startTransition, useMemo, useState } from "react";
@@ -9,7 +9,6 @@ import { BriefcaseBusiness, ExternalLink, RefreshCw, Send, XCircle } from "lucid
 
 import { DataTable } from "@/components/data-table";
 import {
-  buildRuntimeHref,
   buildPositionsHref,
   buildPipelineHref,
   cancelExecution,
@@ -71,37 +70,19 @@ function getPositionDiscovery(position: Position): Record<string, unknown> {
   return readRecord(positionRecord(position).discovery);
 }
 
-function hasPositionAutomationOwner(position: Position): boolean {
+function hasPositionTradingStrategyOwner(position: Position): boolean {
   const owner = getPositionOwner(position);
-  return Boolean(
-    typeof owner.bot_id === "string" &&
-      owner.bot_id &&
-      typeof owner.automation_id === "string" &&
-      owner.automation_id,
-  );
+  return Boolean(readString(owner.trading_strategy_id, ""));
 }
 
-function getPositionRuntimeLabel(position: Position): string {
+function getPositionTradingStrategyLabel(position: Position): string {
   const owner = getPositionOwner(position);
-  const botId = readString(owner.bot_id, "");
-  const automationId = readString(owner.automation_id, "");
-  if (botId && automationId) {
-    return `${botId} / ${automationId}`;
-  }
-  return "—";
+  return readString(owner.trading_strategy_id, "—");
 }
 
 function getPositionDiscoveryLabel(position: Position): string {
   const discovery = getPositionDiscovery(position);
   return readString(discovery.label, readString(position.pipeline_id));
-}
-
-function getPositionRuntimeHref(position: Position): string {
-  const owner = getPositionOwner(position);
-  const botId = typeof owner.bot_id === "string" ? owner.bot_id : null;
-  const automationId =
-    typeof owner.automation_id === "string" ? owner.automation_id : null;
-  return buildRuntimeHref(botId, automationId, position.market_date);
 }
 
 function getPositionDiscoveryHref(position: Position): string {
@@ -156,13 +137,10 @@ const POSITION_COLUMNS: ColumnDef<Position>[] = [
         <div className="text-xs text-muted-foreground">
           {row.original.strategy_family}
         </div>
-        {hasPositionAutomationOwner(row.original) ? (
-          <Link
-            href={getPositionRuntimeHref(row.original)}
-            className="mt-1 inline-block text-xs text-foreground underline-offset-4 hover:underline"
-          >
-            Runtime · {getPositionRuntimeLabel(row.original)}
-          </Link>
+        {hasPositionTradingStrategyOwner(row.original) ? (
+          <div className="mt-1 text-xs text-foreground">
+            Trading strategy · {getPositionTradingStrategyLabel(row.original)}
+          </div>
         ) : null}
         <Link
           href={getPositionDiscoveryHref(row.original)}
@@ -200,56 +178,58 @@ const POSITION_COLUMNS: ColumnDef<Position>[] = [
     header: "",
     cell: ({ row }) => (
       <span className="text-xs text-muted-foreground">
-        {hasPositionAutomationOwner(row.original)
-          ? "Owner-attributed"
+        {hasPositionTradingStrategyOwner(row.original)
+          ? "Trading strategy owner"
           : "Diagnostics lineage only"}
       </span>
     ),
   },
 ];
 
+type PositionsIndexPageContentProps = {
+  marketDate?: string;
+  tradingStrategyId?: string;
+  label?: string;
+  [key: string]: unknown;
+};
+
 export function PositionsIndexPageContent({
   marketDate,
-  botId,
-  automationId,
-  strategyConfigId,
+  tradingStrategyId: tradingStrategyIdProp,
   label,
-}: {
-  marketDate?: string;
-  botId?: string;
-  automationId?: string;
-  strategyConfigId?: string;
-  label?: string;
-}) {
+}: PositionsIndexPageContentProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const closeRuntime = "alpaca_direct";
+  const tradingStrategyId =
+    readString(
+      tradingStrategyIdProp,
+      readString(searchParams.get("tradingStrategyId"), ""),
+    ) ||
+    undefined;
   const [equitySymbol, setEquitySymbol] = useState("AAPL");
   const [equitySide, setEquitySide] = useState<EquityOrderRequest["side"]>("buy");
   const [equityQuantity, setEquityQuantity] = useState("1");
   const [equityLimitPrice, setEquityLimitPrice] = useState("");
   const [equityMessage, setEquityMessage] = useState<string | null>(null);
-  const hasOwnerScope = Boolean(botId && automationId);
+  const hasOwnerScope = Boolean(tradingStrategyId);
   const ownerScopeLabel = hasOwnerScope
-    ? `Runtime · ${botId} / ${automationId}`
+    ? `Trading strategy · ${tradingStrategyId}`
     : label
       ? `Diagnostics · ${label}`
-      : "All runtimes";
+      : "All trading strategies";
   const positionsQuery = useQuery({
     queryKey: [
       "positions",
       marketDate ?? "",
-      botId ?? "",
-      automationId ?? "",
-      strategyConfigId ?? "",
+      tradingStrategyId ?? "",
       label ?? "",
     ],
     queryFn: () =>
       getPositions({
         marketDate,
-        botId,
-        automationId,
-        strategyConfigId,
+        tradingStrategyId,
         label,
         limit: 200,
       }),
@@ -368,7 +348,7 @@ export function PositionsIndexPageContent({
               Open risk inventory
             </div>
             <div className="mt-2 text-sm text-foreground/70">
-              Inspect current risk first. Runtime ownership and diagnostics
+              Inspect current risk first. Trading strategy ownership and diagnostics
               lineage stay attached to each row, but this surface stays focused
               on inventory and exits. Current workspace scope: {ownerScopeLabel}.
             </div>
@@ -491,7 +471,7 @@ export function PositionsIndexPageContent({
         <MetricTile
           label="Positions"
           value={String(summary.position_count ?? 0)}
-          note="Current runtime inventory"
+          note="Current trading strategy inventory"
         />
         <MetricTile
           label="Open"
@@ -656,7 +636,7 @@ export function PositionsIndexPageContent({
 
       <SectionSurface
         title="Position List"
-        description="Use the owning runtime for limits and execution context, or close directly from here."
+        description="Use the owning trading strategy for limits and execution context, or close directly from here."
       >
         <DataTable
           columns={[

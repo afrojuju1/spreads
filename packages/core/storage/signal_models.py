@@ -41,33 +41,19 @@ class SignalStateModel(Base):
     underlying_symbol: Mapped[str] = mapped_column(Text, nullable=False)
     state: Mapped[str] = mapped_column(Text, nullable=False)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
-    reason_codes_json: Mapped[list[str]] = mapped_column(
-        JSONB, nullable=False, default=list
-    )
-    blockers_json: Mapped[list[str]] = mapped_column(
-        JSONB, nullable=False, default=list
-    )
-    evidence_json: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, default=dict
-    )
+    reason_codes_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    blockers_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    evidence_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     active_cycle_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     active_candidate_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     active_selection_state: Mapped[str | None] = mapped_column(Text, nullable=True)
     opportunity_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     session_date: Mapped[date] = mapped_column(Date, nullable=False)
     market_session: Mapped[str] = mapped_column(Text, nullable=False)
-    first_observed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    last_observed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    first_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     transitions: Mapped[list["SignalStateTransitionModel"]] = relationship(
         back_populates="signal_state",
@@ -98,9 +84,7 @@ class SignalStateTransitionModel(Base):
         ),
     )
 
-    transition_id: Mapped[int] = mapped_column(
-        BigInteger, primary_key=True, autoincrement=True
-    )
+    transition_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     signal_state_id: Mapped[str] = mapped_column(
         Text,
         ForeignKey("signal_states.signal_state_id", ondelete="CASCADE"),
@@ -115,68 +99,51 @@ class SignalStateTransitionModel(Base):
     from_state: Mapped[str | None] = mapped_column(Text, nullable=True)
     to_state: Mapped[str] = mapped_column(Text, nullable=False)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
-    reason_codes_json: Mapped[list[str]] = mapped_column(
-        JSONB, nullable=False, default=list
-    )
-    blockers_json: Mapped[list[str]] = mapped_column(
-        JSONB, nullable=False, default=list
-    )
-    evidence_json: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, default=dict
-    )
+    reason_codes_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    blockers_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    evidence_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     active_cycle_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     active_candidate_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     active_selection_state: Mapped[str | None] = mapped_column(Text, nullable=True)
     opportunity_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     session_date: Mapped[date] = mapped_column(Date, nullable=False)
     market_session: Mapped[str] = mapped_column(Text, nullable=False)
-    occurred_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     signal_state: Mapped[SignalStateModel] = relationship(back_populates="transitions")
 
 
-class AutomationRunModel(Base):
-    __tablename__ = "automation_runs"
+class StrategyRunModel(Base):
+    __tablename__ = "strategy_runs"
     __table_args__ = (
         Index(
-            "idx_automation_runs_bot_automation_started",
-            "bot_id",
-            "automation_id",
+            "idx_strategy_runs_strategy_started",
+            "trading_strategy_id",
             "started_at",
         ),
         Index(
-            "idx_automation_runs_session_started",
+            "idx_strategy_runs_session_started",
             "session_date",
             "started_at",
         ),
         Index(
-            "idx_automation_runs_cycle_automation",
+            "idx_strategy_runs_cycle_strategy",
             "cycle_id",
-            "automation_id",
+            "trading_strategy_id",
         ),
     )
 
-    automation_run_id: Mapped[str] = mapped_column(Text, primary_key=True)
-    bot_id: Mapped[str] = mapped_column(Text, nullable=False)
-    automation_id: Mapped[str] = mapped_column(Text, nullable=False)
-    strategy_config_id: Mapped[str] = mapped_column(Text, nullable=False)
+    strategy_run_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    trading_strategy_id: Mapped[str] = mapped_column(Text, nullable=False)
     trigger_type: Mapped[str] = mapped_column(Text, nullable=False)
     job_run_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     cycle_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     label: Mapped[str | None] = mapped_column(Text, nullable=True)
     session_date: Mapped[date] = mapped_column(Date, nullable=False)
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False)
-    result_json: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, default=dict
-    )
+    result_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     config_hash: Mapped[str] = mapped_column(Text, nullable=False)
 
 
@@ -204,13 +171,12 @@ class OpportunityModel(Base):
         Index("idx_opportunities_source_candidate", "source_candidate_id"),
         Index("idx_opportunities_updated_at", "updated_at"),
         Index(
-            "idx_opportunities_bot_automation_session",
-            "bot_id",
-            "automation_id",
+            "idx_opportunities_strategy_session",
+            "trading_strategy_id",
             "session_date",
             "updated_at",
         ),
-        Index("idx_opportunities_automation_run", "automation_run_id"),
+        Index("idx_opportunities_strategy_run", "strategy_run_id"),
     )
 
     opportunity_id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -220,19 +186,14 @@ class OpportunityModel(Base):
     session_date: Mapped[date] = mapped_column(Date, nullable=False)
     cycle_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     root_symbol: Mapped[str | None] = mapped_column(Text, nullable=True)
-    bot_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    automation_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    automation_run_id: Mapped[str | None] = mapped_column(
+    trading_strategy_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    strategy_run_id: Mapped[str | None] = mapped_column(
         Text,
-        ForeignKey("automation_runs.automation_run_id", ondelete="SET NULL"),
+        ForeignKey("strategy_runs.strategy_run_id", ondelete="SET NULL"),
         nullable=True,
     )
-    strategy_config_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    strategy_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     config_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
-    policy_ref_json: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, default=dict
-    )
+    policy_ref_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     strategy_family: Mapped[str] = mapped_column(Text, nullable=False)
     profile: Mapped[str] = mapped_column(Text, nullable=False)
     style_profile: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -255,52 +216,24 @@ class OpportunityModel(Base):
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     signal_state_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
     lifecycle_state: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    reason_codes_json: Mapped[list[str]] = mapped_column(
-        JSONB, nullable=False, default=list
-    )
-    blockers_json: Mapped[list[str]] = mapped_column(
-        JSONB, nullable=False, default=list
-    )
-    legs_json: Mapped[list[dict[str, Any]]] = mapped_column(
-        JSONB, nullable=False, default=list
-    )
-    economics_json: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, default=dict
-    )
-    strategy_metrics_json: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, default=dict
-    )
-    order_payload_json: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, default=dict
-    )
-    evidence_json: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, default=dict
-    )
-    execution_shape_json: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, default=dict
-    )
-    risk_hints_json: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, default=dict
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason_codes_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    blockers_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    legs_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    economics_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    strategy_metrics_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    order_payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    evidence_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    execution_shape_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    risk_hints_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     source_cycle_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_candidate_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     source_selection_state: Mapped[str | None] = mapped_column(Text, nullable=True)
     candidate_identity: Mapped[str | None] = mapped_column(Text, nullable=True)
-    candidate_json: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, default=dict
-    )
-    consumed_by_execution_attempt_id: Mapped[str | None] = mapped_column(
-        Text, nullable=True
-    )
+    candidate_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    consumed_by_execution_attempt_id: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class OpportunityDecisionModel(Base):
@@ -313,9 +246,8 @@ class OpportunityDecisionModel(Base):
             unique=True,
         ),
         Index(
-            "idx_opportunity_decisions_bot_automation_decided",
-            "bot_id",
-            "automation_id",
+            "idx_opportunity_decisions_strategy_decided",
+            "trading_strategy_id",
             "decided_at",
         ),
         Index(
@@ -332,24 +264,15 @@ class OpportunityDecisionModel(Base):
         ForeignKey("opportunities.opportunity_id", ondelete="CASCADE"),
         nullable=False,
     )
-    bot_id: Mapped[str] = mapped_column(Text, nullable=False)
-    automation_id: Mapped[str] = mapped_column(Text, nullable=False)
+    trading_strategy_id: Mapped[str] = mapped_column(Text, nullable=False)
     run_key: Mapped[str] = mapped_column(Text, nullable=False)
     scope_key: Mapped[str] = mapped_column(Text, nullable=False)
-    policy_ref_json: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, default=dict
-    )
+    policy_ref_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     config_hash: Mapped[str] = mapped_column(Text, nullable=False)
     state: Mapped[str] = mapped_column(Text, nullable=False)
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
     rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    reason_codes_json: Mapped[list[str]] = mapped_column(
-        JSONB, nullable=False, default=list
-    )
+    reason_codes_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     superseded_by_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    decided_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    payload_json: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, default=dict
-    )
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)

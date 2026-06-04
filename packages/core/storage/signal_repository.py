@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from core.services.runtime_identity import build_pipeline_id
 from core.storage.base import RepositoryBase
 from core.storage.records import (
-    AutomationRunRecord,
+    StrategyRunRecord,
     OpportunityRecord,
     OpportunityDecisionRecord,
     SignalStateRecord,
@@ -17,7 +17,7 @@ from core.storage.records import (
 )
 from core.storage.serializers import parse_date, parse_datetime, render_value
 from core.storage.signal_models import (
-    AutomationRunModel,
+    StrategyRunModel,
     OpportunityDecisionModel,
     OpportunityModel,
     SignalStateModel,
@@ -71,11 +71,7 @@ def _append_reason_code(
     *,
     clear_absence_reasons: bool = False,
 ) -> list[str]:
-    next_codes = [
-        str(value)
-        for value in reason_codes
-        if not clear_absence_reasons or str(value) not in ABSENCE_OPPORTUNITY_REASON_CODES
-    ]
+    next_codes = [str(value) for value in reason_codes if not clear_absence_reasons or str(value) not in ABSENCE_OPPORTUNITY_REASON_CODES]
     if reason_code not in next_codes:
         next_codes.append(reason_code)
     return next_codes
@@ -135,11 +131,8 @@ def _opportunity_snapshot(payload: dict[str, Any]) -> tuple[Any, ...]:
         str(payload["session_date"]),
         payload.get("cycle_id"),
         payload.get("root_symbol"),
-        payload.get("bot_id"),
-        payload.get("automation_id"),
-        payload.get("automation_run_id"),
-        payload.get("strategy_config_id"),
-        payload.get("strategy_id"),
+        payload.get("trading_strategy_id"),
+        payload.get("strategy_run_id"),
         payload.get("config_hash"),
         dict(payload.get("policy_ref") or {}),
         payload["strategy_family"],
@@ -191,11 +184,8 @@ def _opportunity_model_snapshot(row: OpportunityModel) -> tuple[Any, ...]:
         str(row.session_date),
         row.cycle_id,
         row.root_symbol,
-        row.bot_id,
-        row.automation_id,
-        row.automation_run_id,
-        row.strategy_config_id,
-        row.strategy_id,
+        row.trading_strategy_id,
+        row.strategy_run_id,
         row.config_hash,
         dict(row.policy_ref_json or {}),
         row.strategy_family,
@@ -250,16 +240,14 @@ class SignalRepository(RepositoryBase):
     def decision_schema_ready(self) -> bool:
         return self.schema_has_tables("opportunities", "opportunity_decisions")
 
-    def automation_runtime_schema_ready(self) -> bool:
-        return self.schema_has_tables("opportunities", "automation_runs")
+    def strategy_runtime_schema_ready(self) -> bool:
+        return self.schema_has_tables("opportunities", "strategy_runs")
 
-    def upsert_automation_run(
+    def upsert_strategy_run(
         self,
         *,
-        automation_run_id: str,
-        bot_id: str,
-        automation_id: str,
-        strategy_config_id: str,
+        strategy_run_id: str,
+        trading_strategy_id: str,
         trigger_type: str,
         job_run_id: str | None,
         cycle_id: str | None,
@@ -270,20 +258,18 @@ class SignalRepository(RepositoryBase):
         status: str,
         result: dict[str, Any] | None,
         config_hash: str,
-    ) -> AutomationRunRecord:
+    ) -> StrategyRunRecord:
         started_at_dt = parse_datetime(started_at)
         completed_at_dt = parse_datetime(completed_at)
         session_date_value = parse_date(session_date)
         if started_at_dt is None:
             raise ValueError("started_at is required")
         with self.session_scope() as session:
-            row = session.get(AutomationRunModel, automation_run_id)
+            row = session.get(StrategyRunModel, strategy_run_id)
             if row is None:
-                row = AutomationRunModel(
-                    automation_run_id=automation_run_id,
-                    bot_id=bot_id,
-                    automation_id=automation_id,
-                    strategy_config_id=strategy_config_id,
+                row = StrategyRunModel(
+                    strategy_run_id=strategy_run_id,
+                    trading_strategy_id=trading_strategy_id,
                     trigger_type=trigger_type,
                     job_run_id=job_run_id,
                     cycle_id=cycle_id,
@@ -297,9 +283,7 @@ class SignalRepository(RepositoryBase):
                 )
                 session.add(row)
             else:
-                row.bot_id = bot_id
-                row.automation_id = automation_id
-                row.strategy_config_id = strategy_config_id
+                row.trading_strategy_id = trading_strategy_id
                 row.trigger_type = trigger_type
                 row.job_run_id = job_run_id
                 row.cycle_id = cycle_id
@@ -314,41 +298,30 @@ class SignalRepository(RepositoryBase):
             session.refresh(row)
             return self.row(row)
 
-    def list_automation_runs(
+    def list_strategy_runs(
         self,
         *,
-        bot_id: str | None = None,
-        automation_id: str | None = None,
+        trading_strategy_id: str | None = None,
         session_date: str | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
         cycle_id: str | None = None,
         limit: int = 200,
-    ) -> list[AutomationRunRecord]:
-        statement = select(AutomationRunModel)
-        if bot_id:
-            statement = statement.where(AutomationRunModel.bot_id == bot_id)
-        if automation_id:
-            statement = statement.where(
-                AutomationRunModel.automation_id == automation_id
-            )
+    ) -> list[StrategyRunRecord]:
+        statement = select(StrategyRunModel)
+        if trading_strategy_id:
+            statement = statement.where(StrategyRunModel.trading_strategy_id == trading_strategy_id)
         if session_date:
-            statement = statement.where(
-                AutomationRunModel.session_date == date.fromisoformat(session_date)
-            )
+            statement = statement.where(StrategyRunModel.session_date == date.fromisoformat(session_date))
         if start_date:
-            statement = statement.where(
-                AutomationRunModel.session_date >= date.fromisoformat(start_date)
-            )
+            statement = statement.where(StrategyRunModel.session_date >= date.fromisoformat(start_date))
         if end_date:
-            statement = statement.where(
-                AutomationRunModel.session_date <= date.fromisoformat(end_date)
-            )
+            statement = statement.where(StrategyRunModel.session_date <= date.fromisoformat(end_date))
         if cycle_id:
-            statement = statement.where(AutomationRunModel.cycle_id == cycle_id)
+            statement = statement.where(StrategyRunModel.cycle_id == cycle_id)
         statement = statement.order_by(
-            AutomationRunModel.started_at.desc(),
-            AutomationRunModel.automation_run_id.asc(),
+            StrategyRunModel.started_at.desc(),
+            StrategyRunModel.strategy_run_id.asc(),
         ).limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
@@ -440,9 +413,7 @@ class SignalRepository(RepositoryBase):
                         "opportunity_id": opportunity_id,
                         "session_date": session_date_value,
                         "market_session": market_session,
-                        "expires_at": None
-                        if expires_at_dt is None
-                        else expires_at_dt.isoformat(),
+                        "expires_at": None if expires_at_dt is None else expires_at_dt.isoformat(),
                     }
                 )
                 row.label = label
@@ -515,18 +486,12 @@ class SignalRepository(RepositoryBase):
         if label:
             statement = statement.where(SignalStateModel.label == label)
         if session_date:
-            statement = statement.where(
-                SignalStateModel.session_date == date.fromisoformat(session_date)
-            )
+            statement = statement.where(SignalStateModel.session_date == date.fromisoformat(session_date))
         if state:
             statement = statement.where(SignalStateModel.state == state)
         if underlying_symbol:
-            statement = statement.where(
-                SignalStateModel.underlying_symbol == underlying_symbol.upper()
-            )
-        statement = statement.order_by(
-            SignalStateModel.updated_at.desc(), SignalStateModel.signal_state_id.asc()
-        ).limit(limit)
+            statement = statement.where(SignalStateModel.underlying_symbol == underlying_symbol.upper())
+        statement = statement.order_by(SignalStateModel.updated_at.desc(), SignalStateModel.signal_state_id.asc()).limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
         return self.rows(rows)
@@ -544,19 +509,11 @@ class SignalRepository(RepositoryBase):
         if label:
             statement = statement.where(SignalStateTransitionModel.label == label)
         if session_date:
-            statement = statement.where(
-                SignalStateTransitionModel.session_date
-                == date.fromisoformat(session_date)
-            )
+            statement = statement.where(SignalStateTransitionModel.session_date == date.fromisoformat(session_date))
         if signal_state_id:
-            statement = statement.where(
-                SignalStateTransitionModel.signal_state_id == signal_state_id
-            )
+            statement = statement.where(SignalStateTransitionModel.signal_state_id == signal_state_id)
         if underlying_symbol:
-            statement = statement.where(
-                SignalStateTransitionModel.underlying_symbol
-                == underlying_symbol.upper()
-            )
+            statement = statement.where(SignalStateTransitionModel.underlying_symbol == underlying_symbol.upper())
         statement = statement.order_by(
             SignalStateTransitionModel.occurred_at.desc(),
             SignalStateTransitionModel.transition_id.desc(),
@@ -636,9 +593,7 @@ class SignalRepository(RepositoryBase):
                 clear_absence_reasons=True,
             )
             evidence["absence_state"] = "stale"
-            evidence["stale_at"] = evidence.get("stale_at") or _render_datetime(
-                expired_at_dt
-            )
+            evidence["stale_at"] = evidence.get("stale_at") or _render_datetime(expired_at_dt)
         else:
             if row.lifecycle_state not in ACTIVE_OPPORTUNITY_LIFECYCLE_STATES:
                 row.lifecycle_state = "candidate"
@@ -655,11 +610,7 @@ class SignalRepository(RepositoryBase):
         evidence["stale_after_missed_cycles"] = max(int(stale_after_missed_cycles), 1)
         evidence["last_absent_at"] = _render_datetime(expired_at_dt)
         evidence["hard_expire_at"] = _render_datetime(resolved_hard_expire_at)
-        evidence["last_present_at"] = (
-            evidence.get("last_present_at")
-            or evidence.get("generated_at")
-            or _render_datetime(previous_updated_at)
-        )
+        evidence["last_present_at"] = evidence.get("last_present_at") or evidence.get("generated_at") or _render_datetime(previous_updated_at)
         row.evidence_json = evidence
 
     def expire_opportunity(
@@ -695,11 +646,8 @@ class SignalRepository(RepositoryBase):
         session_date: str | date,
         cycle_id: str | None = None,
         root_symbol: str | None = None,
-        bot_id: str | None = None,
-        automation_id: str | None = None,
-        automation_run_id: str | None = None,
-        strategy_config_id: str | None = None,
-        strategy_id: str | None = None,
+        trading_strategy_id: str | None = None,
+        strategy_run_id: str | None = None,
         config_hash: str | None = None,
         policy_ref: dict[str, Any] | None = None,
         strategy_family: str,
@@ -763,11 +711,8 @@ class SignalRepository(RepositoryBase):
                     session_date=session_date_value,
                     cycle_id=cycle_id or source_cycle_id,
                     root_symbol=root_symbol or underlying_symbol,
-                    bot_id=bot_id,
-                    automation_id=automation_id,
-                    automation_run_id=automation_run_id,
-                    strategy_config_id=strategy_config_id,
-                    strategy_id=strategy_id,
+                    trading_strategy_id=trading_strategy_id,
+                    strategy_run_id=strategy_run_id,
                     config_hash=config_hash,
                     policy_ref_json=dict(policy_ref or {}),
                     strategy_family=strategy_family,
@@ -813,9 +758,7 @@ class SignalRepository(RepositoryBase):
                 )
                 session.add(row)
             else:
-                semantic_changed = _opportunity_model_snapshot(
-                    row
-                ) != _opportunity_snapshot(
+                semantic_changed = _opportunity_model_snapshot(row) != _opportunity_snapshot(
                     {
                         "pipeline_id": pipeline_id or build_pipeline_id(label),
                         "label": label,
@@ -823,11 +766,8 @@ class SignalRepository(RepositoryBase):
                         "session_date": session_date_value,
                         "cycle_id": cycle_id or source_cycle_id,
                         "root_symbol": root_symbol or underlying_symbol,
-                        "bot_id": bot_id,
-                        "automation_id": automation_id,
-                        "automation_run_id": automation_run_id,
-                        "strategy_config_id": strategy_config_id,
-                        "strategy_id": strategy_id,
+                        "trading_strategy_id": trading_strategy_id,
+                        "strategy_run_id": strategy_run_id,
                         "config_hash": config_hash,
                         "policy_ref": dict(policy_ref or {}),
                         "strategy_family": strategy_family,
@@ -835,9 +775,7 @@ class SignalRepository(RepositoryBase):
                         "style_profile": style_profile,
                         "horizon_intent": horizon_intent,
                         "product_class": product_class,
-                        "expiration_date": None
-                        if expiration_date_value is None
-                        else expiration_date_value.isoformat(),
+                        "expiration_date": None if expiration_date_value is None else expiration_date_value.isoformat(),
                         "entity_type": entity_type,
                         "entity_key": entity_key,
                         "underlying_symbol": underlying_symbol,
@@ -854,9 +792,7 @@ class SignalRepository(RepositoryBase):
                         "confidence": confidence,
                         "signal_state_ref": signal_state_ref,
                         "lifecycle_state": lifecycle_state,
-                        "expires_at": None
-                        if expires_at_dt is None
-                        else expires_at_dt.isoformat(),
+                        "expires_at": None if expires_at_dt is None else expires_at_dt.isoformat(),
                         "reason_codes": reason_codes,
                         "blockers": blockers,
                         "legs": list(legs or []),
@@ -880,11 +816,8 @@ class SignalRepository(RepositoryBase):
                 row.session_date = session_date_value
                 row.cycle_id = cycle_id or source_cycle_id
                 row.root_symbol = root_symbol or underlying_symbol
-                row.bot_id = bot_id
-                row.automation_id = automation_id
-                row.automation_run_id = automation_run_id
-                row.strategy_config_id = strategy_config_id
-                row.strategy_id = strategy_id
+                row.trading_strategy_id = trading_strategy_id
+                row.strategy_run_id = strategy_run_id
                 row.config_hash = config_hash
                 row.policy_ref_json = dict(policy_ref or {})
                 row.strategy_family = strategy_family
@@ -944,88 +877,48 @@ class SignalRepository(RepositoryBase):
         eligibility_states: Sequence[str] | None = None,
         underlying_symbol: str | None = None,
         strategy_family: str | None = None,
-        bot_id: str | None = None,
-        automation_id: str | None = None,
-        strategy_config_id: str | None = None,
-        automation_run_id: str | None = None,
+        trading_strategy_id: str | None = None,
+        strategy_run_id: str | None = None,
         runtime_owned: bool | None = False,
         active_only: bool = False,
         limit: int = 200,
     ) -> list[OpportunityRecord]:
         statement = select(OpportunityModel)
-        if runtime_owned is False and not any(
-            [bot_id, automation_id, strategy_config_id, automation_run_id]
-        ):
-            statement = statement.where(OpportunityModel.bot_id.is_(None))
-        elif runtime_owned is True or any(
-            [bot_id, automation_id, strategy_config_id, automation_run_id]
-        ):
-            statement = statement.where(OpportunityModel.bot_id.is_not(None))
+        if runtime_owned is False and not any([trading_strategy_id, strategy_run_id]):
+            statement = statement.where(OpportunityModel.trading_strategy_id.is_(None))
+        elif runtime_owned is True or any([trading_strategy_id, strategy_run_id]):
+            statement = statement.where(OpportunityModel.trading_strategy_id.is_not(None))
         if pipeline_id:
             statement = statement.where(OpportunityModel.pipeline_id == pipeline_id)
         if label:
             statement = statement.where(OpportunityModel.label == label)
         if market_date:
-            statement = statement.where(
-                OpportunityModel.market_date == date.fromisoformat(market_date)
-            )
+            statement = statement.where(OpportunityModel.market_date == date.fromisoformat(market_date))
         if session_date:
-            statement = statement.where(
-                OpportunityModel.session_date == date.fromisoformat(session_date)
-            )
+            statement = statement.where(OpportunityModel.session_date == date.fromisoformat(session_date))
         if lifecycle_state:
-            statement = statement.where(
-                OpportunityModel.lifecycle_state == lifecycle_state
-            )
+            statement = statement.where(OpportunityModel.lifecycle_state == lifecycle_state)
         elif lifecycle_states:
-            resolved_lifecycle_states = tuple(
-                str(value) for value in lifecycle_states if str(value)
-            )
+            resolved_lifecycle_states = tuple(str(value) for value in lifecycle_states if str(value))
             if resolved_lifecycle_states:
-                statement = statement.where(
-                    OpportunityModel.lifecycle_state.in_(resolved_lifecycle_states)
-                )
+                statement = statement.where(OpportunityModel.lifecycle_state.in_(resolved_lifecycle_states))
         elif active_only:
-            statement = statement.where(
-                OpportunityModel.lifecycle_state.in_(
-                    VISIBLE_OPPORTUNITY_LIFECYCLE_STATES
-                )
-            )
+            statement = statement.where(OpportunityModel.lifecycle_state.in_(VISIBLE_OPPORTUNITY_LIFECYCLE_STATES))
         if eligibility_state:
-            statement = statement.where(
-                OpportunityModel.eligibility_state == eligibility_state
-            )
+            statement = statement.where(OpportunityModel.eligibility_state == eligibility_state)
         elif eligibility_states:
-            resolved_eligibility_states = tuple(
-                str(value) for value in eligibility_states if str(value)
-            )
+            resolved_eligibility_states = tuple(str(value) for value in eligibility_states if str(value))
             if resolved_eligibility_states:
-                statement = statement.where(
-                    OpportunityModel.eligibility_state.in_(resolved_eligibility_states)
-                )
+                statement = statement.where(OpportunityModel.eligibility_state.in_(resolved_eligibility_states))
         if underlying_symbol:
-            statement = statement.where(
-                OpportunityModel.underlying_symbol == underlying_symbol.upper()
-            )
+            statement = statement.where(OpportunityModel.underlying_symbol == underlying_symbol.upper())
         if strategy_family:
-            statement = statement.where(
-                OpportunityModel.strategy_family == strategy_family
-            )
-        if bot_id:
-            statement = statement.where(OpportunityModel.bot_id == bot_id)
-        if automation_id:
-            statement = statement.where(OpportunityModel.automation_id == automation_id)
-        if strategy_config_id:
-            statement = statement.where(
-                OpportunityModel.strategy_config_id == strategy_config_id
-            )
-        if automation_run_id:
-            statement = statement.where(
-                OpportunityModel.automation_run_id == automation_run_id
-            )
-        statement = statement.order_by(
-            OpportunityModel.updated_at.desc(), OpportunityModel.opportunity_id.asc()
-        ).limit(limit)
+            statement = statement.where(OpportunityModel.strategy_family == strategy_family)
+        if trading_strategy_id:
+            statement = statement.where(OpportunityModel.trading_strategy_id == trading_strategy_id)
+        if strategy_run_id:
+            statement = statement.where(OpportunityModel.strategy_run_id == strategy_run_id)
+        statement = statement.order_by(OpportunityModel.updated_at.desc(), OpportunityModel.opportunity_id.asc()).limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
         return self.rows(rows)
@@ -1036,43 +929,23 @@ class SignalRepository(RepositoryBase):
         *,
         eligibility_state: str | None = None,
         exclude_consumed: bool = True,
-        bot_id: str | None = None,
-        automation_id: str | None = None,
-        strategy_config_id: str | None = None,
+        trading_strategy_id: str | None = None,
         runtime_owned: bool | None = False,
         limit: int = 200,
     ) -> list[OpportunityRecord]:
-        statement = select(OpportunityModel).where(
-            OpportunityModel.cycle_id == cycle_id
-        )
-        if runtime_owned is False and not any(
-            [bot_id, automation_id, strategy_config_id]
-        ):
-            statement = statement.where(OpportunityModel.bot_id.is_(None))
-        elif runtime_owned is True or any([bot_id, automation_id, strategy_config_id]):
-            statement = statement.where(OpportunityModel.bot_id.is_not(None))
-        statement = statement.where(
-            OpportunityModel.lifecycle_state.in_(ACTIVE_OPPORTUNITY_LIFECYCLE_STATES)
-        )
+        statement = select(OpportunityModel).where(OpportunityModel.cycle_id == cycle_id)
+        if runtime_owned is False and not any([trading_strategy_id]):
+            statement = statement.where(OpportunityModel.trading_strategy_id.is_(None))
+        elif runtime_owned is True or any([trading_strategy_id]):
+            statement = statement.where(OpportunityModel.trading_strategy_id.is_not(None))
+        statement = statement.where(OpportunityModel.lifecycle_state.in_(ACTIVE_OPPORTUNITY_LIFECYCLE_STATES))
         if eligibility_state:
-            statement = statement.where(
-                OpportunityModel.eligibility_state == eligibility_state
-            )
+            statement = statement.where(OpportunityModel.eligibility_state == eligibility_state)
         if exclude_consumed:
-            statement = statement.where(
-                OpportunityModel.consumed_by_execution_attempt_id.is_(None)
-            )
-        if bot_id:
-            statement = statement.where(OpportunityModel.bot_id == bot_id)
-        if automation_id:
-            statement = statement.where(OpportunityModel.automation_id == automation_id)
-        if strategy_config_id:
-            statement = statement.where(
-                OpportunityModel.strategy_config_id == strategy_config_id
-            )
-        statement = statement.order_by(
-            OpportunityModel.updated_at.desc(), OpportunityModel.opportunity_id.asc()
-        ).limit(limit)
+            statement = statement.where(OpportunityModel.consumed_by_execution_attempt_id.is_(None))
+        if trading_strategy_id:
+            statement = statement.where(OpportunityModel.trading_strategy_id == trading_strategy_id)
+        statement = statement.order_by(OpportunityModel.updated_at.desc(), OpportunityModel.opportunity_id.asc()).limit(limit)
         with self.session_factory() as session:
             rows = session.scalars(statement).all()
         return self.rows(rows)
@@ -1084,9 +957,7 @@ class SignalRepository(RepositoryBase):
         session_date: str | date,
         active_opportunity_ids: list[str],
         expired_at: str,
-        bot_id: str | None = None,
-        automation_id: str | None = None,
-        strategy_config_id: str | None = None,
+        trading_strategy_id: str | None = None,
         runtime_owned: bool | None = False,
     ) -> list[OpportunityRecord]:
         session_date_value = parse_date(session_date)
@@ -1098,24 +969,14 @@ class SignalRepository(RepositoryBase):
             OpportunityModel.session_date == session_date_value,
             OpportunityModel.lifecycle_state.in_(VISIBLE_OPPORTUNITY_LIFECYCLE_STATES),
         )
-        if runtime_owned is False and not any(
-            [bot_id, automation_id, strategy_config_id]
-        ):
-            statement = statement.where(OpportunityModel.bot_id.is_(None))
-        elif runtime_owned is True or any([bot_id, automation_id, strategy_config_id]):
-            statement = statement.where(OpportunityModel.bot_id.is_not(None))
-        if bot_id:
-            statement = statement.where(OpportunityModel.bot_id == bot_id)
-        if automation_id:
-            statement = statement.where(OpportunityModel.automation_id == automation_id)
-        if strategy_config_id:
-            statement = statement.where(
-                OpportunityModel.strategy_config_id == strategy_config_id
-            )
+        if runtime_owned is False and not any([trading_strategy_id]):
+            statement = statement.where(OpportunityModel.trading_strategy_id.is_(None))
+        elif runtime_owned is True or any([trading_strategy_id]):
+            statement = statement.where(OpportunityModel.trading_strategy_id.is_not(None))
+        if trading_strategy_id:
+            statement = statement.where(OpportunityModel.trading_strategy_id == trading_strategy_id)
         if active_opportunity_ids:
-            statement = statement.where(
-                OpportunityModel.opportunity_id.not_in(active_opportunity_ids)
-            )
+            statement = statement.where(OpportunityModel.opportunity_id.not_in(active_opportunity_ids))
         with self.session_scope() as session:
             rows = session.scalars(statement).all()
             transitioned_rows: list[OpportunityModel] = []
@@ -1139,14 +1000,8 @@ class SignalRepository(RepositoryBase):
         statement = (
             select(OpportunityModel)
             .where(OpportunityModel.source_candidate_id == candidate_id)
-            .where(
-                OpportunityModel.lifecycle_state.in_(ACTIVE_OPPORTUNITY_LIFECYCLE_STATES)
-            )
-            .where(
-                OpportunityModel.bot_id.is_not(None)
-                if runtime_owned
-                else OpportunityModel.bot_id.is_(None)
-            )
+            .where(OpportunityModel.lifecycle_state.in_(ACTIVE_OPPORTUNITY_LIFECYCLE_STATES))
+            .where(OpportunityModel.trading_strategy_id.is_not(None) if runtime_owned else OpportunityModel.trading_strategy_id.is_(None))
             .order_by(
                 OpportunityModel.updated_at.desc(),
                 OpportunityModel.opportunity_id.asc(),
@@ -1175,19 +1030,13 @@ class SignalRepository(RepositoryBase):
                 func.count().label("row_count"),
             )
             .where(OpportunityModel.cycle_id.in_(cycle_ids))
-            .where(
-                OpportunityModel.lifecycle_state.in_(ACTIVE_OPPORTUNITY_LIFECYCLE_STATES)
-            )
+            .where(OpportunityModel.lifecycle_state.in_(ACTIVE_OPPORTUNITY_LIFECYCLE_STATES))
         )
         statement = statement.where(
-            OpportunityModel.bot_id.is_not(None)
-            if runtime_owned
-            else OpportunityModel.bot_id.is_(None)
+            OpportunityModel.trading_strategy_id.is_not(None) if runtime_owned else OpportunityModel.trading_strategy_id.is_(None)
         )
         if exclude_consumed:
-            statement = statement.where(
-                OpportunityModel.consumed_by_execution_attempt_id.is_(None)
-            )
+            statement = statement.where(OpportunityModel.consumed_by_execution_attempt_id.is_(None))
         statement = statement.group_by(
             OpportunityModel.cycle_id,
             OpportunityModel.selection_state,
@@ -1225,10 +1074,7 @@ class SignalRepository(RepositoryBase):
             row = session.get(OpportunityModel, opportunity_id)
             if row is None:
                 return None, False
-            changed = (
-                row.lifecycle_state != "consumed"
-                or row.consumed_by_execution_attempt_id != execution_attempt_id
-            )
+            changed = row.lifecycle_state != "consumed" or row.consumed_by_execution_attempt_id != execution_attempt_id
             row.lifecycle_state = "consumed"
             row.consumed_by_execution_attempt_id = execution_attempt_id
             row.updated_at = consumed_at_dt
@@ -1238,9 +1084,7 @@ class SignalRepository(RepositoryBase):
             session.refresh(row)
             return self.row(row), changed
 
-    def get_opportunity_decision(
-        self, opportunity_decision_id: str
-    ) -> OpportunityDecisionRecord | None:
+    def get_opportunity_decision(self, opportunity_decision_id: str) -> OpportunityDecisionRecord | None:
         with self.session_factory() as session:
             row = session.get(OpportunityDecisionModel, opportunity_decision_id)
         if row is None:
@@ -1252,8 +1096,7 @@ class SignalRepository(RepositoryBase):
         *,
         opportunity_decision_id: str,
         opportunity_id: str,
-        bot_id: str,
-        automation_id: str,
+        trading_strategy_id: str,
         run_key: str,
         scope_key: str,
         policy_ref: dict[str, Any],
@@ -1275,8 +1118,7 @@ class SignalRepository(RepositoryBase):
                 row = OpportunityDecisionModel(
                     opportunity_decision_id=opportunity_decision_id,
                     opportunity_id=opportunity_id,
-                    bot_id=bot_id,
-                    automation_id=automation_id,
+                    trading_strategy_id=trading_strategy_id,
                     run_key=run_key,
                     scope_key=scope_key,
                     policy_ref_json=render_value(dict(policy_ref)),
@@ -1292,8 +1134,7 @@ class SignalRepository(RepositoryBase):
                 session.add(row)
             else:
                 row.opportunity_id = opportunity_id
-                row.bot_id = bot_id
-                row.automation_id = automation_id
+                row.trading_strategy_id = trading_strategy_id
                 row.run_key = run_key
                 row.scope_key = scope_key
                 row.policy_ref_json = render_value(dict(policy_ref))
@@ -1312,8 +1153,7 @@ class SignalRepository(RepositoryBase):
     def list_opportunity_decisions(
         self,
         *,
-        bot_id: str | None = None,
-        automation_id: str | None = None,
+        trading_strategy_id: str | None = None,
         opportunity_id: str | None = None,
         run_key: str | None = None,
         scope_key: str | None = None,
@@ -1321,16 +1161,10 @@ class SignalRepository(RepositoryBase):
         limit: int = 200,
     ) -> list[OpportunityDecisionRecord]:
         statement = select(OpportunityDecisionModel)
-        if bot_id:
-            statement = statement.where(OpportunityDecisionModel.bot_id == bot_id)
-        if automation_id:
-            statement = statement.where(
-                OpportunityDecisionModel.automation_id == automation_id
-            )
+        if trading_strategy_id:
+            statement = statement.where(OpportunityDecisionModel.trading_strategy_id == trading_strategy_id)
         if opportunity_id:
-            statement = statement.where(
-                OpportunityDecisionModel.opportunity_id == opportunity_id
-            )
+            statement = statement.where(OpportunityDecisionModel.opportunity_id == opportunity_id)
         if run_key:
             statement = statement.where(OpportunityDecisionModel.run_key == run_key)
         if scope_key:

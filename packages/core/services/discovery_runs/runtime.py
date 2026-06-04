@@ -46,9 +46,7 @@ def run_collection_tick(
     reference_time = resolve_collection_reference_time(tick_context.slot_at)
     if not args.allow_off_hours and not collection_window_is_open(
         now=reference_time,
-        session_start_offset_minutes=int(
-            getattr(args, "session_start_offset_minutes", 0)
-        ),
+        session_start_offset_minutes=int(getattr(args, "session_start_offset_minutes", 0)),
         session_end_offset_minutes=int(getattr(args, "session_end_offset_minutes", 0)),
     ):
         if emit_output:
@@ -62,16 +60,11 @@ def run_collection_tick(
 
     with build_storage_context(args.history_db) as storage:
         recovery_store = storage.recovery
-        stale_after_seconds = resolve_live_slot_stale_after_seconds(
-            int(getattr(args, "interval_seconds", 0))
-        )
+        stale_after_seconds = resolve_live_slot_stale_after_seconds(int(getattr(args, "interval_seconds", 0)))
         now = datetime.now(UTC)
         slot_at = resolve_collection_reference_time(tick_context.slot_at)
         if now > slot_at + timedelta(seconds=stale_after_seconds):
-            session_date = str(
-                getattr(args, "session_date", "")
-                or session_date_for_generated_at(tick_context.slot_at)
-            )
+            session_date = str(getattr(args, "session_date", "") or session_date_for_generated_at(tick_context.slot_at))
             label = str(
                 getattr(args, "label", "")
                 or build_live_snapshot_label(
@@ -111,9 +104,7 @@ def run_collection_tick(
         client = AlpacaClient(
             key_id=key_id,
             secret_key=secret_key,
-            trading_base_url=infer_trading_base_url(
-                key_id, scanner_args.trading_base_url
-            ),
+            trading_base_url=infer_trading_base_url(key_id, scanner_args.trading_base_url),
             data_base_url=scanner_args.data_base_url,
         )
         calendar_resolver = build_calendar_event_resolver(
@@ -167,23 +158,17 @@ def run_collection_tick(
         "signal_transitions_recorded": cycle_result["signal_transitions_recorded"],
         "opportunities_upserted": cycle_result["opportunities_upserted"],
         "opportunities_expired": cycle_result["opportunities_expired"],
-        "automation_runs_upserted": cycle_result["automation_runs_upserted"],
-        "runtime_opportunities_upserted": cycle_result[
-            "runtime_opportunities_upserted"
-        ],
-        "runtime_opportunities_expired": cycle_result[
-            "runtime_opportunities_expired"
-        ],
-        "automation_summary": dict(cycle_result["automation_summary"]),
+        "strategy_runs_upserted": cycle_result["strategy_runs_upserted"],
+        "runtime_opportunities_upserted": cycle_result["runtime_opportunities_upserted"],
+        "runtime_opportunities_expired": cycle_result["runtime_opportunities_expired"],
+        "strategy_sync_summary": dict(cycle_result["strategy_sync_summary"]),
         "quote_capture": dict(cycle_result["quote_capture"]),
         "trade_capture": dict(cycle_result["trade_capture"]),
         "uoa_summary": dict(cycle_result["uoa_summary"]),
         "uoa_quote_summary": dict(cycle_result["uoa_quote_summary"]),
         "uoa_decisions": dict(cycle_result["uoa_decisions"]),
         "resolved_ranking_policy": dict(cycle_result["resolved_ranking_policy"]),
-        "ranking_policy_gate_summary": dict(
-            cycle_result["ranking_policy_gate_summary"]
-        ),
+        "ranking_policy_gate_summary": dict(cycle_result["ranking_policy_gate_summary"]),
         "raw_candidate_summary": dict(cycle_result["raw_candidate_summary"]),
         "selection_summary": dict(cycle_result["selection_summary"]),
         "auto_execution": cycle_result["auto_execution"],
@@ -204,9 +189,7 @@ def run_collection(
 
     if not args.allow_off_hours and not collection_window_is_open(
         now=resolve_collection_reference_time(None),
-        session_start_offset_minutes=int(
-            getattr(args, "session_start_offset_minutes", 0)
-        ),
+        session_start_offset_minutes=int(getattr(args, "session_start_offset_minutes", 0)),
         session_end_offset_minutes=int(getattr(args, "session_end_offset_minutes", 0)),
     ):
         if emit_output:
@@ -243,7 +226,7 @@ def run_collection(
     total_signal_transitions = 0
     total_opportunities = 0
     total_opportunities_expired = 0
-    total_automation_runs = 0
+    total_strategy_runs = 0
     total_runtime_opportunities = 0
     total_runtime_opportunities_expired = 0
     last_label: str | None = None
@@ -252,9 +235,7 @@ def run_collection(
         message="bootstrap",
     )
     last_uoa_summary: dict[str, object] = dict(bootstrap_result["uoa_summary"])
-    last_uoa_quote_summary: dict[str, object] = dict(
-        bootstrap_result["uoa_quote_summary"]
-    )
+    last_uoa_quote_summary: dict[str, object] = dict(bootstrap_result["uoa_quote_summary"])
     last_uoa_decisions: dict[str, object] = dict(bootstrap_result["uoa_decisions"])
     last_raw_candidate_summary: dict[str, object] = {
         "candidate_count": 0,
@@ -262,17 +243,11 @@ def run_collection(
         "strategy_counts": {},
         "top_candidates": [],
     }
-    last_selection_summary: dict[str, object] = dict(
-        bootstrap_result["selection_summary"]
-    )
-    last_resolved_ranking_policy: dict[str, object] = dict(
-        bootstrap_result.get("resolved_ranking_policy") or {}
-    )
-    last_ranking_policy_gate_summary: dict[str, object] = dict(
-        bootstrap_result.get("ranking_policy_gate_summary") or {}
-    )
-    last_automation_summary: dict[str, object] = {
-        "automation_runs_upserted": 0,
+    last_selection_summary: dict[str, object] = dict(bootstrap_result["selection_summary"])
+    last_resolved_ranking_policy: dict[str, object] = dict(bootstrap_result.get("resolved_ranking_policy") or {})
+    last_ranking_policy_gate_summary: dict[str, object] = dict(bootstrap_result.get("ranking_policy_gate_summary") or {})
+    last_strategy_sync_summary: dict[str, object] = {
+        "strategy_runs_upserted": 0,
         "runtime_opportunities_upserted": 0,
         "runtime_opportunities_expired": 0,
         "runtime_selection_summary": {},
@@ -286,12 +261,8 @@ def run_collection(
                     heartbeat()
                 if not args.allow_off_hours and not collection_window_is_open(
                     now=datetime.now(UTC),
-                    session_start_offset_minutes=int(
-                        getattr(args, "session_start_offset_minutes", 0)
-                    ),
-                    session_end_offset_minutes=int(
-                        getattr(args, "session_end_offset_minutes", 0)
-                    ),
+                    session_start_offset_minutes=int(getattr(args, "session_start_offset_minutes", 0)),
+                    session_end_offset_minutes=int(getattr(args, "session_end_offset_minutes", 0)),
                 ):
                     if emit_output:
                         print("Market closed during collection window. Stopping.")
@@ -316,53 +287,31 @@ def run_collection(
                 cycle_ids.append(cycle_result["cycle_id"])
                 total_alerts += int(cycle_result["alerts_sent"])
                 total_quote_events += int(cycle_result["quote_events_saved"])
-                total_baseline_quote_events += int(
-                    cycle_result["baseline_quote_events_saved"]
-                )
-                total_stream_quote_events += int(
-                    cycle_result["stream_quote_events_saved"]
-                )
-                total_recovery_quote_events += int(
-                    cycle_result["recovery_quote_events_saved"]
-                )
+                total_baseline_quote_events += int(cycle_result["baseline_quote_events_saved"])
+                total_stream_quote_events += int(cycle_result["stream_quote_events_saved"])
+                total_recovery_quote_events += int(cycle_result["recovery_quote_events_saved"])
                 total_trade_events += int(cycle_result["trade_events_saved"])
-                total_stream_trade_events += int(
-                    cycle_result["stream_trade_events_saved"]
-                )
+                total_stream_trade_events += int(cycle_result["stream_trade_events_saved"])
                 total_signal_states += int(cycle_result["signal_states_upserted"])
-                total_signal_transitions += int(
-                    cycle_result["signal_transitions_recorded"]
-                )
+                total_signal_transitions += int(cycle_result["signal_transitions_recorded"])
                 total_opportunities += int(cycle_result["opportunities_upserted"])
-                total_opportunities_expired += int(
-                    cycle_result["opportunities_expired"]
-                )
-                total_automation_runs += int(cycle_result["automation_runs_upserted"])
-                total_runtime_opportunities += int(
-                    cycle_result["runtime_opportunities_upserted"]
-                )
-                total_runtime_opportunities_expired += int(
-                    cycle_result["runtime_opportunities_expired"]
-                )
+                total_opportunities_expired += int(cycle_result["opportunities_expired"])
+                total_strategy_runs += int(cycle_result["strategy_runs_upserted"])
+                total_runtime_opportunities += int(cycle_result["runtime_opportunities_upserted"])
+                total_runtime_opportunities_expired += int(cycle_result["runtime_opportunities_expired"])
                 iterations_completed += 1
                 last_label = str(cycle_result["label"])
                 last_uoa_summary = dict(cycle_result["uoa_summary"])
                 last_uoa_quote_summary = dict(cycle_result["uoa_quote_summary"])
                 last_uoa_decisions = dict(cycle_result["uoa_decisions"])
-                last_resolved_ranking_policy = dict(
-                    cycle_result["resolved_ranking_policy"]
-                )
-                last_ranking_policy_gate_summary = dict(
-                    cycle_result["ranking_policy_gate_summary"]
-                )
+                last_resolved_ranking_policy = dict(cycle_result["resolved_ranking_policy"])
+                last_ranking_policy_gate_summary = dict(cycle_result["ranking_policy_gate_summary"])
                 last_raw_candidate_summary = dict(cycle_result["raw_candidate_summary"])
                 last_selection_summary = dict(cycle_result["selection_summary"])
-                last_automation_summary = dict(cycle_result["automation_summary"])
+                last_strategy_sync_summary = dict(cycle_result["strategy_sync_summary"])
                 if iteration < args.iterations - 1:
                     elapsed_seconds = time_module.monotonic() - iteration_started_at
-                    sleep_seconds = max(
-                        float(max(args.interval_seconds, 1)) - elapsed_seconds, 0.0
-                    )
+                    sleep_seconds = max(float(max(args.interval_seconds, 1)) - elapsed_seconds, 0.0)
                     if sleep_seconds > 0:
                         time_module.sleep(sleep_seconds)
                     if heartbeat is not None:
@@ -387,16 +336,14 @@ def run_collection(
         "signal_transitions_recorded": total_signal_transitions,
         "opportunities_upserted": total_opportunities,
         "opportunities_expired": total_opportunities_expired,
-        "automation_runs_upserted": total_automation_runs,
+        "strategy_runs_upserted": total_strategy_runs,
         "runtime_opportunities_upserted": total_runtime_opportunities,
         "runtime_opportunities_expired": total_runtime_opportunities_expired,
-        "automation_summary": {
-            "automation_runs_upserted": total_automation_runs,
+        "strategy_sync_summary": {
+            "strategy_runs_upserted": total_strategy_runs,
             "runtime_opportunities_upserted": total_runtime_opportunities,
             "runtime_opportunities_expired": total_runtime_opportunities_expired,
-            "runtime_selection_summary": dict(
-                last_automation_summary.get("runtime_selection_summary") or {}
-            ),
+            "runtime_selection_summary": dict(last_strategy_sync_summary.get("runtime_selection_summary") or {}),
         },
         "quote_capture": build_quote_capture_summary(
             expected_quote_symbols=[],

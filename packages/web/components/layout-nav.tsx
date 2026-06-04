@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Activity,
-  Bot,
   BriefcaseBusiness,
   CandlestickChart,
   Gauge,
@@ -35,12 +34,6 @@ export const LAYOUT_NAV_ITEMS = [
     icon: BriefcaseBusiness,
   },
   {
-    href: "/automations",
-    label: "Automations",
-    caption: "runtime owners",
-    icon: Bot,
-  },
-  {
     href: "/scan",
     label: "Scan",
     caption: "manual run",
@@ -66,22 +59,7 @@ export const LAYOUT_NAV_ITEMS = [
   },
 ];
 
-const RUNTIME_LAYOUT_ITEM = {
-  href: "/automations",
-  label: "Automations",
-  caption: "runtime owners",
-  icon: Bot,
-};
-
 export function resolveActiveLayoutItem(pathname: string) {
-  if (
-    pathname === "/runtimes" ||
-    pathname.startsWith("/runtimes/") ||
-    pathname === "/automations" ||
-    pathname.startsWith("/automations/")
-  ) {
-    return RUNTIME_LAYOUT_ITEM;
-  }
   return (
     LAYOUT_NAV_ITEMS.find((item) =>
       pathname === item.href || pathname.startsWith(`${item.href}/`),

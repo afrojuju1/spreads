@@ -1,0 +1,72 @@
+trading_strategy_id: short_dated_index_iron_condor
+name: Short-Dated Index Iron Condor
+enabled: true
+source:
+  type: static_universe
+  ref: liquid_index_etfs
+trade_structure: iron_condor
+build:
+  dte:
+    min: 5
+    max: 10
+  short_delta:
+    min: 0.12
+    max: 0.22
+  widths: [2, 3, 5]
+  symmetric_wings_only: true
+  expected_move:
+    min_short_vs_expected_move_ratio: -0.30
+    min_breakeven_vs_expected_move_ratio: -0.35
+  ranking:
+    min_probability_of_profit: 0.64
+    min_expected_value_dollars: 1
+    min_slippage_adjusted_expected_value_dollars: 0
+    max_entry_slippage_dollars: 16
+    min_model_implied_volatility: 0.20
+    weights:
+      probability_of_profit: 0.48
+      expected_value_dollars: 0.12
+      slippage_adjusted_expected_value_dollars: 0.22
+      entry_slippage_dollars: 0.10
+      model_implied_volatility: 0.08
+entry:
+  schedule:
+    cadence_minutes: 5
+    market_hours_only: true
+    window:
+      start_et: "09:50"
+      end_et: "15:15"
+  selection:
+    min_opportunity_score: 60
+  recipes:
+    - neutral_range
+management:
+  schedule:
+    cadence_minutes: 1
+    market_hours_only: true
+    window:
+      start_et: "09:50"
+      end_et: "15:45"
+  recipes:
+    - take_profit_50pct
+    - max_loss_2x_credit
+    - expiry_day_exit
+liquidity:
+  min_open_interest: 200
+  max_leg_spread_pct_mid: 0.15
+  max_quote_age_seconds: 30
+risk:
+  limits:
+    extends: baseline
+  sizing:
+    min_return_on_risk: 0.13
+    position_size_pct_of_available_balance: 0.0025
+    max_credit_slippage_pct: 0.25
+runtime:
+  extends: short_dated_default
+  cancel_pending_entries_after_et: "15:00"
+  flatten_positions_at_et: "15:40"
+execution:
+  approval: auto
+  mode: paper
+  runtime: alpaca_direct

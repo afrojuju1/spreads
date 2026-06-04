@@ -11,7 +11,7 @@ Required environment variables:
 Notes:
     - Uses Alpaca's Trading API for option contract metadata.
     - Uses Alpaca's Market Data API for underlying price and option chain snapshots.
-    - Supports call/put credit and debit vertical spreads with shared ranking/backtest logic.
+    - Supports call/put credit and debit vertical spreads with shared ranking logic.
 """
 
 from __future__ import annotations
@@ -21,7 +21,6 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 
 from core.common import env_or_die, load_local_env
-from core.backtest import run_scanner_backtest
 from core.domain.models import SpreadCandidate, SymbolScanResult, UniverseScanFailure
 from core.integrations.alpaca.client import AlpacaClient, infer_trading_base_url
 from core.integrations.calendar_events import build_calendar_event_resolver
@@ -72,11 +71,6 @@ def main(argv: list[str] | None = None) -> int:
     greeks_provider = build_local_greeks_provider()
 
     try:
-        if args.backtest_latest or args.backtest_run_id:
-            return run_scanner_backtest(
-                args=args, client=client, history_store=history_store
-            )
-
         if len(symbols) == 1:
             strategy_results, failures = scan_symbol_across_strategies(
                 symbol=symbols[0],
@@ -92,9 +86,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.strategy == "combined":
                 combined_candidates = merge_strategy_candidates(strategy_results)
                 primary_result = strategy_results[0]
-                output_path = args.output or default_output_path(
-                    primary_result.symbol, args.strategy, args.output_format
-                )
+                output_path = args.output or default_output_path(primary_result.symbol, args.strategy, args.output_format)
                 if args.output_format == "csv":
                     write_csv(output_path, combined_candidates)
                 else:
@@ -118,28 +110,26 @@ def main(argv: list[str] | None = None) -> int:
                                 "symbol": primary_result.symbol,
                                 "strategy": args.strategy,
                                 "spot_price": primary_result.spot_price,
-                                "generated_at": datetime.now(UTC)
-                                .isoformat(timespec="seconds")
-                                .replace("+00:00", "Z"),
+                                "generated_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
                                 "filters": build_filter_payload(args),
                                 "strategy_runs": [
                                     {
                                         "strategy": result.args.strategy,
                                         "run_id": result.run_id,
-                                        "setup": None
-                                        if result.setup is None
-                                        else {
-                                            "status": result.setup.status,
-                                            "score": result.setup.score,
-                                            "reasons": list(result.setup.reasons),
-                                        },
+                                        "setup": (
+                                            None
+                                            if result.setup is None
+                                            else {
+                                                "status": result.setup.status,
+                                                "score": result.setup.score,
+                                                "reasons": list(result.setup.reasons),
+                                            }
+                                        ),
                                     }
                                     for result in strategy_results
                                 ],
                                 "failures": [asdict(failure) for failure in failures],
-                                "candidates": [
-                                    candidate.to_payload() for candidate in candidates
-                                ],
+                                "candidates": [candidate.to_payload() for candidate in candidates],
                                 "output_file": output_path,
                             },
                             indent=2,
@@ -166,9 +156,7 @@ def main(argv: list[str] | None = None) -> int:
                                 f"{strategy_result.delta_contract_count}, local Greeks for "
                                 f"{strategy_result.local_delta_contract_count}."
                             )
-                    maybe_stream_live_quotes(
-                        args=args, client=client, candidates=candidates
-                    )
+                    maybe_stream_live_quotes(args=args, client=client, candidates=candidates)
                     if failures:
                         print("Failures:")
                         for failure in failures:
@@ -180,9 +168,7 @@ def main(argv: list[str] | None = None) -> int:
                         print(f"- {result.args.strategy}: {result.run_id}")
             else:
                 result = strategy_results[0]
-                output_path = args.output or default_output_path(
-                    result.symbol, result.args.strategy, args.output_format
-                )
+                output_path = args.output or default_output_path(result.symbol, result.args.strategy, args.output_format)
 
                 if args.output_format == "csv":
                     write_csv(output_path, result.candidates)
@@ -209,21 +195,19 @@ def main(argv: list[str] | None = None) -> int:
                                 "symbol": result.symbol,
                                 "strategy": result.args.strategy,
                                 "spot_price": result.spot_price,
-                                "generated_at": datetime.now(UTC)
-                                .isoformat(timespec="seconds")
-                                .replace("+00:00", "Z"),
+                                "generated_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
                                 "run_id": result.run_id,
                                 "filters": build_filter_payload(result.args),
-                                "setup": None
-                                if result.setup is None
-                                else {
-                                    "status": result.setup.status,
-                                    "score": result.setup.score,
-                                    "reasons": list(result.setup.reasons),
-                                },
-                                "candidates": [
-                                    candidate.to_payload() for candidate in candidates
-                                ],
+                                "setup": (
+                                    None
+                                    if result.setup is None
+                                    else {
+                                        "status": result.setup.status,
+                                        "score": result.setup.score,
+                                        "reasons": list(result.setup.reasons),
+                                    }
+                                ),
+                                "candidates": [candidate.to_payload() for candidate in candidates],
                                 "output_file": output_path,
                             },
                             indent=2,
@@ -247,9 +231,7 @@ def main(argv: list[str] | None = None) -> int:
                             f"{result.delta_contract_count}, local Greeks for "
                             f"{result.local_delta_contract_count}."
                         )
-                    maybe_stream_live_quotes(
-                        args=result.args, client=client, candidates=candidates
-                    )
+                    maybe_stream_live_quotes(args=result.args, client=client, candidates=candidates)
                     print(f"Saved {len(result.candidates)} candidates to {output_path}")
                     print(f"Latest copy: {latest_copy}")
                     print(f"Run id: {result.run_id}")
@@ -279,9 +261,7 @@ def main(argv: list[str] | None = None) -> int:
 
             ranked_candidates = sort_candidates_for_display(ranked_candidates)
             ranked_candidates = ranked_candidates[: args.top]
-            output_path = args.output or default_universe_output_path(
-                universe_label, args.strategy, args.output_format
-            )
+            output_path = args.output or default_universe_output_path(universe_label, args.strategy, args.output_format)
 
             if args.output_format == "csv":
                 write_universe_csv(output_path, ranked_candidates)
@@ -309,9 +289,7 @@ def main(argv: list[str] | None = None) -> int:
                             "symbols": symbols,
                             "candidate_count": len(ranked_candidates),
                             "failures": [asdict(failure) for failure in failures],
-                            "candidates": [
-                                candidate.to_payload() for candidate in ranked_candidates
-                            ],
+                            "candidates": [candidate.to_payload() for candidate in ranked_candidates],
                             "output_file": output_path,
                         },
                         indent=2,
@@ -327,9 +305,7 @@ def main(argv: list[str] | None = None) -> int:
                     ranked_candidates=ranked_candidates,
                     failures=failures,
                 )
-                maybe_stream_live_quotes(
-                    args=args, client=client, candidates=ranked_candidates
-                )
+                maybe_stream_live_quotes(args=args, client=client, candidates=ranked_candidates)
                 if scan_results:
                     print(f"Stored per-symbol runs: {len(scan_results)}")
                 print(f"Saved {len(ranked_candidates)} ranked candidates to {output_path}")

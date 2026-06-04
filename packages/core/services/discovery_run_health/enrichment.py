@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from core.services.selection_summary import automation_summary_payload
+from core.services.selection_summary import strategy_sync_summary_payload
 from core.services.uoa_terms import normalize_uoa_decision_state
 
 from .capture import build_quote_capture_summary, build_trade_capture_summary
@@ -35,26 +35,12 @@ def build_auto_execution_summary(
 ) -> dict[str, Any] | None:
     if not isinstance(auto_execution, Mapping):
         return None
-    execution_plan = (
-        auto_execution.get("execution_plan")
-        if isinstance(auto_execution.get("execution_plan"), Mapping)
-        else {}
-    )
-    selected_intent = (
-        execution_plan.get("selected_execution_intent")
-        if isinstance(execution_plan.get("selected_execution_intent"), Mapping)
-        else {}
-    )
+    execution_plan = auto_execution.get("execution_plan") if isinstance(auto_execution.get("execution_plan"), Mapping) else {}
+    selected_intent = execution_plan.get("selected_execution_intent") if isinstance(execution_plan.get("selected_execution_intent"), Mapping) else {}
     selected_decision = (
-        execution_plan.get("selected_allocation_decision")
-        if isinstance(execution_plan.get("selected_allocation_decision"), Mapping)
-        else {}
+        execution_plan.get("selected_allocation_decision") if isinstance(execution_plan.get("selected_allocation_decision"), Mapping) else {}
     )
-    top_decision = (
-        execution_plan.get("top_allocation_decision")
-        if isinstance(execution_plan.get("top_allocation_decision"), Mapping)
-        else {}
-    )
+    top_decision = execution_plan.get("top_allocation_decision") if isinstance(execution_plan.get("top_allocation_decision"), Mapping) else {}
     reason = _read_text(auto_execution.get("reason"))
     changed = bool(auto_execution.get("changed"))
     if changed:
@@ -66,9 +52,7 @@ def build_auto_execution_summary(
     else:
         status = "blocked"
     decision = selected_decision or top_decision
-    execution_blockers = _normalize_text_list(
-        decision.get("rejection_codes") if isinstance(decision, Mapping) else None
-    )
+    execution_blockers = _normalize_text_list(decision.get("rejection_codes") if isinstance(decision, Mapping) else None)
     if not execution_blockers and reason is not None and not changed:
         execution_blockers = [reason]
     return _with_auto_execution_target_fallbacks(
@@ -77,46 +61,27 @@ def build_auto_execution_summary(
             "changed": changed,
             "reason": reason,
             "message": _read_text(auto_execution.get("message")),
-            "selected_opportunity_id": _read_text(
-                auto_execution.get("selected_opportunity_id")
-            ),
-            "selected_candidate_id": _read_int(auto_execution, "selected_candidate_id")
-            or None,
-            "selected_symbol": _read_text(selected_intent.get("symbol"))
-            or _read_text(execution_plan.get("top_symbol")),
-            "selected_strategy_family": _read_text(
-                selected_intent.get("strategy_family")
-            )
-            or _read_text(execution_plan.get("top_strategy_family")),
+            "selected_opportunity_id": _read_text(auto_execution.get("selected_opportunity_id")),
+            "selected_candidate_id": _read_int(auto_execution, "selected_candidate_id") or None,
+            "selected_symbol": _read_text(selected_intent.get("symbol")) or _read_text(execution_plan.get("top_symbol")),
+            "selected_strategy_family": _read_text(selected_intent.get("strategy_family")) or _read_text(execution_plan.get("top_strategy_family")),
             "allocation_score": _read_float(decision, "allocation_score"),
-            "decision_reason": _read_text(
-                decision.get("allocation_reason")
-                if isinstance(decision, Mapping)
-                else None
-            ),
+            "decision_reason": _read_text(decision.get("allocation_reason") if isinstance(decision, Mapping) else None),
             "execution_blockers": execution_blockers,
             "candidate_count": _read_int(execution_plan, "candidate_count"),
             "allocation_count": _read_int(execution_plan, "allocation_count"),
-            "execution_intent_count": _read_int(
-                execution_plan, "execution_intent_count"
-            ),
+            "execution_intent_count": _read_int(execution_plan, "execution_intent_count"),
             "top_opportunity_id": _read_text(execution_plan.get("top_opportunity_id")),
         }
     )
 
 
 def _with_auto_execution_target_fallbacks(summary: dict[str, Any]) -> dict[str, Any]:
-    selected_opportunity_id = summary.get("selected_opportunity_id") or summary.get(
-        "top_opportunity_id"
-    )
+    selected_opportunity_id = summary.get("selected_opportunity_id") or summary.get("top_opportunity_id")
     if summary.get("selected_symbol") in (None, ""):
-        summary["selected_symbol"] = _symbol_from_opportunity_id(
-            selected_opportunity_id
-        )
+        summary["selected_symbol"] = _symbol_from_opportunity_id(selected_opportunity_id)
     if summary.get("selected_strategy_family") in (None, ""):
-        summary["selected_strategy_family"] = _strategy_from_opportunity_id(
-            selected_opportunity_id
-        )
+        summary["selected_strategy_family"] = _strategy_from_opportunity_id(selected_opportunity_id)
     return summary
 
 
@@ -132,15 +97,9 @@ def normalize_uoa_decisions_payload(
     payload: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     source = {} if not isinstance(payload, Mapping) else dict(payload)
-    overview = (
-        {}
-        if not isinstance(source.get("overview"), Mapping)
-        else dict(source.get("overview"))
-    )
+    overview = {} if not isinstance(source.get("overview"), Mapping) else dict(source.get("overview"))
     normalized_overview = {
-        key: value
-        for key, value in overview.items()
-        if key not in {"watchlist_count", "board_count", "monitor_count", "promotable_count"}
+        key: value for key, value in overview.items() if key not in {"watchlist_count", "board_count", "monitor_count", "promotable_count"}
     }
     emerging_count = (
         overview.get("emerging_count")
@@ -148,9 +107,7 @@ def normalize_uoa_decisions_payload(
         else overview.get("watchlist_count", overview.get("monitor_count"))
     )
     notable_count = (
-        overview.get("notable_count")
-        if overview.get("notable_count") is not None
-        else overview.get("board_count", overview.get("promotable_count"))
+        overview.get("notable_count") if overview.get("notable_count") is not None else overview.get("board_count", overview.get("promotable_count"))
     )
     normalized_overview["emerging_count"] = emerging_count
     normalized_overview["notable_count"] = notable_count
@@ -158,16 +115,10 @@ def normalize_uoa_decisions_payload(
     normalized_overview.setdefault("monitor_count", emerging_count)
     normalized_overview.setdefault("board_count", notable_count)
     normalized_overview.setdefault("promotable_count", notable_count)
-    normalized_top_decision_state = normalize_uoa_decision_state(
-        normalized_overview.get("top_decision_state")
-    )
+    normalized_top_decision_state = normalize_uoa_decision_state(normalized_overview.get("top_decision_state"))
     if normalized_top_decision_state is not None:
         normalized_overview["top_decision_state"] = normalized_top_decision_state
-    roots = [
-        _normalize_uoa_root(item)
-        for item in list(source.get("roots") or [])
-        if isinstance(item, Mapping)
-    ]
+    roots = [_normalize_uoa_root(item) for item in list(source.get("roots") or []) if isinstance(item, Mapping)]
     top_emerging_roots = [
         _normalize_uoa_root(item)
         for item in list(
@@ -190,16 +141,8 @@ def normalize_uoa_decisions_payload(
         )
         if isinstance(item, Mapping)
     ]
-    top_high_roots = [
-        _normalize_uoa_root(item)
-        for item in list(source.get("top_high_roots") or [])
-        if isinstance(item, Mapping)
-    ]
-    top_critical_roots = [
-        _normalize_uoa_root(item)
-        for item in list(source.get("top_critical_roots") or [])
-        if isinstance(item, Mapping)
-    ]
+    top_high_roots = [_normalize_uoa_root(item) for item in list(source.get("top_high_roots") or []) if isinstance(item, Mapping)]
+    top_critical_roots = [_normalize_uoa_root(item) for item in list(source.get("top_critical_roots") or []) if isinstance(item, Mapping)]
     return {
         **{
             key: value
@@ -237,80 +180,54 @@ def enrich_discovery_run_result(
         total_quote_events_saved=_read_int(enriched, "quote_events_saved"),
         baseline_quote_events_saved=_read_int(enriched, "baseline_quote_events_saved"),
         stream_quote_events_saved=_read_int(enriched, "stream_quote_events_saved"),
-        websocket_quote_events_saved=_read_int(
-            enriched, "websocket_quote_events_saved"
-        ),
+        websocket_quote_events_saved=_read_int(enriched, "websocket_quote_events_saved"),
         recovery_quote_events_saved=_read_int(enriched, "recovery_quote_events_saved"),
     )
     trade_capture = build_trade_capture_summary(
         expected_trade_symbols=enriched.get("expected_trade_symbols"),
         total_trade_events_saved=_read_int(enriched, "trade_events_saved"),
         stream_trade_events_saved=_read_int(enriched, "stream_trade_events_saved"),
-        websocket_trade_events_saved=_read_int(
-            enriched, "websocket_trade_events_saved"
-        ),
+        websocket_trade_events_saved=_read_int(enriched, "websocket_trade_events_saved"),
     )
     enriched["stream_quote_events_saved"] = quote_capture["stream_quote_events_saved"]
-    enriched["websocket_quote_events_saved"] = quote_capture[
-        "websocket_quote_events_saved"
-    ]
+    enriched["websocket_quote_events_saved"] = quote_capture["websocket_quote_events_saved"]
     enriched["stream_trade_events_saved"] = trade_capture["stream_trade_events_saved"]
-    enriched["websocket_trade_events_saved"] = trade_capture[
-        "websocket_trade_events_saved"
-    ]
+    enriched["websocket_trade_events_saved"] = trade_capture["websocket_trade_events_saved"]
     enriched["quote_capture"] = quote_capture
     enriched["trade_capture"] = trade_capture
     enriched["uoa_decisions"] = normalize_uoa_decisions_payload(
-        enriched.get("uoa_decisions")
-        if isinstance(enriched.get("uoa_decisions"), Mapping)
-        else None
+        enriched.get("uoa_decisions") if isinstance(enriched.get("uoa_decisions"), Mapping) else None
     )
     enriched["resolved_ranking_policy"] = (
-        dict(enriched.get("resolved_ranking_policy") or {})
-        if isinstance(enriched.get("resolved_ranking_policy"), Mapping)
-        else {}
+        dict(enriched.get("resolved_ranking_policy") or {}) if isinstance(enriched.get("resolved_ranking_policy"), Mapping) else {}
     )
     enriched["ranking_policy_gate_summary"] = (
-        dict(enriched.get("ranking_policy_gate_summary") or {})
-        if isinstance(enriched.get("ranking_policy_gate_summary"), Mapping)
-        else {}
+        dict(enriched.get("ranking_policy_gate_summary") or {}) if isinstance(enriched.get("ranking_policy_gate_summary"), Mapping) else {}
     )
-    raw_automation_summary = (
-        dict(enriched.get("automation_summary") or {})
-        if isinstance(enriched.get("automation_summary"), Mapping)
-        else {}
+    raw_strategy_sync_summary = (
+        dict(enriched.get("strategy_sync_summary") or {}) if isinstance(enriched.get("strategy_sync_summary"), Mapping) else {}
     )
-    raw_automation_summary.setdefault(
-        "automation_runs_upserted",
-        enriched.get("automation_runs_upserted"),
+    raw_strategy_sync_summary.setdefault(
+        "strategy_runs_upserted",
+        enriched.get("strategy_runs_upserted"),
     )
-    raw_automation_summary.setdefault(
+    raw_strategy_sync_summary.setdefault(
         "runtime_opportunities_upserted",
         enriched.get("runtime_opportunities_upserted"),
     )
-    raw_automation_summary.setdefault(
+    raw_strategy_sync_summary.setdefault(
         "runtime_opportunities_expired",
         enriched.get("runtime_opportunities_expired"),
     )
-    enriched["automation_summary"] = automation_summary_payload(raw_automation_summary)
-    enriched["automation_runs_upserted"] = enriched["automation_summary"][
-        "automation_runs_upserted"
-    ]
-    enriched["runtime_opportunities_upserted"] = enriched["automation_summary"][
-        "runtime_opportunities_upserted"
-    ]
-    enriched["runtime_opportunities_expired"] = enriched["automation_summary"][
-        "runtime_opportunities_expired"
-    ]
+    enriched["strategy_sync_summary"] = strategy_sync_summary_payload(raw_strategy_sync_summary)
+    enriched["strategy_runs_upserted"] = enriched["strategy_sync_summary"]["strategy_runs_upserted"]
+    enriched["runtime_opportunities_upserted"] = enriched["strategy_sync_summary"]["runtime_opportunities_upserted"]
+    enriched["runtime_opportunities_expired"] = enriched["strategy_sync_summary"]["runtime_opportunities_expired"]
     enriched["selection_summary"] = normalize_selection_summary(
-        enriched.get("selection_summary")
-        if isinstance(enriched.get("selection_summary"), Mapping)
-        else None
+        enriched.get("selection_summary") if isinstance(enriched.get("selection_summary"), Mapping) else None
     )
     enriched["auto_execution_summary"] = build_auto_execution_summary(
-        enriched.get("auto_execution")
-        if isinstance(enriched.get("auto_execution"), Mapping)
-        else None
+        enriched.get("auto_execution") if isinstance(enriched.get("auto_execution"), Mapping) else None
     )
     enriched["live_action_gate"] = dict(
         enriched.get("live_action_gate")
@@ -327,9 +244,7 @@ def enrich_discovery_run_job_run_payload(payload: Mapping[str, Any]) -> dict[str
     enriched = dict(payload)
     if enriched.get("job_type") != "discovery_run":
         return enriched
-    result = enrich_discovery_run_result(
-        enriched.get("result") if isinstance(enriched.get("result"), Mapping) else None
-    )
+    result = enrich_discovery_run_result(enriched.get("result") if isinstance(enriched.get("result"), Mapping) else None)
     if result is None:
         return enriched
     enriched["result"] = result
@@ -340,33 +255,20 @@ def enrich_discovery_run_job_run_payload(payload: Mapping[str, Any]) -> dict[str
     enriched["uoa_decisions"] = result.get("uoa_decisions") or {}
     enriched["selection_summary"] = result.get("selection_summary") or {}
     enriched["resolved_ranking_policy"] = result.get("resolved_ranking_policy") or {}
-    enriched["ranking_policy_gate_summary"] = (
-        result.get("ranking_policy_gate_summary") or {}
-    )
+    enriched["ranking_policy_gate_summary"] = result.get("ranking_policy_gate_summary") or {}
     enriched["raw_candidate_summary"] = result.get("raw_candidate_summary") or {}
-    enriched["automation_summary"] = result.get("automation_summary") or {}
-    enriched["automation_runs_upserted"] = result.get("automation_runs_upserted") or 0
-    enriched["runtime_opportunities_upserted"] = (
-        result.get("runtime_opportunities_upserted") or 0
-    )
-    enriched["runtime_opportunities_expired"] = (
-        result.get("runtime_opportunities_expired") or 0
-    )
+    enriched["strategy_sync_summary"] = result.get("strategy_sync_summary") or {}
+    enriched["strategy_runs_upserted"] = result.get("strategy_runs_upserted") or 0
+    enriched["runtime_opportunities_upserted"] = result.get("runtime_opportunities_upserted") or 0
+    enriched["runtime_opportunities_expired"] = result.get("runtime_opportunities_expired") or 0
     enriched["auto_execution_summary"] = result.get("auto_execution_summary")
     enriched["capture_status"] = result["quote_capture"]["capture_status"]
-    run_payload = (
-        enriched.get("payload") if isinstance(enriched.get("payload"), Mapping) else {}
-    )
+    run_payload = enriched.get("payload") if isinstance(enriched.get("payload"), Mapping) else {}
     enriched["live_action_gate"] = dict(
         result.get("live_action_gate")
         or build_live_action_gate(
             profile=str(run_payload.get("profile") or result.get("profile") or ""),
-            label=str(
-                run_payload.get("label")
-                or result.get("label")
-                or enriched.get("label")
-                or ""
-            ),
+            label=str(run_payload.get("label") or result.get("label") or enriched.get("label") or ""),
             quote_capture=result.get("quote_capture"),
         )
     )

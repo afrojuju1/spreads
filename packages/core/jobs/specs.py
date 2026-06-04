@@ -7,11 +7,6 @@ import os
 from pathlib import Path
 from typing import Any
 
-from core.services.bots import (
-    build_discovery_run_scope,
-    build_uoa_symbols,
-    load_active_bots,
-)
 from core.services.config_inheritance import (
     as_mapping as _as_mapping,
     as_required_text as _as_text,
@@ -19,8 +14,12 @@ from core.services.config_inheritance import (
     resolve_policy_mapping as _resolve_policy_mapping,
 )
 from core.services.symbol_feeds import VALID_SYMBOL_FEED_RECIPES
-from core.services.strategy_configs import default_config_root
-
+from core.services.trading_strategies import (
+    build_discovery_run_scope,
+    build_entry_strategy_symbols,
+    default_config_root,
+    load_active_trading_strategies,
+)
 
 VALID_SCHEDULE_TYPES = {
     "interval_minutes",
@@ -32,26 +31,18 @@ VALID_SCHEDULE_TYPES = {
 
 def excluded_declared_job_types() -> set[str]:
     raw = os.environ.get("SPREADS_EXCLUDED_JOB_TYPES", "")
-    return {
-        part.strip()
-        for part in raw.split(",")
-        if part is not None and str(part).strip()
-    }
+    return {part.strip() for part in raw.split(",") if part is not None and str(part).strip()}
 
 
 def _canonical_hash(payload: dict[str, Any]) -> str:
-    return hashlib.sha1(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    return hashlib.sha1(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
 def _schedule_payload(value: Any, *, field_name: str) -> tuple[str, dict[str, Any]]:
     mapping = _as_mapping(value, field_name=field_name)
     schedule_type = _as_text(mapping.get("type"), field_name=f"{field_name}.type")
     if schedule_type not in VALID_SCHEDULE_TYPES:
-        raise ValueError(
-            f"Unsupported schedule type {schedule_type!r} in {field_name}"
-        )
+        raise ValueError(f"Unsupported schedule type {schedule_type!r} in {field_name}")
     return schedule_type, {key: mapping[key] for key in mapping if key != "type"}
 
 
@@ -202,7 +193,7 @@ class DiscoveryRunSpec:
         return self.config.market_calendar
 
     @property
-    def options_automation_scope(self) -> dict[str, Any]:
+    def trading_strategy_scope(self) -> dict[str, Any]:
         if self.config.uoa_only:
             return {"enabled": False}
         return dict(self.scope)
@@ -232,7 +223,7 @@ class DiscoveryRunSpec:
             "allow_off_hours": self.config.allow_off_hours,
             "session_start_offset_minutes": self.config.session_start_offset_minutes,
             "session_end_offset_minutes": self.config.session_end_offset_minutes,
-            "options_automation_enabled": not self.config.uoa_only,
+            "trading_strategy_enabled": not self.config.uoa_only,
             "execution_policy": dict(self.config.execution_policy),
             "risk_policy": dict(self.config.risk_policy),
             "exit_policy": dict(self.config.exit_policy),
@@ -282,11 +273,7 @@ def _load_job_specs(config_root: str | Path | None = None) -> list[DeclaredJobSp
             schedule=schedule,
             payload=payload,
             market_calendar=str(raw.get("market_calendar") or "NYSE"),
-            singleton_scope=(
-                None
-                if raw.get("singleton_scope") in (None, "")
-                else str(raw.get("singleton_scope")).strip()
-            ),
+            singleton_scope=(None if raw.get("singleton_scope") in (None, "") else str(raw.get("singleton_scope")).strip()),
             config_path=path,
             config_hash=_canonical_hash(
                 {
@@ -312,10 +299,7 @@ def _load_discovery_run_configs(
     root = config_root_path / "discovery_runs"
     if not root.exists():
         return []
-    symbol_feed_specs = {
-        spec.config.symbol_feed_id: spec
-        for spec in load_declared_symbol_feed_specs(config_root)
-    }
+    symbol_feed_specs = {spec.config.symbol_feed_id: spec for spec in load_declared_symbol_feed_specs(config_root)}
     configs: list[DiscoveryRunConfig] = []
     for path in sorted(root.glob("*.yaml")):
         raw = _resolve_policy_mapping(
@@ -347,29 +331,17 @@ def _load_discovery_run_configs(
             config_root=config_root_path,
             config_path=path,
         )
-        scanner_args = (
-            {}
-            if raw.get("scanner_args") is None
-            else _as_mapping(raw.get("scanner_args"), field_name="scanner_args")
-        )
-        symbol_feed_ref = (
-            None
-            if raw.get("symbol_feed_ref") in (None, "")
-            else str(raw.get("symbol_feed_ref")).strip()
-        )
+        scanner_args = {} if raw.get("scanner_args") is None else _as_mapping(raw.get("scanner_args"), field_name="scanner_args")
+        symbol_feed_ref = None if raw.get("symbol_feed_ref") in (None, "") else str(raw.get("symbol_feed_ref")).strip()
         if symbol_feed_ref and not bool(raw.get("uoa_only", False)):
-            raise ValueError(
-                "symbol_feed_ref is currently supported only for uoa_only discovery runs"
-            )
+            raise ValueError("symbol_feed_ref is currently supported only for uoa_only discovery runs")
         if raw.get("fallback_universe_ref") not in (None, "") and not symbol_feed_ref:
             raise ValueError("fallback_universe_ref requires symbol_feed_ref")
         symbol_feed_job_key = None
         if symbol_feed_ref is not None:
             symbol_feed_spec = symbol_feed_specs.get(symbol_feed_ref)
             if symbol_feed_spec is None:
-                raise ValueError(
-                    f"Unknown symbol_feed_ref {symbol_feed_ref!r} in {path}"
-                )
+                raise ValueError(f"Unknown symbol_feed_ref {symbol_feed_ref!r} in {path}")
             symbol_feed_job_key = symbol_feed_spec.job_key
         config = DiscoveryRunConfig(
             discovery_run_id=_as_text(raw.get("discovery_run_id"), field_name="discovery_run_id"),
@@ -378,22 +350,10 @@ def _load_discovery_run_configs(
             uoa_only=bool(raw.get("uoa_only", False)),
             symbol_feed_ref=symbol_feed_ref,
             symbol_feed_job_key=symbol_feed_job_key,
-            max_feed_age_seconds=(
-                None
-                if raw.get("max_feed_age_seconds") in (None, "")
-                else max(int(raw.get("max_feed_age_seconds")), 0)
-            ),
-            fallback_universe_ref=(
-                None
-                if raw.get("fallback_universe_ref") in (None, "")
-                else str(raw.get("fallback_universe_ref")).strip()
-            ),
-            scanner_strategy=_as_text(
-                raw.get("scanner_strategy"), field_name="scanner_strategy"
-            ),
-            scanner_profile=_as_text(
-                raw.get("scanner_profile"), field_name="scanner_profile"
-            ),
+            max_feed_age_seconds=(None if raw.get("max_feed_age_seconds") in (None, "") else max(int(raw.get("max_feed_age_seconds")), 0)),
+            fallback_universe_ref=(None if raw.get("fallback_universe_ref") in (None, "") else str(raw.get("fallback_universe_ref")).strip()),
+            scanner_strategy=_as_text(raw.get("scanner_strategy"), field_name="scanner_strategy"),
+            scanner_profile=_as_text(raw.get("scanner_profile"), field_name="scanner_profile"),
             enabled=bool(raw.get("enabled", True)),
             schedule_type=schedule_type,
             schedule=schedule,
@@ -407,19 +367,13 @@ def _load_discovery_run_configs(
             quote_capture_seconds=max(int(raw.get("quote_capture_seconds", 20)), 0),
             trade_capture_seconds=max(int(raw.get("trade_capture_seconds", 10)), 0),
             allow_off_hours=bool(raw.get("allow_off_hours", False)),
-            session_start_offset_minutes=int(
-                raw.get("session_start_offset_minutes", 0)
-            ),
+            session_start_offset_minutes=int(raw.get("session_start_offset_minutes", 0)),
             session_end_offset_minutes=int(raw.get("session_end_offset_minutes", 0)),
             execution_policy=execution_policy,
             risk_policy=risk_policy,
             exit_policy=exit_policy,
             scanner_args=scanner_args,
-            singleton_scope=(
-                None
-                if raw.get("singleton_scope") in (None, "")
-                else str(raw.get("singleton_scope")).strip()
-            ),
+            singleton_scope=(None if raw.get("singleton_scope") in (None, "") else str(raw.get("singleton_scope")).strip()),
             config_path=path,
             config_hash=_canonical_hash(
                 {
@@ -429,15 +383,9 @@ def _load_discovery_run_configs(
                     "uoa_only": bool(raw.get("uoa_only", False)),
                     "symbol_feed_ref": symbol_feed_ref,
                     "symbol_feed_job_key": symbol_feed_job_key,
-                    "max_feed_age_seconds": (
-                        None
-                        if raw.get("max_feed_age_seconds") in (None, "")
-                        else max(int(raw.get("max_feed_age_seconds")), 0)
-                    ),
+                    "max_feed_age_seconds": (None if raw.get("max_feed_age_seconds") in (None, "") else max(int(raw.get("max_feed_age_seconds")), 0)),
                     "fallback_universe_ref": (
-                        None
-                        if raw.get("fallback_universe_ref") in (None, "")
-                        else str(raw.get("fallback_universe_ref")).strip()
+                        None if raw.get("fallback_universe_ref") in (None, "") else str(raw.get("fallback_universe_ref")).strip()
                     ),
                     "scanner_strategy": raw.get("scanner_strategy"),
                     "scanner_profile": raw.get("scanner_profile"),
@@ -449,23 +397,13 @@ def _load_discovery_run_configs(
                     "top": max(int(raw.get("top", 10)), 1),
                     "per_symbol_top": max(int(raw.get("per_symbol_top", 1)), 1),
                     "interval_seconds": max(int(raw.get("interval_seconds", 300)), 1),
-                    "backfill_missed_slots": bool(
-                        raw.get("backfill_missed_slots", False)
-                    ),
+                    "backfill_missed_slots": bool(raw.get("backfill_missed_slots", False)),
                     "max_slot_retries": max(int(raw.get("max_slot_retries", 3)), 0),
-                    "quote_capture_seconds": max(
-                        int(raw.get("quote_capture_seconds", 20)), 0
-                    ),
-                    "trade_capture_seconds": max(
-                        int(raw.get("trade_capture_seconds", 10)), 0
-                    ),
+                    "quote_capture_seconds": max(int(raw.get("quote_capture_seconds", 20)), 0),
+                    "trade_capture_seconds": max(int(raw.get("trade_capture_seconds", 10)), 0),
                     "allow_off_hours": bool(raw.get("allow_off_hours", False)),
-                    "session_start_offset_minutes": int(
-                        raw.get("session_start_offset_minutes", 0)
-                    ),
-                    "session_end_offset_minutes": int(
-                        raw.get("session_end_offset_minutes", 0)
-                    ),
+                    "session_start_offset_minutes": int(raw.get("session_start_offset_minutes", 0)),
+                    "session_end_offset_minutes": int(raw.get("session_end_offset_minutes", 0)),
                     "execution_policy": execution_policy,
                     "risk_policy": risk_policy,
                     "exit_policy": exit_policy,
@@ -495,9 +433,9 @@ def _build_discovery_run_scope(
             "symbols": (),
             "scanner_strategy": None,
             "scanner_profile": config.scanner_profile,
-            "entry_runtimes": [],
+            "entry_strategies": [],
         }
-    symbols = build_uoa_symbols(
+    symbols = build_entry_strategy_symbols(
         config_root=config_root,
         scanner_profile=config.scanner_profile,
     )
@@ -506,7 +444,7 @@ def _build_discovery_run_scope(
         "symbols": symbols,
         "scanner_strategy": None,
         "scanner_profile": config.scanner_profile,
-        "entry_runtimes": [],
+        "entry_strategies": [],
     }
 
 
@@ -534,11 +472,7 @@ def _load_symbol_feed_configs(
         recipe = _as_text(raw.get("recipe"), field_name="recipe").strip().lower()
         if recipe not in VALID_SYMBOL_FEED_RECIPES:
             raise ValueError(f"Unsupported symbol feed recipe {recipe!r} in {path}")
-        recipe_args = (
-            {}
-            if raw.get("recipe_args") is None
-            else _as_mapping(raw.get("recipe_args"), field_name="recipe_args")
-        )
+        recipe_args = {} if raw.get("recipe_args") is None else _as_mapping(raw.get("recipe_args"), field_name="recipe_args")
         configs.append(
             SymbolFeedConfig(
                 symbol_feed_id=_as_text(
@@ -553,11 +487,7 @@ def _load_symbol_feed_configs(
                 market_calendar=str(raw.get("market_calendar") or "NYSE"),
                 allow_off_hours=bool(raw.get("allow_off_hours", False)),
                 recipe_args=recipe_args,
-                singleton_scope=(
-                    None
-                    if raw.get("singleton_scope") in (None, "")
-                    else str(raw.get("singleton_scope")).strip()
-                ),
+                singleton_scope=(None if raw.get("singleton_scope") in (None, "") else str(raw.get("singleton_scope")).strip()),
                 config_path=path,
                 config_hash=_canonical_hash(
                     {
@@ -581,10 +511,7 @@ def _load_symbol_feed_configs(
 def load_declared_symbol_feed_specs(
     config_root: str | Path | None = None,
 ) -> list[SymbolFeedSpec]:
-    return [
-        SymbolFeedSpec(config=config)
-        for config in _load_symbol_feed_configs(config_root)
-    ]
+    return [SymbolFeedSpec(config=config) for config in _load_symbol_feed_configs(config_root)]
 
 
 def get_declared_symbol_feed_spec(
@@ -596,52 +523,42 @@ def get_declared_symbol_feed_spec(
     if not normalized:
         return None
     return next(
-        (
-            spec
-            for spec in load_declared_symbol_feed_specs(config_root)
-            if spec.config.symbol_feed_id == normalized
-        ),
+        (spec for spec in load_declared_symbol_feed_specs(config_root) if spec.config.symbol_feed_id == normalized),
         None,
     )
 
 
-def _automation_job_specs(
+def _trading_strategy_job_specs(
     config_root: str | Path | None = None,
 ) -> list[DeclaredJobSpec]:
     specs: list[DeclaredJobSpec] = []
-    for bot in load_active_bots(config_root).values():
-        for automation in bot.automations:
-            cadence = max(
-                int(automation.automation.schedule_config.cadence_minutes),
-                1,
+    for strategy in load_active_trading_strategies(config_root).values():
+        for routine_name, routine in (
+            ("entry", strategy.entry),
+            ("manage", strategy.management),
+        ):
+            if routine is None or not routine.enabled:
+                continue
+            job_key = f"trading_strategy:{strategy.trading_strategy_id}:{routine_name}"
+            specs.append(
+                DeclaredJobSpec(
+                    job_key=job_key,
+                    job_type=f"trading_strategy_{routine_name}",
+                    enabled=True,
+                    schedule_type="interval_minutes",
+                    schedule={"minutes": max(int(routine.schedule.cadence_minutes), 1)},
+                    payload={
+                        "trading_strategy_id": strategy.trading_strategy_id,
+                        "routine": routine_name,
+                        "allow_off_hours": not bool(routine.schedule.market_hours_only),
+                        "declared_config_hash": strategy.config_hash,
+                    },
+                    market_calendar="NYSE",
+                    singleton_scope=f"{strategy.trading_strategy_id}:{routine_name}",
+                    config_path=strategy.config_path,
+                    config_hash=strategy.config_hash,
+                )
             )
-            payload = {
-                "bot_id": bot.bot.bot_id,
-                "automation_id": automation.automation.automation_id,
-                "allow_off_hours": not bool(
-                    automation.automation.schedule.get("market_hours_only", False)
-                ),
-                "declared_config_hash": bot.config_hash,
-            }
-            if automation.automation.is_entry:
-                job_key = (
-                    f"options_automation_entry:{bot.bot.bot_id}:"
-                    f"{automation.automation.automation_id}"
-                )
-                specs.append(
-                    DeclaredJobSpec(
-                        job_key=job_key,
-                        job_type="options_automation_entry",
-                        enabled=True,
-                        schedule_type="interval_minutes",
-                        schedule={"minutes": cadence},
-                        payload=payload,
-                        market_calendar="NYSE",
-                        singleton_scope=f"{bot.bot.bot_id}:{automation.automation.automation_id}",
-                        config_path=automation.automation.config_path,
-                        config_hash=bot.config_hash,
-                    )
-                )
     return specs
 
 
@@ -649,16 +566,14 @@ def load_declared_job_specs(
     config_root: str | Path | None = None,
 ) -> list[DeclaredJobSpec]:
     # The declared job surface is assembled from static job YAML plus
-    # config-compiled feed, discovery, and automation definitions.
+    # config-compiled feed, discovery, and trading-strategy definitions.
     specs = list(_load_job_specs(config_root))
     specs.extend(spec.as_job_spec() for spec in load_declared_symbol_feed_specs(config_root))
     specs.extend(spec.as_job_spec() for spec in load_declared_discovery_run_specs(config_root))
-    specs.extend(_automation_job_specs(config_root))
+    specs.extend(_trading_strategy_job_specs(config_root))
     excluded_job_types = excluded_declared_job_types()
     if excluded_job_types:
-        specs = [
-            spec for spec in specs if str(spec.job_type or "").strip() not in excluded_job_types
-        ]
+        specs = [spec for spec in specs if str(spec.job_type or "").strip() not in excluded_job_types]
     specs.sort(key=lambda item: item.job_key)
     return specs
 
@@ -688,11 +603,7 @@ def get_declared_job_row(
     if not normalized:
         return None
     return next(
-        (
-            row
-            for row in list_declared_job_rows(config_root=config_root)
-            if str(row.get("job_key") or "") == normalized
-        ),
+        (row for row in list_declared_job_rows(config_root=config_root) if str(row.get("job_key") or "") == normalized),
         None,
     )
 
@@ -706,11 +617,7 @@ def get_declared_discovery_run_spec(
     if not normalized:
         return None
     return next(
-        (
-            spec
-            for spec in load_declared_discovery_run_specs(config_root)
-            if spec.job_key == normalized
-        ),
+        (spec for spec in load_declared_discovery_run_specs(config_root) if spec.job_key == normalized),
         None,
     )
 

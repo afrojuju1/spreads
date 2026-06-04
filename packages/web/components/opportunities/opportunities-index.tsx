@@ -34,7 +34,6 @@ import {
 } from "@/components/ui/sheet";
 import {
   buildOpportunitiesHref,
-  buildRuntimeHref,
   buildPipelineHref,
   executeOpportunity,
   getOpportunities,
@@ -100,14 +99,9 @@ function getOpportunityDiscovery(opportunity: Opportunity): Record<string, unkno
   return readRecord(opportunityRecord(opportunity).discovery);
 }
 
-function getOpportunityRuntimeLabel(opportunity: Opportunity): string {
+function getOpportunityTradingStrategyLabel(opportunity: Opportunity): string {
   const owner = getOpportunityOwner(opportunity);
-  const botId = readString(owner.bot_id, "");
-  const automationId = readString(owner.automation_id, "");
-  if (botId && automationId) {
-    return `${botId} / ${automationId}`;
-  }
-  return "—";
+  return readString(owner.trading_strategy_id, "—");
 }
 
 function getOpportunityDiscoveryLabel(opportunity: Opportunity): string {
@@ -118,21 +112,9 @@ function getOpportunityDiscoveryLabel(opportunity: Opportunity): string {
   );
 }
 
-function getOpportunityRuntimeHref(opportunity: Opportunity): string {
+function hasOpportunityTradingStrategyOwner(opportunity: Opportunity): boolean {
   const owner = getOpportunityOwner(opportunity);
-  const botId = typeof owner.bot_id === "string" ? owner.bot_id : null;
-  const automationId =
-    typeof owner.automation_id === "string" ? owner.automation_id : null;
-  return buildRuntimeHref(
-    botId,
-    automationId,
-    opportunity.market_date,
-  );
-}
-
-function hasOpportunityRuntimeOwner(opportunity: Opportunity): boolean {
-  const owner = getOpportunityOwner(opportunity);
-  return Boolean(readString(owner.bot_id, "") && readString(owner.automation_id, ""));
+  return Boolean(readString(owner.trading_strategy_id, ""));
 }
 
 function getOpportunityDiscoveryHref(opportunity: Opportunity): string {
@@ -1201,8 +1183,8 @@ function OpportunityInspectorPanel({
       <InspectorSection title="Provenance">
         <div className="grid gap-2">
           <BoardMetric
-            label="Runtime"
-            value={getOpportunityRuntimeLabel(opportunity)}
+            label="Trading strategy"
+            value={getOpportunityTradingStrategyLabel(opportunity)}
           />
           <BoardMetric
             label="Diagnostics"
@@ -1229,14 +1211,6 @@ function OpportunityInspectorPanel({
             value={reasonCodes.length ? reasonCodes.join(", ") : "—"}
           />
           <div className="mt-3 flex flex-wrap gap-2">
-            {hasOpportunityRuntimeOwner(opportunity) ? (
-              <Link
-                href={getOpportunityRuntimeHref(opportunity)}
-                className={buttonVariants({ variant: "outline", size: "sm" })}
-              >
-                Open runtime
-              </Link>
-            ) : null}
             <Link
               href={getOpportunityDiscoveryHref(opportunity)}
               className={buttonVariants({ variant: "outline", size: "sm" })}
@@ -1308,13 +1282,10 @@ function OpportunityCell({
         Age {formatAge(generatedAt)} · Policy {humanize(policyStatus)}
       </div>
       <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs">
-        {hasOpportunityRuntimeOwner(opportunity) ? (
-          <Link
-            href={getOpportunityRuntimeHref(opportunity)}
-            className="text-foreground underline-offset-4 hover:underline"
-          >
-            Runtime · {getOpportunityRuntimeLabel(opportunity)}
-          </Link>
+        {hasOpportunityTradingStrategyOwner(opportunity) ? (
+          <div className="text-foreground">
+            Trading strategy · {getOpportunityTradingStrategyLabel(opportunity)}
+          </div>
         ) : null}
         <Link
           href={getOpportunityDiscoveryHref(opportunity)}
@@ -1517,31 +1488,36 @@ function StructureLegChips({
   );
 }
 
-export function OpportunitiesIndexPageContent({
-  marketDate,
-  botId,
-  automationId,
-  strategyConfigId,
-  label,
-  defaultMarketDate,
-}: {
+type OpportunitiesIndexPageContentProps = {
   marketDate?: string;
-  botId?: string;
-  automationId?: string;
-  strategyConfigId?: string;
+  tradingStrategyId?: string;
   label?: string;
   defaultMarketDate: string;
-}) {
+  [key: string]: unknown;
+};
+
+export function OpportunitiesIndexPageContent({
+  marketDate,
+  tradingStrategyId: tradingStrategyIdProp,
+  label,
+  defaultMarketDate,
+}: OpportunitiesIndexPageContentProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
-  const hasOwnerScope = Boolean(botId && automationId);
+  const tradingStrategyId =
+    readString(
+      tradingStrategyIdProp,
+      readString(searchParams.get("tradingStrategyId"), ""),
+    ) ||
+    undefined;
+  const hasOwnerScope = Boolean(tradingStrategyId);
   const ownerScopeLabel = hasOwnerScope
-    ? `Runtime · ${botId} / ${automationId}`
+    ? `Trading strategy · ${tradingStrategyId}`
     : label
       ? `Diagnostics · ${label}`
-      : "All runtimes";
+      : "All trading strategies";
   const selectedMarketDate: string = isMarketDateValue(marketDate)
     ? marketDate
     : defaultMarketDate;
@@ -1586,18 +1562,14 @@ export function OpportunitiesIndexPageContent({
     queryKey: [
       "opportunities",
       selectedMarketDate,
-      botId ?? "",
-      automationId ?? "",
-      strategyConfigId ?? "",
+      tradingStrategyId ?? "",
       label ?? "",
       showNonLive ? "with-non-live" : "live-only",
     ],
     queryFn: () =>
       getOpportunities({
         marketDate: selectedMarketDate,
-        botId,
-        automationId,
-        strategyConfigId,
+        tradingStrategyId,
         label,
         includeNonLive: showNonLive,
         limit: 200,
@@ -1642,13 +1614,12 @@ export function OpportunitiesIndexPageContent({
   const expiredCount = opportunities.filter(
     (row) => isOpportunityExpired(row),
   ).length;
-  const runtimeCount = new Set(
+  const tradingStrategyCount = new Set(
     opportunities.flatMap((row) => {
       const owner = getOpportunityOwner(row);
-      const botId = readString(owner.bot_id, "");
-      const automationId = readString(owner.automation_id, "");
-      if (botId && automationId) {
-        return [`${botId}:${automationId}`];
+      const rowTradingStrategyId = readString(owner.trading_strategy_id, "");
+      if (rowTradingStrategyId) {
+        return [rowTradingStrategyId];
       }
       return [];
     }),
@@ -1794,7 +1765,7 @@ export function OpportunitiesIndexPageContent({
             </div>
             <div className="mt-2 text-sm text-foreground/70">
               Work one market date at a time across live opportunities, with an
-              optional stale and expired diagnostic view. Runtime ownership and
+              optional stale and expired diagnostic view. Trading strategy ownership and
               diagnostics lineage stay attached to every row, but this surface
               stays centered on entry decisions. Current date scope:{" "}
               {dateScopeLabel}. Current visibility scope:{" "}
@@ -1911,8 +1882,8 @@ export function OpportunitiesIndexPageContent({
           }
         />
         <MetricTile
-          label="Runtimes"
-          value={String(runtimeCount)}
+          label="Strategies"
+          value={String(tradingStrategyCount)}
           note={
             latestTimestamp
               ? `Updated ${formatTimestamp(latestTimestamp)}`
@@ -1939,7 +1910,7 @@ export function OpportunitiesIndexPageContent({
         description={
           historicalDateSelected
             ? "Historical boards are review-only. Select a row to inspect leg-native structure, economics, and diagnostics lineage in a detail drawer without leaving the board."
-            : "Select a row to inspect leg-native structure, economics, runtime ownership, and lineage in a detail drawer without leaving the board."
+            : "Select a row to inspect leg-native structure, economics, trading strategy ownership, and lineage in a detail drawer without leaving the board."
         }
       >
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/70 bg-background/40 px-4 py-3">

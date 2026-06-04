@@ -80,17 +80,13 @@ def pipeline_uses_runtime_owned_opportunities(
     pipeline: Mapping[str, Any] | None,
     *runs: Mapping[str, Any] | None,
 ) -> bool:
-    if isinstance(pipeline, Mapping) and bool(
-        pipeline.get("options_automation_enabled", False)
-    ):
+    if isinstance(pipeline, Mapping) and bool(pipeline.get("trading_strategy_enabled", False)):
         return True
     for run in runs:
         if not isinstance(run, Mapping):
             continue
         payload = run.get("payload")
-        if isinstance(payload, Mapping) and bool(
-            payload.get("options_automation_enabled", False)
-        ):
+        if isinstance(payload, Mapping) and bool(payload.get("trading_strategy_enabled", False)):
             return True
     return False
 
@@ -150,9 +146,7 @@ def build_live_session_catalog(
         ],
         "expected_labels": expected_labels,
         "realized_labels": realized,
-        "unexpected_realized_labels": [
-            label for label in realized if label not in expected_label_set
-        ],
+        "unexpected_realized_labels": [label for label in realized if label not in expected_label_set],
         "labels": sorted(expected_label_set | realized_set),
     }
 
