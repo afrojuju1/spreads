@@ -104,6 +104,9 @@ export function TodayCommandCenter() {
   const checks = readRecordList(liveDetails.checks);
   const trading = tradingHealthQuery.data;
   const tradingSummary = readRecord(trading?.summary);
+  const tradingDetails = readRecord(trading?.details);
+  const engine = readRecord(tradingDetails.engine);
+  const engineSummary = readRecord(engine.summary);
   const finvizFeedCheck = findCheck(checks, "Finviz Feed");
   const strategyEntryCheck = findCheck(checks, "Strategy Entry");
   const strategyEntryMetrics = readRecord(strategyEntryCheck.metrics);
@@ -124,23 +127,21 @@ export function TodayCommandCenter() {
   const tradingAllowed = firstPresent(liveSummary.trading_allowed, tradingSummary.trading_allowed);
   const environment = firstPresent(liveSummary.environment, tradingSummary.environment);
   const controlMode = firstPresent(liveSummary.control_mode, tradingSummary.control_mode);
-  const strategyOpportunityValue = firstPresent(
-    liveSummary.strategy_entry_opportunity_count,
-    strategyEntryMetrics.opportunity_count,
-  );
+  const engineSignalValue = firstPresent(engineSummary.signal_count, tradingSummary.engine_signal_count);
+  const engineCandidateValue = firstPresent(engineSummary.trade_candidate_count, tradingSummary.engine_trade_candidate_count);
+  const engineDecisionValue = firstPresent(engineSummary.decision_count, tradingSummary.engine_decision_count);
   const marketDate = readString(liveSummary.market_date, "");
   const openPositions = formatNumberMetric(
     firstPresent(liveSummary.open_position_count, tradingSummary.open_position_count),
     pendingLabel,
   );
   const maxOpenPositions = formatNumberMetric(liveSummary.max_open_positions, pendingLabel);
-  const activeIntents = formatNumberMetric(
-    firstPresent(liveSummary.active_intent_count, tradingSummary.trading_strategy_intent_count),
-    pendingLabel,
-  );
+  const activeIntents = formatNumberMetric(firstPresent(liveSummary.active_intent_count, tradingSummary.engine_intent_count), pendingLabel);
   const remainingEntries = formatNumberMetric(liveSummary.remaining_daily_entries, pendingLabel);
   const maxDailyEntries = formatNumberMetric(liveSummary.max_daily_entries, pendingLabel);
-  const strategyOpportunityCount = formatNumberMetric(strategyOpportunityValue, pendingLabel);
+  const engineSignalCount = formatNumberMetric(engineSignalValue, pendingLabel);
+  const engineCandidateCount = formatNumberMetric(engineCandidateValue, pendingLabel);
+  const engineDecisionCount = formatNumberMetric(engineDecisionValue, pendingLabel);
   const netPnl = hasMetricValue(liveSummary.net_pnl) ? readNumber(liveSummary.net_pnl) : null;
   const realizedPnl = hasMetricValue(liveSummary.realized_pnl)
     ? readNumber(liveSummary.realized_pnl)
@@ -218,9 +219,9 @@ export function TodayCommandCenter() {
           note={`${humanizeToken(controlMode, pendingLabel)} control · ${humanizeToken(marketSessionStatus, pendingLabel)}`}
         />
         <MetricTile
-          label="Finviz Strategy"
-          value={strategyOpportunityCount === pendingLabel ? pendingLabel : `${strategyOpportunityCount} opportunities`}
-          note={`feed ${formatAge(liveSummary.finviz_feed_age_seconds)} · entry ${formatAge(liveSummary.strategy_entry_age_seconds)}`}
+          label="Entry Engine"
+          value={engineSignalCount === pendingLabel ? pendingLabel : `${engineSignalCount} signals`}
+          note={`${engineCandidateCount} candidates · ${engineDecisionCount} decisions`}
         />
         <MetricTile
           label="Capacity"
@@ -271,7 +272,7 @@ export function TodayCommandCenter() {
             <StatusLine
               label="Strategy Entry"
               value={liveSummary.strategy_entry_status ?? (loading ? "loading" : "idle")}
-              note={`${strategyOpportunityCount} opportunities · ${readString(strategyEntryMetrics.job_run_id)}`}
+              note={`${engineSignalCount} signals · ${readString(strategyEntryMetrics.job_run_id)}`}
             />
             <StatusLine
               label="Strategy Manage"
@@ -298,19 +299,23 @@ export function TodayCommandCenter() {
         </section>
 
         <section className="rounded-2xl border border-border/70 bg-card/80 px-4 py-3">
-          <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Strategy Runtime</div>
+          <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Engine Runtime</div>
           <div className="space-y-2 text-sm">
             <div className="flex items-center justify-between gap-3">
               <span>Selected today</span>
-              <Badge variant="outline">{formatNumberMetric(tradingSummary.trading_strategy_selected_count, pendingLabel)}</Badge>
+              <Badge variant="outline">{formatNumberMetric(tradingSummary.engine_selected_count, pendingLabel)}</Badge>
             </div>
             <div className="flex items-center justify-between gap-3">
               <span>Entry intents</span>
-              <Badge variant="outline">{formatNumberMetric(tradingSummary.trading_strategy_entry_intent_count, pendingLabel)}</Badge>
+              <Badge variant="outline">{formatNumberMetric(tradingSummary.engine_entry_intent_count, pendingLabel)}</Badge>
             </div>
             <div className="flex items-center justify-between gap-3">
               <span>Management intents</span>
-              <Badge variant="outline">{formatNumberMetric(tradingSummary.trading_strategy_management_intent_count, pendingLabel)}</Badge>
+              <Badge variant="outline">{formatNumberMetric(tradingSummary.engine_management_intent_count, pendingLabel)}</Badge>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span>Capture targets</span>
+              <Badge variant="outline">{formatNumberMetric(tradingSummary.capture_active_target_count, pendingLabel)}</Badge>
             </div>
           </div>
           <div className="mt-4 border-t border-border/60 pt-3">

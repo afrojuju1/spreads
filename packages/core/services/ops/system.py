@@ -14,23 +14,19 @@ from core.jobs.registry import get_job_spec
 from core.jobs.specs import get_declared_job_row
 from core.jobs.specs import excluded_declared_job_types
 from core.services.broker_sync import BROKER_SYNC_KEY
-from core.services.selection_summary import aggregate_selection_summaries as _aggregate_selection_summaries
 from core.services.value_coercion import (
     as_text as _as_text,
     coerce_int as _coerce_int,
     utc_now_iso as _utc_now,
 )
 
-from .discovery_runs import (
-    _latest_discovery_runs,
-    _trading_strategy_runtime_summary,
-)
 from .jobs import (
     _job_definition_status,
     _job_run_requires_attention,
     _split_active_queued_jobs,
 )
 from .broker_sync import broker_sync_payload as _broker_sync_payload
+from .engine import build_engine_ops_state
 from .market_session import market_session_context as _market_session_context
 from .shared import (
     RECENT_FAILURE_LIMIT,
@@ -164,7 +160,6 @@ def build_system_status(
         queued_jobs = []
         recent_failures = []
         actionable_recent_failures = []
-        latest_discovery_runs = []
         statuses.append("blocked")
         attention.append(
             _attention(
@@ -242,25 +237,11 @@ def build_system_status(
                 )
             )
 
-        latest_discovery_runs = _latest_discovery_runs(storage=storage, now=now)
-        for row in latest_discovery_runs:
-            job_key = str(row.get("job_key") or "")
-            if bool(row.get("needs_attention")):
-                schedule_note = _as_text(row.get("schedule_note"))
-                attention.append(
-                    _attention(
-                        severity="medium",
-                        code="discovery_run_unhealthy",
-                        message=(schedule_note or ("Discovery-run " f"{job_key} is {str(row.get('status') or 'unknown')}.")),
-                    )
-                )
-
         statuses.append(
             _combine_statuses(
                 scheduler_payload["status"],
                 worker_status,
                 "degraded" if actionable_recent_failures else "healthy",
-                "degraded" if any(row["needs_attention"] for row in latest_discovery_runs) else "healthy",
             )
         )
 
@@ -322,6 +303,22 @@ def build_system_status(
             "pending_count": 0,
         }
 
+    engine_ops = build_engine_ops_state(
+        storage=storage,
+        market_date=market_date,
+        now=now,
+    )
+    engine_status = str(engine_ops.get("status") or "unknown")
+    if engine_status in {"degraded", "blocked"}:
+        attention.append(
+            _attention(
+                severity="high" if engine_status == "blocked" else "medium",
+                code="engine_unhealthy",
+                message="Engine facts, execution storage, or capture targets need attention.",
+            )
+        )
+    statuses.append(engine_status)
+
     details.update(
         {
             "scheduler": scheduler_payload,
@@ -335,21 +332,13 @@ def build_system_status(
                 }
                 for row in actionable_recent_failures
             ],
-            "discovery_sessions": latest_discovery_runs,
-            "latest_discovery_runs": latest_discovery_runs,
-            "discovery_selection": _aggregate_selection_summaries([row.get("selection_summary") for row in latest_discovery_runs]),
-            "discovery_run_selection": _aggregate_selection_summaries([row.get("selection_summary") for row in latest_discovery_runs]),
-            "trading_strategy_runtime": _trading_strategy_runtime_summary(
-                storage=storage,
-                market_date=market_date,
-            ),
+            "engine": engine_ops,
             "broker_sync": broker_sync,
             "alert_delivery": alert_delivery,
         }
     )
 
-    discovery_run_selection = dict(details.get("discovery_run_selection") or {})
-    trading_strategy_runtime = dict(details.get("trading_strategy_runtime") or {})
+    engine_summary = dict(engine_ops.get("summary") or {})
     summary = {
         "control_mode": control.get("mode"),
         "worker_count": len(workers),
@@ -358,22 +347,19 @@ def build_system_status(
         "running_jobs_by_type": dict(Counter(str(row.get("job_type") or "unknown") for row in running_jobs)),
         "queued_jobs_by_type": dict(Counter(str(row.get("job_type") or "unknown") for row in queued_jobs)),
         "recent_failure_count": len(actionable_recent_failures),
-        "trading_strategy_opportunity_count": _coerce_int(trading_strategy_runtime.get("opportunity_count")) or 0,
-        "trading_strategy_selected_count": _coerce_int((trading_strategy_runtime.get("decision_state_counts") or {}).get("selected")) or 0,
-        "trading_strategy_intent_count": _coerce_int(trading_strategy_runtime.get("intent_count")) or 0,
-        "trading_strategy_entry_intent_count": _coerce_int(trading_strategy_runtime.get("entry_intent_count")) or 0,
-        "trading_strategy_management_intent_count": _coerce_int(trading_strategy_runtime.get("management_intent_count")) or 0,
-        "trading_strategy_open_position_count": _coerce_int(trading_strategy_runtime.get("open_position_count")) or 0,
-        "discovery_session_count": len(latest_discovery_runs),
-        "discovery_session_degraded_count": sum(1 for row in latest_discovery_runs if row["needs_attention"]),
-        "discovery_opportunity_count": _coerce_int(discovery_run_selection.get("opportunity_count")) or 0,
-        "discovery_shadow_only_count": _coerce_int(discovery_run_selection.get("shadow_only_count")) or 0,
-        "discovery_auto_live_eligible_count": _coerce_int(discovery_run_selection.get("auto_live_eligible_count")) or 0,
-        "discovery_run_count": len(latest_discovery_runs),
-        "discovery_run_degraded_count": sum(1 for row in latest_discovery_runs if row["needs_attention"]),
-        "discovery_run_opportunity_count": _coerce_int(discovery_run_selection.get("opportunity_count")) or 0,
-        "discovery_run_shadow_only_count": _coerce_int(discovery_run_selection.get("shadow_only_count")) or 0,
-        "discovery_run_auto_live_eligible_count": _coerce_int(discovery_run_selection.get("auto_live_eligible_count")) or 0,
+        "engine_status": engine_status,
+        "engine_source_run_count": _coerce_int(engine_summary.get("source_run_count")) or 0,
+        "engine_candidate_run_count": _coerce_int(engine_summary.get("candidate_run_count")) or 0,
+        "engine_trade_candidate_count": _coerce_int(engine_summary.get("trade_candidate_count")) or 0,
+        "engine_signal_count": _coerce_int(engine_summary.get("signal_count")) or 0,
+        "engine_decision_count": _coerce_int(engine_summary.get("decision_count")) or 0,
+        "engine_selected_count": _coerce_int(engine_summary.get("selected_count")) or 0,
+        "engine_intent_count": _coerce_int(engine_summary.get("intent_count")) or 0,
+        "engine_entry_intent_count": _coerce_int(engine_summary.get("entry_intent_count")) or 0,
+        "engine_management_intent_count": _coerce_int(engine_summary.get("management_intent_count")) or 0,
+        "engine_open_position_count": _coerce_int(engine_summary.get("open_position_count")) or 0,
+        "capture_active_target_count": _coerce_int(engine_summary.get("capture_active_target_count")) or 0,
+        "capture_status": engine_summary.get("capture_status"),
         "broker_sync_status": broker_sync.get("status"),
         "alert_delivery_status": alert_delivery.get("status"),
         "market_session_status": market_session.get("status"),

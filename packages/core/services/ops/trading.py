@@ -18,7 +18,6 @@ from core.services.execution_lifecycle import (
 )
 from core.services.execution.runtimes import resolve_execution_runtime_capabilities
 from core.services.risk_manager import assess_position_risk
-from core.services.selection_summary import aggregate_selection_summaries as _aggregate_selection_summaries
 from core.services.value_coercion import (
     as_text as _as_text,
     coerce_float as _coerce_float,
@@ -27,11 +26,8 @@ from core.services.value_coercion import (
 )
 from core.jobs.orchestration import NEW_YORK
 
-from .discovery_runs import (
-    _latest_discovery_runs,
-    _trading_strategy_runtime_summary,
-)
 from .broker_sync import broker_sync_payload as _broker_sync_payload
+from .engine import build_engine_ops_state
 from .market_session import market_session_context as _market_session_context
 from .shared import (
     _attention,
@@ -309,17 +305,23 @@ def build_trading_health(
 
     execution_store = storage.execution
     job_store = getattr(storage, "jobs", None)
-    if job_store is not None and hasattr(job_store, "schema_ready") and job_store.schema_ready():
-        latest_discovery_runs = _latest_discovery_runs(storage=storage, now=now)
-    else:
-        latest_discovery_runs = []
-    discovery_run_selection = _aggregate_selection_summaries([row.get("selection_summary") for row in latest_discovery_runs])
-    details["latest_discovery_runs"] = latest_discovery_runs
-    details["discovery_run_selection"] = discovery_run_selection
-    details["trading_strategy_runtime"] = _trading_strategy_runtime_summary(
+    engine_ops = build_engine_ops_state(
         storage=storage,
         market_date=market_date,
+        now=now,
     )
+    engine_summary = dict(engine_ops.get("summary") or {})
+    details["engine"] = engine_ops
+    engine_status = str(engine_ops.get("status") or "unknown")
+    statuses.append(engine_status)
+    if engine_status in {"degraded", "blocked"}:
+        attention.append(
+            _attention(
+                severity="high" if engine_status == "blocked" else "medium",
+                code="engine_unhealthy",
+                message="Engine facts, execution storage, or capture targets need attention.",
+            )
+        )
     execution_runtimes = resolve_execution_runtime_capabilities()
     details["execution_runtimes"] = execution_runtimes
     if execution_store.schema_ready():
@@ -520,19 +522,19 @@ def build_trading_health(
         "risk_breach_count": risk_breach_count,
         "reconciliation_mismatch_count": reconciliation_mismatch_count,
         "mark_health_status": mark_health_status,
-        "discovery_run_count": len(latest_discovery_runs),
-        "discovery_run_opportunity_count": _coerce_int(discovery_run_selection.get("opportunity_count")) or 0,
-        "discovery_run_shadow_only_count": _coerce_int(discovery_run_selection.get("shadow_only_count")) or 0,
-        "discovery_run_auto_live_eligible_count": _coerce_int(discovery_run_selection.get("auto_live_eligible_count")) or 0,
-        "trading_strategy_opportunity_count": _coerce_int((details.get("trading_strategy_runtime") or {}).get("opportunity_count")) or 0,
-        "trading_strategy_selected_count": _coerce_int(
-            ((details.get("trading_strategy_runtime") or {}).get("decision_state_counts") or {}).get("selected")
-        )
-        or 0,
-        "trading_strategy_intent_count": _coerce_int((details.get("trading_strategy_runtime") or {}).get("intent_count")) or 0,
-        "trading_strategy_entry_intent_count": _coerce_int((details.get("trading_strategy_runtime") or {}).get("entry_intent_count")) or 0,
-        "trading_strategy_management_intent_count": _coerce_int((details.get("trading_strategy_runtime") or {}).get("management_intent_count")) or 0,
-        "trading_strategy_open_position_count": _coerce_int((details.get("trading_strategy_runtime") or {}).get("open_position_count")) or 0,
+        "engine_status": engine_status,
+        "engine_source_run_count": _coerce_int(engine_summary.get("source_run_count")) or 0,
+        "engine_candidate_run_count": _coerce_int(engine_summary.get("candidate_run_count")) or 0,
+        "engine_trade_candidate_count": _coerce_int(engine_summary.get("trade_candidate_count")) or 0,
+        "engine_signal_count": _coerce_int(engine_summary.get("signal_count")) or 0,
+        "engine_decision_count": _coerce_int(engine_summary.get("decision_count")) or 0,
+        "engine_selected_count": _coerce_int(engine_summary.get("selected_count")) or 0,
+        "engine_intent_count": _coerce_int(engine_summary.get("intent_count")) or 0,
+        "engine_entry_intent_count": _coerce_int(engine_summary.get("entry_intent_count")) or 0,
+        "engine_management_intent_count": _coerce_int(engine_summary.get("management_intent_count")) or 0,
+        "engine_open_position_count": _coerce_int(engine_summary.get("open_position_count")) or 0,
+        "capture_active_target_count": _coerce_int(engine_summary.get("capture_active_target_count")) or 0,
+        "capture_status": engine_summary.get("capture_status"),
         "account_error": account_error,
     }
 

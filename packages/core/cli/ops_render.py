@@ -617,7 +617,7 @@ def _render_discovery_run_raw_candidates(
     console.print(table)
 
 
-def _render_strategy_runtime_summary(
+def _render_engine_summary(
     console: Console,
     *,
     title: str,
@@ -635,28 +635,20 @@ def _render_strategy_runtime_summary(
         "Management Strategies",
         _render_value(payload.get("management_strategy_count")),
     )
-    table.add_row("Opportunities", _render_value(payload.get("opportunity_count")))
+    table.add_row("Source Runs", _render_value(payload.get("source_run_count")))
+    table.add_row("Candidate Runs", _render_value(payload.get("candidate_run_count")))
+    table.add_row("Trade Candidates", _render_value(payload.get("trade_candidate_count")))
+    table.add_row("Signals", _render_value(payload.get("signal_count")))
+    table.add_row(
+        "Signal States",
+        _render_count_map(payload.get("signal_state_counts")),
+    )
     table.add_row("Decisions", _render_value(payload.get("decision_count")))
     table.add_row(
         "Decision States",
         _render_count_map(payload.get("decision_state_counts")),
     )
-    table.add_row(
-        "Selected Admissible",
-        _render_value(payload.get("selected_currently_admissible_count")),
-    )
-    table.add_row(
-        "Selected Blocked",
-        _render_value(payload.get("selected_currently_blocked_count")),
-    )
-    table.add_row(
-        "Blocked Buying Power",
-        _render_value(payload.get("blocked_by_buying_power_count")),
-    )
-    table.add_row(
-        "Blocked Policy/Risk",
-        _render_value(payload.get("blocked_by_policy_or_risk_budget_count")),
-    )
+    table.add_row("Selected Decisions", _render_value(payload.get("selected_count")))
     table.add_row(
         "Entry Intents",
         _render_value(payload.get("entry_intent_count")),
@@ -680,6 +672,19 @@ def _render_strategy_runtime_summary(
     table.add_row(
         "Position Symbols",
         _render_count_map(payload.get("open_position_symbols")),
+    )
+    table.add_row(
+        "Capture Targets",
+        _render_value(payload.get("capture_active_target_count")),
+    )
+    table.add_row(
+        "Capture Reasons",
+        _render_count_map(payload.get("capture_target_counts")),
+    )
+    table.add_row("Capture Status", _render_value(payload.get("capture_status")))
+    table.add_row(
+        "Latest Capture Summary",
+        _render_value(payload.get("latest_capture_summary_id")),
     )
     console.print(table)
 
@@ -757,7 +762,8 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
     scheduler = dict(details.get("scheduler") or {})
     broker_sync = dict(details.get("broker_sync") or {})
     alert_delivery = dict(details.get("alert_delivery") or {})
-    trading_strategy_runtime = dict(details.get("trading_strategy_runtime") or {})
+    engine = dict(details.get("engine") or {})
+    engine_summary = dict(engine.get("summary") or {})
 
     overview = Table.grid(padding=(0, 2))
     overview.add_row("Overall", _status_text(payload.get("status")))
@@ -773,13 +779,13 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
         f"running {_render_value(summary.get('running_job_count'))} | queued {_render_value(summary.get('queued_job_count'))}",
     )
     overview.add_row(
-        "Trading Strategies",
+        "Engine",
         (
-            f"opps {_render_value(summary.get('trading_strategy_opportunity_count'))} | "
-            f"selected {_render_value(summary.get('trading_strategy_selected_count'))} | "
-            f"positions {_render_value(summary.get('trading_strategy_open_position_count'))} | "
-            f"entry intents {_render_value(summary.get('trading_strategy_entry_intent_count'))} | "
-            f"mgmt intents {_render_value(summary.get('trading_strategy_management_intent_count'))}"
+            f"signals {_render_value(summary.get('engine_signal_count'))} | "
+            f"decisions {_render_value(summary.get('engine_decision_count'))} | "
+            f"selected {_render_value(summary.get('engine_selected_count'))} | "
+            f"positions {_render_value(summary.get('engine_open_position_count'))} | "
+            f"capture {_render_value(summary.get('capture_active_target_count'))}"
         ),
     )
     overview.add_row(
@@ -800,40 +806,10 @@ def render_system_status(console: Console, payload: dict[str, Any]) -> None:
 
     _render_attention(console, payload)
 
-    discovery_run_rows = list(details.get("latest_discovery_runs") or [])
-    if discovery_run_rows:
-        table = Table(title="Discovery Runs", header_style="bold")
-        table.add_column("Job Key")
-        table.add_column("Session")
-        table.add_column("Status")
-        table.add_column("Capture")
-        table.add_column("Auto Exec")
-        table.add_column("Opps/Live", justify="right")
-        table.add_column("Strategy Sync")
-        table.add_column("Quote Stream/Base", justify="right")
-        table.add_column("Last Slot")
-        table.add_column("Expected")
-        for row in discovery_run_rows:
-            selection_summary = row.get("selection_summary") if isinstance(row.get("selection_summary"), dict) else {}
-            table.add_row(
-                str(row.get("job_key") or "-"),
-                _render_session_state(row.get("session_schedule")),
-                str(row.get("status") or "-"),
-                str(row.get("capture_status") or "-"),
-                _render_auto_execution_summary(row.get("auto_execution_summary")),
-                f"{_render_value(selection_summary.get('opportunity_count'))}/{_render_value(selection_summary.get('auto_live_eligible_count'))}",
-                _render_strategy_sync_value(row.get("strategy_sync_summary")),
-                f"{_render_value(row.get('stream_quote_events_saved'))}/{_render_value(row.get('baseline_quote_events_saved'))}",
-                str(row.get("last_slot_at") or "-"),
-                _render_expected_slot(row.get("session_schedule")),
-            )
-        console.print(table)
-        _render_discovery_run_raw_candidates(console, discovery_run_rows=discovery_run_rows)
-
-    _render_strategy_runtime_summary(
+    _render_engine_summary(
         console,
-        title="Trading Strategy Runtime",
-        value=trading_strategy_runtime,
+        title="Engine Spine",
+        value=engine_summary,
     )
 
     failure_rows = list(details.get("recent_failures") or [])
@@ -859,8 +835,8 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
     account = dict(details.get("account") or {})
     broker_sync = dict(details.get("broker_sync") or {})
     market_session = dict(details.get("market_session") or {})
-    trading_strategy_runtime = dict(details.get("trading_strategy_runtime") or {})
-    discovery_run_rows = list(details.get("latest_discovery_runs") or [])
+    engine = dict(details.get("engine") or {})
+    engine_summary = dict(engine.get("summary") or {})
 
     overview = Table.grid(padding=(0, 2))
     overview.add_row("Overall", _status_text(payload.get("status")))
@@ -888,15 +864,15 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row("Risk Breaches", _render_value(summary.get("risk_breach_count")))
     overview.add_row("Mismatches", _render_value(summary.get("reconciliation_mismatch_count")))
     overview.add_row("Execution Health", _render_value(summary.get("execution_health_status")))
-    overview.add_row("Discovery Runs", _render_value(summary.get("discovery_run_count")))
     overview.add_row(
-        "Trading Strategies",
+        "Engine",
         (
-            f"opps {_render_value(summary.get('trading_strategy_opportunity_count'))} | "
-            f"selected {_render_value(summary.get('trading_strategy_selected_count'))} | "
-            f"positions {_render_value(summary.get('trading_strategy_open_position_count'))} | "
-            f"entry intents {_render_value(summary.get('trading_strategy_entry_intent_count'))} | "
-            f"mgmt intents {_render_value(summary.get('trading_strategy_management_intent_count'))}"
+            f"signals {_render_value(summary.get('engine_signal_count'))} | "
+            f"decisions {_render_value(summary.get('engine_decision_count'))} | "
+            f"selected {_render_value(summary.get('engine_selected_count'))} | "
+            f"entry intents {_render_value(summary.get('engine_entry_intent_count'))} | "
+            f"mgmt intents {_render_value(summary.get('engine_management_intent_count'))} | "
+            f"capture {_render_value(summary.get('capture_active_target_count'))}"
         ),
     )
     overview.add_row(
@@ -913,12 +889,11 @@ def render_trading_health(console: Console, payload: dict[str, Any]) -> None:
 
     _render_attention(console, payload)
 
-    _render_strategy_runtime_summary(
+    _render_engine_summary(
         console,
-        title="Trading Strategy Runtime",
-        value=trading_strategy_runtime,
+        title="Engine Spine",
+        value=engine_summary,
     )
-    _render_discovery_run_raw_candidates(console, discovery_run_rows=discovery_run_rows)
 
     top_positions = list(details.get("top_positions") or [])
     if top_positions:
@@ -1511,14 +1486,8 @@ def _render_job_run_detail(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row("Worker", _render_value(summary.get("worker_name")))
     overview.add_row("Retry", _render_value(summary.get("retry_count")))
     overview.add_row("Capture", _render_value(summary.get("capture_status")))
-    overview.add_row(
-        "Opportunities",
-        _render_value(summary.get("discovery_run_opportunity_count")),
-    )
-    overview.add_row(
-        "Strategy Sync",
-        _render_strategy_sync_value(details.get("strategy_sync_summary")),
-    )
+    overview.add_row("Result", _render_value(summary.get("result_status")))
+    overview.add_row("Reason", _render_value(summary.get("result_reason")))
     console.print(
         Panel(
             overview,
@@ -1555,17 +1524,6 @@ def _render_job_run_detail(console: Console, payload: dict[str, Any]) -> None:
             f"{_render_value(run.get('stream_trade_events_saved'))}/{_render_value(run.get('total_trade_events_saved'))}",
         )
         console.print(table)
-
-    _render_selection_summary(
-        console,
-        title="Selection Summary",
-        value=details.get("selection_summary") or {},
-    )
-    _render_strategy_sync_summary(
-        console,
-        title="Strategy Sync",
-        value=details.get("strategy_sync_summary") or {},
-    )
 
     error_text = run.get("error_text")
     if error_text:

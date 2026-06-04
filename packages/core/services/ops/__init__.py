@@ -12,6 +12,7 @@ from .jobs import (
     build_job_run_view,
     build_jobs_overview,
 )
+from .engine import build_engine_ops_state
 from .live_doctor import build_live_doctor
 from .shared import OpsLookupError
 from .system import build_system_status
@@ -21,6 +22,7 @@ from .uoa import build_uoa_cycle_view, build_uoa_overview
 __all__ = [
     "OpsLookupError",
     "build_audit_view",
+    "build_engine_ops_state",
     "build_job_lanes_overview",
     "build_job_run_view",
     "build_jobs_overview",

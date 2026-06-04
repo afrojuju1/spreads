@@ -20,17 +20,6 @@ from core.jobs.specs import (
     list_declared_job_rows,
 )
 from core.services.broker_sync import BROKER_SYNC_KEY
-from core.services.discovery_run_health.enrichment import (
-    enrich_discovery_run_job_run_payload,
-)
-from core.services.discovery_run_health.schedule import (
-    evaluate_discovery_run_schedule_health,
-)
-from core.services.discovery_run_health.shared import (
-    is_non_healthy_capture_status,
-)
-from core.services.live_pipelines import build_discovery_run_session_schedule
-from core.services.selection_summary import selection_summary_payload as _selection_summary_payload
 from core.storage.serializers import parse_datetime
 from core.services.value_coercion import (
     as_text as _as_text,
@@ -231,8 +220,6 @@ def _skip_is_benign(run: Mapping[str, Any]) -> bool:
         return True
     if reason == "superseded_by_newer_scheduled_run":
         return True
-    if reason == "stale_slot" and str(run.get("job_type") or "") == "discovery_run":
-        return True
     error_text = str(_as_text(run.get("error_text")) or "").strip().lower()
     return error_text in {
         "superseded during queue consolidation",
@@ -286,7 +273,6 @@ def _job_run_operator_status(
     now: datetime,
 ) -> tuple[str, str | None]:
     status = str(run.get("status") or "unknown").strip().lower()
-    live_action_gate = run.get("live_action_gate") if isinstance(run.get("live_action_gate"), Mapping) else {}
     if status == "failed":
         error_text = _as_text(run.get("error_text"))
         return "blocked", error_text or "Job run failed."
@@ -303,11 +289,6 @@ def _job_run_operator_status(
                 return (
                     "healthy",
                     "Job run was skipped because it was outside its configured schedule window.",
-                )
-            if reason == "stale_slot" and str(run.get("job_type") or "") == "discovery_run":
-                return (
-                    "healthy",
-                    "Stale live slot was intentionally marked missed instead of replayed.",
                 )
             if reason == "superseded_by_newer_scheduled_run":
                 return (
@@ -341,18 +322,6 @@ def _job_run_operator_status(
             return "degraded", "Running job heartbeat is stale."
         return "healthy", None
     if status == "succeeded":
-        if str(run.get("job_type") or "") == "discovery_run":
-            if str(live_action_gate.get("status") or "") == "blocked":
-                return (
-                    "blocked",
-                    _as_text(live_action_gate.get("message")) or "Discovery-run actions are blocked.",
-                )
-            capture_status = str(run.get("capture_status") or "").strip().lower()
-            if is_non_healthy_capture_status(capture_status):
-                return (
-                    "degraded",
-                    f"Discovery-run capture finished as {capture_status}.",
-                )
         return "healthy", None
     return "unknown", None
 
@@ -364,8 +333,6 @@ def _definition_is_currently_schedulable(
 ) -> bool:
     if not bool(definition.get("enabled")):
         return False
-    if str(definition.get("job_type") or "") == "discovery_run":
-        return True
     try:
         return resolve_scheduled_for(definition, now=now) is not None
     except (TypeError, ValueError):
@@ -377,13 +344,12 @@ def _summarize_job_run(
     *,
     now: datetime,
 ) -> dict[str, Any]:
-    enriched = enrich_discovery_run_job_run_payload(run)
+    enriched = dict(run)
     operator_status, operator_note = _job_run_operator_status(enriched, now=now)
     quote_capture = enriched.get("quote_capture") if isinstance(enriched.get("quote_capture"), Mapping) else {}
     trade_capture = enriched.get("trade_capture") if isinstance(enriched.get("trade_capture"), Mapping) else {}
     payload = enriched.get("payload") if isinstance(enriched.get("payload"), Mapping) else {}
     result = enriched.get("result") if isinstance(enriched.get("result"), Mapping) else {}
-    live_action_gate = enriched.get("live_action_gate") if isinstance(enriched.get("live_action_gate"), Mapping) else {}
     stream_quote_events_saved = _stream_quote_events_saved(quote_capture)
     stream_trade_events_saved = _stream_trade_events_saved(trade_capture)
     return {
@@ -409,7 +375,6 @@ def _summarize_job_run(
         "singleton_scope": payload.get("singleton_scope"),
         "result_status": result.get("status"),
         "result_reason": result.get("reason"),
-        "live_action_gate": dict(live_action_gate),
         "stream_quote_events_saved": stream_quote_events_saved,
         "websocket_quote_events_saved": stream_quote_events_saved,
         "baseline_quote_events_saved": _coerce_int(quote_capture.get("baseline_quote_events_saved")) or 0,
@@ -432,20 +397,6 @@ def _job_definition_status(
         definition,
         now=now,
     )
-    if str(definition.get("job_type") or "") == "discovery_run":
-        session_schedule = build_discovery_run_session_schedule(definition, now=now)
-        schedule_health = evaluate_discovery_run_schedule_health(
-            schedule_summary=session_schedule,
-            latest_run=latest_run,
-            now=now,
-        )
-        if bool(schedule_health.get("overdue")):
-            return "degraded"
-        if latest_run is None and str(session_schedule.get("state") or "") not in {
-            "pending",
-            "off_day",
-        }:
-            return "degraded"
     if latest_run is None:
         return "unknown" if currently_schedulable else "idle"
     latest_status, _ = _job_run_operator_status(latest_run, now=now)
@@ -464,14 +415,9 @@ def _summarize_job_definition(
     *,
     now: datetime,
 ) -> dict[str, Any]:
-    enriched_latest_run = None if latest_run is None else enrich_discovery_run_job_run_payload(latest_run)
+    enriched_latest_run = None if latest_run is None else dict(latest_run)
     latest_summary = None if enriched_latest_run is None else _summarize_job_run(enriched_latest_run, now=now)
-    session_schedule = build_discovery_run_session_schedule(definition, now=now) if str(definition.get("job_type") or "") == "discovery_run" else {}
-    schedule_health = evaluate_discovery_run_schedule_health(
-        schedule_summary=session_schedule,
-        latest_run=enriched_latest_run,
-        now=now,
-    )
+    session_schedule: dict[str, Any] = {}
     return {
         "job_key": definition.get("job_key"),
         "job_type": definition.get("job_type"),
@@ -494,7 +440,7 @@ def _summarize_job_definition(
         "latest_capture_status": None if latest_summary is None else latest_summary.get("capture_status"),
         "schedule_state": session_schedule.get("state"),
         "expected_slot_at": session_schedule.get("expected_current_slot_at"),
-        "schedule_note": schedule_health.get("message"),
+        "schedule_note": None,
     }
 
 
@@ -726,9 +672,6 @@ def build_jobs_overview(
     stale_running_count = sum(
         1 for row in run_rows if str(row.get("status") or "") == "running" and str(row.get("operator_status") or "") != "healthy"
     )
-    degraded_capture_count = sum(
-        1 for row in run_rows if str(row.get("job_type") or "") == "discovery_run" and is_non_healthy_capture_status(row.get("capture_status"))
-    )
     actionable_failed_count = sum(1 for row in run_rows if _job_run_is_actionable_failure(row))
     historical_failed_count = sum(
         1 for row in run_rows if str(row.get("status") or "") == "failed" and str(row.get("operator_status") or "") in {"healthy", "idle"}
@@ -758,14 +701,6 @@ def build_jobs_overview(
                 severity="medium",
                 code="stale_running_jobs",
                 message=f"{stale_running_count} running job run(s) have stale heartbeats.",
-            )
-        )
-    if degraded_capture_count:
-        attention.append(
-            _attention(
-                severity="medium",
-                code="discovery_run_capture_degraded",
-                message=f"{degraded_capture_count} discovery-run execution(s) completed with degraded capture.",
             )
         )
     if stale_queued_run_rows:
@@ -834,7 +769,7 @@ def build_jobs_overview(
     statuses.append(
         _combine_statuses(
             "blocked" if actionable_failed_count else "healthy",
-            "degraded" if actionable_skipped_count or stale_running_count or degraded_capture_count else "healthy",
+            "degraded" if actionable_skipped_count or stale_running_count else "healthy",
             (
                 "degraded"
                 if actionable_definition_status_counts.get("degraded", 0) or actionable_definition_status_counts.get("blocked", 0)
@@ -862,7 +797,6 @@ def build_jobs_overview(
             "worker_lane_count": len(lane_rows),
             "stale_running_count": stale_running_count,
             "stale_queued_job_count": len(stale_queued_run_rows),
-            "degraded_capture_count": degraded_capture_count,
             "actionable_failed_count": actionable_failed_count,
             "historical_failed_count": historical_failed_count,
         },
@@ -930,7 +864,7 @@ def build_job_run_view(
     if run_record is None:
         raise OpsLookupError(f"Unknown job run: {job_run_id}")
 
-    run = enrich_discovery_run_job_run_payload(run_record)
+    run = dict(run_record)
     run_summary = _summarize_job_run(run, now=now)
     attention: list[dict[str, str]] = []
     statuses = [str(run_summary.get("operator_status") or "unknown")]
@@ -998,12 +932,6 @@ def build_job_run_view(
             )
 
     result = run.get("result") if isinstance(run.get("result"), Mapping) else {}
-    strategy_sync_summary = dict(run.get("strategy_sync_summary") or {}) if isinstance(run.get("strategy_sync_summary"), Mapping) else {}
-    runtime_selection_summary = (
-        dict(strategy_sync_summary.get("runtime_selection_summary") or {})
-        if isinstance(strategy_sync_summary.get("runtime_selection_summary"), Mapping)
-        else {}
-    )
     if str(run.get("status") or "") == "failed" and _as_text(run.get("error_text")) is None:
         result_reason = _as_text(result.get("reason"))
         if result_reason is not None:
@@ -1031,11 +959,8 @@ def build_job_run_view(
             "worker_name": run_summary.get("worker_name"),
             "retry_count": run_summary.get("retry_count"),
             "capture_status": run_summary.get("capture_status"),
-            "discovery_run_opportunity_count": _coerce_int((run.get("selection_summary") or {}).get("opportunity_count")) or 0,
-            "strategy_runs_upserted": _coerce_int(strategy_sync_summary.get("strategy_runs_upserted")) or 0,
-            "runtime_opportunities_upserted": _coerce_int(strategy_sync_summary.get("runtime_opportunities_upserted")) or 0,
-            "runtime_opportunities_expired": _coerce_int(strategy_sync_summary.get("runtime_opportunities_expired")) or 0,
-            "runtime_opportunity_count": _coerce_int(runtime_selection_summary.get("opportunity_count")) or 0,
+            "result_status": run_summary.get("result_status"),
+            "result_reason": run_summary.get("result_reason"),
         },
         "attention": attention,
         "details": {
@@ -1046,11 +971,6 @@ def build_job_run_view(
             "result": dict(result),
             "quote_capture": dict(run.get("quote_capture") or {}),
             "trade_capture": dict(run.get("trade_capture") or {}),
-            "uoa_summary": dict(run.get("uoa_summary") or {}),
-            "uoa_quote_summary": dict(run.get("uoa_quote_summary") or {}),
-            "uoa_decisions": dict(run.get("uoa_decisions") or {}),
-            "selection_summary": _selection_summary_payload(run.get("selection_summary")),
-            "strategy_sync_summary": strategy_sync_summary,
             "singleton_lease": None if singleton_lease is None else dict(singleton_lease),
         },
     }

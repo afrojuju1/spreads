@@ -65,6 +65,8 @@ export function OpsPageContent() {
   const eventLogTable = retentionTables.find((row) => readString(row.physical_table, "") === "event_log") ?? {};
   const hasQueryError = statusQuery.isError || liveDoctorQuery.isError || retentionQuery.isError;
   const scheduler = readRecord(statusDetails.scheduler);
+  const engine = readRecord(statusDetails.engine);
+  const engineSummary = readRecord(engine.summary);
   const marketSessionStatus = firstPresent(liveSummary.market_session_status, statusSummary.market_session_status);
   const schedulerStatus = firstPresent(liveSummary.scheduler_status, scheduler.status);
   const vacuumFullTables = Array.isArray(retentionSummary.vacuum_full_pending_tables)
@@ -92,7 +94,7 @@ export function OpsPageContent() {
               </Badge>
               <RuntimeStatusBadge value={statusPayload?.status ?? liveDoctor?.status} />
             </div>
-            <div className="mt-4 text-3xl font-semibold tracking-[0.02em]">Resources and jobs</div>
+            <div className="mt-4 text-3xl font-semibold tracking-[0.02em]">Engine and runtime</div>
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-foreground/70">
               <span>{humanizeToken(marketSessionStatus)}</span>
               <span>scheduler {humanizeToken(schedulerStatus)}</span>
@@ -126,6 +128,11 @@ export function OpsPageContent() {
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricTile
+          label="Engine"
+          value={humanizeToken(firstPresent(statusSummary.engine_status, engine.status), loading ? "loading" : "idle")}
+          note={`${formatCompactNumber(readNumber(engineSummary.signal_count))} signals · ${formatCompactNumber(readNumber(engineSummary.selected_count))} selected`}
+        />
+        <MetricTile
           label="Workers"
           value={String(readNumber(statusSummary.worker_count, workers.length))}
           note={`${readNumber(liveSummary.worker_lane_count)} lanes · ${readNumber(liveSummary.blocked_worker_lane_count)} blocked`}
@@ -146,6 +153,49 @@ export function OpsPageContent() {
           note={`latest ${formatTimestamp(readString(retentionSummary.latest_run_at, ""))}`}
         />
       </div>
+
+      <section className="rounded-2xl border border-border/70 bg-card/80 px-4 py-3">
+        <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Engine Spine</div>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <MetricTile
+            label="Sources"
+            value={formatCompactNumber(readNumber(engineSummary.source_run_count))}
+            note={`${formatCompactNumber(readNumber(engineSummary.candidate_run_count))} candidate runs`}
+          />
+          <MetricTile
+            label="Candidates"
+            value={formatCompactNumber(readNumber(engineSummary.trade_candidate_count))}
+            note={`${formatCompactNumber(readNumber(engineSummary.signal_count))} signals`}
+          />
+          <MetricTile
+            label="Decisions"
+            value={formatCompactNumber(readNumber(engineSummary.decision_count))}
+            note={`${formatCompactNumber(readNumber(engineSummary.selected_count))} selected`}
+          />
+          <MetricTile
+            label="Capture"
+            value={formatCompactNumber(readNumber(engineSummary.capture_active_target_count))}
+            note={humanizeToken(engineSummary.capture_status, loading ? "loading" : "idle")}
+          />
+        </div>
+        <div className="mt-3 grid gap-3 text-sm md:grid-cols-3">
+          <div className="rounded-lg border border-border/70 px-3 py-2">
+            <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Intents</div>
+            <div className="mt-1 font-medium">
+              {formatCompactNumber(readNumber(engineSummary.entry_intent_count))} entry ·{" "}
+              {formatCompactNumber(readNumber(engineSummary.management_intent_count))} management
+            </div>
+          </div>
+          <div className="rounded-lg border border-border/70 px-3 py-2">
+            <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Positions</div>
+            <div className="mt-1 font-medium">{formatCompactNumber(readNumber(engineSummary.open_position_count))} open</div>
+          </div>
+          <div className="rounded-lg border border-border/70 px-3 py-2">
+            <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Latest Capture</div>
+            <div className="mt-1 truncate font-medium">{readString(engineSummary.latest_capture_summary_id)}</div>
+          </div>
+        </div>
+      </section>
 
       <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
         <section className="rounded-2xl border border-border/70 bg-card/80 px-4 py-3">
