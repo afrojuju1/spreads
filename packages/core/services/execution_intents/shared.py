@@ -150,6 +150,8 @@ def _update_intent(
     payload_updates: dict[str, Any] | None = None,
     payload: dict[str, Any] | object = _UNCHANGED,
     opportunity_decision_id: str | None | object = _UNCHANGED,
+    trade_signal_id: str | None | object = _UNCHANGED,
+    trade_decision_id: str | None | object = _UNCHANGED,
     strategy_position_id: str | None | object = _UNCHANGED,
     execution_attempt_id: str | None | object = _UNCHANGED,
     claim_token: str | None | object = _UNCHANGED,
@@ -173,6 +175,8 @@ def _update_intent(
         opportunity_decision_id=(
             _as_text(intent.get("opportunity_decision_id")) if opportunity_decision_id is _UNCHANGED else opportunity_decision_id
         ),
+        trade_signal_id=(_as_text(intent.get("trade_signal_id")) if trade_signal_id is _UNCHANGED else trade_signal_id),
+        trade_decision_id=(_as_text(intent.get("trade_decision_id")) if trade_decision_id is _UNCHANGED else trade_decision_id),
         strategy_position_id=(_as_text(intent.get("strategy_position_id")) if strategy_position_id is _UNCHANGED else strategy_position_id),
         execution_attempt_id=(_as_text(intent.get("execution_attempt_id")) if execution_attempt_id is _UNCHANGED else execution_attempt_id),
         action_type=str(intent["action_type"]),
@@ -221,6 +225,8 @@ def issue_pending_execution_intent(
     claim_token: str | None = None,
     execution_attempt_id: str | None = None,
     superseded_by_id: str | None = None,
+    trade_signal_id: str | None = None,
+    trade_decision_id: str | None = None,
     state: str = "pending",
 ) -> dict[str, Any]:
     created_at = _utc_now()
@@ -229,6 +235,8 @@ def issue_pending_execution_intent(
         execution_intent_id=execution_intent_id,
         trading_strategy_id=trading_strategy_id,
         opportunity_decision_id=opportunity_decision_id,
+        trade_signal_id=trade_signal_id,
+        trade_decision_id=trade_decision_id,
         strategy_position_id=strategy_position_id,
         execution_attempt_id=execution_attempt_id,
         action_type=action_type,

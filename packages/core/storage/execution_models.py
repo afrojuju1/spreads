@@ -133,6 +133,8 @@ class ExecutionIntentModel(Base):
         ),
         Index("idx_execution_intents_slot_state", "slot_key", "state"),
         Index("idx_execution_intents_opportunity_decision", "opportunity_decision_id"),
+        Index("idx_execution_intents_trade_signal", "trade_signal_id"),
+        Index("idx_execution_intents_trade_decision", "trade_decision_id"),
         Index("idx_execution_intents_strategy_position", "strategy_position_id"),
         Index("idx_execution_intents_execution_attempt", "execution_attempt_id"),
     )
@@ -142,6 +144,16 @@ class ExecutionIntentModel(Base):
     opportunity_decision_id: Mapped[str | None] = mapped_column(
         Text,
         ForeignKey("opportunity_decisions.opportunity_decision_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    trade_signal_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("trade_signals.trade_signal_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    trade_decision_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("trade_decisions.trade_decision_id", ondelete="SET NULL"),
         nullable=True,
     )
     strategy_position_id: Mapped[str | None] = mapped_column(

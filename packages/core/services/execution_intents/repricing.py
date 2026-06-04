@@ -73,6 +73,8 @@ def _create_replacement_intent(
         execution_intent_id=replacement_id,
         trading_strategy_id=str(intent["trading_strategy_id"]),
         opportunity_decision_id=_as_text(intent.get("opportunity_decision_id")),
+        trade_signal_id=_as_text(intent.get("trade_signal_id")),
+        trade_decision_id=_as_text(intent.get("trade_decision_id")),
         strategy_position_id=_as_text(intent.get("strategy_position_id")),
         execution_attempt_id=None,
         action_type=str(intent["action_type"]),

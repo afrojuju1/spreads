@@ -21,6 +21,34 @@ def _stable_id(prefix: str, *parts: Any) -> str:
     return f"{prefix}:{hashlib.sha1(material).hexdigest()[:24]}"
 
 
+def entry_trade_signal_idempotency_key(
+    *,
+    trading_strategy_id: str,
+    market_date: str,
+    underlying_symbol: str,
+    candidate_identity: str,
+) -> str:
+    return f"entry:{trading_strategy_id}:{market_date}:{underlying_symbol.upper()}:{candidate_identity}"
+
+
+def entry_trade_signal_id(
+    *,
+    trading_strategy_id: str,
+    market_date: str,
+    underlying_symbol: str,
+    candidate_identity: str,
+) -> str:
+    return _stable_id(
+        "trade_signal",
+        entry_trade_signal_idempotency_key(
+            trading_strategy_id=trading_strategy_id,
+            market_date=market_date,
+            underlying_symbol=underlying_symbol,
+            candidate_identity=candidate_identity,
+        ),
+    )
+
+
 def _text_list(value: Any) -> list[str]:
     if not isinstance(value, (list, tuple)):
         return []
@@ -244,7 +272,7 @@ def persist_entry_engine_facts(
                 updated_at=now,
             )
 
-    trade_signal_count = 0
+    trade_signal_refs: list[dict[str, Any]] = []
     for opportunity in opportunities:
         candidate = _candidate_payload(opportunity)
         identity = str(opportunity.get("candidate_identity") or _candidate_identity(candidate))
@@ -254,8 +282,18 @@ def persist_entry_engine_facts(
         if not symbol:
             continue
         trade_candidate_id = trade_candidate_ids_by_identity.get(identity)
-        idempotency_key = f"entry:{runtime.trading_strategy_id}:{market_date}:{symbol}:{identity}"
-        trade_signal_id = _stable_id("trade_signal", idempotency_key)
+        idempotency_key = entry_trade_signal_idempotency_key(
+            trading_strategy_id=runtime.trading_strategy_id,
+            market_date=market_date,
+            underlying_symbol=symbol,
+            candidate_identity=identity,
+        )
+        trade_signal_id = entry_trade_signal_id(
+            trading_strategy_id=runtime.trading_strategy_id,
+            market_date=market_date,
+            underlying_symbol=symbol,
+            candidate_identity=identity,
+        )
         signal_state = _signal_state(opportunity)
         engine_facts.upsert_trade_signal(
             trade_signal_id=trade_signal_id,
@@ -297,15 +335,29 @@ def persist_entry_engine_facts(
             metrics=dict(opportunity.get("strategy_metrics") or {}),
             updated_at=now,
         )
-        trade_signal_count += 1
+        trade_signal_refs.append(
+            {
+                "trade_signal_id": trade_signal_id,
+                "trade_candidate_id": trade_candidate_id,
+                "opportunity_id": opportunity.get("opportunity_id"),
+                "underlying_symbol": symbol,
+                "candidate_identity": identity,
+                "signal_state": signal_state,
+            }
+        )
 
     return {
         "status": "ok",
         "source_run_id": source_run["source_run_id"],
         "candidate_run_id": candidate_run_id,
         "trade_candidate_count": len(trade_candidate_ids_by_identity),
-        "trade_signal_count": trade_signal_count,
+        "trade_signal_count": len(trade_signal_refs),
+        "trade_signals": trade_signal_refs,
     }
 
 
-__all__ = ["persist_entry_engine_facts"]
+__all__ = [
+    "entry_trade_signal_id",
+    "entry_trade_signal_idempotency_key",
+    "persist_entry_engine_facts",
+]

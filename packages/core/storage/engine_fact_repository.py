@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from core.storage.base import RepositoryBase
 from core.storage.engine_models import CandidateRunModel, SourceRunModel, SourceTickerModel, TradeCandidateModel
-from core.storage.lifecycle_models import TradeSignalModel
+from core.storage.lifecycle_models import TradeDecisionModel, TradeSignalModel
 from core.storage.records import StorageRow
 from core.storage.serializers import parse_date, parse_datetime, render_value
 
@@ -26,6 +26,7 @@ class EngineFactRepository(RepositoryBase):
             "candidate_runs",
             "trade_candidates",
             "trade_signals",
+            "trade_decisions",
         )
 
     def upsert_source_run(
@@ -398,6 +399,83 @@ class EngineFactRepository(RepositoryBase):
                 row.evidence_json = render_value(evidence)
                 row.metrics_json = render_value(metrics)
                 row.updated_at = updated_at_dt
+            session.flush()
+            session.refresh(row)
+            return self.row(row)
+
+    def upsert_trade_decision(
+        self,
+        *,
+        trade_decision_id: str,
+        trade_signal_id: str,
+        trading_strategy_id: str,
+        trade_structure: str,
+        routine: str,
+        config_hash: str,
+        run_key: str,
+        scope_key: str,
+        decision_state: str,
+        rank: int | None,
+        score: float | None,
+        selected_quantity: int | None,
+        selected_execution_shape: dict[str, Any],
+        reason_codes: list[str],
+        blockers: list[str],
+        evidence: dict[str, Any],
+        metrics: dict[str, Any],
+        supersedes_decision_id: str | None,
+        superseded_by_decision_id: str | None,
+        decided_at: str,
+    ) -> StorageRow:
+        decided_at_dt = parse_datetime(decided_at)
+        if decided_at_dt is None:
+            raise ValueError("decided_at is required")
+        with self.session_scope() as session:
+            row = session.get(TradeDecisionModel, trade_decision_id)
+            if row is None:
+                row = TradeDecisionModel(
+                    trade_decision_id=trade_decision_id,
+                    trade_signal_id=trade_signal_id,
+                    trading_strategy_id=trading_strategy_id,
+                    trade_structure=trade_structure,
+                    routine=routine,
+                    config_hash=config_hash,
+                    run_key=run_key,
+                    scope_key=scope_key,
+                    decision_state=decision_state,
+                    rank=rank,
+                    score=score,
+                    selected_quantity=selected_quantity,
+                    selected_execution_shape_json=render_value(selected_execution_shape),
+                    reason_codes_json=list(reason_codes),
+                    blockers_json=list(blockers),
+                    evidence_json=render_value(evidence),
+                    metrics_json=render_value(metrics),
+                    supersedes_decision_id=supersedes_decision_id,
+                    superseded_by_decision_id=superseded_by_decision_id,
+                    decided_at=decided_at_dt,
+                )
+                session.add(row)
+            else:
+                row.trade_signal_id = trade_signal_id
+                row.trading_strategy_id = trading_strategy_id
+                row.trade_structure = trade_structure
+                row.routine = routine
+                row.config_hash = config_hash
+                row.run_key = run_key
+                row.scope_key = scope_key
+                row.decision_state = decision_state
+                row.rank = rank
+                row.score = score
+                row.selected_quantity = selected_quantity
+                row.selected_execution_shape_json = render_value(selected_execution_shape)
+                row.reason_codes_json = list(reason_codes)
+                row.blockers_json = list(blockers)
+                row.evidence_json = render_value(evidence)
+                row.metrics_json = render_value(metrics)
+                row.supersedes_decision_id = supersedes_decision_id
+                row.superseded_by_decision_id = superseded_by_decision_id
+                row.decided_at = decided_at_dt
             session.flush()
             session.refresh(row)
             return self.row(row)

@@ -360,6 +360,8 @@ class ExecutionRepository(RepositoryBase):
         payload: dict[str, Any] | None,
         created_at: str,
         updated_at: str,
+        trade_signal_id: str | None = None,
+        trade_decision_id: str | None = None,
     ) -> ExecutionIntentRecord:
         created_at_dt = parse_datetime(created_at)
         updated_at_dt = parse_datetime(updated_at)
@@ -374,6 +376,8 @@ class ExecutionRepository(RepositoryBase):
                     created_at=created_at_dt,
                     trading_strategy_id=trading_strategy_id,
                     opportunity_decision_id=opportunity_decision_id,
+                    trade_signal_id=trade_signal_id,
+                    trade_decision_id=trade_decision_id,
                     strategy_position_id=strategy_position_id,
                     execution_attempt_id=execution_attempt_id,
                     action_type=action_type,
@@ -391,6 +395,8 @@ class ExecutionRepository(RepositoryBase):
             else:
                 row.trading_strategy_id = trading_strategy_id
                 row.opportunity_decision_id = opportunity_decision_id
+                row.trade_signal_id = trade_signal_id
+                row.trade_decision_id = trade_decision_id
                 row.strategy_position_id = strategy_position_id
                 row.execution_attempt_id = execution_attempt_id
                 row.action_type = action_type
@@ -412,6 +418,8 @@ class ExecutionRepository(RepositoryBase):
         *,
         trading_strategy_id: str | None = None,
         opportunity_decision_id: str | None = None,
+        trade_signal_id: str | None = None,
+        trade_decision_id: str | None = None,
         strategy_position_id: str | None = None,
         slot_key: str | None = None,
         states: list[str] | None = None,
@@ -423,6 +431,10 @@ class ExecutionRepository(RepositoryBase):
             statement = statement.where(ExecutionIntentModel.trading_strategy_id == trading_strategy_id)
         if opportunity_decision_id:
             statement = statement.where(ExecutionIntentModel.opportunity_decision_id == opportunity_decision_id)
+        if trade_signal_id:
+            statement = statement.where(ExecutionIntentModel.trade_signal_id == trade_signal_id)
+        if trade_decision_id:
+            statement = statement.where(ExecutionIntentModel.trade_decision_id == trade_decision_id)
         if strategy_position_id:
             statement = statement.where(ExecutionIntentModel.strategy_position_id == strategy_position_id)
         if slot_key:

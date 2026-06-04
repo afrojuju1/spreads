@@ -175,14 +175,15 @@ def plan_runtime_entry_selected_alert(
     cycle_id = _as_text(opportunity.get("cycle_id")) or run_key
     candidate = _candidate_payload(opportunity=opportunity, decision=decision)
     execution_intent_id = None if execution_intent is None else _as_text(execution_intent.get("execution_intent_id"))
-    decision_id = _as_text(decision.get("opportunity_decision_id"))
     score = _selected_score(opportunity=opportunity, decision=decision)
     reason_codes = [str(value) for value in list(decision.get("reason_codes") or [])]
     execution_admission = _execution_admission_payload(execution_intent)
     details = {
         "trading_strategy_id": trading_strategy_id,
         "opportunity_id": opportunity_id,
-        "opportunity_decision_id": decision_id,
+        "trade_decision_id": _as_text(decision.get("trade_decision_id")),
+        "trade_signal_id": _as_text(decision.get("trade_signal_id")),
+        "opportunity_decision_id": _as_text(decision.get("opportunity_decision_id")),
         "execution_intent_id": execution_intent_id,
         "dispatch_job_run_id": dispatch_job_run_id,
         "score": score,
