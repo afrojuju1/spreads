@@ -8,6 +8,7 @@ from core.storage.discovery_run_repository import DiscoveryRunRepository
 from core.storage.control_repository import ControlRepository
 from core.storage.event_repository import EventRepository
 from core.storage.db import build_session_factory
+from core.storage.engine_fact_repository import EngineFactRepository
 from core.storage.execution_repository import ExecutionRepository
 from core.storage.job_repository import JobRepository
 from core.storage.ops_store import OpsStore
@@ -60,6 +61,10 @@ class StorageContext:
     @property
     def events(self) -> EventRepository:
         return self._build_repository("events", EventRepository)  # type: ignore[return-value]
+
+    @property
+    def engine_facts(self) -> EngineFactRepository:
+        return self._build_repository("engine_facts", EngineFactRepository)  # type: ignore[return-value]
 
     @property
     def control(self) -> ControlRepository:

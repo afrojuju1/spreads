@@ -29,6 +29,7 @@ from core.services.trading_engine.data_runtime import (
     entry_runtime_with_symbols,
     ticker_source_spec_from_strategy_source,
 )
+from core.services.trading_engine.facts import persist_entry_engine_facts
 from core.services.trading_engine.kernel import EngineComponentRole, EngineContext, EngineRunRef
 from core.services.trading_strategies import load_active_trading_strategies, routine_should_run_now
 from core.services.trading_strategy_runtime import EntryRuntime, resolve_entry_runtime
@@ -169,6 +170,16 @@ def _refresh_entry_runtime_opportunities(
     )
     ticker_summary = _ticker_set_summary(ticker_set)
     if ticker_set.blockers:
+        engine_fact_summary = persist_entry_engine_facts(
+            engine_facts=getattr(storage, "engine_facts", None),
+            runtime=runtime,
+            market_date=market_date,
+            run_key=run_key,
+            generated_at=generated_at,
+            ticker_set=ticker_set,
+            candidate_result=None,
+            opportunities=[],
+        )
         _record_skipped_strategy_run(
             signal_store=storage.signals,
             runtime=runtime,
@@ -185,6 +196,7 @@ def _refresh_entry_runtime_opportunities(
             "ticker_set": ticker_summary,
             "candidate_build": _candidate_result_summary(None),
             "strategy_sync": {},
+            "engine_facts": engine_fact_summary,
         }
 
     runtime_with_symbols = entry_runtime_with_symbols(runtime, ticker_set.symbols)
@@ -234,6 +246,17 @@ def _refresh_entry_runtime_opportunities(
         },
         trigger_type="trading_strategy_entry",
     )
+    synced_opportunities = [dict(row) for row in list(strategy_sync.get("opportunities") or []) if isinstance(row, dict)]
+    engine_fact_summary = persist_entry_engine_facts(
+        engine_facts=getattr(storage, "engine_facts", None),
+        runtime=runtime_with_symbols,
+        market_date=market_date,
+        run_key=run_key,
+        generated_at=generated_at,
+        ticker_set=ticker_set,
+        candidate_result=candidate_result,
+        opportunities=synced_opportunities,
+    )
     return {
         "status": "ok",
         "reason": None,
@@ -243,8 +266,9 @@ def _refresh_entry_runtime_opportunities(
             "strategy_runs_upserted": int(strategy_sync.get("strategy_runs_upserted") or 0),
             "runtime_opportunities_upserted": int(strategy_sync.get("runtime_opportunities_upserted") or 0),
             "runtime_opportunities_expired": int(strategy_sync.get("runtime_opportunities_expired") or 0),
-            "opportunity_count": len(list(strategy_sync.get("opportunities") or [])),
+            "opportunity_count": len(synced_opportunities),
         },
+        "engine_facts": engine_fact_summary,
     }
 
 

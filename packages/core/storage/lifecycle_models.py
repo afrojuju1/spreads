@@ -42,12 +42,22 @@ class TradeSignalModel(Base):
         Index("idx_trade_signals_source", "source_kind", "source_id"),
         Index("idx_trade_signals_session_state", "session_date", "signal_state"),
         Index("idx_trade_signals_underlying_updated", "underlying_symbol", "updated_at"),
+        Index("idx_trade_signals_strategy_session", "trading_strategy_id", "routine", "session_date", "signal_state"),
+        Index("idx_trade_signals_candidate", "trade_candidate_id"),
     )
 
     trade_signal_id: Mapped[str] = mapped_column(Text, primary_key=True)
     idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    trade_candidate_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("trade_candidates.trade_candidate_id", ondelete="SET NULL"),
+        nullable=True,
+    )
     source_kind: Mapped[str] = mapped_column(Text, nullable=False)
     source_id: Mapped[str] = mapped_column(Text, nullable=False)
+    trading_strategy_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    routine: Mapped[str | None] = mapped_column(Text, nullable=True)
+    config_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     account_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     session_date: Mapped[date] = mapped_column(Date, nullable=False)
     market_session: Mapped[str] = mapped_column(Text, nullable=False)

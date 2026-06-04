@@ -12,6 +12,7 @@ from core.storage import calendar_models as storage_calendar_models  # noqa: F40
 from core.storage import company_valuation_models as storage_company_valuation_models  # noqa: F401
 from core.storage import control_models as storage_control_models  # noqa: F401
 from core.storage import discovery_run_models as storage_discovery_run_models  # noqa: F401
+from core.storage import engine_models as storage_engine_models  # noqa: F401
 from core.storage import event_models as storage_event_models  # noqa: F401
 from core.storage import execution_models as storage_execution_models  # noqa: F401
 from core.storage import job_models as storage_job_models  # noqa: F401
