@@ -6,6 +6,7 @@ from typing import Any
 
 from core.alerts.runtime import plan_runtime_entry_selected_alert
 from core.db.decorators import with_storage
+from core.services.admission_lifecycle import admission_allows_attempt, normalize_lifecycle_admission
 from core.services.entry_planner import plan_entry_selection, score_opportunity
 from core.services.execution_intents import request_execution_intent_dispatch
 from core.services.execution_intents.shared import (
@@ -164,6 +165,106 @@ def _trade_decision_state(decision_state: Any) -> str:
     if normalized == "blocked":
         return "skip"
     return "no_entry"
+
+
+def _persist_trade_admission(
+    *,
+    engine_facts: Any,
+    runtime: EntryRuntime,
+    market_date: str,
+    policy_ref: dict[str, Any],
+    trade_signal_id: str,
+    trade_decision_id: str,
+    execution_intent_id: str,
+    slot_key: str,
+    admission_snapshot: dict[str, Any],
+    opportunity: dict[str, Any],
+    expires_at: str,
+) -> dict[str, Any]:
+    normalized = normalize_lifecycle_admission(
+        admission_snapshot,
+        admission_kind="entry_open",
+        source_object_type="trade_decision",
+        source_object_id=trade_decision_id,
+        session_date=market_date,
+        requested_quantity=1,
+        requested_notional=admission_snapshot.get("required_buying_power"),
+        max_loss=admission_snapshot.get("required_buying_power"),
+        policy_snapshot=policy_ref,
+        metrics={
+            "admissible_quantity": admission_snapshot.get("admissible_quantity"),
+            "required_buying_power": admission_snapshot.get("required_buying_power"),
+            "available_buying_power": admission_snapshot.get("available_buying_power"),
+        },
+        evidence={
+            "trade_signal_id": trade_signal_id,
+            "trade_decision_id": trade_decision_id,
+            "execution_intent_id": execution_intent_id,
+            "slot_key": slot_key,
+            "opportunity_id": opportunity.get("opportunity_id"),
+            "underlying_symbol": opportunity.get("underlying_symbol"),
+        },
+    )
+    target_intent_state = "pending" if admission_allows_attempt(normalized) else "revoked"
+    now = _utc_now()
+    engine_facts.upsert_trade_execution_intent(
+        execution_intent_id=execution_intent_id,
+        intent_kind="open",
+        source_object_type="trade_decision",
+        source_object_id=trade_decision_id,
+        trade_signal_id=trade_signal_id,
+        trade_decision_id=trade_decision_id,
+        position_id=None,
+        trading_strategy_id=runtime.trading_strategy_id,
+        trade_structure=runtime.trade_structure,
+        routine="entry",
+        account_id=None,
+        slot_key=slot_key,
+        idempotency_key=execution_intent_id,
+        intent_state=target_intent_state,
+        claim_token=None,
+        claimed_at=None,
+        expires_at=expires_at,
+        supersedes_intent_id=None,
+        superseded_by_intent_id=None,
+        payload={
+            "opportunity_id": opportunity.get("opportunity_id"),
+            "underlying_symbol": opportunity.get("underlying_symbol"),
+            "execution_runtime": runtime.strategy.execution.runtime,
+        },
+        policy_snapshot=policy_ref,
+        config_hash=runtime.config_hash,
+        created_at=now,
+        updated_at=now,
+    )
+    admission = engine_facts.upsert_trade_admission(
+        admission_decision_id=str(normalized["admission_decision_id"]),
+        execution_intent_id=execution_intent_id,
+        trade_signal_id=trade_signal_id,
+        trade_decision_id=trade_decision_id,
+        position_id=None,
+        admission_kind=str(normalized["admission_kind"]),
+        admission_state=str(normalized["admission_state"]),
+        account_id=None,
+        session_date=market_date,
+        requested_quantity=normalized.get("requested_quantity"),
+        requested_notional=normalized.get("requested_notional"),
+        max_loss=normalized.get("max_loss"),
+        policy_snapshot=dict(normalized.get("policy_snapshot") or {}),
+        capability_snapshot=dict(normalized.get("capability_snapshot") or {}),
+        metrics=dict(normalized.get("metrics") or {}),
+        reason_codes=list(normalized.get("reason_codes") or []),
+        blockers=list(normalized.get("blockers") or []),
+        evidence=dict(normalized.get("evidence") or {}),
+        note=normalized.get("message") or normalized.get("reason"),
+        execution_attempt_id=None,
+        decided_at=str(normalized["decided_at"]),
+    )
+    return {
+        **dict(normalized),
+        "admission_decision_id": admission["admission_decision_id"],
+        "execution_intent_id": execution_intent_id,
+    }
 
 
 def _record_skipped_strategy_run(
@@ -510,6 +611,7 @@ def run_trading_strategy_entry_decision(
     selected = plan["selected"]
 
     decisions: list[dict[str, Any]] = []
+    admissions: list[dict[str, Any]] = []
     selected_intent: dict[str, Any] | None = None
     selected_decision: dict[str, Any] | None = None
     selected_opportunity: dict[str, Any] | None = None
@@ -587,9 +689,29 @@ def run_trading_strategy_entry_decision(
             runtime=runtime,
             opportunity=opportunity,
         )
+        execution_intent_id = _intent_id(str(decision["trade_decision_id"]))
+        intent_expires_at = _expires_in(ENTRY_INTENT_TTL_MINUTES)
+        selected_admission = _persist_trade_admission(
+            engine_facts=engine_facts,
+            runtime=runtime,
+            market_date=resolved_market_date,
+            policy_ref=policy_ref,
+            trade_signal_id=trade_signal_id,
+            trade_decision_id=str(decision["trade_decision_id"]),
+            execution_intent_id=execution_intent_id,
+            slot_key=slot_key,
+            admission_snapshot=selected_execution_admission,
+            opportunity=opportunity,
+            expires_at=intent_expires_at,
+        )
+        admissions.append(selected_admission)
+        if not admission_allows_attempt(selected_admission):
+            selected_decision = decision
+            selected_opportunity = opportunity
+            continue
         selected_intent = issue_pending_execution_intent(
             execution_store,
-            execution_intent_id=_intent_id(str(decision["trade_decision_id"])),
+            execution_intent_id=execution_intent_id,
             trading_strategy_id=runtime.trading_strategy_id,
             opportunity_decision_id=None,
             trade_signal_id=trade_signal_id,
@@ -602,23 +724,25 @@ def run_trading_strategy_entry_decision(
             policy_ref=policy_ref,
             config_hash=runtime.config_hash,
             state="pending",
-            expires_at=_expires_in(ENTRY_INTENT_TTL_MINUTES),
+            expires_at=intent_expires_at,
             superseded_by_id=None,
             payload={
                 "trade_signal_id": trade_signal_id,
                 "trade_decision_id": decision["trade_decision_id"],
+                "admission_decision_id": selected_admission["admission_decision_id"],
                 "opportunity_id": opportunity_id,
                 "opportunity_expires_at": opportunity.get("expires_at"),
                 "underlying_symbol": opportunity.get("underlying_symbol"),
                 "execution_mode": runtime.strategy.execution.mode,
                 "approval_mode": runtime.strategy.execution.approval,
                 "execution_runtime": runtime.strategy.execution.runtime,
-                "execution_admission": selected_execution_admission,
+                "execution_admission": selected_admission,
                 "exit_policy": build_exit_policy_from_recipe_refs(tuple(runtime.strategy.management_recipe_refs)),
             },
             created_event_payload={
                 "trade_signal_id": trade_signal_id,
                 "trade_decision_id": decision["trade_decision_id"],
+                "admission_decision_id": selected_admission["admission_decision_id"],
                 "opportunity_id": opportunity_id,
                 "slot_key": slot_key,
                 "execution_runtime": runtime.strategy.execution.runtime,
@@ -676,9 +800,11 @@ def run_trading_strategy_entry_decision(
         "run_key": run_key,
         "opportunity_count": len(opportunities),
         "decision_count": len(decisions),
+        "admission_count": len(admissions),
         "selected_opportunity_id": None if selected is None else str(selected.get("opportunity_id")),
         "execution_intent_id": None if selected_intent is None else str(selected_intent.get("execution_intent_id")),
         "execution_admission": selected_execution_admission,
+        "admission_decision_id": None if not admissions else admissions[-1].get("admission_decision_id"),
         "dispatch_job_run_id": dispatch_job_run_id,
         "runtime_alert": runtime_alert,
         "candidate_generation": candidate_generation,
