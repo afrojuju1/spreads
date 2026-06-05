@@ -13,10 +13,10 @@ from core.storage import capture_models as storage_capture_models  # noqa: F401
 from core.storage import company_valuation_models as storage_company_valuation_models  # noqa: F401
 from core.storage import control_models as storage_control_models  # noqa: F401
 from core.storage import engine_models as storage_engine_models  # noqa: F401
-from core.storage import event_models as storage_event_models  # noqa: F401
 from core.storage import execution_models as storage_execution_models  # noqa: F401
 from core.storage import job_models as storage_job_models  # noqa: F401
 from core.storage import lifecycle_models as storage_lifecycle_models  # noqa: F401
+from core.storage import market_tick_models as storage_market_tick_models  # noqa: F401
 from core.storage import signal_models as storage_signal_models  # noqa: F401
 from core.storage.db import Base
 from core.storage import models as storage_models  # noqa: F401
