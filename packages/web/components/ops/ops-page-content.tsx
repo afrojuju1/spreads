@@ -56,7 +56,7 @@ export function OpsPageContent() {
   const engine = readRecord(tradingDetails.engine);
   const engineSummary = readRecord(engine.summary);
   const quoteTable = storageTables.find((row) => readString(row.name, "") === "option_quote_ticks") ?? {};
-  const eventLogTable = storageTables.find((row) => readString(row.physical_table, "") === "event_log") ?? {};
+  const tradeTable = storageTables.find((row) => readString(row.name, "") === "option_trade_ticks") ?? {};
   const attention = [...readRecordList(tradingState?.attention), ...readRecordList(storageState?.attention)];
   const hasQueryError = tradingOpsQuery.isError || storageOpsQuery.isError;
   const scheduler = readRecord(tradingDetails.scheduler);
@@ -129,7 +129,7 @@ export function OpsPageContent() {
           note={`${queuedJobs.length} queued · ${readNumber(tradingSummary.actionable_failed_job_count)} failed`}
         />
         <MetricTile
-          label="Quote Events"
+          label="Quote Ticks"
           value={formatCompactNumber(readNumber(quoteTable.estimated_live_rows))}
           note={formatBytes(readNumber(quoteTable.total_size_bytes))}
         />
@@ -276,9 +276,9 @@ export function OpsPageContent() {
         <div className="grid gap-4 md:grid-cols-3">
           <MetricTile label="Vacuum Full" value={storageSummary.vacuum_full_pending ? "Pending" : "Clear"} note={vacuumFullTables} />
           <MetricTile
-            label="Event Log"
-            value={formatBytes(readNumber(eventLogTable.total_size_bytes))}
-            note={`${formatCompactNumber(readNumber(eventLogTable.estimated_live_rows))} rows`}
+            label="Trade Ticks"
+            value={formatBytes(readNumber(tradeTable.total_size_bytes))}
+            note={`${formatCompactNumber(readNumber(tradeTable.estimated_live_rows))} rows`}
           />
           <MetricTile
             label="Schedule"

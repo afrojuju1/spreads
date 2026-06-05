@@ -6,24 +6,14 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import delete, func, not_, or_, select, text
+from sqlalchemy import delete, func, select, text
 
-from core.storage.event_models import EventLogModel
 from core.storage.factory import build_storage_context
-from core.storage.models import OptionQuoteEventModel, OptionTradeEventModel
+from core.storage.market_tick_models import OptionQuoteTickModel, OptionTradeTickModel
 from core.storage.serializers import render_value
 
-RAW_MARKET_EVENT_TOPICS = frozenset(
-    {
-        "market.quote.captured",
-        "market.trade.captured",
-    }
-)
-
-DEFAULT_OPTION_QUOTE_RETENTION_DAYS = 7
-DEFAULT_OPTION_TRADE_RETENTION_DAYS = 30
-DEFAULT_EVENT_LOG_MARKET_RETENTION_DAYS = 14
-DEFAULT_EVENT_LOG_CONTROL_RETENTION_DAYS = 180
+DEFAULT_OPTION_QUOTE_TICK_RETENTION_DAYS = 7
+DEFAULT_OPTION_TRADE_TICK_RETENTION_DAYS = 30
 DEFAULT_RETENTION_BATCH_SIZE = 50_000
 DEFAULT_RETENTION_MAX_BATCHES = 20
 DEFAULT_RETENTION_LOG_NAME = "retention.log"
@@ -32,9 +22,8 @@ VACUUM_FULL_DEAD_TUPLE_THRESHOLD = 1_000_000
 VACUUM_FULL_DEAD_TUPLE_RATIO = 0.2
 
 RETENTION_TABLES = (
-    "option_quote_events",
-    "option_trade_events",
-    "event_log",
+    "option_quote_ticks",
+    "option_trade_ticks",
 )
 
 
@@ -50,21 +39,13 @@ def _env_int(name: str, default: int) -> int:
 
 def retention_defaults() -> dict[str, int]:
     return {
-        "option_quote_days": _env_int(
-            "SPREADS_OPTION_QUOTE_RETENTION_DAYS",
-            DEFAULT_OPTION_QUOTE_RETENTION_DAYS,
+        "option_quote_tick_days": _env_int(
+            "SPREADS_OPTION_QUOTE_TICK_RETENTION_DAYS",
+            DEFAULT_OPTION_QUOTE_TICK_RETENTION_DAYS,
         ),
-        "option_trade_days": _env_int(
-            "SPREADS_OPTION_TRADE_RETENTION_DAYS",
-            DEFAULT_OPTION_TRADE_RETENTION_DAYS,
-        ),
-        "event_log_market_days": _env_int(
-            "SPREADS_EVENT_LOG_MARKET_RETENTION_DAYS",
-            DEFAULT_EVENT_LOG_MARKET_RETENTION_DAYS,
-        ),
-        "event_log_control_days": _env_int(
-            "SPREADS_EVENT_LOG_CONTROL_RETENTION_DAYS",
-            DEFAULT_EVENT_LOG_CONTROL_RETENTION_DAYS,
+        "option_trade_tick_days": _env_int(
+            "SPREADS_OPTION_TRADE_TICK_RETENTION_DAYS",
+            DEFAULT_OPTION_TRADE_TICK_RETENTION_DAYS,
         ),
         "batch_size": _env_int(
             "SPREADS_RETENTION_BATCH_SIZE",
@@ -88,9 +69,7 @@ def _cutoff(days: int, *, now: datetime) -> datetime:
 
 
 def _count(session: Any, model: Any, condition: Any) -> int:
-    return int(
-        session.scalar(select(func.count()).select_from(model).where(condition)) or 0
-    )
+    return int(session.scalar(select(func.count()).select_from(model).where(condition)) or 0)
 
 
 def _delete_batches(
@@ -139,11 +118,7 @@ def _read_latest_json_payload(path: Path | None) -> dict[str, Any] | None:
             value, _ = decoder.raw_decode(payload[index:])
         except ValueError:
             continue
-        if (
-            isinstance(value, dict)
-            and "tables" in value
-            and "total_deleted_count" in value
-        ):
+        if isinstance(value, dict) and "tables" in value and "total_deleted_count" in value:
             latest = value
             break
     return latest
@@ -151,8 +126,7 @@ def _read_latest_json_payload(path: Path | None) -> dict[str, Any] | None:
 
 def _table_storage_stats(session: Any) -> dict[str, dict[str, Any]]:
     quoted_names = ",".join(f"'{name}'" for name in RETENTION_TABLES)
-    statement = text(
-        f"""
+    statement = text(f"""
         SELECT
           relname,
           n_live_tup,
@@ -167,8 +141,7 @@ def _table_storage_stats(session: Any) -> dict[str, dict[str, Any]]:
         FROM pg_stat_user_tables
         WHERE schemaname = 'public'
           AND relname IN ({quoted_names})
-        """
-    )
+        """)
     rows = session.execute(statement).mappings().all()
     return {
         str(row["relname"]): {
@@ -193,9 +166,7 @@ def _retained_range(
     timestamp_column: Any,
     condition: Any | None = None,
 ) -> tuple[Any, Any]:
-    statement = select(func.min(timestamp_column), func.max(timestamp_column)).select_from(
-        model
-    )
+    statement = select(func.min(timestamp_column), func.max(timestamp_column)).select_from(model)
     if condition is not None:
         statement = statement.where(condition)
     row = session.execute(statement).one()
@@ -205,11 +176,7 @@ def _retained_range(
 def _latest_prune_by_table(latest_run: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
     if not isinstance(latest_run, dict):
         return {}
-    return {
-        str(row.get("name")): dict(row)
-        for row in list(latest_run.get("tables") or [])
-        if isinstance(row, dict) and row.get("name")
-    }
+    return {str(row.get("name")): dict(row) for row in list(latest_run.get("tables") or []) if isinstance(row, dict) and row.get("name")}
 
 
 def _vacuum_full_signal(
@@ -222,13 +189,8 @@ def _vacuum_full_signal(
     total_size_bytes = int(table.get("total_size_bytes") or 0)
     latest_deleted = int((latest_prune or {}).get("deleted_count") or 0)
     dead_ratio = 0.0 if live_rows <= 0 else dead_rows / max(live_rows, 1)
-    pending = (
-        total_size_bytes >= VACUUM_FULL_SIZE_THRESHOLD_BYTES
-        and (
-            latest_deleted > 0
-            or dead_rows >= VACUUM_FULL_DEAD_TUPLE_THRESHOLD
-            or dead_ratio >= VACUUM_FULL_DEAD_TUPLE_RATIO
-        )
+    pending = total_size_bytes >= VACUUM_FULL_SIZE_THRESHOLD_BYTES and (
+        latest_deleted > 0 or dead_rows >= VACUUM_FULL_DEAD_TUPLE_THRESHOLD or dead_ratio >= VACUUM_FULL_DEAD_TUPLE_RATIO
     )
     reasons: list[str] = []
     if latest_deleted > 0:
@@ -247,41 +209,24 @@ def _vacuum_full_signal(
     }
 
 
-def _market_event_condition() -> Any:
-    return or_(
-        EventLogModel.event_class == "market_event",
-        EventLogModel.topic.in_(tuple(RAW_MARKET_EVENT_TOPICS)),
-    )
-
-
 def prune_retained_data(
     *,
     db_target: str | None = None,
     dry_run: bool = True,
-    option_quote_days: int | None = None,
-    option_trade_days: int | None = None,
-    event_log_market_days: int | None = None,
-    event_log_control_days: int | None = None,
+    option_quote_tick_days: int | None = None,
+    option_trade_tick_days: int | None = None,
     batch_size: int | None = None,
     max_batches: int | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     defaults = retention_defaults()
     resolved_quote_days = _validated_days(
-        option_quote_days or defaults["option_quote_days"],
-        field_name="option_quote_days",
+        option_quote_tick_days or defaults["option_quote_tick_days"],
+        field_name="option_quote_tick_days",
     )
     resolved_trade_days = _validated_days(
-        option_trade_days or defaults["option_trade_days"],
-        field_name="option_trade_days",
-    )
-    resolved_market_days = _validated_days(
-        event_log_market_days or defaults["event_log_market_days"],
-        field_name="event_log_market_days",
-    )
-    resolved_control_days = _validated_days(
-        event_log_control_days or defaults["event_log_control_days"],
-        field_name="event_log_control_days",
+        option_trade_tick_days or defaults["option_trade_tick_days"],
+        field_name="option_trade_tick_days",
     )
     resolved_batch_size = max(int(batch_size or defaults["batch_size"]), 1)
     resolved_max_batches = max(int(max_batches or defaults["max_batches"]), 1)
@@ -289,52 +234,29 @@ def prune_retained_data(
 
     quote_cutoff = _cutoff(resolved_quote_days, now=resolved_now)
     trade_cutoff = _cutoff(resolved_trade_days, now=resolved_now)
-    market_event_cutoff = _cutoff(resolved_market_days, now=resolved_now)
-    control_event_cutoff = _cutoff(resolved_control_days, now=resolved_now)
 
     with build_storage_context(db_target) as storage:
-        if not storage.history.schema_has_tables("option_quote_events"):
-            raise RuntimeError("option_quote_events table is missing.")
-        if not storage.history.schema_has_tables("option_trade_events"):
-            raise RuntimeError("option_trade_events table is missing.")
-        if not storage.events.schema_ready():
-            raise RuntimeError("event_log table is missing.")
+        if not storage.history.schema_has_tables("option_quote_ticks"):
+            raise RuntimeError("option_quote_ticks table is missing.")
+        if not storage.history.schema_has_tables("option_trade_ticks"):
+            raise RuntimeError("option_trade_ticks table is missing.")
 
-        market_condition = _market_event_condition()
         rows = [
             {
-                "name": "option_quote_events",
+                "name": "option_quote_ticks",
                 "retention_days": resolved_quote_days,
                 "cutoff": quote_cutoff,
-                "model": OptionQuoteEventModel,
-                "id_column": OptionQuoteEventModel.quote_id,
-                "condition": OptionQuoteEventModel.captured_at < quote_cutoff,
+                "model": OptionQuoteTickModel,
+                "id_column": OptionQuoteTickModel.quote_tick_id,
+                "condition": OptionQuoteTickModel.captured_at < quote_cutoff,
             },
             {
-                "name": "option_trade_events",
+                "name": "option_trade_ticks",
                 "retention_days": resolved_trade_days,
                 "cutoff": trade_cutoff,
-                "model": OptionTradeEventModel,
-                "id_column": OptionTradeEventModel.trade_id,
-                "condition": OptionTradeEventModel.captured_at < trade_cutoff,
-            },
-            {
-                "name": "event_log_market_events",
-                "retention_days": resolved_market_days,
-                "cutoff": market_event_cutoff,
-                "model": EventLogModel,
-                "id_column": EventLogModel.event_id,
-                "condition": market_condition
-                & (EventLogModel.occurred_at < market_event_cutoff),
-            },
-            {
-                "name": "event_log_control_events",
-                "retention_days": resolved_control_days,
-                "cutoff": control_event_cutoff,
-                "model": EventLogModel,
-                "id_column": EventLogModel.event_id,
-                "condition": not_(market_condition)
-                & (EventLogModel.occurred_at < control_event_cutoff),
+                "model": OptionTradeTickModel,
+                "id_column": OptionTradeTickModel.trade_tick_id,
+                "condition": OptionTradeTickModel.captured_at < trade_cutoff,
             },
         ]
 
@@ -389,64 +311,31 @@ def build_retention_status(
     latest_by_table = _latest_prune_by_table(latest_run)
 
     with build_storage_context(db_target) as storage:
-        if not storage.history.schema_has_tables("option_quote_events"):
-            raise RuntimeError("option_quote_events table is missing.")
-        if not storage.history.schema_has_tables("option_trade_events"):
-            raise RuntimeError("option_trade_events table is missing.")
-        if not storage.events.schema_ready():
-            raise RuntimeError("event_log table is missing.")
+        if not storage.history.schema_has_tables("option_quote_ticks"):
+            raise RuntimeError("option_quote_ticks table is missing.")
+        if not storage.history.schema_has_tables("option_trade_ticks"):
+            raise RuntimeError("option_trade_ticks table is missing.")
 
-        market_condition = _market_event_condition()
         rows = [
             {
-                "name": "option_quote_events",
-                "physical_table": "option_quote_events",
-                "retention_days": defaults["option_quote_days"],
-                "cutoff": _cutoff(defaults["option_quote_days"], now=resolved_now),
-                "model": OptionQuoteEventModel,
-                "timestamp_column": OptionQuoteEventModel.captured_at,
+                "name": "option_quote_ticks",
+                "physical_table": "option_quote_ticks",
+                "retention_days": defaults["option_quote_tick_days"],
+                "cutoff": _cutoff(defaults["option_quote_tick_days"], now=resolved_now),
+                "model": OptionQuoteTickModel,
+                "timestamp_column": OptionQuoteTickModel.captured_at,
                 "condition": None,
-                "pending_condition": OptionQuoteEventModel.captured_at
-                < _cutoff(defaults["option_quote_days"], now=resolved_now),
+                "pending_condition": OptionQuoteTickModel.captured_at < _cutoff(defaults["option_quote_tick_days"], now=resolved_now),
             },
             {
-                "name": "option_trade_events",
-                "physical_table": "option_trade_events",
-                "retention_days": defaults["option_trade_days"],
-                "cutoff": _cutoff(defaults["option_trade_days"], now=resolved_now),
-                "model": OptionTradeEventModel,
-                "timestamp_column": OptionTradeEventModel.captured_at,
+                "name": "option_trade_ticks",
+                "physical_table": "option_trade_ticks",
+                "retention_days": defaults["option_trade_tick_days"],
+                "cutoff": _cutoff(defaults["option_trade_tick_days"], now=resolved_now),
+                "model": OptionTradeTickModel,
+                "timestamp_column": OptionTradeTickModel.captured_at,
                 "condition": None,
-                "pending_condition": OptionTradeEventModel.captured_at
-                < _cutoff(defaults["option_trade_days"], now=resolved_now),
-            },
-            {
-                "name": "event_log_market_events",
-                "physical_table": "event_log",
-                "retention_days": defaults["event_log_market_days"],
-                "cutoff": _cutoff(defaults["event_log_market_days"], now=resolved_now),
-                "model": EventLogModel,
-                "timestamp_column": EventLogModel.occurred_at,
-                "condition": market_condition,
-                "pending_condition": market_condition
-                & (
-                    EventLogModel.occurred_at
-                    < _cutoff(defaults["event_log_market_days"], now=resolved_now)
-                ),
-            },
-            {
-                "name": "event_log_control_events",
-                "physical_table": "event_log",
-                "retention_days": defaults["event_log_control_days"],
-                "cutoff": _cutoff(defaults["event_log_control_days"], now=resolved_now),
-                "model": EventLogModel,
-                "timestamp_column": EventLogModel.occurred_at,
-                "condition": not_(market_condition),
-                "pending_condition": not_(market_condition)
-                & (
-                    EventLogModel.occurred_at
-                    < _cutoff(defaults["event_log_control_days"], now=resolved_now)
-                ),
+                "pending_condition": OptionTradeTickModel.captured_at < _cutoff(defaults["option_trade_tick_days"], now=resolved_now),
             },
         ]
 
@@ -469,9 +358,7 @@ def build_retention_status(
                 )
                 physical_name = str(row["physical_table"])
                 existing_signal = physical_vacuum.get(physical_name)
-                if existing_signal is None or (
-                    vacuum_signal["pending"] and not existing_signal["pending"]
-                ):
+                if existing_signal is None or (vacuum_signal["pending"] and not existing_signal["pending"]):
                     physical_vacuum[physical_name] = vacuum_signal
 
                 result = {
@@ -493,14 +380,8 @@ def build_retention_status(
                     )
                 table_results.append(result)
 
-    latest_run_status = (
-        "missing"
-        if latest_run is None
-        else str(latest_run.get("status") or "unknown").strip().lower()
-    )
-    vacuum_full_pending_tables = [
-        name for name, signal in physical_vacuum.items() if bool(signal.get("pending"))
-    ]
+    latest_run_status = "missing" if latest_run is None else str(latest_run.get("status") or "unknown").strip().lower()
+    vacuum_full_pending_tables = [name for name, signal in physical_vacuum.items() if bool(signal.get("pending"))]
     status = "degraded" if latest_run_status == "failed" or vacuum_full_pending_tables else "healthy"
     return {
         "status": status,
@@ -508,12 +389,8 @@ def build_retention_status(
         "summary": {
             "latest_run_status": latest_run_status,
             "latest_run_at": None if latest_run is None else latest_run.get("generated_at"),
-            "latest_deleted_count": 0
-            if latest_run is None
-            else int(latest_run.get("total_deleted_count") or 0),
-            "latest_matching_count": 0
-            if latest_run is None
-            else int(latest_run.get("total_matching_count") or 0),
+            "latest_deleted_count": 0 if latest_run is None else int(latest_run.get("total_deleted_count") or 0),
+            "latest_matching_count": 0 if latest_run is None else int(latest_run.get("total_matching_count") or 0),
             "vacuum_full_pending": bool(vacuum_full_pending_tables),
             "vacuum_full_pending_tables": vacuum_full_pending_tables,
             "retention_log_path": None if log_path is None else str(log_path),
@@ -528,10 +405,7 @@ def build_retention_status(
                 "vacuum_full_pending": bool(vacuum_full_pending_tables),
                 "vacuum_full_pending_tables": vacuum_full_pending_tables,
                 "vacuum_full_runbook": "spr-f0m",
-                "lock_profile": (
-                    "retention uses batched DELETEs; VACUUM FULL remains a separate "
-                    "off-hours strong-lock maintenance task"
-                ),
+                "lock_profile": ("retention uses batched DELETEs; VACUUM FULL remains a separate " "off-hours strong-lock maintenance task"),
             },
         },
     }

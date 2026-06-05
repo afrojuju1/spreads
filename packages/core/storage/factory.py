@@ -7,7 +7,6 @@ from core.storage.capture_repository import CaptureRepository
 from core.storage.control_repository import ControlRepository
 from core.storage.context import StorageContext
 from core.storage.engine_fact_repository import EngineFactRepository
-from core.storage.event_repository import EventRepository
 from core.storage.execution_repository import ExecutionRepository
 from core.storage.job_repository import JobRepository
 from core.storage.ops_store import OpsStore
@@ -76,13 +75,6 @@ def build_execution_repository(path_or_url: str | None = None, *, context: Stora
         return context.execution
     value = _resolve_postgres_url(path_or_url)
     return ExecutionRepository(value)
-
-
-def build_event_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):
-    if context is not None:
-        return context.events
-    value = _resolve_postgres_url(path_or_url)
-    return EventRepository(value)
 
 
 def build_engine_fact_repository(path_or_url: str | None = None, *, context: StorageContext | None = None):

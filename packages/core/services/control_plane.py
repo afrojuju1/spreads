@@ -33,6 +33,7 @@ POLICY_FAMILIES = {
     "exit_policy",
 }
 
+
 def _operator_action_id() -> str:
     return f"operator_action:{uuid4().hex}"
 
@@ -150,10 +151,7 @@ def get_control_state_snapshot(
         "updated_at": _as_text(record.get("updated_at")) or _utc_now(),
         "metadata": dict(record.get("metadata") or {}),
         "blockers": blockers,
-        "active_policy_refs": {
-            family: _build_policy_ref(row)
-            for family, row in active_rollouts.items()
-        },
+        "active_policy_refs": {family: _build_policy_ref(row) for family, row in active_rollouts.items()},
     }
 
 
@@ -239,7 +237,6 @@ def publish_control_gate_event(
         session_date=session_date,
         correlation_id=_as_text(control.get("triggered_by_action_id")) or session_id,
         causation_id=cycle_id or source_object_id,
-        database_url=db_target,
     )
 
 
@@ -329,7 +326,6 @@ def set_control_mode(
         source="control_plane",
         correlation_id=str(operator_action["operator_action_id"]),
         causation_id=str(operator_action["operator_action_id"]),
-        database_url=db_target,
     )
     return {
         "action": "set_mode",

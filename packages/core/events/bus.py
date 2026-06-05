@@ -1,19 +1,20 @@
 from __future__ import annotations
 
-import asyncio
 import json
+import logging
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
 import redis
 
-from core.runtime.config import default_database_url, default_redis_url
-from core.storage.factory import build_event_repository
+from core.observability.logging import log_event
+from core.runtime.config import default_redis_url
 
 GLOBAL_EVENTS_CHANNEL = "spreads:events"
 EVENT_SCHEMA_VERSION = "v1"
 EVENT_PRODUCER_VERSION = "spreads"
+logger = logging.getLogger(__name__)
 
 
 def _render_timestamp(value: str | datetime | None = None) -> str:
@@ -32,29 +33,25 @@ def _default_event_class(topic: str) -> str:
     return "control_event"
 
 
-def _persist_event(envelope: dict[str, Any], *, database_url: str | None = None) -> dict[str, Any]:
-    repository = build_event_repository(database_url or default_database_url())
-    if not repository.schema_ready():
-        return envelope
-    repository.create_event(
-        event_id=str(envelope["event_id"]),
-        event_class=str(envelope["event_class"]),
-        event_type=str(envelope["event_type"]),
-        topic=str(envelope["topic"]),
-        occurred_at=str(envelope["occurred_at"]),
-        ingested_at=str(envelope["ingested_at"]),
-        source=str(envelope["source"]),
-        entity_type=str(envelope["entity_type"]),
-        entity_key=str(envelope["entity_key"]),
-        payload=dict(envelope.get("payload") or {}),
-        schema_version=str(envelope["schema_version"]),
-        producer_version=str(envelope["producer_version"]),
-        session_date=envelope.get("session_date"),
-        market_session=envelope.get("market_session"),
+def _log_envelope(envelope: dict[str, Any], *, status: str) -> None:
+    log_event(
+        logger,
+        logging.INFO,
+        "global_event",
+        status=status,
+        topic=envelope.get("topic"),
+        event_class=envelope.get("event_class"),
+        event_type=envelope.get("event_type"),
+        event_id=envelope.get("event_id"),
+        entity_type=envelope.get("entity_type"),
+        entity_id=envelope.get("entity_id"),
+        source=envelope.get("source"),
         correlation_id=envelope.get("correlation_id"),
         causation_id=envelope.get("causation_id"),
+        session_date=envelope.get("session_date"),
+        market_session=envelope.get("market_session"),
+        event_payload=dict(envelope.get("payload") or {}),
     )
-    return envelope
 
 
 def build_global_event(
@@ -118,7 +115,6 @@ async def publish_global_event_async(
     producer_version: str = EVENT_PRODUCER_VERSION,
     correlation_id: str | None = None,
     causation_id: str | None = None,
-    database_url: str | None = None,
 ) -> dict[str, Any]:
     envelope = build_global_event(
         topic=topic,
@@ -136,7 +132,7 @@ async def publish_global_event_async(
         correlation_id=correlation_id,
         causation_id=causation_id,
     )
-    await asyncio.to_thread(_persist_event, envelope, database_url=database_url)
+    _log_envelope(envelope, status="published")
     await event_bus.publish(GLOBAL_EVENTS_CHANNEL, json.dumps(envelope))
     return envelope
 
@@ -157,7 +153,6 @@ async def record_global_event_async(
     producer_version: str = EVENT_PRODUCER_VERSION,
     correlation_id: str | None = None,
     causation_id: str | None = None,
-    database_url: str | None = None,
 ) -> dict[str, Any]:
     envelope = build_global_event(
         topic=topic,
@@ -175,7 +170,7 @@ async def record_global_event_async(
         correlation_id=correlation_id,
         causation_id=causation_id,
     )
-    await asyncio.to_thread(_persist_event, envelope, database_url=database_url)
+    _log_envelope(envelope, status="recorded")
     return envelope
 
 
@@ -196,7 +191,6 @@ def publish_global_event_sync(
     producer_version: str = EVENT_PRODUCER_VERSION,
     correlation_id: str | None = None,
     causation_id: str | None = None,
-    database_url: str | None = None,
 ) -> dict[str, Any]:
     envelope = build_global_event(
         topic=topic,
@@ -214,7 +208,7 @@ def publish_global_event_sync(
         correlation_id=correlation_id,
         causation_id=causation_id,
     )
-    _persist_event(envelope, database_url=database_url)
+    _log_envelope(envelope, status="published")
     client = redis.Redis.from_url(redis_url or default_redis_url(), decode_responses=True)
     try:
         client.publish(GLOBAL_EVENTS_CHANNEL, json.dumps(envelope))
@@ -239,7 +233,6 @@ def record_global_event_sync(
     producer_version: str = EVENT_PRODUCER_VERSION,
     correlation_id: str | None = None,
     causation_id: str | None = None,
-    database_url: str | None = None,
 ) -> dict[str, Any]:
     envelope = build_global_event(
         topic=topic,
@@ -257,5 +250,5 @@ def record_global_event_sync(
         correlation_id=correlation_id,
         causation_id=causation_id,
     )
-    _persist_event(envelope, database_url=database_url)
+    _log_envelope(envelope, status="recorded")
     return envelope

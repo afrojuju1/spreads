@@ -6,7 +6,6 @@ from core.storage.broker_repository import BrokerRepository
 from core.storage.capture_repository import CaptureRepository
 from core.storage.capabilities import StorageCapabilities
 from core.storage.control_repository import ControlRepository
-from core.storage.event_repository import EventRepository
 from core.storage.db import build_session_factory
 from core.storage.engine_fact_repository import EngineFactRepository
 from core.storage.execution_repository import ExecutionRepository
@@ -55,10 +54,6 @@ class StorageContext:
     @property
     def execution(self) -> ExecutionRepository:
         return self.trading
-
-    @property
-    def events(self) -> EventRepository:
-        return self._build_repository("events", EventRepository)  # type: ignore[return-value]
 
     @property
     def engine_facts(self) -> EngineFactRepository:

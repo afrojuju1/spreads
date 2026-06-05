@@ -18,28 +18,16 @@ from .shared import _attention, _combine_statuses
 
 STORAGE_POLICIES = (
     {
-        "name": "option_quote_events",
-        "physical_table": "option_quote_events",
-        "retention_days_key": "option_quote_days",
+        "name": "option_quote_ticks",
+        "physical_table": "option_quote_ticks",
+        "retention_days_key": "option_quote_tick_days",
         "data_class": "option_quotes",
     },
     {
-        "name": "option_trade_events",
-        "physical_table": "option_trade_events",
-        "retention_days_key": "option_trade_days",
+        "name": "option_trade_ticks",
+        "physical_table": "option_trade_ticks",
+        "retention_days_key": "option_trade_tick_days",
         "data_class": "option_trades",
-    },
-    {
-        "name": "event_log_market_events",
-        "physical_table": "event_log",
-        "retention_days_key": "event_log_market_days",
-        "data_class": "market_events",
-    },
-    {
-        "name": "event_log_control_events",
-        "physical_table": "event_log",
-        "retention_days_key": "event_log_control_days",
-        "data_class": "control_events",
     },
 )
 
@@ -61,12 +49,10 @@ def build_storage_ops_state(
     statuses: list[str] = []
 
     missing_tables: list[str] = []
-    if not storage.history.schema_has_tables("option_quote_events"):
-        missing_tables.append("option_quote_events")
-    if not storage.history.schema_has_tables("option_trade_events"):
-        missing_tables.append("option_trade_events")
-    if not storage.events.schema_ready():
-        missing_tables.append("event_log")
+    if not storage.history.schema_has_tables("option_quote_ticks"):
+        missing_tables.append("option_quote_ticks")
+    if not storage.history.schema_has_tables("option_trade_ticks"):
+        missing_tables.append("option_trade_ticks")
     if missing_tables:
         attention.append(
             _attention(

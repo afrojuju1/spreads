@@ -53,23 +53,16 @@ def _render_status(payload: dict[str, Any], *, no_color: bool) -> None:
     overview.add_row("Generated", _render_value(payload.get("generated_at")))
     overview.add_row(
         "Latest Run",
-        (
-            f"{_render_value(summary.get('latest_run_status'))} @ "
-            f"{_render_value(summary.get('latest_run_at'))}"
-        ),
+        (f"{_render_value(summary.get('latest_run_status'))} @ " f"{_render_value(summary.get('latest_run_at'))}"),
     )
     overview.add_row(
         "Latest Prune",
-        (
-            f"matched {_render_value(summary.get('latest_matching_count'))} | "
-            f"deleted {_render_value(summary.get('latest_deleted_count'))}"
-        ),
+        (f"matched {_render_value(summary.get('latest_matching_count'))} | " f"deleted {_render_value(summary.get('latest_deleted_count'))}"),
     )
     overview.add_row(
         "Vacuum Full",
         (
-            "pending "
-            f"{_render_value(', '.join(summary.get('vacuum_full_pending_tables') or []))}"
+            "pending " f"{_render_value(', '.join(summary.get('vacuum_full_pending_tables') or []))}"
             if summary.get("vacuum_full_pending")
             else "not pending"
         ),
@@ -90,12 +83,8 @@ def _render_status(payload: dict[str, Any], *, no_color: bool) -> None:
         table.add_column("Latest Deleted", justify="right")
         table.add_column("Vacuum")
         for row in tables:
-            latest_prune = (
-                row.get("latest_prune") if isinstance(row.get("latest_prune"), dict) else {}
-            )
-            vacuum_full = (
-                row.get("vacuum_full") if isinstance(row.get("vacuum_full"), dict) else {}
-            )
+            latest_prune = row.get("latest_prune") if isinstance(row.get("latest_prune"), dict) else {}
+            vacuum_full = row.get("vacuum_full") if isinstance(row.get("vacuum_full"), dict) else {}
             table.add_row(
                 _render_value(row.get("name")),
                 f"{_render_value(row.get('retention_days'))}d",
@@ -161,25 +150,15 @@ def prune_command(
         "--execute",
         help="Apply deletes. Omit for a dry run.",
     ),
-    option_quote_days: int | None = typer.Option(
+    option_quote_tick_days: int | None = typer.Option(
         None,
-        "--option-quote-days",
-        help="Retention days for option_quote_events.",
+        "--option-quote-tick-days",
+        help="Retention days for option_quote_ticks.",
     ),
-    option_trade_days: int | None = typer.Option(
+    option_trade_tick_days: int | None = typer.Option(
         None,
-        "--option-trade-days",
-        help="Retention days for option_trade_events.",
-    ),
-    event_log_market_days: int | None = typer.Option(
-        None,
-        "--event-log-market-days",
-        help="Retention days for market_event rows in event_log.",
-    ),
-    event_log_control_days: int | None = typer.Option(
-        None,
-        "--event-log-control-days",
-        help="Retention days for non-market rows in event_log.",
+        "--option-trade-tick-days",
+        help="Retention days for option_trade_ticks.",
     ),
     batch_size: int | None = typer.Option(
         None,
@@ -198,12 +177,8 @@ def prune_command(
         payload = prune_retained_data(
             db_target=db,
             dry_run=not execute,
-            option_quote_days=option_quote_days or defaults["option_quote_days"],
-            option_trade_days=option_trade_days or defaults["option_trade_days"],
-            event_log_market_days=event_log_market_days
-            or defaults["event_log_market_days"],
-            event_log_control_days=event_log_control_days
-            or defaults["event_log_control_days"],
+            option_quote_tick_days=option_quote_tick_days or defaults["option_quote_tick_days"],
+            option_trade_tick_days=option_trade_tick_days or defaults["option_trade_tick_days"],
             batch_size=batch_size or defaults["batch_size"],
             max_batches=max_batches or defaults["max_batches"],
         )
