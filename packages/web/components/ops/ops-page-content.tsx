@@ -31,6 +31,10 @@ function firstPresent(...values: unknown[]): unknown {
   return values.find((value) => value !== undefined && value !== null && value !== "");
 }
 
+function formatOptionalCompact(value: unknown): string {
+  return value === undefined || value === null ? "-" : formatCompactNumber(readNumber(value));
+}
+
 export function OpsPageContent() {
   const tradingOpsQuery = useQuery({
     queryKey: ["trading-ops-state", "ops-page"],
@@ -294,13 +298,17 @@ export function OpsPageContent() {
           </div>
           <div className="divide-y divide-border/60">
             {storageTables.map((row) => {
+              const requiredFutureDays = row.required_future_partition_days;
+              const currentReady = row.current_partition_ready;
               return (
                 <div key={readString(row.name)} className="grid grid-cols-[1.2fr_0.7fr_0.7fr_0.8fr_0.8fr] gap-3 px-3 py-2 text-sm">
                   <span className="min-w-0 truncate font-medium">{readString(row.name)}</span>
-                  <span>{formatCompactNumber(readNumber(row.partition_count))}</span>
-                  <span>{row.current_partition_ready ? "ready" : "missing"}</span>
+                  <span>{formatOptionalCompact(row.partition_count)}</span>
+                  <span>{currentReady === undefined || currentReady === null ? "-" : currentReady ? "ready" : "missing"}</span>
                   <span>
-                    {formatCompactNumber(readNumber(row.future_partition_days))}/{formatCompactNumber(readNumber(row.required_future_partition_days))}
+                    {requiredFutureDays === undefined || requiredFutureDays === null
+                      ? "-"
+                      : `${formatOptionalCompact(row.future_partition_days)}/${formatOptionalCompact(requiredFutureDays)}`}
                   </span>
                   <span>{formatBytes(readNumber(row.total_size_bytes))}</span>
                 </div>

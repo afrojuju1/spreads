@@ -4,7 +4,7 @@ This document is the canonical source of truth for the current `spreads` runtime
 
 It describes the system as it exists in code today. Planning documents can describe history or target states, but when they disagree with this file, this file wins.
 
-Last updated: 2026-06-04
+Last updated: 2026-06-05
 
 ## Top-Level Boundaries
 
@@ -14,7 +14,7 @@ Last updated: 2026-06-04
 | Trading strategy config | `packages/config/trading_strategies`, `services/trading_strategies.py`, `services/trading_strategy_runtime.py` | A `trading_strategy` is the product/operator owner for source, trade structure, entry routine, management routine, risk, limits, and execution settings. |
 | Scheduling and workers | `packages/config/jobs`, `packages/core/jobs`, `services/runtime_policy.py` | Declared jobs and generated trading-strategy jobs are the scheduler source of truth. Runtime workers execute broker sync, strategy entry/manage, dispatch, and alert jobs; data workers execute ticker sources. |
 | Dynamic ticker sources | `packages/config/ticker_sources`, `services/ticker_sources.py` | Ticker sources materialize reusable underlying lists. `finviz_momentum` feeds `momentum_long_calls`. |
-| Market data capture | `services/trading_engine/capture_targets.py`, `services/market_recorder.py`, `storage/capture_repository.py` | `DataEngine` owns desired capture state in `capture_targets`; `market_recorder.py` is the normal Alpaca option websocket owner and reconciles the prioritized target set into quote/trade events plus `capture_summaries`. |
+| Market data capture | `services/trading_engine/capture_targets.py`, `services/market_recorder.py`, `storage/capture_repository.py` | `DataEngine` owns desired capture state in `capture_targets`; `market_recorder.py` is the normal Alpaca option websocket owner and reconciles the prioritized target set into option quote/trade ticks plus `capture_summaries`. |
 | Engine data and scanning | `services/trading_engine/data_runtime.py`, `services/scanners/`, `services/live_selection.py`, `services/opportunity_scoring.py`, `services/candidate_policy.py` | DataEngine resolves ticker sources/static sources and builds candidate inputs directly for strategy entry. Scanner math remains reusable; discovery-run ownership is retired. |
 | Strategy signals and decisions | `services/trading_engine/facts.py`, `services/decision_engine.py`, `storage/engine_fact_repository.py` | Owns candidate runs, trade candidates, trade signals, trade decisions, and admission decisions before intents. Ticker-source jobs own ticker-source runs and observations. |
 | Execution and portfolio state | `services/execution/`, `services/execution_intents/`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py` | Owns intent dispatch, broker submission, order/fill facts, position attribution, reconciliation, and close behavior. |
@@ -61,7 +61,7 @@ Last updated: 2026-06-04
 | Close | Decision, intent, attempt, and fill path that reduces or exits a position. | `services/exit_manager.py`, `services/execution_intents/`, `services/execution/` | Separate close-only bypasses. |
 | Broker sync | Poll-first broker/account health and fact ingestion. | `services/broker_sync.py`, `broker_sync_state`, `account_snapshots` | Trading decisions or owner attribution. |
 | Capture target | Desired option contract capture need with owner, reason, priority, TTL, and quote/trade flags. | `services/trading_engine/capture_targets.py`, `capture_targets`, `storage/capture_repository.py` | Scanner diagnostics or broker order truth. |
-| Capture summary | Market-recorder iteration summary for target pressure, captured rows, groups, and errors. | `services/market_recorder.py`, `capture_summaries` | Raw quote/trade event retention. |
+| Capture summary | Market-recorder iteration summary for target pressure, captured rows, groups, and errors. | `services/market_recorder.py`, `capture_summaries` | Raw quote/trade tick retention. |
 | Trading ops state | Operator-facing trading health: market, control, scheduler/workers, sources, candidates, signals, decisions, intents, attempts, positions, exits, risk, capture, and attention. | `services/ops/` | Frontend stitching or live Alpaca calls during default dashboard render. |
 | Storage ops state | Operator-facing retention/storage health. | `services/retention.py`, storage ops surfaces | Live trading decisions. |
 | Research scan | Batch TradingAgents research run over a bounded ticker list. | `services/tradingagents_scan.py`, `outputs/tradingagents/`, `external/TradingAgents` | Live execution admission. |
@@ -90,7 +90,7 @@ ARQ workers
 
 Market recorder
   |
-  +--> prioritized capture_targets -> Alpaca option websocket -> option quote/trade tables + capture_summaries
+  +--> prioritized capture_targets -> Alpaca option websocket -> option_quote_ticks / option_trade_ticks + capture_summaries
 
 Postgres = source of truth
 Redis = queues, leases, pub/sub

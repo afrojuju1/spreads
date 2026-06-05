@@ -64,19 +64,20 @@ Resolution order:
 The existing commands use Postgres automatically:
 
 ```bash
-uv run spreads scan --symbol SPY
-uv run spreads discover --profile weekly --universe explore_10
-uv run spreads analyze --label explore_10_combined_weekly_auto
+uv run spreads config validate --json
+uv run spreads ops state --json
+uv run spreads ops storage --json
+uv run spreads jobs --json
 ```
 
 ARQ orchestration defaults:
 
 ```bash
 uv run spreads scheduler
-uv run arq core.jobs.worker.FastWorkerSettings
-uv run arq core.jobs.worker.DiscoveryWorkerSettings
-uv run arq core.jobs.worker.AnalysisWorkerSettings
-uv run arq core.jobs.worker.GeneratorWorkerSettings
+uv run arq core.jobs.worker.RuntimeWorkerSettings
+uv run arq core.jobs.worker.DataWorkerSettings
+uv run arq core.jobs.worker.ValuationWorkerSettings
+uv run arq core.jobs.worker.ResearchWorkerSettings
 ```
 
 Redis default connection URL:
@@ -85,9 +86,9 @@ Redis default connection URL:
 redis://localhost:56379/0
 ```
 
-`spreads discover` now persists discovery run cycles, promotable/monitor opportunity state, events, and quote events directly to Postgres.
+Ticker sources, strategy runs, execution facts, capture targets, option quote/trade ticks, and capture summaries are persisted directly to Postgres. Discovery-run and generic DB event-log surfaces are retired from the active runtime.
 
-Discord alert delivery is optional. If configured, discovery run alerts are sent through:
+Discord alert delivery is optional. If configured, alerts are sent through:
 
 ```bash
 SPREADS_DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
@@ -97,32 +98,25 @@ The runtime also accepts legacy `DISCORD_WEBHOOK_URL` if that is already present
 
 If the webhook is missing, alert rows are still persisted in Postgres with status `skipped`.
 
-`spreads analyze` renders the post-close markdown report to stdout from Postgres-backed analytics; it does not write a report file.
+Operator analytics are exposed through the ops CLI and API read models; ad hoc scanner commands should not become new durable ownership paths.
 
 ## API
 
-The FastAPI app is DB-backed. Useful endpoints include:
+The FastAPI app is DB-backed. Useful active endpoints include:
 
-- `/live/{label}`
-- `/live/{label}/cycles`
-- `/live/{label}/events`
-- `/history/runs`
-- `/history/runs/{run_id}`
-- `/history/runs/{run_id}/candidates`
-- `/sessions/{session_date}/{label}/outcomes`
-- `/sessions/{session_date}/{label}/summary`
-- `/alerts`
-- `/alerts/latest`
-- `/alerts/{alert_id}`
-- `/jobs`
-- `/jobs/runs`
-- `/jobs/runs/{job_run_id}`
-- `/jobs/health`
+- `/health`
+- `/internal/trading-ops/state`
+- `/internal/storage-ops/state`
+- `/account/overview`
+- `/control/state`
+- `/positions`
+- `/executions/runtimes`
+- `/company-valuation/screen`
 
 ## Notes
 
 - Docker Compose can run `postgres`, `redis`, `api`, `worker`, and `scheduler`.
 - Alembic owns app-schema changes.
 - The runtime stores are SQLAlchemy ORM on Postgres.
-- Run history, discovery run live state, and calendar events all use the same Postgres database and session pattern.
+- Ticker source facts, strategy facts, execution facts, capture targets, capture summaries, and market tick partitions all use the same Postgres database and session pattern.
 - Redis is transport/runtime only for ARQ; Postgres remains the source of truth for job state.

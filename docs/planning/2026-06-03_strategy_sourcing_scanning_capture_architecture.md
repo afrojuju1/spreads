@@ -265,11 +265,11 @@ TradeCandidate / TradeSignal / ExecutionIntent / TradingPosition
         |
         +--> market_recorder reconciles actual subscriptions
               |
-              +--> raw quote/trade events
+              +--> option quote/trade ticks
               +--> CaptureSummary rows
 ```
 
-Raw quote/trade events should have short retention. Decisions, exits, dashboards, and audits should lean on `CaptureSummary` and latest mark/quote read models whenever possible. This keeps the quote tables from growing forever while preserving the facts needed to explain trading behavior.
+Raw quote/trade ticks should have short partition retention. Decisions, exits, dashboards, and audits should lean on `CaptureSummary` and latest mark/quote read models whenever possible. This keeps the quote tables from growing forever while preserving the facts needed to explain trading behavior.
 
 ## Finviz Long Calls Target
 

@@ -648,13 +648,15 @@ def render_storage_ops_state(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Rows Est.", justify="right")
         table.add_column("Size", justify="right")
         for row in table_rows:
+            retention_days = row.get("retention_days")
+            required_future_days = row.get("required_future_partition_days")
             table.add_row(
                 _render_value(row.get("name")),
                 _render_value(row.get("data_class")),
-                f"{_render_value(row.get('retention_days'))}d",
+                "-" if retention_days is None else f"{_render_value(retention_days)}d",
                 _render_value(row.get("partition_count")),
-                "ready" if row.get("current_partition_ready") else "missing",
-                f"{_render_value(row.get('future_partition_days'))}/{_render_value(row.get('required_future_partition_days'))}",
+                "-" if row.get("current_partition_ready") is None else ("ready" if row.get("current_partition_ready") else "missing"),
+                "-" if required_future_days is None else f"{_render_value(row.get('future_partition_days'))}/{_render_value(required_future_days)}",
                 _render_value(row.get("estimated_live_rows")),
                 _render_bytes(row.get("total_size_bytes")),
             )

@@ -549,7 +549,7 @@ async def run_market_recorder_loop(args: argparse.Namespace) -> int:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Continuously record raw option quote and trade events for active capture targets.")
+    parser = argparse.ArgumentParser(description="Continuously record option quote and trade ticks for active capture targets.")
     parser.add_argument(
         "--db",
         default=default_database_url(),
