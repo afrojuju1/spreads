@@ -39,6 +39,13 @@ def _as_int(value: Any, default: int) -> int:
     return default if parsed is None else int(parsed)
 
 
+def _as_positive_int_or_none(value: Any) -> int | None:
+    parsed = parse_int(value)
+    if parsed is None:
+        return None
+    return max(int(parsed), 1)
+
+
 def _as_float(value: Any, default: float) -> float:
     parsed = parse_float(value)
     return default if parsed is None else float(parsed)
@@ -648,7 +655,7 @@ def _run_finviz_screener_feed(
     recipe: str,
     recipe_args: Mapping[str, Any],
 ) -> dict[str, Any]:
-    top = max(_as_int(recipe_args.get("top"), 10), 1)
+    source_symbol_limit = _as_positive_int_or_none(recipe_args.get("source_symbol_limit"))
     min_price = max(_as_float(recipe_args.get("min_price"), 0.0), 0.0)
     min_market_cap = max(_as_float(recipe_args.get("min_market_cap"), 0.0), 0.0)
     min_volume = max(
@@ -845,7 +852,8 @@ def _run_finviz_screener_feed(
             str(item.get("symbol") or ""),
         ),
     )
-    selected = [{**dict(item), "observation_state": "selected"} for item in ranked[:top]]
+    selected_candidates = ranked if source_symbol_limit is None else ranked[:source_symbol_limit]
+    selected = [{**dict(item), "observation_state": "selected"} for item in selected_candidates]
     symbols = [str(item.get("symbol")) for item in selected if str(item.get("symbol") or "").strip()]
     selected_symbol_set = set(symbols)
     observations = [
@@ -871,7 +879,7 @@ def _run_finviz_screener_feed(
             "recipe": str(recipe),
             "source": source_kind,
             "source_format": source_format,
-            "top": top,
+            "source_symbol_limit": source_symbol_limit,
             "min_price": min_price,
             "min_market_cap": min_market_cap,
             "min_volume": min_volume,
