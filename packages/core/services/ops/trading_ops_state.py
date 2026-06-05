@@ -26,7 +26,7 @@ from core.services.execution_lifecycle import (
 )
 from core.services.exit_manager import describe_position_exit_state
 from core.services.risk_manager import assess_position_risk
-from core.services.trading_strategies import load_active_trading_strategies
+from core.services.trading_strategies import load_active_trading_strategies, routine_should_run_now
 from core.storage.engine_models import CandidateRunModel, SourceRunModel, SourceTickerModel
 from core.services.value_coercion import (
     as_text as _as_text,
@@ -417,7 +417,7 @@ def _candidate_state(
         "symbol_count": _coerce_int(candidate_run.get("symbol_count")) or 0,
         "candidate_count": candidate_count,
         "latest_run": dict(candidate_run),
-        "reason": "no_candidates" if candidate_count == 0 else ("candidate_run_stale" if stale else None),
+        "reason": "candidate_run_stale" if stale else ("no_candidates" if candidate_count == 0 else None),
     }
 
 
@@ -518,6 +518,7 @@ def _build_trading_flows(
         latest_source = latest_sources.get(strategy.source.ref)
         latest_entry = latest_candidates.get(strategy.trading_strategy_id)
         entry_cadence_minutes = None if strategy.entry is None else strategy.entry.schedule.cadence_minutes
+        entry_due = bool(strategy.entry is not None and strategy.entry.enabled and routine_should_run_now(strategy.entry, now=now))
         source_state = _source_state(
             source_run=latest_source,
             source_kind=strategy.source.kind,
@@ -528,7 +529,7 @@ def _build_trading_flows(
         candidate_state = _candidate_state(
             candidate_run=latest_entry,
             cadence_minutes=entry_cadence_minutes,
-            market_open=market_open and strategy.entry is not None and strategy.entry.enabled,
+            market_open=market_open and entry_due,
             now=now,
         )
         intent_summary = _flow_intent_summary(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -18,6 +19,7 @@ from core.domain.models import (
 
 DEFAULT_DATA_BASE_URL = "https://data.alpaca.markets"
 DEFAULT_TRADING_BASE_URL = "https://api.alpaca.markets"
+RETRYABLE_GET_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 class AlpacaRequestError(RuntimeError):
@@ -52,10 +54,14 @@ class AlpacaClient:
         trading_base_url: str,
         data_base_url: str,
         request_timeout_seconds: float = 30.0,
+        request_retry_count: int = 2,
+        request_retry_backoff_seconds: float = 0.5,
     ) -> None:
         self.trading_base_url = trading_base_url.rstrip("/")
         self.data_base_url = data_base_url.rstrip("/")
         self.request_timeout_seconds = float(request_timeout_seconds)
+        self.request_retry_count = max(int(request_retry_count), 0)
+        self.request_retry_backoff_seconds = max(float(request_retry_backoff_seconds), 0.0)
         self.headers = {
             "APCA-API-KEY-ID": key_id,
             "APCA-API-SECRET-KEY": secret_key,
@@ -75,6 +81,22 @@ class AlpacaClient:
             for index in range(0, len(normalized), batch_size)
         ]
 
+    def _max_attempts_for(self, method: str) -> int:
+        if method.upper() != "GET":
+            return 1
+        return self.request_retry_count + 1
+
+    def _sleep_before_retry(self, attempt_index: int) -> None:
+        delay_seconds = self.request_retry_backoff_seconds * (2 ** max(attempt_index - 1, 0))
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
+
+    @staticmethod
+    def _attempt_note(attempt_count: int) -> str:
+        if attempt_count <= 1:
+            return ""
+        return f" after {attempt_count} attempts"
+
     def request_json(
         self,
         method: str,
@@ -93,33 +115,49 @@ class AlpacaClient:
         if body is not None:
             request_headers["Content-Type"] = "application/json"
             request_data = json.dumps(body).encode("utf-8")
+        method_upper = method.upper()
         request = urllib.request.Request(
             url,
             headers=request_headers,
             data=request_data,
-            method=method.upper(),
+            method=method_upper,
         )
-        try:
-            with urllib.request.urlopen(
-                request, timeout=self.request_timeout_seconds
-            ) as response:
-                body_bytes = response.read()
-                if not body_bytes:
-                    return None
-                return json.loads(body_bytes.decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            response_body = exc.read().decode("utf-8", errors="replace")
-            raise AlpacaRequestError(
-                f"Alpaca request failed: {exc.code} {exc.reason} for {url}\n{response_body}",
-                status_code=exc.code,
-                url=url,
-                response_body=response_body,
-            ) from exc
-        except urllib.error.URLError as exc:
-            raise AlpacaRequestError(
-                f"Failed to reach Alpaca for {url}: {exc.reason}",
-                url=url,
-            ) from exc
+        max_attempts = self._max_attempts_for(method_upper)
+        for attempt_index in range(1, max_attempts + 1):
+            try:
+                with urllib.request.urlopen(request, timeout=self.request_timeout_seconds) as response:
+                    body_bytes = response.read()
+                    if not body_bytes:
+                        return None
+                    return json.loads(body_bytes.decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                response_body = exc.read().decode("utf-8", errors="replace")
+                if exc.code in RETRYABLE_GET_STATUS_CODES and attempt_index < max_attempts:
+                    self._sleep_before_retry(attempt_index)
+                    continue
+                raise AlpacaRequestError(
+                    f"Alpaca request failed{self._attempt_note(attempt_index)}: {exc.code} {exc.reason} for {url}\n{response_body}",
+                    status_code=exc.code,
+                    url=url,
+                    response_body=response_body,
+                ) from exc
+            except urllib.error.URLError as exc:
+                if attempt_index < max_attempts:
+                    self._sleep_before_retry(attempt_index)
+                    continue
+                raise AlpacaRequestError(
+                    f"Failed to reach Alpaca for {url}{self._attempt_note(attempt_index)}: {exc.reason}",
+                    url=url,
+                ) from exc
+            except (TimeoutError, ConnectionError) as exc:
+                if attempt_index < max_attempts:
+                    self._sleep_before_retry(attempt_index)
+                    continue
+                raise AlpacaRequestError(
+                    f"Failed to reach Alpaca for {url}{self._attempt_note(attempt_index)}: {exc}",
+                    url=url,
+                ) from exc
+        raise AlpacaRequestError(f"Failed to reach Alpaca for {url}", url=url)
 
     def get_json(
         self, base_url: str, path: str, params: dict[str, Any] | None = None
