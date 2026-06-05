@@ -116,17 +116,14 @@ def build_option_symbol_metadata(candidates: list[dict[str, Any]]) -> dict[str, 
                     "strategy": candidate.get("strategy"),
                     "leg_role": role,
                     "option_type": _strategy_option_type(option_symbol),
-                    "expiration_date": leg.get("expiration_date")
-                    or candidate.get("expiration_date"),
+                    "expiration_date": leg.get("expiration_date") or candidate.get("expiration_date"),
                     "days_to_expiration": _days_to_expiration(candidate),
                     "strike_price": strike_price,
                     "underlying_price": _coerce_float(candidate.get("underlying_price")),
                     "open_interest": _coerce_int(candidate.get(f"{role}_open_interest")),
                     "open_interest_date": candidate.get(f"{role}_open_interest_date"),
                     "volume": _coerce_int(candidate.get(f"{role}_volume")),
-                    "implied_volatility": _coerce_float(
-                        candidate.get(f"{role}_implied_volatility")
-                    ),
+                    "implied_volatility": _coerce_float(candidate.get(f"{role}_implied_volatility")),
                     "delta": _coerce_float(candidate.get(f"{role}_delta")),
                     "gamma": _coerce_float(candidate.get(f"{role}_gamma")),
                     "vega": _coerce_float(candidate.get(f"{role}_vega")),
@@ -136,12 +133,8 @@ def build_option_symbol_metadata(candidates: list[dict[str, Any]]) -> dict[str, 
                     "midpoint": _coerce_float(candidate.get(f"{role}_midpoint")),
                     "bid_size": _coerce_int(candidate.get(f"{role}_bid_size")),
                     "ask_size": _coerce_int(candidate.get(f"{role}_ask_size")),
-                    "last_trade_price": _coerce_float(
-                        candidate.get(f"{role}_last_trade_price")
-                    ),
-                    "relative_spread": _coerce_float(
-                        candidate.get(f"{role}_relative_spread")
-                    ),
+                    "last_trade_price": _coerce_float(candidate.get(f"{role}_last_trade_price")),
+                    "relative_spread": _coerce_float(candidate.get(f"{role}_relative_spread")),
                     "percent_otm": _percent_otm(
                         option_type=_strategy_option_type(option_symbol),
                         strike_price=strike_price,
@@ -218,7 +211,7 @@ def build_quote_records(
                 "midpoint": quote.midpoint,
                 "bid_size": quote.bid_size,
                 "ask_size": quote.ask_size,
-                "quote_timestamp": quote.timestamp,
+                "source_timestamp": quote.timestamp,
                 "source": source,
             }
         )

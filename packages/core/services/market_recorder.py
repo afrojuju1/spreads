@@ -470,8 +470,8 @@ async def run_market_recorder_iteration(
         )
         quote_rows = [row for result in group_results for row in list(result.get("quote_rows") or []) if isinstance(row, Mapping)]
         trade_rows = [row for result in group_results for row in list(result.get("trade_rows") or []) if isinstance(row, Mapping)]
-        quote_rows_saved = history_store.save_option_quote_event_rows(rows=[dict(row) for row in quote_rows])
-        trade_rows_saved = history_store.save_option_trade_event_rows(rows=[dict(row) for row in trade_rows])
+        quote_rows_saved = history_store.save_option_quote_tick_rows(rows=[dict(row) for row in quote_rows])
+        trade_rows_saved = history_store.save_option_trade_tick_rows(rows=[dict(row) for row in trade_rows])
         summary = {
             "status": "ok",
             "active_target_count": int(target_refresh.get("active_target_count") or len(target_rows)),

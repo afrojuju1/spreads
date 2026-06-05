@@ -869,8 +869,8 @@ def _render_job_run_detail(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Trades Stream/Total", justify="right")
         table.add_row(
             _render_value(capture_status),
-            f"{_render_value(run.get('stream_quote_events_saved'))}/{_render_value(run.get('baseline_quote_events_saved'))}",
-            f"{_render_value(run.get('stream_trade_events_saved'))}/{_render_value(run.get('total_trade_events_saved'))}",
+            f"{_render_value(run.get('stream_quote_ticks_saved'))}/{_render_value(run.get('baseline_quote_ticks_saved'))}",
+            f"{_render_value(run.get('stream_trade_ticks_saved'))}/{_render_value(run.get('total_trade_ticks_saved'))}",
         )
         console.print(table)
 

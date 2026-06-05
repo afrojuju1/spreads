@@ -17,8 +17,8 @@ def make_storage_row(values: Mapping[str, Any] | None = None, /, **kwargs: Any) 
 ScanRunRecord = StorageRow
 ScanCandidateRecord = StorageRow
 SessionTopRunRecord = StorageRow
-OptionQuoteEventRecord = StorageRow
-OptionTradeEventRecord = StorageRow
+OptionQuoteTickRecord = StorageRow
+OptionTradeTickRecord = StorageRow
 AlertEventRecord = StorageRow
 AlertStateRecord = StorageRow
 JobRunRecord = StorageRow
@@ -57,8 +57,8 @@ __all__ = [
     "ScanRunRecord",
     "ScanCandidateRecord",
     "SessionTopRunRecord",
-    "OptionQuoteEventRecord",
-    "OptionTradeEventRecord",
+    "OptionQuoteTickRecord",
+    "OptionTradeTickRecord",
     "AlertEventRecord",
     "AlertStateRecord",
     "JobRunRecord",

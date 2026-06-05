@@ -41,8 +41,8 @@ from .shared import (
     _run_duration_seconds,
     _seconds_since,
     _sorted_by_activity,
-    _stream_quote_events_saved,
-    _stream_trade_events_saved,
+    _stream_quote_ticks_saved,
+    _stream_trade_ticks_saved,
 )
 
 _JOB_TYPE_BY_TASK_NAME = {spec.task_name: job_type for job_type, spec in JOB_SPECS.items()}
@@ -350,8 +350,8 @@ def _summarize_job_run(
     trade_capture = enriched.get("trade_capture") if isinstance(enriched.get("trade_capture"), Mapping) else {}
     payload = enriched.get("payload") if isinstance(enriched.get("payload"), Mapping) else {}
     result = enriched.get("result") if isinstance(enriched.get("result"), Mapping) else {}
-    stream_quote_events_saved = _stream_quote_events_saved(quote_capture)
-    stream_trade_events_saved = _stream_trade_events_saved(trade_capture)
+    stream_quote_ticks_saved = _stream_quote_ticks_saved(quote_capture)
+    stream_trade_ticks_saved = _stream_trade_ticks_saved(trade_capture)
     return {
         "job_run_id": enriched.get("job_run_id"),
         "job_key": enriched.get("job_key"),
@@ -375,13 +375,13 @@ def _summarize_job_run(
         "singleton_scope": payload.get("singleton_scope"),
         "result_status": result.get("status"),
         "result_reason": result.get("reason"),
-        "stream_quote_events_saved": stream_quote_events_saved,
-        "websocket_quote_events_saved": stream_quote_events_saved,
-        "baseline_quote_events_saved": _coerce_int(quote_capture.get("baseline_quote_events_saved")) or 0,
-        "recovery_quote_events_saved": _coerce_int(quote_capture.get("recovery_quote_events_saved")) or 0,
-        "total_trade_events_saved": _coerce_int(trade_capture.get("total_trade_events_saved")) or 0,
-        "stream_trade_events_saved": stream_trade_events_saved,
-        "websocket_trade_events_saved": stream_trade_events_saved,
+        "stream_quote_ticks_saved": stream_quote_ticks_saved,
+        "websocket_quote_ticks_saved": stream_quote_ticks_saved,
+        "baseline_quote_ticks_saved": _coerce_int(quote_capture.get("baseline_quote_ticks_saved")) or 0,
+        "recovery_quote_ticks_saved": _coerce_int(quote_capture.get("recovery_quote_ticks_saved")) or 0,
+        "total_trade_ticks_saved": _coerce_int(trade_capture.get("total_trade_ticks_saved")) or 0,
+        "stream_trade_ticks_saved": stream_trade_ticks_saved,
+        "websocket_trade_ticks_saved": stream_trade_ticks_saved,
     }
 
 
@@ -863,10 +863,7 @@ def build_jobs_compact_state(
             },
         }
 
-    recent_runs = [
-        _summarize_job_run(dict(row), now=now)
-        for row in job_store.list_job_runs(limit=limit)
-    ]
+    recent_runs = [_summarize_job_run(dict(row), now=now) for row in job_store.list_job_runs(limit=limit)]
     recent_runs = _sorted_by_activity(
         _filter_excluded_job_runs(
             recent_runs,

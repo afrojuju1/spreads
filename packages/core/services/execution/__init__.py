@@ -497,7 +497,7 @@ def _execution_retention_bound(
 
 def _quote_record_sort_key(record: dict[str, Any]) -> tuple[str, str]:
     return (
-        _as_text(record.get("quote_timestamp")) or "",
+        _as_text(record.get("source_timestamp")) or "",
         _as_text(record.get("captured_at")) or "",
     )
 
@@ -1360,9 +1360,7 @@ def submit_position_close_by_id(
         )
         open_attempt_id = _as_text(position.get("open_execution_attempt_id"))
         open_attempt = execution_store.get_attempt(open_attempt_id) if open_attempt_id is not None else None
-        label = _as_text(open_attempt.get("label") if isinstance(open_attempt, Mapping) else None) or _as_text(
-            position.get("trading_strategy_id")
-        )
+        label = _as_text(open_attempt.get("label") if isinstance(open_attempt, Mapping) else None) or _as_text(position.get("trading_strategy_id"))
         market_date = (
             _as_text(position.get("market_date"))
             or _as_text(position.get("market_date_opened"))

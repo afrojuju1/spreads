@@ -52,7 +52,7 @@ def build_trade_records(
                 "premium": round(trade.price * trade.size * 100.0, 4),
                 "exchange_code": trade.exchange_code,
                 "conditions": conditions,
-                "trade_timestamp": trade.timestamp,
+                "source_timestamp": trade.timestamp,
                 "included_in_score": included_in_score,
                 "exclusion_reason": exclusion_reason,
                 "raw_payload": dict(trade.raw_payload),

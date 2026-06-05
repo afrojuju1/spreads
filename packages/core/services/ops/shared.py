@@ -80,16 +80,16 @@ def _session_status(status: Any) -> str:
     return "unknown"
 
 
-def _stream_quote_events_saved(capture: Mapping[str, Any] | None) -> int:
+def _stream_quote_ticks_saved(capture: Mapping[str, Any] | None) -> int:
     if not isinstance(capture, Mapping):
         return 0
-    return _coerce_int(capture.get("stream_quote_events_saved")) or _coerce_int(capture.get("websocket_quote_events_saved")) or 0
+    return _coerce_int(capture.get("stream_quote_ticks_saved")) or _coerce_int(capture.get("websocket_quote_ticks_saved")) or 0
 
 
-def _stream_trade_events_saved(capture: Mapping[str, Any] | None) -> int:
+def _stream_trade_ticks_saved(capture: Mapping[str, Any] | None) -> int:
     if not isinstance(capture, Mapping):
         return 0
-    return _coerce_int(capture.get("stream_trade_events_saved")) or _coerce_int(capture.get("websocket_trade_events_saved")) or 0
+    return _coerce_int(capture.get("stream_trade_ticks_saved")) or _coerce_int(capture.get("websocket_trade_ticks_saved")) or 0
 
 
 def _seconds_since(value: Any, *, now: datetime) -> float | None:

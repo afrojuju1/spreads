@@ -162,13 +162,9 @@ def normalize_legs(
         position_intent = normalize_position_intent(
             leg.get("position_intent"),
             role=role,
-            trade_intent="close"
-            if str(leg.get("position_intent") or "").strip().lower() == "close"
-            else "open",
+            trade_intent="close" if str(leg.get("position_intent") or "").strip().lower() == "close" else "open",
         )
-        option_type = _option_type_from_value(leg.get("option_type")) or (
-            _option_type_from_value(symbol)
-        )
+        option_type = _option_type_from_value(leg.get("option_type")) or (_option_type_from_value(symbol))
         strike = _as_float(leg.get("strike"))
         if strike is None:
             strike = _strike_from_symbol(symbol)
@@ -179,8 +175,7 @@ def normalize_legs(
                 "position_intent": position_intent,
                 "ratio_qty": _as_text(leg.get("ratio_qty")) or "1",
                 "role": role or leg_role(side=side, position_intent=position_intent),
-                "expiration_date": _as_text(leg.get("expiration_date"))
-                or expiration_date,
+                "expiration_date": _as_text(leg.get("expiration_date")) or expiration_date,
                 "strike": strike,
                 "option_type": option_type,
             }
@@ -258,20 +253,14 @@ def payload_structure_identity(
     *,
     strategy: Any = None,
 ) -> str | None:
-    existing = _as_text(payload.get("structure_identity")) or _as_text(
-        payload.get("candidate_identity")
-    )
+    existing = _as_text(payload.get("structure_identity")) or _as_text(payload.get("candidate_identity"))
     if existing is not None:
         return existing
     legs = candidate_legs(payload)
     if not legs:
         return None
     return legs_identity_key(
-        strategy=(
-            strategy
-            if strategy is not None
-            else payload.get("strategy_family") or payload.get("strategy")
-        ),
+        strategy=(strategy if strategy is not None else payload.get("strategy_family") or payload.get("strategy")),
         legs=legs,
     )
 
@@ -311,39 +300,27 @@ def structure_strike_path(
             "call": {"short": None, "long": None},
         }
         for leg in normalized_legs:
-            option_type = _option_type_from_value(
-                leg.get("option_type")
-            ) or _option_type_from_value(leg.get("symbol"))
+            option_type = _option_type_from_value(leg.get("option_type")) or _option_type_from_value(leg.get("symbol"))
             role = _as_text(leg.get("role")) or leg_role(
                 side=leg.get("side"),
                 position_intent=leg.get("position_intent"),
             )
             strike = _as_float(leg.get("strike"))
-            if (
-                option_type in {"call", "put"}
-                and role in {"short", "long"}
-                and strike is not None
-                and grouped[option_type][role] is None
-            ):
+            if option_type in {"call", "put"} and role in {"short", "long"} and strike is not None and grouped[option_type][role] is None:
                 grouped[option_type][role] = strike
         put_long = grouped["put"]["long"]
         put_short = grouped["put"]["short"]
         call_short = grouped["call"]["short"]
         call_long = grouped["call"]["long"]
         if None not in (put_long, put_short, call_short, call_long):
-            return (
-                f"{put_long:.2f}-{put_short:.2f}P"
-                f" / {call_short:.2f}-{call_long:.2f}C"
-            )
+            return f"{put_long:.2f}-{put_short:.2f}P" f" / {call_short:.2f}-{call_long:.2f}C"
 
     rendered_parts: list[str] = []
     for leg in normalized_legs:
         strike = _as_float(leg.get("strike"))
         if strike is None:
             continue
-        option_type = _option_type_from_value(leg.get("option_type")) or (
-            _option_type_from_value(leg.get("symbol"))
-        )
+        option_type = _option_type_from_value(leg.get("option_type")) or (_option_type_from_value(leg.get("symbol")))
         suffix = {"call": "C", "put": "P"}.get(option_type, "")
         rendered_parts.append(f"{strike:.2f}{suffix}")
     if not rendered_parts:
@@ -376,9 +353,7 @@ def structure_width(
         strike = _as_float(leg.get("strike"))
         if strike is None:
             continue
-        option_type = _option_type_from_value(leg.get("option_type")) or (
-            _option_type_from_value(leg.get("symbol"))
-        )
+        option_type = _option_type_from_value(leg.get("option_type")) or (_option_type_from_value(leg.get("symbol")))
         grouped.setdefault(option_type, []).append(strike)
     for strikes in grouped.values():
         unique_strikes = sorted({round(strike, 4) for strike in strikes})
@@ -387,15 +362,7 @@ def structure_width(
         widths.append(round(unique_strikes[-1] - unique_strikes[0], 4))
     if widths:
         return max(widths)
-    strikes = sorted(
-        {
-            round(strike, 4)
-            for strike in (
-                _as_float(leg.get("strike")) for leg in normalized_legs
-            )
-            if strike is not None
-        }
-    )
+    strikes = sorted({round(strike, 4) for strike in (_as_float(leg.get("strike")) for leg in normalized_legs) if strike is not None})
     if len(strikes) <= 1:
         return 0.0 if strikes else None
     return round(strikes[-1] - strikes[0], 4)
@@ -431,11 +398,7 @@ def structure_barrier_strike(
         matching_legs = [
             leg
             for leg in normalized_legs
-            if (
-                _option_type_from_value(leg.get("option_type"))
-                or _option_type_from_value(leg.get("symbol"))
-            )
-            == target_option_type
+            if (_option_type_from_value(leg.get("option_type")) or _option_type_from_value(leg.get("symbol"))) == target_option_type
         ]
         if matching_legs:
             ordered_legs = matching_legs
@@ -500,11 +463,7 @@ def unique_leg_symbols(legs: list[Mapping[str, Any]]) -> list[str]:
 
 
 def common_expiration_date(legs: list[Mapping[str, Any]]) -> str | None:
-    expirations = {
-        expiration
-        for expiration in (_as_text(leg.get("expiration_date")) for leg in legs)
-        if expiration is not None
-    }
+    expirations = {expiration for expiration in (_as_text(leg.get("expiration_date")) for leg in legs) if expiration is not None}
     if len(expirations) != 1:
         return None
     return next(iter(expirations))
@@ -702,10 +661,9 @@ def order_payload_legs(
     position_intent = normalize_position_intent(
         order_payload.get("position_intent"),
         role=role,
-        trade_intent="close"
-        if str(order_payload.get("position_intent") or "").strip().lower()
-        in {"buy_to_close", "sell_to_close", "close"}
-        else "open",
+        trade_intent=(
+            "close" if str(order_payload.get("position_intent") or "").strip().lower() in {"buy_to_close", "sell_to_close", "close"} else "open"
+        ),
     )
     return normalize_legs(
         [
@@ -715,8 +673,7 @@ def order_payload_legs(
                 "position_intent": position_intent,
                 "ratio_qty": _as_text(order_payload.get("ratio_qty")) or "1",
                 "role": role,
-                "expiration_date": _as_text(order_payload.get("expiration_date"))
-                or expiration_date,
+                "expiration_date": _as_text(order_payload.get("expiration_date")) or expiration_date,
                 "strike": order_payload.get("strike"),
                 "option_type": order_payload.get("option_type"),
             }
@@ -863,11 +820,7 @@ def structure_quote_snapshot(
         midpoint = _quote_number(quote, "midpoint")
         if bid is None or ask is None or midpoint is None:
             return None
-        timestamp = (
-            _quote_text(quote, "timestamp")
-            or _quote_text(quote, "quote_timestamp")
-            or _quote_text(quote, "captured_at")
-        )
+        timestamp = _quote_text(quote, "timestamp") or _quote_text(quote, "source_timestamp") or _quote_text(quote, "captured_at")
         if timestamp:
             timestamps.append(timestamp)
         source = None if sources_by_symbol is None else _as_text(sources_by_symbol.get(symbol))

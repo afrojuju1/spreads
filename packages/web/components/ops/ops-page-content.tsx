@@ -55,7 +55,7 @@ export function OpsPageContent() {
   const queuedJobs = latestJobRows(readRecordList(tradingDetails.queued_jobs));
   const engine = readRecord(tradingDetails.engine);
   const engineSummary = readRecord(engine.summary);
-  const quoteTable = storageTables.find((row) => readString(row.name, "") === "option_quote_events") ?? {};
+  const quoteTable = storageTables.find((row) => readString(row.name, "") === "option_quote_ticks") ?? {};
   const eventLogTable = storageTables.find((row) => readString(row.physical_table, "") === "event_log") ?? {};
   const attention = [...readRecordList(tradingState?.attention), ...readRecordList(storageState?.attention)];
   const hasQueryError = tradingOpsQuery.isError || storageOpsQuery.isError;
