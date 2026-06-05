@@ -35,11 +35,11 @@ from core.services.company_valuation.unresolved import (
     ResolveUnresolvedInstitutionalPositionsRequest,
     resolve_unresolved_institutional_positions,
 )
-from core.services.decision_engine import run_trading_strategy_entry_decision
 from core.services.execution import run_execution_submit
 from core.services.execution_intents import dispatch_pending_execution_intents
 from core.services.exit_manager import run_position_exit_manager
 from core.services.ticker_sources import persist_ticker_source_result, run_ticker_source
+from core.services.trading_engine.strategy_runtime import run_trading_strategy_entry
 from core.services.tradingagents_scan import run_tradingagents_scan
 from core.storage.company_valuation_repository import CompanyValuationRepository
 from core.storage.serializers import parse_date, parse_datetime, render_value
@@ -214,7 +214,7 @@ async def run_trading_strategy_entry_job(
 
     def runner(heartbeat: Any) -> dict[str, Any]:
         heartbeat()
-        return run_trading_strategy_entry_decision(
+        return run_trading_strategy_entry(
             db_target=database_url,
             trading_strategy_id=str(payload["trading_strategy_id"]),
             market_date=payload.get("market_date"),

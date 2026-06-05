@@ -15,8 +15,8 @@ Last updated: 2026-06-05
 | Scheduling and workers | `packages/config/jobs`, `packages/core/jobs`, `services/runtime_policy.py` | Declared jobs and generated trading-strategy jobs are the scheduler source of truth. Runtime workers execute broker sync, strategy entry/manage, dispatch, and alert jobs; data workers execute ticker sources. |
 | Dynamic ticker sources | `packages/config/ticker_sources`, `services/ticker_sources.py` | Ticker sources materialize reusable underlying lists. `finviz_momentum` feeds `momentum_long_calls`. |
 | Market data capture | `services/trading_engine/capture_targets.py`, `services/market_recorder.py`, `storage/capture_repository.py` | `DataEngine` owns desired capture state in `capture_targets`; `market_recorder.py` is the normal Alpaca option websocket owner and reconciles the prioritized target set into option quote/trade ticks plus `capture_summaries`. |
-| Engine data and scanning | `services/trading_engine/data_runtime.py`, `services/scanners/`, `services/live_selection.py`, `services/opportunity_scoring.py`, `services/candidate_policy.py` | DataEngine resolves ticker sources/static sources and builds candidate inputs directly for strategy entry. Scanner math remains reusable; discovery-run ownership is retired. |
-| Strategy signals and decisions | `services/trading_engine/facts.py`, `services/decision_engine.py`, `storage/engine_fact_repository.py` | Owns candidate runs, trade candidates, trade signals, trade decisions, and admission decisions before intents. Ticker-source jobs own ticker-source runs and observations. |
+| Engine data and scanning | `services/trading_engine/data_runtime.py`, `services/strategy_builders.py`, `services/scanners/` | DataEngine resolves ticker sources/static sources and builds strategy-owned candidate inputs. Scanner, ranking-policy, and runtime candidate filters are delegated build policy and persist diagnostics; discovery-run ownership is retired. |
+| Strategy signals and decisions | `services/trading_engine/strategy_runtime.py`, `services/live_selection.py`, `services/entry_planner.py`, `services/trading_engine/facts.py`, `storage/engine_fact_repository.py` | StrategyEngine owns entry orchestration: ticker resolution, candidate build, live signal selection, trade decisions, admission handoff, and intent creation. Helper modules are pure policy delegates, not alternate orchestration paths. |
 | Execution and portfolio state | `services/execution/`, `services/execution_intents/`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py` | Owns intent dispatch, broker submission, order/fill facts, position attribution, reconciliation, and close behavior. |
 | Operator read models | `services/ops/`, `services/positions.py`, `services/execution/runtimes.py` | Read models compose persisted engine, jobs, trading health, positions, execution, account, retention, and capture state. Retired pipeline/discovery/UOA product routes are not active surfaces. |
 | Research AI layer | `services/tradingagents_scan.py`, `packages/config/jobs/tradingagents_scan_finviz_momentum.yaml`, `external/TradingAgents` | Spreads owns orchestration, job config, artifacts, alerts, and visibility. The external TradingAgents repo owns its own agent internals. |
@@ -51,7 +51,7 @@ Last updated: 2026-06-05
 | Ticker source run | One materialized ticker-source refresh plus selected, observed, and filtered ticker observations. | `ticker_source_runs`, `ticker_source_observations`, `ticker_source_state`, `services/ticker_sources.py` | Strategy candidate ownership, execution ownership, or broker facts. |
 | Candidate run | One strategy candidate-build pass over resolved tickers. | `candidate_runs`, `trade_candidates`, `services/trading_engine/facts.py` | Broker facts or position PnL. |
 | Trade signal | Normalized market/setup observation from a candidate. | `trade_signals`, `services/trading_engine/facts.py` | Broker sync or frontend state. |
-| Trade decision | Strategy/lifecycle choice such as selected, skipped, blocked, or no-entry. | `trade_decisions`, strategy services | Alert delivery or dashboard-only read models. |
+| Trade decision | Strategy/lifecycle choice such as selected, skipped, blocked, or no-entry. | `trade_decisions`, `services/trading_engine/strategy_runtime.py` | Alert delivery or dashboard-only read models. |
 | Admission | Account/risk/policy answer to whether an approved idea can be carried now. | `services/risk_manager.py`, `services/execution/`, admission payloads | Account snapshots alone. |
 | Intent | Control-plane request to open, manage, or close. | `execution_intents`, `services/execution_intents/` | Broker order/fill persistence. |
 | Attempt | Broker-facing submission/refresh/cancel lifecycle for an intent. | `execution_attempts`, `services/execution/` | Session position attribution. |
@@ -154,6 +154,8 @@ Disabled strategy configs are kept as authored strategy definitions, but they do
 Strategy entry follows the Nautilus-shaped spine:
 
 `DataEngine -> engine facts/read models -> StrategyEngine -> RiskEngine -> ExecutionEngine -> PortfolioEngine -> Ops projections`.
+
+The active entry owner is `PostgresStrategyEngine` in `services/trading_engine/strategy_runtime.py`. It resolves tickers through DataEngine, builds candidates once, turns selected candidates into trade signals, plans trade decisions, runs admission, and creates execution intents. DataEngine records runtime-filter and ranking-policy diagnostics during candidate build; StrategyEngine does not run a second candidate-filter pass.
 
 Active entry facts are persisted through:
 

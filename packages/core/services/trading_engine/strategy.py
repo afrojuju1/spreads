@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Protocol
 
-from .data import CandidateBuildResult, ResolvedTickerSet
 from .kernel import EngineRunRef
 
 
@@ -14,8 +13,6 @@ class StrategyEntryRequest:
     run_ref: EngineRunRef
     trading_strategy_id: str
     market_date: date
-    ticker_set: ResolvedTickerSet
-    candidate_result: CandidateBuildResult
     policy: Mapping[str, Any] = field(default_factory=dict)
 
 

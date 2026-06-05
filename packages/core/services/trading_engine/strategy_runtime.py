@@ -23,7 +23,6 @@ from core.services.opportunity_fields import (
     candidate_strategy_metrics,
     risk_hints,
 )
-from core.services.runtime_candidate_filters import filter_runtime_symbol_candidates
 from core.services.runtime_policy import resolve_runtime_policy_fields
 from core.services.risk_manager import (
     build_execution_admission_snapshot,
@@ -41,7 +40,8 @@ from core.services.trading_engine.data_runtime import (
 )
 from core.services.trading_engine.facts import entry_trade_signal_id, persist_entry_engine_facts
 from core.services.trading_engine.kernel import EngineComponentRole, EngineContext, EngineRunRef
-from core.services.trading_strategies import load_active_trading_strategies, routine_should_run_now
+from core.services.trading_engine.strategy import StrategyEntryRequest, StrategyEntryResult
+from core.services.trading_strategies import routine_should_run_now
 from core.services.trading_strategy_runtime import EntryRuntime, resolve_entry_runtime
 
 ENTRY_INTENT_TTL_MINUTES = 5
@@ -122,6 +122,28 @@ def _group_candidate_rows(candidates: tuple[Any, ...]) -> dict[str, list[dict[st
             continue
         grouped.setdefault(symbol, []).append(dict(candidate))
     return grouped
+
+
+def _candidate_result_runtime_filter_reason_counts(candidate_result: CandidateBuildResult) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for diagnostic in candidate_result.diagnostics:
+        if not isinstance(diagnostic, dict):
+            continue
+        rejection_counts = diagnostic.get("rejection_counts")
+        if not isinstance(rejection_counts, dict):
+            continue
+        runtime_filter = rejection_counts.get("runtime_filter")
+        if not isinstance(runtime_filter, dict):
+            continue
+        for reason, count in runtime_filter.items():
+            rendered = str(reason or "").strip()
+            if not rendered:
+                continue
+            try:
+                counts[rendered] = counts.get(rendered, 0) + int(count)
+            except (TypeError, ValueError):
+                continue
+    return dict(sorted(counts.items()))
 
 
 def _candidate_payload(row: dict[str, Any]) -> dict[str, Any]:
@@ -461,12 +483,12 @@ def _signal_row_from_selection(
 
 def _selection_summary(
     *,
-    filtered_candidates: dict[str, list[dict[str, Any]]],
+    candidate_rows_by_symbol: dict[str, list[dict[str, Any]]],
     runtime_filter_reason_counts: dict[str, int],
     selected_rows: list[dict[str, Any]],
     selection_memory: dict[str, Any],
 ) -> dict[str, Any]:
-    candidate_count = sum(len(rows) for rows in filtered_candidates.values())
+    candidate_count = sum(len(rows) for rows in candidate_rows_by_symbol.values())
     signal_count = len(selected_rows)
     if signal_count:
         status = "signals_selected"
@@ -480,7 +502,7 @@ def _selection_summary(
     return {
         "status": status,
         "message": message,
-        "candidate_symbol_count": len(filtered_candidates),
+        "candidate_symbol_count": len(candidate_rows_by_symbol),
         "candidate_count": candidate_count,
         "signal_count": signal_count,
         "runtime_filter_reason_counts": dict(runtime_filter_reason_counts),
@@ -568,10 +590,7 @@ def _refresh_entry_runtime_signals(
         runtime=runtime_with_symbols,
     )
     symbol_candidates = _group_candidate_rows(candidate_result.candidates)
-    filtered_candidates, runtime_filter_reason_counts = filter_runtime_symbol_candidates(
-        symbol_candidates=symbol_candidates,
-        runtime=runtime_with_symbols,
-    )
+    runtime_filter_reason_counts = _candidate_result_runtime_filter_reason_counts(candidate_result)
     previous_promotable, previous_selection_memory = _read_previous_entry_selection(
         signal_store=storage.signals,
         runtime=runtime_with_symbols,
@@ -581,7 +600,7 @@ def _refresh_entry_runtime_signals(
         label=entry_engine_label(runtime_with_symbols),
         cycle_id=run_key,
         generated_at=generated_at,
-        symbol_candidates=filtered_candidates,
+        symbol_candidates=symbol_candidates,
         previous_promotable=previous_promotable,
         previous_selection_memory=previous_selection_memory,
         top_promotable=_entry_candidate_limit(runtime_with_symbols),
@@ -605,7 +624,7 @@ def _refresh_entry_runtime_signals(
     ]
     selection_memory = dict(selection.get("selection_memory") or {})
     selection_summary = _selection_summary(
-        filtered_candidates=filtered_candidates,
+        candidate_rows_by_symbol=symbol_candidates,
         runtime_filter_reason_counts=runtime_filter_reason_counts,
         selected_rows=selected_rows,
         selection_memory=selection_memory,
@@ -719,13 +738,13 @@ def _selected_execution_admission(
         }
 
 
-@with_storage()
-def run_trading_strategy_entry_decision(
+def _run_trading_strategy_entry(
     *,
     db_target: str,
     trading_strategy_id: str,
     market_date: str | None = None,
     planner_job_run_id: str | None = None,
+    run_key: str | None = None,
     storage: Any | None = None,
 ) -> dict[str, Any]:
     signal_store = storage.signals
@@ -750,7 +769,7 @@ def run_trading_strategy_entry_decision(
         }
 
     resolved_market_date = market_date or _market_date_today()
-    run_key = f"decision:{runtime.trading_strategy_id}:entry:{_utc_now()}"
+    run_key = run_key or f"strategy:{runtime.trading_strategy_id}:entry:{_utc_now()}"
     scope_key = f"entry:{runtime.trading_strategy_id}:{resolved_market_date}"
     policy_ref = build_runtime_policy_ref(
         trading_strategy_id=runtime.trading_strategy_id,
@@ -984,6 +1003,16 @@ def run_trading_strategy_entry_decision(
         "signal_count": len(signals),
         "decision_count": len(decisions),
         "admission_count": len(admissions),
+        "trade_decision_ids": [
+            str(decision["trade_decision_id"])
+            for decision in decisions
+            if decision.get("trade_decision_id") not in (None, "")
+        ],
+        "selected_decision_ids": [
+            str(decision["trade_decision_id"])
+            for decision in decisions
+            if decision.get("trade_decision_id") not in (None, "") and str(decision.get("decision_state") or "") == "selected"
+        ],
         "selected_trade_signal_id": None if selected is None else str(selected.get("trade_signal_id")),
         "execution_intent_id": None if selected_intent is None else str(selected_intent.get("execution_intent_id")),
         "execution_admission": selected_execution_admission,
@@ -994,31 +1023,68 @@ def run_trading_strategy_entry_decision(
     }
 
 
+class PostgresStrategyEngine:
+    def __init__(self, context: EngineContext) -> None:
+        self.context = context
+
+    def run_entry(self, request: StrategyEntryRequest) -> StrategyEntryResult:
+        summary = _run_trading_strategy_entry(
+            db_target=self.context.db_target,
+            trading_strategy_id=request.trading_strategy_id,
+            market_date=request.market_date.isoformat(),
+            planner_job_run_id=request.run_ref.job_run_id,
+            run_key=request.run_ref.run_id,
+            storage=self.context.storage,
+        )
+        candidate_generation = summary.get("candidate_generation") if isinstance(summary.get("candidate_generation"), dict) else {}
+        engine_facts = candidate_generation.get("engine_facts") if isinstance(candidate_generation.get("engine_facts"), dict) else {}
+        strategy_run = candidate_generation.get("strategy_run") if isinstance(candidate_generation.get("strategy_run"), dict) else {}
+        decisions = [dict(row) for row in list(engine_facts.get("trade_decisions") or []) if isinstance(row, dict)]
+        return StrategyEntryResult(
+            run_ref=request.run_ref,
+            strategy_run_id=str(strategy_run.get("strategy_run_id") or summary.get("run_key") or request.run_ref.run_id),
+            trade_signal_ids=tuple(
+                str(row["trade_signal_id"])
+                for row in list(engine_facts.get("trade_signals") or [])
+                if isinstance(row, dict) and row.get("trade_signal_id") not in (None, "")
+            ),
+            trade_decision_ids=tuple(str(value) for value in list(summary.get("trade_decision_ids") or []))
+            or tuple(str(row["trade_decision_id"]) for row in decisions if row.get("trade_decision_id") not in (None, "")),
+            selected_decision_ids=tuple(str(value) for value in list(summary.get("selected_decision_ids") or [])),
+            status=str(summary.get("status") or "unknown"),
+            reason=None if summary.get("reason") in (None, "") else str(summary["reason"]),
+            summary=summary,
+        )
+
+
 @with_storage()
-def run_active_entry_decisions(
+def run_trading_strategy_entry(
     *,
     db_target: str,
+    trading_strategy_id: str,
     market_date: str | None = None,
+    planner_job_run_id: str | None = None,
     storage: Any | None = None,
 ) -> dict[str, Any]:
-    strategies = load_active_trading_strategies()
-    results: list[dict[str, Any]] = []
-    for strategy in strategies.values():
-        if strategy.entry is None or not strategy.entry.enabled:
-            continue
-        results.append(
-            run_trading_strategy_entry_decision(
-                db_target=db_target,
-                trading_strategy_id=strategy.trading_strategy_id,
-                market_date=market_date,
-                storage=storage,
-            )
+    resolved_market_date = datetime.fromisoformat(market_date).date() if market_date else datetime.now(UTC).date()
+    context = EngineContext(
+        db_target=db_target,
+        storage=storage,
+        job_run_id=planner_job_run_id,
+    )
+    result = PostgresStrategyEngine(context).run_entry(
+        StrategyEntryRequest(
+            run_ref=EngineRunRef(
+                role=EngineComponentRole.STRATEGY,
+                run_id=f"strategy:{trading_strategy_id}:entry:{_utc_now()}",
+                trading_strategy_id=trading_strategy_id,
+                job_run_id=planner_job_run_id,
+            ),
+            trading_strategy_id=trading_strategy_id,
+            market_date=resolved_market_date,
         )
-    return {
-        "status": "ok",
-        "decision_runs": results,
-        "decision_run_count": len(results),
-    }
+    )
+    return dict(result.summary)
 
 
-__all__ = ["run_active_entry_decisions", "run_trading_strategy_entry_decision"]
+__all__ = ["PostgresStrategyEngine", "run_trading_strategy_entry"]
