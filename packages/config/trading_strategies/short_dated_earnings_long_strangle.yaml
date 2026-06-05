@@ -1,6 +1,6 @@
 trading_strategy_id: short_dated_earnings_long_strangle
 name: Short-Dated Earnings Long Strangle
-enabled: true
+enabled: false
 source:
   type: static
   ref: liquid_stocks

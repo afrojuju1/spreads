@@ -1,6 +1,6 @@
 trading_strategy_id: short_dated_earnings_put_debit
 name: Short-Dated Earnings Put Debit
-enabled: true
+enabled: false
 source:
   type: static
   ref: liquid_stocks

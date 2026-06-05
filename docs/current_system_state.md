@@ -130,9 +130,12 @@ Each strategy owns:
 - execution mode, approval mode, environment, and runtime
 - `config_hash`
 
-Current active strategies:
+Current default-enabled strategy:
 
 - `momentum_long_calls`
+
+Available but disabled-by-default strategy configs:
+
 - `short_dated_earnings_call_debit`
 - `short_dated_earnings_long_straddle`
 - `short_dated_earnings_long_strangle`
@@ -143,6 +146,8 @@ Current active strategies:
 - `short_dated_index_put_credit`
 
 `momentum_long_calls` is the Finviz-fed long-call strategy. It consumes `ticker_source:finviz_momentum`, enters during market hours on a 2-minute cadence, and manages during market hours on a 1-minute cadence.
+
+Disabled strategy configs are kept as authored strategy definitions, but they do not generate default scheduler jobs until intentionally re-enabled.
 
 ## Engine Entry State
 
