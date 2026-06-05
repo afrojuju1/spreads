@@ -4,11 +4,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from core.services.exit_manager import (
+from core.services.trading_engine.close_policy import (
     evaluate_exit_policy,
     resolve_exit_policy_snapshot,
 )
-
 
 DEFAULT_EXIT_POLICY = {
     "enabled": True,
@@ -156,10 +155,7 @@ def compile_management_recipes(
     *,
     session_date: str | None = None,
 ) -> tuple[CompiledManagementRecipe, ...]:
-    return tuple(
-        _compile_recipe(recipe_ref, session_date=session_date)
-        for recipe_ref in recipe_refs
-    )
+    return tuple(_compile_recipe(recipe_ref, session_date=session_date) for recipe_ref in recipe_refs)
 
 
 def _evaluate_compiled_recipe(
@@ -184,16 +180,8 @@ def _evaluate_compiled_recipe(
         recipe_ref=recipe.recipe_ref,
         should_close=bool(decision.get("should_close")),
         reason=str(decision.get("reason") or "hold"),
-        limit_price=(
-            None
-            if decision.get("limit_price") in (None, "")
-            else float(decision["limit_price"])
-        ),
-        limit_price_source=(
-            None
-            if decision.get("limit_price_source") in (None, "")
-            else str(decision["limit_price_source"])
-        ),
+        limit_price=(None if decision.get("limit_price") in (None, "") else float(decision["limit_price"])),
+        limit_price_source=(None if decision.get("limit_price_source") in (None, "") else str(decision["limit_price_source"])),
         details=dict(decision),
     )
 
@@ -222,10 +210,7 @@ def evaluate_compiled_management_recipes(
         )
         if decision.should_close:
             return decision
-        if (
-            decision.reason not in {"hold", "policy_disabled"}
-            and pending_decision is None
-        ):
+        if decision.reason not in {"hold", "policy_disabled"} and pending_decision is None:
             pending_decision = decision
     return pending_decision or ManagementRecipeDecision(
         recipe_ref=None,

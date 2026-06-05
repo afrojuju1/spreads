@@ -8,7 +8,7 @@ from core.services.deployment_policy import (
     deployment_mode_auto_executes,
     resolve_execution_deployment_mode,
 )
-from core.services.exit_manager import normalize_exit_policy
+from core.services.trading_engine.close_policy import normalize_exit_policy
 from core.services.risk_manager import normalize_risk_policy
 from core.services.value_coercion import (
     as_text as _as_text,
@@ -36,9 +36,7 @@ def _validate_open_timing_window(
 ) -> dict[str, Any]:
     normalized_policy = normalize_exit_policy(exit_policy)
     force_close_at_text = _as_text(normalized_policy.get("force_close_at"))
-    force_close_at = (
-        None if force_close_at_text is None else parse_datetime(force_close_at_text)
-    )
+    force_close_at = None if force_close_at_text is None else parse_datetime(force_close_at_text)
     if force_close_at is None:
         return {
             "allowed": True,
@@ -51,9 +49,7 @@ def _validate_open_timing_window(
     from core.services.candidate_policy import resolve_deployment_quality_thresholds
 
     thresholds = resolve_deployment_quality_thresholds(profile)
-    minimum_minutes_to_force_close = _coerce_float(
-        thresholds.get("min_minutes_to_force_close")
-    )
+    minimum_minutes_to_force_close = _coerce_float(thresholds.get("min_minutes_to_force_close"))
     minutes_to_force_close = round(
         max((force_close_at - current_time).total_seconds(), 0.0) / 60.0,
         1,
@@ -62,19 +58,12 @@ def _validate_open_timing_window(
         return {
             "allowed": False,
             "reason": "force_close_window_started",
-            "message": (
-                "Open execution is blocked because the exit force-close window has already started."
-            ),
-            "force_close_at": force_close_at.isoformat(timespec="seconds").replace(
-                "+00:00", "Z"
-            ),
+            "message": ("Open execution is blocked because the exit force-close window has already started."),
+            "force_close_at": force_close_at.isoformat(timespec="seconds").replace("+00:00", "Z"),
             "minutes_to_force_close": minutes_to_force_close,
             "minimum_minutes_to_force_close": minimum_minutes_to_force_close,
         }
-    if (
-        minimum_minutes_to_force_close is not None
-        and minutes_to_force_close < minimum_minutes_to_force_close
-    ):
+    if minimum_minutes_to_force_close is not None and minutes_to_force_close < minimum_minutes_to_force_close:
         return {
             "allowed": False,
             "reason": "insufficient_time_to_force_close",
@@ -84,9 +73,7 @@ def _validate_open_timing_window(
                 f"{force_close_at.isoformat(timespec='seconds').replace('+00:00', 'Z')}, "
                 f"below the {minimum_minutes_to_force_close:.1f}-minute deployment threshold."
             ),
-            "force_close_at": force_close_at.isoformat(timespec="seconds").replace(
-                "+00:00", "Z"
-            ),
+            "force_close_at": force_close_at.isoformat(timespec="seconds").replace("+00:00", "Z"),
             "minutes_to_force_close": minutes_to_force_close,
             "minimum_minutes_to_force_close": minimum_minutes_to_force_close,
         }
@@ -94,9 +81,7 @@ def _validate_open_timing_window(
         "allowed": True,
         "reason": None,
         "message": None,
-        "force_close_at": force_close_at.isoformat(timespec="seconds").replace(
-            "+00:00", "Z"
-        ),
+        "force_close_at": force_close_at.isoformat(timespec="seconds").replace("+00:00", "Z"),
         "minutes_to_force_close": minutes_to_force_close,
         "minimum_minutes_to_force_close": minimum_minutes_to_force_close,
     }
@@ -130,24 +115,12 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
     if isinstance(raw_policy, dict):
         quantity_configured = raw_policy.get("quantity") not in (None, "")
         quantity = _coerce_int(raw_policy.get("quantity")) or 1
-        pricing_mode = (
-            _as_text(raw_policy.get("pricing_mode")) or DEFAULT_ENTRY_PRICING_MODE
-        )
-        min_credit_retention_pct = (
-            _coerce_float(raw_policy.get("min_credit_retention_pct"))
-            or DEFAULT_MIN_CREDIT_RETENTION_PCT
-        )
-        max_credit_concession = (
-            _coerce_float(raw_policy.get("max_credit_concession"))
-            or DEFAULT_MAX_CREDIT_CONCESSION
-        )
+        pricing_mode = _as_text(raw_policy.get("pricing_mode")) or DEFAULT_ENTRY_PRICING_MODE
+        min_credit_retention_pct = _coerce_float(raw_policy.get("min_credit_retention_pct")) or DEFAULT_MIN_CREDIT_RETENTION_PCT
+        max_credit_concession = _coerce_float(raw_policy.get("max_credit_concession")) or DEFAULT_MAX_CREDIT_CONCESSION
         deployment_mode = resolve_execution_deployment_mode(
             raw_policy,
-            risk_policy=(
-                source.get("risk_policy")
-                if isinstance(source.get("risk_policy"), Mapping)
-                else None
-            ),
+            risk_policy=(source.get("risk_policy") if isinstance(source.get("risk_policy"), Mapping) else None),
         )
     else:
         deployment_mode = "shadow"
@@ -164,9 +137,7 @@ def normalize_execution_policy(payload: dict[str, Any] | None) -> dict[str, Any]
         "adaptive",
     }:
         raise ValueError(f"Unsupported execution pricing mode: {pricing_mode}")
-    min_credit_retention_pct = _clamp_fraction(
-        min_credit_retention_pct, minimum=0.5, maximum=1.0
-    )
+    min_credit_retention_pct = _clamp_fraction(min_credit_retention_pct, minimum=0.5, maximum=1.0)
     max_credit_concession = max(float(max_credit_concession), 0.0)
     if not enabled:
         return {
@@ -216,9 +187,7 @@ def _resolve_source_policies(
     job_run = resolved_job_store.get_job_run(job_run_id)
     payload = {} if job_run is None else dict(job_run["payload"])
     return {
-        "source_job_type": None
-        if job_run is None
-        else _as_text(job_run.get("job_type")),
+        "source_job_type": None if job_run is None else _as_text(job_run.get("job_type")),
         "source_job_key": None if job_run is None else _as_text(job_run.get("job_key")),
         "source_job_run_id": job_run_id,
         "execution_policy": normalize_execution_policy(
@@ -239,9 +208,7 @@ def _policy_source_kind(
     source_job_key: str | None,
     rollout: dict[str, Any] | None,
 ) -> str:
-    if isinstance(request_metadata, dict) and isinstance(
-        request_metadata.get(policy_name), dict
-    ):
+    if isinstance(request_metadata, dict) and isinstance(request_metadata.get(policy_name), dict):
         return "request_override"
     if rollout is not None:
         return "policy_rollout"
@@ -257,17 +224,11 @@ def _requested_policy_payload(
     source_policies: dict[str, Any],
     active_policy_rollouts: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    base_policy = (
-        dict(source_policies.get(policy_name) or {})
-        if isinstance(source_policies.get(policy_name), Mapping)
-        else {}
-    )
+    base_policy = dict(source_policies.get(policy_name) or {}) if isinstance(source_policies.get(policy_name), Mapping) else {}
     rollout = active_policy_rollouts.get(policy_name)
     if rollout is not None and isinstance(rollout.get("policy"), dict):
         base_policy.update(dict(rollout["policy"]))
-    if isinstance(request_metadata, dict) and isinstance(
-        request_metadata.get(policy_name), dict
-    ):
+    if isinstance(request_metadata, dict) and isinstance(request_metadata.get(policy_name), dict):
         base_policy.update(dict(request_metadata[policy_name]))
     return base_policy
 
@@ -297,23 +258,17 @@ def _build_policy_refs(
                 rollout=risk_rollout,
             ),
             source_key=(
-                str(risk_rollout["policy_rollout_id"])
-                if risk_rollout is not None
-                else ("risk_policy" if source_job_key is None else source_job_key)
+                str(risk_rollout["policy_rollout_id"]) if risk_rollout is not None else ("risk_policy" if source_job_key is None else source_job_key)
             ),
             source_job_key=None if risk_rollout is not None else source_job_key,
             source_job_run_id=None if risk_rollout is not None else source_job_run_id,
-            version_token=None
-            if risk_rollout is None
-            else str(risk_rollout["version_token"]),
+            version_token=None if risk_rollout is None else str(risk_rollout["version_token"]),
             extra=(
                 {}
                 if risk_rollout is None
                 else {
                     "policy_rollout_id": str(risk_rollout["policy_rollout_id"]),
-                    "operator_action_id": _as_text(
-                        risk_rollout.get("operator_action_id")
-                    ),
+                    "operator_action_id": _as_text(risk_rollout.get("operator_action_id")),
                 }
             ),
         ),
@@ -332,20 +287,14 @@ def _build_policy_refs(
                 else ("execution_policy" if source_job_key is None else source_job_key)
             ),
             source_job_key=None if execution_rollout is not None else source_job_key,
-            source_job_run_id=None
-            if execution_rollout is not None
-            else source_job_run_id,
-            version_token=None
-            if execution_rollout is None
-            else str(execution_rollout["version_token"]),
+            source_job_run_id=None if execution_rollout is not None else source_job_run_id,
+            version_token=None if execution_rollout is None else str(execution_rollout["version_token"]),
             extra=(
                 {}
                 if execution_rollout is None
                 else {
                     "policy_rollout_id": str(execution_rollout["policy_rollout_id"]),
-                    "operator_action_id": _as_text(
-                        execution_rollout.get("operator_action_id")
-                    ),
+                    "operator_action_id": _as_text(execution_rollout.get("operator_action_id")),
                 }
             ),
         ),
@@ -359,23 +308,17 @@ def _build_policy_refs(
                 rollout=exit_rollout,
             ),
             source_key=(
-                str(exit_rollout["policy_rollout_id"])
-                if exit_rollout is not None
-                else ("exit_policy" if source_job_key is None else source_job_key)
+                str(exit_rollout["policy_rollout_id"]) if exit_rollout is not None else ("exit_policy" if source_job_key is None else source_job_key)
             ),
             source_job_key=None if exit_rollout is not None else source_job_key,
             source_job_run_id=None if exit_rollout is not None else source_job_run_id,
-            version_token=None
-            if exit_rollout is None
-            else str(exit_rollout["version_token"]),
+            version_token=None if exit_rollout is None else str(exit_rollout["version_token"]),
             extra=(
                 {}
                 if exit_rollout is None
                 else {
                     "policy_rollout_id": str(exit_rollout["policy_rollout_id"]),
-                    "operator_action_id": _as_text(
-                        exit_rollout.get("operator_action_id")
-                    ),
+                    "operator_action_id": _as_text(exit_rollout.get("operator_action_id")),
                 }
             ),
         ),

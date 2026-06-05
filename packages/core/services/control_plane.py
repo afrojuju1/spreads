@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from core.db.decorators import with_storage
 from core.events.bus import publish_global_event_sync
-from core.services.exit_manager import normalize_exit_policy
+from core.services.trading_engine.close_policy import normalize_exit_policy
 from core.services.risk_manager import normalize_risk_policy, resolve_execution_kill_switch_reason
 from core.services.value_coercion import (
     as_text as _as_text,

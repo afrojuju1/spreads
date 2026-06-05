@@ -13,7 +13,6 @@ from core.services.trading_lifecycle import (
     normalize_lifecycle_state,
 )
 
-
 BLOCKED_CLOSE_REASONS = {
     "awaiting_broker_reconciliation",
     "broker_reconciliation_stale",
@@ -22,6 +21,10 @@ BLOCKED_CLOSE_REASONS = {
     "close_symbols_missing",
     "close_validation_blocked",
     "execution_intent_schema_unavailable",
+    "ambiguous_management_runtime",
+    "management_runtime_required_for_close_intent",
+    "missing_management_owner",
+    "no_management_runtime",
     "no_remaining_quantity",
     "position_not_open",
 }
@@ -197,17 +200,10 @@ def build_close_decision_lifecycle(
         "limit_price_source": _as_text(decision.get("limit_price_source")),
         "mark_state": _as_text(details.get("mark_state")),
         "force_close_at": _as_text(details.get("force_close_at")),
-        "management_recipe_refs": [
-            str(value)
-            for value in decision.get("management_recipe_refs") or []
-            if str(value or "").strip()
-        ],
+        "management_recipe_refs": [str(value) for value in decision.get("management_recipe_refs") or [] if str(value or "").strip()],
     }
     return {
-        "close_decision_id": (
-            "close_decision:"
-            f"{_safe_component(position_id)}:{_safe_component(decided_at_value)}:{_safe_component(reason)}"
-        ),
+        "close_decision_id": ("close_decision:" f"{_safe_component(position_id)}:{_safe_component(decided_at_value)}:{_safe_component(reason)}"),
         "object_type": LifecycleObject.CLOSE_DECISION.value,
         "position_id": position_id,
         "decision_state": state,
