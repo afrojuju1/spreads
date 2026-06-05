@@ -603,8 +603,12 @@ def render_storage_ops_state(console: Console, payload: dict[str, Any]) -> None:
         (f"{_render_value(summary.get('latest_run_status'))} @ " f"{_render_value(summary.get('latest_run_at'))}"),
     )
     overview.add_row(
-        "Latest Prune",
-        (f"matched {_render_value(summary.get('latest_matching_count'))} | " f"deleted {_render_value(summary.get('latest_deleted_count'))}"),
+        "Latest Maintenance",
+        (
+            f"created {_render_value(summary.get('latest_created_partition_count'))} | "
+            f"expired {_render_value(summary.get('latest_expired_partition_count'))} | "
+            f"dropped {_render_value(summary.get('latest_dropped_partition_count'))}"
+        ),
     )
     overview.add_row(
         "Storage",
@@ -614,13 +618,10 @@ def render_storage_ops_state(console: Console, payload: dict[str, Any]) -> None:
             f"dead rows {_render_value(summary.get('estimated_dead_rows'))}"
         ),
     )
+    overview.add_row("Partition Ready", "yes" if summary.get("partition_ready") else "no")
     overview.add_row(
-        "Vacuum Full",
-        (
-            "pending " f"{_render_value(', '.join(summary.get('vacuum_full_pending_tables') or []))}"
-            if summary.get("vacuum_full_pending")
-            else "not pending"
-        ),
+        "Future Coverage",
+        f"{_render_value(summary.get('future_partition_days'))}/{_render_value(summary.get('required_future_partition_days'))} days",
     )
     overview.add_row("Schedule", _render_value(summary.get("schedule")))
     overview.add_row("Retention Log", _render_value(summary.get("retention_log_path")))
@@ -637,27 +638,25 @@ def render_storage_ops_state(console: Console, payload: dict[str, Any]) -> None:
 
     table_rows = list(details.get("tables") or [])
     if table_rows:
-        table = Table(title="Storage Tables", header_style="bold")
+        table = Table(title="Tick Partitions", header_style="bold")
         table.add_column("Name")
         table.add_column("Class")
         table.add_column("Retention", justify="right")
+        table.add_column("Partitions", justify="right")
+        table.add_column("Current")
+        table.add_column("Future", justify="right")
         table.add_column("Rows Est.", justify="right")
-        table.add_column("Dead Est.", justify="right")
         table.add_column("Size", justify="right")
-        table.add_column("Latest Deleted", justify="right")
-        table.add_column("Vacuum")
         for row in table_rows:
-            latest_prune = dict(row.get("latest_prune") or {})
-            vacuum_full = dict(row.get("vacuum_full") or {})
             table.add_row(
                 _render_value(row.get("name")),
                 _render_value(row.get("data_class")),
                 f"{_render_value(row.get('retention_days'))}d",
+                _render_value(row.get("partition_count")),
+                "ready" if row.get("current_partition_ready") else "missing",
+                f"{_render_value(row.get('future_partition_days'))}/{_render_value(row.get('required_future_partition_days'))}",
                 _render_value(row.get("estimated_live_rows")),
-                _render_value(row.get("estimated_dead_rows")),
                 _render_bytes(row.get("total_size_bytes")),
-                _render_value(latest_prune.get("deleted_count")),
-                "pending" if vacuum_full.get("pending") else "ok",
             )
         console.print(table)
 
@@ -665,7 +664,7 @@ def render_storage_ops_state(console: Console, payload: dict[str, Any]) -> None:
         console.print(
             Panel(
                 _render_value(maintenance.get("lock_profile")),
-                title=f"Maintenance Runbook: {_render_value(maintenance.get('vacuum_full_runbook'))}",
+                title="Partition Maintenance",
             )
         )
 

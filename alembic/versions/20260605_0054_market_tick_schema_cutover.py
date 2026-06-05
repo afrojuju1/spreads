@@ -7,11 +7,16 @@ Create Date: 2026-06-05 11:40:00
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
-
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+
+from core.storage.market_tick_partitions import (
+    DEFAULT_FUTURE_PARTITION_DAYS,
+    create_partition_sql,
+    initial_partition_days,
+    market_tick_partition_families,
+)
 
 revision = "20260605_0054"
 down_revision = "20260605_0053"
@@ -19,9 +24,6 @@ branch_labels = None
 depends_on = None
 
 TOMBSTONE_SUFFIX = "old_20260605"
-QUOTE_RETENTION_DAYS = 7
-TRADE_RETENTION_DAYS = 30
-FUTURE_PARTITION_DAYS = 14
 
 
 def _jsonb() -> postgresql.JSONB:
@@ -52,32 +54,6 @@ def _restore_tombstone(table_name: str) -> None:
     if _table_exists(table_name):
         raise RuntimeError(f"Cannot restore {tombstone_name}; {table_name} already exists.")
     op.rename_table(tombstone_name, table_name)
-
-
-def _utc_partition_bounds(day: date) -> tuple[str, str]:
-    next_day = day + timedelta(days=1)
-    return f"{day.isoformat()} 00:00:00+00", f"{next_day.isoformat()} 00:00:00+00"
-
-
-def _create_daily_partitions(
-    *,
-    parent_table: str,
-    partition_prefix: str,
-    retention_days: int,
-) -> None:
-    today = datetime.now(timezone.utc).date()
-    start_day = today - timedelta(days=retention_days)
-    end_day = today + timedelta(days=FUTURE_PARTITION_DAYS)
-    current_day = start_day
-    while current_day <= end_day:
-        partition_name = f"{partition_prefix}_{current_day:%Y_%m_%d}"
-        lower_bound, upper_bound = _utc_partition_bounds(current_day)
-        op.execute(sa.text(f"""
-                CREATE TABLE IF NOT EXISTS {partition_name}
-                PARTITION OF {parent_table}
-                FOR VALUES FROM ('{lower_bound}') TO ('{upper_bound}')
-                """))
-        current_day += timedelta(days=1)
 
 
 def _create_option_quote_ticks() -> None:
@@ -147,16 +123,9 @@ def upgrade() -> None:
 
     _create_option_quote_ticks()
     _create_option_trade_ticks()
-    _create_daily_partitions(
-        parent_table="option_quote_ticks",
-        partition_prefix="option_quote_ticks",
-        retention_days=QUOTE_RETENTION_DAYS,
-    )
-    _create_daily_partitions(
-        parent_table="option_trade_ticks",
-        partition_prefix="option_trade_ticks",
-        retention_days=TRADE_RETENTION_DAYS,
-    )
+    for family in market_tick_partition_families():
+        for day in initial_partition_days(family, future_days=DEFAULT_FUTURE_PARTITION_DAYS):
+            op.execute(sa.text(create_partition_sql(family, day)))
 
 
 def downgrade() -> None:

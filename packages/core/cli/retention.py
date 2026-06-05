@@ -16,7 +16,7 @@ from core.services.retention import (
 
 retention_app = typer.Typer(
     add_completion=False,
-    help="Prune high-volume retained runtime data.",
+    help="Maintain high-volume tick partitions.",
     no_args_is_help=True,
 )
 
@@ -56,16 +56,17 @@ def _render_status(payload: dict[str, Any], *, no_color: bool) -> None:
         (f"{_render_value(summary.get('latest_run_status'))} @ " f"{_render_value(summary.get('latest_run_at'))}"),
     )
     overview.add_row(
-        "Latest Prune",
-        (f"matched {_render_value(summary.get('latest_matching_count'))} | " f"deleted {_render_value(summary.get('latest_deleted_count'))}"),
-    )
-    overview.add_row(
-        "Vacuum Full",
+        "Latest Maintenance",
         (
-            "pending " f"{_render_value(', '.join(summary.get('vacuum_full_pending_tables') or []))}"
-            if summary.get("vacuum_full_pending")
-            else "not pending"
+            f"created {_render_value(summary.get('latest_created_partition_count'))} | "
+            f"expired {_render_value(summary.get('latest_expired_partition_count'))} | "
+            f"dropped {_render_value(summary.get('latest_dropped_partition_count'))}"
         ),
+    )
+    overview.add_row("Partition Ready", "yes" if summary.get("partition_ready") else "no")
+    overview.add_row(
+        "Future Coverage",
+        f"{_render_value(summary.get('future_partition_days'))}/{_render_value(summary.get('required_future_partition_days'))} days",
     )
     overview.add_row("Schedule", _render_value(summary.get("schedule")))
     overview.add_row("Retention Log", _render_value(summary.get("retention_log_path")))
@@ -73,27 +74,23 @@ def _render_status(payload: dict[str, Any], *, no_color: bool) -> None:
 
     tables = list(details.get("tables") or [])
     if tables:
-        table = Table(title="High-Volume Retention Tables", header_style="bold")
+        table = Table(title="Tick Partitions", header_style="bold")
         table.add_column("Name")
         table.add_column("Retention", justify="right")
-        table.add_column("Retained Range")
+        table.add_column("Partitions", justify="right")
+        table.add_column("Current")
+        table.add_column("Future", justify="right")
         table.add_column("Rows Est.", justify="right")
-        table.add_column("Dead Est.", justify="right")
         table.add_column("Size", justify="right")
-        table.add_column("Latest Deleted", justify="right")
-        table.add_column("Vacuum")
         for row in tables:
-            latest_prune = row.get("latest_prune") if isinstance(row.get("latest_prune"), dict) else {}
-            vacuum_full = row.get("vacuum_full") if isinstance(row.get("vacuum_full"), dict) else {}
             table.add_row(
                 _render_value(row.get("name")),
                 f"{_render_value(row.get('retention_days'))}d",
-                f"{_render_value(row.get('retained_from'))} -> {_render_value(row.get('retained_to'))}",
+                _render_value(row.get("partition_count")),
+                "ready" if row.get("current_partition_ready") else "missing",
+                f"{_render_value(row.get('future_partition_days'))}/{_render_value(row.get('required_future_partition_days'))}",
                 _render_value(row.get("estimated_live_rows")),
-                _render_value(row.get("estimated_dead_rows")),
                 _format_bytes(row.get("total_size_bytes")),
-                _render_value(latest_prune.get("deleted_count")),
-                "pending" if vacuum_full.get("pending") else "ok",
             )
         console.print(table)
 
@@ -101,12 +98,12 @@ def _render_status(payload: dict[str, Any], *, no_color: bool) -> None:
     console.print(
         Panel(
             _render_value(maintenance.get("lock_profile")),
-            title=f"Maintenance Runbook: {_render_value(maintenance.get('vacuum_full_runbook'))}",
+            title="Partition Maintenance",
         )
     )
 
 
-@retention_app.command("status", help="Show quote/trade/event retention health.")
+@retention_app.command("status", help="Show quote/trade tick partition health.")
 def status_command(
     environment: str | None = typer.Option(
         None,
@@ -137,7 +134,7 @@ def status_command(
         _render_status(payload, no_color=no_color)
 
 
-@retention_app.command("prune", help="Prune retained quote/trade/event rows.")
+@retention_app.command("prune", help="Create future tick partitions and drop expired tick partitions.")
 def prune_command(
     environment: str | None = typer.Option(
         None,
@@ -160,15 +157,10 @@ def prune_command(
         "--option-trade-tick-days",
         help="Retention days for option_trade_ticks.",
     ),
-    batch_size: int | None = typer.Option(
+    future_partition_days: int | None = typer.Option(
         None,
-        "--batch-size",
-        help="Maximum rows to delete per table batch.",
-    ),
-    max_batches: int | None = typer.Option(
-        None,
-        "--max-batches",
-        help="Maximum delete batches per table.",
+        "--future-partition-days",
+        help="Future calendar days to keep precreated.",
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
@@ -179,8 +171,7 @@ def prune_command(
             dry_run=not execute,
             option_quote_tick_days=option_quote_tick_days or defaults["option_quote_tick_days"],
             option_trade_tick_days=option_trade_tick_days or defaults["option_trade_tick_days"],
-            batch_size=batch_size or defaults["batch_size"],
-            max_batches=max_batches or defaults["max_batches"],
+            future_partition_days=future_partition_days or defaults["future_partition_days"],
         )
     except Exception as exc:
         typer.secho(f"Retention prune failed: {exc}", err=True, fg=typer.colors.RED)

@@ -62,9 +62,7 @@ export function OpsPageContent() {
   const scheduler = readRecord(tradingDetails.scheduler);
   const marketSessionStatus = tradingSummary.market_session_status;
   const schedulerStatus = firstPresent(tradingSummary.scheduler_status, scheduler.status);
-  const vacuumFullTables = Array.isArray(storageSummary.vacuum_full_pending_tables)
-    ? storageSummary.vacuum_full_pending_tables.map(String).join(", ") || "no pending tables"
-    : readString(storageSummary.vacuum_full_pending_tables, "no pending tables");
+  const futureCoverage = `${readNumber(storageSummary.future_partition_days)}/${readNumber(storageSummary.required_future_partition_days)} days`;
 
   const refreshAll = () => {
     void tradingOpsQuery.refetch();
@@ -274,7 +272,7 @@ export function OpsPageContent() {
           Storage Retention
         </div>
         <div className="grid gap-4 md:grid-cols-3">
-          <MetricTile label="Vacuum Full" value={storageSummary.vacuum_full_pending ? "Pending" : "Clear"} note={vacuumFullTables} />
+          <MetricTile label="Partitions" value={storageSummary.partition_ready ? "Ready" : "Review"} note={futureCoverage} />
           <MetricTile
             label="Trade Ticks"
             value={formatBytes(readNumber(tradeTable.total_size_bytes))}
@@ -287,21 +285,24 @@ export function OpsPageContent() {
           />
         </div>
         <div className="mt-4 overflow-hidden rounded-lg border border-border/70">
-          <div className="grid grid-cols-[1.2fr_0.8fr_0.8fr_0.8fr] gap-3 border-b border-border/70 bg-background/70 px-3 py-2 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+          <div className="grid grid-cols-[1.2fr_0.7fr_0.7fr_0.8fr_0.8fr] gap-3 border-b border-border/70 bg-background/70 px-3 py-2 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
             <span>Table</span>
-            <span>Rows</span>
+            <span>Parts</span>
+            <span>Current</span>
+            <span>Future</span>
             <span>Size</span>
-            <span>Vacuum</span>
           </div>
           <div className="divide-y divide-border/60">
             {storageTables.map((row) => {
-              const vacuumFull = readRecord(row.vacuum_full);
               return (
-                <div key={readString(row.name)} className="grid grid-cols-[1.2fr_0.8fr_0.8fr_0.8fr] gap-3 px-3 py-2 text-sm">
+                <div key={readString(row.name)} className="grid grid-cols-[1.2fr_0.7fr_0.7fr_0.8fr_0.8fr] gap-3 px-3 py-2 text-sm">
                   <span className="min-w-0 truncate font-medium">{readString(row.name)}</span>
-                  <span>{formatCompactNumber(readNumber(row.estimated_live_rows))}</span>
+                  <span>{formatCompactNumber(readNumber(row.partition_count))}</span>
+                  <span>{row.current_partition_ready ? "ready" : "missing"}</span>
+                  <span>
+                    {formatCompactNumber(readNumber(row.future_partition_days))}/{formatCompactNumber(readNumber(row.required_future_partition_days))}
+                  </span>
                   <span>{formatBytes(readNumber(row.total_size_bytes))}</span>
-                  <span>{vacuumFull.pending ? "pending" : "ok"}</span>
                 </div>
               );
             })}
