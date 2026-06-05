@@ -136,6 +136,49 @@ class CandidateRunModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class CandidateSymbolDiagnosticModel(Base):
+    __tablename__ = "candidate_symbol_diagnostics"
+    __table_args__ = (
+        Index("idx_candidate_symbol_diagnostics_strategy_status", "trading_strategy_id", "routine", "diagnostic_status", "observed_at"),
+        Index("idx_candidate_symbol_diagnostics_symbol_observed", "underlying_symbol", "observed_at"),
+    )
+
+    candidate_run_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("candidate_runs.candidate_run_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    underlying_symbol: Mapped[str] = mapped_column(Text, primary_key=True)
+    trading_strategy_id: Mapped[str] = mapped_column(Text, nullable=False)
+    trade_structure: Mapped[str] = mapped_column(Text, nullable=False)
+    routine: Mapped[str] = mapped_column(Text, nullable=False)
+    ticker_source_run_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("ticker_source_runs.ticker_source_run_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    ticker_source_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    ticker_source_id: Mapped[str] = mapped_column(Text, nullable=False)
+    diagnostic_status: Mapped[str] = mapped_column(Text, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    spot_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    expiration_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    contract_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    snapshot_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    raw_candidate_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    postprocess_candidate_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    runtime_candidate_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    returned_candidate_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    setup_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    market_data_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    rejection_counts_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    ranking_gate_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    examples_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    evidence_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class TradeCandidateModel(Base):
     __tablename__ = "trade_candidates"
     __table_args__ = (

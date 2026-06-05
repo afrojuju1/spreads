@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from core.services.scanners.config import parse_args as parse_scanner_args
-from core.services.strategy_builders import build_entry_runtime_candidates, runtime_owner_key
+from core.services.strategy_builders import build_entry_runtime_candidates_with_diagnostics, runtime_owner_key
 from core.services.ticker_sources import resolve_ticker_source_symbols
 from core.services.trading_engine.data import CaptureTargetRequest, CandidateBuildRequest, CandidateBuildResult, ResolvedTickerSet, TickerSourceSpec
 from core.services.trading_engine.kernel import EngineContext
@@ -164,7 +164,7 @@ class PostgresDataEngine:
         )
         greeks_provider = build_local_greeks_provider()
         try:
-            candidates_by_owner = build_entry_runtime_candidates(
+            candidates_by_owner, diagnostics_by_owner = build_entry_runtime_candidates_with_diagnostics(
                 entry_runtimes=[runtime],
                 base_scanner_args=base_scanner_args,
                 client=client,
@@ -178,11 +178,13 @@ class PostgresDataEngine:
             calendar_resolver.store.close()
 
         owner_candidates = candidates_by_owner.get(runtime_owner_key(runtime), {})
+        owner_diagnostics = tuple(dict(row) for row in diagnostics_by_owner.get(runtime_owner_key(runtime), ()))
         flattened = tuple(dict(row) for rows in owner_candidates.values() for row in list(rows or []))
         return CandidateBuildResult(
             run_ref=request.run_ref,
             candidate_run_id=self._candidate_run_id(request),
             candidates=flattened,
+            diagnostics=owner_diagnostics,
             summary={
                 "status": "completed",
                 "symbol_count": len(symbols),

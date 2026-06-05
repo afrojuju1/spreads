@@ -51,6 +51,14 @@ function firstPresent(...values: unknown[]): unknown {
   return values.find(hasMetricValue);
 }
 
+function countEntries(value: unknown, limit = 5): Array<[string, number]> {
+  return Object.entries(readRecord(value))
+    .map(([key, rawValue]) => [key, readNumber(rawValue)] as [string, number])
+    .filter(([key, count]) => key.length > 0 && Number.isFinite(count) && count > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit);
+}
+
 function StatusLine({
   label,
   value,
@@ -94,6 +102,8 @@ export function TodayCommandCenter() {
   const sourceSymbols = Array.isArray(sourceState.symbols) ? sourceState.symbols.map(String).slice(0, 12) : [];
   const latestTickerSourceRun = readRecord(sourceState.latest_run);
   const latestCandidateRun = readRecord(candidateState.latest_run);
+  const topCandidateBlockers = countEntries(candidateState.top_rejection_counts);
+  const candidateDiagnostics = readRecordList(candidateState.diagnostics).slice(0, 10);
 
   const pendingLabel = loading ? "Loading" : "-";
   const marketDate = readString(summary.market_date, "");
@@ -234,7 +244,7 @@ export function TodayCommandCenter() {
             <StatusLine
               label="Candidates"
               value={candidateState.status ?? (loading ? "loading" : "idle")}
-              note={`${formatNumberMetric(candidateState.candidate_count, pendingLabel)} candidates · ${formatAge(candidateState.age_seconds)} old`}
+              note={`${formatNumberMetric(candidateState.candidate_count, pendingLabel)} candidates · ${humanizeToken(candidateState.diagnostic_status, pendingLabel)}`}
             />
             <StatusLine
               label="Flow"
@@ -246,6 +256,18 @@ export function TodayCommandCenter() {
               value={summary.capture_status ?? (loading ? "loading" : "idle")}
               note={`${formatNumberMetric(summary.capture_active_target_count, pendingLabel)} active targets`}
             />
+            {topCandidateBlockers.length ? (
+              <div className="mt-3 border-t border-border/60 pt-3">
+                <div className="mb-2 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Top blockers</div>
+                <div className="flex flex-wrap gap-2">
+                  {topCandidateBlockers.map(([name, count]) => (
+                    <Badge key={name} variant="outline">
+                      {humanizeToken(name)} {formatQuantity(count)}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <div className="mt-3 flex flex-wrap gap-2">
               <Link href="/ops" className={buttonVariants({ variant: "outline", size: "sm" })}>
                 Ops
@@ -334,6 +356,29 @@ export function TodayCommandCenter() {
               <span className="text-sm text-muted-foreground">No source symbols loaded.</span>
             )}
           </div>
+          {candidateDiagnostics.length ? (
+            <div className="mt-3 border-t border-border/60 pt-3">
+              <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Candidate Diagnostics</div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {candidateDiagnostics.map((row) => {
+                  const symbol = readString(row.underlying_symbol, "-");
+                  const status = humanizeToken(row.diagnostic_status, "-");
+                  const blockers = countEntries(readRecord(row.rejection_counts).top, 2)
+                    .map(([name, count]) => `${humanizeToken(name)} ${formatQuantity(count)}`)
+                    .join(" · ");
+                  return (
+                    <div key={symbol} className="rounded-lg border border-border/70 px-3 py-2 text-sm">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-medium">{symbol}</span>
+                        <Badge variant="outline">{status}</Badge>
+                      </div>
+                      <div className="mt-1 truncate text-xs text-muted-foreground">{blockers || "No blockers"}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
         </div>
       </section>
 

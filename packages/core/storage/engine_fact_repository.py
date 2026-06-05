@@ -4,11 +4,12 @@ from collections.abc import Mapping
 from datetime import UTC, date, datetime
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select
 
 from core.storage.base import RepositoryBase
 from core.storage.engine_models import (
     CandidateRunModel,
+    CandidateSymbolDiagnosticModel,
     TickerSourceObservationModel,
     TickerSourceRunModel,
     TickerSourceStateModel,
@@ -32,6 +33,7 @@ class EngineFactRepository(RepositoryBase):
             "ticker_source_observations",
             "ticker_source_state",
             "candidate_runs",
+            "candidate_symbol_diagnostics",
             "trade_candidates",
             "trade_signals",
             "trade_decisions",
@@ -218,7 +220,9 @@ class EngineFactRepository(RepositoryBase):
         generated_dt = run.generated_at.astimezone(UTC)
         age_seconds = max((datetime.now(UTC) - generated_dt).total_seconds(), 0.0)
         run_status = str(run.status or "").strip().lower()
-        snapshot_status = "ready" if observation_rows and run_status == "completed" else "empty" if run_status == "completed" else run_status or "missing"
+        snapshot_status = (
+            "ready" if observation_rows and run_status == "completed" else "empty" if run_status == "completed" else run_status or "missing"
+        )
         if max_age_seconds is not None and age_seconds > max(int(max_age_seconds), 0):
             snapshot_status = "stale"
         symbols = [str(row.get("symbol") or "").upper() for row in observation_rows if str(row.get("symbol") or "").strip()]
@@ -331,6 +335,89 @@ class EngineFactRepository(RepositoryBase):
             session.flush()
             session.refresh(row)
             return self.row(row)
+
+    def replace_candidate_symbol_diagnostics(
+        self,
+        *,
+        candidate_run_id: str,
+        trading_strategy_id: str,
+        trade_structure: str,
+        routine: str,
+        ticker_source_run_id: str | None,
+        ticker_source_kind: str,
+        ticker_source_id: str,
+        diagnostics: list[dict[str, Any]],
+        updated_at: str,
+    ) -> list[StorageRow]:
+        updated_at_dt = parse_datetime(updated_at)
+        if updated_at_dt is None:
+            raise ValueError("updated_at is required")
+
+        rows: list[StorageRow] = []
+        normalized_rows = [
+            dict(row)
+            for row in list(diagnostics or [])
+            if isinstance(row, Mapping) and self._normalize_symbol(row.get("underlying_symbol") or row.get("symbol")) is not None
+        ]
+        with self.session_scope() as session:
+            session.execute(delete(CandidateSymbolDiagnosticModel).where(CandidateSymbolDiagnosticModel.candidate_run_id == candidate_run_id))
+            for raw in normalized_rows:
+                symbol = self._normalize_symbol(raw.get("underlying_symbol") or raw.get("symbol"))
+                if symbol is None:
+                    continue
+                observed_at_dt = parse_datetime(raw.get("observed_at")) or updated_at_dt
+                row = CandidateSymbolDiagnosticModel(
+                    candidate_run_id=candidate_run_id,
+                    underlying_symbol=symbol,
+                    trading_strategy_id=trading_strategy_id,
+                    trade_structure=trade_structure,
+                    routine=routine,
+                    ticker_source_run_id=ticker_source_run_id,
+                    ticker_source_kind=ticker_source_kind,
+                    ticker_source_id=ticker_source_id,
+                    diagnostic_status=str(raw.get("diagnostic_status") or raw.get("status") or "unknown"),
+                    observed_at=observed_at_dt,
+                    spot_price=self._optional_float(raw.get("spot_price")),
+                    expiration_count=self._optional_int(raw.get("expiration_count")) or 0,
+                    contract_count=self._optional_int(raw.get("contract_count")) or 0,
+                    snapshot_count=self._optional_int(raw.get("snapshot_count")) or 0,
+                    raw_candidate_count=self._optional_int(raw.get("raw_candidate_count")) or 0,
+                    postprocess_candidate_count=self._optional_int(raw.get("postprocess_candidate_count")) or 0,
+                    runtime_candidate_count=self._optional_int(raw.get("runtime_candidate_count")) or 0,
+                    returned_candidate_count=self._optional_int(raw.get("returned_candidate_count")) or 0,
+                    setup_json=render_value(raw.get("setup") or {}),
+                    market_data_json=render_value(raw.get("market_data") or {}),
+                    rejection_counts_json=render_value(raw.get("rejection_counts") or {}),
+                    ranking_gate_json=render_value(raw.get("ranking_gate") or {}),
+                    examples_json=render_value(raw.get("examples") or {}),
+                    evidence_json=render_value(raw.get("evidence") or {}),
+                    created_at=updated_at_dt,
+                    updated_at=updated_at_dt,
+                )
+                session.add(row)
+                session.flush()
+                rows.append(self.row(row))
+        return rows
+
+    def list_candidate_symbol_diagnostics(
+        self,
+        *,
+        candidate_run_id: str,
+        limit: int = 100,
+    ) -> list[StorageRow]:
+        with self.session_factory() as session:
+            rows = session.scalars(
+                select(CandidateSymbolDiagnosticModel)
+                .where(CandidateSymbolDiagnosticModel.candidate_run_id == candidate_run_id)
+                .order_by(
+                    CandidateSymbolDiagnosticModel.returned_candidate_count.desc(),
+                    CandidateSymbolDiagnosticModel.postprocess_candidate_count.desc(),
+                    CandidateSymbolDiagnosticModel.raw_candidate_count.desc(),
+                    CandidateSymbolDiagnosticModel.underlying_symbol.asc(),
+                )
+                .limit(max(int(limit), 1))
+            ).all()
+        return self.rows(rows)
 
     def upsert_trade_candidate(
         self,

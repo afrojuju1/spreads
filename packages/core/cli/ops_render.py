@@ -101,6 +101,7 @@ def _render_count_map(
     *,
     limit: int = 4,
     item_length: int = 56,
+    normalize_names: bool = False,
 ) -> str:
     if not isinstance(value, dict) or not value:
         return "-"
@@ -108,10 +109,19 @@ def _render_count_map(
         ((str(key), int(raw_value)) for key, raw_value in value.items() if str(key or "").strip()),
         key=lambda item: (-item[1], item[0]),
     )
+    if normalize_names:
+        ranked = [(_compact_count_name(name), count) for name, count in ranked]
     rendered = ", ".join(f"{name} {_render_value(count)}" for name, count in ranked[:limit])
     if len(ranked) > limit:
         rendered += ", …"
     return _truncate(rendered, length=item_length)
+
+
+def _compact_count_name(value: str) -> str:
+    text = value.strip()
+    if text == "Calendar data confidence is low for this single-name candidate":
+        return "calendar_confidence_low"
+    return text.replace(" ", "_").replace("-", "_").lower()
 
 
 def _render_session_schedule(value: Any, *, length: int = 72) -> str:
@@ -421,6 +431,7 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
         table.add_column("Ticker Source")
         table.add_column("Symbols", justify="right")
         table.add_column("Candidates", justify="right")
+        table.add_column("Blockers", max_width=34, overflow="ellipsis", no_wrap=True)
         table.add_column("Active Intents", justify="right")
         table.add_column("Positions")
         table.add_column("Capacity")
@@ -435,7 +446,13 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
                 _status_text(row.get("status")),
                 f"{_render_value(source_state.get('status'))} ({_render_value(source_state.get('age_seconds'))}s)",
                 _render_value(source_state.get("symbol_count")),
-                _render_value(candidate_state.get("candidate_count")),
+                (f"{_render_value(candidate_state.get('candidate_count'))} " f"({_render_value(candidate_state.get('diagnostic_status'))})"),
+                _render_count_map(
+                    candidate_state.get("top_rejection_counts"),
+                    limit=3,
+                    item_length=52,
+                    normalize_names=True,
+                ),
                 _render_value(intent_state.get("active_intent_count")),
                 (
                     f"{_render_value(position_state.get('open_position_count'))} open | "
@@ -583,17 +600,11 @@ def render_storage_ops_state(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row("Generated", _render_value(payload.get("generated_at")))
     overview.add_row(
         "Latest Run",
-        (
-            f"{_render_value(summary.get('latest_run_status'))} @ "
-            f"{_render_value(summary.get('latest_run_at'))}"
-        ),
+        (f"{_render_value(summary.get('latest_run_status'))} @ " f"{_render_value(summary.get('latest_run_at'))}"),
     )
     overview.add_row(
         "Latest Prune",
-        (
-            f"matched {_render_value(summary.get('latest_matching_count'))} | "
-            f"deleted {_render_value(summary.get('latest_deleted_count'))}"
-        ),
+        (f"matched {_render_value(summary.get('latest_matching_count'))} | " f"deleted {_render_value(summary.get('latest_deleted_count'))}"),
     )
     overview.add_row(
         "Storage",
@@ -606,8 +617,7 @@ def render_storage_ops_state(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row(
         "Vacuum Full",
         (
-            "pending "
-            f"{_render_value(', '.join(summary.get('vacuum_full_pending_tables') or []))}"
+            "pending " f"{_render_value(', '.join(summary.get('vacuum_full_pending_tables') or []))}"
             if summary.get("vacuum_full_pending")
             else "not pending"
         ),

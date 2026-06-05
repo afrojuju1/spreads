@@ -27,7 +27,7 @@ from core.services.execution_lifecycle import (
 from core.services.exit_manager import describe_position_exit_state
 from core.services.risk_manager import assess_position_risk
 from core.services.trading_strategies import load_active_trading_strategies, routine_should_run_now
-from core.storage.engine_models import CandidateRunModel, TickerSourceObservationModel, TickerSourceRunModel
+from core.storage.engine_models import CandidateRunModel, CandidateSymbolDiagnosticModel, TickerSourceObservationModel, TickerSourceRunModel
 from core.services.value_coercion import (
     as_text as _as_text,
     coerce_float as _coerce_float,
@@ -236,11 +236,7 @@ def _symbols_from_ticker_source_run(ticker_source_run: Mapping[str, Any] | None)
     evidence = _mapping(ticker_source_run.get("evidence"))
     snapshot = _mapping(evidence.get("snapshot"))
     entries = _sequence(snapshot.get("entries"))
-    symbols = [
-        str(_mapping(entry).get("symbol") or "").strip().upper()
-        for entry in entries
-        if str(_mapping(entry).get("symbol") or "").strip()
-    ]
+    symbols = [str(_mapping(entry).get("symbol") or "").strip().upper() for entry in entries if str(_mapping(entry).get("symbol") or "").strip()]
     if symbols:
         return list(dict.fromkeys(symbols))
     tickers = _sequence(ticker_source_run.get("symbols"))
@@ -273,7 +269,38 @@ def _ticker_source_run_payload(row: TickerSourceRunModel, *, symbols: list[str])
     }
 
 
-def _candidate_run_payload(row: CandidateRunModel) -> dict[str, Any]:
+def _candidate_symbol_diagnostic_payload(row: CandidateSymbolDiagnosticModel) -> dict[str, Any]:
+    return {
+        "candidate_run_id": row.candidate_run_id,
+        "underlying_symbol": row.underlying_symbol,
+        "trading_strategy_id": row.trading_strategy_id,
+        "trade_structure": row.trade_structure,
+        "routine": row.routine,
+        "ticker_source_run_id": row.ticker_source_run_id,
+        "ticker_source_kind": row.ticker_source_kind,
+        "ticker_source_id": row.ticker_source_id,
+        "diagnostic_status": row.diagnostic_status,
+        "observed_at": _render_datetime(row.observed_at),
+        "spot_price": row.spot_price,
+        "expiration_count": row.expiration_count,
+        "contract_count": row.contract_count,
+        "snapshot_count": row.snapshot_count,
+        "raw_candidate_count": row.raw_candidate_count,
+        "postprocess_candidate_count": row.postprocess_candidate_count,
+        "runtime_candidate_count": row.runtime_candidate_count,
+        "returned_candidate_count": row.returned_candidate_count,
+        "setup": dict(row.setup_json or {}),
+        "market_data": dict(row.market_data_json or {}),
+        "rejection_counts": dict(row.rejection_counts_json or {}),
+        "ranking_gate": dict(row.ranking_gate_json or {}),
+        "examples": dict(row.examples_json or {}),
+        "evidence": dict(row.evidence_json or {}),
+        "created_at": _render_datetime(row.created_at),
+        "updated_at": _render_datetime(row.updated_at),
+    }
+
+
+def _candidate_run_payload(row: CandidateRunModel, *, diagnostics: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     return {
         "candidate_run_id": row.candidate_run_id,
         "run_key": row.run_key,
@@ -290,6 +317,7 @@ def _candidate_run_payload(row: CandidateRunModel) -> dict[str, Any]:
         "symbol_count": row.symbol_count,
         "candidate_count": row.candidate_count,
         "summary": dict(row.summary_json or {}),
+        "diagnostics": list(diagnostics or []),
         "created_at": _render_datetime(row.created_at),
         "updated_at": _render_datetime(row.updated_at),
     }
@@ -327,7 +355,9 @@ def _latest_flow_facts(
                 latest_candidates[strategy_id] = row
 
         ticker_source_run_ids = [row.ticker_source_run_id for row in latest_sources.values()]
+        candidate_run_ids = [row.candidate_run_id for row in latest_candidates.values()]
         symbols_by_ticker_source_run: dict[str, list[str]] = {ticker_source_run_id: [] for ticker_source_run_id in ticker_source_run_ids}
+        diagnostics_by_candidate_run: dict[str, list[dict[str, Any]]] = {candidate_run_id: [] for candidate_run_id in candidate_run_ids}
         if ticker_source_run_ids:
             for ticker_source_run_id, symbol in session.execute(
                 select(TickerSourceObservationModel.ticker_source_run_id, TickerSourceObservationModel.symbol)
@@ -342,13 +372,32 @@ def _latest_flow_facts(
                 symbols = symbols_by_ticker_source_run.setdefault(str(ticker_source_run_id), [])
                 if len(symbols) < SOURCE_SYMBOL_LIMIT:
                     symbols.append(str(symbol))
+        if candidate_run_ids:
+            diagnostic_rows = session.scalars(
+                select(CandidateSymbolDiagnosticModel)
+                .where(CandidateSymbolDiagnosticModel.candidate_run_id.in_(candidate_run_ids))
+                .order_by(
+                    CandidateSymbolDiagnosticModel.candidate_run_id.asc(),
+                    CandidateSymbolDiagnosticModel.returned_candidate_count.desc(),
+                    CandidateSymbolDiagnosticModel.postprocess_candidate_count.desc(),
+                    CandidateSymbolDiagnosticModel.raw_candidate_count.desc(),
+                    CandidateSymbolDiagnosticModel.underlying_symbol.asc(),
+                )
+            ).all()
+            for diagnostic in diagnostic_rows:
+                rows = diagnostics_by_candidate_run.setdefault(diagnostic.candidate_run_id, [])
+                if len(rows) < SOURCE_SYMBOL_LIMIT:
+                    rows.append(_candidate_symbol_diagnostic_payload(diagnostic))
 
     return (
         {
             ticker_source_id: _ticker_source_run_payload(row, symbols=symbols_by_ticker_source_run.get(row.ticker_source_run_id, []))
             for ticker_source_id, row in latest_sources.items()
         },
-        {strategy_id: _candidate_run_payload(row) for strategy_id, row in latest_candidates.items()},
+        {
+            strategy_id: _candidate_run_payload(row, diagnostics=diagnostics_by_candidate_run.get(row.candidate_run_id, []))
+            for strategy_id, row in latest_candidates.items()
+        },
     )
 
 
@@ -415,6 +464,8 @@ def _candidate_state(
     if stale and status == "healthy":
         status = "degraded"
     candidate_count = _coerce_int(candidate_run.get("candidate_count")) or 0
+    summary = _mapping(candidate_run.get("summary"))
+    diagnostics = [dict(row) for row in _sequence(candidate_run.get("diagnostics")) if isinstance(row, Mapping)]
     return {
         "status": status,
         "raw_status": raw_status,
@@ -423,6 +474,10 @@ def _candidate_state(
         "stale": stale,
         "symbol_count": _coerce_int(candidate_run.get("symbol_count")) or 0,
         "candidate_count": candidate_count,
+        "diagnostic_status": summary.get("diagnostic_status"),
+        "symbol_status_counts": _mapping(summary.get("symbol_status_counts")),
+        "top_rejection_counts": _mapping(summary.get("top_rejection_counts")),
+        "diagnostics": diagnostics,
         "latest_run": dict(candidate_run),
         "reason": "candidate_run_stale" if stale else ("no_candidates" if candidate_count == 0 else None),
     }
@@ -560,19 +615,23 @@ def _build_trading_flows(
                 "runtime": strategy.runtime.as_dict(),
                 "execution": strategy.execution.as_dict(),
                 "source": strategy.source.as_dict(),
-                "entry": None
-                if strategy.entry is None
-                else {
-                    "enabled": strategy.entry.enabled,
-                    "schedule": strategy.entry.schedule.as_dict(),
-                    "selection": strategy.entry.selection.as_dict(),
-                },
-                "management": None
-                if strategy.management is None
-                else {
-                    "enabled": strategy.management.enabled,
-                    "schedule": strategy.management.schedule.as_dict(),
-                },
+                "entry": (
+                    None
+                    if strategy.entry is None
+                    else {
+                        "enabled": strategy.entry.enabled,
+                        "schedule": strategy.entry.schedule.as_dict(),
+                        "selection": strategy.entry.selection.as_dict(),
+                    }
+                ),
+                "management": (
+                    None
+                    if strategy.management is None
+                    else {
+                        "enabled": strategy.management.enabled,
+                        "schedule": strategy.management.schedule.as_dict(),
+                    }
+                ),
                 "risk_limits": strategy.risk_limits.as_dict(),
                 "source_state": source_state,
                 "candidate_state": candidate_state,
@@ -927,7 +986,9 @@ def build_trading_ops_state(
         trading_allowed = False
 
     active_intent_count = sum(int(_mapping(flow.get("intent_state")).get("active_intent_count") or 0) for flow in trading_flows)
-    primary_flow = next((flow for flow in trading_flows if flow.get("trading_strategy_id") == "momentum_long_calls"), trading_flows[0] if trading_flows else {})
+    primary_flow = next(
+        (flow for flow in trading_flows if flow.get("trading_strategy_id") == "momentum_long_calls"), trading_flows[0] if trading_flows else {}
+    )
     primary_capacity = _mapping(primary_flow.get("capacity"))
     primary_position_state = _mapping(primary_flow.get("position_state"))
     summary = {
@@ -985,16 +1046,8 @@ def build_trading_ops_state(
         "scheduler": job_details.get("scheduler"),
         "workers": job_details.get("workers"),
         "worker_lanes": job_details.get("worker_lanes"),
-        "running_jobs": [
-            dict(row)
-            for row in _sequence(job_details.get("running_jobs"))
-            if _mapping(row).get("status") == "running"
-        ],
-        "queued_jobs": [
-            dict(row)
-            for row in _sequence(job_details.get("queued_jobs"))
-            if _mapping(row).get("status") == "queued"
-        ],
+        "running_jobs": [dict(row) for row in _sequence(job_details.get("running_jobs")) if _mapping(row).get("status") == "running"],
+        "queued_jobs": [dict(row) for row in _sequence(job_details.get("queued_jobs")) if _mapping(row).get("status") == "queued"],
         "recent_job_runs": job_details.get("job_runs"),
         "broker_sync": broker_sync,
         "account_snapshot": account_snapshot,

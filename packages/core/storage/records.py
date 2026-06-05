@@ -45,6 +45,7 @@ TickerSourceRunRecord = StorageRow
 TickerSourceObservationRecord = StorageRow
 TickerSourceStateRecord = StorageRow
 CandidateRunRecord = StorageRow
+CandidateSymbolDiagnosticRecord = StorageRow
 TradeCandidateRecord = StorageRow
 TradeSignalRecord = StorageRow
 
@@ -84,6 +85,7 @@ __all__ = [
     "TickerSourceObservationRecord",
     "TickerSourceStateRecord",
     "CandidateRunRecord",
+    "CandidateSymbolDiagnosticRecord",
     "TradeCandidateRecord",
     "TradeSignalRecord",
 ]

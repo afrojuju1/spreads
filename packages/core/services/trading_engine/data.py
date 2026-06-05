@@ -44,6 +44,7 @@ class CandidateBuildResult:
     run_ref: EngineRunRef
     candidate_run_id: str
     candidates: tuple[Mapping[str, Any], ...]
+    diagnostics: tuple[Mapping[str, Any], ...] = ()
     failures: tuple[Mapping[str, Any], ...] = ()
     summary: Mapping[str, Any] = field(default_factory=dict)
 
@@ -65,17 +66,14 @@ class DataEngine(Protocol):
         *,
         source: TickerSourceSpec,
         as_of: datetime,
-    ) -> ResolvedTickerSet:
-        ...
+    ) -> ResolvedTickerSet: ...
 
     def build_trade_candidates(
         self,
         request: CandidateBuildRequest,
-    ) -> CandidateBuildResult:
-        ...
+    ) -> CandidateBuildResult: ...
 
     def declare_capture_targets(
         self,
         requests: Sequence[CaptureTargetRequest],
-    ) -> Mapping[str, Any]:
-        ...
+    ) -> Mapping[str, Any]: ...

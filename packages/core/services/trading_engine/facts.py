@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 import hashlib
@@ -133,6 +134,74 @@ def _candidate_payload(row: Mapping[str, Any]) -> dict[str, Any]:
     return dict(row)
 
 
+def _diagnostic_rows(candidate_result: CandidateBuildResult | None, *, observed_at: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for raw in tuple(() if candidate_result is None else candidate_result.diagnostics):
+        if not isinstance(raw, Mapping):
+            continue
+        row = dict(raw)
+        row["observed_at"] = row.get("observed_at") or observed_at
+        rows.append(row)
+    return rows
+
+
+def _diagnostic_top_counts(diagnostics: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for row in diagnostics:
+        rejection_counts = row.get("rejection_counts") if isinstance(row.get("rejection_counts"), Mapping) else {}
+        top = rejection_counts.get("top") if isinstance(rejection_counts, Mapping) and isinstance(rejection_counts.get("top"), Mapping) else {}
+        for reason, count in dict(top).items():
+            try:
+                counts[str(reason)] += int(count)
+            except (TypeError, ValueError):
+                continue
+    return dict(counts.most_common(12))
+
+
+def _candidate_run_diagnostic_status(
+    *,
+    candidate_count: int,
+    diagnostics: Sequence[Mapping[str, Any]],
+) -> str:
+    if candidate_count > 0:
+        return "candidate_available"
+    if not diagnostics:
+        return "diagnostics_missing"
+    statuses = {str(row.get("diagnostic_status") or row.get("status") or "").strip() for row in diagnostics}
+    statuses.discard("")
+    if "build_error" in statuses:
+        return "build_error"
+    if statuses and statuses <= {"data_unavailable"}:
+        return "data_unavailable"
+    if statuses & {"ranking_rejected", "postprocess_rejected", "runtime_rejected"}:
+        return "filtered_out"
+    if "no_raw_candidates" in statuses:
+        return "no_raw_candidates"
+    return "no_candidates"
+
+
+def _candidate_run_summary_with_diagnostics(
+    *,
+    base_summary: Mapping[str, Any],
+    candidate_count: int,
+    diagnostics: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    summary = dict(base_summary or {})
+    status_counts = Counter(str(row.get("diagnostic_status") or row.get("status") or "unknown") for row in diagnostics if isinstance(row, Mapping))
+    summary.update(
+        {
+            "diagnostic_status": _candidate_run_diagnostic_status(
+                candidate_count=candidate_count,
+                diagnostics=diagnostics,
+            ),
+            "diagnostic_symbol_count": len(diagnostics),
+            "symbol_status_counts": dict(sorted(status_counts.items())),
+            "top_rejection_counts": _diagnostic_top_counts(diagnostics),
+        }
+    )
+    return summary
+
+
 def persist_entry_engine_facts(
     *,
     engine_facts: Any,
@@ -152,8 +221,14 @@ def persist_entry_engine_facts(
 
     now = _utc_now()
     candidate_rows = [dict(row) for row in tuple(() if candidate_result is None else candidate_result.candidates) if isinstance(row, Mapping)]
+    diagnostic_rows = _diagnostic_rows(candidate_result, observed_at=generated_at)
     candidate_run_id = None if candidate_result is None else candidate_result.candidate_run_id
     if candidate_result is not None:
+        candidate_summary = _candidate_run_summary_with_diagnostics(
+            base_summary=candidate_result.summary or {},
+            candidate_count=len(candidate_rows),
+            diagnostics=diagnostic_rows,
+        )
         engine_facts.upsert_candidate_run(
             candidate_run_id=candidate_result.candidate_run_id,
             run_key=run_key,
@@ -169,7 +244,7 @@ def persist_entry_engine_facts(
             completed_at=generated_at,
             symbol_count=len(ticker_set.symbols),
             candidate_count=len(candidate_rows),
-            summary=dict(candidate_result.summary or {}),
+            summary=candidate_summary,
             evidence={
                 "ticker_set": {
                     "ticker_source_run_id": ticker_set.ticker_source_run_id,
@@ -178,6 +253,17 @@ def persist_entry_engine_facts(
                     "symbols": list(ticker_set.symbols),
                 },
             },
+            updated_at=now,
+        )
+        engine_facts.replace_candidate_symbol_diagnostics(
+            candidate_run_id=candidate_result.candidate_run_id,
+            trading_strategy_id=runtime.trading_strategy_id,
+            trade_structure=runtime.trade_structure,
+            routine="entry",
+            ticker_source_run_id=ticker_set.ticker_source_run_id,
+            ticker_source_kind=ticker_set.source.source_type,
+            ticker_source_id=ticker_set.source.ref,
+            diagnostics=diagnostic_rows,
             updated_at=now,
         )
 
@@ -303,6 +389,8 @@ def persist_entry_engine_facts(
         "ticker_source_run_id": ticker_set.ticker_source_run_id,
         "candidate_run_id": candidate_run_id,
         "trade_candidate_count": len(trade_candidate_ids_by_identity),
+        "candidate_diagnostic_count": len(diagnostic_rows),
+        "top_rejection_counts": _diagnostic_top_counts(diagnostic_rows),
         "trade_signal_count": len(trade_signal_refs),
         "trade_signals": trade_signal_refs,
     }
