@@ -569,7 +569,7 @@ def run_tradingagents_scan(
     source_job_key = _as_text(payload.get("source_job_key")) or f"ticker_source:{source_id}"
     max_source_age_seconds = _as_optional_int(payload.get("max_source_age_seconds"))
     snapshot = get_latest_ticker_source_snapshot(
-        job_store,
+        storage.engine_facts,
         source_id=source_id,
         job_key=source_job_key,
         max_age_seconds=max_source_age_seconds,

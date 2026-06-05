@@ -39,7 +39,7 @@ from core.services.decision_engine import run_trading_strategy_entry_decision
 from core.services.execution import run_execution_submit
 from core.services.execution_intents import dispatch_pending_execution_intents
 from core.services.exit_manager import run_position_exit_manager
-from core.services.ticker_sources import run_ticker_source
+from core.services.ticker_sources import persist_ticker_source_result, run_ticker_source
 from core.services.tradingagents_scan import run_tradingagents_scan
 from core.storage.company_valuation_repository import CompanyValuationRepository
 from core.storage.serializers import parse_date, parse_datetime, render_value
@@ -90,6 +90,27 @@ def _compact_company_valuation_bootstrap_result(
             "treasury_curve": result.get("treasury_curve"),
             "errors": errors[:25],
             "error_count": len(errors),
+        }
+    )
+
+
+def _compact_ticker_source_result(result: Mapping[str, Any]) -> dict[str, Any]:
+    entries = [dict(item) for item in list(result.get("entries") or []) if isinstance(item, Mapping)]
+    observations = list(result.get("observations") or [])
+    return render_value(
+        {
+            "status": result.get("status"),
+            "source_id": result.get("source_id"),
+            "recipe": result.get("recipe"),
+            "generated_at": result.get("generated_at"),
+            "ticker_source_run_id": result.get("ticker_source_run_id"),
+            "symbols": list(result.get("symbols") or []),
+            "entries": entries[:25],
+            "entry_count": len(entries),
+            "observation_count": len(observations),
+            "summary": result.get("summary"),
+            "degradation": result.get("degradation"),
+            "persistence": result.get("persistence"),
         }
     )
 
@@ -339,11 +360,23 @@ async def run_ticker_source_job(
 ) -> dict[str, Any]:
     def runner(heartbeat: Any) -> dict[str, Any]:
         heartbeat()
-        return run_ticker_source(
+        result = run_ticker_source(
             source_id=str(payload["source_id"]),
             recipe=str(payload["recipe"]),
             recipe_args=dict(payload.get("recipe_args") or {}),
         )
+        persistence = persist_ticker_source_result(
+            ctx["storage"].engine_facts,
+            source_id=str(payload["source_id"]),
+            recipe=str(payload["recipe"]),
+            job_run_id=job_run_id,
+            result=result,
+        )
+        return {
+            **result,
+            "ticker_source_run_id": persistence.get("ticker_source_run_id"),
+            "persistence": persistence,
+        }
 
     enriched_payload = dict(payload)
     enriched_payload["job_type"] = TICKER_SOURCE_JOB_TYPE
@@ -354,7 +387,7 @@ async def run_ticker_source_job(
         arq_job_id=arq_job_id,
         payload=enriched_payload,
         runner=runner,
-        compact_result=lambda result: result,
+        compact_result=_compact_ticker_source_result,
     )
 
 

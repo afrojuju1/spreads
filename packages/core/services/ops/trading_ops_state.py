@@ -27,7 +27,7 @@ from core.services.execution_lifecycle import (
 from core.services.exit_manager import describe_position_exit_state
 from core.services.risk_manager import assess_position_risk
 from core.services.trading_strategies import load_active_trading_strategies, routine_should_run_now
-from core.storage.engine_models import CandidateRunModel, SourceRunModel, SourceTickerModel
+from core.storage.engine_models import CandidateRunModel, TickerSourceObservationModel, TickerSourceRunModel
 from core.services.value_coercion import (
     as_text as _as_text,
     coerce_float as _coerce_float,
@@ -230,10 +230,10 @@ def _summarize_execution_attempt(
     }
 
 
-def _symbols_from_source_run(source_run: Mapping[str, Any] | None) -> list[str]:
-    if source_run is None:
+def _symbols_from_ticker_source_run(ticker_source_run: Mapping[str, Any] | None) -> list[str]:
+    if ticker_source_run is None:
         return []
-    evidence = _mapping(source_run.get("evidence"))
+    evidence = _mapping(ticker_source_run.get("evidence"))
     snapshot = _mapping(evidence.get("snapshot"))
     entries = _sequence(snapshot.get("entries"))
     symbols = [
@@ -243,7 +243,7 @@ def _symbols_from_source_run(source_run: Mapping[str, Any] | None) -> list[str]:
     ]
     if symbols:
         return list(dict.fromkeys(symbols))
-    tickers = _sequence(source_run.get("symbols"))
+    tickers = _sequence(ticker_source_run.get("symbols"))
     return [str(symbol).strip().upper() for symbol in tickers if str(symbol or "").strip()]
 
 
@@ -253,17 +253,19 @@ def _render_datetime(value: datetime | None) -> str | None:
     return value.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _source_run_payload(row: SourceRunModel, *, symbols: list[str]) -> dict[str, Any]:
+def _ticker_source_run_payload(row: TickerSourceRunModel, *, symbols: list[str]) -> dict[str, Any]:
     return {
-        "source_run_id": row.source_run_id,
-        "source_type": row.source_type,
-        "source_ref": row.source_ref,
-        "source_job_run_id": row.source_job_run_id,
+        "ticker_source_run_id": row.ticker_source_run_id,
+        "ticker_source_type": row.ticker_source_type,
+        "ticker_source_id": row.ticker_source_id,
+        "job_run_id": row.job_run_id,
         "status": row.status,
         "config_hash": row.config_hash,
         "generated_at": _render_datetime(row.generated_at),
         "completed_at": _render_datetime(row.completed_at),
-        "symbol_count": row.symbol_count,
+        "observed_count": row.observed_count,
+        "selected_count": row.selected_count,
+        "excluded_count": row.excluded_count,
         "symbols": symbols[:SOURCE_SYMBOL_LIMIT],
         "summary": dict(row.summary_json or {}),
         "created_at": _render_datetime(row.created_at),
@@ -278,9 +280,9 @@ def _candidate_run_payload(row: CandidateRunModel) -> dict[str, Any]:
         "trading_strategy_id": row.trading_strategy_id,
         "trade_structure": row.trade_structure,
         "routine": row.routine,
-        "source_run_id": row.source_run_id,
-        "source_type": row.source_type,
-        "source_ref": row.source_ref,
+        "ticker_source_run_id": row.ticker_source_run_id,
+        "ticker_source_kind": row.ticker_source_kind,
+        "ticker_source_id": row.ticker_source_id,
         "status": row.status,
         "config_hash": row.config_hash,
         "generated_at": _render_datetime(row.generated_at),
@@ -296,23 +298,23 @@ def _candidate_run_payload(row: CandidateRunModel) -> dict[str, Any]:
 def _latest_flow_facts(
     *,
     storage: Any,
-    source_refs: set[str],
+    ticker_source_ids: set[str],
     strategy_ids: set[str],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     if not storage.engine_facts.schema_ready():
         return {}, {}
-    latest_sources: dict[str, SourceRunModel] = {}
+    latest_sources: dict[str, TickerSourceRunModel] = {}
     latest_candidates: dict[str, CandidateRunModel] = {}
     with storage.engine_facts.session_factory() as session:
-        for source_ref in sorted(source_refs):
+        for ticker_source_id in sorted(ticker_source_ids):
             row = session.scalars(
-                select(SourceRunModel)
-                .where(SourceRunModel.source_ref == source_ref)
-                .order_by(SourceRunModel.generated_at.desc(), SourceRunModel.source_run_id.asc())
+                select(TickerSourceRunModel)
+                .where(TickerSourceRunModel.ticker_source_id == ticker_source_id)
+                .order_by(TickerSourceRunModel.generated_at.desc(), TickerSourceRunModel.ticker_source_run_id.asc())
                 .limit(1)
             ).first()
             if row is not None:
-                latest_sources[source_ref] = row
+                latest_sources[ticker_source_id] = row
         for strategy_id in sorted(strategy_ids):
             row = session.scalars(
                 select(CandidateRunModel)
@@ -324,22 +326,27 @@ def _latest_flow_facts(
             if row is not None:
                 latest_candidates[strategy_id] = row
 
-        source_run_ids = [row.source_run_id for row in latest_sources.values()]
-        symbols_by_source_run: dict[str, list[str]] = {source_run_id: [] for source_run_id in source_run_ids}
-        if source_run_ids:
-            for source_run_id, symbol in session.execute(
-                select(SourceTickerModel.source_run_id, SourceTickerModel.symbol)
-                .where(SourceTickerModel.source_run_id.in_(source_run_ids))
-                .order_by(SourceTickerModel.source_run_id.asc(), SourceTickerModel.rank.asc().nulls_last(), SourceTickerModel.symbol.asc())
+        ticker_source_run_ids = [row.ticker_source_run_id for row in latest_sources.values()]
+        symbols_by_ticker_source_run: dict[str, list[str]] = {ticker_source_run_id: [] for ticker_source_run_id in ticker_source_run_ids}
+        if ticker_source_run_ids:
+            for ticker_source_run_id, symbol in session.execute(
+                select(TickerSourceObservationModel.ticker_source_run_id, TickerSourceObservationModel.symbol)
+                .where(TickerSourceObservationModel.ticker_source_run_id.in_(ticker_source_run_ids))
+                .where(TickerSourceObservationModel.observation_state == "selected")
+                .order_by(
+                    TickerSourceObservationModel.ticker_source_run_id.asc(),
+                    TickerSourceObservationModel.rank.asc().nulls_last(),
+                    TickerSourceObservationModel.symbol.asc(),
+                )
             ):
-                symbols = symbols_by_source_run.setdefault(str(source_run_id), [])
+                symbols = symbols_by_ticker_source_run.setdefault(str(ticker_source_run_id), [])
                 if len(symbols) < SOURCE_SYMBOL_LIMIT:
                     symbols.append(str(symbol))
 
     return (
         {
-            source_ref: _source_run_payload(row, symbols=symbols_by_source_run.get(row.source_run_id, []))
-            for source_ref, row in latest_sources.items()
+            ticker_source_id: _ticker_source_run_payload(row, symbols=symbols_by_ticker_source_run.get(row.ticker_source_run_id, []))
+            for ticker_source_id, row in latest_sources.items()
         },
         {strategy_id: _candidate_run_payload(row) for strategy_id, row in latest_candidates.items()},
     )
@@ -347,13 +354,13 @@ def _latest_flow_facts(
 
 def _source_state(
     *,
-    source_run: Mapping[str, Any] | None,
+    ticker_source_run: Mapping[str, Any] | None,
     source_kind: str,
     max_age_seconds: int | None,
     market_open: bool,
     now: datetime,
 ) -> dict[str, Any]:
-    if source_run is None:
+    if ticker_source_run is None:
         return {
             "status": "degraded" if market_open and source_kind == "dynamic" else "idle",
             "age_seconds": None,
@@ -361,24 +368,24 @@ def _source_state(
             "symbol_count": 0,
             "symbols": [],
             "latest_run": None,
-            "reason": "source_run_missing",
+            "reason": "ticker_source_run_missing",
         }
-    raw_status = str(source_run.get("status") or "unknown")
-    age_seconds = _age_seconds(source_run.get("generated_at") or source_run.get("completed_at"), now=now)
+    raw_status = str(ticker_source_run.get("status") or "unknown")
+    age_seconds = _age_seconds(ticker_source_run.get("generated_at") or ticker_source_run.get("completed_at"), now=now)
     stale = bool(market_open and max_age_seconds is not None and age_seconds is not None and age_seconds > max_age_seconds)
     status = "healthy" if raw_status in {"ready", "fallback", "completed", "ok"} else "degraded"
     if stale and status == "healthy":
         status = "degraded"
-    symbols = _symbols_from_source_run(source_run)
+    symbols = _symbols_from_ticker_source_run(ticker_source_run)
     return {
         "status": status,
         "raw_status": raw_status,
         "age_seconds": age_seconds,
         "max_age_seconds": max_age_seconds,
         "stale": stale,
-        "symbol_count": _coerce_int(source_run.get("symbol_count")) or len(symbols),
+        "symbol_count": _coerce_int(ticker_source_run.get("selected_count")) or len(symbols),
         "symbols": symbols[:25],
-        "latest_run": dict(source_run),
+        "latest_run": dict(ticker_source_run),
         "reason": "source_stale" if stale else None,
     }
 
@@ -510,7 +517,7 @@ def _build_trading_flows(
     strategies = [strategy for strategy in load_active_trading_strategies().values() if strategy.enabled]
     latest_sources, latest_candidates = _latest_flow_facts(
         storage=storage,
-        source_refs={strategy.source.ref for strategy in strategies},
+        ticker_source_ids={strategy.source.ref for strategy in strategies},
         strategy_ids={strategy.trading_strategy_id for strategy in strategies},
     )
     flows: list[dict[str, Any]] = []
@@ -520,7 +527,7 @@ def _build_trading_flows(
         entry_cadence_minutes = None if strategy.entry is None else strategy.entry.schedule.cadence_minutes
         entry_due = bool(strategy.entry is not None and strategy.entry.enabled and routine_should_run_now(strategy.entry, now=now))
         source_state = _source_state(
-            source_run=latest_source,
+            ticker_source_run=latest_source,
             source_kind=strategy.source.kind,
             max_age_seconds=strategy.source.max_age_seconds,
             market_open=market_open,
@@ -957,7 +964,7 @@ def build_trading_ops_state(
         "reconciliation_mismatch_count": reconciliation_mismatch_count,
         "mark_health_status": mark_health_status,
         "engine_status": engine_status,
-        "engine_source_run_count": _coerce_int(engine_summary.get("source_run_count")) or 0,
+        "engine_ticker_source_run_count": _coerce_int(engine_summary.get("ticker_source_run_count")) or 0,
         "engine_candidate_run_count": _coerce_int(engine_summary.get("candidate_run_count")) or 0,
         "engine_trade_candidate_count": _coerce_int(engine_summary.get("trade_candidate_count")) or 0,
         "engine_signal_count": _coerce_int(engine_summary.get("signal_count")) or 0,

@@ -41,8 +41,9 @@ PortfolioPositionRecord = StorageRow
 PositionCloseRecord = StorageRow
 CaptureTargetRecord = StorageRow
 CaptureSummaryRecord = StorageRow
-SourceRunRecord = StorageRow
-SourceTickerRecord = StorageRow
+TickerSourceRunRecord = StorageRow
+TickerSourceObservationRecord = StorageRow
+TickerSourceStateRecord = StorageRow
 CandidateRunRecord = StorageRow
 TradeCandidateRecord = StorageRow
 TradeSignalRecord = StorageRow
@@ -79,8 +80,9 @@ __all__ = [
     "PositionCloseRecord",
     "CaptureTargetRecord",
     "CaptureSummaryRecord",
-    "SourceRunRecord",
-    "SourceTickerRecord",
+    "TickerSourceRunRecord",
+    "TickerSourceObservationRecord",
+    "TickerSourceStateRecord",
     "CandidateRunRecord",
     "TradeCandidateRecord",
     "TradeSignalRecord",

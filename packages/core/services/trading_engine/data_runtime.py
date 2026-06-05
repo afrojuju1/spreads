@@ -81,7 +81,7 @@ class PostgresDataEngine:
         if source_type == "dynamic":
             job_key = f"ticker_source:{source.ref}"
             snapshot = resolve_ticker_source_symbols(
-                self.context.storage.jobs,
+                self.context.storage.engine_facts,
                 source_id=source.ref,
                 job_key=job_key,
                 max_age_seconds=source.max_age_seconds,
@@ -96,7 +96,7 @@ class PostgresDataEngine:
                 source=source,
                 symbols=symbols,
                 resolved_at=as_of,
-                source_run_id=None if snapshot.get("job_run_id") in (None, "") else str(snapshot["job_run_id"]),
+                ticker_source_run_id=None if snapshot.get("ticker_source_run_id") in (None, "") else str(snapshot["ticker_source_run_id"]),
                 reason_codes=(f"ticker_source_{status or 'missing'}",),
                 blockers=() if symbols and status in {"ready", "fallback"} else (reason,),
                 evidence=dict(snapshot),
@@ -244,7 +244,7 @@ class PostgresDataEngine:
         source: TickerSourceSpec,
         symbols: tuple[str, ...],
         resolved_at: datetime,
-        source_run_id: str | None = None,
+        ticker_source_run_id: str | None = None,
         reason_codes: tuple[str, ...] = (),
         blockers: tuple[str, ...] = (),
         evidence: Mapping[str, Any] | None = None,
@@ -259,7 +259,7 @@ class PostgresDataEngine:
             symbols=normalized,
             source=source,
             resolved_at=resolved_at,
-            source_run_id=source_run_id,
+            ticker_source_run_id=ticker_source_run_id,
             reason_codes=tuple(reason_codes),
             blockers=resolved_blockers,
             evidence=dict(evidence or {}),

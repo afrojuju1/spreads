@@ -11,7 +11,13 @@ from core.services.positions import enrich_position_row
 from core.services.trading_strategies import load_active_trading_strategies
 from core.services.value_coercion import as_text as _as_text
 from core.storage.capture_models import CaptureSummaryModel
-from core.storage.engine_models import CandidateRunModel, SourceRunModel, SourceTickerModel, TradeCandidateModel
+from core.storage.engine_models import (
+    CandidateRunModel,
+    TickerSourceObservationModel,
+    TickerSourceRunModel,
+    TickerSourceStateModel,
+    TradeCandidateModel,
+)
 from core.storage.lifecycle_models import TradeDecisionModel, TradeSignalModel
 from core.storage.serializers import parse_date, parse_datetime
 
@@ -42,17 +48,19 @@ def _render_datetime(value: datetime | None) -> str | None:
     return value.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _source_run_row(row: SourceRunModel, *, symbols: list[str]) -> dict[str, Any]:
+def _ticker_source_run_row(row: TickerSourceRunModel, *, symbols: list[str]) -> dict[str, Any]:
     return {
-        "source_run_id": row.source_run_id,
-        "source_type": row.source_type,
-        "source_ref": row.source_ref,
-        "source_job_run_id": row.source_job_run_id,
+        "ticker_source_run_id": row.ticker_source_run_id,
+        "ticker_source_type": row.ticker_source_type,
+        "ticker_source_id": row.ticker_source_id,
+        "job_run_id": row.job_run_id,
         "status": row.status,
         "config_hash": row.config_hash,
         "generated_at": _render_datetime(row.generated_at),
         "completed_at": _render_datetime(row.completed_at),
-        "symbol_count": row.symbol_count,
+        "observed_count": row.observed_count,
+        "selected_count": row.selected_count,
+        "excluded_count": row.excluded_count,
         "symbols": symbols[:SOURCE_SYMBOL_LIMIT],
         "summary": dict(row.summary_json or {}),
         "created_at": _render_datetime(row.created_at),
@@ -67,9 +75,9 @@ def _candidate_run_row(row: CandidateRunModel) -> dict[str, Any]:
         "trading_strategy_id": row.trading_strategy_id,
         "trade_structure": row.trade_structure,
         "routine": row.routine,
-        "source_run_id": row.source_run_id,
-        "source_type": row.source_type,
-        "source_ref": row.source_ref,
+        "ticker_source_run_id": row.ticker_source_run_id,
+        "ticker_source_kind": row.ticker_source_kind,
+        "ticker_source_id": row.ticker_source_id,
         "status": row.status,
         "config_hash": row.config_hash,
         "generated_at": _render_datetime(row.generated_at),
@@ -79,6 +87,27 @@ def _candidate_run_row(row: CandidateRunModel) -> dict[str, Any]:
         "summary": dict(row.summary_json or {}),
         "created_at": _render_datetime(row.created_at),
         "updated_at": _render_datetime(row.updated_at),
+    }
+
+
+def _ticker_source_state_row(row: TickerSourceStateModel) -> dict[str, Any]:
+    return {
+        "ticker_source_id": row.ticker_source_id,
+        "symbol": row.symbol,
+        "active": row.active,
+        "last_state": row.last_state,
+        "last_rank": row.last_rank,
+        "best_rank": row.best_rank,
+        "last_score": row.last_score,
+        "best_score": row.best_score,
+        "seen_count": row.seen_count,
+        "selected_count": row.selected_count,
+        "consecutive_missing_count": row.consecutive_missing_count,
+        "last_ticker_source_run_id": row.last_ticker_source_run_id,
+        "last_seen_at": _render_datetime(row.last_seen_at),
+        "last_selected_at": _render_datetime(row.last_selected_at),
+        "updated_at": _render_datetime(row.updated_at),
+        "metrics": dict(row.last_metrics_json or {}),
     }
 
 
@@ -129,13 +158,14 @@ def _engine_fact_summary(
         return {
             "status": "blocked",
             "reason": "engine_fact_schema_unavailable",
-            "source_runs": [],
+            "ticker_source_runs": [],
+            "ticker_source_state": [],
             "candidate_runs": [],
             "trade_signals": [],
             "selected_decisions": [],
             "signal_state_counts": {},
             "decision_state_counts": {},
-            "source_run_count": 0,
+            "ticker_source_run_count": 0,
             "candidate_run_count": 0,
             "trade_candidate_count": 0,
             "signal_count": 0,
@@ -145,19 +175,28 @@ def _engine_fact_summary(
 
     market_day = parse_date(market_date)
     with engine_facts.session_factory() as session:
-        source_runs = session.scalars(
-            select(SourceRunModel)
-            .where(SourceRunModel.generated_at >= start)
-            .where(SourceRunModel.generated_at < end)
-            .order_by(SourceRunModel.generated_at.desc(), SourceRunModel.source_run_id.asc())
+        ticker_source_runs = session.scalars(
+            select(TickerSourceRunModel)
+            .where(TickerSourceRunModel.generated_at >= start)
+            .where(TickerSourceRunModel.generated_at < end)
+            .order_by(TickerSourceRunModel.generated_at.desc(), TickerSourceRunModel.ticker_source_run_id.asc())
             .limit(ENGINE_RECENT_ROW_LIMIT)
         ).all()
-        source_run_count = (
+        ticker_source_run_count = (
             session.scalar(
-                select(func.count()).select_from(SourceRunModel).where(SourceRunModel.generated_at >= start).where(SourceRunModel.generated_at < end)
+                select(func.count())
+                .select_from(TickerSourceRunModel)
+                .where(TickerSourceRunModel.generated_at >= start)
+                .where(TickerSourceRunModel.generated_at < end)
             )
             or 0
         )
+        ticker_source_state = session.scalars(
+            select(TickerSourceStateModel)
+            .where(TickerSourceStateModel.active.is_(True))
+            .order_by(TickerSourceStateModel.last_rank.asc().nullslast(), TickerSourceStateModel.last_seen_at.desc())
+            .limit(ENGINE_RECENT_ROW_LIMIT)
+        ).all()
         candidate_runs = session.scalars(
             select(CandidateRunModel)
             .where(CandidateRunModel.generated_at >= start)
@@ -198,15 +237,20 @@ def _engine_fact_summary(
             )
             or 0
         )
-        source_run_ids = [row.source_run_id for row in source_runs]
-        symbols_by_source_run: dict[str, list[str]] = {source_run_id: [] for source_run_id in source_run_ids}
-        if source_run_ids:
-            for source_run_id, symbol in session.execute(
-                select(SourceTickerModel.source_run_id, SourceTickerModel.symbol)
-                .where(SourceTickerModel.source_run_id.in_(source_run_ids))
-                .order_by(SourceTickerModel.source_run_id.asc(), SourceTickerModel.rank.asc().nulls_last(), SourceTickerModel.symbol.asc())
+        ticker_source_run_ids = [row.ticker_source_run_id for row in ticker_source_runs]
+        symbols_by_ticker_source_run: dict[str, list[str]] = {ticker_source_run_id: [] for ticker_source_run_id in ticker_source_run_ids}
+        if ticker_source_run_ids:
+            for ticker_source_run_id, symbol in session.execute(
+                select(TickerSourceObservationModel.ticker_source_run_id, TickerSourceObservationModel.symbol)
+                .where(TickerSourceObservationModel.ticker_source_run_id.in_(ticker_source_run_ids))
+                .where(TickerSourceObservationModel.observation_state == "selected")
+                .order_by(
+                    TickerSourceObservationModel.ticker_source_run_id.asc(),
+                    TickerSourceObservationModel.rank.asc().nulls_last(),
+                    TickerSourceObservationModel.symbol.asc(),
+                )
             ):
-                symbols = symbols_by_source_run.setdefault(str(source_run_id), [])
+                symbols = symbols_by_ticker_source_run.setdefault(str(ticker_source_run_id), [])
                 if len(symbols) < SOURCE_SYMBOL_LIMIT:
                     symbols.append(str(symbol))
 
@@ -229,21 +273,25 @@ def _engine_fact_summary(
             limit=ENGINE_RECENT_ROW_LIMIT,
         )
     ]
-    source_rows = [_source_run_row(row, symbols=symbols_by_source_run.get(row.source_run_id, [])) for row in source_runs]
+    ticker_source_rows = [
+        _ticker_source_run_row(row, symbols=symbols_by_ticker_source_run.get(row.ticker_source_run_id, [])) for row in ticker_source_runs
+    ]
+    ticker_source_state_rows = [_ticker_source_state_row(row) for row in ticker_source_state]
     candidate_rows = [_candidate_run_row(row) for row in candidate_runs]
-    source_statuses = {str(row.get("status") or "unknown") for row in source_rows}
-    source_status = "idle"
-    if source_rows:
-        source_status = "degraded" if source_statuses - {"ready", "fallback", "completed", "ok"} else "healthy"
+    ticker_source_statuses = {str(row.get("status") or "unknown") for row in ticker_source_rows}
+    ticker_source_status = "idle"
+    if ticker_source_rows:
+        ticker_source_status = "degraded" if ticker_source_statuses - {"ready", "fallback", "completed", "ok"} else "healthy"
     return {
-        "status": source_status,
-        "source_runs": source_rows,
+        "status": ticker_source_status,
+        "ticker_source_runs": ticker_source_rows,
+        "ticker_source_state": ticker_source_state_rows,
         "candidate_runs": candidate_rows,
         "trade_signals": watch_signals,
         "selected_decisions": selected_decisions,
         "signal_state_counts": dict(sorted((str(key), int(value)) for key, value in signal_counts.items())),
         "decision_state_counts": dict(sorted((str(key), int(value)) for key, value in decision_counts.items())),
-        "source_run_count": int(source_run_count),
+        "ticker_source_run_count": int(ticker_source_run_count),
         "candidate_run_count": int(candidate_run_count),
         "trade_candidate_count": int(trade_candidate_count),
         "signal_count": int(sum(signal_counts.values())),
@@ -363,7 +411,7 @@ def build_engine_ops_state(
         "strategy_count": len(strategies),
         "entry_strategy_count": sum(1 for strategy in strategies.values() if strategy.entry is not None and strategy.entry.enabled),
         "management_strategy_count": sum(1 for strategy in strategies.values() if strategy.management is not None and strategy.management.enabled),
-        "source_run_count": fact_summary.get("source_run_count"),
+        "ticker_source_run_count": fact_summary.get("ticker_source_run_count"),
         "candidate_run_count": fact_summary.get("candidate_run_count"),
         "trade_candidate_count": fact_summary.get("trade_candidate_count"),
         "signal_count": fact_summary.get("signal_count"),
@@ -390,7 +438,8 @@ def build_engine_ops_state(
         "status": status,
         "summary": summary,
         "details": {
-            "source_runs": fact_summary.get("source_runs"),
+            "ticker_source_runs": fact_summary.get("ticker_source_runs"),
+            "ticker_source_state": fact_summary.get("ticker_source_state"),
             "candidate_runs": fact_summary.get("candidate_runs"),
             "trade_signals": fact_summary.get("trade_signals"),
             "selected_decisions": fact_summary.get("selected_decisions"),

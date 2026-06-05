@@ -16,7 +16,7 @@ Last updated: 2026-06-04
 | Dynamic ticker sources | `packages/config/ticker_sources`, `services/ticker_sources.py` | Ticker sources materialize reusable underlying lists. `finviz_momentum` feeds `momentum_long_calls`. |
 | Market data capture | `services/trading_engine/capture_targets.py`, `services/market_recorder.py`, `storage/capture_repository.py` | `DataEngine` owns desired capture state in `capture_targets`; `market_recorder.py` is the normal Alpaca option websocket owner and reconciles the prioritized target set into quote/trade events plus `capture_summaries`. |
 | Engine data and scanning | `services/trading_engine/data_runtime.py`, `services/scanners/`, `services/live_selection.py`, `services/opportunity_scoring.py`, `services/candidate_policy.py` | DataEngine resolves ticker sources/static sources and builds candidate inputs directly for strategy entry. Scanner math remains reusable; discovery-run ownership is retired. |
-| Strategy signals and decisions | `services/trading_engine/facts.py`, `services/decision_engine.py`, `storage/engine_fact_repository.py` | Owns source runs, candidate runs, trade candidates, trade signals, trade decisions, and admission decisions before intents. |
+| Strategy signals and decisions | `services/trading_engine/facts.py`, `services/decision_engine.py`, `storage/engine_fact_repository.py` | Owns candidate runs, trade candidates, trade signals, trade decisions, and admission decisions before intents. Ticker-source jobs own ticker-source runs and observations. |
 | Execution and portfolio state | `services/execution/`, `services/execution_intents/`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, `services/exit_manager.py` | Owns intent dispatch, broker submission, order/fill facts, position attribution, reconciliation, and close behavior. |
 | Operator read models | `services/ops/`, `services/positions.py`, `services/execution/runtimes.py` | Read models compose persisted engine, jobs, trading health, positions, execution, account, retention, and capture state. Retired pipeline/discovery/UOA product routes are not active surfaces. |
 | Research AI layer | `services/tradingagents_scan.py`, `packages/config/jobs/tradingagents_scan_finviz_momentum.yaml`, `external/TradingAgents` | Spreads owns orchestration, job config, artifacts, alerts, and visibility. The external TradingAgents repo owns its own agent internals. |
@@ -47,8 +47,8 @@ Last updated: 2026-06-04
 | Trading strategy | Operator/product trading unit with source, trade structure, routines, risk, limits, execution settings, and config hash. | `packages/config/trading_strategies`, `services/trading_strategies.py` | Discovery-session identity, broker facts, or dashboard-only state. |
 | Trade structure | Reusable option construction family. | `services/strategy_builders.py`, `services/option_structures.py`, scanner builders | Runtime owner identity. |
 | Routine | Scheduled strategy behavior such as entry or manage. | `services/trading_strategy_runtime.py`, generated job specs | Broker submission facts. |
-| Ticker source | Reusable dynamic symbol list. | `packages/config/ticker_sources`, `services/ticker_sources.py`, `ticker_source:*` jobs | Execution ownership or position attribution. |
-| Source run | One ticker-source/materialized source refresh used by strategies. | `source_runs`, `source_tickers`, `services/trading_engine/data_runtime.py` | Execution ownership or broker facts. |
+| Ticker source | Reusable static or dynamic symbol source. | `packages/config/ticker_sources`, `services/ticker_sources.py`, `ticker_source:*` jobs | Execution ownership or position attribution. |
+| Ticker source run | One materialized ticker-source refresh plus selected, observed, and filtered ticker observations. | `ticker_source_runs`, `ticker_source_observations`, `ticker_source_state`, `services/ticker_sources.py` | Strategy candidate ownership, execution ownership, or broker facts. |
 | Candidate run | One strategy candidate-build pass over resolved tickers. | `candidate_runs`, `trade_candidates`, `services/trading_engine/facts.py` | Broker facts or position PnL. |
 | Trade signal | Normalized market/setup observation from a candidate. | `trade_signals`, `services/trading_engine/facts.py` | Broker sync or frontend state. |
 | Trade decision | Strategy/lifecycle choice such as selected, skipped, blocked, or no-entry. | `trade_decisions`, strategy services | Alert delivery or dashboard-only read models. |
@@ -152,8 +152,9 @@ Strategy entry follows the Nautilus-shaped spine:
 
 Active entry facts are persisted through:
 
-- `source_runs`
-- `source_tickers`
+- `ticker_source_runs`
+- `ticker_source_observations`
+- `ticker_source_state`
 - `candidate_runs`
 - `trade_candidates`
 - `trade_signals`

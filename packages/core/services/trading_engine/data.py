@@ -23,7 +23,7 @@ class ResolvedTickerSet:
     symbols: tuple[str, ...]
     source: TickerSourceSpec
     resolved_at: datetime
-    source_run_id: str | None = None
+    ticker_source_run_id: str | None = None
     reason_codes: tuple[str, ...] = ()
     blockers: tuple[str, ...] = ()
     evidence: Mapping[str, Any] = field(default_factory=dict)

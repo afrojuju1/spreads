@@ -126,30 +126,6 @@ def _signal_state(opportunity: Mapping[str, Any]) -> str:
     return "observed"
 
 
-def _source_run_id(
-    *,
-    run_key: str,
-    ticker_set: ResolvedTickerSet,
-) -> str:
-    if ticker_set.source_run_id:
-        return _stable_id("source_run", ticker_set.source.source_type, ticker_set.source.ref, ticker_set.source_run_id)
-    return _stable_id("source_run", ticker_set.source.source_type, ticker_set.source.ref, run_key)
-
-
-def _source_status(ticker_set: ResolvedTickerSet) -> str:
-    if ticker_set.blockers:
-        return "blocked"
-    evidence_status = str((ticker_set.evidence or {}).get("status") or "").strip().lower()
-    return evidence_status or "ready"
-
-
-def _source_entries(ticker_set: ResolvedTickerSet) -> list[dict[str, Any]]:
-    entries = ticker_set.evidence.get("entries") if isinstance(ticker_set.evidence, Mapping) else None
-    if not isinstance(entries, list):
-        return []
-    return [dict(entry) for entry in entries if isinstance(entry, Mapping)]
-
-
 def _candidate_payload(row: Mapping[str, Any]) -> dict[str, Any]:
     candidate = row.get("candidate")
     if isinstance(candidate, Mapping):
@@ -175,28 +151,6 @@ def persist_entry_engine_facts(
         }
 
     now = _utc_now()
-    source_summary = ticker_set.evidence.get("summary") if isinstance(ticker_set.evidence.get("summary"), Mapping) else {}
-    source_run_id = _source_run_id(run_key=run_key, ticker_set=ticker_set)
-    source_run = engine_facts.upsert_source_run(
-        source_run_id=source_run_id,
-        source_type=ticker_set.source.source_type,
-        source_ref=ticker_set.source.ref,
-        source_job_run_id=ticker_set.source_run_id,
-        status=_source_status(ticker_set),
-        config_hash=runtime.config_hash,
-        generated_at=ticker_set.resolved_at.isoformat().replace("+00:00", "Z"),
-        completed_at=generated_at,
-        symbols=list(ticker_set.symbols),
-        entries=_source_entries(ticker_set),
-        summary=dict(source_summary),
-        evidence={
-            "reason_codes": list(ticker_set.reason_codes),
-            "blockers": list(ticker_set.blockers),
-            "snapshot": dict(ticker_set.evidence or {}),
-        },
-        updated_at=now,
-    )
-
     candidate_rows = [dict(row) for row in tuple(() if candidate_result is None else candidate_result.candidates) if isinstance(row, Mapping)]
     candidate_run_id = None if candidate_result is None else candidate_result.candidate_run_id
     if candidate_result is not None:
@@ -206,9 +160,9 @@ def persist_entry_engine_facts(
             trading_strategy_id=runtime.trading_strategy_id,
             trade_structure=runtime.trade_structure,
             routine="entry",
-            source_run_id=str(source_run["source_run_id"]),
-            source_type=ticker_set.source.source_type,
-            source_ref=ticker_set.source.ref,
+            ticker_source_run_id=ticker_set.ticker_source_run_id,
+            ticker_source_kind=ticker_set.source.source_type,
+            ticker_source_id=ticker_set.source.ref,
             status=str(candidate_result.summary.get("status") or "completed"),
             config_hash=runtime.config_hash,
             generated_at=generated_at,
@@ -218,9 +172,9 @@ def persist_entry_engine_facts(
             summary=dict(candidate_result.summary or {}),
             evidence={
                 "ticker_set": {
-                    "source_run_id": source_run["source_run_id"],
-                    "source_type": ticker_set.source.source_type,
-                    "source_ref": ticker_set.source.ref,
+                    "ticker_source_run_id": ticker_set.ticker_source_run_id,
+                    "ticker_source_kind": ticker_set.source.source_type,
+                    "ticker_source_id": ticker_set.source.ref,
                     "symbols": list(ticker_set.symbols),
                 },
             },
@@ -264,7 +218,7 @@ def persist_entry_engine_facts(
                 blockers=_blockers(candidate),
                 candidate=dict(candidate),
                 evidence={
-                    "source_run_id": source_run["source_run_id"],
+                    "ticker_source_run_id": ticker_set.ticker_source_run_id,
                     "candidate_run_id": candidate_run_id,
                     "ranking_policy_status": candidate.get("ranking_policy_status"),
                     "scoring_state": candidate.get("scoring_state"),
@@ -300,7 +254,7 @@ def persist_entry_engine_facts(
             idempotency_key=idempotency_key,
             trade_candidate_id=trade_candidate_id,
             source_kind="trade_candidate" if trade_candidate_id is not None else "candidate_run",
-            source_id=trade_candidate_id or str(candidate_run_id or source_run["source_run_id"]),
+            source_id=trade_candidate_id or str(candidate_run_id or ticker_set.ticker_source_run_id or run_key),
             trading_strategy_id=runtime.trading_strategy_id,
             trade_structure=runtime.trade_structure,
             routine="entry",
@@ -325,7 +279,7 @@ def persist_entry_engine_facts(
             reason_codes=_text_list(signal_row.get("reason_codes")),
             blockers=_blockers(signal_row),
             evidence={
-                "source_run_id": source_run["source_run_id"],
+                "ticker_source_run_id": ticker_set.ticker_source_run_id,
                 "candidate_run_id": candidate_run_id,
                 "trade_candidate_id": trade_candidate_id,
                 "selection_state": signal_row.get("selection_state"),
@@ -346,7 +300,7 @@ def persist_entry_engine_facts(
 
     return {
         "status": "ok",
-        "source_run_id": source_run["source_run_id"],
+        "ticker_source_run_id": ticker_set.ticker_source_run_id,
         "candidate_run_id": candidate_run_id,
         "trade_candidate_count": len(trade_candidate_ids_by_identity),
         "trade_signal_count": len(trade_signal_refs),

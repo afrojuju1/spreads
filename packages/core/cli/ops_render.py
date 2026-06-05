@@ -169,7 +169,7 @@ def _render_engine_summary(
         "Management Strategies",
         _render_value(payload.get("management_strategy_count")),
     )
-    table.add_row("Source Runs", _render_value(payload.get("source_run_count")))
+    table.add_row("Ticker Source Runs", _render_value(payload.get("ticker_source_run_count")))
     table.add_row("Candidate Runs", _render_value(payload.get("candidate_run_count")))
     table.add_row("Trade Candidates", _render_value(payload.get("trade_candidate_count")))
     table.add_row("Signals", _render_value(payload.get("signal_count")))
@@ -379,7 +379,7 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
     overview.add_row(
         "Engine",
         (
-            f"sources {_render_value(summary.get('engine_source_run_count'))} | "
+            f"ticker sources {_render_value(summary.get('engine_ticker_source_run_count'))} | "
             f"candidates {_render_value(summary.get('engine_trade_candidate_count'))} | "
             f"signals {_render_value(summary.get('engine_signal_count'))} | "
             f"decisions {_render_value(summary.get('engine_decision_count'))} | "
@@ -418,7 +418,7 @@ def render_trading_ops_state(console: Console, payload: dict[str, Any]) -> None:
         table = Table(title="Trading Flows", header_style="bold")
         table.add_column("Strategy")
         table.add_column("Status")
-        table.add_column("Source")
+        table.add_column("Ticker Source")
         table.add_column("Symbols", justify="right")
         table.add_column("Candidates", justify="right")
         table.add_column("Active Intents", justify="right")

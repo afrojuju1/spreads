@@ -92,7 +92,7 @@ export function TodayCommandCenter() {
   const runtimeRows = readRecordList(executionRuntimes.runtimes);
   const attention = readRecordList(state?.attention);
   const sourceSymbols = Array.isArray(sourceState.symbols) ? sourceState.symbols.map(String).slice(0, 12) : [];
-  const latestSourceRun = readRecord(sourceState.latest_run);
+  const latestTickerSourceRun = readRecord(sourceState.latest_run);
   const latestCandidateRun = readRecord(candidateState.latest_run);
 
   const pendingLabel = loading ? "Loading" : "-";
@@ -313,9 +313,9 @@ export function TodayCommandCenter() {
           <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Flow Evidence</div>
           <div className="grid gap-3 text-sm md:grid-cols-2">
             <div className="rounded-lg border border-border/70 px-3 py-2">
-              <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Latest Source</div>
-              <div className="mt-1 truncate font-medium">{readString(latestSourceRun.source_run_id, "-")}</div>
-              <div className="mt-1 text-xs text-muted-foreground">{formatTimestamp(readString(latestSourceRun.generated_at, ""))}</div>
+              <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Latest Ticker Source</div>
+              <div className="mt-1 truncate font-medium">{readString(latestTickerSourceRun.ticker_source_run_id, "-")}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{formatTimestamp(readString(latestTickerSourceRun.generated_at, ""))}</div>
             </div>
             <div className="rounded-lg border border-border/70 px-3 py-2">
               <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Latest Candidates</div>

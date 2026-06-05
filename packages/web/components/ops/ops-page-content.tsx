@@ -144,8 +144,8 @@ export function OpsPageContent() {
         <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Engine Spine</div>
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <MetricTile
-            label="Sources"
-            value={formatCompactNumber(readNumber(engineSummary.source_run_count))}
+            label="Ticker Sources"
+            value={formatCompactNumber(readNumber(engineSummary.ticker_source_run_count))}
             note={`${formatCompactNumber(readNumber(engineSummary.candidate_run_count))} candidate runs`}
           />
           <MetricTile

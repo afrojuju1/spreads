@@ -85,9 +85,9 @@ def _ticker_set_summary(ticker_set: ResolvedTickerSet) -> dict[str, Any]:
     summary = evidence.get("summary") if isinstance(evidence.get("summary"), dict) else {}
     degradation = evidence.get("degradation") if isinstance(evidence.get("degradation"), dict) else {}
     return {
-        "source_type": ticker_set.source.source_type,
-        "source_ref": ticker_set.source.ref,
-        "source_run_id": ticker_set.source_run_id,
+        "ticker_source_kind": ticker_set.source.source_type,
+        "ticker_source_id": ticker_set.source.ref,
+        "ticker_source_run_id": ticker_set.ticker_source_run_id,
         "resolved_at": ticker_set.resolved_at.isoformat().replace("+00:00", "Z"),
         "symbol_count": len(ticker_set.symbols),
         "symbols": list(ticker_set.symbols),
@@ -825,8 +825,8 @@ def run_trading_strategy_entry_decision(
                     if isinstance(candidate_generation.get("engine_facts"), dict)
                     else None
                 ),
-                "source_run_id": (
-                    (candidate_generation.get("engine_facts") or {}).get("source_run_id")
+                "ticker_source_run_id": (
+                    (candidate_generation.get("engine_facts") or {}).get("ticker_source_run_id")
                     if isinstance(candidate_generation.get("engine_facts"), dict)
                     else None
                 ),

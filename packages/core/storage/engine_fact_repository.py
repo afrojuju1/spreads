@@ -1,12 +1,19 @@
 from __future__ import annotations
 
-from datetime import date
+from collections.abc import Mapping
+from datetime import UTC, date, datetime
 from typing import Any
 
 from sqlalchemy import or_, select
 
 from core.storage.base import RepositoryBase
-from core.storage.engine_models import CandidateRunModel, SourceRunModel, SourceTickerModel, TradeCandidateModel
+from core.storage.engine_models import (
+    CandidateRunModel,
+    TickerSourceObservationModel,
+    TickerSourceRunModel,
+    TickerSourceStateModel,
+    TradeCandidateModel,
+)
 from core.storage.lifecycle_models import TradeAdmissionModel, TradeDecisionModel, TradeExecutionIntentModel, TradeSignalModel
 from core.storage.records import StorageRow
 from core.storage.serializers import parse_date, parse_datetime, render_value
@@ -21,8 +28,9 @@ def _optional_date(value: Any) -> date | None:
 class EngineFactRepository(RepositoryBase):
     def schema_ready(self) -> bool:
         return self.schema_has_tables(
-            "source_runs",
-            "source_tickers",
+            "ticker_source_runs",
+            "ticker_source_observations",
+            "ticker_source_state",
             "candidate_runs",
             "trade_candidates",
             "trade_signals",
@@ -31,19 +39,20 @@ class EngineFactRepository(RepositoryBase):
             "trade_admissions",
         )
 
-    def upsert_source_run(
+    def upsert_ticker_source_run(
         self,
         *,
-        source_run_id: str,
-        source_type: str,
-        source_ref: str,
-        source_job_run_id: str | None,
+        ticker_source_run_id: str,
+        ticker_source_type: str,
+        ticker_source_id: str,
+        job_run_id: str | None,
         status: str,
         config_hash: str | None,
         generated_at: str,
         completed_at: str | None,
         symbols: list[str],
         entries: list[dict[str, Any]],
+        observations: list[dict[str, Any]] | None = None,
         summary: dict[str, Any],
         evidence: dict[str, Any],
         updated_at: str,
@@ -53,23 +62,32 @@ class EngineFactRepository(RepositoryBase):
         updated_at_dt = parse_datetime(updated_at)
         if generated_at_dt is None or updated_at_dt is None:
             raise ValueError("generated_at and updated_at are required")
-        entries_by_symbol = {
-            str(entry.get("symbol") or "").upper(): dict(entry) for entry in list(entries or []) if str(entry.get("symbol") or "").strip()
-        }
+        selected_entries = [dict(entry) for entry in list(entries or []) if isinstance(entry, Mapping)]
+        entries_by_symbol = {self._normalize_symbol(entry.get("symbol")): dict(entry) for entry in selected_entries}
+        entries_by_symbol = {symbol: entry for symbol, entry in entries_by_symbol.items() if symbol is not None}
         normalized_symbols = list(dict.fromkeys(str(symbol).upper() for symbol in symbols if str(symbol or "").strip()))
+        selected_symbols = set(normalized_symbols)
+        observation_rows = self._normalize_observations(
+            observations=observations,
+            selected_entries=selected_entries,
+            selected_symbols=selected_symbols,
+        )
+        excluded_count = sum(1 for row in observation_rows if str(row.get("observation_state") or "") in {"excluded", "filtered_out"})
         with self.session_scope() as session:
-            row = session.get(SourceRunModel, source_run_id)
+            row = session.get(TickerSourceRunModel, ticker_source_run_id)
             if row is None:
-                row = SourceRunModel(
-                    source_run_id=source_run_id,
-                    source_type=source_type,
-                    source_ref=source_ref,
-                    source_job_run_id=source_job_run_id,
+                row = TickerSourceRunModel(
+                    ticker_source_run_id=ticker_source_run_id,
+                    ticker_source_type=ticker_source_type,
+                    ticker_source_id=ticker_source_id,
+                    job_run_id=job_run_id,
                     status=status,
                     config_hash=config_hash,
                     generated_at=generated_at_dt,
                     completed_at=completed_at_dt,
-                    symbol_count=len(normalized_symbols),
+                    observed_count=len(observation_rows),
+                    selected_count=len(normalized_symbols),
+                    excluded_count=excluded_count,
                     summary_json=render_value(summary),
                     evidence_json=render_value(evidence),
                     created_at=updated_at_dt,
@@ -77,48 +95,171 @@ class EngineFactRepository(RepositoryBase):
                 )
                 session.add(row)
             else:
-                row.source_type = source_type
-                row.source_ref = source_ref
-                row.source_job_run_id = source_job_run_id
+                row.ticker_source_type = ticker_source_type
+                row.ticker_source_id = ticker_source_id
+                row.job_run_id = job_run_id
                 row.status = status
                 row.config_hash = config_hash
                 row.generated_at = generated_at_dt
                 row.completed_at = completed_at_dt
-                row.symbol_count = len(normalized_symbols)
+                row.observed_count = len(observation_rows)
+                row.selected_count = len(normalized_symbols)
+                row.excluded_count = excluded_count
                 row.summary_json = render_value(summary)
                 row.evidence_json = render_value(evidence)
                 row.updated_at = updated_at_dt
 
-            for rank, symbol in enumerate(normalized_symbols, start=1):
+            observations_by_symbol: dict[str, TickerSourceObservationModel] = {}
+            for rank, observation in enumerate(observation_rows, start=1):
+                symbol = str(observation["symbol"])
                 ticker = session.scalar(
-                    select(SourceTickerModel).where(
-                        SourceTickerModel.source_run_id == source_run_id,
-                        SourceTickerModel.symbol == symbol,
+                    select(TickerSourceObservationModel).where(
+                        TickerSourceObservationModel.ticker_source_run_id == ticker_source_run_id,
+                        TickerSourceObservationModel.symbol == symbol,
                     )
                 )
                 entry = entries_by_symbol.get(symbol, {})
+                observation_rank = self._optional_int(observation.get("rank"))
+                if observation_rank is None and str(observation.get("observation_state") or "") == "selected":
+                    observation_rank = rank
                 if ticker is None:
-                    ticker = SourceTickerModel(
-                        source_run_id=source_run_id,
-                        source_ref=source_ref,
+                    ticker = TickerSourceObservationModel(
+                        ticker_source_run_id=ticker_source_run_id,
+                        ticker_source_id=ticker_source_id,
                         symbol=symbol,
-                        rank=rank,
-                        score=self._optional_float(entry.get("score")),
-                        reason_codes_json=self._text_list(entry.get("reason_codes")),
-                        evidence_json=render_value(entry),
+                        observation_state=str(observation.get("observation_state") or "observed"),
+                        rank=observation_rank,
+                        score=self._optional_float(observation.get("score")),
+                        company=self._optional_text(observation.get("company")),
+                        sector=self._optional_text(observation.get("sector")),
+                        industry=self._optional_text(observation.get("industry")),
+                        country=self._optional_text(observation.get("country")),
+                        price=self._optional_float(observation.get("price")),
+                        market_cap=self._optional_int(observation.get("market_cap")),
+                        daily_volume=self._optional_int(observation.get("daily_volume")),
+                        move_percent=self._optional_float(observation.get("move_percent")),
+                        relative_volume=self._optional_float(observation.get("relative_volume")),
+                        reason_codes_json=self._text_list(observation.get("reason_codes") or entry.get("reason_codes")),
+                        evidence_json=render_value(observation),
                         created_at=updated_at_dt,
                     )
                     session.add(ticker)
                 else:
-                    ticker.source_ref = source_ref
-                    ticker.rank = rank
-                    ticker.score = self._optional_float(entry.get("score"))
-                    ticker.reason_codes_json = self._text_list(entry.get("reason_codes"))
-                    ticker.evidence_json = render_value(entry)
+                    ticker.ticker_source_id = ticker_source_id
+                    ticker.observation_state = str(observation.get("observation_state") or "observed")
+                    ticker.rank = observation_rank
+                    ticker.score = self._optional_float(observation.get("score"))
+                    ticker.company = self._optional_text(observation.get("company"))
+                    ticker.sector = self._optional_text(observation.get("sector"))
+                    ticker.industry = self._optional_text(observation.get("industry"))
+                    ticker.country = self._optional_text(observation.get("country"))
+                    ticker.price = self._optional_float(observation.get("price"))
+                    ticker.market_cap = self._optional_int(observation.get("market_cap"))
+                    ticker.daily_volume = self._optional_int(observation.get("daily_volume"))
+                    ticker.move_percent = self._optional_float(observation.get("move_percent"))
+                    ticker.relative_volume = self._optional_float(observation.get("relative_volume"))
+                    ticker.reason_codes_json = self._text_list(observation.get("reason_codes") or entry.get("reason_codes"))
+                    ticker.evidence_json = render_value(observation)
+                observations_by_symbol[symbol] = ticker
+
+            session.flush()
+            self._update_ticker_source_state(
+                session,
+                ticker_source_id=ticker_source_id,
+                ticker_source_run_id=ticker_source_run_id,
+                generated_at=generated_at_dt,
+                updated_at=updated_at_dt,
+                status=status,
+                observations_by_symbol=observations_by_symbol,
+                selected_symbols=selected_symbols,
+            )
 
             session.flush()
             session.refresh(row)
             return self.row(row)
+
+    def get_latest_ticker_source_snapshot(
+        self,
+        *,
+        ticker_source_id: str,
+        max_age_seconds: int | None = None,
+    ) -> StorageRow:
+        with self.session_factory() as session:
+            run = session.scalar(
+                select(TickerSourceRunModel)
+                .where(TickerSourceRunModel.ticker_source_id == ticker_source_id)
+                .order_by(TickerSourceRunModel.generated_at.desc(), TickerSourceRunModel.ticker_source_run_id.asc())
+                .limit(1)
+            )
+            if run is None:
+                return {
+                    "status": "missing",
+                    "ticker_source_id": ticker_source_id,
+                    "symbols": [],
+                    "entries": [],
+                    "summary": {},
+                    "degradation": {
+                        "status": "missing",
+                        "reason": "no_ticker_source_run",
+                    },
+                    "ticker_source_run_id": None,
+                    "job_run_id": None,
+                    "generated_at": None,
+                    "age_seconds": None,
+                }
+            observations = session.scalars(
+                select(TickerSourceObservationModel)
+                .where(TickerSourceObservationModel.ticker_source_run_id == run.ticker_source_run_id)
+                .where(TickerSourceObservationModel.observation_state == "selected")
+                .order_by(TickerSourceObservationModel.rank.asc().nullslast(), TickerSourceObservationModel.symbol.asc())
+            ).all()
+            run_row = self.row(run)
+            observation_rows = self.rows(observations)
+        generated_dt = run.generated_at.astimezone(UTC)
+        age_seconds = max((datetime.now(UTC) - generated_dt).total_seconds(), 0.0)
+        run_status = str(run.status or "").strip().lower()
+        snapshot_status = "ready" if observation_rows and run_status == "completed" else "empty" if run_status == "completed" else run_status or "missing"
+        if max_age_seconds is not None and age_seconds > max(int(max_age_seconds), 0):
+            snapshot_status = "stale"
+        symbols = [str(row.get("symbol") or "").upper() for row in observation_rows if str(row.get("symbol") or "").strip()]
+        return {
+            "status": snapshot_status,
+            "ticker_source_id": ticker_source_id,
+            "ticker_source_run_id": run_row.get("ticker_source_run_id"),
+            "ticker_source_type": run_row.get("ticker_source_type"),
+            "job_run_id": run_row.get("job_run_id"),
+            "generated_at": run_row.get("generated_at"),
+            "age_seconds": age_seconds,
+            "symbols": symbols if snapshot_status != "stale" else [],
+            "entries": observation_rows if snapshot_status != "stale" else [],
+            "summary": dict(run_row.get("summary") or {}),
+            "degradation": {
+                "status": snapshot_status,
+                "reason": None if snapshot_status in {"ready", "empty"} else "snapshot_stale" if snapshot_status == "stale" else snapshot_status,
+            },
+        }
+
+    def list_ticker_source_state(
+        self,
+        *,
+        ticker_source_id: str | None = None,
+        active: bool | None = None,
+        limit: int = 50,
+    ) -> list[StorageRow]:
+        statement = select(TickerSourceStateModel)
+        if ticker_source_id is not None:
+            statement = statement.where(TickerSourceStateModel.ticker_source_id == ticker_source_id)
+        if active is not None:
+            statement = statement.where(TickerSourceStateModel.active.is_(active))
+        statement = statement.order_by(
+            TickerSourceStateModel.active.desc(),
+            TickerSourceStateModel.last_rank.asc().nullslast(),
+            TickerSourceStateModel.last_seen_at.desc(),
+            TickerSourceStateModel.symbol.asc(),
+        ).limit(max(int(limit), 1))
+        with self.session_factory() as session:
+            rows = session.scalars(statement).all()
+        return self.rows(rows)
 
     def upsert_candidate_run(
         self,
@@ -128,9 +269,9 @@ class EngineFactRepository(RepositoryBase):
         trading_strategy_id: str,
         trade_structure: str,
         routine: str,
-        source_run_id: str | None,
-        source_type: str,
-        source_ref: str,
+        ticker_source_run_id: str | None,
+        ticker_source_kind: str,
+        ticker_source_id: str,
         status: str,
         config_hash: str,
         generated_at: str,
@@ -155,9 +296,9 @@ class EngineFactRepository(RepositoryBase):
                     trading_strategy_id=trading_strategy_id,
                     trade_structure=trade_structure,
                     routine=routine,
-                    source_run_id=source_run_id,
-                    source_type=source_type,
-                    source_ref=source_ref,
+                    ticker_source_run_id=ticker_source_run_id,
+                    ticker_source_kind=ticker_source_kind,
+                    ticker_source_id=ticker_source_id,
                     status=status,
                     config_hash=config_hash,
                     generated_at=generated_at_dt,
@@ -175,9 +316,9 @@ class EngineFactRepository(RepositoryBase):
                 row.trading_strategy_id = trading_strategy_id
                 row.trade_structure = trade_structure
                 row.routine = routine
-                row.source_run_id = source_run_id
-                row.source_type = source_type
-                row.source_ref = source_ref
+                row.ticker_source_run_id = ticker_source_run_id
+                row.ticker_source_kind = ticker_source_kind
+                row.ticker_source_id = ticker_source_id
                 row.status = status
                 row.config_hash = config_hash
                 row.generated_at = generated_at_dt
@@ -766,17 +907,186 @@ class EngineFactRepository(RepositoryBase):
             session.refresh(row)
             return self.row(row)
 
+    @classmethod
+    def _normalize_observations(
+        cls,
+        *,
+        observations: list[dict[str, Any]] | None,
+        selected_entries: list[dict[str, Any]],
+        selected_symbols: set[str],
+    ) -> list[dict[str, Any]]:
+        rows: dict[str, dict[str, Any]] = {}
+        for raw in list(observations or []):
+            if not isinstance(raw, Mapping):
+                continue
+            symbol = cls._normalize_symbol(raw.get("symbol"))
+            if symbol is None:
+                continue
+            row = dict(raw)
+            row["symbol"] = symbol
+            state = cls._optional_text(row.get("observation_state") or row.get("state"))
+            row["observation_state"] = (state or ("selected" if symbol in selected_symbols else "observed")).strip().lower()
+            rows[symbol] = row
+
+        for rank, raw in enumerate(selected_entries, start=1):
+            symbol = cls._normalize_symbol(raw.get("symbol"))
+            if symbol is None:
+                continue
+            row = rows.get(symbol, dict(raw))
+            row["symbol"] = symbol
+            row["observation_state"] = "selected"
+            row["rank"] = rank
+            row.setdefault("score", raw.get("score"))
+            row.setdefault("reason_codes", raw.get("reason_codes"))
+            rows[symbol] = row
+
+        return list(rows.values())
+
+    def _update_ticker_source_state(
+        self,
+        session: Any,
+        *,
+        ticker_source_id: str,
+        ticker_source_run_id: str,
+        generated_at: datetime,
+        updated_at: datetime,
+        status: str,
+        observations_by_symbol: dict[str, TickerSourceObservationModel],
+        selected_symbols: set[str],
+    ) -> None:
+        seen_symbols = set(observations_by_symbol)
+        for symbol, observation in observations_by_symbol.items():
+            state = session.scalar(
+                select(TickerSourceStateModel).where(
+                    TickerSourceStateModel.ticker_source_id == ticker_source_id,
+                    TickerSourceStateModel.symbol == symbol,
+                )
+            )
+            is_selected = symbol in selected_symbols and observation.observation_state == "selected"
+            is_new_ticker_source_run = state is None or state.last_ticker_source_run_id != ticker_source_run_id
+            if state is None:
+                state = TickerSourceStateModel(
+                    ticker_source_id=ticker_source_id,
+                    symbol=symbol,
+                    active=True,
+                    first_seen_at=generated_at,
+                    last_seen_at=generated_at,
+                    first_selected_at=generated_at if is_selected else None,
+                    last_selected_at=generated_at if is_selected else None,
+                    seen_count=0,
+                    selected_count=0,
+                    consecutive_seen_count=0,
+                    consecutive_missing_count=0,
+                    last_rank=observation.rank,
+                    best_rank=observation.rank,
+                    last_score=observation.score,
+                    best_score=observation.score,
+                    last_state=observation.observation_state,
+                    last_ticker_source_run_id=ticker_source_run_id,
+                    last_observation_id=observation.ticker_source_observation_id,
+                    last_metrics_json={},
+                    created_at=updated_at,
+                    updated_at=updated_at,
+                )
+                session.add(state)
+
+            state.active = True
+            state.last_seen_at = generated_at
+            state.last_rank = observation.rank
+            state.last_score = observation.score
+            state.last_state = observation.observation_state
+            state.last_ticker_source_run_id = ticker_source_run_id
+            state.last_observation_id = observation.ticker_source_observation_id
+            state.last_metrics_json = render_value(self._observation_metrics(observation))
+            state.updated_at = updated_at
+            if is_new_ticker_source_run:
+                state.seen_count += 1
+                state.consecutive_seen_count += 1
+                state.consecutive_missing_count = 0
+            if observation.rank is not None and (state.best_rank is None or observation.rank < state.best_rank):
+                state.best_rank = observation.rank
+            if observation.score is not None and (state.best_score is None or observation.score > state.best_score):
+                state.best_score = observation.score
+            if is_selected:
+                if state.first_selected_at is None:
+                    state.first_selected_at = generated_at
+                state.last_selected_at = generated_at
+                if is_new_ticker_source_run:
+                    state.selected_count += 1
+
+        if str(status or "").strip().lower() != "completed":
+            return
+
+        missing_statement = select(TickerSourceStateModel).where(
+            TickerSourceStateModel.ticker_source_id == ticker_source_id,
+            TickerSourceStateModel.active.is_(True),
+        )
+        if seen_symbols:
+            missing_statement = missing_statement.where(~TickerSourceStateModel.symbol.in_(seen_symbols))
+        for state in session.scalars(missing_statement).all():
+            if state.last_ticker_source_run_id == ticker_source_run_id:
+                continue
+            state.active = False
+            state.consecutive_seen_count = 0
+            state.consecutive_missing_count += 1
+            state.updated_at = updated_at
+
+    @staticmethod
+    def _observation_metrics(observation: TickerSourceObservationModel) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in {
+                "company": observation.company,
+                "sector": observation.sector,
+                "industry": observation.industry,
+                "country": observation.country,
+                "price": observation.price,
+                "market_cap": observation.market_cap,
+                "daily_volume": observation.daily_volume,
+                "move_percent": observation.move_percent,
+                "relative_volume": observation.relative_volume,
+            }.items()
+            if value is not None
+        }
+
+    @staticmethod
+    def _normalize_symbol(value: Any) -> str | None:
+        rendered = str(value or "").upper().strip()
+        return rendered or None
+
+    @staticmethod
+    def _optional_text(value: Any) -> str | None:
+        rendered = str(value or "").strip()
+        return rendered or None
+
+    @staticmethod
+    def _optional_int(value: Any) -> int | None:
+        if value in (None, ""):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
     @staticmethod
     def _optional_float(value: Any) -> float | None:
         if value in (None, ""):
             return None
-        return float(value)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _text_list(value: Any) -> list[str]:
         if not isinstance(value, (list, tuple)):
             return []
-        return [str(item) for item in value if str(item or "").strip()]
+        normalized: list[str] = []
+        for item in value:
+            rendered = str(item or "").strip()
+            if rendered and rendered not in normalized:
+                normalized.append(rendered)
+        return normalized
 
 
 __all__ = ["EngineFactRepository"]

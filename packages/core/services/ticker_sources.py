@@ -15,7 +15,6 @@ from core.common import parse_float, parse_int, pick
 from core.integrations.alpaca.client import AlpacaRequestError
 from core.services.alpaca import create_alpaca_client_from_env
 from core.services.trading_strategies import build_entry_strategy_symbols, load_universe_symbols
-from core.storage.serializers import parse_datetime
 
 VALID_TICKER_SOURCE_RECIPES = frozenset({"strategy_union", "finviz_screener", "stock_prefilter"})
 
@@ -183,6 +182,17 @@ def _build_strategy_union_result(
         "entries": [
             {
                 "symbol": symbol,
+                "observation_state": "selected",
+                "score": None,
+                "reason_codes": [str(recipe)],
+                "source_tags": list(source_tags),
+            }
+            for symbol in symbols
+        ],
+        "observations": [
+            {
+                "symbol": symbol,
+                "observation_state": "selected",
                 "score": None,
                 "reason_codes": [str(recipe)],
                 "source_tags": list(source_tags),
@@ -391,7 +401,7 @@ def _run_stock_prefilter_feed(
             str(item.get("symbol") or ""),
         ),
     )
-    selected = ranked[:top]
+    selected = [{**dict(item), "observation_state": "selected"} for item in ranked[:top]]
     symbols = [str(item.get("symbol")) for item in selected if str(item.get("symbol") or "").strip()]
     if not symbols:
         raise RuntimeError(f"Stock prefilter source {source_id} produced no symbols after filters")
@@ -409,6 +419,13 @@ def _run_stock_prefilter_feed(
         "generated_at": generated_at,
         "symbols": symbols,
         "entries": selected,
+        "observations": [
+            {
+                **dict(item),
+                "observation_state": "selected" if str(item.get("symbol") or "") in set(symbols) else "observed",
+            }
+            for item in ranked
+        ],
         "summary": {
             "symbol_count": len(symbols),
             "candidate_count": len(candidate_symbols),
@@ -655,6 +672,7 @@ def _run_finviz_screener_feed(
             "generated_at": generated_at,
             "symbols": [],
             "entries": [],
+            "observations": [],
             "summary": {
                 "symbol_count": 0,
                 "recipe": str(recipe),
@@ -676,6 +694,7 @@ def _run_finviz_screener_feed(
     rows, source_format = _parse_finviz_source_rows(source_text)
 
     candidates: list[dict[str, Any]] = []
+    filtered_observations: list[dict[str, Any]] = []
     missing_symbol_count = 0
     below_min_price_count = 0
     missing_market_cap_count = 0
@@ -687,6 +706,33 @@ def _run_finviz_screener_feed(
         if symbol is None:
             missing_symbol_count += 1
             continue
+        price = _parse_finviz_float(pick(row, "price", "last", "close"))
+        market_cap = _parse_finviz_float(pick(row, "market_cap", "market_capitalization", "mkt_cap"))
+        volume = _parse_finviz_int(pick(row, "volume", "vol"))
+        change_percent = _parse_finviz_float(pick(row, "change", "change_percent", "change_pct"))
+        relative_volume = _parse_finviz_float(pick(row, "rel_volume", "relative_volume", "rel_vol"))
+        raw_rank = parse_int(pick(row, "no", "rank"))
+        rank_index = max(raw_rank - 1, 0) if raw_rank is not None else index
+        base_observation = {
+            "symbol": symbol,
+            "company": pick(row, "company", "name"),
+            "sector": pick(row, "sector"),
+            "industry": pick(row, "industry"),
+            "country": pick(row, "country"),
+            "price": None if price is None else round(price, 4),
+            "market_cap": None if market_cap is None else int(round(market_cap)),
+            "daily_volume": volume,
+            "move_percent": (None if change_percent is None else round(change_percent, 4)),
+            "relative_volume": (None if relative_volume is None else round(relative_volume, 4)),
+            "finviz_rank": None if raw_rank is None else int(raw_rank),
+            "rank": None if raw_rank is None else int(raw_rank),
+            "finviz_rank_index": rank_index,
+            "source_tags": [
+                f"recipe:{str(recipe or '').strip().lower()}",
+                "source:finviz",
+            ],
+            "raw": row,
+        }
         exclusion_reason = _finviz_instrument_exclusion_reason(
             row,
             exclude_industries=exclude_industries,
@@ -694,27 +740,55 @@ def _run_finviz_screener_feed(
         )
         if exclusion_reason is not None:
             excluded_instrument_reason_counts[exclusion_reason] = excluded_instrument_reason_counts.get(exclusion_reason, 0) + 1
+            filtered_observations.append(
+                {
+                    **base_observation,
+                    "observation_state": "excluded",
+                    "reason_codes": ["finviz_screen", exclusion_reason],
+                }
+            )
             continue
-        price = _parse_finviz_float(pick(row, "price", "last", "close"))
         if price is not None and price < min_price:
             below_min_price_count += 1
+            filtered_observations.append(
+                {
+                    **base_observation,
+                    "observation_state": "filtered_out",
+                    "reason_codes": ["finviz_screen", "below_min_price"],
+                }
+            )
             continue
-        market_cap = _parse_finviz_float(pick(row, "market_cap", "market_capitalization", "mkt_cap"))
         if min_market_cap > 0:
             if market_cap is None:
                 missing_market_cap_count += 1
+                filtered_observations.append(
+                    {
+                        **base_observation,
+                        "observation_state": "filtered_out",
+                        "reason_codes": ["finviz_screen", "missing_market_cap"],
+                    }
+                )
                 continue
             if market_cap < min_market_cap:
                 below_min_market_cap_count += 1
+                filtered_observations.append(
+                    {
+                        **base_observation,
+                        "observation_state": "filtered_out",
+                        "reason_codes": ["finviz_screen", "below_min_market_cap"],
+                    }
+                )
                 continue
-        volume = _parse_finviz_int(pick(row, "volume", "vol"))
         if volume is not None and volume < min_volume:
             below_min_volume_count += 1
+            filtered_observations.append(
+                {
+                    **base_observation,
+                    "observation_state": "filtered_out",
+                    "reason_codes": ["finviz_screen", "below_min_volume"],
+                }
+            )
             continue
-        change_percent = _parse_finviz_float(pick(row, "change", "change_percent", "change_pct"))
-        relative_volume = _parse_finviz_float(pick(row, "rel_volume", "relative_volume", "rel_vol"))
-        raw_rank = parse_int(pick(row, "no", "rank"))
-        rank_index = max(raw_rank - 1, 0) if raw_rank is not None else index
         reason_codes = ["finviz_screen"]
         if change_percent is not None:
             if change_percent > 0:
@@ -727,24 +801,9 @@ def _run_finviz_screener_feed(
             reason_codes.append("market_cap_filter")
         candidates.append(
             {
-                "symbol": symbol,
-                "company": pick(row, "company", "name"),
-                "sector": pick(row, "sector"),
-                "industry": pick(row, "industry"),
-                "country": pick(row, "country"),
-                "price": None if price is None else round(price, 4),
-                "market_cap": None if market_cap is None else int(round(market_cap)),
-                "daily_volume": volume,
-                "move_percent": (None if change_percent is None else round(change_percent, 4)),
-                "relative_volume": (None if relative_volume is None else round(relative_volume, 4)),
-                "finviz_rank": None if raw_rank is None else int(raw_rank),
-                "finviz_rank_index": rank_index,
+                **base_observation,
+                "observation_state": "observed",
                 "reason_codes": reason_codes,
-                "source_tags": [
-                    f"recipe:{str(recipe or '').strip().lower()}",
-                    "source:finviz",
-                ],
-                "raw": row,
             }
         )
 
@@ -786,8 +845,16 @@ def _run_finviz_screener_feed(
             str(item.get("symbol") or ""),
         ),
     )
-    selected = ranked[:top]
+    selected = [{**dict(item), "observation_state": "selected"} for item in ranked[:top]]
     symbols = [str(item.get("symbol")) for item in selected if str(item.get("symbol") or "").strip()]
+    selected_symbol_set = set(symbols)
+    observations = [
+        {
+            **dict(item),
+            "observation_state": "selected" if str(item.get("symbol") or "") in selected_symbol_set else "observed",
+        }
+        for item in ranked
+    ] + filtered_observations
     return {
         "status": "completed",
         "source_id": str(source_id),
@@ -795,9 +862,11 @@ def _run_finviz_screener_feed(
         "generated_at": generated_at,
         "symbols": symbols,
         "entries": selected,
+        "observations": observations,
         "summary": {
             "symbol_count": len(symbols),
             "candidate_count": len(rows),
+            "observed_count": len(observations),
             "retained_count": len(candidates),
             "recipe": str(recipe),
             "source": source_kind,
@@ -891,78 +960,107 @@ def run_ticker_source(
     raise ValueError(f"Unsupported ticker source recipe: {recipe}")
 
 
-def _snapshot_generated_at(run_record: Mapping[str, Any]) -> str | None:
-    result = run_record.get("result")
-    if isinstance(result, Mapping):
-        generated_at = _as_optional_text(result.get("generated_at"))
-        if generated_at is not None:
-            return generated_at
-    for field_name in ("finished_at", "started_at", "scheduled_for"):
-        rendered = _as_optional_text(run_record.get(field_name))
-        if rendered is not None:
-            return rendered
-    return None
+def _ticker_source_run_id(*, source_id: str, job_run_id: str | None, generated_at: str | None) -> str:
+    if job_run_id not in (None, ""):
+        return f"ticker_source_run:{job_run_id}"
+    generated_key = str(generated_at or _iso_now()).replace(":", "").replace("-", "")
+    return f"ticker_source_run:{source_id}:{generated_key}"
+
+
+def persist_ticker_source_result(
+    engine_facts: Any,
+    *,
+    source_id: str,
+    recipe: str,
+    job_run_id: str | None,
+    result: Mapping[str, Any],
+    config_hash: str | None = None,
+) -> dict[str, Any]:
+    if engine_facts is None or not engine_facts.schema_ready():
+        return {
+            "status": "skipped",
+            "reason": "engine_fact_schema_unavailable",
+        }
+    generated_at = _as_optional_text(result.get("generated_at")) or _iso_now()
+    ticker_source_run_id = _ticker_source_run_id(
+        source_id=str(source_id),
+        job_run_id=job_run_id,
+        generated_at=generated_at,
+    )
+    row = engine_facts.upsert_ticker_source_run(
+        ticker_source_run_id=ticker_source_run_id,
+        ticker_source_type=str(recipe),
+        ticker_source_id=str(source_id),
+        job_run_id=job_run_id,
+        status=str(result.get("status") or "completed"),
+        config_hash=config_hash,
+        generated_at=generated_at,
+        completed_at=_iso_now(),
+        symbols=[str(symbol).upper() for symbol in list(result.get("symbols") or []) if str(symbol or "").strip()],
+        entries=[dict(item) for item in list(result.get("entries") or []) if isinstance(item, Mapping)],
+        observations=[dict(item) for item in list(result.get("observations") or []) if isinstance(item, Mapping)],
+        summary=dict(result.get("summary") or {}),
+        evidence={
+            "source_id": str(source_id),
+            "recipe": str(recipe),
+            "degradation": dict(result.get("degradation") or {}),
+        },
+        updated_at=_iso_now(),
+    )
+    return {
+        "status": "ok",
+        "ticker_source_run_id": row.get("ticker_source_run_id"),
+        "observed_count": row.get("observed_count"),
+        "selected_count": row.get("selected_count"),
+        "excluded_count": row.get("excluded_count"),
+    }
 
 
 def get_latest_ticker_source_snapshot(
-    job_store: Any,
+    engine_facts: Any,
     *,
     source_id: str,
-    job_key: str,
+    job_key: str | None = None,
     max_age_seconds: int | None = None,
 ) -> dict[str, Any]:
-    latest_run = next(
-        iter(job_store.list_job_runs(job_key=job_key, status="succeeded", limit=1)),
-        None,
-    )
-    if latest_run is None:
+    if engine_facts is None or not engine_facts.schema_ready():
         return {
             "status": "missing",
             "source_id": str(source_id),
-            "job_key": str(job_key),
+            "job_key": None if job_key is None else str(job_key),
             "symbols": [],
             "entries": [],
             "summary": {},
             "degradation": {
                 "status": "missing",
-                "reason": "no_successful_snapshot",
+                "reason": "engine_fact_schema_unavailable",
             },
-            "job_run_id": None,
+            "ticker_source_run_id": None,
             "generated_at": None,
             "age_seconds": None,
         }
-    result = latest_run.get("result") if isinstance(latest_run.get("result"), Mapping) else {}
-    generated_at = _snapshot_generated_at(latest_run)
-    generated_dt = parse_datetime(generated_at)
-    age_seconds = None
-    if generated_dt is not None:
-        age_seconds = max(
-            (datetime.now(UTC) - generated_dt.astimezone(UTC)).total_seconds(),
-            0.0,
-        )
-    symbols = [str(symbol).upper() for symbol in list(result.get("symbols") or []) if str(symbol).strip()]
-    snapshot_status = "ready" if symbols else "empty"
-    if max_age_seconds is not None and generated_dt is not None and age_seconds is not None and age_seconds > max(int(max_age_seconds), 0):
-        snapshot_status = "stale"
+    snapshot = engine_facts.get_latest_ticker_source_snapshot(
+        ticker_source_id=str(source_id),
+        max_age_seconds=max_age_seconds,
+    )
     return {
-        "status": snapshot_status,
+        "status": str(snapshot.get("status") or "missing"),
         "source_id": str(source_id),
-        "job_key": str(job_key),
-        "job_run_id": latest_run.get("job_run_id"),
-        "generated_at": generated_at,
-        "age_seconds": age_seconds,
-        "symbols": symbols if snapshot_status != "stale" else [],
-        "entries": [dict(item) for item in list(result.get("entries") or []) if isinstance(item, Mapping)],
-        "summary": dict(result.get("summary") or {}),
-        "degradation": {
-            "status": snapshot_status,
-            "reason": None if snapshot_status in {"ready", "empty"} else "snapshot_stale",
-        },
+        "job_key": None if job_key is None else str(job_key),
+        "ticker_source_run_id": snapshot.get("ticker_source_run_id"),
+        "ticker_source_type": snapshot.get("ticker_source_type"),
+        "job_run_id": snapshot.get("job_run_id"),
+        "generated_at": snapshot.get("generated_at"),
+        "age_seconds": snapshot.get("age_seconds"),
+        "symbols": list(snapshot.get("symbols") or []),
+        "entries": [dict(item) for item in list(snapshot.get("entries") or []) if isinstance(item, Mapping)],
+        "summary": dict(snapshot.get("summary") or {}),
+        "degradation": dict(snapshot.get("degradation") or {}),
     }
 
 
 def resolve_ticker_source_symbols(
-    job_store: Any,
+    engine_facts: Any,
     *,
     source_id: str,
     job_key: str,
@@ -971,7 +1069,7 @@ def resolve_ticker_source_symbols(
     config_root: str | None = None,
 ) -> dict[str, Any]:
     snapshot = get_latest_ticker_source_snapshot(
-        job_store,
+        engine_facts,
         source_id=source_id,
         job_key=job_key,
         max_age_seconds=max_age_seconds,
@@ -983,6 +1081,7 @@ def resolve_ticker_source_symbols(
             "status": snapshot_status,
             "source_id": str(source_id),
             "job_key": str(job_key),
+            "ticker_source_run_id": snapshot.get("ticker_source_run_id"),
             "job_run_id": snapshot.get("job_run_id"),
             "generated_at": snapshot.get("generated_at"),
             "age_seconds": snapshot.get("age_seconds"),
@@ -1019,6 +1118,7 @@ def resolve_ticker_source_symbols(
         "source_id": str(source_id),
         "job_key": str(job_key),
         "symbols": [],
+        "ticker_source_run_id": snapshot.get("ticker_source_run_id"),
         "entries": [dict(item) for item in list(snapshot.get("entries") or []) if isinstance(item, Mapping)],
         "summary": dict(snapshot.get("summary") or {}),
         "degradation": dict(snapshot.get("degradation") or {}),
@@ -1030,6 +1130,7 @@ __all__ = [
     "VALID_TICKER_SOURCE_RECIPES",
     "build_ticker_source_symbols",
     "get_latest_ticker_source_snapshot",
+    "persist_ticker_source_result",
     "resolve_ticker_source_symbols",
     "run_ticker_source",
 ]
