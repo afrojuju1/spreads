@@ -16,8 +16,8 @@ from core.services.trading_strategy_runtime import (
 
 from .kernel import EngineComponentRole, EngineRunRef
 from .portfolio import CloseDecisionResult, PositionSnapshot
+from .risk_runtime import OPEN_POSITION_STATUSES
 
-OPEN_POSITION_STATUSES = ("open", "partial_close")
 NEW_YORK = ZoneInfo("America/New_York")
 
 
@@ -114,6 +114,50 @@ def close_decision_row_fields(close_decision: Mapping[str, Any]) -> dict[str, An
         "close_decision_state": close_decision.get("decision_state"),
         "close_decision": dict(close_decision),
     }
+
+
+def close_decision_projection(
+    *,
+    position_id: str,
+    reason: str,
+    decision_source: str,
+    should_close: bool,
+    portfolio_run_id: str,
+    close_decision: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "position_id": position_id,
+        "reason": reason,
+        "decision_source": decision_source,
+        "should_close": should_close,
+        "portfolio_run_id": portfolio_run_id,
+        **close_decision_row_fields(close_decision),
+    }
+
+
+def blocked_close_decision_projection(
+    *,
+    position: Mapping[str, Any],
+    reason: str,
+    decision_source: str,
+    portfolio_run_id: str,
+    decided_at: str | None = None,
+) -> dict[str, Any]:
+    position_id = _as_text(position.get("position_id")) or "unknown"
+    close_decision = build_blocked_close_decision(
+        position=position,
+        reason=reason,
+        decision_source=decision_source,
+        decided_at=decided_at,
+    )
+    return close_decision_projection(
+        position_id=position_id,
+        reason=reason,
+        decision_source=decision_source,
+        should_close=False,
+        portfolio_run_id=portfolio_run_id,
+        close_decision=close_decision,
+    )
 
 
 def evaluate_position_close_decision(
@@ -340,10 +384,12 @@ def build_portfolio_run_ref(
 __all__ = [
     "OPEN_POSITION_STATUSES",
     "PostgresPortfolioEngine",
+    "blocked_close_decision_projection",
     "build_blocked_close_decision",
     "build_portfolio_run_ref",
     "build_position_snapshot",
     "close_decision_lifecycle",
+    "close_decision_projection",
     "close_decision_row_fields",
     "describe_position_exit_state",
     "evaluate_position_close_decision",

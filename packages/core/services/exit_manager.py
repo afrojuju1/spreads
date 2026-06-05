@@ -8,14 +8,17 @@ from core.db.decorators import with_storage
 from core.services.trading_strategy_runtime import resolve_management_runtimes
 from core.services.trading_engine.portfolio_runtime import (
     PostgresPortfolioEngine,
-    build_blocked_close_decision,
+    blocked_close_decision_projection,
     build_portfolio_run_ref,
     build_position_snapshot,
     close_decision_lifecycle,
-    close_decision_row_fields,
+    close_decision_projection,
 )
 from core.services.trading_engine.risk_runtime import (
-    position_close_block_reason,
+    close_execution_block_reason,
+    close_intent_block_reason,
+    close_intent_id,
+    close_slot_key,
     position_is_open,
 )
 from core.services.execution_portfolio import refresh_session_position_marks
@@ -23,21 +26,6 @@ from core.services.positions import enrich_position_row
 from core.services.risk_manager import CLOSE_RECONCILIATION_MAX_AGE_SECONDS
 from core.storage.serializers import parse_datetime
 
-OPEN_CLOSE_ATTEMPT_STATUSES = [
-    "accepted",
-    "accepted_for_bidding",
-    "calculated",
-    "held",
-    "new",
-    "partially_filled",
-    "pending_cancel",
-    "pending_new",
-    "pending_replace",
-    "pending_submission",
-    "replaced",
-    "stopped",
-    "suspended",
-]
 MANAGED_CLOSE_INTENT_TTL_MINUTES = 5
 BROKER_SYNC_KEY = "broker_sync:alpaca"
 BROKER_SYNC_IN_FLIGHT_STATUSES = {"queued", "running", "leased"}
@@ -188,37 +176,6 @@ def _close_source_payload(*, kind: str, decision: dict[str, Any]) -> dict[str, A
     return payload
 
 
-def _has_open_close_attempt(execution_store: Any, position_id: str) -> bool:
-    return bool(
-        execution_store.list_open_attempts_for_position(
-            position_id=position_id,
-            statuses=sorted(OPEN_CLOSE_ATTEMPT_STATUSES),
-        )
-    )
-
-
-def _close_intent_id(position_id: str, trading_strategy_id: str) -> str:
-    return f"execution_intent:manage:{trading_strategy_id}:{position_id}"
-
-
-def _close_slot_key(position_id: str) -> str:
-    return f"manage:{position_id}:close"
-
-
-def _has_active_close_intent(execution_store: Any, position_id: str) -> bool:
-    if not execution_store.intent_schema_ready():
-        return False
-    from core.services.execution_intents.shared import ACTIVE_INTENT_STATES
-
-    return bool(
-        execution_store.list_execution_intents(
-            slot_key=_close_slot_key(position_id),
-            states=sorted(ACTIVE_INTENT_STATES),
-            limit=1,
-        )
-    )
-
-
 def _create_close_intent(
     execution_store: Any,
     *,
@@ -237,12 +194,12 @@ def _create_close_intent(
     decision = {**decision, "close_decision": close_decision}
     return issue_pending_execution_intent(
         execution_store,
-        execution_intent_id=_close_intent_id(position_id, runtime.trading_strategy_id),
+        execution_intent_id=close_intent_id(position_id=position_id, trading_strategy_id=runtime.trading_strategy_id),
         trading_strategy_id=runtime.trading_strategy_id,
         strategy_position_id=position_id,
         execution_attempt_id=None,
         action_type="close",
-        slot_key=_close_slot_key(position_id),
+        slot_key=close_slot_key(position_id),
         claim_token=None,
         policy_ref={
             "trading_strategy_id": runtime.trading_strategy_id,
@@ -287,6 +244,36 @@ def _refresh_open_position_marks(*, db_target: str, session_ids: list[str], stor
         db_target=db_target,
         session_ids=session_ids,
         storage=storage,
+    )
+
+
+def _mark_exit_evaluated(execution_store: Any, *, position_id: str, reason: str) -> None:
+    execution_store.update_position(
+        position_id=position_id,
+        last_exit_evaluated_at=_utc_now(),
+        last_exit_reason=reason,
+        updated_at=_utc_now(),
+    )
+
+
+def _replace_with_blocked_projection(
+    row: dict[str, Any],
+    *,
+    position: Mapping[str, Any],
+    reason: str,
+    decision_source: str,
+    portfolio_run_id: str,
+    decided_at: str,
+) -> None:
+    row.clear()
+    row.update(
+        blocked_close_decision_projection(
+            position=position,
+            reason=reason,
+            decision_source=decision_source,
+            portfolio_run_id=portfolio_run_id,
+            decided_at=decided_at,
+        )
     )
 
 
@@ -342,25 +329,17 @@ def run_position_exit_manager(
         }
     if broker_sync.get("status") != "current":
         broker_reason = str(broker_sync.get("reason") or "broker_sync_not_current")
-        broker_decisions: list[dict[str, Any]] = []
         decided_at = now.isoformat(timespec="seconds").replace("+00:00", "Z")
-        for position in open_positions[:25]:
-            close_decision = build_blocked_close_decision(
+        broker_decisions = [
+            blocked_close_decision_projection(
                 position=position,
                 reason=broker_reason,
                 decision_source="broker_sync",
+                portfolio_run_id=portfolio_run_ref.run_id,
                 decided_at=decided_at,
             )
-            broker_decisions.append(
-                {
-                    "position_id": position.get("position_id"),
-                    "reason": broker_reason,
-                    "decision_source": "broker_sync",
-                    "should_close": False,
-                    "portfolio_run_id": portfolio_run_ref.run_id,
-                    **close_decision_row_fields(close_decision),
-                }
-            )
+            for position in open_positions[:25]
+        ]
         return {
             "status": "skipped",
             "reason": broker_reason,
@@ -417,59 +396,24 @@ def run_position_exit_manager(
             position = enrich_position_row(dict(latest_position))
             position_snapshot = build_position_snapshot(position)
 
-        if _has_open_close_attempt(execution_store, position_id):
-            evaluated += 1
-            skipped += 1
-            execution_store.update_position(
-                position_id=position_id,
-                last_exit_evaluated_at=_utc_now(),
-                last_exit_reason="close_already_open",
-                updated_at=_utc_now(),
-            )
-            close_decision = build_blocked_close_decision(
-                position=position,
-                reason="close_already_open",
-                decision_source="close_guard",
-                decided_at=now_iso,
-            )
-            decisions.append(
-                {
-                    "position_id": position_id,
-                    "reason": "close_already_open",
-                    "decision_source": "close_guard",
-                    "should_close": False,
-                    "portfolio_run_id": portfolio_run_ref.run_id,
-                    **close_decision_row_fields(close_decision),
-                }
-            )
-            continue
-
-        close_block_reason = position_close_block_reason(position, now=now)
+        close_block_reason = close_execution_block_reason(
+            execution_store,
+            position=position,
+            now=now,
+        )
         if close_block_reason is not None:
             evaluated += 1
             skipped += 1
             if position_is_open(position):
-                execution_store.update_position(
-                    position_id=position_id,
-                    last_exit_evaluated_at=_utc_now(),
-                    last_exit_reason=close_block_reason,
-                    updated_at=_utc_now(),
-                )
-            close_decision = build_blocked_close_decision(
-                position=position,
-                reason=close_block_reason,
-                decision_source="close_guard",
-                decided_at=now_iso,
-            )
+                _mark_exit_evaluated(execution_store, position_id=position_id, reason=close_block_reason)
             decisions.append(
-                {
-                    "position_id": position_id,
-                    "reason": close_block_reason,
-                    "decision_source": "close_guard",
-                    "should_close": False,
-                    "portfolio_run_id": portfolio_run_ref.run_id,
-                    **close_decision_row_fields(close_decision),
-                }
+                blocked_close_decision_projection(
+                    position=position,
+                    reason=close_block_reason,
+                    decision_source="close_guard",
+                    portfolio_run_id=portfolio_run_ref.run_id,
+                    decided_at=now_iso,
+                )
             )
             continue
 
@@ -482,21 +426,16 @@ def run_position_exit_manager(
         management_runtime = close_result.payload.get("management_runtime")
         close_decision = dict(close_result.payload.get("close_decision") or decision.get("close_decision") or {})
         evaluated += 1
-        execution_store.update_position(
-            position_id=position_id,
-            last_exit_evaluated_at=_utc_now(),
-            last_exit_reason=str(decision["reason"]),
-            updated_at=_utc_now(),
-        )
+        _mark_exit_evaluated(execution_store, position_id=position_id, reason=str(decision["reason"]))
         decisions.append(
-            {
-                "position_id": position_id,
-                "reason": decision["reason"],
-                "decision_source": decision_source,
-                "should_close": bool(decision["should_close"]),
-                "portfolio_run_id": portfolio_run_ref.run_id,
-                **close_decision_row_fields(close_decision),
-            }
+            close_decision_projection(
+                position_id=position_id,
+                reason=str(decision["reason"]),
+                decision_source=decision_source,
+                should_close=bool(decision["should_close"]),
+                portfolio_run_id=portfolio_run_ref.run_id,
+                close_decision=close_decision,
+            )
         )
         if not decision["should_close"]:
             skipped += 1
@@ -506,86 +445,27 @@ def run_position_exit_manager(
         if latest_position is not None:
             position = enrich_position_row(dict(latest_position))
             position_snapshot = build_position_snapshot(position)
-        close_block_reason = position_close_block_reason(position, now=now)
+
+        close_block_reason = close_execution_block_reason(
+            execution_store,
+            position=position,
+            now=now,
+        )
+        if close_block_reason is None and management_runtime is None:
+            close_block_reason = "management_runtime_required_for_close_intent"
+        if close_block_reason is None:
+            close_block_reason = close_intent_block_reason(execution_store, position_id=position_id)
         if close_block_reason is not None:
             skipped += 1
-            execution_store.update_position(
-                position_id=position_id,
-                last_exit_evaluated_at=_utc_now(),
-                last_exit_reason=close_block_reason,
-                updated_at=_utc_now(),
-            )
-            close_decision = build_blocked_close_decision(
+            _mark_exit_evaluated(execution_store, position_id=position_id, reason=close_block_reason)
+            _replace_with_blocked_projection(
+                decisions[-1],
                 position=position,
                 reason=close_block_reason,
                 decision_source="close_guard",
+                portfolio_run_id=portfolio_run_ref.run_id,
                 decided_at=now_iso,
             )
-            decisions[-1]["reason"] = close_block_reason
-            decisions[-1]["decision_source"] = "close_guard"
-            decisions[-1]["should_close"] = False
-            decisions[-1].update(close_decision_row_fields(close_decision))
-            continue
-
-        if management_runtime is None:
-            skipped += 1
-            reason = "management_runtime_required_for_close_intent"
-            execution_store.update_position(
-                position_id=position_id,
-                last_exit_evaluated_at=_utc_now(),
-                last_exit_reason=reason,
-                updated_at=_utc_now(),
-            )
-            close_decision = build_blocked_close_decision(
-                position=position,
-                reason=reason,
-                decision_source="close_guard",
-                decided_at=now_iso,
-            )
-            decisions[-1]["reason"] = reason
-            decisions[-1]["decision_source"] = "close_guard"
-            decisions[-1]["should_close"] = False
-            decisions[-1].update(close_decision_row_fields(close_decision))
-            continue
-
-        if not execution_store.intent_schema_ready():
-            skipped += 1
-            execution_store.update_position(
-                position_id=position_id,
-                last_exit_evaluated_at=_utc_now(),
-                last_exit_reason="execution_intent_schema_unavailable",
-                updated_at=_utc_now(),
-            )
-            close_decision = build_blocked_close_decision(
-                position=position,
-                reason="execution_intent_schema_unavailable",
-                decision_source="close_guard",
-                decided_at=now_iso,
-            )
-            decisions[-1]["reason"] = "execution_intent_schema_unavailable"
-            decisions[-1]["decision_source"] = "close_guard"
-            decisions[-1]["should_close"] = False
-            decisions[-1].update(close_decision_row_fields(close_decision))
-            continue
-
-        if _has_active_close_intent(execution_store, position_id):
-            skipped += 1
-            execution_store.update_position(
-                position_id=position_id,
-                last_exit_evaluated_at=_utc_now(),
-                last_exit_reason="close_intent_already_open",
-                updated_at=_utc_now(),
-            )
-            close_decision = build_blocked_close_decision(
-                position=position,
-                reason="close_intent_already_open",
-                decision_source="close_guard",
-                decided_at=now_iso,
-            )
-            decisions[-1]["reason"] = "close_intent_already_open"
-            decisions[-1]["decision_source"] = "close_guard"
-            decisions[-1]["should_close"] = False
-            decisions[-1].update(close_decision_row_fields(close_decision))
             continue
 
         try:

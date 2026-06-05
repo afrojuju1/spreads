@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
+from core.services.execution_lifecycle import OPEN_ATTEMPT_STATUS_LIST
 from core.services.risk_manager import (
     CLOSE_RECONCILIATION_MAX_AGE_SECONDS,
     validate_close_execution,
@@ -35,6 +36,37 @@ def position_status(position: Mapping[str, Any]) -> str:
 
 def position_is_open(position: Mapping[str, Any]) -> bool:
     return position_status(position) in OPEN_POSITION_STATUSES
+
+
+def close_slot_key(position_id: str) -> str:
+    return f"manage:{position_id}:close"
+
+
+def close_intent_id(*, position_id: str, trading_strategy_id: str) -> str:
+    return f"execution_intent:manage:{trading_strategy_id}:{position_id}"
+
+
+def has_open_close_attempt(execution_store: Any, *, position_id: str) -> bool:
+    return bool(
+        execution_store.list_open_attempts_for_position(
+            position_id=position_id,
+            statuses=list(OPEN_ATTEMPT_STATUS_LIST),
+        )
+    )
+
+
+def has_active_close_intent(execution_store: Any, *, position_id: str) -> bool:
+    if not execution_store.intent_schema_ready():
+        return False
+    from core.services.execution_intents.shared import ACTIVE_INTENT_STATES
+
+    return bool(
+        execution_store.list_execution_intents(
+            slot_key=close_slot_key(position_id),
+            states=sorted(ACTIVE_INTENT_STATES),
+            limit=1,
+        )
+    )
 
 
 def position_close_block_reason(position: Mapping[str, Any], *, now: datetime) -> str | None:
@@ -74,8 +106,34 @@ def position_close_block_reason(position: Mapping[str, Any], *, now: datetime) -
     return None
 
 
+def close_execution_block_reason(
+    execution_store: Any,
+    *,
+    position: Mapping[str, Any],
+    now: datetime,
+) -> str | None:
+    position_id = _as_text(position.get("position_id"))
+    if position_id is not None and has_open_close_attempt(execution_store, position_id=position_id):
+        return "close_already_open"
+    return position_close_block_reason(position, now=now)
+
+
+def close_intent_block_reason(execution_store: Any, *, position_id: str) -> str | None:
+    if not execution_store.intent_schema_ready():
+        return "execution_intent_schema_unavailable"
+    if has_active_close_intent(execution_store, position_id=position_id):
+        return "close_intent_already_open"
+    return None
+
+
 __all__ = [
     "OPEN_POSITION_STATUSES",
+    "close_execution_block_reason",
+    "close_intent_block_reason",
+    "close_intent_id",
+    "close_slot_key",
+    "has_active_close_intent",
+    "has_open_close_attempt",
     "position_close_block_reason",
     "position_is_open",
     "position_status",
