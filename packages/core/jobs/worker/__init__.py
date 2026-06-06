@@ -26,7 +26,6 @@ from .tasks import (
     run_company_valuation_screen_materialize_job,
     run_execution_submit_job,
     run_execution_intent_dispatch_job,
-    run_position_exit_manager_job,
     run_ticker_source_job,
     run_tradingagents_scan_job,
     run_trading_strategy_entry_job,
@@ -43,7 +42,6 @@ class RuntimeWorkerSettings:
         run_execution_intent_dispatch_job,
         run_alert_delivery_job,
         run_alert_reconcile_job,
-        run_position_exit_manager_job,
     ]
     queue_name = RUNTIME_QUEUE_NAME
     redis_settings = build_redis_settings(default_redis_url())
@@ -116,7 +114,6 @@ __all__ = [
     "run_company_valuation_screen_materialize_job",
     "run_execution_submit_job",
     "run_execution_intent_dispatch_job",
-    "run_position_exit_manager_job",
     "run_ticker_source_job",
     "run_tradingagents_scan_job",
     "run_trading_strategy_entry_job",

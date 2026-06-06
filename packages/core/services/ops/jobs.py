@@ -46,7 +46,7 @@ from .shared import (
 )
 
 _JOB_TYPE_BY_TASK_NAME = {spec.task_name: job_type for job_type, spec in JOB_SPECS.items()}
-POSITION_EXIT_MANAGER_BROKER_SYNC_SKIP_REASONS = {
+TRADING_STRATEGY_MANAGE_BROKER_SYNC_SKIP_REASONS = {
     "broker_sync_in_flight",
     "broker_sync_missing",
     "broker_sync_schema_unavailable",
@@ -212,7 +212,7 @@ def _skip_reason_text(run: Mapping[str, Any]) -> str | None:
 
 def _skip_is_benign(run: Mapping[str, Any]) -> bool:
     reason = str(_skip_reason_text(run) or "").strip().lower()
-    if str(run.get("job_type") or "") == "position_exit_manager" and reason in POSITION_EXIT_MANAGER_BROKER_SYNC_SKIP_REASONS:
+    if str(run.get("job_type") or "") == "trading_strategy_manage" and reason in TRADING_STRATEGY_MANAGE_BROKER_SYNC_SKIP_REASONS:
         return True
     if reason == "singleton_lease_unavailable":
         return True
@@ -295,10 +295,10 @@ def _job_run_operator_status(
                     "healthy",
                     "Older scheduled job run was superseded by a newer run for the same job key.",
                 )
-            if str(run.get("job_type") or "") == "position_exit_manager" and reason in POSITION_EXIT_MANAGER_BROKER_SYNC_SKIP_REASONS:
+            if str(run.get("job_type") or "") == "trading_strategy_manage" and reason in TRADING_STRATEGY_MANAGE_BROKER_SYNC_SKIP_REASONS:
                 return (
                     "healthy",
-                    "Exit manager skipped until broker sync is current.",
+                    "Strategy manage skipped until broker sync is current.",
                 )
             return "healthy", "Job run was superseded during queue consolidation."
         return "degraded", reason or "Job run was skipped."

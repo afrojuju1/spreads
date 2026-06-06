@@ -12,7 +12,6 @@ from core.jobs.registry import (
     COMPANY_VALUATION_SCREEN_MATERIALIZE_JOB_TYPE,
     EXECUTION_INTENT_DISPATCH_JOB_TYPE,
     EXECUTION_SUBMIT_JOB_TYPE,
-    POSITION_EXIT_MANAGER_JOB_TYPE,
     TICKER_SOURCE_JOB_TYPE,
     TRADINGAGENTS_SCAN_JOB_TYPE,
     TRADING_STRATEGY_ENTRY_JOB_TYPE,
@@ -164,34 +163,6 @@ async def run_execution_submit_job(
 
     enriched_payload = dict(payload)
     enriched_payload["job_type"] = EXECUTION_SUBMIT_JOB_TYPE
-    return await _execute_managed_job(
-        ctx,
-        job_key=job_key,
-        job_run_id=job_run_id,
-        arq_job_id=arq_job_id,
-        payload=enriched_payload,
-        runner=runner,
-        compact_result=render_value,
-    )
-
-
-async def run_position_exit_manager_job(
-    ctx: dict[str, Any],
-    job_key: str,
-    job_run_id: str,
-    payload: dict[str, Any],
-    arq_job_id: str,
-) -> dict[str, Any]:
-    database_url = ctx["database_url"]
-
-    def runner(heartbeat: Any) -> dict[str, Any]:
-        heartbeat()
-        return run_position_exit_manager(
-            db_target=database_url,
-        )
-
-    enriched_payload = dict(payload)
-    enriched_payload["job_type"] = POSITION_EXIT_MANAGER_JOB_TYPE
     return await _execute_managed_job(
         ctx,
         job_key=job_key,

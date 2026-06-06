@@ -13,7 +13,6 @@ ALERT_DELIVERY_JOB_TYPE = "alert_delivery"
 ALERT_RECONCILE_JOB_TYPE = "alert_reconcile"
 TICKER_SOURCE_JOB_TYPE = "ticker_source"
 TRADINGAGENTS_SCAN_JOB_TYPE = "tradingagents_scan"
-POSITION_EXIT_MANAGER_JOB_TYPE = "position_exit_manager"
 TRADING_STRATEGY_ENTRY_JOB_TYPE = "trading_strategy_entry"
 TRADING_STRATEGY_MANAGE_JOB_TYPE = "trading_strategy_manage"
 EXECUTION_INTENT_DISPATCH_JOB_TYPE = "execution_intent_dispatch"
@@ -69,11 +68,6 @@ JOB_SPECS = {
             queue_name=RUNTIME_QUEUE_NAME,
         ),
         JobSpec(
-            job_type=POSITION_EXIT_MANAGER_JOB_TYPE,
-            task_name="run_position_exit_manager_job",
-            queue_name=RUNTIME_QUEUE_NAME,
-        ),
-        JobSpec(
             job_type=TICKER_SOURCE_JOB_TYPE,
             task_name="run_ticker_source_job",
             queue_name=DATA_QUEUE_NAME,
@@ -125,7 +119,6 @@ WORKER_LANES = (
             JOB_SPECS[EXECUTION_SUBMIT_JOB_TYPE].task_name,
             JOB_SPECS[ALERT_DELIVERY_JOB_TYPE].task_name,
             JOB_SPECS[ALERT_RECONCILE_JOB_TYPE].task_name,
-            JOB_SPECS[POSITION_EXIT_MANAGER_JOB_TYPE].task_name,
             JOB_SPECS[TRADING_STRATEGY_ENTRY_JOB_TYPE].task_name,
             JOB_SPECS[TRADING_STRATEGY_MANAGE_JOB_TYPE].task_name,
             JOB_SPECS[EXECUTION_INTENT_DISPATCH_JOB_TYPE].task_name,

@@ -192,6 +192,16 @@ Dynamic-source and static-source strategies both flow through the same strategy 
 
 `services/session_positions.py` owns position attribution. `PostgresPortfolioEngine` owns close decisions and `services/trading_engine/close_policy.py` owns reusable profit/stop/force-close policy math. `services/trading_engine/risk_runtime.py` owns close admission checks for position status, reconciliation freshness, broker symbols, and order validity. `services/exit_manager.py` is the manage-job adapter: it refreshes marks, applies broker/active-close guards plus close admission, and creates close intents for selected closes. Close actions go through intents and attempts; they should not bypass the execution lifecycle.
 
+## Hot-Path Abstraction Audit
+
+Current audit result for the live trading hot path:
+
+- Keep the thin engine contract modules in `services/trading_engine/`. They are ownership boundaries and typed payload shapes, not a second runtime, bus, actor framework, or alternate store.
+- Keep `execution_submit` as the broker-submit isolation job. It gives each claimed intent a durable attempt/job lifecycle and lets ops distinguish dispatch, broker submission, and unknown-submit outcomes.
+- Keep scanner/build policy helpers under DataEngine ownership. They do candidate math and diagnostics; they must not become alternate orchestration paths.
+- Merge management scheduling into `trading_strategy_manage` only. The standalone `position_exit_manager` job type is retired as an active worker surface; `services/exit_manager.py` remains the Strategy/Portfolio manage adapter.
+- Do not add a message bus, second database, actor framework, or compatibility wrapper around retired discovery/symbol-feed/UOA surfaces.
+
 ## Operator Read Models
 
 Operator views should read service-owned state through:
