@@ -21,10 +21,11 @@ Use [docs/current_system_state.md](../../../docs/current_system_state.md) as the
 
 Current shipped operator surfaces:
 
-- `ops state` is the canonical live trading operator surface
-- `ops storage` is the canonical storage and retention surface
-- `jobs` and `jobs lanes` are the canonical scheduler/worker surfaces
-- `positions` is the shipped position drilldown
+- `spreads status` is the canonical first live trading operator surface
+- `spreads trading` is the canonical strategy/source/candidate/decision surface
+- `spreads storage` is the canonical storage and retention surface
+- `spreads jobs` and `spreads jobs lanes` are the canonical scheduler/worker surfaces
+- `spreads positions` is the shipped position drilldown
 - do not tell operators to use removed or currently unshipped `spreads audit`, `spreads automations`, `spreads backtest`, `spreads research`, `spreads replay`, `spreads analyze`, or `spreads post-market analyze` commands
 
 ## First Principle
@@ -92,6 +93,7 @@ Read these fields first:
 Interpret them this way:
 
 - `capture_status=healthy` means capture is good even if the session is still blocked for another reason.
+- Market-closed `market_recorder_idle` logs are normal off-hours resource policy, not a capture outage.
 - `capture_status=empty`, `baseline_only`, or `recovery_only` means capture is degraded.
 - stale source or candidate state during market hours means the data/strategy lane is the first suspect.
 - healthy source and candidate state with no selected decisions is usually strategy selection, not scheduler failure.
@@ -257,6 +259,7 @@ Classify missing alerts this way:
 Use these assumptions unless current evidence disproves them:
 
 - The collector should prefer recorder-backed market data instead of opening its own live stream.
+- Outside regular market hours, the recorder should idle and avoid capture-target refreshes, option websocket work, and capture-summary writes.
 - `406 connection limit exceeded` is usually a sign that the recorder path was bypassed or another stream owner is misconfigured.
 - stale scheduled slots should be marked `missed`, not replayed.
 - recovery should clear once missed gaps are resolved by a fresh healthy slot.

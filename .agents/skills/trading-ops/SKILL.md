@@ -93,6 +93,7 @@ uv run spreads jobs --env ade-nucbox-k8-plus --job-type trading_strategy_entry -
 - A skipped run can be healthy when it is a singleton, off-window, superseded, or stale-slot skip.
 - Historical failed jobs matter only if operator state or jobs health says they are actionable.
 - A disabled lane should be idle, not blocked.
+- Closed-market `market_recorder_idle` logs are expected resource-policy behavior, not a capture outage.
 - `trading_allowed=false` before market open is expected; during market hours it should be explained by market, control, broker-sync, account, execution, or risk state.
 - Separate realized account performance from model, source, or decision output.
 

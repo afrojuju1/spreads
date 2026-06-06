@@ -79,6 +79,8 @@ Apply only the steps that match the change:
   - `docker compose restart scheduler`
 - recorder code changed:
   - `docker compose restart market-recorder`
+- live data-worker replica count changed:
+  - `docker compose up -d --scale worker-data=<count> --no-deps worker-data`
 - CLI-only code:
   - no Docker restart; validate through the CLI or targeted tests
 - API runtime only:
@@ -96,6 +98,8 @@ In practice:
 - most changes under `services/execution/`, `services/session_positions.py`, `services/broker_sync.py`, `services/risk_manager.py`, or runtime job logic require at least `worker-runtime`
 - if ownership crosses both lanes, restart both workers and the scheduler only when scheduling logic or job dispatch changed
 - changes limited to `packages/core/cli/` do not require worker or scheduler restarts unless the touched module is imported by runtime services
+- the live deploy target defaults to one `worker-data` container; if this changes, use compose scaling instead of a restart-only rollout
+- `market-recorder` is deployed continuously but should idle outside regular market hours; closed-market `market_recorder_idle` logs are healthy unless other ops state says capture is degraded
 
 ## Verification After Rollout
 
