@@ -40,7 +40,7 @@
 - For questions about "how did we do today", market-close summaries, or live ops status, prefer the running Docker-backed system state before code inspection.
 - Use the existing stack and narrow live reads first:
   - account and trading health: `services/account_state.py` or `http://localhost:58080/account/overview?history_range=1D`
-- strategy/source/signal/decision health: `services/ops/` or `uv run spreads ops state`
+- strategy/source/signal/decision health: `services/ops/` or `uv run spreads trading`
 - strategy tuning: prefer live/runtime read models and documented strategy-run summaries; add a new strategy-owned evaluation surface only when explicitly requested.
 - After market close, use exact dates in summaries.
 

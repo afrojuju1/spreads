@@ -127,6 +127,23 @@ def trading_ops_state_command(
     watch: float | None = typer.Option(None, "--watch", help="Refresh every N seconds."),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
 ) -> None:
+    run_trading_ops_state_visibility(
+        market_date=market_date,
+        db=db,
+        json_output=json_output,
+        watch=watch,
+        no_color=no_color,
+    )
+
+
+def run_trading_ops_state_visibility(
+    *,
+    market_date: str | None,
+    db: str | None,
+    json_output: bool,
+    watch: float | None,
+    no_color: bool,
+) -> None:
     _run_visibility_command(
         builder=lambda: build_trading_ops_state(db_target=db, market_date=market_date),
         renderer=render_trading_ops_state,
@@ -142,6 +159,21 @@ def storage_ops_state_command(
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
     watch: float | None = typer.Option(None, "--watch", help="Refresh every N seconds."),
     no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors."),
+) -> None:
+    run_storage_ops_state_visibility(
+        db=db,
+        json_output=json_output,
+        watch=watch,
+        no_color=no_color,
+    )
+
+
+def run_storage_ops_state_visibility(
+    *,
+    db: str | None,
+    json_output: bool,
+    watch: float | None,
+    no_color: bool,
 ) -> None:
     _run_visibility_command(
         builder=lambda: build_storage_ops_state(db_target=db),

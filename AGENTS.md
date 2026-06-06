@@ -49,18 +49,21 @@
 - Spreads owns the active trading-ops skill and operator guidance. Do not add new active guidance to the retired `trading_operator` hub repo.
 - The external research AI layer is linked at [external/TradingAgents](external/TradingAgents), which resolves to `/home/ade/Projects/TradingAgents`. Spreads owns orchestration, job config, alerts, outputs, and operator visibility around that layer; the external repo owns its own agent internals.
 - For operator visibility or runtime triage, prefer the shipped ops CLI first when it fits the question:
-  - `uv run spreads ops state`
-  - `uv run spreads ops storage`
+  - `uv run spreads status`
+  - `uv run spreads trading`
+  - `uv run spreads storage`
   - `uv run spreads jobs`
   - `uv run spreads jobs lanes`
+  - `uv run spreads logs --env ade-nucbox-k8-plus <service>`
   - `uv run spreads positions --date <YYYY-MM-DD> --json`
   - `uv run spreads execution-runtimes --json`
 - Do not add frontend or API callers to retired fragmented ops surfaces.
 - The deploy target `ade-nucbox-k8-plus` is the canonical live paper environment. Treat it as live operator infrastructure, not a scratch box.
 - For target-aware operator reads, prefer `--env <target>` over raw connection overrides. Do not use bare `--db postgresql://...` when a named deploy target exists.
 - Canonical live-ops examples:
-  - `uv run spreads ops state --env ade-nucbox-k8-plus --json`
-  - `uv run spreads ops storage --env ade-nucbox-k8-plus --json`
+  - `uv run spreads status --env ade-nucbox-k8-plus --json`
+  - `uv run spreads trading --env ade-nucbox-k8-plus --json`
+  - `uv run spreads storage --env ade-nucbox-k8-plus --json`
   - `uv run spreads jobs --env ade-nucbox-k8-plus --json`
 - Use `uv run spreads deploy exec --env ade-nucbox-k8-plus -- ...` only when you explicitly need to run on the deployed checkout at `/home/ade/Projects/spreads`.
 - Use `uv run spreads deploy logs --env ade-nucbox-k8-plus ...` and `uv run spreads deploy restart --env ade-nucbox-k8-plus ...` for live box operations before falling back to ad hoc SSH commands.
